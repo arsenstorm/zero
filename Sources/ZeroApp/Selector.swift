@@ -36,8 +36,8 @@ final class SelectorState {
     var highlighted: String?
     /// The rows, built when the selector opens; hovering must not rebuild them.
     var sections: [SelectorSection] = []
-    /// The app resizes the panel when the tab changes, keeping the edge nearest the chip in place.
-    @ObservationIgnored var onHeightChange: ((CGFloat) -> Void)?
+    /// The card's laid-out height: the app treats a click in the rest of its strip as a click outside.
+    @ObservationIgnored var cardHeight: CGFloat = 0
     init(kind: SelectorKind) { self.kind = kind }
 }
 
@@ -71,6 +71,7 @@ struct SelectorView: View {
         }
         .frame(width: Self.width)
         .card()
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { state.cardHeight = $0 }
         .focusable()
         .focused($focused)
         .focusEffectDisabled()

@@ -188,8 +188,6 @@ final class Panel: NSPanel {
         // SwiftUI's global frame is in the window's content, top-left origin; AppKit wants bottom-left.
         let appKit = NSRect(x: anchor.minX, y: content.bounds.height - anchor.maxY, width: anchor.width, height: anchor.height)
         let chip = inboxPanel.convertToScreen(appKit)
-        // Sized exactly to the laid-out view, left-aligned with the chip, above it unless that runs off the screen.
-        // Content hugs the edge nearest the chip, and a tab change resizes the panel from the far edge only.
         // A fixed, transparent strip above the chip (below it only when there is no room). The card inside is
         // anchored to the chip's edge, so a tab change grows or shrinks it from the far edge in the same frame,
         // with no window resizing and nothing moving underneath.
@@ -208,12 +206,16 @@ final class Panel: NSPanel {
         panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
         panel.makeKeyAndOrderFront(nil)
         selectorPanel = panel
-        // A click anywhere but the selector closes it: in another app (global) or in Zero's other windows (local).
+        // A click anywhere but the card closes it: in another app (global), in Zero's other windows, or in the
+        // strip's empty part (local).
         if let global = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
             self?.inbox.closeSelector()
         }) { selectorMonitors.append(global) }
-        if let local = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self] event in
-            if let self, let panel = selectorPanel, event.window !== panel { inbox.closeSelector() }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self, weak selector] event in
+            guard let self, let panel = selectorPanel else { return event }
+            let y = event.locationInWindow.y, card = selector?.cardHeight ?? 0
+            let inCard = opensAbove ? y <= card : y >= panel.frame.height - card
+            if event.window !== panel || !inCard { inbox.closeSelector() }
             return event
         }) { selectorMonitors.append(local) }
     }
