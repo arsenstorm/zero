@@ -67,3 +67,10 @@ private func store() -> Store {
     #expect(s.ask(a.id)?.output.contains("hi") == true)
     #expect(chunks.contains("hi"))
 }
+
+@Test func codexNamesReadCodenameFirst() {
+    #expect(SoloAdapter.codexDisplayName("GPT-5.6-Luna") == "Luna 5.6")
+    #expect(SoloAdapter.codexDisplayName("GPT-6.1-Sol") == "Sol 6.1")
+    #expect(SoloAdapter.codexDisplayName("GPT-5.5") == "GPT 5.5")
+    #expect(SoloAdapter.codexDisplayName("Daybreak Blue") == "Daybreak Blue")
+}

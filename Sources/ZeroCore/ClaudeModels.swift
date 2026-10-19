@@ -21,7 +21,7 @@ public enum ClaudeModels {
     public static func cached() -> [SpawnChoice] {
         let fromAPI = (accountID().flatMap { UserDefaults.standard.data(forKey: "claudeModels." + $0) })
             .flatMap { try? JSONDecoder().decode([Entry].self, from: $0) } ?? []
-        var choices = fromAPI.map { SpawnChoice(id: $0.id, name: $0.name, detail: describe($0.id), icon: "claude", provider: "Anthropic") }
+        var choices = fromAPI.map { SpawnChoice(id: $0.id, name: shortName($0.name), detail: describe($0.id), icon: "claude", provider: "Anthropic") }
         for extra in localExtras() where !choices.contains(where: { $0.id == extra.id }) { choices.append(extra) }
         return choices
     }
@@ -84,7 +84,7 @@ public enum ClaudeModels {
             let parts = description.components(separatedBy: " · ")
             let title = parts.first.map { $0.hasPrefix(label) ? $0 : label } ?? label
             let detail = parts.count > 1 ? parts.dropFirst().joined(separator: " · ") : (description.isEmpty ? nil : description)
-            return SpawnChoice(id: value, name: title.hasPrefix("Claude") ? title : "Claude " + title, detail: detail, icon: "claude", provider: "Anthropic",
+            return SpawnChoice(id: value, name: shortName(title), detail: detail, icon: "claude", provider: "Anthropic",
                                context: value.hasSuffix("[1m]") ? "1M tokens" : nil)
         }
     }
@@ -100,6 +100,11 @@ public enum ClaudeModels {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let oauth = json["claudeAiOauth"] as? [String: Any] else { return nil }
         return oauth["accessToken"] as? String
+    }
+
+    /// "Claude Haiku 5.5" reads "Haiku 5.5": the provider is the tab, so the name need not repeat it.
+    private static func shortName(_ name: String) -> String {
+        name.hasPrefix("Claude ") ? String(name.dropFirst(7)) : name
     }
 
     /// One line per family, so a bare id still reads like Codex's rows do.

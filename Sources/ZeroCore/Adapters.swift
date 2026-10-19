@@ -128,12 +128,13 @@ public struct SoloAdapter: AgentAdapter {
             .sorted { (($0["priority"] as? Int) ?? 99) < (($1["priority"] as? Int) ?? 99) }
             .compactMap { model in
                 guard let slug = model["slug"] as? String else { return nil }
+                let raw = (model["display_name"] as? String) ?? slug
                 let window = (model["context_window"] as? Int).map { $0 >= 1_000_000 ? "\($0 / 1_000_000)M tokens" : "\($0 / 1000)K tokens" }
                 let levels = (model["supported_reasoning_levels"] as? [[String: Any]] ?? []).compactMap { level -> SpawnChoice? in
                     guard let effort = level["effort"] as? String else { return nil }
                     return SpawnChoice(id: effort, name: effort.capitalized, detail: level["description"] as? String)
                 }
-                return SpawnChoice(id: slug, name: (model["display_name"] as? String) ?? slug, detail: model["description"] as? String,
+                return SpawnChoice(id: slug, name: Self.codexDisplayName(raw), detail: model["description"] as? String,
                                    icon: "openai", provider: "OpenAI", context: window, levels: levels,
                                    defaultLevel: model["default_reasoning_level"] as? String)
             }
@@ -247,5 +248,17 @@ public struct SoloAdapter: AgentAdapter {
                 return message["result"] as? [String: Any] ?? [:]
             }
         }
+    }
+}
+
+extension SoloAdapter {
+    /// "GPT-5.6-Luna" reads "Luna 5.6", "GPT-6.1-Sol" reads "Sol 6.1", "GPT-5.5" reads "GPT 5.5"; anything not
+    /// starting with GPT ("Daybreak Blue") is left as it is.
+    static func codexDisplayName(_ name: String) -> String {
+        let parts = name.split(separator: "-").map(String.init)
+        guard parts.count >= 2, parts[0].uppercased() == "GPT" else { return name }
+        let version = parts[1]
+        let codename = parts.dropFirst(2).joined(separator: " ")
+        return codename.isEmpty ? "GPT \(version)" : "\(codename) \(version)"
     }
 }
