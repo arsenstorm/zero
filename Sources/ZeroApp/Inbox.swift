@@ -471,6 +471,8 @@ enum Theme {
     static let card = dynamic(dark: NSColor(white: 0.11, alpha: 1), light: NSColor(white: 1, alpha: 1))
     static let row = dynamic(dark: NSColor(white: 0.16, alpha: 1), light: NSColor(white: 0.94, alpha: 1))
     static let keycap = dynamic(dark: NSColor(white: 0.22, alpha: 1), light: NSColor(white: 0.86, alpha: 1))
+    /// A fully solid knob; `.primary` is a translucent label colour.
+    static let knob = dynamic(dark: .white, light: .black)
     static let code = dynamic(dark: NSColor(white: 0, alpha: 0.35), light: NSColor(white: 0, alpha: 0.05))
     static let pill = dynamic(dark: NSColor(white: 0, alpha: 0.9), light: NSColor(white: 1, alpha: 0.96))
     // Opaque, so a border is one colour along its length whatever sits behind each segment.

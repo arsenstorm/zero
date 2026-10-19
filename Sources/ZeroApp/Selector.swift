@@ -196,12 +196,11 @@ struct SelectorView: View {
                         .padding(.bottom, 10)
                 }
                 Text(row.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                // Two lines reserved for the description and one for the tokens, so switching models shifts nothing.
                 Text(describe(row)).font(.system(size: 11)).foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.center).lineLimit(2, reservesSpace: true)
                     .padding(.top, 4)
-                if let context = row.context {
-                    Text(context).font(.system(size: 11)).foregroundStyle(.tertiary).padding(.top, 4)
-                }
+                Text(row.context ?? " ").font(.system(size: 11)).foregroundStyle(.tertiary).padding(.top, 4)
                 if !row.levels.isEmpty {
                     HStack {
                         Text("Effort").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
@@ -275,9 +274,10 @@ struct EffortSlider: View {
     var body: some View {
         let index = picked.flatMap { levels.firstIndex(of: $0) } ?? 0
         GeometryReader { geo in
-            let usable = geo.size.width - knob
-            let step = levels.count > 1 ? usable / CGFloat(levels.count - 1) : 0
-            let x = knob / 2 + step * CGFloat(index)
+            // Points run from one rounded end of the track to the other; the knob overhangs a little at the extremes.
+            let inset = trackHeight / 2
+            let step = levels.count > 1 ? (geo.size.width - trackHeight) / CGFloat(levels.count - 1) : 0
+            let x = inset + step * CGFloat(index)
             let mid = geo.size.height / 2
             ZStack(alignment: .leading) {
                 Capsule().fill(Theme.row).frame(height: trackHeight)
@@ -288,9 +288,9 @@ struct EffortSlider: View {
                     let size = 3 + CGFloat(i) * 4 / CGFloat(max(levels.count - 1, 1))
                     Circle().fill(i <= index ? Color.white.opacity(0.6) : Color.primary.opacity(0.22))
                         .frame(width: size, height: size)
-                        .position(x: knob / 2 + step * CGFloat(i), y: mid)
+                        .position(x: inset + step * CGFloat(i), y: mid)
                 }
-                Circle().fill(Color.primary)
+                Circle().fill(Theme.knob)
                     .frame(width: knob, height: knob)
                     .scaleEffect(held ? 1.2 : 1)
                     .position(x: x, y: mid)
@@ -302,7 +302,7 @@ struct EffortSlider: View {
                 .onChanged { value in
                     held = true
                     guard step > 0 else { return }
-                    let i = Int(((value.location.x - knob / 2) / step).rounded())
+                    let i = Int(((value.location.x - inset) / step).rounded())
                     let level = levels[max(0, min(levels.count - 1, i))]
                     if level != picked {
                         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
