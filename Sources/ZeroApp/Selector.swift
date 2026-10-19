@@ -48,6 +48,8 @@ struct SelectorView: View {
     @Bindable var controller: InboxController
     @Bindable var state: SelectorState
     @FocusState private var focused: Bool
+    @State private var moreAbove = false
+    @State private var moreBelow = false
 
     static let width: CGFloat = 272
     private static let rowHeight: CGFloat = 30
@@ -66,6 +68,12 @@ struct SelectorView: View {
                     .padding(.horizontal, 6).padding(.vertical, 4)
             }
             .frame(height: min(CGFloat(max(rows.count, 1)) * Self.rowHeight + 8 + CGFloat(max(rows.count - 1, 0)), 8 * Self.rowHeight + 8 + 7))
+            .onScrollGeometryChange(for: [Bool].self) { g in
+                [g.contentOffset.y > 1, g.contentOffset.y + g.containerSize.height < g.contentSize.height - 1]
+            } action: { _, more in moreAbove = more[0]; moreBelow = more[1] }
+            .mask(edgeFades)
+            .animation(.easeOut(duration: 0.15), value: moreAbove)
+            .animation(.easeOut(duration: 0.15), value: moreBelow)
             Divider().padding(.horizontal, 10)
             footer
         }
@@ -86,6 +94,15 @@ struct SelectorView: View {
             if state.tab == nil { state.tab = sections.first { $0.rows.contains { $0.selected } }?.id ?? sections.first?.id }
             state.highlighted = rows.first { $0.selected }?.id ?? rows.first?.id
             focused = true
+        }
+    }
+
+    /// The list fades out at an edge with more rows past it, a hint that it scrolls.
+    private var edgeFades: some View {
+        VStack(spacing: 0) {
+            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: moreAbove ? 28 : 0)
+            Color.black
+            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: moreBelow ? 28 : 0)
         }
     }
 
