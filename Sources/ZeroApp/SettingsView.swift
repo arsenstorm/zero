@@ -74,6 +74,10 @@ struct SettingsView: View {
                     LabeledContent(adapter.name.capitalized) {
                         Text(adapterStatus(adapter)).foregroundStyle(.secondary)
                     }
+                    if let account = adapter.spawnNote(for: SpawnChoice(id: "", name: "Claude")) {
+                        LabeledContent("Claude account") { Text(account).foregroundStyle(.secondary) }
+                        Text("New Claude agents run under this account. Switching accounts stays with your switcher for now.").font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 Text("How Zero delivers your messages into an agent's session.").font(.caption).foregroundStyle(.secondary)
             }

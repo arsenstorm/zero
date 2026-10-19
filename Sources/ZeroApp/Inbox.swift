@@ -617,20 +617,33 @@ struct NewAgentCard: View {
                     .focused(focus, equals: key)
                     .onSubmit { controller.spawn() }
                 HStack(spacing: 6) {
-                    chip(icon: Image(nsImage: soloIcon), title: controller.spawnTargets.first { $0.id == controller.spawnTarget }?.name ?? "Project") {
-                        ForEach(controller.spawnTargets) { choice in
-                            Button(choice.name) { controller.spawnTarget = choice.id }
+                    // Where: a place, so a folder, with the project's name.
+                    chip(icon: Image(systemName: "folder"), tint: .secondary,
+                         title: controller.spawnTargets.first { $0.id == controller.spawnTarget }?.name ?? "Project") {
+                        Section("Project") {
+                            ForEach(controller.spawnTargets) { choice in
+                                Button(choice.name) { controller.spawnTarget = choice.id }
+                            }
                         }
                     }
-                    chip(icon: Image(systemName: "apple.terminal"), title: controller.spawnRuntimes.first { $0.id == controller.spawnRuntime }?.name ?? "Runtime") {
-                        ForEach(controller.spawnRuntimes) { choice in
-                            Button(choice.name) { controller.spawnRuntime = choice.id }
-                        }
-                    }
-                    if !controller.spawnModels.isEmpty {
-                        chip(icon: Image(systemName: "sparkle"), title: controller.spawnModels.first { $0.id == controller.spawnModel }?.name ?? "Model") {
-                            ForEach(controller.spawnModels) { choice in
-                                Button(choice.name) { controller.spawnModel = choice.id }
+                    // With what: runtime and model in one pick, shown as the runtime's icon and the model's name.
+                    chip(icon: runtimeIcon(controller.spawnRuntimes.first { $0.id == controller.spawnRuntime }),
+                         tint: runtimeTint(controller.spawnRuntimes.first { $0.id == controller.spawnRuntime }),
+                         title: controller.spawnModels.first { $0.id == controller.spawnModel }.map { $0.id.isEmpty ? (controller.spawnRuntimes.first { $0.id == controller.spawnRuntime }?.name ?? "Default") : $0.name }
+                            ?? controller.spawnRuntimes.first { $0.id == controller.spawnRuntime }?.name ?? "Runtime") {
+                        ForEach(controller.spawnRuntimes) { runtime in
+                            Section(runtime.name) {
+                                let models = controller.store.spawners.first?.spawnModels(for: runtime) ?? []
+                                if models.isEmpty {
+                                    Button(runtime.name) { controller.spawnRuntime = runtime.id }
+                                } else {
+                                    ForEach(models) { model in
+                                        Button(model.id.isEmpty ? "Default" : model.name) {
+                                            controller.spawnRuntime = runtime.id
+                                            controller.spawnModel = model.id
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -647,10 +660,6 @@ struct NewAgentCard: View {
                             .foregroundStyle(controller.drafts[key, default: ""].isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
                     }.buttonStyle(.plain)
                 }
-                if let note = controller.spawnNote {
-                    Text("Account " + note).font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
-                        .help("The account the agent will use. Switch accounts with your switcher; Zero follows.")
-                }
             }
             .padding(.horizontal, 14).padding(.bottom, 14).padding(.top, 10 + 12)
             .background(ComposerBoxShape().fill(Theme.row))
@@ -665,13 +674,29 @@ struct NewAgentCard: View {
         .onAppear { controller.loadSpawnChoices() }
     }
 
-    /// A small pill menu: optional icon, current value, chevron.
-    private func chip<Items: View>(icon: Image?, title: String, @ViewBuilder items: () -> Items) -> some View {
+    private func runtimeIcon(_ runtime: SpawnChoice?) -> Image {
+        switch runtime?.name.lowercased() {
+        case .some(let n) where n.contains("claude"): return Image(systemName: "asterisk")
+        case .some(let n) where n.contains("codex"): return Image(systemName: "chevron.left.forwardslash.chevron.right")
+        default: return Image(systemName: "apple.terminal")
+        }
+    }
+
+    private func runtimeTint(_ runtime: SpawnChoice?) -> Color {
+        switch runtime?.name.lowercased() {
+        case .some(let n) where n.contains("claude"): return Color(red: 0.85, green: 0.47, blue: 0.34)
+        case .some(let n) where n.contains("codex"): return Color(red: 0.06, green: 0.64, blue: 0.51)
+        default: return .secondary
+        }
+    }
+
+    /// A small pill menu: icon in its tint, current value, chevron.
+    private func chip<Items: View>(icon: Image?, tint: Color, title: String, @ViewBuilder items: () -> Items) -> some View {
         Menu {
             items()
         } label: {
             HStack(spacing: 5) {
-                if let icon { icon.resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14).foregroundStyle(.secondary) }
+                if let icon { icon.resizable().aspectRatio(contentMode: .fit).frame(width: 12, height: 12).fontWeight(.semibold).foregroundStyle(tint) }
                 Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1)
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
             }
