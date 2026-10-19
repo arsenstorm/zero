@@ -23,7 +23,16 @@ public enum ClaudeModels {
             .flatMap { try? JSONDecoder().decode([Entry].self, from: $0) } ?? []
         var choices = fromAPI.map { SpawnChoice(id: $0.id, name: shortName($0.name), detail: describe($0.id), icon: "claude", provider: "Anthropic") }
         for extra in localExtras() where !choices.contains(where: { $0.id == extra.id }) { choices.append(extra) }
-        return choices
+        return choices.sorted { rank($0.name) < rank($1.name) }
+    }
+
+    /// Family first (Mythos, Fable, Opus, Sonnet, Haiku, then the rest), newest version first within one.
+    static func rank(_ name: String) -> (Int, Double) {
+        let families = ["mythos", "fable", "opus", "sonnet", "haiku"]
+        let lower = name.lowercased()
+        let family = families.firstIndex { lower.contains($0) } ?? families.count
+        let version = Double(lower.split(separator: " ").first { Double($0) != nil } ?? "") ?? 0
+        return (family, -version)
     }
 
     /// Fetches the account's models and caches them. Returns true when the list changed.
