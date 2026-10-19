@@ -244,12 +244,15 @@ final class Panel: NSPanel {
     /// and is not held up by SwiftUI's layout.
     private static func animateSelector(_ panel: NSWindow, anchor: CGPoint, opening: Bool, completion: (() -> Void)? = nil) {
         guard let layer = panel.contentView?.layer else { completion?(); return }
-        var small = CATransform3DMakeTranslation(anchor.x, anchor.y, 0)
+        // A layer transform pivots on its centre, so the anchor is taken relative to the centre; otherwise the
+        // card starts displaced and slides into place.
+        let ax = anchor.x - layer.bounds.midX, ay = anchor.y - layer.bounds.midY
+        var small = CATransform3DMakeTranslation(ax, ay, 0)
         small = CATransform3DScale(small, 0.95, 0.95, 1)
-        small = CATransform3DTranslate(small, -anchor.x, -anchor.y, 0)
+        small = CATransform3DTranslate(small, -ax, -ay, 0)
         small.m42 += anchor.y > 0 ? 4 : -4
         let (from, to) = opening ? (small, CATransform3DIdentity) : (CATransform3DIdentity, small)
-        let duration = opening ? 0.14 : 0.1
+        let duration = opening ? 0.1 : 0.07
         let curve = opening ? CAMediaTimingFunction(controlPoints: 0.32, 0.72, 0, 1) : CAMediaTimingFunction(name: .easeIn)
         CATransaction.begin()
         CATransaction.setCompletionBlock(completion)
