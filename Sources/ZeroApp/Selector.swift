@@ -52,7 +52,6 @@ struct SelectorView: View {
     static let width: CGFloat = 272
     private static let rowHeight: CGFloat = 30
     private static let tabsHeight: CGFloat = 44
-    private static let footerHeight: CGFloat = 30
 
     private var sections: [SelectorSection] { state.sections }
     private var section: SelectorSection? { sections.first { $0.id == state.tab } ?? sections.first }
@@ -92,9 +91,13 @@ struct SelectorView: View {
 
     /// The natural height for a kind, so the panel can be sized before the view exists.
     static func height(for sections: [SelectorSection], tab: String?) -> CGFloat {
-        let rows = (sections.first { $0.id == tab } ?? sections.first { $0.rows.contains { $0.selected } } ?? sections.first)?.rows.count ?? 0
+        let section = sections.first { $0.id == tab } ?? sections.first { $0.rows.contains { $0.selected } } ?? sections.first
+        let rows = section?.rows.count ?? 0
         let list = min(CGFloat(max(rows, 1)) * rowHeight + 8 + CGFloat(max(rows - 1, 0)), 10 * rowHeight + 8)
-        return tabsHeight + list + 1 + footerHeight
+        // The footer holds the tab's longest description in full: about 46 characters per line at 11 pt.
+        let longest = section?.rows.map { ($0.detail ?? $0.provider ?? "").count + (($0.context?.count ?? -10) + 10) }.max() ?? 0
+        let lines = max(1, Int((Double(longest) / 46).rounded(.up)))
+        return tabsHeight + 1 + list + 1 + 18 + CGFloat(lines) * 14
     }
 
     private var tabs: some View {
