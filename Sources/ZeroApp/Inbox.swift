@@ -61,7 +61,9 @@ final class InboxController {
         // The click on the chip that should close the selector first closes it through the click-outside
         // monitor, then arrives here: within a third of a second of that close, it is that close.
         if Date().timeIntervalSince(selectorClosedAt) < 0.3 { return }
-        selector = SelectorState(kind: kind)
+        let state = SelectorState(kind: kind)
+        state.sections = selectorSections(for: kind) // once: the rows read catalogues from disk
+        selector = state
         presentSelector?(anchor)
     }
 
@@ -266,7 +268,10 @@ final class InboxController {
                 if spawnTarget == nil || !targets.contains(where: { $0.id == spawnTarget }) { spawnTarget = targets.first?.id }
                 if spawnRuntime == nil || !runtimes.contains(where: { $0.id == spawnRuntime }) { spawnRuntime = runtimes.first?.id }
             }
-            if await adapter.refreshModels() { modelsVersion += 1 }
+            if await adapter.refreshModels() {
+                modelsVersion += 1
+                if let selector { selector.sections = selectorSections(for: selector.kind) }
+            }
         }
     }
 
@@ -465,9 +470,10 @@ enum Theme {
     static let keycap = dynamic(dark: NSColor(white: 0.22, alpha: 1), light: NSColor(white: 0.86, alpha: 1))
     static let code = dynamic(dark: NSColor(white: 0, alpha: 0.35), light: NSColor(white: 0, alpha: 0.05))
     static let pill = dynamic(dark: NSColor(white: 0, alpha: 0.9), light: NSColor(white: 1, alpha: 0.96))
-    static let hairline = dynamic(dark: NSColor(white: 1, alpha: 0.12), light: NSColor(white: 0, alpha: 0.12))
-    static let stroke = dynamic(dark: NSColor(white: 1, alpha: 0.06), light: NSColor(white: 0, alpha: 0.12))
-    static let selectedStroke = dynamic(dark: NSColor(white: 1, alpha: 0.35), light: NSColor(white: 0, alpha: 0.35))
+    // Opaque, so a border is one colour along its length whatever sits behind each segment.
+    static let hairline = dynamic(dark: NSColor(white: 0.30, alpha: 1), light: NSColor(white: 0.82, alpha: 1))
+    static let stroke = dynamic(dark: NSColor(white: 0.24, alpha: 1), light: NSColor(white: 0.86, alpha: 1))
+    static let selectedStroke = dynamic(dark: NSColor(white: 0.45, alpha: 1), light: NSColor(white: 0.65, alpha: 1))
     /// Key cap fills for a chosen option: deeper in dark mode so the white digit keeps its contrast.
     static let greenCap = dynamic(dark: NSColor(red: 0.16, green: 0.55, blue: 0.27, alpha: 1), light: NSColor.systemGreen)
     static let orangeCap = dynamic(dark: NSColor(red: 0.78, green: 0.45, blue: 0.08, alpha: 1), light: NSColor.systemOrange)
@@ -650,9 +656,17 @@ struct ComposerTopEdge: Shape {
     func path(in rect: CGRect) -> Path { ComposerBoxShape().topEdge(in: rect) }
 }
 
-/// An icon the app bundles for an adapter's choice (claude, openai, solo), by resource name.
-func choiceIcon(_ name: String?) -> Image? {
+/// An icon the app bundles for an adapter's choice (claude, openai, solo), by resource name. Built once.
+@MainActor private var iconCache: [String: Image] = [:]
+@MainActor func choiceIcon(_ name: String?) -> Image? {
     guard let name else { return nil }
+    if let cached = iconCache[name] { return cached }
+    let built = buildChoiceIcon(name)
+    if let built { iconCache[name] = built }
+    return built
+}
+
+private func buildChoiceIcon(_ name: String) -> Image? {
     if name == "solo" {
         let icon = NSWorkspace.shared.icon(forFile: "/Applications/Solo.app").copy() as! NSImage
         icon.size = NSSize(width: 16, height: 16)

@@ -189,7 +189,7 @@ final class Panel: NSPanel {
         let appKit = NSRect(x: anchor.minX, y: content.bounds.height - anchor.maxY, width: anchor.width, height: anchor.height)
         let chip = inboxPanel.convertToScreen(appKit)
         // Sized to its rows (capped), left-aligned with the chip, below it unless that runs off the screen.
-        let height = SelectorView.height(for: inbox.selectorSections(for: selector.kind), tab: selector.tab)
+        let height = SelectorView.height(for: selector.sections, tab: selector.tab)
         let size = NSSize(width: SelectorView.width, height: height)
         var x = chip.minX
         var y = chip.minY - 6 - size.height

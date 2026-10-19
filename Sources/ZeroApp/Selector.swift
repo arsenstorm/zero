@@ -34,6 +34,8 @@ final class SelectorState {
     let kind: SelectorKind
     var tab: String?
     var highlighted: String?
+    /// The rows, built when the selector opens; hovering must not rebuild them.
+    var sections: [SelectorSection] = []
     init(kind: SelectorKind) { self.kind = kind }
 }
 
@@ -50,7 +52,7 @@ struct SelectorView: View {
     private static let tabsHeight: CGFloat = 40
     private static let footerHeight: CGFloat = 36
 
-    private var sections: [SelectorSection] { controller.selectorSections(for: state.kind) }
+    private var sections: [SelectorSection] { state.sections }
     private var section: SelectorSection? { sections.first { $0.id == state.tab } ?? sections.first }
     private var rows: [SelectorRow] { section?.rows ?? [] }
     private var highlightedRow: SelectorRow? { rows.first { $0.id == state.highlighted } }
