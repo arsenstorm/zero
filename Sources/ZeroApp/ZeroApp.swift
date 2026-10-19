@@ -255,7 +255,7 @@ final class Panel: NSPanel {
     private func peek(_ agent: String?) {
         inbox.show(agent: agent)
         if !inboxPanel.isVisible { open(byIntent: false) }
-        syncKeyboard()
+        if !openedByIntent { syncKeyboard() }
     }
 
     /// The inbox takes the keyboard only when there is something to type into (or it was opened on purpose).
@@ -279,7 +279,9 @@ final class Panel: NSPanel {
         let onScreen = inboxPanel.screen?.frame.contains(mouse) ?? false
         let inSafeZone = onScreen && mouse.x >= inboxPanel.frame.minX
         if inSafeZone {
-            syncKeyboard()
+            // Pinned: the keyboard is taken only by a deliberate act (the pin click, a click into the inbox), never
+            // by the pointer drifting back; otherwise typing elsewhere gets stolen mid-sentence.
+            if !openedByIntent { syncKeyboard() }
         } else if inbox.dictatingFor == nil, !openedByIntent {
             hideInbox()
         }

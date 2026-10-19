@@ -598,7 +598,9 @@ struct NewAgentCard: View {
 
     var body: some View {
         let key = InboxController.newAgentKey
-        VStack(alignment: .leading, spacing: 12) {
+        // The box's flat top edge is 12 pt below where the box begins, so 2 pt here puts it 14 pt under the text,
+        // the same as the card's padding above the headline.
+        VStack(alignment: .leading, spacing: 2) {
             if quiet {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("All quiet.").font(.system(size: 15, weight: .semibold))
