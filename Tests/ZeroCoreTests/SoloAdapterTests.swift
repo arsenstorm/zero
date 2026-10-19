@@ -12,3 +12,25 @@ func soloAdapterDeliversInput() async throws {
     #expect(adapter.canReach(agent))
     try await adapter.send("echo zero-ok-\(pid)", to: agent)
 }
+
+/// Read-only: Solo lists projects and agent tools through the adapter. Runs only with ZERO_SOLO=1.
+@Test(.enabled(if: ProcessInfo.processInfo.environment["ZERO_SOLO"] != nil))
+func soloAdapterListsSpawnChoices() async throws {
+    let adapter = SoloAdapter()
+    let targets = try await adapter.spawnTargets()
+    let runtimes = try await adapter.spawnRuntimes()
+    #expect(targets.contains { $0.name == "zero" })
+    #expect(runtimes.contains { $0.name == "Claude" })
+}
+
+/// Starts a real agent in the project named by ZERO_SOLO_SPAWN_PROJECT and sends it one line. Costs a launch.
+@Test(.enabled(if: ProcessInfo.processInfo.environment["ZERO_SOLO_SPAWN_PROJECT"] != nil))
+func soloAdapterSpawnsAnAgent() async throws {
+    let adapter = SoloAdapter()
+    let project = ProcessInfo.processInfo.environment["ZERO_SOLO_SPAWN_PROJECT"]!
+    let target = try await adapter.spawnTargets().first { $0.id == project }!
+    let runtime = try await adapter.spawnRuntimes().first { $0.name == "Claude" }!
+    let identity = try await adapter.spawn(prompt: "Reply with the single word ready, then stop.", target: target, runtime: runtime)
+    #expect(identity.soloProcessID != nil)
+    print("spawned", identity.name, identity.soloProcessID ?? -1)
+}

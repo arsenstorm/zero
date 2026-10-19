@@ -1,11 +1,32 @@
 import Foundation
 
-/// A way to deliver Arsen's words into an agent's session. Solo is the first; a Hyperfocus or bench adapter
-/// would implement the same two calls.
+/// Something an adapter can start an agent in (a Solo project) or with (a Solo agent tool).
+public struct SpawnChoice: Identifiable, Hashable, Sendable {
+    public let id: String
+    public let name: String
+    public init(id: String, name: String) { self.id = id; self.name = name }
+}
+
+/// A way to deliver Arsen's words into an agent's session, and optionally to start a new one. Solo is the
+/// first; a Hyperfocus or bench adapter would implement the same calls.
 public protocol AgentAdapter: Sendable {
     var name: String { get }
     func canReach(_ agent: AgentIdentity) -> Bool
     func send(_ text: String, to agent: AgentIdentity) async throws
+    /// Starting agents: where they can run, what runs them, and the start itself. Default: not supported.
+    var canSpawn: Bool { get }
+    func spawnTargets() async throws -> [SpawnChoice]
+    func spawnRuntimes() async throws -> [SpawnChoice]
+    func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice) async throws -> AgentIdentity
+}
+
+public extension AgentAdapter {
+    var canSpawn: Bool { false }
+    func spawnTargets() async throws -> [SpawnChoice] { [] }
+    func spawnRuntimes() async throws -> [SpawnChoice] { [] }
+    func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice) async throws -> AgentIdentity {
+        throw AdapterError("\(name) cannot start agents")
+    }
 }
 
 public struct AdapterError: LocalizedError {
@@ -28,11 +49,54 @@ public struct SoloAdapter: AgentAdapter {
 
     public func send(_ text: String, to agent: AgentIdentity) async throws {
         guard let processID = agent.soloProcessID else { throw AdapterError("\(agent.name) has no Solo process id") }
-        let result = try await call(tool: "send_input", arguments: ["process_id": processID, "input": text, "submit": true])
-        if let isError = result["isError"] as? Bool, isError {
-            let content = (result["content"] as? [[String: Any]])?.first?["text"] as? String
-            throw AdapterError(content ?? "Solo refused the input")
+        _ = try await resultText(of: call(tool: "send_input", arguments: ["process_id": processID, "input": text, "submit": true]))
+    }
+
+    public var canSpawn: Bool { FileManager.default.isExecutableFile(atPath: helper) }
+
+    public func spawnTargets() async throws -> [SpawnChoice] {
+        let rows = try await resultJSON(of: call(tool: "list_projects", arguments: [:])) as? [[String: Any]] ?? []
+        return rows.compactMap { row in
+            guard let id = row["id"] as? Int else { return nil }
+            return SpawnChoice(id: String(id), name: (row["display_name"] as? String) ?? (row["name"] as? String) ?? "Project \(id)")
         }
+    }
+
+    public func spawnRuntimes() async throws -> [SpawnChoice] {
+        let rows = try await resultJSON(of: call(tool: "list_agent_tools", arguments: [:])) as? [[String: Any]] ?? []
+        return rows.compactMap { row in
+            guard let id = row["id"] as? Int, (row["enabled"] as? Bool) != false else { return nil }
+            return SpawnChoice(id: String(id), name: (row["name"] as? String) ?? "Tool \(id)")
+        }
+    }
+
+    /// Spawns the agent in the project, waits until it is idle at its prompt, then types the first message.
+    public func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice) async throws -> AgentIdentity {
+        guard let projectID = Int(target.id), let toolID = Int(runtime.id) else { throw AdapterError("Bad Solo ids") }
+        let created = try await resultJSON(of: call(tool: "spawn_agent", arguments: [
+            "project_id": projectID, "agent_tool_id": toolID, "include_agent_instructions": false])) as? [String: Any] ?? [:]
+        guard let processID = created["process_id"] as? Int else { throw AdapterError("Solo did not return a process id") }
+        let name = (created["name"] as? String) ?? "agent-\(processID)"
+        let identity = AgentIdentity(name: name, host: ProcessInfo.processInfo.hostName, soloProcessID: processID)
+        // ponytail: poll idle for up to 30 s; a prompt typed before the agent's UI is up is lost.
+        for _ in 0..<30 {
+            try await Task.sleep(for: .seconds(1))
+            let status = try await resultJSON(of: call(tool: "get_process_status", arguments: ["process_id": processID])) as? [String: Any]
+            if let state = status?["agent_state"] as? [String: Any], state["idle"] as? Bool == true { break }
+        }
+        try await send(prompt, to: identity)
+        return identity
+    }
+
+    private func resultText(of result: [String: Any]) throws -> String {
+        let content = (result["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""
+        if let isError = result["isError"] as? Bool, isError { throw AdapterError(content.isEmpty ? "Solo refused the call" : content) }
+        return content
+    }
+
+    private func resultJSON(of result: [String: Any]) throws -> Any {
+        let raw = try resultText(of: result)
+        return (try? JSONSerialization.jsonObject(with: Data(raw.utf8))) ?? [:]
     }
 
     // ponytail: a fresh helper per call keeps this stateless; pool one helper if messages ever get chatty.

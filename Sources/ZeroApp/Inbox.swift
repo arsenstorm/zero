@@ -31,6 +31,18 @@ final class InboxController {
         requestScroll(animated: false)
         DispatchQueue.main.async { self.switching = false }
     }
+    /// The new-agent composer: choices loaded from the spawning adapter, last picks remembered.
+    var spawnTargets: [SpawnChoice] = []
+    var spawnRuntimes: [SpawnChoice] = []
+    var spawnTarget: String? = UserDefaults.standard.string(forKey: "lastSpawnTarget") {
+        didSet { UserDefaults.standard.set(spawnTarget, forKey: "lastSpawnTarget") }
+    }
+    var spawnRuntime: String? = UserDefaults.standard.string(forKey: "lastSpawnRuntime") {
+        didSet { UserDefaults.standard.set(spawnRuntime, forKey: "lastSpawnRuntime") }
+    }
+    var spawning = false
+    var spawnError: String?
+    static let newAgentKey = "new:"
     /// Ask id → index of the text option whose input is open on that card.
     var textOption: [String: Int] = [:]
     /// Bumped when the view should scroll the selected card to the bar's centre line (never on hover selection).
@@ -138,7 +150,10 @@ final class InboxController {
         if dictatingFor == key { stopDictation() }
         drafts[key] = nil
         focusedReply = nil
-        if key.hasPrefix("msg:") {
+        if key == Self.newAgentKey {
+            drafts[key] = text
+            spawn()
+        } else if key.hasPrefix("msg:") {
             let agent = String(key.dropFirst(4))
             Task { await store.message(text, to: agent) }
         } else if let index = textOption[key] {
@@ -167,6 +182,41 @@ final class InboxController {
 
     func composerKey(_ agent: String) -> String { "msg:" + agent }
 
+    var canSpawn: Bool { !store.spawners.isEmpty }
+
+    func loadSpawnChoices() {
+        guard let adapter = store.spawners.first, spawnTargets.isEmpty else { return }
+        Task {
+            let targets = (try? await adapter.spawnTargets()) ?? []
+            let runtimes = (try? await adapter.spawnRuntimes()) ?? []
+            spawnTargets = targets
+            spawnRuntimes = runtimes
+            if spawnTarget == nil || !targets.contains(where: { $0.id == spawnTarget }) { spawnTarget = targets.first?.id }
+            if spawnRuntime == nil || !runtimes.contains(where: { $0.id == spawnRuntime }) { spawnRuntime = runtimes.first?.id }
+        }
+    }
+
+    func spawn() {
+        let prompt = drafts[Self.newAgentKey, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty, !spawning, let adapter = store.spawners.first,
+              let target = spawnTargets.first(where: { $0.id == spawnTarget }),
+              let runtime = spawnRuntimes.first(where: { $0.id == spawnRuntime }) else { return }
+        if dictatingFor == Self.newAgentKey { stopDictation() }
+        spawning = true
+        spawnError = nil
+        focusedReply = nil
+        Task {
+            do {
+                let identity = try await store.spawn(prompt: prompt, adapter: adapter, target: target, runtime: runtime)
+                drafts[Self.newAgentKey] = nil
+                show(agent: identity.name)
+            } catch {
+                spawnError = error.localizedDescription
+            }
+            spawning = false
+        }
+    }
+
     /// Where typing or dictation goes: the selected waiting card's own input (a free-text question, or its
     /// text option, which opens), else the agent composer.
     var typingTarget: String? {
@@ -176,6 +226,7 @@ final class InboxController {
             if let index = ask.options.firstIndex(where: Ask.expectsText) { textOption[selected] = index; return selected }
         }
         if let agentFilter, store.canMessage(agentFilter) { return composerKey(agentFilter) }
+        if agentFilter == nil, canSpawn { return Self.newAgentKey }
         return nil
     }
 
@@ -253,16 +304,17 @@ struct InboxView: View {
                     VStack(spacing: 10) {
                         if controller.agentFilter != nil {
                             AgentTimeline(controller: controller, focus: $focus)
-                        } else if controller.cards.isEmpty {
-                            Text("No asks")
-                                .font(.callout).foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity).padding(18)
-                                .card()
                         } else {
                             ForEach(controller.cards) { ask in
                                 CardView(ask: ask, controller: controller, focus: $focus)
                                     .id(ask.id)
                                     .transition(.asymmetric(insertion: .identity, removal: .opacity.animation(.easeIn(duration: 0.15))))
+                            }
+                            if controller.canSpawn {
+                                NewAgentCard(controller: controller, focus: $focus, quiet: controller.cards.isEmpty)
+                            } else if controller.cards.isEmpty {
+                                Text("All quiet.").font(.callout).foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity).padding(18).card()
                             }
                         }
                     }
@@ -485,6 +537,47 @@ struct ReplyBox: View {
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
+    }
+}
+
+/// Start a new agent from the inbox: a prompt, and where and with what it runs. Sits at the bottom of the open
+/// asks; when nothing is open it is the inbox, headed "All quiet."
+struct NewAgentCard: View {
+    @Bindable var controller: InboxController
+    var focus: FocusState<String?>.Binding
+    let quiet: Bool
+
+    var body: some View {
+        let key = InboxController.newAgentKey
+        VStack(alignment: .leading, spacing: 12) {
+            if quiet {
+                Text("All quiet.").font(.system(size: 15, weight: .semibold))
+            }
+            HStack(spacing: 10) {
+                Picker("", selection: Binding(get: { controller.spawnTarget ?? "" }, set: { controller.spawnTarget = $0 })) {
+                    ForEach(controller.spawnTargets) { Text($0.name).tag($0.id) }
+                }
+                .labelsHidden().fixedSize()
+                Picker("", selection: Binding(get: { controller.spawnRuntime ?? "" }, set: { controller.spawnRuntime = $0 })) {
+                    ForEach(controller.spawnRuntimes) { Text($0.name).tag($0.id) }
+                }
+                .labelsHidden().fixedSize()
+                Spacer()
+                if controller.spawning { Spinner().frame(width: 12, height: 12) }
+            }
+            .font(.system(size: 12))
+            ReplyBox(placeholder: "What should a new agent work on?",
+                     text: Binding(get: { controller.drafts[key, default: ""] }, set: { controller.drafts[key] = $0 }),
+                     key: key, focus: focus, dictating: controller.dictatingFor == key,
+                     onMic: { controller.toggleDictation() }, onSend: { controller.spawn() })
+                .background(Theme.row).clipShape(RoundedRectangle(cornerRadius: 10))
+            if let error = controller.spawnError {
+                Text(error).font(.system(size: 12)).foregroundStyle(.red)
+            }
+        }
+        .padding(14)
+        .card()
+        .onAppear { controller.loadSpawnChoices() }
     }
 }
 

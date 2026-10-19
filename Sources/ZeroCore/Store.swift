@@ -34,6 +34,18 @@ public final class Store {
         return adapters.contains { $0.canReach(identity) }
     }
 
+    public var spawners: [AgentAdapter] { adapters.filter(\.canSpawn) }
+
+    /// Starts a new agent through an adapter and records the first prompt in its timeline, so it appears in
+    /// the bar at once with what Arsen asked of it.
+    public func spawn(prompt: String, adapter: AgentAdapter, target: SpawnChoice, runtime: SpawnChoice) async throws -> AgentIdentity {
+        let identity = try await adapter.spawn(prompt: prompt, target: target, runtime: runtime)
+        var item = Ask(kind: .message, title: "Message", body: prompt, agent: identity)
+        item.status = "sent"
+        _ = create(item)
+        return identity
+    }
+
     /// Sends Arsen's text into the agent's session and records it in the timeline as sent or failed.
     public func message(_ text: String, to agent: String) async {
         guard let identity = identity(of: agent) else { return }
