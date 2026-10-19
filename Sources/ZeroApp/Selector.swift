@@ -111,16 +111,23 @@ struct SelectorView: View {
         .mask(edgeFades)
     }
 
-    /// The list fades out at an edge with more rows past it, a hint that it scrolls.
+    /// The list fades out at an edge with more rows past it, a hint that it scrolls. Nothing in the mask changes
+    /// size: the strips are fixed and punch their fade out of the solid mask, and only their opacity animates.
+    /// (A strip that grew from 0 pt animated its first layout, and with it the whole mask, over the rows.)
     private var edgeFades: some View {
-        VStack(spacing: 0) {
-            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: moreAbove ? 28 : 0)
+        ZStack {
             Color.black
-            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: moreBelow ? 28 : 0)
+            VStack(spacing: 0) {
+                LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 28)
+                    .blendMode(.destinationOut).opacity(moreAbove ? 1 : 0)
+                    .animation(.easeOut(duration: 0.15), value: moreAbove)
+                Spacer(minLength: 0)
+                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: 28)
+                    .blendMode(.destinationOut).opacity(moreBelow ? 1 : 0)
+                    .animation(.easeOut(duration: 0.15), value: moreBelow)
+            }
         }
-        // Animated here, on the mask alone: on the list it also animated the rows' first layout, a slide-in.
-        .animation(.easeOut(duration: 0.15), value: moreAbove)
-        .animation(.easeOut(duration: 0.15), value: moreBelow)
+        .compositingGroup()
     }
 
     private var tabs: some View {
