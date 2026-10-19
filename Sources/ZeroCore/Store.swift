@@ -38,8 +38,8 @@ public final class Store {
 
     /// Starts a new agent through an adapter and records the first prompt in its timeline, so it appears in
     /// the bar at once with what Arsen asked of it.
-    public func spawn(prompt: String, adapter: AgentAdapter, target: SpawnChoice, runtime: SpawnChoice) async throws -> AgentIdentity {
-        let identity = try await adapter.spawn(prompt: prompt, target: target, runtime: runtime)
+    public func spawn(prompt: String, adapter: AgentAdapter, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?) async throws -> AgentIdentity {
+        let identity = try await adapter.spawn(prompt: prompt, target: target, runtime: runtime, model: model)
         var item = Ask(kind: .message, title: "Message", body: prompt, agent: identity)
         item.status = "sent"
         _ = create(item)

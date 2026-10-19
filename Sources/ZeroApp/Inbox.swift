@@ -42,6 +42,12 @@ final class InboxController {
     }
     var spawning = false
     var spawnError: String?
+    /// Models for the chosen runtime, and the pick remembered per runtime.
+    var spawnModels: [SpawnChoice] { store.spawners.first.flatMap { adapter in spawnRuntimes.first { $0.id == spawnRuntime }.map { adapter.spawnModels(for: $0) } } ?? [] }
+    var spawnModel: String? {
+        get { spawnRuntime.flatMap { UserDefaults.standard.string(forKey: "lastSpawnModel.\($0)") } ?? spawnModels.first?.id }
+        set { if let spawnRuntime { UserDefaults.standard.set(newValue, forKey: "lastSpawnModel.\(spawnRuntime)") } }
+    }
     static let newAgentKey = "new:"
     /// Ask id → index of the text option whose input is open on that card.
     var textOption: [String: Int] = [:]
@@ -201,13 +207,14 @@ final class InboxController {
         guard !prompt.isEmpty, !spawning, let adapter = store.spawners.first,
               let target = spawnTargets.first(where: { $0.id == spawnTarget }),
               let runtime = spawnRuntimes.first(where: { $0.id == spawnRuntime }) else { return }
+        let model = spawnModels.first { $0.id == spawnModel }
         if dictatingFor == Self.newAgentKey { stopDictation() }
         spawning = true
         spawnError = nil
         focusedReply = nil
         Task {
             do {
-                let identity = try await store.spawn(prompt: prompt, adapter: adapter, target: target, runtime: runtime)
+                let identity = try await store.spawn(prompt: prompt, adapter: adapter, target: target, runtime: runtime, model: model)
                 drafts[Self.newAgentKey] = nil
                 show(agent: identity.name)
             } catch {
@@ -559,7 +566,8 @@ struct NewAgentCard: View {
                     Text("Nothing needs you. Start something.").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
-            VStack(alignment: .leading, spacing: 10) {
+            // Unboxed, so the prompt's text starts exactly under the headline.
+            VStack(alignment: .leading, spacing: 12) {
                 TextField("What should a new agent work on?",
                           text: Binding(get: { controller.drafts[key, default: ""] }, set: { controller.drafts[key] = $0 }),
                           axis: .vertical)
@@ -572,9 +580,16 @@ struct NewAgentCard: View {
                             Button(choice.name) { controller.spawnTarget = choice.id }
                         }
                     }
-                    chip(icon: nil, title: controller.spawnRuntimes.first { $0.id == controller.spawnRuntime }?.name ?? "Runtime") {
+                    chip(icon: Image(systemName: "apple.terminal"), title: controller.spawnRuntimes.first { $0.id == controller.spawnRuntime }?.name ?? "Runtime") {
                         ForEach(controller.spawnRuntimes) { choice in
                             Button(choice.name) { controller.spawnRuntime = choice.id }
+                        }
+                    }
+                    if !controller.spawnModels.isEmpty {
+                        chip(icon: Image(systemName: "sparkle"), title: controller.spawnModels.first { $0.id == controller.spawnModel }?.name ?? "Model") {
+                            ForEach(controller.spawnModels) { choice in
+                                Button(choice.name) { controller.spawnModel = choice.id }
+                            }
                         }
                     }
                     Spacer(minLength: 8)
@@ -591,8 +606,6 @@ struct NewAgentCard: View {
                     }.buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 8)
-            .background(Theme.row).clipShape(RoundedRectangle(cornerRadius: 12))
             if let error = controller.spawnError {
                 Text(error).font(.system(size: 12)).foregroundStyle(.red)
             }
@@ -608,7 +621,7 @@ struct NewAgentCard: View {
             items()
         } label: {
             HStack(spacing: 5) {
-                if let icon { icon.resizable().frame(width: 14, height: 14) }
+                if let icon { icon.resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14).foregroundStyle(.secondary) }
                 Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1)
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
             }

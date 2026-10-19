@@ -17,14 +17,17 @@ public protocol AgentAdapter: Sendable {
     var canSpawn: Bool { get }
     func spawnTargets() async throws -> [SpawnChoice]
     func spawnRuntimes() async throws -> [SpawnChoice]
-    func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice) async throws -> AgentIdentity
+    /// Models the runtime can be started with; empty means the runtime's default only.
+    func spawnModels(for runtime: SpawnChoice) -> [SpawnChoice]
+    func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?) async throws -> AgentIdentity
 }
 
 public extension AgentAdapter {
     var canSpawn: Bool { false }
     func spawnTargets() async throws -> [SpawnChoice] { [] }
     func spawnRuntimes() async throws -> [SpawnChoice] { [] }
-    func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice) async throws -> AgentIdentity {
+    func spawnModels(for runtime: SpawnChoice) -> [SpawnChoice] { [] }
+    func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?) async throws -> AgentIdentity {
         throw AdapterError("\(name) cannot start agents")
     }
 }
@@ -70,11 +73,19 @@ public struct SoloAdapter: AgentAdapter {
         }
     }
 
+    /// Claude Code takes `--model`; these are the Claude 5 ids. Codex's ids are not known here, so it offers none.
+    public func spawnModels(for runtime: SpawnChoice) -> [SpawnChoice] {
+        guard runtime.name.lowercased().contains("claude") else { return [] }
+        return [SpawnChoice(id: "claude-fable-5-1", name: "Fable 5.1"), SpawnChoice(id: "claude-opus-5-5", name: "Opus 5.5"),
+                SpawnChoice(id: "claude-sonnet-5-5", name: "Sonnet 5.5"), SpawnChoice(id: "claude-haiku-5-5", name: "Haiku 5.5")]
+    }
+
     /// Spawns the agent in the project, waits until it is idle at its prompt, then types the first message.
-    public func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice) async throws -> AgentIdentity {
+    public func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?) async throws -> AgentIdentity {
         guard let projectID = Int(target.id), let toolID = Int(runtime.id) else { throw AdapterError("Bad Solo ids") }
-        let created = try await resultJSON(of: call(tool: "spawn_agent", arguments: [
-            "project_id": projectID, "agent_tool_id": toolID, "include_agent_instructions": false])) as? [String: Any] ?? [:]
+        var arguments: [String: Any] = ["project_id": projectID, "agent_tool_id": toolID, "include_agent_instructions": false]
+        if let model { arguments["extra_args"] = ["--model", model.id] }
+        let created = try await resultJSON(of: call(tool: "spawn_agent", arguments: arguments)) as? [String: Any] ?? [:]
         guard let processID = created["process_id"] as? Int else { throw AdapterError("Solo did not return a process id") }
         let name = (created["name"] as? String) ?? "agent-\(processID)"
         let identity = AgentIdentity(name: name, host: ProcessInfo.processInfo.hostName, soloProcessID: processID)
