@@ -232,7 +232,10 @@ public struct SoloAdapter: AgentAdapter {
         if !extra.isEmpty { arguments["extra_args"] = extra }
         let created = try await resultJSON(of: call(tool: "spawn_agent", arguments: arguments)) as? [String: Any] ?? [:]
         guard let processID = created["process_id"] as? Int else { throw AdapterError("Solo did not return a process id") }
-        let name = (created["name"] as? String) ?? "agent-\(processID)"
+        // Solo calls every Claude process "Claude", and Zero keys agents by name: a closed "Claude" would hide
+        // the next one. Named like the CLI's agents instead: claude-119.
+        let base = ((created["name"] as? String) ?? "agent").lowercased().replacingOccurrences(of: " ", with: "-")
+        let name = "\(base)-\(processID)"
         let identity = AgentIdentity(name: name, host: ProcessInfo.processInfo.hostName, soloProcessID: processID, soloProjectID: projectID)
         // A prompt typed before the agent sits at its own input is lost, so wait: first for idle, then for any
         // start-up dialog (Claude Code's "trust this folder", for one) to be answered in Solo. Up to 90 s.
