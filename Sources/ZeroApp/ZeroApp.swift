@@ -205,16 +205,26 @@ final class Panel: NSPanel {
         let view = FirstMouseHostingView(rootView: AnyView(SelectorView(controller: inbox, state: selector)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: opensBelow ? .top : .bottom)))
         view.sizingOptions = []
-        let panel = makePanel(size: size, content: view)
+        // The animated layer is a plain container's, not the hosting view's: AppKit resets a hosting view's layer
+        // geometry whenever SwiftUI lays out, which stutters a transform on it.
+        let container = NSView(frame: NSRect(origin: .zero, size: size))
+        container.wantsLayer = true
+        view.frame = container.bounds
+        view.autoresizingMask = [.width, .height]
+        container.addSubview(view)
+        let panel = makePanel(size: size, content: container)
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
         panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
-        view.wantsLayer = true
         panel.alphaValue = 0
         panel.makeKeyAndOrderFront(nil)
-        panel.displayIfNeeded() // the first layout happens now, not inside the animation
+        panel.layoutIfNeeded() // the heavy first layout happens now, invisible, not inside the animation
         selectorPanel = panel
         selectorAnchor = CGPoint(x: chip.midX - x, y: opensBelow ? size.height : 0)
-        Self.animateSelector(panel, anchor: selectorAnchor, opening: true)
+        DispatchQueue.main.async { [weak self, weak panel] in
+            // One turn later the first frame is committed; the animation then has nothing to wait on.
+            guard let self, let panel, selectorPanel === panel else { return }
+            Self.animateSelector(panel, anchor: selectorAnchor, opening: true)
+        }
         // A click anywhere but the card closes it: in another app (global), in Zero's other windows, or in the
         // strip's empty part (local).
         if let global = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
