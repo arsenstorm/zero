@@ -73,6 +73,7 @@ struct SelectorView: View {
                     Divider().padding(.vertical, 10)
                     details.frame(width: Self.paneWidth - 1, height: Self.modelListHeight, alignment: .top)
                 }
+                .frame(height: Self.modelListHeight) // a vertical Divider would otherwise stretch the row to the strip
             } else {
                 list.frame(height: min(CGFloat(max(rows.count, 1)) * Self.rowHeight + 8 + CGFloat(max(rows.count - 1, 0)), Self.modelListHeight))
                 Divider().padding(.horizontal, 10)
@@ -213,11 +214,11 @@ struct SelectorView: View {
                         if let id = row.modelID { controller.setSpawnSetting(modelID: id, key: "reasoning", value: level) }
                         state.sections = controller.selectorSections(for: state.kind)
                     }
-                    .padding(.top, 6)
+                    .padding(.top, 4)
                 }
             }
             .frame(maxWidth: .infinity)
-            .padding(.horizontal, 14).padding(.vertical, 12)
+            .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 12)
         }
     }
 
@@ -266,8 +267,8 @@ struct EffortSlider: View {
     let picked: String?
     let onPick: (String) -> Void
 
-    private let trackHeight: CGFloat = 16
-    private let knob: CGFloat = 22
+    private let trackHeight: CGFloat = 12
+    private let knob: CGFloat = 18
 
     var body: some View {
         let index = picked.flatMap { levels.firstIndex(of: $0) } ?? 0
@@ -298,6 +299,6 @@ struct EffortSlider: View {
                 if level != picked { onPick(level) }
             })
         }
-        .frame(height: knob + 4)
+        .frame(height: knob + 2)
     }
 }
