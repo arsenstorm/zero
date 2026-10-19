@@ -30,7 +30,12 @@ func soloAdapterSpawnsAnAgent() async throws {
     let project = ProcessInfo.processInfo.environment["ZERO_SOLO_SPAWN_PROJECT"]!
     let target = try await adapter.spawnTargets().first { $0.id == project }!
     let runtime = try await adapter.spawnRuntimes().first { $0.name == "Claude" }!
-    let identity = try await adapter.spawn(prompt: "Reply with the single word ready, then stop.", target: target, runtime: runtime, model: nil, settings: [:])
+    let prompt = "Reply with the single word ready, then stop."
+    let identity = try await adapter.spawn(prompt: prompt, target: target, runtime: runtime, model: nil, settings: [:])
     #expect(identity.soloProcessID != nil)
     print("spawned", identity.name, identity.soloProcessID ?? -1)
+    // And the agent's answer comes back off its screen.
+    let reply = await adapter.reply(from: identity, to: prompt)
+    print("reply:", reply ?? "nil")
+    #expect(reply?.lowercased().contains("ready") == true)
 }
