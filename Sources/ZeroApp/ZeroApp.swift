@@ -392,6 +392,20 @@ enum Preview {
         _ = runs.create(Ask(kind: .run, title: "Production read", options: ["Run", "Reject", "Suggest something else…"],
                             command: "echo one; echo two", cwd: "/tmp", agent: lead))
         write(CardStack(controller: InboxController(store: runs)).padding(12).background(Color(white: 0.5)), "runs.png")
+        // The empty inbox: "All quiet." and the new-agent composer, with example choices.
+        let empty = InboxController(store: Store(logURL: nil))
+        empty.spawnTargets = [SpawnChoice(id: "10", name: "Acme"), SpawnChoice(id: "13", name: "zero")]
+        empty.spawnRuntimes = [SpawnChoice(id: "6", name: "Claude"), SpawnChoice(id: "7", name: "Codex")]
+        empty.spawnTarget = "10"; empty.spawnRuntime = "6"
+        write(ComposerPreview(controller: empty).padding(12).background(Color(white: 0.5)), "composer.png")
+    }
+}
+
+private struct ComposerPreview: View {
+    @Bindable var controller: InboxController
+    @FocusState private var focus: String?
+    var body: some View {
+        NewAgentCard(controller: controller, focus: $focus, quiet: true).frame(width: 380)
     }
 }
 

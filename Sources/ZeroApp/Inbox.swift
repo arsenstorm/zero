@@ -540,37 +540,59 @@ struct ReplyBox: View {
     }
 }
 
-/// Start a new agent from the inbox: a prompt, and where and with what it runs. Sits at the bottom of the open
-/// asks; when nothing is open it is the inbox, headed "All quiet."
+/// Start a new agent from the inbox. One composer box: the prompt on top, and beneath it a toolbar with where
+/// and with what it runs (chips with the adapter's own icon) and the mic and send on the right. When nothing is
+/// open it is the whole inbox, headed "All quiet."
 struct NewAgentCard: View {
     @Bindable var controller: InboxController
     var focus: FocusState<String?>.Binding
     let quiet: Bool
 
+    private var soloIcon: NSImage { NSWorkspace.shared.icon(forFile: "/Applications/Solo.app") }
+
     var body: some View {
         let key = InboxController.newAgentKey
         VStack(alignment: .leading, spacing: 12) {
             if quiet {
-                Text("All quiet.").font(.system(size: 15, weight: .semibold))
-            }
-            HStack(spacing: 10) {
-                Picker("", selection: Binding(get: { controller.spawnTarget ?? "" }, set: { controller.spawnTarget = $0 })) {
-                    ForEach(controller.spawnTargets) { Text($0.name).tag($0.id) }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("All quiet.").font(.system(size: 15, weight: .semibold))
+                    Text("Nothing needs you. Start something.").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
-                .labelsHidden().fixedSize()
-                Picker("", selection: Binding(get: { controller.spawnRuntime ?? "" }, set: { controller.spawnRuntime = $0 })) {
-                    ForEach(controller.spawnRuntimes) { Text($0.name).tag($0.id) }
-                }
-                .labelsHidden().fixedSize()
-                Spacer()
-                if controller.spawning { Spinner().frame(width: 12, height: 12) }
             }
-            .font(.system(size: 12))
-            ReplyBox(placeholder: "What should a new agent work on?",
-                     text: Binding(get: { controller.drafts[key, default: ""] }, set: { controller.drafts[key] = $0 }),
-                     key: key, focus: focus, dictating: controller.dictatingFor == key,
-                     onMic: { controller.toggleDictation() }, onSend: { controller.spawn() })
-                .background(Theme.row).clipShape(RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 10) {
+                TextField("What should a new agent work on?",
+                          text: Binding(get: { controller.drafts[key, default: ""] }, set: { controller.drafts[key] = $0 }),
+                          axis: .vertical)
+                    .textFieldStyle(.plain).font(.system(size: 13)).lineLimit(2...8)
+                    .focused(focus, equals: key)
+                    .onSubmit { controller.spawn() }
+                HStack(spacing: 6) {
+                    chip(icon: Image(nsImage: soloIcon), title: controller.spawnTargets.first { $0.id == controller.spawnTarget }?.name ?? "Project") {
+                        ForEach(controller.spawnTargets) { choice in
+                            Button(choice.name) { controller.spawnTarget = choice.id }
+                        }
+                    }
+                    chip(icon: nil, title: controller.spawnRuntimes.first { $0.id == controller.spawnRuntime }?.name ?? "Runtime") {
+                        ForEach(controller.spawnRuntimes) { choice in
+                            Button(choice.name) { controller.spawnRuntime = choice.id }
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    if controller.spawning {
+                        Spinner().frame(width: 12, height: 12).padding(.trailing, 4)
+                    }
+                    Button { controller.toggleDictation() } label: {
+                        Image(systemName: controller.dictatingFor == key ? "waveform" : "mic")
+                            .foregroundStyle(controller.dictatingFor == key ? .red : .secondary)
+                    }.buttonStyle(.plain)
+                    Button { controller.spawn() } label: {
+                        Image(systemName: "arrow.up.circle.fill").font(.system(size: 18))
+                            .foregroundStyle(controller.drafts[key, default: ""].isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
+                    }.buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 8)
+            .background(Theme.row).clipShape(RoundedRectangle(cornerRadius: 12))
             if let error = controller.spawnError {
                 Text(error).font(.system(size: 12)).foregroundStyle(.red)
             }
@@ -578,6 +600,22 @@ struct NewAgentCard: View {
         .padding(14)
         .card()
         .onAppear { controller.loadSpawnChoices() }
+    }
+
+    /// A small pill menu: optional icon, current value, chevron.
+    private func chip<Items: View>(icon: Image?, title: String, @ViewBuilder items: () -> Items) -> some View {
+        Menu {
+            items()
+        } label: {
+            HStack(spacing: 5) {
+                if let icon { icon.resizable().frame(width: 14, height: 14) }
+                Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(Theme.keycap).clipShape(Capsule())
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
     }
 }
 
