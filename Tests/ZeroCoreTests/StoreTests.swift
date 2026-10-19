@@ -1,0 +1,69 @@
+import Foundation
+import Testing
+@testable import ZeroCore
+
+private let agent = AgentIdentity(name: "test", host: "mac")
+
+@MainActor
+private func store() -> Store {
+    let s = Store(logURL: nil)
+    s.takeBackDelay = 0.1
+    return s
+}
+
+@MainActor @Test func chooseTakeBackThenAnswer() async throws {
+    let s = store()
+    let a = s.create(Ask(kind: .choice, title: "Pick", options: ["Yes", "No"], agent: agent))
+    s.choose(a.id, option: 0)
+    #expect(s.ask(a.id)?.state == .pending)
+    #expect(s.takeBack(a.id))
+    #expect(s.ask(a.id)?.state == .waiting)
+    s.choose(a.id, option: 1)
+    try await Task.sleep(for: .seconds(0.3))
+    #expect(s.ask(a.id)?.state == .answered)
+    #expect(s.ask(a.id)?.answer == "No")
+}
+
+@MainActor @Test func approveSecondOptionDeclines() async throws {
+    let s = store()
+    let a = s.create(Ask(kind: .approve, title: "Go?", options: ["Yes", "No", "No, and say why…"], agent: agent))
+    s.choose(a.id, option: 1)
+    try await Task.sleep(for: .seconds(0.3))
+    #expect(s.ask(a.id)?.state == .declined)
+    let b = s.create(Ask(kind: .approve, title: "Go?", options: ["Yes", "No", "No, and say why…"], agent: agent))
+    s.answer(b.id, option: 2, text: "use pnpm")
+    try await Task.sleep(for: .seconds(0.3))
+    #expect(s.ask(b.id)?.state == .declined)
+    #expect(s.ask(b.id)?.answer == "No, and say why: use pnpm")
+}
+
+@MainActor @Test func typedReplyAnswers() async throws {
+    let s = store()
+    let a = s.create(Ask(kind: .question, title: "Which?", agent: agent))
+    s.reply(a.id, text: "the second one")
+    try await Task.sleep(for: .seconds(0.3))
+    #expect(s.ask(a.id)?.answer == "the second one")
+    #expect(s.ask(a.id)?.state == .answered)
+}
+
+@MainActor @Test func expires() async throws {
+    let s = store()
+    let a = s.create(Ask(kind: .question, title: "Slow", agent: agent, ttl: 1))
+    try await Task.sleep(for: .seconds(1.3))
+    #expect(s.ask(a.id)?.state == .expired)
+}
+
+@MainActor @Test func runStreamsOutputAndExitCode() async throws {
+    let s = store()
+    var chunks = ""
+    s.onOutput = { _, c in chunks += c }
+    let a = s.create(Ask(kind: .run, title: "Run", options: ["Run", "Decline"], command: "printf hi; exit 3", cwd: "/tmp", agent: agent))
+    s.choose(a.id, option: 0)
+    for _ in 0..<100 where s.ask(a.id)?.state != .answered {
+        try await Task.sleep(for: .seconds(0.1))
+    }
+    #expect(s.ask(a.id)?.state == .answered)
+    #expect(s.ask(a.id)?.exitCode == 3)
+    #expect(s.ask(a.id)?.output.contains("hi") == true)
+    #expect(chunks.contains("hi"))
+}
