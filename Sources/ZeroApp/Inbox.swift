@@ -556,7 +556,12 @@ struct NewAgentCard: View {
     var focus: FocusState<String?>.Binding
     let quiet: Bool
 
-    private var soloIcon: NSImage { NSWorkspace.shared.icon(forFile: "/Applications/Solo.app") }
+    /// Solo's icon at chip size; sized here, since a menu label would otherwise draw the app icon at full size.
+    private var soloIcon: NSImage {
+        let icon = NSWorkspace.shared.icon(forFile: "/Applications/Solo.app").copy() as! NSImage
+        icon.size = NSSize(width: 14, height: 14)
+        return icon
+    }
 
     var body: some View {
         let key = InboxController.newAgentKey
@@ -594,10 +599,6 @@ struct NewAgentCard: View {
                             }
                         }
                     }
-                    if let note = controller.spawnNote {
-                        Text(note).font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
-                            .help("The account the agent will use. Switch accounts with your switcher; Zero follows.")
-                    }
                     Spacer(minLength: 8)
                     if controller.spawning {
                         Spinner().frame(width: 12, height: 12).padding(.trailing, 4)
@@ -611,12 +612,16 @@ struct NewAgentCard: View {
                             .foregroundStyle(controller.drafts[key, default: ""].isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
                     }.buttonStyle(.plain)
                 }
+                if let note = controller.spawnNote {
+                    Text("Account " + note).font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
+                        .help("The account the agent will use. Switch accounts with your switcher; Zero follows.")
+                }
             }
             .padding(14)
             .background(Theme.row)
-            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 18, bottomTrailingRadius: 18, topTrailingRadius: 12))
-            // The box's own hairline, the card's stroke colour, drawn on top so it wins where the two outlines meet.
-            .overlay(UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 18, bottomTrailingRadius: 18, topTrailingRadius: 12)
+            // Square on top, so its top edge is a straight hairline that meets the card's sides; the card's radius below.
+            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 18, bottomTrailingRadius: 18, topTrailingRadius: 0))
+            .overlay(UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 18, bottomTrailingRadius: 18, topTrailingRadius: 0)
                 .strokeBorder(Theme.stroke, lineWidth: 1))
             .padding(.horizontal, -14).padding(.bottom, -14)
             if let error = controller.spawnError {
