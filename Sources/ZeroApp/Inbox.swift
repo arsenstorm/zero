@@ -581,20 +581,104 @@ struct ComposerTopEdge: Shape {
     func path(in rect: CGRect) -> Path { ComposerBoxShape().topEdge(in: rect) }
 }
 
+/// An icon the app bundles for an adapter's choice (claude, openai, solo), by resource name.
+func choiceIcon(_ name: String?) -> Image? {
+    guard let name else { return nil }
+    if name == "solo" {
+        let icon = NSWorkspace.shared.icon(forFile: "/Applications/Solo.app").copy() as! NSImage
+        icon.size = NSSize(width: 16, height: 16)
+        return Image(nsImage: icon)
+    }
+    guard let url = Bundle.main.url(forResource: name, withExtension: "png"), let image = NSImage(contentsOf: url) else { return nil }
+    return Image(nsImage: image)
+}
+
+/// One row of a picker: icon, name, detail, and whether it is the current choice.
+struct PickerRow: Identifiable {
+    let id: String
+    let icon: Image?
+    let title: String
+    let detail: String?
+    let selected: Bool
+    let action: () -> Void
+}
+
+struct PickerSection: Identifiable {
+    let id: String
+    let title: String
+    let icon: Image?
+    let rows: [PickerRow]
+}
+
+/// Zero's own picker: grouped rows with icons and a detail line, so a model reads as "Fable 5.1 · Most capable…"
+/// and a project as its name and path. Replaces the system menu, which cannot show either.
+struct ChoicePopover: View {
+    let sections: [PickerSection]
+    @Binding var shown: Bool
+    @State private var hovered: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(sections) { section in
+                    HStack(spacing: 6) {
+                        if let icon = section.icon { icon.resizable().aspectRatio(contentMode: .fit).frame(width: 12, height: 12).clipShape(RoundedRectangle(cornerRadius: 3)) }
+                        Text(section.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 10).padding(.top, sections.first?.id == section.id ? 6 : 12).padding(.bottom, 4)
+                    ForEach(section.rows) { row in
+                        Button {
+                            row.action()
+                            shown = false
+                        } label: {
+                            HStack(alignment: .top, spacing: 10) {
+                                if let icon = row.icon {
+                                    icon.resizable().aspectRatio(contentMode: .fit).frame(width: 18, height: 18).clipShape(RoundedRectangle(cornerRadius: 4))
+                                        .padding(.top, 1)
+                                } else {
+                                    Color.clear.frame(width: 18, height: 18)
+                                }
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(row.title).font(.system(size: 13, weight: .medium))
+                                    if let detail = row.detail {
+                                        Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                                Spacer(minLength: 8)
+                                if row.selected {
+                                    Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold)).padding(.top, 2)
+                                }
+                            }
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(hovered == row.id ? Theme.row : .clear)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { hovered = $0 ? row.id : (hovered == row.id ? nil : hovered) }
+                    }
+                }
+            }
+            .padding(6)
+        }
+        .frame(width: 320)
+        .frame(maxHeight: 420)
+    }
+}
+
 /// Start a new agent from the inbox. One composer box: the prompt on top, and beneath it a toolbar with where
-/// and with what it runs (chips with the adapter's own icon) and the mic and send on the right. When nothing is
+/// and with what it runs (chips opening Zero's own pickers) and the mic and send on the right. When nothing is
 /// open it is the whole inbox, headed "All quiet."
 struct NewAgentCard: View {
     @Bindable var controller: InboxController
     var focus: FocusState<String?>.Binding
     let quiet: Bool
+    @State private var projectPicker = false
+    @State private var runtimePicker = false
 
-    /// Solo's icon at chip size; sized here, since a menu label would otherwise draw the app icon at full size.
-    private var soloIcon: NSImage {
-        let icon = NSWorkspace.shared.icon(forFile: "/Applications/Solo.app").copy() as! NSImage
-        icon.size = NSSize(width: 14, height: 14)
-        return icon
-    }
+    private var runtime: SpawnChoice? { controller.spawnRuntimes.first { $0.id == controller.spawnRuntime } }
+    private var model: SpawnChoice? { controller.spawnModels.first { $0.id == controller.spawnModel } }
+    private var project: SpawnChoice? { controller.spawnTargets.first { $0.id == controller.spawnTarget } }
 
     var body: some View {
         let key = InboxController.newAgentKey
@@ -617,36 +701,34 @@ struct NewAgentCard: View {
                     .focused(focus, equals: key)
                     .onSubmit { controller.spawn() }
                 HStack(spacing: 6) {
-                    // Where: a place, so a folder, with the project's name.
-                    chip(icon: Image(systemName: "folder"), tint: .secondary,
-                         title: controller.spawnTargets.first { $0.id == controller.spawnTarget }?.name ?? "Project") {
-                        Section("Project") {
-                            ForEach(controller.spawnTargets) { choice in
-                                Button(choice.name) { controller.spawnTarget = choice.id }
-                            }
+                    // Where: grouped by adapter, each project with its path.
+                    chip(icon: choiceIcon(project?.icon) ?? Image(systemName: "folder"), title: project?.name ?? "Project") { projectPicker.toggle() }
+                        .popover(isPresented: $projectPicker, arrowEdge: .bottom) {
+                            ChoicePopover(sections: [PickerSection(id: "solo", title: "Solo projects", icon: choiceIcon("solo"),
+                                rows: controller.spawnTargets.map { choice in
+                                    PickerRow(id: choice.id, icon: nil, title: choice.name, detail: choice.detail,
+                                              selected: choice.id == controller.spawnTarget) { controller.spawnTarget = choice.id }
+                                })], shown: $projectPicker)
                         }
-                    }
-                    // With what: runtime and model in one pick, shown as the runtime's icon and the model's name.
-                    chip(icon: runtimeIcon(controller.spawnRuntimes.first { $0.id == controller.spawnRuntime }),
-                         tint: runtimeTint(controller.spawnRuntimes.first { $0.id == controller.spawnRuntime }),
-                         title: controller.spawnModels.first { $0.id == controller.spawnModel }.map { $0.id.isEmpty ? (controller.spawnRuntimes.first { $0.id == controller.spawnRuntime }?.name ?? "Default") : $0.name }
-                            ?? controller.spawnRuntimes.first { $0.id == controller.spawnRuntime }?.name ?? "Runtime") {
-                        ForEach(controller.spawnRuntimes) { runtime in
-                            Section(runtime.name) {
-                                let models = controller.store.spawners.first?.spawnModels(for: runtime) ?? []
-                                if models.isEmpty {
-                                    Button(runtime.name) { controller.spawnRuntime = runtime.id }
-                                } else {
-                                    ForEach(models) { model in
-                                        Button(model.id.isEmpty ? "Default" : model.name) {
-                                            controller.spawnRuntime = runtime.id
-                                            controller.spawnModel = model.id
+                    // With what: runtime and model in one pick; the chip shows the runtime's icon and the model's name.
+                    chip(icon: choiceIcon(runtime?.icon) ?? Image(systemName: "apple.terminal"),
+                         title: model.map { $0.id.isEmpty ? (runtime?.name ?? "Default") : $0.name } ?? runtime?.name ?? "Runtime") { runtimePicker.toggle() }
+                        .popover(isPresented: $runtimePicker, arrowEdge: .bottom) {
+                            ChoicePopover(sections: controller.spawnRuntimes.map { rt in
+                                let models = controller.store.spawners.first?.spawnModels(for: rt) ?? []
+                                let rows = models.isEmpty
+                                    ? [PickerRow(id: rt.id, icon: choiceIcon(rt.icon), title: rt.name, detail: rt.detail,
+                                                 selected: rt.id == controller.spawnRuntime) { controller.spawnRuntime = rt.id }]
+                                    : models.map { m in
+                                        PickerRow(id: rt.id + "/" + m.id, icon: choiceIcon(m.icon ?? rt.icon), title: m.name, detail: m.detail,
+                                                  selected: rt.id == controller.spawnRuntime && m.id == controller.spawnModel) {
+                                            controller.spawnRuntime = rt.id
+                                            controller.spawnModel = m.id
                                         }
                                     }
-                                }
-                            }
+                                return PickerSection(id: rt.id, title: rt.name, icon: choiceIcon(rt.icon), rows: rows)
+                            }, shown: $runtimePicker)
                         }
-                    }
                     Spacer(minLength: 8)
                     if controller.spawning {
                         Spinner().frame(width: 12, height: 12).padding(.trailing, 4)
@@ -674,36 +756,18 @@ struct NewAgentCard: View {
         .onAppear { controller.loadSpawnChoices() }
     }
 
-    private func runtimeIcon(_ runtime: SpawnChoice?) -> Image {
-        switch runtime?.name.lowercased() {
-        case .some(let n) where n.contains("claude"): return Image(systemName: "asterisk")
-        case .some(let n) where n.contains("codex"): return Image(systemName: "chevron.left.forwardslash.chevron.right")
-        default: return Image(systemName: "apple.terminal")
-        }
-    }
-
-    private func runtimeTint(_ runtime: SpawnChoice?) -> Color {
-        switch runtime?.name.lowercased() {
-        case .some(let n) where n.contains("claude"): return Color(red: 0.85, green: 0.47, blue: 0.34)
-        case .some(let n) where n.contains("codex"): return Color(red: 0.06, green: 0.64, blue: 0.51)
-        default: return .secondary
-        }
-    }
-
-    /// A small pill menu: icon in its tint, current value, chevron.
-    private func chip<Items: View>(icon: Image?, tint: Color, title: String, @ViewBuilder items: () -> Items) -> some View {
-        Menu {
-            items()
-        } label: {
+    /// A small pill: icon, current value, chevron. Opens one of Zero's pickers.
+    private func chip(icon: Image, title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             HStack(spacing: 5) {
-                if let icon { icon.resizable().aspectRatio(contentMode: .fit).frame(width: 12, height: 12).fontWeight(.semibold).foregroundStyle(tint) }
+                icon.resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14).clipShape(RoundedRectangle(cornerRadius: 3))
                 Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1)
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 8).padding(.vertical, 4)
             .background(Theme.keycap).clipShape(Capsule())
         }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .buttonStyle(.plain)
     }
 }
 

@@ -1,10 +1,15 @@
 import Foundation
 
-/// Something an adapter can start an agent in (a Solo project) or with (a Solo agent tool).
+/// Something an adapter can start an agent in (a project), with (a runtime), or as (a model): a name for the
+/// chip, a detail line for the picker, and an icon resource name the app may know.
 public struct SpawnChoice: Identifiable, Hashable, Sendable {
     public let id: String
     public let name: String
-    public init(id: String, name: String) { self.id = id; self.name = name }
+    public let detail: String?
+    public let icon: String?
+    public init(id: String, name: String, detail: String? = nil, icon: String? = nil) {
+        self.id = id; self.name = name; self.detail = detail; self.icon = icon
+    }
 }
 
 /// A way to deliver Arsen's words into an agent's session, and optionally to start a new one. Solo is the
@@ -62,9 +67,12 @@ public struct SoloAdapter: AgentAdapter {
 
     public func spawnTargets() async throws -> [SpawnChoice] {
         let rows = try await resultJSON(of: call(tool: "list_projects", arguments: [:])) as? [[String: Any]] ?? []
+        let home = NSHomeDirectory()
         return rows.compactMap { row in
             guard let id = row["id"] as? Int else { return nil }
-            return SpawnChoice(id: String(id), name: (row["display_name"] as? String) ?? (row["name"] as? String) ?? "Project \(id)")
+            let path = (row["path"] as? String)?.replacingOccurrences(of: home, with: "~")
+            return SpawnChoice(id: String(id), name: (row["display_name"] as? String) ?? (row["name"] as? String) ?? "Project \(id)",
+                               detail: path, icon: "solo")
         }
     }
 
@@ -72,7 +80,9 @@ public struct SoloAdapter: AgentAdapter {
         let rows = try await resultJSON(of: call(tool: "list_agent_tools", arguments: [:])) as? [[String: Any]] ?? []
         return rows.compactMap { row in
             guard let id = row["id"] as? Int, (row["enabled"] as? Bool) != false else { return nil }
-            return SpawnChoice(id: String(id), name: (row["name"] as? String) ?? "Tool \(id)")
+            let name = (row["name"] as? String) ?? "Tool \(id)"
+            let icon = name.lowercased().contains("claude") ? "claude" : name.lowercased().contains("codex") ? "openai" : nil
+            return SpawnChoice(id: String(id), name: name, detail: row["command"] as? String, icon: icon)
         }
     }
 
@@ -81,17 +91,45 @@ public struct SoloAdapter: AgentAdapter {
     /// account gained (Mythos, say) shows up here once that account has been used in Claude Code.
     /// Codex's ids are not known here, so it offers none.
     public func spawnModels(for runtime: SpawnChoice) -> [SpawnChoice] {
-        guard runtime.name.lowercased().contains("claude") else { return [] }
-        var choices = [SpawnChoice(id: "", name: "Default"), SpawnChoice(id: "opus", name: "Opus"), SpawnChoice(id: "sonnet", name: "Sonnet")]
+        let name = runtime.name.lowercased()
+        if name.contains("claude") { return claudeModels() }
+        if name.contains("codex") { return codexModels() }
+        return []
+    }
+
+    /// Claude Code's picker for the active account: the built-in aliases, then the account's cached options with
+    /// their own descriptions ("Fable 5.1 · Most capable…"), whose first part names the model precisely.
+    private func claudeModels() -> [SpawnChoice] {
+        var choices = [SpawnChoice(id: "", name: "Default", detail: "Claude Code's current default", icon: "claude"),
+                       SpawnChoice(id: "opus", name: "Opus", detail: "Latest Opus", icon: "claude"),
+                       SpawnChoice(id: "sonnet", name: "Sonnet", detail: "Latest Sonnet", icon: "claude")]
         let config = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude.json")
-        if let data = try? Data(contentsOf: config), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let extra = json["additionalModelOptionsCache"] as? [[String: Any]] {
-            for option in extra {
-                guard let value = option["value"] as? String, !choices.contains(where: { $0.id == value }) else { continue }
-                choices.append(SpawnChoice(id: value, name: (option["label"] as? String) ?? value))
-            }
+        guard let data = try? Data(contentsOf: config), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let extra = json["additionalModelOptionsCache"] as? [[String: Any]] else { return choices }
+        for option in extra {
+            guard let value = option["value"] as? String, !choices.contains(where: { $0.id == value }) else { continue }
+            let label = (option["label"] as? String) ?? value
+            let description = (option["description"] as? String) ?? ""
+            let parts = description.components(separatedBy: " · ")
+            let title = parts.first.map { $0.hasPrefix(label) ? $0 : label } ?? label
+            let detail = parts.count > 1 ? parts.dropFirst().joined(separator: " · ") : (description.isEmpty ? nil : description)
+            choices.append(SpawnChoice(id: value, name: title, detail: detail, icon: "claude"))
         }
         return choices
+    }
+
+    /// Codex's own catalogue for the signed-in account, from its cache: listed models in its order.
+    private func codexModels() -> [SpawnChoice] {
+        let cache = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/models_cache.json")
+        guard let data = try? Data(contentsOf: cache), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let models = json["models"] as? [[String: Any]] else { return [] }
+        return models
+            .filter { ($0["visibility"] as? String) == "list" }
+            .sorted { (($0["priority"] as? Int) ?? 99) < (($1["priority"] as? Int) ?? 99) }
+            .compactMap { model in
+                guard let slug = model["slug"] as? String else { return nil }
+                return SpawnChoice(id: slug, name: (model["display_name"] as? String) ?? slug, detail: model["description"] as? String, icon: "openai")
+            }
     }
 
     /// The Claude account the new agent will run under, from the account switcher's record when present.

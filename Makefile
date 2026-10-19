@@ -18,6 +18,7 @@ bundle: build
 	cp $(BIN)/zero $(APP)/Contents/MacOS/zero-cli
 	cp Resources/Info.plist $(APP)/Contents/Info.plist
 	mkdir -p $(APP)/Contents/Resources
+	cp Resources/icons/*.png $(APP)/Contents/Resources/
 	cp drop-client/target/release/zero-drop $(APP)/Contents/Resources/zero-drop-darwin-arm64
 	cp drop-client/target/x86_64-unknown-linux-musl/release/zero-drop $(APP)/Contents/Resources/zero-drop-linux-x86_64
 	cp drop-client/target/aarch64-unknown-linux-musl/release/zero-drop $(APP)/Contents/Resources/zero-drop-linux-aarch64
