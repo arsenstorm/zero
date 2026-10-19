@@ -205,7 +205,7 @@ struct SelectorView: View {
                     HStack {
                         Text("Effort").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                         Spacer()
-                        Text(picked.map(effortLabel) ?? "").font(.system(size: 11, weight: .medium)).contentTransition(.numericText())
+                        Text(picked.map { effortLabel($0) } ?? "").font(.system(size: 11, weight: .medium)).contentTransition(.numericText())
                     }
                     .padding(.top, 16)
                     EffortSlider(levels: row.levels.map(\.id), picked: picked) { level in
@@ -251,10 +251,10 @@ struct SelectorView: View {
     }
 }
 
-/// Effort level ids as Zero shows them.
-func effortLabel(_ id: String) -> String {
+/// Effort level ids as Zero shows them; `short` is for the chip, where "Extra High" would not fit.
+func effortLabel(_ id: String, short: Bool = false) -> String {
     switch id {
-    case "xhigh": "XHigh"
+    case "xhigh": short ? "XHigh" : "Extra High"
     default: id.capitalized
     }
 }

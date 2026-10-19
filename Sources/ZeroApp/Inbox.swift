@@ -718,7 +718,7 @@ struct NewAgentCard: View {
     /// The model's effort level, when it has levels: the one picked for it, else its default.
     private var effort: String? {
         guard let model, !model.levels.isEmpty else { return nil }
-        return (controller.spawnSettings[model.id]?["reasoning"] ?? model.defaultLevel).map(effortLabel)
+        return (controller.spawnSettings[model.id]?["reasoning"] ?? model.defaultLevel).map { effortLabel($0, short: true) }
     }
 
     var body: some View {
