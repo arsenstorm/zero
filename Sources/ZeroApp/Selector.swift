@@ -65,7 +65,7 @@ struct SelectorView: View {
                 VStack(spacing: 1) { ForEach(rows) { rowView($0) } }
                     .padding(.horizontal, 6).padding(.vertical, 4)
             }
-            .frame(height: min(CGFloat(max(rows.count, 1)) * Self.rowHeight + 8 + CGFloat(max(rows.count - 1, 0)), 10 * Self.rowHeight + 8))
+            .frame(height: min(CGFloat(max(rows.count, 1)) * Self.rowHeight + 8 + CGFloat(max(rows.count - 1, 0)), 8 * Self.rowHeight + 8 + 7))
             Divider().padding(.horizontal, 10)
             footer
         }
