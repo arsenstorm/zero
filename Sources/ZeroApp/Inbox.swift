@@ -572,8 +572,8 @@ struct NewAgentCard: View {
                     Text("Nothing needs you. Start something.").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
-            // The grey box runs flush to the card's edges and bottom, with the card's own inner padding, so the
-            // prompt's text starts exactly under the headline.
+            // The grey box sits 6 pt in from the card's sides and bottom with 8 pt of inner padding: 14 in all, the
+            // card's own padding, so the prompt's text starts exactly under the headline and the corners stay round.
             VStack(alignment: .leading, spacing: 12) {
                 TextField("What should a new agent work on?",
                           text: Binding(get: { controller.drafts[key, default: ""] }, set: { controller.drafts[key] = $0 }),
@@ -617,13 +617,11 @@ struct NewAgentCard: View {
                         .help("The account the agent will use. Switch accounts with your switcher; Zero follows.")
                 }
             }
-            .padding(14)
+            .padding(.horizontal, 8).padding(.vertical, 10)
             .background(Theme.row)
-            // Square on top, so its top edge is a straight hairline that meets the card's sides; the card's radius below.
-            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 18, bottomTrailingRadius: 18, topTrailingRadius: 0))
-            .overlay(UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 18, bottomTrailingRadius: 18, topTrailingRadius: 0)
-                .strokeBorder(Theme.stroke, lineWidth: 1))
-            .padding(.horizontal, -14).padding(.bottom, -14)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke, lineWidth: 1))
+            .padding(.horizontal, -8).padding(.bottom, -8)
             if let error = controller.spawnError {
                 Text(error).font(.system(size: 12)).foregroundStyle(.red).padding(.top, 14)
             }
