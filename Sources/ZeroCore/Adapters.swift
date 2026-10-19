@@ -26,6 +26,8 @@ public protocol AgentAdapter: Sendable {
     var name: String { get }
     func canReach(_ agent: AgentIdentity) -> Bool
     func send(_ text: String, to agent: AgentIdentity) async throws
+    /// What the agent said back to `text`, once it has finished its turn; nil when the adapter cannot tell.
+    func reply(from agent: AgentIdentity, to text: String) async -> String?
     /// Starting agents: where they can run, what runs them, and the start itself. Default: not supported.
     var canSpawn: Bool { get }
     func spawnTargets() async throws -> [SpawnChoice]
@@ -41,6 +43,7 @@ public protocol AgentAdapter: Sendable {
 }
 
 public extension AgentAdapter {
+    func reply(from agent: AgentIdentity, to text: String) async -> String? { nil }
     var canSpawn: Bool { false }
     func spawnTargets() async throws -> [SpawnChoice] { [] }
     func spawnRuntimes() async throws -> [SpawnChoice] { [] }
@@ -75,6 +78,65 @@ public struct SoloAdapter: AgentAdapter {
         var arguments: [String: Any] = ["process_id": processID, "input": text, "submit": true]
         if let project = agent.soloProjectID { arguments["project_id"] = project }
         _ = try await resultText(of: call(tool: "send_input", arguments: arguments))
+    }
+
+    /// Solo reports only busy or idle, so the reply is read off the agent's screen: wait for it to start
+    /// working and then go idle, then take the last thing it said after the echo of our message.
+    public func reply(from agent: AgentIdentity, to text: String) async -> String? {
+        guard let processID = agent.soloProcessID else { return nil }
+        var arguments: [String: Any] = ["process_id": processID]
+        if let project = agent.soloProjectID { arguments["project_id"] = project }
+        var busy = false
+        for tick in 0..<450 { // every 2 s, up to 15 minutes; each check is one helper process
+            try? await Task.sleep(for: .seconds(2))
+            guard let status = try? await resultJSON(of: call(tool: "get_process_status", arguments: arguments)) as? [String: Any],
+                  let state = status["agent_state"] as? [String: Any] else { continue }
+            if state["idle"] as? Bool != true { busy = true; continue }
+            guard busy || tick >= 5, (state["idle_seconds"] as? Double ?? 0) >= 1.5 else { continue }
+            var output = arguments
+            output["lines"] = 200
+            let screen = (try? await resultText(of: call(tool: "get_process_output", arguments: output))) ?? ""
+            return Self.lastReply(in: screen, after: text)
+        }
+        return nil
+    }
+
+    /// The agent's last spoken block on a rendered Claude Code or Codex screen, after the echo of `prompt`:
+    /// a block starts at a "⏺"/"●" line, tool calls (followed by "⎿", or named like `Bash(`) are skipped, and the
+    /// turn ends at the "· done" line or the next prompt. ponytail: screen scraping; Solo has no message API.
+    public static func lastReply(in screen: String, after prompt: String) -> String? {
+        let lines = screen.components(separatedBy: "\n")
+        let needle = String(prompt.prefix(40))
+        var start = 0
+        for (index, line) in lines.enumerated() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            // The echo is the prompt glyph followed by our text; a later prompt that merely contains it is not.
+            if let first = trimmed.first, "❯〉›>".contains(first),
+               trimmed.dropFirst().trimmingCharacters(in: .whitespaces).hasPrefix(needle) { start = index + 1 }
+        }
+        var blocks: [[String]] = []
+        var current: [String]?
+        for line in lines[min(start, lines.count)...] {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.contains("· done") || "❯〉›─".contains(trimmed.first ?? " ") { break }
+            if trimmed.hasPrefix("⏺") || trimmed.hasPrefix("●") {
+                if let block = current { blocks.append(block) }
+                current = [String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)]
+            } else if trimmed.hasPrefix("⎿") {
+                current = nil // the block above was a tool call
+            } else if current != nil {
+                current?.append(line.hasPrefix("  ") ? String(line.dropFirst(2)) : line)
+            }
+        }
+        if let block = current { blocks.append(block) }
+        let spoken = blocks.filter { block in
+            guard let first = block.first else { return false }
+            return first.range(of: "^[A-Z][A-Za-z]*\\(", options: .regularExpression) == nil
+        }
+        guard let last = spoken.last else { return nil }
+        let text = last.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
+        return text.isEmpty ? nil : text
     }
 
     public var canSpawn: Bool { FileManager.default.isExecutableFile(atPath: helper) }

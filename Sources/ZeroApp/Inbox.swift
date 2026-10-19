@@ -289,16 +289,14 @@ final class InboxController {
         spawning = true
         spawnError = nil
         focusedReply = nil
-        // Cleared now, not when the spawn finishes: Return in an AppKit text field selects its text, and the
-        // prompt sat there highlighted for the seconds Solo takes. It comes back if the spawn fails.
-        drafts[Self.newAgentKey] = nil
         Task {
             do {
                 let identity = try await store.spawn(prompt: prompt, adapter: adapter, target: target, runtime: runtime, model: model, settings: settings)
+                // Up: clear the composer and go to the agent. On failure the prompt stays for another try.
+                drafts[Self.newAgentKey] = nil
                 show(agent: identity.name)
             } catch {
                 spawnError = error.localizedDescription
-                drafts[Self.newAgentKey] = prompt
             }
             spawning = false
         }
@@ -793,6 +791,7 @@ struct NewAgentCard: View {
                           axis: .vertical)
                     .textFieldStyle(.plain).font(.system(size: 13)).lineLimit(2...8)
                     .focused(focus, equals: key)
+                    .disabled(controller.spawning) // the prompt stays put, read-only, until the agent is up
                     .onSubmit { controller.spawn() }
                 HStack(spacing: 6) {
                     // Where: grouped by adapter, each project with its path.
@@ -913,6 +912,32 @@ struct CardView: View {
     }
 
     var body: some View {
+        if ask.kind == .message { messageBubble } else { card }
+    }
+
+    /// Arsen's message to the agent: a bubble on the right with a small time beside it, no header and no
+    /// dismiss; delivery trouble shows underneath.
+    private var messageBubble: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            HStack(alignment: .bottom, spacing: 8) {
+                Spacer(minLength: 36)
+                Text(ask.body).font(.system(size: 13)).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(Theme.row).clipShape(RoundedRectangle(cornerRadius: 14))
+                Text(ask.createdAt.formatted(date: .omitted, time: .shortened))
+                    .font(.system(size: 10)).monospacedDigit().foregroundStyle(.tertiary).padding(.bottom, 8)
+            }
+            if let status = ask.status, status.hasPrefix("failed") {
+                Text(status).font(.system(size: 11)).foregroundStyle(.red).padding(.trailing, 44)
+            } else if ask.status == "sending" {
+                Text("Sending…").font(.system(size: 11)).foregroundStyle(.tertiary).padding(.trailing, 44)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    private var card: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Who and what on the left, when on the right.
             HStack(spacing: 8) {
@@ -1002,10 +1027,9 @@ struct CardView: View {
         }
         .opacity(dimmed ? 0.45 : 1)
         .padding(14)
-        .background(ask.kind == .message ? Theme.row : Theme.card)
+        .background(Theme.card)
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke, lineWidth: 1))
-        .padding(.leading, ask.kind == .message ? 36 : 0)
         .contentShape(Rectangle())
         .onHover { if $0, ask.state == .waiting { controller.select(ask.id) } }
         .onTapGesture { controller.select(ask.id) }
