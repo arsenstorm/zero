@@ -55,12 +55,14 @@ final class InboxController {
     }
 
     @ObservationIgnored private var selectorClosedAt = Date.distantPast
+    @ObservationIgnored private var selectorClosedKind: SelectorKind?
 
     func openSelector(_ kind: SelectorKind, anchor: CGRect) {
         if let selector, selector.kind == kind { closeSelector(); return }
         // The click on the chip that should close the selector first closes it through the click-outside
-        // monitor, then arrives here: within a third of a second of that close, it is that close.
-        if Date().timeIntervalSince(selectorClosedAt) < 0.3 { return }
+        // monitor, then arrives here: within a third of a second of that close, on the same chip, it is
+        // that close. A click on the other chip is a switch and opens straight away.
+        if selectorClosedKind == kind, Date().timeIntervalSince(selectorClosedAt) < 0.3 { return }
         let state = SelectorState(kind: kind)
         state.sections = selectorSections(for: kind) // once: the rows read catalogues from disk
         selector = state
@@ -68,9 +70,10 @@ final class InboxController {
     }
 
     func closeSelector() {
-        guard selector != nil else { return }
+        guard let selector else { return }
         selectorClosedAt = Date()
-        selector = nil
+        selectorClosedKind = selector.kind
+        self.selector = nil
         dismissSelector?()
     }
 

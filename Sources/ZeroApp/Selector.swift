@@ -109,7 +109,7 @@ struct SelectorView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10).padding(.vertical, 8)
+        .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 6)
     }
 
     private func select(tab: String) {
