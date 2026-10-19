@@ -195,7 +195,7 @@ final class Panel: NSPanel {
         let roomBelow = chip.minY - 6 - screen.minY
         let roomAbove = screen.maxY - chip.maxY - 6
         let opensBelow = roomBelow >= 240 || roomBelow >= roomAbove
-        let size = NSSize(width: SelectorView.width, height: min(480, opensBelow ? roomBelow : roomAbove))
+        let size = NSSize(width: SelectorView.width(selector.kind), height: min(480, opensBelow ? roomBelow : roomAbove))
         let x = min(chip.minX, screen.maxX - size.width - 8)
         let y = opensBelow ? chip.minY - 6 - size.height : chip.maxY + 6
         let view = FirstMouseHostingView(rootView: AnyView(SelectorView(controller: inbox, state: selector)

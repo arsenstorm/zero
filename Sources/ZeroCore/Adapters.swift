@@ -161,8 +161,9 @@ public struct SoloAdapter: AgentAdapter {
         var arguments: [String: Any] = ["project_id": projectID, "agent_tool_id": toolID, "include_agent_instructions": false]
         var extra: [String] = []
         if let model, !model.id.isEmpty { extra += ["--model", model.id] }
-        if runtime.name.lowercased().contains("codex"), let level = settings["reasoning"], !level.isEmpty {
-            extra += ["-c", "model_reasoning_effort=\"\(level)\""]
+        if let level = settings["reasoning"], !level.isEmpty {
+            if model?.provider == "Anthropic" { extra += ["--effort", level] }
+            else if runtime.name.lowercased().contains("codex") { extra += ["-c", "model_reasoning_effort=\"\(level)\""] }
         }
         if !extra.isEmpty { arguments["extra_args"] = extra }
         let created = try await resultJSON(of: call(tool: "spawn_agent", arguments: arguments)) as? [String: Any] ?? [:]

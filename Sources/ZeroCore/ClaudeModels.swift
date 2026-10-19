@@ -21,10 +21,14 @@ public enum ClaudeModels {
     public static func cached() -> [SpawnChoice] {
         let fromAPI = (accountID().flatMap { UserDefaults.standard.data(forKey: "claudeModels." + $0) })
             .flatMap { try? JSONDecoder().decode([Entry].self, from: $0) } ?? []
-        var choices = fromAPI.map { SpawnChoice(id: $0.id, name: shortName($0.name), detail: describe($0.id), icon: "claude", provider: "Anthropic") }
+        var choices = fromAPI.map { SpawnChoice(id: $0.id, name: shortName($0.name), detail: describe($0.id), icon: "claude", provider: "Anthropic",
+                                                levels: levels, defaultLevel: "high") }
         for extra in localExtras() where !choices.contains(where: { $0.id == extra.id }) { choices.append(extra) }
         return choices.sorted { rank($0.name) < rank($1.name) }
     }
+
+    /// Claude Code's `--effort` levels; it defaults to high.
+    static let levels = ["low", "medium", "high", "xhigh", "max"].map { SpawnChoice(id: $0, name: $0) }
 
     /// Newest version first; within one, Mythos, Fable, Opus, Sonnet, Haiku, then the rest.
     static func rank(_ name: String) -> (Double, Int, String) {
@@ -96,7 +100,7 @@ public enum ClaudeModels {
             // The 1M-context variant shares its name with the base model; say so in the row, not a badge.
             let long = value.hasSuffix("[1m]")
             return SpawnChoice(id: value, name: shortName(title) + (long ? " (1M)" : ""), detail: detail, icon: "claude",
-                               provider: "Anthropic", context: long ? "1M tokens" : nil)
+                               provider: "Anthropic", context: long ? "1M tokens" : nil, levels: levels, defaultLevel: "high")
         }
     }
 
@@ -120,7 +124,7 @@ public enum ClaudeModels {
 
     /// One line per family, so a bare id still reads like Codex's rows do.
     private static func describe(_ id: String) -> String? {
-        if id.contains("mythos") { return "Mythos-class: the most capable Claude, without Fable's dual-use safeguards." }
+        if id.contains("mythos") { return "The most capable Claude, without Fable's dual-use safeguards." }
         if id.contains("fable") { return "Most capable for your hardest and longest-running tasks." }
         if id.contains("opus") { return "Strong reasoning for complex, multi-step work." }
         if id.contains("sonnet") { return "Balanced speed and capability for everyday coding." }

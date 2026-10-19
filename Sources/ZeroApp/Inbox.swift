@@ -713,6 +713,11 @@ struct NewAgentCard: View {
     private var runtime: SpawnChoice? { controller.spawnRuntimes.first { $0.id == controller.spawnRuntime } }
     private var model: SpawnChoice? { controller.spawnModels.first { $0.id == controller.spawnModel } }
     private var project: SpawnChoice? { controller.spawnTargets.first { $0.id == controller.spawnTarget } }
+    /// The model's effort level, when it has levels: the one picked for it, else its default.
+    private var effort: String? {
+        guard let model, !model.levels.isEmpty else { return nil }
+        return (controller.spawnSettings[model.id]?["reasoning"] ?? model.defaultLevel).map(effortLabel)
+    }
 
     var body: some View {
         let key = InboxController.newAgentKey
@@ -741,7 +746,7 @@ struct NewAgentCard: View {
                         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { projectAnchor = $0 }
                     // With what: runtime and model in one pick; the chip shows the runtime's icon and the model's name.
                     chip(icon: choiceIcon(runtime?.icon) ?? Image(systemName: "apple.terminal"),
-                         title: model.map { $0.id.isEmpty ? (runtime?.name ?? "Default") : $0.name } ?? runtime?.name ?? "Runtime",
+                         title: model.map { $0.id.isEmpty ? (runtime?.name ?? "Default") : $0.name + (effort.map { " · " + $0 } ?? "") } ?? runtime?.name ?? "Runtime",
                          open: controller.selector?.kind == .runtime) { controller.openSelector(.runtime, anchor: runtimeAnchor) }
                         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { runtimeAnchor = $0 }
                     Spacer(minLength: 8)

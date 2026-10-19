@@ -51,7 +51,8 @@ struct SelectorView: View {
     @State private var moreAbove = false
     @State private var moreBelow = false
 
-    static let width: CGFloat = 272
+    /// Models need room for their effort pills; projects do not.
+    static func width(_ kind: SelectorKind) -> CGFloat { kind == .runtime ? 400 : 272 }
     private static let rowHeight: CGFloat = 30
 
     private var sections: [SelectorSection] { state.sections }
@@ -77,7 +78,7 @@ struct SelectorView: View {
             Divider().padding(.horizontal, 10)
             footer
         }
-        .frame(width: Self.width)
+        .frame(width: Self.width(state.kind))
         .card()
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { state.cardHeight = $0 }
         .focusable()
@@ -155,6 +156,8 @@ struct SelectorView: View {
             HStack(spacing: 8) {
                 Text(row.title).font(.system(size: 13, weight: row.selected ? .semibold : .regular)).lineLimit(1)
                 Spacer(minLength: 6)
+                // Effort: shown on the chosen row and the one under the pointer, so a pick and its level sit together.
+                if !row.levels.isEmpty, row.selected || current { levels(row) }
                 Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold)).opacity(row.selected ? 1 : 0)
             }
             .padding(.horizontal, 10)
@@ -168,17 +171,39 @@ struct SelectorView: View {
         .onHover { if $0 { state.highlighted = row.id } }
     }
 
-    /// The highlighted row's description, in a box two lines tall with the text centred in it: descriptions fit
-    /// two lines, a one-liner sits in the middle, and the box never changes height as the pointer moves.
+    /// A row's effort levels as pills; the current one is filled. Picking one also picks the row, and leaves the
+    /// selector open so the level can be changed again.
+    private func levels(_ row: SelectorRow) -> some View {
+        let picked = row.modelID.flatMap { controller.spawnSettings[$0]?["reasoning"] } ?? row.defaultLevel
+        return HStack(spacing: 1) {
+            ForEach(row.levels, id: \.id) { level in
+                Button {
+                    row.pick()
+                    if let id = row.modelID { controller.setSpawnSetting(modelID: id, key: "reasoning", value: level.id) }
+                    state.sections = controller.selectorSections(for: state.kind)
+                } label: {
+                    Text(effortLabel(level.id)).font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(level.id == picked ? .primary : .secondary)
+                        .padding(.horizontal, 6).padding(.vertical, 3)
+                        .background(level.id == picked ? Theme.keycap : .clear)
+                        .clipShape(Capsule())
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    /// The highlighted row's description on one line, in a box that never changes height as the pointer moves.
     private var footer: some View {
         Text(highlightedRow.map(describe) ?? " ")
-            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: 30, alignment: .center)
-            .padding(.horizontal, 16).padding(.vertical, 7)
+            .padding(.horizontal, 16).padding(.vertical, 8)
     }
 
     private func describe(_ row: SelectorRow) -> String { row.detail ?? row.provider ?? "" }
+
 
     private func move(_ delta: Int) {
         let ids = rows.map(\.id)
@@ -196,5 +221,13 @@ struct SelectorView: View {
         guard let row = highlightedRow else { return }
         row.pick()
         controller.closeSelector()
+    }
+}
+
+/// Effort level ids as Zero shows them.
+func effortLabel(_ id: String) -> String {
+    switch id {
+    case "xhigh": "XHigh"
+    default: id.capitalized
     }
 }
