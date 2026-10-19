@@ -548,6 +548,39 @@ struct ReplyBox: View {
     }
 }
 
+/// The composer's box: flush with its card's sides and bottom, bottom corners on the card's radius, and a top
+/// edge whose ends sweep up into the card's walls (concave fillets), so no sliver of card shows beside a corner.
+struct ComposerBoxShape: Shape {
+    var fillet: CGFloat = 12
+    var cardRadius: CGFloat = 18
+
+    func path(in rect: CGRect) -> Path {
+        var path = topEdge(in: rect)
+        let w = rect.maxX, h = rect.maxY, R = cardRadius
+        path.addLine(to: CGPoint(x: w, y: h - R))
+        path.addArc(center: CGPoint(x: w - R, y: h - R), radius: R, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
+        path.addLine(to: CGPoint(x: R, y: h))
+        path.addArc(center: CGPoint(x: R, y: h - R), radius: R, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
+        path.closeSubpath()
+        return path
+    }
+
+    /// Wall to wall: down the left fillet, across, up the right fillet. Stroked on its own as the box's hairline.
+    func topEdge(in rect: CGRect) -> Path {
+        let w = rect.maxX, r = fillet
+        var path = Path()
+        path.move(to: CGPoint(x: 0, y: 0))
+        path.addArc(center: CGPoint(x: r, y: 0), radius: r, startAngle: .degrees(180), endAngle: .degrees(90), clockwise: true)
+        path.addLine(to: CGPoint(x: w - r, y: r))
+        path.addArc(center: CGPoint(x: w - r, y: 0), radius: r, startAngle: .degrees(90), endAngle: .degrees(0), clockwise: true)
+        return path
+    }
+}
+
+struct ComposerTopEdge: Shape {
+    func path(in rect: CGRect) -> Path { ComposerBoxShape().topEdge(in: rect) }
+}
+
 /// Start a new agent from the inbox. One composer box: the prompt on top, and beneath it a toolbar with where
 /// and with what it runs (chips with the adapter's own icon) and the mic and send on the right. When nothing is
 /// open it is the whole inbox, headed "All quiet."
@@ -572,8 +605,8 @@ struct NewAgentCard: View {
                     Text("Nothing needs you. Start something.").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
-            // The grey box sits 6 pt in from the card's sides and bottom with 8 pt of inner padding: 14 in all, the
-            // card's own padding, so the prompt's text starts exactly under the headline and the corners stay round.
+            // Flush with the card's sides and bottom; the card's own 14 pt inside, so the prompt's text starts
+            // exactly under the headline. The top edge's fillets add their 12 pt above the content.
             VStack(alignment: .leading, spacing: 12) {
                 TextField("What should a new agent work on?",
                           text: Binding(get: { controller.drafts[key, default: ""] }, set: { controller.drafts[key] = $0 }),
@@ -617,11 +650,10 @@ struct NewAgentCard: View {
                         .help("The account the agent will use. Switch accounts with your switcher; Zero follows.")
                 }
             }
-            .padding(.horizontal, 8).padding(.vertical, 10)
-            .background(Theme.row)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke, lineWidth: 1))
-            .padding(.horizontal, -8).padding(.bottom, -8)
+            .padding(.horizontal, 14).padding(.bottom, 14).padding(.top, 10 + 12)
+            .background(ComposerBoxShape().fill(Theme.row))
+            .overlay(ComposerTopEdge().stroke(Theme.stroke, lineWidth: 1))
+            .padding(.horizontal, -14).padding(.bottom, -14)
             if let error = controller.spawnError {
                 Text(error).font(.system(size: 12)).foregroundStyle(.red).padding(.top, 14)
             }
