@@ -53,9 +53,10 @@ public final class Store {
     public func ask(_ id: String) -> Ask? { asks.first { $0.id == id } }
     public var open: [Ask] { asks.filter { !$0.state.isFinal } }
 
-    public func create(_ incoming: Ask) -> Ask {
+    /// `keepID` keeps the caller's id (a drop client names its own files by it) unless it is already taken.
+    public func create(_ incoming: Ask, keepID: Bool = false) -> Ask {
         var ask = incoming
-        ask.id = Ask.newID()
+        if !keepID || incoming.id.isEmpty || asks.contains(where: { $0.id == incoming.id }) { ask.id = Ask.newID() }
         ask.state = .waiting
         let requested = incoming.expiresAt.timeIntervalSince(incoming.createdAt)
         let ttl = requested > 0 ? requested : defaultTTL

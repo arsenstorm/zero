@@ -8,6 +8,14 @@ struct SettingsView: View {
     let store: Store
     let inbox: InboxController
     @State private var microphones: [(name: String, uid: String)] = []
+    @State private var newPattern = ""
+
+    private func addPattern() {
+        let pattern = newPattern.trimmingCharacters(in: .whitespaces)
+        guard !pattern.isEmpty else { return }
+        settings.dropPatterns.append(pattern)
+        newPattern = ""
+    }
 
     var body: some View {
         Form {
@@ -68,6 +76,29 @@ struct SettingsView: View {
                     }
                 }
                 Text("How Zero delivers your messages into an agent's session.").font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Drop folders") {
+                ForEach(settings.dropPatterns, id: \.self) { pattern in
+                    HStack {
+                        Text(pattern).font(.system(.body, design: .monospaced)).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Button("Remove") { settings.dropPatterns.removeAll { $0 == pattern } }.buttonStyle(.borderless)
+                    }
+                }
+                HStack {
+                    TextField("~/path/or/glob/*/.zero", text: $newPattern).textFieldStyle(.roundedBorder)
+                        .onSubmit(addPattern)
+                    Button("Add", action: addPattern).disabled(newPattern.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button("Choose…") {
+                        let panel = NSOpenPanel()
+                        panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
+                        if panel.runModal() == .OK, let url = panel.url {
+                            settings.dropPatterns.append(url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                        }
+                    }
+                }
+                Text("Asks arrive as files in these folders and answers go back the same way. Any folder another machine syncs with this Mac works: Zero keeps a small `zero` client in each one for the other side to call. Globs match many folders at once.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Log") {
                 LabeledContent("File") {

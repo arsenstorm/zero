@@ -37,6 +37,8 @@ final class Settings {
     var hotKeyLabel: String { didSet { defaults.set(hotKeyLabel, forKey: "hotKeyLabel") } }
     /// After an answer turns green, move on to the next waiting card a few seconds later.
     var autoAdvance: Bool { didSet { defaults.set(autoAdvance, forKey: "autoAdvance"); onChange?() } }
+    /// Folder patterns Zero watches for asks as files (globs, ~ allowed).
+    var dropPatterns: [String] { didSet { defaults.set(dropPatterns, forKey: "dropPatterns"); onChange?() } }
     /// Microphone for dictation, as a CoreAudio device UID; nil follows the system default.
     var inputDeviceUID: String? { didSet { defaults.set(inputDeviceUID, forKey: "inputDeviceUID"); onChange?() } }
     @ObservationIgnored var onChange: (() -> Void)?
@@ -56,6 +58,7 @@ final class Settings {
         hotKeyLabel = defaults.string(forKey: "hotKeyLabel") ?? "⌥ Space"
         inputDeviceUID = defaults.string(forKey: "inputDeviceUID")
         autoAdvance = defaults.object(forKey: "autoAdvance") as? Bool ?? true
+        dropPatterns = defaults.stringArray(forKey: "dropPatterns") ?? []
     }
 
     func sorted(_ names: [String]) -> [String] {
@@ -89,6 +92,7 @@ final class Panel: NSPanel {
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private let store = Store()
     private lazy var server = Server(store: store)
+    private lazy var drops = DropWatcher(store: store)
     private lazy var inbox = InboxController(store: store)
     private var pill: Panel!
     private var inboxPanel: Panel!
@@ -105,6 +109,8 @@ final class Panel: NSPanel {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         do { try server.start() } catch { NSLog("zero: server failed: \(error)") }
+        let serverChanged = store.onChange
+        store.onChange = { [weak self] ask in serverChanged?(ask); self?.drops.changed(ask) }
         store.onCreate = { [weak self] ask in self?.arrived(ask) }
         inbox.hide = { [weak self] in self?.hideInbox() }
         makePanels()
@@ -125,6 +131,7 @@ final class Panel: NSPanel {
     }
 
     private func applySettings() {
+        drops.start(patterns: settings.dropPatterns)
         inbox.autoAdvance = settings.autoAdvance
         inbox.dictation.deviceUID = settings.inputDeviceUID
         store.takeBackDelay = settings.takeBackSeconds

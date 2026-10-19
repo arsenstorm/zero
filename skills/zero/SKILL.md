@@ -53,6 +53,22 @@ Blocking is the default because you need the answer to continue. When you cannot
 
 Post a `note` when you start, at each milestone, and when you finish. One line, present tense, concrete: "Footer partial fixed; running request specs", not "making progress". `--blocked` the moment you cannot continue without something; `--done` when the deliverable exists. Why: your dot in his bar is coloured by your last note; a stale note misleads him.
 
+## Away from Arsen's Mac
+
+Zero's own `zero` binary speaks to the app over a socket, so it only works on his Mac. Anywhere else, Zero
+reaches you through a drop folder: a folder the Mac keeps in sync with where you are (on a Acme bench,
+`<app>/.zero/` inside each app checkout). Zero puts a `zero` client in it; call that one, same commands, same
+exit codes:
+
+```bash
+export PATH="$PWD/app/.zero:$PATH"   # once, from the bench root; any app's .zero works
+zero note "Claimed the bench; reading the ticket"
+```
+
+Answers take a few seconds longer than on the Mac: the files ride the sync both ways. Never create the drop
+folder yourself and never write into `asks/` or `answers/` by hand; the client does, atomically, and Zero
+removes what it has consumed.
+
 ## Identity
 
 Zero names you by `ZERO_AGENT`, or by your Solo process id. If neither is set, export `ZERO_AGENT` once at the start to a stable short name: the ticket id or your role (`ENG-9429`, `app-lead`). Why: one dot per name; a changing name scatters your history across several dots.
