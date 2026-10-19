@@ -42,6 +42,60 @@ final class InboxController {
     }
     var spawning = false
     var spawnError: String?
+    /// The open selector, if any, and how the app shows and hides it (an anchored panel of its own).
+    var selector: SelectorState?
+    @ObservationIgnored var presentSelector: ((CGRect) -> Void)?
+    @ObservationIgnored var dismissSelector: (() -> Void)?
+    /// Per-model configuration Arsen picked in the preview card, such as a reasoning level.
+    var spawnSettings: [String: [String: String]] = (UserDefaults.standard.dictionary(forKey: "spawnSettings") as? [String: [String: String]]) ?? [:]
+
+    func setSpawnSetting(modelID: String, key: String, value: String) {
+        spawnSettings[modelID, default: [:]][key] = value
+        UserDefaults.standard.set(spawnSettings, forKey: "spawnSettings")
+    }
+
+    func openSelector(_ kind: SelectorKind, anchor: CGRect) {
+        if let selector, selector.kind == kind { closeSelector(); return }
+        selector = SelectorState(kind: kind)
+        presentSelector?(anchor)
+    }
+
+    func closeSelector() {
+        guard selector != nil else { return }
+        selector = nil
+        dismissSelector?()
+    }
+
+    /// Rows for the selector: projects grouped by adapter, or models grouped by runtime.
+    func selectorSections(for kind: SelectorKind) -> [SelectorSection] {
+        switch kind {
+        case .project:
+            return [SelectorSection(id: "solo", title: "Solo projects", rows: spawnTargets.map { choice in
+                SelectorRow(id: choice.id, title: choice.name, provider: choice.provider, providerIcon: choiceIcon(choice.icon),
+                            detail: choice.detail, context: nil, levels: [], defaultLevel: nil, modelID: nil,
+                            selected: choice.id == spawnTarget) { [weak self] in self?.spawnTarget = choice.id }
+            })]
+        case .runtime:
+            guard let adapter = store.spawners.first else { return [] }
+            return spawnRuntimes.map { runtime in
+                let models = adapter.spawnModels(for: runtime)
+                let rows: [SelectorRow] = models.isEmpty
+                    ? [SelectorRow(id: runtime.id, title: runtime.name, provider: runtime.provider, providerIcon: choiceIcon(runtime.icon),
+                                   detail: runtime.detail, context: nil, levels: [], defaultLevel: nil, modelID: nil,
+                                   selected: runtime.id == spawnRuntime) { [weak self] in self?.spawnRuntime = runtime.id }]
+                    : models.map { model in
+                        SelectorRow(id: runtime.id + "/" + model.id, title: model.name, provider: model.provider ?? runtime.provider,
+                                    providerIcon: choiceIcon(model.icon ?? runtime.icon), detail: model.detail, context: model.context,
+                                    levels: model.levels, defaultLevel: model.defaultLevel, modelID: model.id.isEmpty ? runtime.id + "/default" : model.id,
+                                    selected: runtime.id == spawnRuntime && model.id == spawnModel) { [weak self] in
+                            self?.spawnRuntime = runtime.id
+                            self?.spawnModel = model.id
+                        }
+                    }
+                return SelectorSection(id: runtime.id, title: runtime.name, rows: rows)
+            }
+        }
+    }
     /// Models for the chosen runtime, and the pick remembered per runtime.
     var spawnModels: [SpawnChoice] { store.spawners.first.flatMap { adapter in spawnRuntimes.first { $0.id == spawnRuntime }.map { adapter.spawnModels(for: $0) } } ?? [] }
     var spawnNote: String? { store.spawners.first.flatMap { adapter in spawnRuntimes.first { $0.id == spawnRuntime }.flatMap { adapter.spawnNote(for: $0) } } }
@@ -209,13 +263,14 @@ final class InboxController {
               let target = spawnTargets.first(where: { $0.id == spawnTarget }),
               let runtime = spawnRuntimes.first(where: { $0.id == spawnRuntime }) else { return }
         let model = spawnModels.first { $0.id == spawnModel }
+        let settings = model.flatMap { spawnSettings[$0.id] } ?? [:]
         if dictatingFor == Self.newAgentKey { stopDictation() }
         spawning = true
         spawnError = nil
         focusedReply = nil
         Task {
             do {
-                let identity = try await store.spawn(prompt: prompt, adapter: adapter, target: target, runtime: runtime, model: model)
+                let identity = try await store.spawn(prompt: prompt, adapter: adapter, target: target, runtime: runtime, model: model, settings: settings)
                 drafts[Self.newAgentKey] = nil
                 show(agent: identity.name)
             } catch {
@@ -245,6 +300,7 @@ final class InboxController {
         let editing = event.window?.firstResponder is NSTextView
         let key = event.charactersIgnoringModifiers ?? ""
         if event.keyCode == 53 { // escape
+            if selector != nil { closeSelector(); return true }
             if dictatingFor != nil { stopDictation(); return true }
             if let selected, textOption[selected] != nil { cancelTextOption(selected); event.window?.makeFirstResponder(nil); return true }
             if let last = lastAnswered, store.takeBack(last) { cancelAdvance(); selected = last; return true }
@@ -593,79 +649,6 @@ func choiceIcon(_ name: String?) -> Image? {
     return Image(nsImage: image)
 }
 
-/// One row of a picker: icon, name, detail, and whether it is the current choice.
-struct PickerRow: Identifiable {
-    let id: String
-    let icon: Image?
-    let title: String
-    let detail: String?
-    let selected: Bool
-    let action: () -> Void
-}
-
-struct PickerSection: Identifiable {
-    let id: String
-    let title: String
-    let icon: Image?
-    let rows: [PickerRow]
-}
-
-/// Zero's own picker: grouped rows with icons and a detail line, so a model reads as "Fable 5.1 · Most capable…"
-/// and a project as its name and path. Replaces the system menu, which cannot show either.
-struct ChoicePopover: View {
-    let sections: [PickerSection]
-    @Binding var shown: Bool
-    @State private var hovered: String?
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(sections) { section in
-                    HStack(spacing: 6) {
-                        if let icon = section.icon { icon.resizable().aspectRatio(contentMode: .fit).frame(width: 12, height: 12).clipShape(RoundedRectangle(cornerRadius: 3)) }
-                        Text(section.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 10).padding(.top, sections.first?.id == section.id ? 6 : 12).padding(.bottom, 4)
-                    ForEach(section.rows) { row in
-                        Button {
-                            row.action()
-                            shown = false
-                        } label: {
-                            HStack(alignment: .top, spacing: 10) {
-                                if let icon = row.icon {
-                                    icon.resizable().aspectRatio(contentMode: .fit).frame(width: 18, height: 18).clipShape(RoundedRectangle(cornerRadius: 4))
-                                        .padding(.top, 1)
-                                } else {
-                                    Color.clear.frame(width: 18, height: 18)
-                                }
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(row.title).font(.system(size: 13, weight: .medium))
-                                    if let detail = row.detail {
-                                        Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                                    }
-                                }
-                                Spacer(minLength: 8)
-                                if row.selected {
-                                    Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold)).padding(.top, 2)
-                                }
-                            }
-                            .padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(hovered == row.id ? Theme.row : .clear)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .onHover { hovered = $0 ? row.id : (hovered == row.id ? nil : hovered) }
-                    }
-                }
-            }
-            .padding(6)
-        }
-        .frame(width: 320)
-        .frame(maxHeight: 420)
-    }
-}
-
 /// Start a new agent from the inbox. One composer box: the prompt on top, and beneath it a toolbar with where
 /// and with what it runs (chips opening Zero's own pickers) and the mic and send on the right. When nothing is
 /// open it is the whole inbox, headed "All quiet."
@@ -673,8 +656,8 @@ struct NewAgentCard: View {
     @Bindable var controller: InboxController
     var focus: FocusState<String?>.Binding
     let quiet: Bool
-    @State private var projectPicker = false
-    @State private var runtimePicker = false
+    @State private var projectAnchor = CGRect.zero
+    @State private var runtimeAnchor = CGRect.zero
 
     private var runtime: SpawnChoice? { controller.spawnRuntimes.first { $0.id == controller.spawnRuntime } }
     private var model: SpawnChoice? { controller.spawnModels.first { $0.id == controller.spawnModel } }
@@ -702,33 +685,14 @@ struct NewAgentCard: View {
                     .onSubmit { controller.spawn() }
                 HStack(spacing: 6) {
                     // Where: grouped by adapter, each project with its path.
-                    chip(icon: choiceIcon(project?.icon) ?? Image(systemName: "folder"), title: project?.name ?? "Project") { projectPicker.toggle() }
-                        .popover(isPresented: $projectPicker, arrowEdge: .bottom) {
-                            ChoicePopover(sections: [PickerSection(id: "solo", title: "Solo projects", icon: choiceIcon("solo"),
-                                rows: controller.spawnTargets.map { choice in
-                                    PickerRow(id: choice.id, icon: nil, title: choice.name, detail: choice.detail,
-                                              selected: choice.id == controller.spawnTarget) { controller.spawnTarget = choice.id }
-                                })], shown: $projectPicker)
-                        }
+                    chip(icon: choiceIcon(project?.icon) ?? Image(systemName: "folder"), title: project?.name ?? "Project",
+                         open: controller.selector?.kind == .project) { controller.openSelector(.project, anchor: projectAnchor) }
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { projectAnchor = $0 }
                     // With what: runtime and model in one pick; the chip shows the runtime's icon and the model's name.
                     chip(icon: choiceIcon(runtime?.icon) ?? Image(systemName: "apple.terminal"),
-                         title: model.map { $0.id.isEmpty ? (runtime?.name ?? "Default") : $0.name } ?? runtime?.name ?? "Runtime") { runtimePicker.toggle() }
-                        .popover(isPresented: $runtimePicker, arrowEdge: .bottom) {
-                            ChoicePopover(sections: controller.spawnRuntimes.map { rt in
-                                let models = controller.store.spawners.first?.spawnModels(for: rt) ?? []
-                                let rows = models.isEmpty
-                                    ? [PickerRow(id: rt.id, icon: choiceIcon(rt.icon), title: rt.name, detail: rt.detail,
-                                                 selected: rt.id == controller.spawnRuntime) { controller.spawnRuntime = rt.id }]
-                                    : models.map { m in
-                                        PickerRow(id: rt.id + "/" + m.id, icon: choiceIcon(m.icon ?? rt.icon), title: m.name, detail: m.detail,
-                                                  selected: rt.id == controller.spawnRuntime && m.id == controller.spawnModel) {
-                                            controller.spawnRuntime = rt.id
-                                            controller.spawnModel = m.id
-                                        }
-                                    }
-                                return PickerSection(id: rt.id, title: rt.name, icon: choiceIcon(rt.icon), rows: rows)
-                            }, shown: $runtimePicker)
-                        }
+                         title: model.map { $0.id.isEmpty ? (runtime?.name ?? "Default") : $0.name } ?? runtime?.name ?? "Runtime",
+                         open: controller.selector?.kind == .runtime) { controller.openSelector(.runtime, anchor: runtimeAnchor) }
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { runtimeAnchor = $0 }
                     Spacer(minLength: 8)
                     if controller.spawning {
                         Spinner().frame(width: 12, height: 12).padding(.trailing, 4)
@@ -756,16 +720,18 @@ struct NewAgentCard: View {
         .onAppear { controller.loadSpawnChoices() }
     }
 
-    /// A small pill: icon, current value, chevron. Opens one of Zero's pickers.
-    private func chip(icon: Image, title: String, action: @escaping () -> Void) -> some View {
+    /// A small pill: icon, current value, chevron. Opens one of Zero's selectors; reads pressed while it is open.
+    private func chip(icon: Image, title: String, open: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 5) {
                 icon.resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14).clipShape(RoundedRectangle(cornerRadius: 3))
                 Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1)
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(open ? 180 : 0))
             }
             .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(Theme.keycap).clipShape(Capsule())
+            .background(Theme.keycap.opacity(open ? 1 : 0.8)).clipShape(Capsule())
+            .overlay(Capsule().strokeBorder(open ? Theme.selectedStroke : .clear, lineWidth: 1))
         }
         .buttonStyle(.plain)
     }

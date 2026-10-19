@@ -7,8 +7,16 @@ public struct SpawnChoice: Identifiable, Hashable, Sendable {
     public let name: String
     public let detail: String?
     public let icon: String?
-    public init(id: String, name: String, detail: String? = nil, icon: String? = nil) {
-        self.id = id; self.name = name; self.detail = detail; self.icon = icon
+    /// Who provides it ("Anthropic", "OpenAI", "Solo"): the small line under a name in the picker.
+    public let provider: String?
+    /// For a model: its context window as text, and the reasoning levels it can be started at.
+    public let context: String?
+    public let levels: [SpawnChoice]
+    public let defaultLevel: String?
+    public init(id: String, name: String, detail: String? = nil, icon: String? = nil, provider: String? = nil,
+                context: String? = nil, levels: [SpawnChoice] = [], defaultLevel: String? = nil) {
+        self.id = id; self.name = name; self.detail = detail; self.icon = icon; self.provider = provider
+        self.context = context; self.levels = levels; self.defaultLevel = defaultLevel
     }
 }
 
@@ -26,7 +34,8 @@ public protocol AgentAdapter: Sendable {
     func spawnModels(for runtime: SpawnChoice) -> [SpawnChoice]
     /// One line of context for the start, such as the account the runtime will use.
     func spawnNote(for runtime: SpawnChoice) -> String?
-    func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?) async throws -> AgentIdentity
+    /// `settings`: per-model configuration Arsen picked, such as ["reasoning": "high"].
+    func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String]) async throws -> AgentIdentity
 }
 
 public extension AgentAdapter {
@@ -35,7 +44,7 @@ public extension AgentAdapter {
     func spawnRuntimes() async throws -> [SpawnChoice] { [] }
     func spawnModels(for runtime: SpawnChoice) -> [SpawnChoice] { [] }
     func spawnNote(for runtime: SpawnChoice) -> String? { nil }
-    func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?) async throws -> AgentIdentity {
+    func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String]) async throws -> AgentIdentity {
         throw AdapterError("\(name) cannot start agents")
     }
 }
@@ -72,7 +81,7 @@ public struct SoloAdapter: AgentAdapter {
             guard let id = row["id"] as? Int else { return nil }
             let path = (row["path"] as? String)?.replacingOccurrences(of: home, with: "~")
             return SpawnChoice(id: String(id), name: (row["display_name"] as? String) ?? (row["name"] as? String) ?? "Project \(id)",
-                               detail: path, icon: "solo")
+                               detail: path, icon: "solo", provider: "Solo")
         }
     }
 
@@ -81,8 +90,9 @@ public struct SoloAdapter: AgentAdapter {
         return rows.compactMap { row in
             guard let id = row["id"] as? Int, (row["enabled"] as? Bool) != false else { return nil }
             let name = (row["name"] as? String) ?? "Tool \(id)"
-            let icon = name.lowercased().contains("claude") ? "claude" : name.lowercased().contains("codex") ? "openai" : nil
-            return SpawnChoice(id: String(id), name: name, detail: row["command"] as? String, icon: icon)
+            let claude = name.lowercased().contains("claude"), codex = name.lowercased().contains("codex")
+            return SpawnChoice(id: String(id), name: name, detail: row["command"] as? String,
+                               icon: claude ? "claude" : codex ? "openai" : nil, provider: claude ? "Anthropic" : codex ? "OpenAI" : nil)
         }
     }
 
@@ -100,9 +110,9 @@ public struct SoloAdapter: AgentAdapter {
     /// Claude Code's picker for the active account: the built-in aliases, then the account's cached options with
     /// their own descriptions ("Fable 5.1 · Most capable…"), whose first part names the model precisely.
     private func claudeModels() -> [SpawnChoice] {
-        var choices = [SpawnChoice(id: "", name: "Default", detail: "Claude Code's current default", icon: "claude"),
-                       SpawnChoice(id: "opus", name: "Opus", detail: "Latest Opus", icon: "claude"),
-                       SpawnChoice(id: "sonnet", name: "Sonnet", detail: "Latest Sonnet", icon: "claude")]
+        var choices = [SpawnChoice(id: "", name: "Default", detail: "Whatever Claude Code currently defaults to.", icon: "claude", provider: "Anthropic"),
+                       SpawnChoice(id: "opus", name: "Opus", detail: "The latest Opus.", icon: "claude", provider: "Anthropic"),
+                       SpawnChoice(id: "sonnet", name: "Sonnet", detail: "The latest Sonnet.", icon: "claude", provider: "Anthropic")]
         let config = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude.json")
         guard let data = try? Data(contentsOf: config), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let extra = json["additionalModelOptionsCache"] as? [[String: Any]] else { return choices }
@@ -113,7 +123,8 @@ public struct SoloAdapter: AgentAdapter {
             let parts = description.components(separatedBy: " · ")
             let title = parts.first.map { $0.hasPrefix(label) ? $0 : label } ?? label
             let detail = parts.count > 1 ? parts.dropFirst().joined(separator: " · ") : (description.isEmpty ? nil : description)
-            choices.append(SpawnChoice(id: value, name: title, detail: detail, icon: "claude"))
+            choices.append(SpawnChoice(id: value, name: title, detail: detail, icon: "claude", provider: "Anthropic",
+                                       context: value.hasSuffix("[1m]") ? "1M tokens" : nil))
         }
         return choices
     }
@@ -128,7 +139,14 @@ public struct SoloAdapter: AgentAdapter {
             .sorted { (($0["priority"] as? Int) ?? 99) < (($1["priority"] as? Int) ?? 99) }
             .compactMap { model in
                 guard let slug = model["slug"] as? String else { return nil }
-                return SpawnChoice(id: slug, name: (model["display_name"] as? String) ?? slug, detail: model["description"] as? String, icon: "openai")
+                let window = (model["context_window"] as? Int).map { $0 >= 1_000_000 ? "\($0 / 1_000_000)M tokens" : "\($0 / 1000)K tokens" }
+                let levels = (model["supported_reasoning_levels"] as? [[String: Any]] ?? []).compactMap { level -> SpawnChoice? in
+                    guard let effort = level["effort"] as? String else { return nil }
+                    return SpawnChoice(id: effort, name: effort.capitalized, detail: level["description"] as? String)
+                }
+                return SpawnChoice(id: slug, name: (model["display_name"] as? String) ?? slug, detail: model["description"] as? String,
+                                   icon: "openai", provider: "OpenAI", context: window, levels: levels,
+                                   defaultLevel: model["default_reasoning_level"] as? String)
             }
     }
 
@@ -148,10 +166,15 @@ public struct SoloAdapter: AgentAdapter {
     }
 
     /// Spawns the agent in the project, waits until it is idle at its prompt, then types the first message.
-    public func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?) async throws -> AgentIdentity {
+    public func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String]) async throws -> AgentIdentity {
         guard let projectID = Int(target.id), let toolID = Int(runtime.id) else { throw AdapterError("Bad Solo ids") }
         var arguments: [String: Any] = ["project_id": projectID, "agent_tool_id": toolID, "include_agent_instructions": false]
-        if let model, !model.id.isEmpty { arguments["extra_args"] = ["--model", model.id] }
+        var extra: [String] = []
+        if let model, !model.id.isEmpty { extra += ["--model", model.id] }
+        if runtime.name.lowercased().contains("codex"), let level = settings["reasoning"], !level.isEmpty {
+            extra += ["-c", "model_reasoning_effort=\"\(level)\""]
+        }
+        if !extra.isEmpty { arguments["extra_args"] = extra }
         let created = try await resultJSON(of: call(tool: "spawn_agent", arguments: arguments)) as? [String: Any] ?? [:]
         guard let processID = created["process_id"] as? Int else { throw AdapterError("Solo did not return a process id") }
         let name = (created["name"] as? String) ?? "agent-\(processID)"

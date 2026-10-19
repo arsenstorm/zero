@@ -98,6 +98,8 @@ final class Panel: NSPanel {
     private var inboxPanel: Panel!
     private var hotKey: EventHotKeyRef?
     private var statusItem: NSStatusItem!
+    private var selectorPanel: Panel?
+    private var selectorMonitors: [Any] = []
     private var settingsWindow: NSWindow?
     private let settings = Settings()
     private var pinnedDisplay: CGDirectDisplayID?
@@ -113,6 +115,8 @@ final class Panel: NSPanel {
         store.onChange = { [weak self] ask in serverChanged?(ask); self?.drops.changed(ask) }
         store.onCreate = { [weak self] ask in self?.arrived(ask) }
         inbox.hide = { [weak self] in self?.hideInbox() }
+        inbox.presentSelector = { [weak self] anchor in self?.showSelector(anchorInInbox: anchor) }
+        inbox.dismissSelector = { [weak self] in self?.hideSelector() }
         makePanels()
         makeStatusItem()
         applySettings()
@@ -166,6 +170,43 @@ final class Panel: NSPanel {
         }
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    /// The selector is a panel of its own, so it can reach past the inbox's edges: the 240 pt list aligned with the
+    /// chip and the 224 pt preview to its left, above the chip when there is room, otherwise below.
+    private func showSelector(anchorInInbox anchor: CGRect) {
+        guard let selector = inbox.selector, let content = inboxPanel.contentView else { return }
+        hideSelector(keepState: true)
+        let view = FirstMouseHostingView(rootView: AnyView(SelectorView(controller: inbox, state: selector)))
+        view.sizingOptions = []
+        let size = view.fittingSize
+        let panel = makePanel(size: size, content: view)
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
+        // SwiftUI's global frame is in the window's content, top-left origin; AppKit wants bottom-left.
+        let appKit = NSRect(x: anchor.minX, y: content.bounds.height - anchor.maxY, width: anchor.width, height: anchor.height)
+        let chip = inboxPanel.convertToScreen(appKit)
+        let listX = chip.minX - 232 // 224 preview + 8 gap sit to the left of the list
+        var y = chip.maxY + 4
+        if let screen = inboxPanel.screen, y + size.height > screen.visibleFrame.maxY { y = chip.minY - 4 - size.height }
+        panel.setFrame(NSRect(x: listX, y: y, width: size.width, height: size.height), display: true)
+        panel.makeKeyAndOrderFront(nil)
+        selectorPanel = panel
+        // A click anywhere but the selector closes it: in another app (global) or in Zero's other windows (local).
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
+            self?.inbox.closeSelector()
+        }) { selectorMonitors.append(global) }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self] event in
+            if let self, let panel = selectorPanel, event.window !== panel { inbox.closeSelector() }
+            return event
+        }) { selectorMonitors.append(local) }
+    }
+
+    private func hideSelector(keepState: Bool = false) {
+        selectorMonitors.forEach { NSEvent.removeMonitor($0) }
+        selectorMonitors.removeAll()
+        selectorPanel?.orderOut(nil)
+        selectorPanel = nil
+        if !keepState, openedByIntent || inbox.takesKeys { inboxPanel.makeKey() }
     }
 
     private func makePanel(size: NSSize, content: NSView) -> Panel {
