@@ -115,7 +115,6 @@ struct SelectorView: View {
     private func select(tab: String) {
         state.tab = tab
         state.highlighted = rows.first { $0.selected }?.id ?? rows.first?.id
-        DispatchQueue.main.async { state.onHeightChange?(0) } // the app re-measures the laid-out view
     }
 
     private func singleHeader(_ section: SelectorSection) -> some View {
@@ -151,28 +150,17 @@ struct SelectorView: View {
         .onHover { if $0 { state.highlighted = row.id } }
     }
 
-    /// The highlighted row's description in full. Every row's description is laid out underneath, invisible,
-    /// so the footer is always as tall as the tab's longest one and never changes height as the pointer moves.
+    /// The highlighted row's description, in a box two lines tall with the text centred in it: descriptions fit
+    /// two lines, a one-liner sits in the middle, and the box never changes height as the pointer moves.
     private var footer: some View {
-        ZStack(alignment: .topLeading) {
-            ForEach(rows) { row in
-                Text(describe(row)).hidden()
-            }
-            Text(highlightedRow.map(describe) ?? " ")
-        }
-        .font(.system(size: 11)).foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16).padding(.vertical, 8)
+        Text(highlightedRow.map(describe) ?? " ")
+            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: 30, alignment: .center)
+            .padding(.horizontal, 16).padding(.vertical, 7)
     }
 
-    private func describe(_ row: SelectorRow) -> String {
-        var parts: [String] = []
-        if let detail = row.detail { parts.append(detail) }
-        if let context = row.context { parts.append(context + " context") }
-        if parts.isEmpty, let provider = row.provider { parts.append(provider) }
-        return parts.joined(separator: " · ")
-    }
+    private func describe(_ row: SelectorRow) -> String { row.detail ?? row.provider ?? "" }
 
     private func move(_ delta: Int) {
         let ids = rows.map(\.id)

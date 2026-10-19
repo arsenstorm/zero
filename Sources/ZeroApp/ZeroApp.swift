@@ -190,35 +190,22 @@ final class Panel: NSPanel {
         let chip = inboxPanel.convertToScreen(appKit)
         // Sized exactly to the laid-out view, left-aligned with the chip, above it unless that runs off the screen.
         // Content hugs the edge nearest the chip, and a tab change resizes the panel from the far edge only.
-        let view = FirstMouseHostingView(rootView: AnyView(SelectorView(controller: inbox, state: selector)))
-        view.sizingOptions = [.intrinsicContentSize]
-        // Host it first, then measure: a hosting view has no size until it is in a window and laid out.
-        let panel = makePanel(size: NSSize(width: SelectorView.width, height: 360), content: view)
-        panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
-        func measuredHeight() -> CGFloat {
-            view.layoutSubtreeIfNeeded()
-            let intrinsic = view.intrinsicContentSize.height
-            let fitting = view.fittingSize.height
-            let height = max(intrinsic, fitting)
-            return height.isFinite && height > 40 ? height : 360
-        }
-        let size = NSSize(width: SelectorView.width, height: measuredHeight())
+        // A fixed, transparent strip above the chip (below it only when there is no room). The card inside is
+        // anchored to the chip's edge, so a tab change grows or shrinks it from the far edge in the same frame,
+        // with no window resizing and nothing moving underneath.
+        let roomAbove = (inboxPanel.screen.map { chip.minY - 6 - $0.visibleFrame.minY } ?? 480)
+        let opensAbove = roomAbove >= 240
+        let height = min(480, opensAbove ? roomAbove : (inboxPanel.screen.map { $0.visibleFrame.maxY - chip.maxY - 6 } ?? 480))
+        let size = NSSize(width: SelectorView.width, height: height)
         var x = chip.minX
-        var y = chip.minY - 6 - size.height
-        var opensAbove = true
-        if let screen = inboxPanel.screen {
-            if y < screen.visibleFrame.minY { y = chip.maxY + 6; opensAbove = false }
-            x = min(x, screen.visibleFrame.maxX - size.width - 8)
-        }
+        let y = opensAbove ? chip.minY - 6 - size.height : chip.maxY + 6
+        if let screen = inboxPanel.screen { x = min(x, screen.visibleFrame.maxX - size.width - 8) }
+        let view = FirstMouseHostingView(rootView: AnyView(SelectorView(controller: inbox, state: selector)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: opensAbove ? .bottom : .top)))
+        view.sizingOptions = []
+        let panel = makePanel(size: size, content: view)
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
         panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
-        selector.onHeightChange = { [weak panel] _ in
-            guard let panel else { return }
-            let height = measuredHeight()
-            var frame = panel.frame
-            if opensAbove { frame.origin.y = frame.maxY - height }
-            frame.size.height = height
-            panel.setFrame(frame, display: true)
-        }
         panel.makeKeyAndOrderFront(nil)
         selectorPanel = panel
         // A click anywhere but the selector closes it: in another app (global) or in Zero's other windows (local).
@@ -353,7 +340,8 @@ final class Panel: NSPanel {
             // Pinned: the keyboard is taken only by a deliberate act (the pin click, a click into the inbox), never
             // by the pointer drifting back; otherwise typing elsewhere gets stolen mid-sentence.
             if !openedByIntent { syncKeyboard() }
-        } else if inbox.dictatingFor == nil, !openedByIntent {
+        } else if inbox.dictatingFor == nil, !openedByIntent, inbox.selector == nil {
+            // An open selector keeps the inbox up wherever the pointer goes; a click elsewhere closes it.
             hideInbox()
         }
     }
