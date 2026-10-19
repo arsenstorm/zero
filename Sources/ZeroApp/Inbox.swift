@@ -527,21 +527,71 @@ enum AgentStatus {
 }
 
 /// An arc turning once a second; a plain dot under Reduce Motion.
+/// A spinner driven by Core Animation: the arc turns on the render server, so a busy main thread (a Solo call
+/// during a spawn, a layout pass in the bar) cannot stall it, and a view rebuild does not restart it. A SwiftUI
+/// rotationEffect did both.
 struct Spinner: View {
     var color: Color = .blue
-    @State private var turning = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         if reduceMotion {
             Circle().fill(color)
         } else {
-            Circle().trim(from: 0.15, to: 1).stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                .padding(1)
-                .rotationEffect(.degrees(turning ? 360 : 0))
-                // Scoped to `turning`: a withAnimation(.repeatForever) in onAppear would leak into every layout change.
-                .animation(.linear(duration: 1).repeatForever(autoreverses: false), value: turning)
-                .onAppear { turning = true }
+            SpinnerLayer(color: NSColor(color))
         }
+    }
+}
+
+private struct SpinnerLayer: NSViewRepresentable {
+    let color: NSColor
+    func makeNSView(context: Context) -> SpinnerView { SpinnerView() }
+    func updateNSView(_ view: SpinnerView, context: Context) { view.color = color }
+}
+
+final class SpinnerView: NSView {
+    var color: NSColor = .systemBlue { didSet { recolor() } }
+    private let arc = CAShapeLayer()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        arc.fillColor = nil
+        arc.lineWidth = 2
+        arc.lineCap = .round
+        arc.strokeStart = 0.15
+        layer?.addSublayer(arc)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    /// Pointer events pass through, so the gestures on the dot or row underneath keep working.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func layout() {
+        super.layout()
+        arc.frame = bounds
+        arc.path = CGPath(ellipseIn: bounds.insetBy(dx: 2, dy: 2), transform: nil)
+        recolor()
+        spin()
+    }
+
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); spin() }
+    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); recolor() }
+
+    private func recolor() {
+        effectiveAppearance.performAsCurrentDrawingAppearance { arc.strokeColor = color.cgColor }
+    }
+
+    /// One turn a second, clockwise, forever; re-added whenever the view comes back on screen, since Core
+    /// Animation drops animations from layers that leave the hierarchy.
+    private func spin() {
+        guard window != nil, arc.animation(forKey: "spin") == nil else { return }
+        let turn = CABasicAnimation(keyPath: "transform.rotation.z")
+        turn.fromValue = 0
+        turn.toValue = -2 * Double.pi
+        turn.duration = 1
+        turn.repeatCount = .infinity
+        turn.isRemovedOnCompletion = false
+        arc.add(turn, forKey: "spin")
     }
 }
 
