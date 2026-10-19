@@ -177,17 +177,21 @@ final class Panel: NSPanel {
     private func showSelector(anchorInInbox anchor: CGRect) {
         guard let selector = inbox.selector, let content = inboxPanel.contentView else { return }
         hideSelector(keepState: true)
-        let view = FirstMouseHostingView(rootView: AnyView(SelectorView(controller: inbox, state: selector)))
-        view.sizingOptions = []
-        let size = view.fittingSize
-        let panel = makePanel(size: size, content: view)
-        panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
         // SwiftUI's global frame is in the window's content, top-left origin; AppKit wants bottom-left.
         let appKit = NSRect(x: anchor.minX, y: content.bounds.height - anchor.maxY, width: anchor.width, height: anchor.height)
         let chip = inboxPanel.convertToScreen(appKit)
+        // A fixed panel (a scrolling list has no intrinsic height); the content hugs the edge nearest the chip.
+        let size = NSSize(width: 472, height: 440)
         let listX = chip.minX - 232 // 224 preview + 8 gap sit to the left of the list
         var y = chip.maxY + 4
-        if let screen = inboxPanel.screen, y + size.height > screen.visibleFrame.maxY { y = chip.minY - 4 - size.height }
+        var opensUpward = true
+        if let screen = inboxPanel.screen, y + size.height > screen.visibleFrame.maxY { y = chip.minY - 4 - size.height; opensUpward = false }
+        let view = FirstMouseHostingView(rootView: AnyView(
+            SelectorView(controller: inbox, state: selector)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: opensUpward ? .bottomTrailing : .topTrailing)))
+        view.sizingOptions = []
+        let panel = makePanel(size: size, content: view)
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
         panel.setFrame(NSRect(x: listX, y: y, width: size.width, height: size.height), display: true)
         panel.makeKeyAndOrderFront(nil)
         selectorPanel = panel
