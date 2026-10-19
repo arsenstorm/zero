@@ -44,7 +44,18 @@ public final class Store {
         var item = Ask(kind: .message, title: "Message", body: prompt, agent: identity)
         item.status = "sent"
         _ = create(item)
+        watchReply(from: identity, to: prompt, via: adapter)
         return identity
+    }
+
+    /// The agent's answer to something Arsen sent comes back as a note from it, so the exchange reads in Zero.
+    private func watchReply(from identity: AgentIdentity, to text: String, via adapter: AgentAdapter) {
+        Task { [weak self] in
+            guard let reply = await adapter.reply(from: identity, to: text), let self else { return }
+            var note = Ask(kind: .note, title: "Replied", body: reply, agent: identity, ttl: 7 * 86400)
+            note.status = "done"
+            _ = create(note)
+        }
     }
 
     /// Sends Arsen's text into the agent's session and records it in the timeline as sent or failed.
@@ -57,13 +68,7 @@ public final class Store {
             guard let adapter = adapters.first(where: { $0.canReach(identity) }) else { throw AdapterError("No way to reach \(agent)") }
             try await adapter.send(text, to: identity)
             update(created.id) { $0.status = "sent" }
-            // The agent's answer comes back as a note from it, so the conversation reads in Zero.
-            Task { [weak self] in
-                guard let reply = await adapter.reply(from: identity, to: text), let self else { return }
-                var note = Ask(kind: .note, title: "Replied", body: reply, agent: identity, ttl: 7 * 86400)
-                note.status = "done"
-                _ = create(note)
-            }
+            watchReply(from: identity, to: text, via: adapter)
         } catch {
             update(created.id) { $0.status = "failed: \(error.localizedDescription)" }
         }
