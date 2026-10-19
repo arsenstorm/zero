@@ -20,6 +20,7 @@ struct SelectorRow: Identifiable {
     let pick: () -> Void
 }
 
+/// A provider (Anthropic, OpenAI, Solo): one tab of the selector.
 struct SelectorSection: Identifiable {
     let id: String
     let title: String
@@ -27,44 +28,45 @@ struct SelectorSection: Identifiable {
     let rows: [SelectorRow]
 }
 
-/// The open selector's transient state: the kind and which row the pointer or arrows are on.
+/// The open selector's transient state: the kind, the provider tab, and the row under the pointer or arrows.
 @MainActor @Observable
 final class SelectorState {
     let kind: SelectorKind
+    var tab: String?
     var highlighted: String?
     init(kind: SelectorKind) { self.kind = kind }
 }
 
-/// Zero's selector: a plain dropdown under the chip. Sections per provider, each headed by its icon and name;
-/// rows of a specific model (or project) with one line about it; a tick on the current one. Arrows move,
-/// Return picks, Esc closes. No search and no preview: the lists are short and the rows say enough.
+/// Zero's selector, a compact palette: provider tabs across the top, the chosen provider's rows beneath at
+/// 28 pt each (name left, a small badge right, a tick on the current one), and a single footer line that
+/// describes the row under the pointer. ←→ switch provider, ↑↓ move, Return picks, Esc closes.
 struct SelectorView: View {
     @Bindable var controller: InboxController
     @Bindable var state: SelectorState
     @FocusState private var focused: Bool
 
+    static let width: CGFloat = 272
+    private static let rowHeight: CGFloat = 28
+    private static let tabsHeight: CGFloat = 40
+    private static let footerHeight: CGFloat = 36
+
     private var sections: [SelectorSection] { controller.selectorSections(for: state.kind) }
-    private var rows: [SelectorRow] { sections.flatMap(\.rows) }
-    static let width: CGFloat = 300
+    private var section: SelectorSection? { sections.first { $0.id == state.tab } ?? sections.first }
+    private var rows: [SelectorRow] { section?.rows ?? [] }
+    private var highlightedRow: SelectorRow? { rows.first { $0.id == state.highlighted } }
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(sections) { section in
-                    HStack(spacing: 6) {
-                        if let icon = section.icon {
-                            icon.resizable().aspectRatio(contentMode: .fit).frame(width: 13, height: 13).clipShape(RoundedRectangle(cornerRadius: 3))
-                        }
-                        Text(section.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 12).padding(.top, section.id == sections.first?.id ? 10 : 14).padding(.bottom, 6)
-                    ForEach(section.rows) { row in rowView(row) }
-                }
+        VStack(spacing: 0) {
+            if sections.count > 1 { tabs } else if let section { singleHeader(section) }
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 1) { ForEach(rows) { rowView($0) } }
+                    .padding(.horizontal, 6).padding(.vertical, 4)
             }
-            .padding(.horizontal, 6).padding(.bottom, 6)
+            .frame(height: min(CGFloat(max(rows.count, 1)) * Self.rowHeight + 8 + CGFloat(max(rows.count - 1, 0)), 10 * Self.rowHeight + 8))
+            Divider().padding(.horizontal, 10)
+            footer
         }
         .frame(width: Self.width)
-        .frame(height: min(SelectorView.height(for: sections), 460))
         .background(Theme.card)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke, lineWidth: 1))
@@ -74,22 +76,63 @@ struct SelectorView: View {
         .focusEffectDisabled()
         .onKeyPress(.downArrow) { move(1); return .handled }
         .onKeyPress(.upArrow) { move(-1); return .handled }
+        .onKeyPress(.leftArrow) { switchTab(-1); return .handled }
+        .onKeyPress(.rightArrow) { switchTab(1); return .handled }
         .onKeyPress(.return) { pickHighlighted(); return .handled }
         .onKeyPress(.escape) { controller.closeSelector(); return .handled }
         .onAppear {
+            // Open on the provider that holds the current pick, with that pick highlighted.
+            if state.tab == nil { state.tab = sections.first { $0.rows.contains { $0.selected } }?.id ?? sections.first?.id }
             state.highlighted = rows.first { $0.selected }?.id ?? rows.first?.id
             focused = true
         }
     }
 
-    /// The list's natural height: headers, rows with or without a detail line, paddings. Capped by the caller.
-    static func height(for sections: [SelectorSection]) -> CGFloat {
-        var height: CGFloat = 6
-        for (index, section) in sections.enumerated() {
-            height += (index == 0 ? 10 : 14) + 16 + 6
-            for row in section.rows { height += row.detail == nil ? 30 : 46 }
+    /// The natural height for a kind, so the panel can be sized before the view exists.
+    static func height(for sections: [SelectorSection], tab: String?) -> CGFloat {
+        let rows = (sections.first { $0.id == tab } ?? sections.first { $0.rows.contains { $0.selected } } ?? sections.first)?.rows.count ?? 0
+        let list = min(CGFloat(max(rows, 1)) * rowHeight + 8 + CGFloat(max(rows - 1, 0)), 10 * rowHeight + 8)
+        return tabsHeight + list + 1 + footerHeight
+    }
+
+    private var tabs: some View {
+        HStack(spacing: 4) {
+            ForEach(sections) { section in
+                let active = section.id == (state.tab ?? sections.first?.id)
+                Button {
+                    state.tab = section.id
+                    state.highlighted = section.rows.first { $0.selected }?.id ?? section.rows.first?.id
+                } label: {
+                    HStack(spacing: 6) {
+                        if let icon = section.icon {
+                            icon.resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14).clipShape(RoundedRectangle(cornerRadius: 3))
+                        }
+                        Text(section.title).font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundStyle(active ? .primary : .secondary)
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(active ? Theme.row : .clear)
+                    .clipShape(Capsule())
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer(minLength: 0)
         }
-        return height
+        .padding(.horizontal, 8)
+        .frame(height: Self.tabsHeight)
+    }
+
+    private func singleHeader(_ section: SelectorSection) -> some View {
+        HStack(spacing: 6) {
+            if let icon = section.icon {
+                icon.resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14).clipShape(RoundedRectangle(cornerRadius: 3))
+            }
+            Text(section.title).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .frame(height: Self.tabsHeight)
     }
 
     private func rowView(_ row: SelectorRow) -> some View {
@@ -98,29 +141,33 @@ struct SelectorView: View {
             row.pick()
             controller.closeSelector()
         } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(row.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                    if let detail = row.detail {
-                        Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
-                    }
-                }
+            HStack(spacing: 8) {
+                Text(row.title).font(.system(size: 13, weight: row.selected ? .semibold : .regular)).lineLimit(1)
                 Spacer(minLength: 6)
                 if let context = row.context {
                     Text(context).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
                         .padding(.horizontal, 5).padding(.vertical, 2).background(Theme.keycap).clipShape(RoundedRectangle(cornerRadius: 4))
                 }
-                Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold))
-                    .opacity(row.selected ? 1 : 0)
+                Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold)).opacity(row.selected ? 1 : 0)
             }
-            .padding(.horizontal, 8).padding(.vertical, row.detail == nil ? 6 : 7)
+            .padding(.horizontal, 10)
+            .frame(height: Self.rowHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(current ? Theme.row : .clear)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: 7))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { if $0 { state.highlighted = row.id } }
+    }
+
+    /// One line about the highlighted row; the space is reserved so the panel never changes height.
+    private var footer: some View {
+        Text(highlightedRow?.detail ?? highlightedRow?.provider ?? " ")
+            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14)
+            .frame(height: Self.footerHeight)
     }
 
     private func move(_ delta: Int) {
@@ -129,8 +176,15 @@ struct SelectorView: View {
         state.highlighted = ids[max(0, min(ids.count - 1, index + delta))]
     }
 
+    private func switchTab(_ delta: Int) {
+        let ids = sections.map(\.id)
+        guard ids.count > 1, let index = ids.firstIndex(of: state.tab ?? ids[0]) else { return }
+        state.tab = ids[(index + delta + ids.count) % ids.count]
+        state.highlighted = rows.first { $0.selected }?.id ?? rows.first?.id
+    }
+
     private func pickHighlighted() {
-        guard let row = rows.first(where: { $0.id == state.highlighted }) else { return }
+        guard let row = highlightedRow else { return }
         row.pick()
         controller.closeSelector()
     }

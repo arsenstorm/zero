@@ -54,14 +54,20 @@ final class InboxController {
         UserDefaults.standard.set(spawnSettings, forKey: "spawnSettings")
     }
 
+    @ObservationIgnored private var selectorClosedAt = Date.distantPast
+
     func openSelector(_ kind: SelectorKind, anchor: CGRect) {
         if let selector, selector.kind == kind { closeSelector(); return }
+        // The click on the chip that should close the selector first closes it through the click-outside
+        // monitor, then arrives here: within a third of a second of that close, it is that close.
+        if Date().timeIntervalSince(selectorClosedAt) < 0.3 { return }
         selector = SelectorState(kind: kind)
         presentSelector?(anchor)
     }
 
     func closeSelector() {
         guard selector != nil else { return }
+        selectorClosedAt = Date()
         selector = nil
         dismissSelector?()
     }
@@ -653,7 +659,20 @@ func choiceIcon(_ name: String?) -> Image? {
         return Image(nsImage: icon)
     }
     guard let url = Bundle.main.url(forResource: name, withExtension: "png"), let image = NSImage(contentsOf: url) else { return nil }
+    if name == "openai" { return Image(nsImage: onWhiteTile(image)) }
     return Image(nsImage: image)
+}
+
+/// OpenAI's mark as OpenAI now shows it: black on a white rounded square.
+private func onWhiteTile(_ mark: NSImage) -> NSImage {
+    let size = NSSize(width: 64, height: 64)
+    let tile = NSImage(size: size)
+    tile.lockFocus()
+    NSColor.white.setFill()
+    NSBezierPath(roundedRect: NSRect(origin: .zero, size: size), xRadius: 14, yRadius: 14).fill()
+    mark.draw(in: NSRect(x: 11, y: 11, width: 42, height: 42), from: .zero, operation: .sourceOver, fraction: 1)
+    tile.unlockFocus()
+    return tile
 }
 
 /// Start a new agent from the inbox. One composer box: the prompt on top, and beneath it a toolbar with where
