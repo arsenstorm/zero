@@ -27,12 +27,12 @@ public enum ClaudeModels {
     }
 
     /// Newest version first; within one, Mythos, Fable, Opus, Sonnet, Haiku, then the rest.
-    static func rank(_ name: String) -> (Double, Int) {
+    static func rank(_ name: String) -> (Double, Int, String) {
         let families = ["mythos", "fable", "opus", "sonnet", "haiku"]
         let lower = name.lowercased()
         let family = families.firstIndex { lower.contains($0) } ?? families.count
         let version = Double(lower.split(separator: " ").first { Double($0) != nil } ?? "") ?? 0
-        return (-version, family)
+        return (-version, family, name)
     }
 
     /// Fetches the account's models and caches them. Returns true when the list changed.
@@ -93,8 +93,10 @@ public enum ClaudeModels {
             let parts = description.components(separatedBy: " · ")
             let title = parts.first.map { $0.hasPrefix(label) ? $0 : label } ?? label
             let detail = parts.count > 1 ? parts.dropFirst().joined(separator: " · ") : (description.isEmpty ? nil : description)
-            return SpawnChoice(id: value, name: shortName(title), detail: detail, icon: "claude", provider: "Anthropic",
-                               context: value.hasSuffix("[1m]") ? "1M tokens" : nil)
+            // The 1M-context variant shares its name with the base model; say so in the row, not a badge.
+            let long = value.hasSuffix("[1m]")
+            return SpawnChoice(id: value, name: shortName(title) + (long ? " (1M)" : ""), detail: detail, icon: "claude",
+                               provider: "Anthropic", context: long ? "1M tokens" : nil)
         }
     }
 
