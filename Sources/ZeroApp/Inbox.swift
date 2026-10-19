@@ -289,13 +289,16 @@ final class InboxController {
         spawning = true
         spawnError = nil
         focusedReply = nil
+        // Cleared now, not when the spawn finishes: Return in an AppKit text field selects its text, and the
+        // prompt sat there highlighted for the seconds Solo takes. It comes back if the spawn fails.
+        drafts[Self.newAgentKey] = nil
         Task {
             do {
                 let identity = try await store.spawn(prompt: prompt, adapter: adapter, target: target, runtime: runtime, model: model, settings: settings)
-                drafts[Self.newAgentKey] = nil
                 show(agent: identity.name)
             } catch {
                 spawnError = error.localizedDescription
+                drafts[Self.newAgentKey] = prompt
             }
             spawning = false
         }

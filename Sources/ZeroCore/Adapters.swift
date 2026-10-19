@@ -72,7 +72,9 @@ public struct SoloAdapter: AgentAdapter {
 
     public func send(_ text: String, to agent: AgentIdentity) async throws {
         guard let processID = agent.soloProcessID else { throw AdapterError("\(agent.name) has no Solo process id") }
-        _ = try await resultText(of: call(tool: "send_input", arguments: ["process_id": processID, "input": text, "submit": true]))
+        var arguments: [String: Any] = ["process_id": processID, "input": text, "submit": true]
+        if let project = agent.soloProjectID { arguments["project_id"] = project }
+        _ = try await resultText(of: call(tool: "send_input", arguments: arguments))
     }
 
     public var canSpawn: Bool { FileManager.default.isExecutableFile(atPath: helper) }
@@ -169,16 +171,17 @@ public struct SoloAdapter: AgentAdapter {
         let created = try await resultJSON(of: call(tool: "spawn_agent", arguments: arguments)) as? [String: Any] ?? [:]
         guard let processID = created["process_id"] as? Int else { throw AdapterError("Solo did not return a process id") }
         let name = (created["name"] as? String) ?? "agent-\(processID)"
-        let identity = AgentIdentity(name: name, host: ProcessInfo.processInfo.hostName, soloProcessID: processID)
+        let identity = AgentIdentity(name: name, host: ProcessInfo.processInfo.hostName, soloProcessID: processID, soloProjectID: projectID)
         // A prompt typed before the agent sits at its own input is lost, so wait: first for idle, then for any
         // start-up dialog (Claude Code's "trust this folder", for one) to be answered in Solo. Up to 90 s.
         var ready = false
         for second in 0..<90 {
             try await Task.sleep(for: .seconds(1))
-            let status = try await resultJSON(of: call(tool: "get_process_status", arguments: ["process_id": processID])) as? [String: Any]
+            // Solo wants the project on every call: without it, "No project selected" after a successful spawn.
+            let status = try await resultJSON(of: call(tool: "get_process_status", arguments: ["process_id": processID, "project_id": projectID])) as? [String: Any]
             let idle = (status?["agent_state"] as? [String: Any])?["idle"] as? Bool == true
             guard idle || second >= 20 else { continue }
-            let screen = try await resultText(of: call(tool: "get_process_output", arguments: ["process_id": processID, "lines": 15]))
+            let screen = try await resultText(of: call(tool: "get_process_output", arguments: ["process_id": processID, "project_id": projectID, "lines": 15]))
             let dialog = ["Enter to confirm", "trust this folder", "Esc to cancel"].contains { screen.contains($0) }
             if !dialog { ready = true; break }
         }

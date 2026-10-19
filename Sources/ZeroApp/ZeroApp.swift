@@ -249,7 +249,9 @@ final class Panel: NSPanel {
         if !keepState, openedByIntent || inbox.takesKeys { inboxPanel.makeKey() }
     }
 
-    /// Emil's popover: fade with a scale from 0.95 at the trigger and a 4 pt nudge toward it, ease-out in,
+    /// Emil's popover: fade with a scale from 0.95 at the trigger, ease-out in, faster ease-in out. (No nudge
+    /// toward the trigger: the card sits flush with the strip's edge there, so a nudge pushed it out of the
+    /// window and its top border vanished for the first frames.)
     /// faster ease-in out. One Core Animation group on the content layer, so both run on the render server in
     /// step; a window-alpha fade is an AppKit timer animation and starts a frame late.
     private static func animateSelector(_ panel: NSWindow, anchor: CGPoint, opening: Bool, completion: (() -> Void)? = nil) {
@@ -259,9 +261,8 @@ final class Panel: NSPanel {
         var small = CATransform3DMakeTranslation(anchor.x, anchor.y, 0)
         small = CATransform3DScale(small, 0.95, 0.95, 1)
         small = CATransform3DTranslate(small, -anchor.x, -anchor.y, 0)
-        small.m42 += anchor.y > 0 ? 4 : -4
         let (from, to) = opening ? (small, CATransform3DIdentity) : (CATransform3DIdentity, small)
-        let duration = opening ? 0.1 : 0.07
+        let duration = opening ? 0.12 : 0.08
         let curve = opening ? CAMediaTimingFunction(controlPoints: 0.32, 0.72, 0, 1) : CAMediaTimingFunction(name: .easeIn)
         let scale = CABasicAnimation(keyPath: "transform")
         scale.fromValue = from
@@ -269,10 +270,12 @@ final class Panel: NSPanel {
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = opening ? 0 : 1
         fade.toValue = opening ? 1 : 0
+        // The children need the duration too: a group's duration only clips them, and a child without its own
+        // runs Core Animation's default 0.25 s, so at 0.1 s it was cut off part-way and snapped to the end.
+        for child in [scale, fade] { child.duration = duration; child.timingFunction = curve }
         let group = CAAnimationGroup()
         group.animations = [scale, fade]
         group.duration = duration
-        group.timingFunction = curve
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         CATransaction.setCompletionBlock(completion)

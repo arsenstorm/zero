@@ -13,10 +13,12 @@ public struct AgentIdentity: Codable, Hashable, Sendable {
     public var host: String
     public var cwd: String?
     public var soloProcessID: Int?
+    /// Solo scopes its calls to a project; every call about the process carries this one.
+    public var soloProjectID: Int?
     public var ticket: String?
 
-    public init(name: String, host: String, cwd: String? = nil, soloProcessID: Int? = nil, ticket: String? = nil) {
-        self.name = name; self.host = host; self.cwd = cwd; self.soloProcessID = soloProcessID; self.ticket = ticket
+    public init(name: String, host: String, cwd: String? = nil, soloProcessID: Int? = nil, soloProjectID: Int? = nil, ticket: String? = nil) {
+        self.name = name; self.host = host; self.cwd = cwd; self.soloProcessID = soloProcessID; self.soloProjectID = soloProjectID; self.ticket = ticket
     }
 }
 
