@@ -188,18 +188,18 @@ final class Panel: NSPanel {
         // SwiftUI's global frame is in the window's content, top-left origin; AppKit wants bottom-left.
         let appKit = NSRect(x: anchor.minX, y: content.bounds.height - anchor.maxY, width: anchor.width, height: anchor.height)
         let chip = inboxPanel.convertToScreen(appKit)
-        // A fixed, transparent strip above the chip (below it only when there is no room). The card inside is
+        // A fixed, transparent strip below the chip (above it only when there is no room). The card inside is
         // anchored to the chip's edge, so a tab change grows or shrinks it from the far edge in the same frame,
         // with no window resizing and nothing moving underneath.
-        let roomAbove = (inboxPanel.screen.map { chip.minY - 6 - $0.visibleFrame.minY } ?? 480)
-        let opensAbove = roomAbove >= 240
-        let height = min(480, opensAbove ? roomAbove : (inboxPanel.screen.map { $0.visibleFrame.maxY - chip.maxY - 6 } ?? 480))
-        let size = NSSize(width: SelectorView.width, height: height)
-        var x = chip.minX
-        let y = opensAbove ? chip.minY - 6 - size.height : chip.maxY + 6
-        if let screen = inboxPanel.screen { x = min(x, screen.visibleFrame.maxX - size.width - 8) }
+        let screen = inboxPanel.screen?.visibleFrame ?? NSScreen.screens[0].visibleFrame
+        let roomBelow = chip.minY - 6 - screen.minY
+        let roomAbove = screen.maxY - chip.maxY - 6
+        let opensBelow = roomBelow >= 240 || roomBelow >= roomAbove
+        let size = NSSize(width: SelectorView.width, height: min(480, opensBelow ? roomBelow : roomAbove))
+        let x = min(chip.minX, screen.maxX - size.width - 8)
+        let y = opensBelow ? chip.minY - 6 - size.height : chip.maxY + 6
         let view = FirstMouseHostingView(rootView: AnyView(SelectorView(controller: inbox, state: selector)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: opensAbove ? .bottom : .top)))
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: opensBelow ? .top : .bottom)))
         view.sizingOptions = []
         let panel = makePanel(size: size, content: view)
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
@@ -214,7 +214,7 @@ final class Panel: NSPanel {
         if let local = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self, weak selector] event in
             guard let self, let panel = selectorPanel else { return event }
             let y = event.locationInWindow.y, card = selector?.cardHeight ?? 0
-            let inCard = opensAbove ? y <= card : y >= panel.frame.height - card
+            let inCard = opensBelow ? y >= panel.frame.height - card : y <= card
             if event.window !== panel || !inCard { inbox.closeSelector() }
             return event
         }) { selectorMonitors.append(local) }
