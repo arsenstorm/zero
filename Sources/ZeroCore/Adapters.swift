@@ -86,18 +86,24 @@ public struct SoloAdapter: AgentAdapter {
         guard let processID = agent.soloProcessID else { return nil }
         var arguments: [String: Any] = ["process_id": processID]
         if let project = agent.soloProjectID { arguments["project_id"] = project }
-        var busy = false
-        for tick in 0..<450 { // every 2 s, up to 15 minutes; each check is one helper process
+        // Every 2 s, up to 15 minutes; each check is one helper process. Idle is not enough on its own (it may
+        // still be the idleness from before our message landed), so the screen is read whenever the agent is
+        // idle and the loop only ends once a reply after the echo of our message is there.
+        for _ in 0..<450 {
             try? await Task.sleep(for: .seconds(2))
             guard let status = try? await resultJSON(of: call(tool: "get_process_status", arguments: arguments)) as? [String: Any],
                   let state = status["agent_state"] as? [String: Any] else { continue }
-            if state["idle"] as? Bool != true { busy = true; continue }
-            guard busy || tick >= 5, (state["idle_seconds"] as? Double ?? 0) >= 1.5 else { continue }
+            if (status["status"] as? String) == "Exited" { NSLog("zero: reply watch for \(agent.name): process exited"); return nil }
+            guard state["idle"] as? Bool == true, (state["idle_seconds"] as? Double ?? 0) >= 1.5 else { continue }
             var output = arguments
             output["lines"] = 200
             let screen = (try? await resultText(of: call(tool: "get_process_output", arguments: output))) ?? ""
-            return Self.lastReply(in: screen, after: text)
+            if let reply = Self.lastReply(in: screen, after: text) {
+                NSLog("zero: reply from \(agent.name): \(reply.prefix(80))")
+                return reply
+            }
         }
+        NSLog("zero: reply watch for \(agent.name) timed out")
         return nil
     }
 
@@ -114,9 +120,10 @@ public struct SoloAdapter: AgentAdapter {
             if let first = trimmed.first, "❯〉›>".contains(first),
                trimmed.dropFirst().trimmingCharacters(in: .whitespaces).hasPrefix(needle) { start = index + 1 }
         }
+        guard start > 0 else { return nil } // no echo of our message yet: nothing after it can be the reply
         var blocks: [[String]] = []
         var current: [String]?
-        for line in lines[min(start, lines.count)...] {
+        for line in lines[start...] {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.contains("· done") || "❯〉›─".contains(trimmed.first ?? " ") { break }
             if trimmed.hasPrefix("⏺") || trimmed.hasPrefix("●") {
@@ -231,8 +238,8 @@ public struct SoloAdapter: AgentAdapter {
         }
         if !extra.isEmpty { arguments["extra_args"] = extra }
         // An exited agent of this tool already in the project is started again rather than adding another tab.
-        // ponytail: a restart reruns the command it was created with, so the model and effort picked now do not
-        // reach it; send "/model" after start if that matters.
+        // ponytail: a restart reruns the command it was created with, its own model and effort, not the ones
+        // picked now; send "/model" after start if that matters.
         let created: [String: Any]
         if let exited = try await exitedAgent(in: projectID, running: runtime.detail), let id = exited["id"] as? Int {
             _ = try await resultText(of: call(tool: "start_process", arguments: ["process_id": id, "project_id": projectID]))
