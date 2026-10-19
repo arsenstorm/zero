@@ -188,9 +188,11 @@ final class Panel: NSPanel {
         // SwiftUI's global frame is in the window's content, top-left origin; AppKit wants bottom-left.
         let appKit = NSRect(x: anchor.minX, y: content.bounds.height - anchor.maxY, width: anchor.width, height: anchor.height)
         let chip = inboxPanel.convertToScreen(appKit)
-        // Sized to its rows (capped), left-aligned with the chip, below it unless that runs off the screen.
-        let height = SelectorView.height(for: selector.sections, tab: selector.tab)
-        let size = NSSize(width: SelectorView.width, height: height)
+        // Sized exactly to the laid-out view, left-aligned with the chip, above it unless that runs off the screen.
+        // Content hugs the edge nearest the chip, and a tab change resizes the panel from the far edge only.
+        let view = FirstMouseHostingView(rootView: AnyView(SelectorView(controller: inbox, state: selector)))
+        view.sizingOptions = []
+        let size = view.fittingSize
         var x = chip.minX
         var y = chip.minY - 6 - size.height
         var opensAbove = true
@@ -198,15 +200,13 @@ final class Panel: NSPanel {
             if y < screen.visibleFrame.minY { y = chip.maxY + 6; opensAbove = false }
             x = min(x, screen.visibleFrame.maxX - size.width - 8)
         }
-        // Content hugs the edge nearest the chip, and a tab change resizes the panel from the far edge only.
-        let view = FirstMouseHostingView(rootView: AnyView(SelectorView(controller: inbox, state: selector)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: opensAbove ? .bottom : .top)))
-        view.sizingOptions = []
         let panel = makePanel(size: size, content: view)
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
         panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
-        selector.onHeightChange = { [weak panel] height in
-            guard let panel else { return }
+        selector.onHeightChange = { [weak panel, weak view] _ in
+            guard let panel, let view else { return }
+            view.layoutSubtreeIfNeeded()
+            let height = view.fittingSize.height
             var frame = panel.frame
             if opensAbove { frame.origin.y = frame.maxY - height }
             frame.size.height = height

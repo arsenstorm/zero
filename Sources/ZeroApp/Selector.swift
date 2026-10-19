@@ -51,7 +51,6 @@ struct SelectorView: View {
 
     static let width: CGFloat = 272
     private static let rowHeight: CGFloat = 30
-    private static let tabsHeight: CGFloat = 44
 
     private var sections: [SelectorSection] { state.sections }
     private var section: SelectorSection? { sections.first { $0.id == state.tab } ?? sections.first }
@@ -89,17 +88,6 @@ struct SelectorView: View {
         }
     }
 
-    /// The natural height for a kind, so the panel can be sized before the view exists.
-    static func height(for sections: [SelectorSection], tab: String?) -> CGFloat {
-        let section = sections.first { $0.id == tab } ?? sections.first { $0.rows.contains { $0.selected } } ?? sections.first
-        let rows = section?.rows.count ?? 0
-        let list = min(CGFloat(max(rows, 1)) * rowHeight + 8 + CGFloat(max(rows - 1, 0)), 10 * rowHeight + 8)
-        // The footer holds the tab's longest description in full: about 46 characters per line at 11 pt.
-        let longest = section?.rows.map { ($0.detail ?? $0.provider ?? "").count + (($0.context?.count ?? -10) + 10) }.max() ?? 0
-        let lines = max(1, Int((Double(longest) / 46).rounded(.up)))
-        return tabsHeight + 1 + list + 1 + 18 + CGFloat(lines) * 14
-    }
-
     private var tabs: some View {
         HStack(spacing: 4) {
             ForEach(sections) { section in
@@ -121,14 +109,13 @@ struct SelectorView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
-        .frame(height: Self.tabsHeight)
+        .padding(.horizontal, 10).padding(.vertical, 8)
     }
 
     private func select(tab: String) {
         state.tab = tab
         state.highlighted = rows.first { $0.selected }?.id ?? rows.first?.id
-        state.onHeightChange?(Self.height(for: sections, tab: tab))
+        DispatchQueue.main.async { state.onHeightChange?(0) } // the app re-measures the laid-out view
     }
 
     private func singleHeader(_ section: SelectorSection) -> some View {
@@ -139,8 +126,7 @@ struct SelectorView: View {
             Text(section.title).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
             Spacer()
         }
-        .padding(.horizontal, 14)
-        .frame(height: Self.tabsHeight)
+        .padding(.horizontal, 14).padding(.vertical, 10)
     }
 
     private func rowView(_ row: SelectorRow) -> some View {
@@ -177,7 +163,7 @@ struct SelectorView: View {
         .font(.system(size: 11)).foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16).padding(.vertical, 9)
+        .padding(.horizontal, 16).padding(.vertical, 8)
     }
 
     private func describe(_ row: SelectorRow) -> String {
