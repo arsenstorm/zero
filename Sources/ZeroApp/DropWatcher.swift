@@ -63,9 +63,22 @@ final class DropWatcher {
                 guard let data = try? Data(contentsOf: file), let incoming = try? jsonDecoder.decode(Ask.self, from: data) else { continue }
                 ingested.insert(key)
                 let ask = store.create(incoming, keepID: true)
-                origin[ask.id] = drop
-                if ask.state.isFinal { deliver(ask) } // notes are final on arrival
+                if ask.kind == .note {
+                    try? FileManager.default.removeItem(at: file) // nobody waits for a note's answer
+                } else {
+                    origin[ask.id] = drop
+                }
             }
+            sweep(drop.appendingPathComponent("answers"))
+        }
+    }
+
+    /// Answers nobody collected within a day (an `--async` ask whose agent never came back) are removed.
+    private func sweep(_ answers: URL) {
+        guard let files = try? FileManager.default.contentsOfDirectory(at: answers, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
+        for file in files {
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
+            if modified < Date().addingTimeInterval(-86400) { try? FileManager.default.removeItem(at: file) }
         }
     }
 
