@@ -191,8 +191,18 @@ final class Panel: NSPanel {
         // Sized exactly to the laid-out view, left-aligned with the chip, above it unless that runs off the screen.
         // Content hugs the edge nearest the chip, and a tab change resizes the panel from the far edge only.
         let view = FirstMouseHostingView(rootView: AnyView(SelectorView(controller: inbox, state: selector)))
-        view.sizingOptions = []
-        let size = view.fittingSize
+        view.sizingOptions = [.intrinsicContentSize]
+        // Host it first, then measure: a hosting view has no size until it is in a window and laid out.
+        let panel = makePanel(size: NSSize(width: SelectorView.width, height: 360), content: view)
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
+        func measuredHeight() -> CGFloat {
+            view.layoutSubtreeIfNeeded()
+            let intrinsic = view.intrinsicContentSize.height
+            let fitting = view.fittingSize.height
+            let height = max(intrinsic, fitting)
+            return height.isFinite && height > 40 ? height : 360
+        }
+        let size = NSSize(width: SelectorView.width, height: measuredHeight())
         var x = chip.minX
         var y = chip.minY - 6 - size.height
         var opensAbove = true
@@ -200,13 +210,10 @@ final class Panel: NSPanel {
             if y < screen.visibleFrame.minY { y = chip.maxY + 6; opensAbove = false }
             x = min(x, screen.visibleFrame.maxX - size.width - 8)
         }
-        let panel = makePanel(size: size, content: view)
-        panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
         panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
-        selector.onHeightChange = { [weak panel, weak view] _ in
-            guard let panel, let view else { return }
-            view.layoutSubtreeIfNeeded()
-            let height = view.fittingSize.height
+        selector.onHeightChange = { [weak panel] _ in
+            guard let panel else { return }
+            let height = measuredHeight()
             var frame = panel.frame
             if opensAbove { frame.origin.y = frame.maxY - height }
             frame.size.height = height
