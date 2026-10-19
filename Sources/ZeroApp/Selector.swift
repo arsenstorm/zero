@@ -109,8 +109,6 @@ struct SelectorView: View {
             [g.contentOffset.y > 1, g.contentOffset.y + g.containerSize.height < g.contentSize.height - 1]
         } action: { _, more in moreAbove = more[0]; moreBelow = more[1] }
         .mask(edgeFades)
-        .animation(.easeOut(duration: 0.15), value: moreAbove)
-        .animation(.easeOut(duration: 0.15), value: moreBelow)
     }
 
     /// The list fades out at an edge with more rows past it, a hint that it scrolls.
@@ -120,6 +118,9 @@ struct SelectorView: View {
             Color.black
             LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: moreBelow ? 28 : 0)
         }
+        // Animated here, on the mask alone: on the list it also animated the rows' first layout, a slide-in.
+        .animation(.easeOut(duration: 0.15), value: moreAbove)
+        .animation(.easeOut(duration: 0.15), value: moreBelow)
     }
 
     private var tabs: some View {
