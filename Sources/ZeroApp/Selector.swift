@@ -56,7 +56,7 @@ struct SelectorView: View {
     private static let paneWidth: CGFloat = 240
     /// The model list is always eight rows tall, so neither a tab change nor a hover moves anything.
     private static let modelListHeight: CGFloat = 8 * rowHeight + 8 + 7
-    private static let rowHeight: CGFloat = 30
+    private static let rowHeight: CGFloat = 28
 
     private var sections: [SelectorSection] { state.sections }
     private var section: SelectorSection? { sections.first { $0.id == state.tab } ?? sections.first }
@@ -184,45 +184,39 @@ struct SelectorView: View {
         .onHover { if $0 { state.highlighted = row.id } }
     }
 
-    /// The right pane: the highlighted model, what it is for, and its effort levels. Picking a level also picks
-    /// the model and leaves the selector open, so the level can be changed again.
+    /// The right pane: the highlighted model's logo, name and purpose, centred, with its effort slider below.
+    /// Moving the slider also picks the model and leaves the selector open.
     @ViewBuilder private var details: some View {
         if let row = highlightedRow {
             let picked = row.modelID.flatMap { controller.spawnSettings[$0]?["reasoning"] } ?? row.defaultLevel
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    if let icon = row.providerIcon {
-                        icon.resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14).clipShape(RoundedRectangle(cornerRadius: 3))
-                    }
-                    Text(row.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+            VStack(spacing: 0) {
+                if let icon = row.providerIcon {
+                    icon.resizable().aspectRatio(contentMode: .fit).frame(width: 36, height: 36).clipShape(RoundedRectangle(cornerRadius: 8))
+                        .padding(.bottom, 10)
                 }
+                Text(row.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                 Text(describe(row)).font(.system(size: 11)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 4)
                 if let context = row.context {
-                    Text(context + " context").font(.system(size: 11)).foregroundStyle(.tertiary)
+                    Text(context).font(.system(size: 11)).foregroundStyle(.tertiary).padding(.top, 4)
                 }
                 Spacer(minLength: 0)
                 if !row.levels.isEmpty {
-                    Text("Effort").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 4), GridItem(.flexible(), spacing: 4)], spacing: 4) {
-                        ForEach(row.levels, id: \.id) { level in
-                            Button {
-                                row.pick()
-                                if let id = row.modelID { controller.setSpawnSetting(modelID: id, key: "reasoning", value: level.id) }
-                                state.sections = controller.selectorSections(for: state.kind)
-                            } label: {
-                                Text(effortLabel(level.id)).font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(level.id == picked ? .primary : .secondary)
-                                    .frame(maxWidth: .infinity).padding(.vertical, 4)
-                                    .background(level.id == picked ? Theme.keycap : Theme.row)
-                                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                                    .contentShape(RoundedRectangle(cornerRadius: 6))
-                            }
-                            .buttonStyle(.plain)
-                        }
+                    HStack {
+                        Text("Effort").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                        Spacer()
+                        Text(picked.map(effortLabel) ?? "").font(.system(size: 11, weight: .medium))
                     }
+                    EffortSlider(levels: row.levels.map(\.id), picked: picked) { level in
+                        row.pick()
+                        if let id = row.modelID { controller.setSpawnSetting(modelID: id, key: "reasoning", value: level) }
+                        state.sections = controller.selectorSections(for: state.kind)
+                    }
+                    .padding(.top, 6)
                 }
             }
+            .frame(maxWidth: .infinity)
             .padding(.horizontal, 14).padding(.vertical, 12)
         }
     }
@@ -262,5 +256,48 @@ func effortLabel(_ id: String) -> String {
     switch id {
     case "xhigh": "XHigh"
     default: id.capitalized
+    }
+}
+
+/// A chunky stepped slider: a thick track with a point per level, filled up to the picked one, and a knob that
+/// snaps to the nearest point under the pointer. Deliberately not the system slider; this is a five-way choice.
+struct EffortSlider: View {
+    let levels: [String]
+    let picked: String?
+    let onPick: (String) -> Void
+
+    private let trackHeight: CGFloat = 16
+    private let knob: CGFloat = 22
+
+    var body: some View {
+        let index = picked.flatMap { levels.firstIndex(of: $0) } ?? 0
+        GeometryReader { geo in
+            let usable = geo.size.width - knob
+            let step = levels.count > 1 ? usable / CGFloat(levels.count - 1) : 0
+            let x = knob / 2 + step * CGFloat(index)
+            ZStack(alignment: .leading) {
+                Capsule().fill(Theme.row).frame(height: trackHeight)
+                Capsule().fill(Theme.keycap).frame(width: x + trackHeight / 2, height: trackHeight)
+                ForEach(levels.indices, id: \.self) { i in
+                    Circle().fill(i <= index ? Color.primary.opacity(0.35) : Color.secondary.opacity(0.35))
+                        .frame(width: 5, height: 5)
+                        .position(x: knob / 2 + step * CGFloat(i), y: geo.size.height / 2)
+                }
+                Circle().fill(Color.primary)
+                    .overlay(Circle().strokeBorder(Theme.card, lineWidth: 2))
+                    .frame(width: knob, height: knob)
+                    .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
+                    .position(x: x, y: geo.size.height / 2)
+            }
+            .animation(.snappy(duration: 0.2), value: index)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                guard step > 0 else { return }
+                let i = Int(((value.location.x - knob / 2) / step).rounded())
+                let level = levels[max(0, min(levels.count - 1, i))]
+                if level != picked { onPick(level) }
+            })
+        }
+        .frame(height: knob + 4)
     }
 }
