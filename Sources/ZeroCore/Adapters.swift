@@ -34,6 +34,8 @@ public protocol AgentAdapter: Sendable {
     func spawnModels(for runtime: SpawnChoice) -> [SpawnChoice]
     /// One line of context for the start, such as the account the runtime will use.
     func spawnNote(for runtime: SpawnChoice) -> String?
+    /// Refreshes anything the model lists come from; returns true when a list changed.
+    func refreshModels() async -> Bool
     /// `settings`: per-model configuration Arsen picked, such as ["reasoning": "high"].
     func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String]) async throws -> AgentIdentity
 }
@@ -44,6 +46,7 @@ public extension AgentAdapter {
     func spawnRuntimes() async throws -> [SpawnChoice] { [] }
     func spawnModels(for runtime: SpawnChoice) -> [SpawnChoice] { [] }
     func spawnNote(for runtime: SpawnChoice) -> String? { nil }
+    func refreshModels() async -> Bool { false }
     func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String]) async throws -> AgentIdentity {
         throw AdapterError("\(name) cannot start agents")
     }
@@ -73,6 +76,8 @@ public struct SoloAdapter: AgentAdapter {
     }
 
     public var canSpawn: Bool { FileManager.default.isExecutableFile(atPath: helper) }
+
+    public func refreshModels() async -> Bool { await ClaudeModels.refresh() }
 
     public func spawnTargets() async throws -> [SpawnChoice] {
         let rows = try await resultJSON(of: call(tool: "list_projects", arguments: [:])) as? [[String: Any]] ?? []
@@ -109,25 +114,9 @@ public struct SoloAdapter: AgentAdapter {
 
     /// Claude Code's picker for the active account: the built-in aliases, then the account's cached options with
     /// their own descriptions ("Fable 5.1 · Most capable…"), whose first part names the model precisely.
-    private func claudeModels() -> [SpawnChoice] {
-        var choices = [SpawnChoice(id: "", name: "Default", detail: "Whatever Claude Code currently defaults to.", icon: "claude", provider: "Anthropic"),
-                       SpawnChoice(id: "opus", name: "Opus", detail: "The latest Opus.", icon: "claude", provider: "Anthropic"),
-                       SpawnChoice(id: "sonnet", name: "Sonnet", detail: "The latest Sonnet.", icon: "claude", provider: "Anthropic")]
-        let config = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude.json")
-        guard let data = try? Data(contentsOf: config), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let extra = json["additionalModelOptionsCache"] as? [[String: Any]] else { return choices }
-        for option in extra {
-            guard let value = option["value"] as? String, !choices.contains(where: { $0.id == value }) else { continue }
-            let label = (option["label"] as? String) ?? value
-            let description = (option["description"] as? String) ?? ""
-            let parts = description.components(separatedBy: " · ")
-            let title = parts.first.map { $0.hasPrefix(label) ? $0 : label } ?? label
-            let detail = parts.count > 1 ? parts.dropFirst().joined(separator: " · ") : (description.isEmpty ? nil : description)
-            choices.append(SpawnChoice(id: value, name: title, detail: detail, icon: "claude", provider: "Anthropic",
-                                       context: value.hasSuffix("[1m]") ? "1M tokens" : nil))
-        }
-        return choices
-    }
+    /// Claude's list comes from Anthropic's models endpoint for the active Claude Code account (see ClaudeModels),
+    /// merged with Claude Code's local option cache. Never a list typed here.
+    private func claudeModels() -> [SpawnChoice] { ClaudeModels.cached() }
 
     /// Codex's own catalogue for the signed-in account, from its cache: listed models in its order.
     private func codexModels() -> [SpawnChoice] {

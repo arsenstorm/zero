@@ -70,12 +70,13 @@ final class InboxController {
     func selectorSections(for kind: SelectorKind) -> [SelectorSection] {
         switch kind {
         case .project:
-            return [SelectorSection(id: "solo", title: "Solo projects", rows: spawnTargets.map { choice in
+            return [SelectorSection(id: "solo", title: "Solo projects", icon: choiceIcon("solo"), rows: spawnTargets.map { choice in
                 SelectorRow(id: choice.id, title: choice.name, provider: choice.provider, providerIcon: choiceIcon(choice.icon),
                             detail: choice.detail, context: nil, levels: [], defaultLevel: nil, modelID: nil,
                             selected: choice.id == spawnTarget) { [weak self] in self?.spawnTarget = choice.id }
             })]
         case .runtime:
+            _ = modelsVersion
             guard let adapter = store.spawners.first else { return [] }
             return spawnRuntimes.map { runtime in
                 let models = adapter.spawnModels(for: runtime)
@@ -92,12 +93,12 @@ final class InboxController {
                             self?.spawnModel = model.id
                         }
                     }
-                return SelectorSection(id: runtime.id, title: runtime.name, rows: rows)
+                return SelectorSection(id: runtime.id, title: runtime.provider ?? runtime.name, icon: choiceIcon(runtime.icon), rows: rows)
             }
         }
     }
     /// Models for the chosen runtime, and the pick remembered per runtime.
-    var spawnModels: [SpawnChoice] { store.spawners.first.flatMap { adapter in spawnRuntimes.first { $0.id == spawnRuntime }.map { adapter.spawnModels(for: $0) } } ?? [] }
+    var spawnModels: [SpawnChoice] { _ = modelsVersion; return store.spawners.first.flatMap { adapter in spawnRuntimes.first { $0.id == spawnRuntime }.map { adapter.spawnModels(for: $0) } } ?? [] }
     var spawnNote: String? { store.spawners.first.flatMap { adapter in spawnRuntimes.first { $0.id == spawnRuntime }.flatMap { adapter.spawnNote(for: $0) } } }
     var spawnModel: String? {
         get { spawnRuntime.flatMap { UserDefaults.standard.string(forKey: "lastSpawnModel.\($0)") } ?? spawnModels.first?.id }
@@ -245,15 +246,21 @@ final class InboxController {
 
     var canSpawn: Bool { !store.spawners.isEmpty }
 
+    /// Bumped when a model list changes, so views that compute from the adapters re-read.
+    var modelsVersion = 0
+
     func loadSpawnChoices() {
-        guard let adapter = store.spawners.first, spawnTargets.isEmpty else { return }
+        guard let adapter = store.spawners.first else { return }
         Task {
-            let targets = (try? await adapter.spawnTargets()) ?? []
-            let runtimes = (try? await adapter.spawnRuntimes()) ?? []
-            spawnTargets = targets
-            spawnRuntimes = runtimes
-            if spawnTarget == nil || !targets.contains(where: { $0.id == spawnTarget }) { spawnTarget = targets.first?.id }
-            if spawnRuntime == nil || !runtimes.contains(where: { $0.id == spawnRuntime }) { spawnRuntime = runtimes.first?.id }
+            if spawnTargets.isEmpty {
+                let targets = (try? await adapter.spawnTargets()) ?? []
+                let runtimes = (try? await adapter.spawnRuntimes()) ?? []
+                spawnTargets = targets
+                spawnRuntimes = runtimes
+                if spawnTarget == nil || !targets.contains(where: { $0.id == spawnTarget }) { spawnTarget = targets.first?.id }
+                if spawnRuntime == nil || !runtimes.contains(where: { $0.id == spawnRuntime }) { spawnRuntime = runtimes.first?.id }
+            }
+            if await adapter.refreshModels() { modelsVersion += 1 }
         }
     }
 

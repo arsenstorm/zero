@@ -8,6 +8,14 @@ import ZeroCore
 @main
 enum ZeroMain {
     static func main() {
+        if CommandLine.arguments.contains("--claude-models") {
+            let semaphore = DispatchSemaphore(value: 0)
+            Task { _ = await ClaudeModels.refresh(); semaphore.signal() }
+            semaphore.wait()
+            print("source:", ClaudeModels.status.source, ClaudeModels.status.error.map { "(\($0))" } ?? "")
+            for choice in ClaudeModels.cached() { print(choice.id, "—", choice.name, "—", choice.detail ?? "") }
+            return
+        }
         if let i = CommandLine.arguments.firstIndex(of: "--render-pill"), i + 1 < CommandLine.arguments.count {
             MainActor.assumeIsolated { Preview.renderPill(to: CommandLine.arguments[i + 1]) }
             return
@@ -180,19 +188,20 @@ final class Panel: NSPanel {
         // SwiftUI's global frame is in the window's content, top-left origin; AppKit wants bottom-left.
         let appKit = NSRect(x: anchor.minX, y: content.bounds.height - anchor.maxY, width: anchor.width, height: anchor.height)
         let chip = inboxPanel.convertToScreen(appKit)
-        // A fixed panel (a scrolling list has no intrinsic height); the content hugs the edge nearest the chip.
-        let size = NSSize(width: 472, height: 440)
-        let listX = chip.minX - 232 // 224 preview + 8 gap sit to the left of the list
-        var y = chip.maxY + 4
-        var opensUpward = true
-        if let screen = inboxPanel.screen, y + size.height > screen.visibleFrame.maxY { y = chip.minY - 4 - size.height; opensUpward = false }
-        let view = FirstMouseHostingView(rootView: AnyView(
-            SelectorView(controller: inbox, state: selector)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: opensUpward ? .bottomTrailing : .topTrailing)))
+        // Sized to its rows (capped), left-aligned with the chip, below it unless that runs off the screen.
+        let height = min(SelectorView.height(for: inbox.selectorSections(for: selector.kind)), 460)
+        let size = NSSize(width: SelectorView.width, height: height)
+        var x = chip.minX
+        var y = chip.minY - 6 - size.height
+        if let screen = inboxPanel.screen {
+            if y < screen.visibleFrame.minY { y = chip.maxY + 6 }
+            x = min(x, screen.visibleFrame.maxX - size.width - 8)
+        }
+        let view = FirstMouseHostingView(rootView: AnyView(SelectorView(controller: inbox, state: selector)))
         view.sizingOptions = []
         let panel = makePanel(size: size, content: view)
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
-        panel.setFrame(NSRect(x: listX, y: y, width: size.width, height: size.height), display: true)
+        panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
         panel.makeKeyAndOrderFront(nil)
         selectorPanel = panel
         // A click anywhere but the selector closes it: in another app (global) or in Zero's other windows (local).
