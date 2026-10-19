@@ -19,6 +19,8 @@ public protocol AgentAdapter: Sendable {
     func spawnRuntimes() async throws -> [SpawnChoice]
     /// Models the runtime can be started with; empty means the runtime's default only.
     func spawnModels(for runtime: SpawnChoice) -> [SpawnChoice]
+    /// One line of context for the start, such as the account the runtime will use.
+    func spawnNote(for runtime: SpawnChoice) -> String?
     func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?) async throws -> AgentIdentity
 }
 
@@ -27,6 +29,7 @@ public extension AgentAdapter {
     func spawnTargets() async throws -> [SpawnChoice] { [] }
     func spawnRuntimes() async throws -> [SpawnChoice] { [] }
     func spawnModels(for runtime: SpawnChoice) -> [SpawnChoice] { [] }
+    func spawnNote(for runtime: SpawnChoice) -> String? { nil }
     func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?) async throws -> AgentIdentity {
         throw AdapterError("\(name) cannot start agents")
     }
@@ -73,18 +76,44 @@ public struct SoloAdapter: AgentAdapter {
         }
     }
 
-    /// Claude Code takes `--model`; these are the Claude 5 ids. Codex's ids are not known here, so it offers none.
+    /// Claude Code takes `--model`. The choices are what its own picker offers the active account: the built-in
+    /// aliases, plus the account-specific options Claude Code caches in ~/.claude.json after use. A model an
+    /// account gained (Mythos, say) shows up here once that account has been used in Claude Code.
+    /// Codex's ids are not known here, so it offers none.
     public func spawnModels(for runtime: SpawnChoice) -> [SpawnChoice] {
         guard runtime.name.lowercased().contains("claude") else { return [] }
-        return [SpawnChoice(id: "claude-fable-5-1", name: "Fable 5.1"), SpawnChoice(id: "claude-opus-5-5", name: "Opus 5.5"),
-                SpawnChoice(id: "claude-sonnet-5-5", name: "Sonnet 5.5"), SpawnChoice(id: "claude-haiku-5-5", name: "Haiku 5.5")]
+        var choices = [SpawnChoice(id: "", name: "Default"), SpawnChoice(id: "opus", name: "Opus"), SpawnChoice(id: "sonnet", name: "Sonnet")]
+        let config = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude.json")
+        if let data = try? Data(contentsOf: config), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let extra = json["additionalModelOptionsCache"] as? [[String: Any]] {
+            for option in extra {
+                guard let value = option["value"] as? String, !choices.contains(where: { $0.id == value }) else { continue }
+                choices.append(SpawnChoice(id: value, name: (option["label"] as? String) ?? value))
+            }
+        }
+        return choices
+    }
+
+    /// The Claude account the new agent will run under, from the account switcher's record when present.
+    public func spawnNote(for runtime: SpawnChoice) -> String? {
+        guard runtime.name.lowercased().contains("claude") else { return nil }
+        let switcher = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/claude-switcher/accounts.json")
+        if let data = try? Data(contentsOf: switcher), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let accounts = json["accounts"] as? [[String: Any]],
+           let active = accounts.first(where: { $0["active"] as? Bool == true }), let email = active["email"] as? String {
+            return email
+        }
+        let config = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude.json")
+        if let data = try? Data(contentsOf: config), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let account = json["oauthAccount"] as? [String: Any] { return account["emailAddress"] as? String }
+        return nil
     }
 
     /// Spawns the agent in the project, waits until it is idle at its prompt, then types the first message.
     public func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?) async throws -> AgentIdentity {
         guard let projectID = Int(target.id), let toolID = Int(runtime.id) else { throw AdapterError("Bad Solo ids") }
         var arguments: [String: Any] = ["project_id": projectID, "agent_tool_id": toolID, "include_agent_instructions": false]
-        if let model { arguments["extra_args"] = ["--model", model.id] }
+        if let model, !model.id.isEmpty { arguments["extra_args"] = ["--model", model.id] }
         let created = try await resultJSON(of: call(tool: "spawn_agent", arguments: arguments)) as? [String: Any] ?? [:]
         guard let processID = created["process_id"] as? Int else { throw AdapterError("Solo did not return a process id") }
         let name = (created["name"] as? String) ?? "agent-\(processID)"

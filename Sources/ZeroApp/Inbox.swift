@@ -44,6 +44,7 @@ final class InboxController {
     var spawnError: String?
     /// Models for the chosen runtime, and the pick remembered per runtime.
     var spawnModels: [SpawnChoice] { store.spawners.first.flatMap { adapter in spawnRuntimes.first { $0.id == spawnRuntime }.map { adapter.spawnModels(for: $0) } } ?? [] }
+    var spawnNote: String? { store.spawners.first.flatMap { adapter in spawnRuntimes.first { $0.id == spawnRuntime }.flatMap { adapter.spawnNote(for: $0) } } }
     var spawnModel: String? {
         get { spawnRuntime.flatMap { UserDefaults.standard.string(forKey: "lastSpawnModel.\($0)") } ?? spawnModels.first?.id }
         set { if let spawnRuntime { UserDefaults.standard.set(newValue, forKey: "lastSpawnModel.\(spawnRuntime)") } }
@@ -591,6 +592,10 @@ struct NewAgentCard: View {
                                 Button(choice.name) { controller.spawnModel = choice.id }
                             }
                         }
+                    }
+                    if let note = controller.spawnNote {
+                        Text(note).font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+                            .help("The account the agent will use. Switch accounts with your switcher; Zero follows.")
                     }
                     Spacer(minLength: 8)
                     if controller.spawning {
