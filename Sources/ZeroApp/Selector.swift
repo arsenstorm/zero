@@ -232,7 +232,12 @@ struct SelectorView: View {
             .padding(.horizontal, 16).padding(.vertical, 8)
     }
 
-    private func describe(_ row: SelectorRow) -> String { row.detail ?? row.provider ?? "" }
+    /// Catalogue descriptions arrive with and without a full stop; here they all end in one.
+    private func describe(_ row: SelectorRow) -> String {
+        let text = (row.detail ?? row.provider ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let last = text.last else { return text }
+        return ".!?…".contains(last) ? text : text + "."
+    }
 
 
     private func move(_ delta: Int) {
