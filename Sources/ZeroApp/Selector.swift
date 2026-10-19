@@ -71,7 +71,7 @@ struct SelectorView: View {
                 HStack(spacing: 0) {
                     list.frame(width: Self.paneWidth, height: Self.modelListHeight)
                     Divider().padding(.vertical, 10)
-                    details.frame(width: Self.paneWidth - 1, height: Self.modelListHeight, alignment: .top)
+                    details.frame(width: Self.paneWidth - 1, height: Self.modelListHeight)
                 }
                 .frame(height: Self.modelListHeight) // a vertical Divider would otherwise stretch the row to the strip
             } else {
@@ -202,23 +202,23 @@ struct SelectorView: View {
                 if let context = row.context {
                     Text(context).font(.system(size: 11)).foregroundStyle(.tertiary).padding(.top, 4)
                 }
-                Spacer(minLength: 0)
                 if !row.levels.isEmpty {
                     HStack {
                         Text("Effort").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                         Spacer()
-                        Text(picked.map(effortLabel) ?? "").font(.system(size: 11, weight: .medium))
+                        Text(picked.map(effortLabel) ?? "").font(.system(size: 11, weight: .medium)).contentTransition(.numericText())
                     }
+                    .padding(.top, 16)
                     EffortSlider(levels: row.levels.map(\.id), picked: picked) { level in
                         row.pick()
                         if let id = row.modelID { controller.setSpawnSetting(modelID: id, key: "reasoning", value: level) }
                         state.sections = controller.selectorSections(for: state.kind)
                     }
-                    .padding(.top, 4)
+                    .padding(.top, 6)
                 }
             }
             .frame(maxWidth: .infinity)
-            .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 12)
+            .padding(.horizontal, 14).padding(.vertical, 14)
         }
     }
 
@@ -260,15 +260,17 @@ func effortLabel(_ id: String) -> String {
     }
 }
 
-/// A chunky stepped slider: a thick track with a point per level, filled up to the picked one, and a knob that
-/// snaps to the nearest point under the pointer. Deliberately not the system slider; this is a five-way choice.
+/// A stepped slider for effort: a thick track whose fill warms from amber to red as the level rises, points that
+/// grow with the level, and a knob that swells while held and snaps to the nearest point. Not the system slider.
 struct EffortSlider: View {
     let levels: [String]
     let picked: String?
     let onPick: (String) -> Void
+    @State private var held = false
 
-    private let trackHeight: CGFloat = 12
+    private let trackHeight: CGFloat = 10
     private let knob: CGFloat = 18
+    private let heat = [Color(red: 0.95, green: 0.72, blue: 0.25), Color(red: 0.95, green: 0.45, blue: 0.15), Color(red: 0.90, green: 0.22, blue: 0.18)]
 
     var body: some View {
         let index = picked.flatMap { levels.firstIndex(of: $0) } ?? 0
@@ -276,29 +278,39 @@ struct EffortSlider: View {
             let usable = geo.size.width - knob
             let step = levels.count > 1 ? usable / CGFloat(levels.count - 1) : 0
             let x = knob / 2 + step * CGFloat(index)
+            let mid = geo.size.height / 2
             ZStack(alignment: .leading) {
                 Capsule().fill(Theme.row).frame(height: trackHeight)
-                Capsule().fill(Theme.keycap).frame(width: x + trackHeight / 2, height: trackHeight)
+                // The gradient spans the whole track and is revealed up to the knob, so the colour at the knob is the level's.
+                Capsule().fill(LinearGradient(colors: heat, startPoint: .leading, endPoint: .trailing)).frame(height: trackHeight)
+                    .mask(alignment: .leading) { Capsule().frame(width: x + trackHeight / 2) }
                 ForEach(levels.indices, id: \.self) { i in
-                    Circle().fill(i <= index ? Color.primary.opacity(0.35) : Color.secondary.opacity(0.35))
-                        .frame(width: 5, height: 5)
-                        .position(x: knob / 2 + step * CGFloat(i), y: geo.size.height / 2)
+                    let size = 3 + CGFloat(i) * 4 / CGFloat(max(levels.count - 1, 1))
+                    Circle().fill(i <= index ? Color.white.opacity(0.6) : Color.primary.opacity(0.22))
+                        .frame(width: size, height: size)
+                        .position(x: knob / 2 + step * CGFloat(i), y: mid)
                 }
                 Circle().fill(Color.primary)
-                    .overlay(Circle().strokeBorder(Theme.card, lineWidth: 2))
                     .frame(width: knob, height: knob)
-                    .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
-                    .position(x: x, y: geo.size.height / 2)
+                    .scaleEffect(held ? 1.2 : 1)
+                    .position(x: x, y: mid)
             }
             .animation(.snappy(duration: 0.2), value: index)
+            .animation(.snappy(duration: 0.15), value: held)
             .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                guard step > 0 else { return }
-                let i = Int(((value.location.x - knob / 2) / step).rounded())
-                let level = levels[max(0, min(levels.count - 1, i))]
-                if level != picked { onPick(level) }
-            })
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    held = true
+                    guard step > 0 else { return }
+                    let i = Int(((value.location.x - knob / 2) / step).rounded())
+                    let level = levels[max(0, min(levels.count - 1, i))]
+                    if level != picked {
+                        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+                        onPick(level)
+                    }
+                }
+                .onEnded { _ in held = false })
         }
-        .frame(height: knob + 2)
+        .frame(height: knob + 4)
     }
 }
