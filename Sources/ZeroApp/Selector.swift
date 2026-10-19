@@ -38,6 +38,10 @@ final class SelectorState {
     var sections: [SelectorSection] = []
     /// The card's laid-out height: the app treats a click in the rest of its strip as a click outside.
     @ObservationIgnored var cardHeight: CGFloat = 0
+    /// Where the chip that opened it sits, in the card's unit space: the card scales out of and back into that point.
+    var origin: UnitPoint = .top
+    /// Set by the app when the panel is about to go; the card fades and shrinks back toward the chip first.
+    var closing = false
     init(kind: SelectorKind) { self.kind = kind }
 }
 
@@ -50,6 +54,7 @@ struct SelectorView: View {
     @FocusState private var focused: Bool
     @State private var moreAbove = false
     @State private var moreBelow = false
+    @State private var appeared = false
 
     /// Models get two panes, the list and its details, centred on the inbox; projects a single list on the chip.
     static func width(_ kind: SelectorKind) -> CGFloat { kind == .runtime ? 2 * paneWidth : 272 }
@@ -83,6 +88,11 @@ struct SelectorView: View {
         .frame(width: Self.width(state.kind))
         .card()
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { state.cardHeight = $0 }
+        // Fade and scale from 0.95 at the chip, with a 4 pt nudge away from it; the exit is a touch faster.
+        .scaleEffect(shown ? 1 : 0.95, anchor: state.origin)
+        .offset(y: shown ? 0 : (state.origin.y < 0.5 ? -4 : 4))
+        .opacity(shown ? 1 : 0)
+        .animation(.easeIn(duration: 0.12), value: state.closing)
         .focusable()
         .focused($focused)
         .focusEffectDisabled()
@@ -97,8 +107,11 @@ struct SelectorView: View {
             if state.tab == nil { state.tab = sections.first { $0.rows.contains { $0.selected } }?.id ?? sections.first?.id }
             state.highlighted = rows.first { $0.selected }?.id ?? rows.first?.id
             focused = true
+            withAnimation(.easeOut(duration: 0.16)) { appeared = true }
         }
     }
+
+    private var shown: Bool { appeared && !state.closing }
 
     private var list: some View {
         ScrollView(.vertical, showsIndicators: false) {

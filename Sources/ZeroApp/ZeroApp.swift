@@ -107,6 +107,7 @@ final class Panel: NSPanel {
     private var hotKey: EventHotKeyRef?
     private var statusItem: NSStatusItem!
     private var selectorPanel: Panel?
+    private var selectorState: SelectorState?
     private var selectorMonitors: [Any] = []
     private var settingsWindow: NSWindow?
     private let settings = Settings()
@@ -200,6 +201,7 @@ final class Panel: NSPanel {
         let left = selector.kind == .runtime ? inboxPanel.frame.midX - size.width / 2 : chip.minX
         let x = max(screen.minX + 8, min(left, screen.maxX - size.width - 8))
         let y = opensBelow ? chip.minY - 6 - size.height : chip.maxY + 6
+        selector.origin = UnitPoint(x: (chip.midX - x) / size.width, y: opensBelow ? 0 : 1)
         let view = FirstMouseHostingView(rootView: AnyView(SelectorView(controller: inbox, state: selector)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: opensBelow ? .top : .bottom)))
         view.sizingOptions = []
@@ -208,6 +210,7 @@ final class Panel: NSPanel {
         panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
         panel.makeKeyAndOrderFront(nil)
         selectorPanel = panel
+        selectorState = selector
         // A click anywhere but the card closes it: in another app (global), in Zero's other windows, or in the
         // strip's empty part (local).
         if let global = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
@@ -225,8 +228,15 @@ final class Panel: NSPanel {
     private func hideSelector(keepState: Bool = false) {
         selectorMonitors.forEach { NSEvent.removeMonitor($0) }
         selectorMonitors.removeAll()
-        selectorPanel?.orderOut(nil)
+        if let panel = selectorPanel, let state = selectorState, state !== inbox.selector || !keepState {
+            // Let the card animate back into the chip before the window goes.
+            state.closing = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.13) { panel.orderOut(nil) }
+        } else {
+            selectorPanel?.orderOut(nil)
+        }
         selectorPanel = nil
+        selectorState = nil
         if !keepState, openedByIntent || inbox.takesKeys { inboxPanel.makeKey() }
     }
 
