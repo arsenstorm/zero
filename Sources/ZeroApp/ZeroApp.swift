@@ -215,7 +215,7 @@ final class Panel: NSPanel {
         let panel = makePanel(size: size, content: container)
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
         panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
-        panel.alphaValue = 0
+        container.layer?.opacity = 0 // invisible until the animation starts; the window's own alpha stays 1
         panel.makeKeyAndOrderFront(nil)
         panel.layoutIfNeeded() // the heavy first layout happens now, invisible, not inside the animation
         selectorPanel = panel
@@ -250,8 +250,8 @@ final class Panel: NSPanel {
     }
 
     /// Emil's popover: fade with a scale from 0.95 at the trigger and a 4 pt nudge toward it, ease-out in,
-    /// faster ease-in out. Done in Core Animation on the window and its layer, so it runs on the render server
-    /// and is not held up by SwiftUI's layout.
+    /// faster ease-in out. One Core Animation group on the content layer, so both run on the render server in
+    /// step; a window-alpha fade is an AppKit timer animation and starts a frame late.
     private static func animateSelector(_ panel: NSWindow, anchor: CGPoint, opening: Bool, completion: (() -> Void)? = nil) {
         guard let layer = panel.contentView?.layer else { completion?(); return }
         // AppKit gives a view's layer an anchor point of (0, 0), so the pivot is measured from the bottom-left,
@@ -263,21 +263,23 @@ final class Panel: NSPanel {
         let (from, to) = opening ? (small, CATransform3DIdentity) : (CATransform3DIdentity, small)
         let duration = opening ? 0.1 : 0.07
         let curve = opening ? CAMediaTimingFunction(controlPoints: 0.32, 0.72, 0, 1) : CAMediaTimingFunction(name: .easeIn)
-        CATransaction.begin()
-        CATransaction.setCompletionBlock(completion)
         let scale = CABasicAnimation(keyPath: "transform")
         scale.fromValue = from
         scale.toValue = to
-        scale.duration = duration
-        scale.timingFunction = curve
-        layer.add(scale, forKey: "selector")
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = opening ? 0 : 1
+        fade.toValue = opening ? 1 : 0
+        let group = CAAnimationGroup()
+        group.animations = [scale, fade]
+        group.duration = duration
+        group.timingFunction = curve
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        CATransaction.setCompletionBlock(completion)
+        layer.add(group, forKey: "selector")
         layer.transform = to
+        layer.opacity = opening ? 1 : 0
         CATransaction.commit()
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = duration
-            context.timingFunction = curve
-            panel.animator().alphaValue = opening ? 1 : 0
-        }
     }
 
     private func makePanel(size: NSSize, content: NSView) -> Panel {
