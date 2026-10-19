@@ -36,6 +36,8 @@ final class SelectorState {
     var highlighted: String?
     /// The rows, built when the selector opens; hovering must not rebuild them.
     var sections: [SelectorSection] = []
+    /// The app resizes the panel when the tab changes, keeping the edge nearest the chip in place.
+    @ObservationIgnored var onHeightChange: ((CGFloat) -> Void)?
     init(kind: SelectorKind) { self.kind = kind }
 }
 
@@ -48,9 +50,9 @@ struct SelectorView: View {
     @FocusState private var focused: Bool
 
     static let width: CGFloat = 272
-    private static let rowHeight: CGFloat = 28
-    private static let tabsHeight: CGFloat = 40
-    private static let footerHeight: CGFloat = 36
+    private static let rowHeight: CGFloat = 30
+    private static let tabsHeight: CGFloat = 44
+    private static let footerHeight: CGFloat = 30
 
     private var sections: [SelectorSection] { state.sections }
     private var section: SelectorSection? { sections.first { $0.id == state.tab } ?? sections.first }
@@ -69,10 +71,7 @@ struct SelectorView: View {
             footer
         }
         .frame(width: Self.width)
-        .background(Theme.card)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke, lineWidth: 1))
-        .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
+        .card()
         .focusable()
         .focused($focused)
         .focusEffectDisabled()
@@ -101,10 +100,7 @@ struct SelectorView: View {
         HStack(spacing: 4) {
             ForEach(sections) { section in
                 let active = section.id == (state.tab ?? sections.first?.id)
-                Button {
-                    state.tab = section.id
-                    state.highlighted = section.rows.first { $0.selected }?.id ?? section.rows.first?.id
-                } label: {
+                Button { select(tab: section.id) } label: {
                     HStack(spacing: 6) {
                         if let icon = section.icon {
                             icon.resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14).clipShape(RoundedRectangle(cornerRadius: 3))
@@ -113,7 +109,7 @@ struct SelectorView: View {
                     }
                     .foregroundStyle(active ? .primary : .secondary)
                     .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(active ? Theme.row : .clear)
+                    .background(active ? Theme.keycap : .clear)
                     .clipShape(Capsule())
                     .contentShape(Capsule())
                 }
@@ -121,8 +117,14 @@ struct SelectorView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 10)
         .frame(height: Self.tabsHeight)
+    }
+
+    private func select(tab: String) {
+        state.tab = tab
+        state.highlighted = rows.first { $0.selected }?.id ?? rows.first?.id
+        state.onHeightChange?(Self.height(for: sections, tab: tab))
     }
 
     private func singleHeader(_ section: SelectorSection) -> some View {
@@ -156,19 +158,19 @@ struct SelectorView: View {
             .frame(height: Self.rowHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(current ? Theme.row : .clear)
-            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { if $0 { state.highlighted = row.id } }
     }
 
-    /// One line about the highlighted row; the space is reserved so the panel never changes height.
+    /// One line about the highlighted row, truncated rather than wrapped; its space is always reserved.
     private var footer: some View {
         Text(highlightedRow?.detail ?? highlightedRow?.provider ?? " ")
-            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 16)
             .frame(height: Self.footerHeight)
     }
 
@@ -181,8 +183,7 @@ struct SelectorView: View {
     private func switchTab(_ delta: Int) {
         let ids = sections.map(\.id)
         guard ids.count > 1, let index = ids.firstIndex(of: state.tab ?? ids[0]) else { return }
-        state.tab = ids[(index + delta + ids.count) % ids.count]
-        state.highlighted = rows.first { $0.selected }?.id ?? rows.first?.id
+        select(tab: ids[(index + delta + ids.count) % ids.count])
     }
 
     private func pickHighlighted() {

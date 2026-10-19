@@ -193,15 +193,25 @@ final class Panel: NSPanel {
         let size = NSSize(width: SelectorView.width, height: height)
         var x = chip.minX
         var y = chip.minY - 6 - size.height
+        var opensAbove = true
         if let screen = inboxPanel.screen {
-            if y < screen.visibleFrame.minY { y = chip.maxY + 6 }
+            if y < screen.visibleFrame.minY { y = chip.maxY + 6; opensAbove = false }
             x = min(x, screen.visibleFrame.maxX - size.width - 8)
         }
-        let view = FirstMouseHostingView(rootView: AnyView(SelectorView(controller: inbox, state: selector)))
+        // Content hugs the edge nearest the chip, and a tab change resizes the panel from the far edge only.
+        let view = FirstMouseHostingView(rootView: AnyView(SelectorView(controller: inbox, state: selector)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: opensAbove ? .bottom : .top)))
         view.sizingOptions = []
         let panel = makePanel(size: size, content: view)
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
         panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
+        selector.onHeightChange = { [weak panel] height in
+            guard let panel else { return }
+            var frame = panel.frame
+            if opensAbove { frame.origin.y = frame.maxY - height }
+            frame.size.height = height
+            panel.setFrame(frame, display: true)
+        }
         panel.makeKeyAndOrderFront(nil)
         selectorPanel = panel
         // A click anywhere but the selector closes it: in another app (global) or in Zero's other windows (local).
