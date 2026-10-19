@@ -567,7 +567,8 @@ struct NewAgentCard: View {
                     Text("Nothing needs you. Start something.").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
-            // Unboxed, so the prompt's text starts exactly under the headline.
+            // The grey box runs flush to the card's edges and bottom, with the card's own inner padding, so the
+            // prompt's text starts exactly under the headline.
             VStack(alignment: .leading, spacing: 12) {
                 TextField("What should a new agent work on?",
                           text: Binding(get: { controller.drafts[key, default: ""] }, set: { controller.drafts[key] = $0 }),
@@ -611,8 +612,12 @@ struct NewAgentCard: View {
                     }.buttonStyle(.plain)
                 }
             }
+            .padding(14)
+            .background(Theme.row)
+            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 18, bottomTrailingRadius: 18, topTrailingRadius: 12))
+            .padding(.horizontal, -14).padding(.bottom, -14)
             if let error = controller.spawnError {
-                Text(error).font(.system(size: 12)).foregroundStyle(.red)
+                Text(error).font(.system(size: 12)).foregroundStyle(.red).padding(.top, 14)
             }
         }
         .padding(14)
