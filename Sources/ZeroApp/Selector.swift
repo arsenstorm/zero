@@ -51,8 +51,11 @@ struct SelectorView: View {
     @State private var moreAbove = false
     @State private var moreBelow = false
 
-    /// Models need room for their effort pills; projects do not.
-    static func width(_ kind: SelectorKind) -> CGFloat { kind == .runtime ? 400 : 272 }
+    /// Models get two panes, the list and its details, centred on the inbox; projects a single list on the chip.
+    static func width(_ kind: SelectorKind) -> CGFloat { kind == .runtime ? 2 * paneWidth : 272 }
+    private static let paneWidth: CGFloat = 240
+    /// The model list is always eight rows tall, so neither a tab change nor a hover moves anything.
+    private static let modelListHeight: CGFloat = 8 * rowHeight + 8 + 7
     private static let rowHeight: CGFloat = 30
 
     private var sections: [SelectorSection] { state.sections }
@@ -64,19 +67,17 @@ struct SelectorView: View {
         VStack(spacing: 0) {
             if sections.count > 1 { tabs } else if let section { singleHeader(section) }
             Divider().padding(.horizontal, 10)
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 1) { ForEach(rows) { rowView($0) } }
-                    .padding(.horizontal, 6).padding(.vertical, 4)
+            if state.kind == .runtime {
+                HStack(spacing: 0) {
+                    list.frame(width: Self.paneWidth, height: Self.modelListHeight)
+                    Divider().padding(.vertical, 10)
+                    details.frame(width: Self.paneWidth - 1, height: Self.modelListHeight, alignment: .top)
+                }
+            } else {
+                list.frame(height: min(CGFloat(max(rows.count, 1)) * Self.rowHeight + 8 + CGFloat(max(rows.count - 1, 0)), Self.modelListHeight))
+                Divider().padding(.horizontal, 10)
+                footer
             }
-            .frame(height: min(CGFloat(max(rows.count, 1)) * Self.rowHeight + 8 + CGFloat(max(rows.count - 1, 0)), 8 * Self.rowHeight + 8 + 7))
-            .onScrollGeometryChange(for: [Bool].self) { g in
-                [g.contentOffset.y > 1, g.contentOffset.y + g.containerSize.height < g.contentSize.height - 1]
-            } action: { _, more in moreAbove = more[0]; moreBelow = more[1] }
-            .mask(edgeFades)
-            .animation(.easeOut(duration: 0.15), value: moreAbove)
-            .animation(.easeOut(duration: 0.15), value: moreBelow)
-            Divider().padding(.horizontal, 10)
-            footer
         }
         .frame(width: Self.width(state.kind))
         .card()
@@ -96,6 +97,19 @@ struct SelectorView: View {
             state.highlighted = rows.first { $0.selected }?.id ?? rows.first?.id
             focused = true
         }
+    }
+
+    private var list: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: 1) { ForEach(rows) { rowView($0) } }
+                .padding(.horizontal, 6).padding(.vertical, 4)
+        }
+        .onScrollGeometryChange(for: [Bool].self) { g in
+            [g.contentOffset.y > 1, g.contentOffset.y + g.containerSize.height < g.contentSize.height - 1]
+        } action: { _, more in moreAbove = more[0]; moreBelow = more[1] }
+        .mask(edgeFades)
+        .animation(.easeOut(duration: 0.15), value: moreAbove)
+        .animation(.easeOut(duration: 0.15), value: moreBelow)
     }
 
     /// The list fades out at an edge with more rows past it, a hint that it scrolls.
@@ -157,7 +171,6 @@ struct SelectorView: View {
                 Text(row.title).font(.system(size: 13, weight: row.selected ? .semibold : .regular)).lineLimit(1)
                 Spacer(minLength: 6)
                 // Effort: shown on the chosen row and the one under the pointer, so a pick and its level sit together.
-                if !row.levels.isEmpty, row.selected || current { levels(row) }
                 Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold)).opacity(row.selected ? 1 : 0)
             }
             .padding(.horizontal, 10)
@@ -171,26 +184,46 @@ struct SelectorView: View {
         .onHover { if $0 { state.highlighted = row.id } }
     }
 
-    /// A row's effort levels as pills; the current one is filled. Picking one also picks the row, and leaves the
-    /// selector open so the level can be changed again.
-    private func levels(_ row: SelectorRow) -> some View {
-        let picked = row.modelID.flatMap { controller.spawnSettings[$0]?["reasoning"] } ?? row.defaultLevel
-        return HStack(spacing: 1) {
-            ForEach(row.levels, id: \.id) { level in
-                Button {
-                    row.pick()
-                    if let id = row.modelID { controller.setSpawnSetting(modelID: id, key: "reasoning", value: level.id) }
-                    state.sections = controller.selectorSections(for: state.kind)
-                } label: {
-                    Text(effortLabel(level.id)).font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(level.id == picked ? .primary : .secondary)
-                        .padding(.horizontal, 6).padding(.vertical, 3)
-                        .background(level.id == picked ? Theme.keycap : .clear)
-                        .clipShape(Capsule())
-                        .contentShape(Capsule())
+    /// The right pane: the highlighted model, what it is for, and its effort levels. Picking a level also picks
+    /// the model and leaves the selector open, so the level can be changed again.
+    @ViewBuilder private var details: some View {
+        if let row = highlightedRow {
+            let picked = row.modelID.flatMap { controller.spawnSettings[$0]?["reasoning"] } ?? row.defaultLevel
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    if let icon = row.providerIcon {
+                        icon.resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14).clipShape(RoundedRectangle(cornerRadius: 3))
+                    }
+                    Text(row.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                 }
-                .buttonStyle(.plain)
+                Text(describe(row)).font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let context = row.context {
+                    Text(context + " context").font(.system(size: 11)).foregroundStyle(.tertiary)
+                }
+                Spacer(minLength: 0)
+                if !row.levels.isEmpty {
+                    Text("Effort").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 4), GridItem(.flexible(), spacing: 4)], spacing: 4) {
+                        ForEach(row.levels, id: \.id) { level in
+                            Button {
+                                row.pick()
+                                if let id = row.modelID { controller.setSpawnSetting(modelID: id, key: "reasoning", value: level.id) }
+                                state.sections = controller.selectorSections(for: state.kind)
+                            } label: {
+                                Text(effortLabel(level.id)).font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(level.id == picked ? .primary : .secondary)
+                                    .frame(maxWidth: .infinity).padding(.vertical, 4)
+                                    .background(level.id == picked ? Theme.keycap : Theme.row)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    .contentShape(RoundedRectangle(cornerRadius: 6))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
             }
+            .padding(.horizontal, 14).padding(.vertical, 12)
         }
     }
 

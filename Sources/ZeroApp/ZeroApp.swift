@@ -196,7 +196,9 @@ final class Panel: NSPanel {
         let roomAbove = screen.maxY - chip.maxY - 6
         let opensBelow = roomBelow >= 240 || roomBelow >= roomAbove
         let size = NSSize(width: SelectorView.width(selector.kind), height: min(480, opensBelow ? roomBelow : roomAbove))
-        let x = min(chip.minX, screen.maxX - size.width - 8)
+        // Projects hang off their chip; the two-pane model selector is centred on the inbox, overhanging it equally.
+        let left = selector.kind == .runtime ? inboxPanel.frame.midX - size.width / 2 : chip.minX
+        let x = max(screen.minX + 8, min(left, screen.maxX - size.width - 8))
         let y = opensBelow ? chip.minY - 6 - size.height : chip.maxY + 6
         let view = FirstMouseHostingView(rootView: AnyView(SelectorView(controller: inbox, state: selector)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: opensBelow ? .top : .bottom)))
