@@ -615,6 +615,9 @@ struct NewAgentCard: View {
             .padding(14)
             .background(Theme.row)
             .clipShape(UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 18, bottomTrailingRadius: 18, topTrailingRadius: 12))
+            // The box's own hairline, the card's stroke colour, drawn on top so it wins where the two outlines meet.
+            .overlay(UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 18, bottomTrailingRadius: 18, topTrailingRadius: 12)
+                .strokeBorder(Theme.stroke, lineWidth: 1))
             .padding(.horizontal, -14).padding(.bottom, -14)
             if let error = controller.spawnError {
                 Text(error).font(.system(size: 12)).foregroundStyle(.red).padding(.top, 14)
