@@ -62,6 +62,7 @@ struct SelectorView: View {
     var body: some View {
         VStack(spacing: 0) {
             if sections.count > 1 { tabs } else if let section { singleHeader(section) }
+            Divider().padding(.horizontal, 10)
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 1) { ForEach(rows) { rowView($0) } }
                     .padding(.horizontal, 6).padding(.vertical, 4)
@@ -148,10 +149,6 @@ struct SelectorView: View {
             HStack(spacing: 8) {
                 Text(row.title).font(.system(size: 13, weight: row.selected ? .semibold : .regular)).lineLimit(1)
                 Spacer(minLength: 6)
-                if let context = row.context {
-                    Text(context).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
-                        .padding(.horizontal, 5).padding(.vertical, 2).background(Theme.keycap).clipShape(RoundedRectangle(cornerRadius: 4))
-                }
                 Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold)).opacity(row.selected ? 1 : 0)
             }
             .padding(.horizontal, 10)
@@ -165,13 +162,27 @@ struct SelectorView: View {
         .onHover { if $0 { state.highlighted = row.id } }
     }
 
-    /// One line about the highlighted row, truncated rather than wrapped; its space is always reserved.
+    /// The highlighted row's description in full. Every row's description is laid out underneath, invisible,
+    /// so the footer is always as tall as the tab's longest one and never changes height as the pointer moves.
     private var footer: some View {
-        Text(highlightedRow?.detail ?? highlightedRow?.provider ?? " ")
-            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
-            .frame(height: Self.footerHeight)
+        ZStack(alignment: .topLeading) {
+            ForEach(rows) { row in
+                Text(describe(row)).hidden()
+            }
+            Text(highlightedRow.map(describe) ?? " ")
+        }
+        .font(.system(size: 11)).foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16).padding(.vertical, 9)
+    }
+
+    private func describe(_ row: SelectorRow) -> String {
+        var parts: [String] = []
+        if let detail = row.detail { parts.append(detail) }
+        if let context = row.context { parts.append(context + " context") }
+        if parts.isEmpty, let provider = row.provider { parts.append(provider) }
+        return parts.joined(separator: " · ")
     }
 
     private func move(_ delta: Int) {

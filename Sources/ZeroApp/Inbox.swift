@@ -677,14 +677,22 @@ private func buildChoiceIcon(_ name: String) -> Image? {
     return Image(nsImage: image)
 }
 
-/// OpenAI's mark as OpenAI now shows it: black on a white rounded square.
+/// OpenAI's mark as OpenAI now shows it: black on a white rounded square. The asset's shape is used as a mask,
+/// so it renders black whatever colour the file was drawn in.
 private func onWhiteTile(_ mark: NSImage) -> NSImage {
     let size = NSSize(width: 64, height: 64)
     let tile = NSImage(size: size)
     tile.lockFocus()
     NSColor.white.setFill()
     NSBezierPath(roundedRect: NSRect(origin: .zero, size: size), xRadius: 14, yRadius: 14).fill()
-    mark.draw(in: NSRect(x: 11, y: 11, width: 42, height: 42), from: .zero, operation: .sourceOver, fraction: 1)
+    if let context = NSGraphicsContext.current?.cgContext, let cg = mark.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+        let inset = CGRect(x: 10, y: 10, width: 44, height: 44)
+        context.saveGState()
+        context.clip(to: inset, mask: cg)
+        context.setFillColor(NSColor.black.cgColor)
+        context.fill(inset)
+        context.restoreGState()
+    }
     tile.unlockFocus()
     return tile
 }
