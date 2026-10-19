@@ -195,18 +195,21 @@ struct SelectorView: View {
                     icon.resizable().aspectRatio(contentMode: .fit).frame(width: 36, height: 36).clipShape(RoundedRectangle(cornerRadius: 8))
                         .padding(.bottom, 10)
                 }
-                Text(row.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                // Two lines reserved for the description and one for the tokens, so switching models shifts nothing.
+                // Every text row has a fixed whole-point height (two lines for the description), so switching
+                // models shifts nothing: measured text heights differ by fractions between one and two lines.
+                Text(row.title).font(.system(size: 13, weight: .semibold)).lineLimit(1).frame(height: 16)
                 Text(describe(row)).font(.system(size: 11)).foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center).lineLimit(2, reservesSpace: true)
+                    .multilineTextAlignment(.center).lineLimit(2)
+                    .frame(height: 28, alignment: .top)
                     .padding(.top, 4)
-                Text(row.context ?? " ").font(.system(size: 11)).foregroundStyle(.tertiary).padding(.top, 4)
+                Text(row.context ?? " ").font(.system(size: 11)).foregroundStyle(.tertiary).frame(height: 14).padding(.top, 4)
                 if !row.levels.isEmpty {
                     HStack {
                         Text("Effort").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                         Spacer()
                         Text(picked.map { effortLabel($0) } ?? "").font(.system(size: 11, weight: .medium)).contentTransition(.numericText())
                     }
+                    .frame(height: 14)
                     .padding(.top, 16)
                     EffortSlider(levels: row.levels.map(\.id), picked: picked) { level in
                         row.pick()
