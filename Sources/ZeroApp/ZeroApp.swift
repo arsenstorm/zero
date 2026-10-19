@@ -107,7 +107,8 @@ final class Panel: NSPanel {
     private var hotKey: EventHotKeyRef?
     private var statusItem: NSStatusItem!
     private var selectorPanel: Panel?
-    private var selectorState: SelectorState?
+    /// The chip's point in the selector view, bottom-left origin: the card scales out of it and back into it.
+    private var selectorAnchor = CGPoint.zero
     private var selectorMonitors: [Any] = []
     private var settingsWindow: NSWindow?
     private let settings = Settings()
@@ -201,16 +202,19 @@ final class Panel: NSPanel {
         let left = selector.kind == .runtime ? inboxPanel.frame.midX - size.width / 2 : chip.minX
         let x = max(screen.minX + 8, min(left, screen.maxX - size.width - 8))
         let y = opensBelow ? chip.minY - 6 - size.height : chip.maxY + 6
-        selector.origin = UnitPoint(x: (chip.midX - x) / size.width, y: opensBelow ? 0 : 1)
         let view = FirstMouseHostingView(rootView: AnyView(SelectorView(controller: inbox, state: selector)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: opensBelow ? .top : .bottom)))
         view.sizingOptions = []
         let panel = makePanel(size: size, content: view)
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
         panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
+        view.wantsLayer = true
+        panel.alphaValue = 0
         panel.makeKeyAndOrderFront(nil)
+        panel.displayIfNeeded() // the first layout happens now, not inside the animation
         selectorPanel = panel
-        selectorState = selector
+        selectorAnchor = CGPoint(x: chip.midX - x, y: opensBelow ? size.height : 0)
+        Self.animateSelector(panel, anchor: selectorAnchor, opening: true)
         // A click anywhere but the card closes it: in another app (global), in Zero's other windows, or in the
         // strip's empty part (local).
         if let global = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
@@ -228,16 +232,40 @@ final class Panel: NSPanel {
     private func hideSelector(keepState: Bool = false) {
         selectorMonitors.forEach { NSEvent.removeMonitor($0) }
         selectorMonitors.removeAll()
-        if let panel = selectorPanel, let state = selectorState, state !== inbox.selector || !keepState {
-            // Let the card animate back into the chip before the window goes.
-            state.closing = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.13) { panel.orderOut(nil) }
-        } else {
-            selectorPanel?.orderOut(nil)
+        if let panel = selectorPanel {
+            Self.animateSelector(panel, anchor: selectorAnchor, opening: false) { panel.orderOut(nil) }
         }
         selectorPanel = nil
-        selectorState = nil
         if !keepState, openedByIntent || inbox.takesKeys { inboxPanel.makeKey() }
+    }
+
+    /// Emil's popover: fade with a scale from 0.95 at the trigger and a 4 pt nudge toward it, ease-out in,
+    /// faster ease-in out. Done in Core Animation on the window and its layer, so it runs on the render server
+    /// and is not held up by SwiftUI's layout.
+    private static func animateSelector(_ panel: NSWindow, anchor: CGPoint, opening: Bool, completion: (() -> Void)? = nil) {
+        guard let layer = panel.contentView?.layer else { completion?(); return }
+        var small = CATransform3DMakeTranslation(anchor.x, anchor.y, 0)
+        small = CATransform3DScale(small, 0.95, 0.95, 1)
+        small = CATransform3DTranslate(small, -anchor.x, -anchor.y, 0)
+        small.m42 += anchor.y > 0 ? 4 : -4
+        let (from, to) = opening ? (small, CATransform3DIdentity) : (CATransform3DIdentity, small)
+        let duration = opening ? 0.14 : 0.1
+        let curve = opening ? CAMediaTimingFunction(controlPoints: 0.32, 0.72, 0, 1) : CAMediaTimingFunction(name: .easeIn)
+        CATransaction.begin()
+        CATransaction.setCompletionBlock(completion)
+        let scale = CABasicAnimation(keyPath: "transform")
+        scale.fromValue = from
+        scale.toValue = to
+        scale.duration = duration
+        scale.timingFunction = curve
+        layer.add(scale, forKey: "selector")
+        layer.transform = to
+        CATransaction.commit()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = duration
+            context.timingFunction = curve
+            panel.animator().alphaValue = opening ? 1 : 0
+        }
     }
 
     private func makePanel(size: NSSize, content: NSView) -> Panel {
