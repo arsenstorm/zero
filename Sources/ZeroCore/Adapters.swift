@@ -230,7 +230,16 @@ public struct SoloAdapter: AgentAdapter {
             else if runtime.name.lowercased().contains("codex") { extra += ["-c", "model_reasoning_effort=\"\(level)\""] }
         }
         if !extra.isEmpty { arguments["extra_args"] = extra }
-        let created = try await resultJSON(of: call(tool: "spawn_agent", arguments: arguments)) as? [String: Any] ?? [:]
+        // An exited agent of this tool already in the project is started again rather than adding another tab.
+        // ponytail: a restart reruns the command it was created with, so the model and effort picked now do not
+        // reach it; send "/model" after start if that matters.
+        let created: [String: Any]
+        if let exited = try await exitedAgent(in: projectID, running: runtime.detail), let id = exited["id"] as? Int {
+            _ = try await resultText(of: call(tool: "start_process", arguments: ["process_id": id, "project_id": projectID]))
+            created = ["process_id": id, "name": exited["name"] ?? "agent"]
+        } else {
+            created = try await resultJSON(of: call(tool: "spawn_agent", arguments: arguments)) as? [String: Any] ?? [:]
+        }
         guard let processID = created["process_id"] as? Int else { throw AdapterError("Solo did not return a process id") }
         // Solo calls every Claude process "Claude", and Zero keys agents by name: a closed "Claude" would hide
         // the next one. Named like the CLI's agents instead: claude-119.
@@ -255,6 +264,18 @@ public struct SoloAdapter: AgentAdapter {
         }
         try await send(prompt, to: identity)
         return identity
+    }
+
+    /// The first exited agent process in the project whose command is the tool's (`command` is the tool's
+    /// command line, such as "claude"; nil matches any agent).
+    private func exitedAgent(in projectID: Int, running command: String?) async throws -> [String: Any]? {
+        let processes = try await resultJSON(of: call(tool: "list_processes", arguments: ["project_id": projectID])) as? [[String: Any]] ?? []
+        let executable = command?.split(separator: " ").first.map(String.init)
+        return processes.first { process in
+            guard (process["kind"] as? String) == "agent", (process["status"] as? String) == "Exited" else { return false }
+            guard let executable else { return true }
+            return ((process["command"] as? String) ?? "").split(separator: " ").first.map(String.init) == executable
+        }
     }
 
     private func resultText(of result: [String: Any]) throws -> String {
