@@ -78,11 +78,20 @@ public struct SoloAdapter: AgentAdapter {
         guard let processID = created["process_id"] as? Int else { throw AdapterError("Solo did not return a process id") }
         let name = (created["name"] as? String) ?? "agent-\(processID)"
         let identity = AgentIdentity(name: name, host: ProcessInfo.processInfo.hostName, soloProcessID: processID)
-        // ponytail: poll idle for up to 30 s; a prompt typed before the agent's UI is up is lost.
-        for _ in 0..<30 {
+        // A prompt typed before the agent sits at its own input is lost, so wait: first for idle, then for any
+        // start-up dialog (Claude Code's "trust this folder", for one) to be answered in Solo. Up to 90 s.
+        var ready = false
+        for second in 0..<90 {
             try await Task.sleep(for: .seconds(1))
             let status = try await resultJSON(of: call(tool: "get_process_status", arguments: ["process_id": processID])) as? [String: Any]
-            if let state = status?["agent_state"] as? [String: Any], state["idle"] as? Bool == true { break }
+            let idle = (status?["agent_state"] as? [String: Any])?["idle"] as? Bool == true
+            guard idle || second >= 20 else { continue }
+            let screen = try await resultText(of: call(tool: "get_process_output", arguments: ["process_id": processID, "lines": 15]))
+            let dialog = ["Enter to confirm", "trust this folder", "Esc to cancel"].contains { screen.contains($0) }
+            if !dialog { ready = true; break }
+        }
+        guard ready else {
+            throw AdapterError("\(name) started, but it is waiting at a dialog in Solo. Answer it there, then message the agent.")
         }
         try await send(prompt, to: identity)
         return identity
