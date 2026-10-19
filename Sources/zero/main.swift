@@ -14,6 +14,7 @@ func usage() -> Never {
       zero wait    <id>
       zero status  <id>
       zero list
+      zero say     <agent> "text"   (sends Arsen's words to the agent through Zero, as the inbox's message box does)
     common: --async (print the id and return) --agent NAME ($ZERO_AGENT) --ticket ID --ttl MINUTES (default from Zero's settings)
     exit: 0 answered (answer on stdout; for run, the command's output and exit code), 2 declined, 3 expired
     """)
@@ -141,6 +142,11 @@ case "status":
     if reply.op == "error" { fail("zero: \(reply.message ?? "error")") }
     guard let ask = reply.ask else { fail("zero: malformed reply") }
     print(ask.state.rawValue + (ask.answer.map { " \($0)" } ?? ""))
+case "say":
+    guard positional.count >= 2 else { usage() }
+    let socket = connect()
+    try? socket.send(Request(op: "message", agent: positional[0], text: positional[1...].joined(separator: " ")))
+    guard let reply = socket.receive(Response.self), reply.op == "created" else { fail("zero: \(socket.receive(Response.self)?.message ?? "no reply from Zero.app")") }
 case "list":
     let socket = connect()
     try? socket.send(Request(op: "list"))

@@ -47,6 +47,12 @@ final class Server {
         case "list":
             try? client.send(Response(op: "asks", asks: onMain { store.asks }))
             client.close()
+        case "message":
+            // Arsen's words to an agent, from a script: the same path as the inbox's message box.
+            guard let agent = request.agent, let text = request.text else { return reject(client, "message needs an agent and text") }
+            onMain { Task { await store.message(text, to: agent) } }
+            try? client.send(Response(op: "created"))
+            client.close()
         default:
             reject(client, "unknown op \(request.op)")
         }
