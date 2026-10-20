@@ -146,6 +146,11 @@ private struct HostedScroll<Content: View>: NSViewRepresentable {
         var hosting: NSHostingView<Content>? { subviews.first as? NSHostingView<Content> }
     }
 
+    /// The inbox panel never becomes key, so its first click must count, as it does for the panel's own view.
+    final class Hosting: NSHostingView<Content> {
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    }
+
     final class Coordinator {
         var observer: Any?
         var stuckToBottom = true
@@ -162,7 +167,7 @@ private struct HostedScroll<Content: View>: NSViewRepresentable {
         scroll.verticalScroller?.controlSize = .mini
         scroll.verticalScrollElasticity = .none
         let document = Document()
-        let hosting = NSHostingView(rootView: content)
+        let hosting = Hosting(rootView: content)
         hosting.sizingOptions = [.intrinsicContentSize] // the rows are one line each, so height needs no width
         document.addSubview(hosting)
         scroll.documentView = document

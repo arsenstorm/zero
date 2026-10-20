@@ -23,6 +23,7 @@ final class InboxController {
 
     /// Changes the view with no animation and no card entrances.
     func show(agent: String?) {
+        expandedEarlier = nil
         guard agentFilter != agent else { return }
         switching = true
         agentFilter = agent
@@ -405,6 +406,20 @@ final class InboxController {
     var screenOpen: Bool { agentFilter.map { store.screens[$0] != nil } ?? false }
 
     func composerKey(_ agent: String) -> String { "msg:" + agent }
+
+    /// The Earlier row opened into its full card, if any.
+    var expandedEarlier: String?
+
+    /// Starts a message to `agent` with the first line of `ask` quoted, so "about this:" needs no retyping.
+    func quote(_ ask: Ask, to agent: String) {
+        let key = composerKey(agent)
+        let text = ask.kind == .note || ask.kind == .message ? ask.body : ask.title
+        let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
+        let quoted = "> \(line)\n\n"
+        drafts[key] = quoted + drafts[key, default: ""]
+        caretRequest[key] = (quoted as NSString).length
+        focusedReply = key
+    }
 
     var canSpawn: Bool { !store.spawners.isEmpty }
 
@@ -835,20 +850,17 @@ struct AgentTimeline: View {
                 // fading where more is past them.
                 ContainedList(height: Self.earlierHeight(earlier.count)) {
                     VStack(alignment: .leading, spacing: Self.earlierGap) {
-                        ForEach(earlier) { ask in
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                TimelineView(.periodic(from: .now, by: 1)) { context in
-                                    Text(shortAge(ask.answeredAt ?? ask.createdAt, now: context.date))
-                                        .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).frame(width: 30, alignment: .trailing)
-                                }
-                                Text(summary(ask)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                            .frame(height: Self.earlierRow)
-                        }
+                        ForEach(earlier) { ask in EarlierRow(ask: ask, controller: controller) }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .id(controller.agentFilter) // each agent's list starts fresh, fades included
+                // A row opened from the list shows in full beneath it, inside the same card: it is history,
+                // not a new turn in the conversation.
+                if let id = controller.expandedEarlier, let ask = earlier.first(where: { $0.id == id }) {
+                    Rectangle().fill(Theme.stroke).frame(height: 1).padding(.vertical, 4)
+                    EarlierDetail(ask: ask).transition(.opacity)
+                }
             }
             .padding(14).frame(maxWidth: .infinity, alignment: .leading)
             .card()
@@ -885,8 +897,84 @@ struct AgentTimeline: View {
         }
     }
 
+}
+
+/// An Earlier row in full: the whole message, or the question with what was answered and, for a run, its output.
+private struct EarlierDetail: View {
+    let ask: Ask
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if ask.kind == .note || ask.kind == .message {
+                MarkdownText(ask.body, cwd: ask.agent.cwd ?? ask.cwd)
+            } else {
+                Text(ask.title).font(.system(size: 13, weight: .semibold)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                if !ask.body.isEmpty, ask.body != ask.title {
+                    Text(ask.body).font(.system(size: 12)).foregroundStyle(.secondary).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                }
+                if let command = ask.command, !command.isEmpty {
+                    Text(ask.kind == .run && !ask.output.isEmpty ? "$ \(command)\n\(ask.output.suffix(2000))" : command)
+                        .font(.system(size: 11, design: .monospaced)).textSelection(.enabled).lineLimit(14)
+                        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.code).clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                if ask.kind != .run, let answer = ask.answer {
+                    Label(answer, systemImage: ask.state == .declined ? "xmark.circle.fill" : "checkmark.circle.fill")
+                        .font(.system(size: 12, weight: .medium)).foregroundStyle(ask.state == .declined ? .red : .green)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// One line of an agent's history: when, what kind, who said what. A click opens it into its full card under the
+/// list; on hover, a reply button starts a message quoting it.
+private struct EarlierRow: View {
+    let ask: Ask
+    @Bindable var controller: InboxController
+    @State private var hovered = false
+
+    private var open: Bool { controller.expandedEarlier == ask.id }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(shortAge(ask.answeredAt ?? ask.createdAt, now: context.date))
+                    .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).frame(width: 30, alignment: .trailing)
+            }
+            Image(systemName: symbol).font(.system(size: 10, weight: .medium)).foregroundStyle(.tertiary).frame(width: 14)
+            Text(summary).font(.system(size: 12)).foregroundStyle(open ? .primary : .secondary).lineLimit(1)
+            Spacer(minLength: 4)
+            if let agent = controller.agentFilter, controller.store.canMessage(agent) {
+                Button { controller.quote(ask, to: agent) } label: {
+                    Image(systemName: "arrowshape.turn.up.left").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                        .frame(width: 16, height: 16).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).help("Reply to this").opacity(hovered ? 1 : 0)
+            }
+        }
+        .frame(height: 16)
+        .contentShape(Rectangle())
+        .onHover { hovered = $0 }
+        .onTapGesture {
+            withAnimation(.easeOut(duration: 0.2)) { controller.expandedEarlier = open ? nil : ask.id }
+        }
+    }
+
+    private var symbol: String {
+        switch ask.kind {
+        case .note where ask.status == "closed": "xmark.circle"
+        case .note: "text.bubble"
+        case .message: "arrow.up.circle"
+        case .run: "terminal"
+        case .permission: "lock"
+        case .approve: "checkmark.seal"
+        case .question, .choice: "questionmark.bubble"
+        }
+    }
+
     /// A transcript line: who said it, then the first line of what they said.
-    private func summary(_ ask: Ask) -> String {
+    private var summary: String {
         switch ask.kind {
         case .note where ask.status == "closed": return "Closed"
         case .note: return speaker(ask.agent.name) + ": " + (ask.body.split(whereSeparator: \.isNewline).first.map(String.init) ?? ask.body)
