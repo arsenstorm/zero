@@ -39,8 +39,9 @@ struct OnboardingView: View {
                 Text("One inbox on your Mac for everything your agents need from you: a question, a go-ahead, a command to run on your side.")
                     .font(.system(size: 14)).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 380)
                 VStack(alignment: .leading, spacing: 14) {
-                    point("rectangle.portrait", "The bar", "Sits at the edge of your screen. One dot per agent: blue working, orange needs you, green done.")
-                    point("tray", "The inbox", "Opens from the bar. Answer with 1, 2 or 3, type a reply, or start a new agent.")
+                    point(AnyView(BarGlyph()), "The bar", "Sits at the edge of your screen, with a dot for each agent. A dot turns orange when that agent needs you.")
+                    point(AnyView(Image(systemName: "tray").font(.system(size: 15)).foregroundStyle(.secondary)), "The inbox",
+                          "Opens from the bar. Answer with 1, 2 or 3, type a reply, or start a new agent.")
                 }
                 .padding(.top, 14).frame(maxWidth: 400)
             }
@@ -84,9 +85,9 @@ struct OnboardingView: View {
         }
     }
 
-    private func point(_ icon: String, _ title: String, _ detail: String) -> some View {
+    private func point(_ icon: AnyView, _ title: String, _ detail: String) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon).font(.system(size: 15)).foregroundStyle(.secondary).frame(width: 22)
+            icon.frame(width: 22, height: 22)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 13, weight: .semibold))
                 Text(detail).font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -343,5 +344,18 @@ private extension String {
     /// "2.1.304 (Claude Code)" and "codex-cli 0.160.1" both read "2.1.304", "0.160.1".
     var versionNumber: String {
         range(of: #"\d+(\.\d+)+"#, options: .regularExpression).map { String(self[$0]) } ?? self
+    }
+}
+
+/// The bar in miniature: a capsule standing on its end with three agents' dots in it, one of them needing you.
+private struct BarGlyph: View {
+    var body: some View {
+        VStack(spacing: 2.5) {
+            Circle().fill(.blue).frame(width: 4, height: 4)
+            Circle().fill(.orange).frame(width: 4, height: 4)
+            Circle().fill(.green).frame(width: 4, height: 4)
+        }
+        .frame(width: 10, height: 22)
+        .overlay(Capsule().strokeBorder(.secondary, lineWidth: 1.2))
     }
 }
