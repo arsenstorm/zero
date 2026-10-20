@@ -576,6 +576,8 @@ enum Theme {
     static let keycap = dynamic(dark: NSColor(white: 0.22, alpha: 1), light: NSColor(white: 0.88, alpha: 1))
     /// A fully solid knob; `.primary` is a translucent label colour.
     static let knob = dynamic(dark: .white, light: .black)
+    /// Text on a solid `knob` surface (Arsen's message bubbles).
+    static let onKnob = dynamic(dark: .black, light: .white)
     static let code = dynamic(dark: NSColor(white: 0, alpha: 0.35), light: NSColor(white: 0, alpha: 0.05))
     static let pill = dynamic(dark: NSColor(white: 0, alpha: 0.9), light: NSColor(white: 1, alpha: 0.96))
     // Opaque, so a border is one colour along its length whatever sits behind each segment.
@@ -1040,14 +1042,14 @@ struct CardView: View {
     /// dismiss; delivery trouble shows underneath.
     private var messageBubble: some View {
         VStack(alignment: .trailing, spacing: 4) {
+            // Yours are solid: black in light mode, white in dark, the text in the opposite.
             HuggingWidth(max: 260) {
-                Text(ask.body).font(.system(size: 13)).textSelection(.enabled)
+                Text(ask.body).font(.system(size: 13)).foregroundStyle(Theme.onKnob).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 14).padding(.vertical, 12)
             }
-            .background(Theme.row)
+            .background(Theme.knob)
             .clipShape(RoundedRectangle(cornerRadius: 18))
-            .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke, lineWidth: 1))
             if ask.status == "starting" {
                 Text("Starting…").font(.system(size: 11)).foregroundStyle(.tertiary).padding(.trailing, 6)
             }
