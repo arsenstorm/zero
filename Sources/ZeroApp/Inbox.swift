@@ -1217,7 +1217,7 @@ struct CardView: View {
             }
             if ask.kind == .note {
                 // An agent's words and nothing else; the time is in Earlier once the card folds away.
-                MarkdownText(ask.body)
+                MarkdownText(ask.body, cwd: ask.agent.cwd ?? ask.cwd)
                 if ask.status == "blocked" { Text("Blocked").font(.system(size: 11, weight: .medium)).foregroundStyle(.red) }
             } else {
                 Text(headline).font(.system(size: 15, weight: .semibold))
@@ -1580,8 +1580,15 @@ func speaker(_ agent: String) -> String {
 /// monospace on their own surface. ponytail: fences and inline syntax only; headings and lists read as text.
 struct MarkdownText: View {
     let text: String
+    /// Where "#123" points: the GitHub repository of the agent's folder.
+    var repo: String?
 
-    init(_ text: String) { self.text = text }
+    init(_ text: String, cwd: String? = nil) {
+        self.text = text
+        repo = cwd.flatMap(References.repo(of:))
+    }
+
+    private static let linearApp = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "linear://\(References.linearWorkspace)")!) != nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1619,8 +1626,15 @@ struct MarkdownText: View {
         return result
     }
 
+    /// Linear issues and pull requests become links, except inside `code` and links the agent already wrote.
     private func attributed(_ prose: String) -> AttributedString {
-        (try? AttributedString(markdown: prose, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(prose)
+        var result = (try? AttributedString(markdown: prose, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(prose)
+        for (range, url) in References.find(in: String(result.characters), repo: repo, linearApp: Self.linearApp) {
+            guard let span = Range(range, in: result) else { continue }
+            let plain = result[span].runs.allSatisfy { $0.link == nil && !($0.inlinePresentationIntent?.contains(.code) ?? false) }
+            if plain { result[span].link = url }
+        }
+        return result
     }
 }
 
