@@ -33,6 +33,8 @@ struct SettingsView: View {
                     Text(String(format: "%.1f s", settings.takeBackSeconds)).monospacedDigit().frame(width: 40, alignment: .trailing)
                 }
                 Toggle("Move to the next question 3 s after an answer lands", isOn: $settings.autoAdvance)
+                Toggle("Suggest commands and skills after /", isOn: $settings.suggestCommands)
+                Toggle("Suggest project files after @", isOn: $settings.suggestFiles)
                 LabeledContent("Talk hotkey") { HotKeyRecorder(settings: settings) }
                 Text("Opens the inbox on the oldest waiting ask and starts dictation.").font(.caption).foregroundStyle(.secondary)
             }

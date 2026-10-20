@@ -45,6 +45,9 @@ final class Settings {
     var hotKeyLabel: String { didSet { defaults.set(hotKeyLabel, forKey: "hotKeyLabel") } }
     /// After an answer turns green, move on to the next waiting card a few seconds later.
     var autoAdvance: Bool { didSet { defaults.set(autoAdvance, forKey: "autoAdvance"); onChange?() } }
+    /// Composer suggestions: commands and skills after "/" (on), project files after "@" (off unless wanted).
+    var suggestCommands: Bool { didSet { defaults.set(suggestCommands, forKey: "suggestCommands"); onChange?() } }
+    var suggestFiles: Bool { didSet { defaults.set(suggestFiles, forKey: "suggestFiles"); onChange?() } }
     /// Folder patterns Zero watches for asks as files (globs, ~ allowed).
     var dropPatterns: [String] { didSet { defaults.set(dropPatterns, forKey: "dropPatterns"); onChange?() } }
     /// Microphone for dictation, as a CoreAudio device UID; nil follows the system default.
@@ -66,6 +69,8 @@ final class Settings {
         hotKeyLabel = defaults.string(forKey: "hotKeyLabel") ?? "⌥ Space"
         inputDeviceUID = defaults.string(forKey: "inputDeviceUID")
         autoAdvance = defaults.object(forKey: "autoAdvance") as? Bool ?? true
+        suggestCommands = defaults.object(forKey: "suggestCommands") as? Bool ?? true
+        suggestFiles = defaults.object(forKey: "suggestFiles") as? Bool ?? false
         dropPatterns = defaults.stringArray(forKey: "dropPatterns") ?? []
     }
 
@@ -144,6 +149,8 @@ final class Panel: NSPanel {
     private func applySettings() {
         drops.start(patterns: settings.dropPatterns)
         inbox.autoAdvance = settings.autoAdvance
+        inbox.suggestCommands = settings.suggestCommands
+        inbox.suggestFiles = settings.suggestFiles
         inbox.dictation.deviceUID = settings.inputDeviceUID
         store.takeBackDelay = settings.takeBackSeconds
         store.defaultTTL = TimeInterval(settings.defaultTTLMinutes * 60)

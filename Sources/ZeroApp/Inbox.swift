@@ -78,7 +78,7 @@ final class InboxController {
 
     func updateMention(key: String, trigger: MentionTrigger?) {
         mentionTask?.cancel()
-        guard let trigger else { if mention?.key == key { mention = nil }; return }
+        guard let trigger, trigger.symbol == "/" ? suggestCommands : suggestFiles else { if mention?.key == key { mention = nil }; return }
         let path = projectPath(for: key)
         if trigger.symbol == "/" {
             let query = trigger.query.lowercased()
@@ -247,6 +247,9 @@ final class InboxController {
     @ObservationIgnored var scrollAnimated = false
     /// Settings: move on to the next waiting card a few seconds after an answer turns green.
     @ObservationIgnored var autoAdvance = true
+    /// From Settings: whether "/" and "@" open suggestions (and "@" paths are highlighted).
+    var suggestCommands = true
+    var suggestFiles = false
     @ObservationIgnored private var advanceTask: Task<Void, Never>?
     /// The card last answered, so Esc can take it back even after the selection has moved on.
     @ObservationIgnored var lastAnswered: String?
@@ -1050,8 +1053,10 @@ struct ComposerCard: View {
                          onSubmit: submit,
                          onTrigger: { controller.updateMention(key: key, trigger: $0) },
                          onKey: { controller.mentionKey($0, for: key) },
+                         highlightFiles: controller.suggestFiles,
                          height: $fieldHeight)
                 .frame(height: fieldHeight)
+                .padding(.horizontal, -TokenTextView.inset.width) // text still starts under the card's 14 pt
             HStack(spacing: 6) {
                 if agentName == nil {
                     // Where: grouped by adapter, each project with its path.
