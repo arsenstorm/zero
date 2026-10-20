@@ -57,7 +57,7 @@ struct OnboardingView: View {
             StepPage(title: "Make it yours", detail: "Change any of these later in Settings, from the menu bar.") {
                 VStack(spacing: 0) {
                     OnboardingRow(icon: "keyboard", title: "Talk hotkey", detail: "Opens the inbox on the oldest ask and starts dictation.") {
-                        HotKeyRecorder(settings: settings)
+                        HotKeyRecorder(settings: settings, minWidth: nil)
                     }
                     Divider()
                     OnboardingRow(icon: "power", title: "Open at login", detail: "So agents can always reach you.") {

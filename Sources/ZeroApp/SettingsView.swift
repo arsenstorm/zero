@@ -161,6 +161,8 @@ struct SettingsView: View {
 /// Click, press a combination, done. Stores the key code and Carbon modifiers the hotkey needs.
 struct HotKeyRecorder: View {
     @Bindable var settings: Settings
+    /// Settings gives the button a 120 pt floor; onboarding lets it hug its label so it sits flush right.
+    var minWidth: CGFloat? = 120
     @State private var recording = false
     @State private var monitor: Any?
 
@@ -168,7 +170,7 @@ struct HotKeyRecorder: View {
         Button(recording ? "Press keys…" : settings.hotKeyLabel) {
             recording ? stop() : start()
         }
-        .frame(minWidth: 120)
+        .frame(minWidth: minWidth)
     }
 
     private func start() {
