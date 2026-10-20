@@ -236,11 +236,15 @@ private struct IntegrationsPage: View {
     @State private var plugin: Bool?
     @State private var pluginError: String?
     @State private var refreshing = false
-    @State private var connecting = false
-    @State private var linearError: String?
+    @State private var linear = LinearConnecting()
+    @State private var showingLinear = false
 
     private var linearDetail: String {
-        Linear.shared.workspaces.isEmpty ? "Issue ids in messages open in Linear." : "Connect another workspace."
+        switch Linear.shared.workspaces.count {
+        case 0: "Issue ids in messages open in Linear."
+        case 1: "Connected to \(Linear.shared.workspaces[0].name)."
+        case let count: "Connected to \(count) workspaces."
+        }
     }
 
     var body: some View {
@@ -267,21 +271,10 @@ private struct IntegrationsPage: View {
                     Text(soloStatus).font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 OnboardingRow(icon: "link", picture: choiceIcon("linear"), title: "Linear", detail: linearDetail) {
-                    if connecting { ProgressView().controlSize(.small) }
-                    else {
-                        RowButton(title: "Connect") {
-                            connecting = true
-                            linearError = nil
-                            Task {
-                                linearError = await Linear.shared.connect { NSWorkspace.shared.open($0) }
-                                connecting = false
-                            }
-                        }
-                    }
-                }
-                ForEach(Linear.shared.workspaces) { workspace in
-                    OnboardingRow(icon: "building.2", title: workspace.name, detail: "Teams \(workspace.teams.joined(separator: ", ")).") {
-                        RowButton(title: "Remove") { Linear.shared.remove(workspace.urlKey) }
+                    if Linear.shared.workspaces.isEmpty {
+                        if linear.busy { ProgressView().controlSize(.small) } else { RowButton(title: "Connect") { linear.connect() } }
+                    } else {
+                        RowButton(title: "View connections") { showingLinear = true }
                     }
                 }
                 OnboardingRow(icon: "list.bullet", title: "Claude models", detail: account.map { "For \($0)." } ?? "For your Claude Code account.") {
@@ -298,8 +291,9 @@ private struct IntegrationsPage: View {
                 }
             }
             if let pluginError { Text(pluginError).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3) }
-            if let linearError { Text(linearError).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3) }
+            if let error = linear.error, !showingLinear { Text(error).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3) }
         }
+        .sheet(isPresented: $showingLinear) { LinearConnections(connecting: linear) }
         .task { plugin = await ClaudePlugin.isInstalled() }
     }
 
@@ -310,6 +304,78 @@ private struct IntegrationsPage: View {
               FileManager.default.isExecutableFile(atPath: solo.helper) else { return "Not installed" }
         let socket = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/soloterm/solo-mcp.sock").path
         return FileManager.default.fileExists(atPath: socket) ? "Connected" : "Not running"
+    }
+}
+
+/// A Linear sign-in in progress, shared by the Integrations row and the connections sheet.
+@MainActor @Observable
+private final class LinearConnecting {
+    var busy = false
+    var error: String?
+
+    func connect() {
+        busy = true
+        error = nil
+        Task {
+            error = await Linear.shared.connect { NSWorkspace.shared.open($0) }
+            busy = false
+        }
+    }
+}
+
+/// The connected Linear workspaces, each with its logo and teams, and a way to add another.
+private struct LinearConnections: View {
+    let connecting: LinearConnecting
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Linear connections").font(.system(size: 17, weight: .semibold)).padding(.bottom, 4)
+            Text("Issue ids from these workspaces open in Linear.").font(.system(size: 12)).foregroundStyle(.secondary)
+                .padding(.bottom, 12)
+            Rows {
+                ForEach(Linear.shared.workspaces) { workspace in
+                    HStack(spacing: 12) {
+                        WorkspaceLogo(workspace: workspace)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(workspace.name).font(.system(size: 13, weight: .semibold))
+                            Text("Teams \(workspace.teams.joined(separator: ", ")).").font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer(minLength: 12)
+                        RowButton(title: "Remove") { Linear.shared.remove(workspace.urlKey) }
+                    }
+                    .padding(.vertical, 12)
+                }
+            }
+            if let error = connecting.error { Text(error).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3).padding(.top, 8) }
+            HStack {
+                ZStack {
+                    RowButton(title: "Add workspace") { connecting.connect() }.opacity(connecting.busy ? 0 : 1)
+                    if connecting.busy { ProgressView().controlSize(.small) }
+                }
+                Spacer()
+                SolidButton(title: "Done") { dismiss() }
+            }
+            .padding(.top, 20)
+        }
+        .padding(24)
+        .frame(width: 440)
+        .onChange(of: Linear.shared.workspaces.isEmpty) { _, empty in if empty { dismiss() } }
+    }
+}
+
+/// The workspace's own logo from Linear, or its initial on a tile while that loads or when it has none.
+private struct WorkspaceLogo: View {
+    let workspace: Linear.Workspace
+    var body: some View {
+        AsyncImage(url: workspace.logo) { phase in
+            if let image = phase.image { image.resizable().aspectRatio(contentMode: .fill) }
+            else {
+                Text(workspace.name.prefix(1).uppercased()).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.keycap)
+            }
+        }
+        .frame(width: 22, height: 22).clipShape(RoundedRectangle(cornerRadius: 5))
     }
 }
 

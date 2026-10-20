@@ -162,8 +162,8 @@ struct OnboardingRow<Trailing: View>: View {
                 Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1) // one line, always
             }
             Spacer(minLength: 12)
-            // A fixed slot, so a spinner turning into a button or a tick moves nothing beside it.
-            trailing().frame(width: 128, alignment: .trailing)
+            // A fixed slot, so a spinner turning into a button or a tick moves nothing beside it; a longer button widens it.
+            trailing().frame(minWidth: 128, alignment: .trailing)
         }
         .padding(.vertical, 12)
     }
@@ -176,7 +176,7 @@ struct RowButton: View {
     var action: () -> Void = {}
     var body: some View {
         Button(action: action) {
-            Text(title).font(.system(size: 12, weight: .semibold))
+            Text(title).font(.system(size: 12, weight: .semibold)).fixedSize()
                 .foregroundStyle(enabled ? AnyShapeStyle(Theme.onKnob) : AnyShapeStyle(.tertiary))
                 .padding(.horizontal, 12).frame(height: 26)
                 .background(enabled ? AnyShapeStyle(Theme.knob) : AnyShapeStyle(Theme.keycap)).clipShape(Capsule())

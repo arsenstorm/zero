@@ -1,7 +1,6 @@
 import CryptoKit
 import Foundation
 import Network
-import Security
 
 /// Linear workspaces connected through OAuth (authorization code with PKCE: a client id and no secret). Zero
 /// reads each workspace's URL key and team keys, so issue ids in agents' messages link to the right workspace.
@@ -11,6 +10,8 @@ public final class Linear {
         public var urlKey: String
         public var name: String
         public var teams: [String]
+        /// The workspace's logo, as Linear serves it; nil when it has none.
+        public var logo: URL?
         var access: String
         var refresh: String?
         var expires: Date
@@ -92,10 +93,10 @@ public final class Linear {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(tokens.access)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["query": "{ organization { urlKey name } teams(first: 250) { nodes { key } } }"])
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["query": "{ organization { urlKey name logoUrl } teams(first: 250) { nodes { key } } }"])
         struct Reply: Decodable {
             struct Data: Decodable {
-                struct Organization: Decodable { let urlKey: String; let name: String }
+                struct Organization: Decodable { let urlKey: String; let name: String; let logoUrl: String? }
                 struct Teams: Decodable { struct Team: Decodable { let key: String }; let nodes: [Team] }
                 let organization: Organization
                 let teams: Teams
@@ -106,6 +107,7 @@ public final class Linear {
         var workspace = tokens
         workspace.urlKey = reply.data.organization.urlKey
         workspace.name = reply.data.organization.name
+        workspace.logo = reply.data.organization.logoUrl.flatMap(URL.init(string:))
         workspace.teams = reply.data.teams.nodes.map { $0.key.uppercased() }
         return workspace
     }
@@ -180,24 +182,35 @@ private enum Callback {
     }
 }
 
-/// The workspaces and their tokens, as one item in Zero's Keychain.
+/// The workspaces and their tokens, as one item in the login Keychain. Read and written through macOS's
+/// `security` tool, as Claude Code does: the item then trusts that tool rather than this build of Zero, so a
+/// rebuilt or updated Zero reads it without asking for the Keychain password.
 private enum Keychain {
-    static let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "Zero Linear",
-                                       kSecAttrAccount as String: "workspaces"]
-
     static func load() -> [Linear.Workspace] {
-        var item: CFTypeRef?
-        var search = query
-        search[kSecReturnData as String] = true
-        guard SecItemCopyMatching(search as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return [] }
+        guard let encoded = security(["find-generic-password", "-s", "Zero Linear", "-a", "workspaces", "-w"]),
+              let data = Data(base64Encoded: encoded) else { return [] }
         return (try? JSONDecoder().decode([Linear.Workspace].self, from: data)) ?? []
     }
 
     static func save(_ workspaces: [Linear.Workspace]) {
-        SecItemDelete(query as CFDictionary)
-        guard !workspaces.isEmpty, let data = try? JSONEncoder().encode(workspaces) else { return }
-        var item = query
-        item[kSecValueData as String] = data
-        SecItemAdd(item as CFDictionary, nil)
+        guard !workspaces.isEmpty, let data = try? JSONEncoder().encode(workspaces) else {
+            _ = security(["delete-generic-password", "-s", "Zero Linear", "-a", "workspaces"])
+            return
+        }
+        _ = security(["add-generic-password", "-U", "-s", "Zero Linear", "-a", "workspaces", "-w", data.base64EncodedString()])
+    }
+
+    private static func security(_ arguments: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
