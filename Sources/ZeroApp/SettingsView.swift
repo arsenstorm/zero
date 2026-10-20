@@ -60,7 +60,7 @@ struct SettingsView: View {
                         Spacer(minLength: 0)
                     }
                     // The page you are on is in full colour; the rest recede, no highlight box (as in the reference).
-                    .foregroundStyle(item == page ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+                    .foregroundStyle(item == page ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
                     .padding(.horizontal, 12).frame(height: 32)
                     .contentShape(Rectangle())
                 }
@@ -82,13 +82,9 @@ struct SettingsView: View {
             // since blurring a flat fill just smudges its edge.
             Theme.knob.mask(LinearGradient(stops: ProgressiveBlur<EmptyView>.eased, startPoint: .top, endPoint: .bottom))
             ProgressiveBlur { Blueprint().foregroundStyle(Theme.onKnob) }
-            HStack(spacing: 7) {
-                ZeroMark(small: true).frame(width: 16, height: 15)
-                Text("Zero").font(.system(size: 13, weight: .semibold))
-                Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
-                    .font(.system(size: 9, weight: .semibold))
-                    .padding(.horizontal, 5).padding(.vertical, 1.5)
-                    .overlay(Capsule().strokeBorder(Theme.onKnob.opacity(0.5), lineWidth: 1))
+            HStack(spacing: 8) {
+                ZeroMark(small: true).frame(width: 21, height: 20)
+                Text("Zero").font(.system(size: 17, weight: .semibold))
             }
             .foregroundStyle(Theme.onKnob)
             .padding(.leading, 20).padding(.top, 44) // just under the window's buttons
@@ -443,7 +439,7 @@ private struct Blueprint: View {
 private struct ProgressiveBlur<Content: View>: View {
     @ViewBuilder let content: () -> Content
     private static var layers: [(blur: CGFloat, from: CGFloat, to: CGFloat)] {
-        [(0, 0.0, 0.78), (2, 0.72, 0.86), (4, 0.82, 0.93), (7, 0.9, 1.0)]
+        [(0, 0.0, 0.7), (1.5, 0.62, 0.8), (3, 0.72, 0.88), (5, 0.8, 0.95), (8, 0.88, 1.0)]
     }
     var body: some View {
         ZStack {
@@ -456,10 +452,16 @@ private struct ProgressiveBlur<Content: View>: View {
         .mask(LinearGradient(stops: Self.eased, startPoint: .top, endPoint: .bottom))
     }
 
-    /// Solid to clear on an ease-in-out curve over the bottom quarter.
+    /// Solid to clear over the bottom third along a smootherstep curve, sampled finely: it leaves the solid and
+    /// arrives at clear with no visible start or end, so the colour melts into the sidebar instead of passing
+    /// through a band of grey.
     static var eased: [Gradient.Stop] {
-        [(0.0, 1.0), (0.76, 1.0), (0.82, 0.92), (0.88, 0.7), (0.93, 0.42), (0.97, 0.16), (1.0, 0.0)]
-            .map { Gradient.Stop(color: .black.opacity($0.1), location: $0.0) }
+        let start = 0.64
+        return [Gradient.Stop(color: .black, location: 0)] + (0...16).map { step in
+            let t = Double(step) / 16
+            let ease = t * t * t * (t * (t * 6 - 15) + 10)
+            return Gradient.Stop(color: .black.opacity(1 - ease), location: start + (1 - start) * t)
+        }
     }
 
     /// Opaque over its band, ramping in at the top of it; a layer's band overlaps the next so there are no seams.
