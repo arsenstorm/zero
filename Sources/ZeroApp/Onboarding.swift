@@ -107,7 +107,12 @@ struct OnboardingView: View {
             .animation(.snappy(duration: 0.2), value: step)
             Spacer()
             if step != .welcome {
-                Button("Back") { go(-1) }.buttonStyle(.plain).foregroundStyle(.secondary).padding(.trailing, 14)
+                // The same 32 pt capsule as Continue, just without a fill, so the whole shape takes the click.
+                Button { go(-1) } label: {
+                    Text("Back").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                        .padding(.horizontal, 16).frame(height: 32).contentShape(Capsule())
+                }
+                .buttonStyle(PressableStyle()).padding(.trailing, 2)
             }
             SolidButton(title: step == .tryIt ? "Done" : "Continue") { step == .tryIt ? finish() : go(1) }
         }
