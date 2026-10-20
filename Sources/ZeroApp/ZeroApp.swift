@@ -132,6 +132,11 @@ final class Panel: NSPanel {
         NSApp.setActivationPolicy(.accessory)
         do { try server.start() } catch { NSLog("zero: server failed: \(error)") }
         Task { await Linear.shared.refresh() }
+        ClaudeAccounts.shared.onSwitch = { [weak self] in
+            guard let self else { return }
+            Task { if let adapter = self.store.spawners.first, await adapter.refreshModels() { self.inbox.modelsVersion += 1 } }
+        }
+        ClaudeAccounts.shared.start()
         let serverChanged = store.onChange
         store.onChange = { [weak self] ask in serverChanged?(ask); self?.drops.changed(ask) }
         store.onCreate = { [weak self] ask in self?.arrived(ask) }

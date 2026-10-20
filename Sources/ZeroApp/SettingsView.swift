@@ -232,12 +232,14 @@ private struct AgentsPage: View {
 private struct IntegrationsPage: View {
     let store: Store
     let inbox: InboxController
-    /// nil while it is being checked or changed.
-    @State private var plugin: Bool?
-    @State private var pluginError: String?
-    @State private var refreshing = false
+    @State private var claude = ClaudeAdding()
+    @State private var showingClaude = false
     @State private var linear = LinearConnecting()
     @State private var showingLinear = false
+
+    private var claudeDetail: String {
+        ClaudeAccounts.shared.active.map { "Signed in as \($0)." } ?? "Asks and progress come to your inbox."
+    }
 
     private var linearDetail: String {
         switch Linear.shared.workspaces.count {
@@ -250,18 +252,11 @@ private struct IntegrationsPage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Rows {
-                OnboardingRow(icon: "sparkle", picture: choiceIcon("claude"), title: "Claude Code", detail: "Asks and progress come to your inbox.") {
-                    if let plugin {
-                        Switch(isOn: Binding(get: { plugin }, set: { on in
-                            self.plugin = nil
-                            pluginError = nil
-                            Task {
-                                if on { pluginError = await ClaudePlugin.install() } else { await ClaudePlugin.uninstall() }
-                                self.plugin = await ClaudePlugin.isInstalled()
-                            }
-                        }))
+                OnboardingRow(icon: "sparkle", picture: choiceIcon("claude"), title: "Claude Code", detail: claudeDetail) {
+                    if ClaudeAccounts.shared.accounts.isEmpty {
+                        if claude.busy { ProgressView().controlSize(.small) } else { RowButton(title: "Connect") { claude.add() } }
                     } else {
-                        ProgressView().controlSize(.small)
+                        RowButton(title: "View accounts") { showingClaude = true }
                     }
                 }
                 OnboardingRow(icon: "chevron.left.forwardslash.chevron.right", picture: choiceIcon("openai"), title: "Codex", detail: "Start Codex agents from Zero.") {
@@ -277,33 +272,120 @@ private struct IntegrationsPage: View {
                         RowButton(title: "View connections") { showingLinear = true }
                     }
                 }
-                OnboardingRow(icon: "list.bullet", title: "Claude models", detail: account.map { "For \($0)." } ?? "For your Claude Code account.") {
-                    if refreshing { ProgressView().controlSize(.small) }
-                    else {
-                        RowButton(title: "Refresh") {
-                            refreshing = true
-                            Task {
-                                if let adapter = store.spawners.first, await adapter.refreshModels() { inbox.modelsVersion += 1 }
-                                refreshing = false
-                            }
-                        }
-                    }
-                }
             }
-            if let pluginError { Text(pluginError).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3) }
+            if let error = claude.error, !showingClaude { Text(error).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3) }
             if let error = linear.error, !showingLinear { Text(error).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3) }
         }
         .sheet(isPresented: $showingLinear) { LinearConnections(connecting: linear) }
-        .task { plugin = await ClaudePlugin.isInstalled() }
+        .sheet(isPresented: $showingClaude) { ClaudeAccountsSheet(adding: claude) }
     }
-
-    private var account: String? { store.adapters.compactMap { $0.spawnNote(for: SpawnChoice(id: "", name: "Claude")) }.first }
 
     private var soloStatus: String {
         guard let solo = store.adapters.first(where: { $0 is SoloAdapter }) as? SoloAdapter,
               FileManager.default.isExecutableFile(atPath: solo.helper) else { return "Not installed" }
         let socket = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/soloterm/solo-mcp.sock").path
         return FileManager.default.fileExists(atPath: socket) ? "Connected" : "Not running"
+    }
+}
+
+/// A Claude Code sign-in in progress, shared by the Integrations row and the accounts sheet.
+@MainActor @Observable
+private final class ClaudeAdding {
+    var busy = false
+    var error: String?
+
+    func add() {
+        busy = true
+        error = nil
+        Task {
+            error = await ClaudeAccounts.shared.add()
+            busy = false
+        }
+    }
+}
+
+/// The Claude Code accounts Zero switches between, auto-switch, and the Zero plugin.
+private struct ClaudeAccountsSheet: View {
+    let adding: ClaudeAdding
+    @Environment(\.dismiss) private var dismiss
+    /// nil while it is being checked or changed.
+    @State private var plugin: Bool?
+    @State private var pluginError: String?
+    @State private var switchError: String?
+
+    private var accounts: ClaudeAccounts { ClaudeAccounts.shared }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Claude Code accounts").font(.system(size: 17, weight: .semibold)).padding(.bottom, 4)
+            Text("Agents and your terminal use the active account.").font(.system(size: 12)).foregroundStyle(.secondary)
+                .padding(.bottom, 12)
+            Rows {
+                ForEach(accounts.accounts) { account in
+                    HStack(spacing: 12) {
+                        (choiceIcon("claude") ?? Image(systemName: "person.crop.circle")).resizable().aspectRatio(contentMode: .fit)
+                            .frame(width: 20, height: 20).frame(width: 22)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(account.email).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                            Text(detail(account)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer(minLength: 12)
+                        if account.email == accounts.active {
+                            Text("Active").font(.system(size: 12)).foregroundStyle(.secondary)
+                        } else {
+                            HStack(spacing: 6) {
+                                RowButton(title: "Remove") { accounts.remove(account.email) }
+                                RowButton(title: "Switch") { switchError = accounts.switchTo(account.email) }
+                            }
+                        }
+                    }
+                    .padding(.vertical, 12)
+                }
+                OnboardingRow(icon: "arrow.left.arrow.right", title: "Auto-switch",
+                              detail: "Switches at \(Int(ClaudeAccounts.threshold))% of a usage limit.") {
+                    Switch(isOn: Binding(get: { accounts.autoSwitch }, set: { accounts.autoSwitch = $0 }))
+                }
+                OnboardingRow(icon: "puzzlepiece.extension", title: "Zero plugin", detail: "Asks and progress come to your inbox.") {
+                    if let plugin {
+                        Switch(isOn: Binding(get: { plugin }, set: { on in
+                            self.plugin = nil
+                            pluginError = nil
+                            Task {
+                                if on { pluginError = await ClaudePlugin.install() } else { await ClaudePlugin.uninstall() }
+                                self.plugin = await ClaudePlugin.isInstalled()
+                            }
+                        }))
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+            }
+            ForEach([switchError, adding.error, pluginError].compactMap { $0 }, id: \.self) { error in
+                Text(error).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3).padding(.top, 8)
+            }
+            HStack {
+                ZStack {
+                    RowButton(title: "Add account") { adding.add() }.opacity(adding.busy ? 0 : 1)
+                    if adding.busy { ProgressView().controlSize(.small) }
+                }
+                Spacer()
+                SolidButton(title: "Done") { dismiss() }
+            }
+            .padding(.top, 20)
+        }
+        .padding(24)
+        .frame(width: 480)
+        .task { plugin = await ClaudePlugin.isInstalled() }
+    }
+
+    /// "Max · 21% of 5 hours, 67% of 7 days".
+    private func detail(_ account: ClaudeAccounts.Account) -> String {
+        var parts = [account.plan.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Claude"]
+        if let usage = accounts.usage[account.email] {
+            let windows = [usage.fiveHour.map { "\(Int($0))% of 5 hours" }, usage.sevenDay.map { "\(Int($0))% of 7 days" }].compactMap { $0 }
+            if !windows.isEmpty { parts.append(windows.joined(separator: ", ")) }
+        }
+        return parts.joined(separator: " · ")
     }
 }
 
