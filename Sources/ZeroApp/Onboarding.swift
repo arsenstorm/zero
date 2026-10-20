@@ -79,8 +79,6 @@ struct OnboardingView: View {
                         .font(.system(size: 12, design: .monospaced)).padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Theme.code).clipShape(RoundedRectangle(cornerRadius: 10))
-                    Text("Agents send this from their terminal. It waits until you answer, then carries on.")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
                     SolidButton(title: "Send test ask", action: tryIt).padding(.top, 6)
                 }
             }
@@ -270,7 +268,7 @@ private struct PermissionsStep: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            OnboardingRow(icon: "bell.badge", title: "Notifications", detail: "So an ask reaches you while you are in another app.") {
+            OnboardingRow(icon: "bell.badge", title: "Notifications", detail: "So asks reach you in any app.") {
                 StatusControl(done: notifications, label: "Allow") {
                     Task {
                         _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
