@@ -1016,13 +1016,9 @@ struct CardView: View {
                 .frame(height: 20)
             }
             if ask.kind == .note {
-                // An agent's words, nothing else over them: the Markdown body, then a small time underneath.
+                // An agent's words and nothing else; the time is in Earlier once the card folds away.
                 MarkdownText(ask.body)
-                HStack(spacing: 6) {
-                    if ask.status == "blocked" { Text("Blocked").font(.system(size: 10, weight: .medium)).foregroundStyle(.red) }
-                    Text((ask.answeredAt ?? ask.createdAt).formatted(date: .omitted, time: .shortened))
-                        .font(.system(size: 10)).monospacedDigit().foregroundStyle(.tertiary)
-                }
+                if ask.status == "blocked" { Text("Blocked").font(.system(size: 11, weight: .medium)).foregroundStyle(.red) }
             } else {
                 Text(headline).font(.system(size: 15, weight: .semibold))
                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
@@ -1084,7 +1080,7 @@ struct CardView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading) // a one-word reply still gets the whole card
         .opacity(dimmed ? 0.45 : 1)
-        .padding(14)
+        .padding(.horizontal, 14).padding(.vertical, ask.kind == .note ? 12 : 14)
         .background(Theme.card)
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke, lineWidth: 1))
