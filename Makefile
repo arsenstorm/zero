@@ -19,6 +19,7 @@ bundle: build
 	cp Resources/Info.plist $(APP)/Contents/Info.plist
 	mkdir -p $(APP)/Contents/Resources
 	cp Resources/icons/*.png $(APP)/Contents/Resources/
+	cp Resources/AppIcon.icns Resources/logo/menubar.png Resources/logo/menubar@2x.png Resources/logo/mark.svg Resources/logo/mark-small.svg $(APP)/Contents/Resources/
 	rm -rf $(APP)/Contents/Resources/plugin && mkdir -p $(APP)/Contents/Resources/plugin
 	cp -R .claude-plugin hooks skills $(APP)/Contents/Resources/plugin/
 	cp drop-client/target/release/zero-drop $(APP)/Contents/Resources/zero-drop-darwin-arm64

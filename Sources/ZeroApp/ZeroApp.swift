@@ -141,9 +141,51 @@ final class Panel: NSPanel {
             guard let self, event.window === inboxPanel else { return event }
             return inbox.handle(event) ? nil : event
         }
-        let center = UNUserNotificationCenter.current()
-        center.delegate = self
-        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        UNUserNotificationCenter.current().delegate = self // permission is asked for in onboarding, not at every launch
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { [weak self] _ in
+            DispatchQueue.main.async { self?.updateDock() }
+        }
+        if !UserDefaults.standard.bool(forKey: "onboarded") { openOnboarding() }
+    }
+
+    /// Zero is in the Dock only while one of its windows (onboarding, Settings) is open; otherwise it is a menu
+    /// bar app with its bar.
+    private func updateDock() {
+        let windowOpen = [settingsWindow, onboardingWindow].contains { $0?.isVisible == true }
+        let policy: NSApplication.ActivationPolicy = windowOpen ? .regular : .accessory
+        if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
+    }
+
+    private var onboardingWindow: NSWindow?
+
+    @objc func openOnboarding() {
+        if onboardingWindow == nil {
+            let view = OnboardingView(settings: settings, tryIt: { [weak self] in self?.sendSampleAsk() },
+                                      finish: { [weak self] in
+                                          UserDefaults.standard.set(true, forKey: "onboarded")
+                                          self?.onboardingWindow?.close()
+                                      })
+            let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+            window.styleMask = [.titled, .closable, .fullSizeContentView]
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            window.isMovableByWindowBackground = true
+            window.isReleasedWhenClosed = false
+            window.setContentSize(NSSize(width: 560, height: 600))
+            window.center()
+            onboardingWindow = window
+        }
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        onboardingWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    /// The ask an agent would send, so the first card answered is a real one; the inbox opens on it.
+    private func sendSampleAsk() {
+        let zero = AgentIdentity(name: "zero", host: ProcessInfo.processInfo.hostName, label: "Zero")
+        _ = store.create(Ask(kind: .approve, title: "Onboarding", body: "Zero is set up. Finish onboarding?",
+                             options: ["Yes", "No", "Suggest something else…"], agent: zero, ttl: 600))
+        pin(agent: nil)
     }
 
     private func applySettings() {
@@ -159,10 +201,14 @@ final class Panel: NSPanel {
 
     private func makeStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "0.circle", accessibilityDescription: "Zero")
+        let mark = NSImage(named: "menubar") ?? NSImage(systemSymbolName: "0.circle", accessibilityDescription: "Zero")
+        mark?.isTemplate = true
+        mark?.size = NSSize(width: 18, height: 18)
+        statusItem.button?.image = mark
         let menu = NSMenu()
         menu.addItem(withTitle: "Open Log", action: #selector(openLog), keyEquivalent: "")
         menu.addItem(.separator())
+        menu.addItem(withTitle: "Welcome to Zero…", action: #selector(openOnboarding), keyEquivalent: "")
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         menu.addItem(withTitle: "Quit Zero", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         for item in menu.items where item.action != #selector(NSApplication.terminate(_:)) { item.target = self }
@@ -182,6 +228,7 @@ final class Panel: NSPanel {
             window.center()
             settingsWindow = window
         }
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
     }

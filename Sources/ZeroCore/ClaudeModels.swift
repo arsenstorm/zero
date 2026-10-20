@@ -108,13 +108,20 @@ public enum ClaudeModels {
     }
 
     /// Claude Code's sign-in, as Claude Code stores it. Returns nil when the item is missing or access is refused.
+    /// Read through macOS's `security` tool, not the Keychain API: Claude Code writes the item with that tool, so
+    /// it stays allowed to read it, while an app's "Always Allow" is wiped each time Claude Code rewrites the item
+    /// on a token refresh. This way there is never a prompt.
     private static func accessToken() -> String? {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                    kSecAttrService as String: "Claude Code-credentials",
-                                    kSecReturnData as String: true,
-                                    kSecMatchLimit as String: kSecMatchLimitOne]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data,
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = ["find-generic-password", "-s", "Claude Code-credentials", "-w"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let oauth = json["claudeAiOauth"] as? [String: Any] else { return nil }
         return oauth["accessToken"] as? String
