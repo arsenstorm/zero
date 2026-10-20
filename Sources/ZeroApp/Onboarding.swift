@@ -321,12 +321,6 @@ private struct PermissionsStep: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            OnboardingRow(icon: "bell.badge", title: "Notifications", detail: "So asks reach you in any app.") {
-                if let status = check.notifications {
-                    StatusControl(done: status == .authorized || status == .provisional, label: "Allow") { check.allowNotifications() }
-                }
-            }
-            Divider()
             OnboardingRow(icon: "mic", title: "Microphone", detail: "To dictate a reply instead of typing it.") {
                 StatusControl(done: check.microphone == .authorized, label: "Allow") { check.allowMicrophone() }
             }

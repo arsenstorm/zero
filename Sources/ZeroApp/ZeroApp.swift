@@ -470,16 +470,12 @@ final class Panel: NSPanel {
         if inbox.dictatingFor == nil { inbox.startDictation() } else { inbox.stopDictation() }
     }
 
+    /// A new ask is announced by a sound and the bar's orange dot, not a banner: the card is already in the inbox,
+    /// and a banner on top of it said the same thing twice (and on whichever screen macOS chose).
     private func arrived(_ ask: Ask) {
-        guard ask.kind != .note else { return }
+        guard ask.kind != .note, ask.kind != .message else { return }
         layout()
-        let content = UNMutableNotificationContent()
-        content.title = store.displayName(of: ask.agent.name)
-        content.subtitle = ask.kind == .run ? "wants to run a command" : "needs your answer"
-        content.body = ask.title
-        content.sound = .default
-        content.userInfo = ["id": ask.id]
-        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: ask.id, content: content, trigger: nil))
+        NSSound(named: "Glass")?.play()
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
