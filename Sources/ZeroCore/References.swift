@@ -1,34 +1,41 @@
 import Foundation
 
-/// Linear issues ("OPS-3096") and pull requests ("#12846", "app#12846") in what agents write, as links.
+/// Linear issues ("OPS-3096", "eng-9559"), pull requests ("#12846", "app#12846") and commits ("064c6bb7b5") in
+/// what agents write, as links.
 public enum References {
-    // ponytail: the workspace is Arsen's; a Settings field when Zero has a second Linear user.
+    // ponytail: Acme's workspace and team keys; Settings fields when Zero has a second Linear user.
     public static let linearWorkspace = "acme"
-    /// Look like issue ids but are standards.
-    private static let notIssues: Set<String> = ["UTF", "ISO", "SHA", "RFC", "CVE", "GPT", "MD", "TLS", "HTTP", "X"]
-    private static let pattern = try! NSRegularExpression(pattern: #"\b([A-Z][A-Z0-9]{1,9})-\d+\b|(?:\b([\w.-]+/[\w.-]+|[\w.-]+))?#(\d+)\b"#)
+    /// Only these prefixes are issues, so "UTF-8" and "SHA-256" stay text.
+    static let linearTeams: Set<String> = ["ENG", "OPS", "WEB"]
+    private static let pattern = try! NSRegularExpression(pattern:
+        #"\b([A-Za-z]{1,5})-(\d+)\b|(?:\b([\w.-]+/[\w.-]+|[\w.-]+))?#(\d+)\b|\b([0-9a-f]{7,40})\b"#)
 
-    /// Each reference's range in `text` (UTF-16, as NSString counts) and where it goes. A bare "#123" needs `repo`
-    /// ("owner/name"); "name#123" takes `repo`'s owner. `linearApp` opens issues in Linear's app instead of the web.
+    /// Each reference's range in `text` (UTF-16, as NSString counts) and where it goes. A bare "#123" or commit
+    /// needs `repo` ("owner/name"); "name#123" takes `repo`'s owner. `linearApp` opens issues in Linear's app.
     public static func find(in text: String, repo: String?, linearApp: Bool) -> [(range: NSRange, url: URL)] {
         let ns = text as NSString
+        func group(_ match: NSTextCheckingResult, _ i: Int) -> String? {
+            match.range(at: i).location == NSNotFound ? nil : ns.substring(with: match.range(at: i))
+        }
         return pattern.matches(in: text, range: NSRange(location: 0, length: ns.length)).compactMap { match in
-            if match.range(at: 1).location != NSNotFound {
-                guard !notIssues.contains(ns.substring(with: match.range(at: 1))) else { return nil }
-                let id = ns.substring(with: match.range)
-                let url = linearApp ? "linear://\(linearWorkspace)/issue/\(id)" : "https://linear.app/\(linearWorkspace)/issue/\(id)"
-                return URL(string: url).map { (match.range, $0) }
-            }
-            let number = ns.substring(with: match.range(at: 3))
-            let named = match.range(at: 2).location == NSNotFound ? nil : ns.substring(with: match.range(at: 2))
-            let target: String?
-            switch named {
-            case nil: target = repo
-            case let name? where name.contains("/"): target = name
-            case let name?: target = repo.map { $0.split(separator: "/")[0] + "/" + name }
-            }
-            guard let target else { return nil }
-            return URL(string: "https://github.com/\(target)/pull/\(number)").map { (match.range, $0) }
+            let link: String?
+            if let team = group(match, 1)?.uppercased(), let number = group(match, 2) {
+                guard linearTeams.contains(team) else { return nil }
+                let path = "\(linearWorkspace)/issue/\(team)-\(number)"
+                link = linearApp ? "linear://\(path)" : "https://linear.app/\(path)"
+            } else if let number = group(match, 4) {
+                let target: String? = switch group(match, 3) {
+                case nil: repo
+                case let name? where name.contains("/"): name
+                case let name?: repo.map { $0.split(separator: "/")[0] + "/" + name }
+                }
+                link = target.map { "https://github.com/\($0)/pull/\(number)" }
+            } else if let sha = group(match, 5) {
+                // A hash has letters and digits; "1234567" and "deadbeef" are something else.
+                guard sha.contains(where: \.isNumber), sha.contains(where: \.isLetter) else { return nil }
+                link = repo.map { "https://github.com/\($0)/commit/\(sha)" }
+            } else { link = nil }
+            return link.flatMap(URL.init(string:)).map { (match.range, $0) }
         }
     }
 
