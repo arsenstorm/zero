@@ -15,6 +15,19 @@ public final class Store {
     @ObservationIgnored public var onChange: ((Ask) -> Void)?
     @ObservationIgnored public var onOutput: ((Ask, String) -> Void)?
 
+    /// Agents whose session is not running, by the adapters' last look (every few seconds from the app).
+    public private(set) var offline: Set<String> = []
+
+    public func refreshLiveness() async {
+        var identities: [String: AgentIdentity] = [:]
+        for ask in asks where ask.state != .expired { identities[ask.agent.name] = ask.agent }
+        var gone: Set<String> = []
+        for adapter in adapters { gone.formUnion(await adapter.offline(among: Array(identities.values))) }
+        if gone != offline { offline = gone }
+        // Titles arrive on their own schedule; with the session known this is a local file read.
+        for identity in identities.values where identity.session != nil { await relabel(identity) }
+    }
+
     /// Agents whose terminal screen is open in Zero (after a slash command), with the latest rendering.
     public private(set) var screens: [String: String] = [:]
     @ObservationIgnored private var screenPolls: [String: Task<Void, Never>] = [:]
@@ -55,13 +68,20 @@ public final class Store {
         started(provisional.name)
         do {
             var identity = try await adapter.spawn(prompt: prompt, target: target, runtime: runtime, model: model, settings: settings)
-            // Solo's own session titles are not in its API, so the label is the gist of what Arsen asked.
+            // The gist of the prompt names it until the runtime has titled the session itself.
             identity.label = Self.gist(of: prompt) ?? "\(runtime.name) \(identity.soloProcessID.map(String.init) ?? "")".trimmingCharacters(in: .whitespaces)
             rebind(provisional.name, to: identity)
             update(message.id) { $0.status = "sent" }
             if let sent = ask(message.id) { log(sent) }
             watchReply(from: identity, to: prompt, via: adapter)
-            Task { await relabel(identity) }
+            Task { [weak self] in
+                // The session id makes the agent resumable and titled; it exists once the first prompt is taken.
+                guard let session = await adapter.session(for: identity, firstPrompt: prompt), let self else { return }
+                var known = identity
+                known.session = session
+                rebind(identity.name, to: known)
+                await relabel(known)
+            }
             return identity
         } catch {
             // Gone from everywhere: expired items never show, and the log's last line for it says so.
@@ -141,13 +161,27 @@ public final class Store {
 
     /// Sends Arsen's text into the agent's session and records it in the timeline as sent or failed.
     public func message(_ text: String, to agent: String) async {
-        guard let identity = identity(of: agent) else { return }
+        guard var identity = identity(of: agent) else { return }
         var item = Ask(kind: .message, title: "Message", body: text, agent: identity)
         item.status = "sending"
         let created = create(item)
         do {
             guard let adapter = adapters.first(where: { $0.canReach(identity) }) else { throw AdapterError("No way to reach \(agent)") }
-            try await adapter.send(text, to: identity)
+            // A stopped session is brought back first, with its conversation when the runtime can; a send that
+            // fails because the session is gone gets the same treatment once.
+            func revive() async throws {
+                update(created.id) { $0.status = "resuming" }
+                identity = try await adapter.revive(identity)
+                rebind(agent, to: identity)
+                offline.remove(agent)
+            }
+            if offline.contains(agent) { try await revive() }
+            do {
+                try await adapter.send(text, to: identity)
+            } catch where "\(error)".lowercased().contains("closed") {
+                try await revive()
+                try await adapter.send(text, to: identity)
+            }
             update(created.id) { $0.status = "sent" }
             // A slash command opens something in the agent's terminal, so that screen comes to Zero; a message
             // gets an answer, which is read back when it lands.
@@ -173,6 +207,14 @@ public final class Store {
         if ask.kind == .note || ask.kind == .message {
             ask.state = .answered
             ask.answeredAt = ask.createdAt
+        }
+        // What Zero has learned about the agent (its process, session, label) carries into every later item,
+        // whether it was made from an older copy of the identity or came from the CLI with a bare name.
+        if let known = identity(of: ask.agent.name) {
+            ask.agent.soloProcessID = ask.agent.soloProcessID ?? known.soloProcessID
+            ask.agent.soloProjectID = ask.agent.soloProjectID ?? known.soloProjectID
+            ask.agent.session = ask.agent.session ?? known.session
+            ask.agent.label = ask.agent.label ?? known.label
         }
         asks.append(ask)
         log(ask)

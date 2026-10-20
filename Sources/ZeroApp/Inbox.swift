@@ -525,7 +525,7 @@ func shortAge(_ date: Date, now: Date = Date()) -> String {
 /// What an agent's dot says: orange it needs you, red it said it is blocked, green it said it is done, blue it is
 /// working. Closed means Arsen shut it: no dot until it speaks again.
 enum AgentStatus {
-    case needsYou, blocked, done, working, closed
+    case needsYou, blocked, done, working, closed, offline
 
     static func of(_ asks: [Ask]) -> AgentStatus {
         if asks.contains(where: { $0.state == .waiting || $0.state == .pending }) { return .needsYou }
@@ -544,7 +544,7 @@ enum AgentStatus {
         case .blocked: return .red
         case .done: return .green
         case .working: return .blue
-        case .closed: return .gray
+        case .closed, .offline: return .gray
         }
     }
 }
@@ -958,8 +958,8 @@ struct CardView: View {
             }
             if let status = ask.status, status.hasPrefix("failed") {
                 Text(status).font(.system(size: 11)).foregroundStyle(.red).padding(.trailing, 44)
-            } else if ask.status == "sending" || ask.status == "starting" {
-                Text(ask.status == "starting" ? "Starting…" : "Sending…").font(.system(size: 11)).foregroundStyle(.tertiary).padding(.trailing, 44)
+            } else if let status = ask.status, ["sending", "starting", "resuming"].contains(status) {
+                Text(status.prefix(1).uppercased() + status.dropFirst() + "…").font(.system(size: 11)).foregroundStyle(.tertiary).padding(.trailing, 44)
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
@@ -1236,7 +1236,11 @@ struct PillView: View {
         var seen: [String] = []
         for ask in live where !seen.contains(ask.agent.name) { seen.append(ask.agent.name) }
         return settings.sorted(seen)
-            .map { name in (name, AgentStatus.of(live.filter { $0.agent.name == name })) }
+            .map { name -> (String, AgentStatus) in
+                let status = AgentStatus.of(live.filter { $0.agent.name == name })
+                // A session that is not running shows grey and still, whatever its last note said.
+                return (name, status != .closed && controller.store.offline.contains(name) ? .offline : status)
+            }
             .filter { $0.1 != .closed }
     }
 

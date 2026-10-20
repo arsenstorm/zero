@@ -30,10 +30,17 @@ public protocol AgentAdapter: Sendable {
     func reply(from agent: AgentIdentity, to text: String) async -> String?
     /// What the runtime calls the agent now, when that is more than the tool's generic name.
     func displayName(for agent: AgentIdentity) async -> String?
+    /// The runtime's session id for an agent that was just given `firstPrompt`, once it exists.
+    func session(for agent: AgentIdentity, firstPrompt: String) async -> String?
     /// The agent's rendered screen, for slash commands whose pickers live in its terminal.
     func screen(of agent: AgentIdentity) async -> String?
     /// Raw keys into the agent's terminal (arrows, Enter, Esc, a digit); returns the screen just after.
     func press(_ bytes: [UInt8], on agent: AgentIdentity) async throws -> String?
+    /// Names of the given agents whose session is not running right now.
+    func offline(among agents: [AgentIdentity]) async -> Set<String>
+    /// Brings a stopped agent back, with its conversation when the runtime can resume one; returns the identity
+    /// to use from now on (the session may live in a new process).
+    func revive(_ agent: AgentIdentity) async throws -> AgentIdentity
     /// Starting agents: where they can run, what runs them, and the start itself. Default: not supported.
     var canSpawn: Bool { get }
     func spawnTargets() async throws -> [SpawnChoice]
@@ -51,8 +58,11 @@ public protocol AgentAdapter: Sendable {
 public extension AgentAdapter {
     func reply(from agent: AgentIdentity, to text: String) async -> String? { nil }
     func displayName(for agent: AgentIdentity) async -> String? { nil }
+    func session(for agent: AgentIdentity, firstPrompt: String) async -> String? { nil }
     func screen(of agent: AgentIdentity) async -> String? { nil }
     func press(_ bytes: [UInt8], on agent: AgentIdentity) async throws -> String? { nil }
+    func offline(among agents: [AgentIdentity]) async -> Set<String> { [] }
+    func revive(_ agent: AgentIdentity) async throws -> AgentIdentity { throw AdapterError("\(name) cannot restart \(agent.name)") }
     var canSpawn: Bool { false }
     func spawnTargets() async throws -> [SpawnChoice] { [] }
     func spawnRuntimes() async throws -> [SpawnChoice] { [] }
@@ -104,14 +114,32 @@ public struct SoloAdapter: AgentAdapter {
         return result?["output"] as? String
     }
 
-    /// Solo renames a session after its first task ("Ready word reply"); the tool's own name is not a label.
+    /// Claude titles its sessions a little after the first exchange ("Pong reply"); that title is the label.
+    /// Solo's own API never exposes a title, so nothing comes from it.
     public func displayName(for agent: AgentIdentity) async -> String? {
-        guard let processID = agent.soloProcessID else { return nil }
-        var arguments: [String: Any] = ["process_id": processID]
-        if let project = agent.soloProjectID { arguments["project_id"] = project }
-        guard let status = try? await resultJSON(of: call(tool: "get_process_status", arguments: arguments)) as? [String: Any],
-              let name = status["name"] as? String, !name.isEmpty else { return nil }
-        return ["claude", "codex", "agent", "claude code"].contains(name.lowercased()) ? nil : name
+        guard let session = agent.session, let project = agent.soloProjectID, let cwd = await projectPath(project) else { return nil }
+        return ClaudeSessions.title(of: session, cwd: cwd)
+    }
+
+    /// The session file appears once Claude has taken the first prompt, sometimes only with its answer; looks
+    /// every two seconds for half a minute.
+    public func session(for agent: AgentIdentity, firstPrompt: String) async -> String? {
+        guard let project = agent.soloProjectID, let cwd = await projectPath(project) else { return nil }
+        for _ in 0..<15 {
+            if let id = ClaudeSessions.find(prompt: firstPrompt, cwd: cwd) { return id }
+            try? await Task.sleep(for: .seconds(2))
+        }
+        return nil
+    }
+
+    /// Project paths do not move; one lookup each, so title checks every few seconds stay local file reads.
+    nonisolated(unsafe) private static var projectPaths: [Int: String] = [:]
+    private func projectPath(_ id: Int) async -> String? {
+        if let cached = Self.projectPaths[id] { return cached }
+        let rows = (try? await resultJSON(of: call(tool: "list_projects", arguments: [:])) as? [[String: Any]]) ?? []
+        guard let path = rows.first(where: { ($0["id"] as? Int) == id })?["path"] as? String else { return nil }
+        Self.projectPaths[id] = path
+        return path
     }
 
     /// Solo reports only busy or idle, so the reply is read off the agent's screen: wait for it to start
@@ -287,9 +315,14 @@ public struct SoloAdapter: AgentAdapter {
         let base = ((created["name"] as? String) ?? "agent").lowercased().replacingOccurrences(of: " ", with: "-")
         let name = "\(base)-\(processID)"
         let identity = AgentIdentity(name: name, host: ProcessInfo.processInfo.hostName, soloProcessID: processID, soloProjectID: projectID)
-        // A prompt typed before the agent sits at its own input is lost, so wait: first for idle, then for any
-        // start-up dialog (Claude Code's "trust this folder", for one) to be answered in Solo. Up to 90 s.
-        var ready = false
+        try await waitUntilReady(processID, in: projectID, name: name)
+        try await send(prompt, to: identity)
+        return identity
+    }
+
+    /// A prompt typed before the agent sits at its own input is lost, so wait: first for idle, then for any
+    /// start-up dialog (Claude Code's "trust this folder", for one) to be answered in Solo. Up to 90 s.
+    private func waitUntilReady(_ processID: Int, in projectID: Int, name: String) async throws {
         for second in 0..<90 {
             try await Task.sleep(for: .seconds(1))
             // Solo wants the project on every call: without it, "No project selected" after a successful spawn.
@@ -298,13 +331,52 @@ public struct SoloAdapter: AgentAdapter {
             guard idle || second >= 20 else { continue }
             let screen = try await resultText(of: call(tool: "get_process_output", arguments: ["process_id": processID, "project_id": projectID, "lines": 15]))
             let dialog = ["Enter to confirm", "trust this folder", "Esc to cancel"].contains { screen.contains($0) }
-            if !dialog { ready = true; break }
+            if !dialog { return }
         }
-        guard ready else {
-            throw AdapterError("\(name) started, but it is waiting at a dialog in Solo. Answer it there, then message the agent.")
+        throw AdapterError("\(name) started, but it is waiting at a dialog in Solo. Answer it there, then message the agent.")
+    }
+
+    /// One `list_processes` per project the agents live in; anything not "Running" is offline.
+    public func offline(among agents: [AgentIdentity]) async -> Set<String> {
+        var result: Set<String> = []
+        let projects = Set(agents.compactMap(\.soloProjectID))
+        for project in projects {
+            guard let rows = try? await resultJSON(of: call(tool: "list_processes", arguments: ["project_id": project])) as? [[String: Any]] else { continue }
+            let running = Set(rows.compactMap { ($0["status"] as? String) == "Running" ? $0["id"] as? Int : nil })
+            for agent in agents where agent.soloProjectID == project {
+                if let pid = agent.soloProcessID, !running.contains(pid) { result.insert(agent.name) }
+            }
         }
-        try await send(prompt, to: identity)
-        return identity
+        return result
+    }
+
+    /// A stopped Claude Code leaves "claude --resume <id>" on its screen: a new process with the old arguments plus
+    /// that flag continues the conversation, and the dead one is closed. Anything else is simply started again.
+    public func revive(_ agent: AgentIdentity) async throws -> AgentIdentity {
+        guard let processID = agent.soloProcessID, let projectID = agent.soloProjectID else { throw AdapterError("\(agent.name) has no Solo process") }
+        let status = try await resultJSON(of: call(tool: "get_process_status", arguments: ["process_id": processID, "project_id": projectID])) as? [String: Any] ?? [:]
+        if (status["status"] as? String) == "Running" { return agent }
+        let command = (status["command"] as? String) ?? ""
+        // The session Zero recorded for the agent; failing that, the hint a Claude that quit leaves on its screen.
+        let screen = (try? await resultText(of: call(tool: "get_process_output", arguments: ["process_id": processID, "project_id": projectID, "lines": 60]))) ?? ""
+        let session = agent.session.map { Substring($0) }
+            ?? screen.range(of: "--resume ([0-9a-f-]{36})", options: .regularExpression).map { screen[$0].dropFirst("--resume ".count) }
+        let executable = command.split(separator: " ").first.map(String.init) ?? ""
+        let tools = (try? await resultJSON(of: call(tool: "list_agent_tools", arguments: [:])) as? [[String: Any]]) ?? []
+        let tool = tools.first { (($0["command"] as? String) ?? "").split(separator: " ").first.map(String.init) == executable }
+        if executable == "claude", let session, let toolID = tool?["id"] as? Int {
+            let extra = command.split(separator: " ").dropFirst().map(String.init) + ["--resume", String(session)]
+            let created = try await resultJSON(of: call(tool: "spawn_agent", arguments: ["project_id": projectID, "agent_tool_id": toolID, "extra_args": extra, "include_agent_instructions": false])) as? [String: Any] ?? [:]
+            guard let newID = created["process_id"] as? Int else { throw AdapterError("Solo did not return a process id") }
+            _ = try? await call(tool: "close_process", arguments: ["process_id": processID, "project_id": projectID])
+            var revived = agent
+            revived.soloProcessID = newID
+            try await waitUntilReady(newID, in: projectID, name: agent.name)
+            return revived
+        }
+        _ = try await resultText(of: call(tool: "start_process", arguments: ["process_id": processID, "project_id": projectID]))
+        try await waitUntilReady(processID, in: projectID, name: agent.name)
+        return agent
     }
 
     /// The first exited agent process in the project whose command is the tool's (`command` is the tool's
