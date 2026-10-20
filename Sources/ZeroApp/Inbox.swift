@@ -716,6 +716,13 @@ struct AgentTimeline: View {
         if let agent = controller.agentFilter, let screen = controller.store.screens[agent] {
             ScreenCard(agent: agent, screen: screen, controller: controller)
         }
+        if let agent = controller.agentFilter, controller.waitingOn(agent) {
+            HStack(spacing: 8) {
+                Spinner().frame(width: 10, height: 10)
+                Text("Waiting for \(controller.store.displayName(of: agent))…").font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            .padding(.leading, 14)
+        }
         if let agent = controller.agentFilter, controller.store.canMessage(agent) {
             ComposerCard(controller: controller, focus: focus, mode: .agent(agent))
         }
@@ -819,10 +826,10 @@ private func onWhiteTile(_ mark: NSImage) -> NSImage {
 /// and with what it runs (chips opening Zero's own pickers) and the mic and send on the right. When nothing is
 /// open it is the whole inbox, headed "All quiet."
 
-/// The composer, the same card everywhere: the prompt or message, pills for where and with what, and a status
-/// line at its foot. In the inbox it starts an agent (project, runtime and model); in a conversation it messages
-/// that agent (its model only, since a conversation does not change project). Its height never changes between
-/// the two, so it sits still on the bar's bottom line as views switch.
+/// The composer, the same card everywhere: the prompt or message and pills for where and with what. In the inbox
+/// it starts an agent (project, runtime and model); in a conversation it messages that agent (its model only, since
+/// a conversation does not change project). When the inbox is quiet, "All quiet." sits flush on top of it in the
+/// same card. It hangs from the bar's bottom line in every view, so it does not move as views switch.
 struct ComposerCard: View {
     enum Mode { case newAgent, agent(String) }
     @Bindable var controller: InboxController
@@ -856,6 +863,26 @@ struct ComposerCard: View {
     private var starting: Bool { agentName == nil && controller.spawning }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if quiet {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("All quiet.").font(.system(size: 15, weight: .semibold))
+                    Text("Nothing needs you. Start something.").font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.card)
+            }
+            composer
+                .padding(14)
+                .background(Theme.row)
+                .overlay(alignment: .top) { if quiet { Rectangle().fill(Theme.stroke).frame(height: 1) } }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke, lineWidth: 1))
+        .onAppear { controller.loadSpawnChoices() }
+    }
+
+    private var composer: some View {
         VStack(alignment: .leading, spacing: 12) {
             TextField(placeholder, text: Binding(get: { controller.drafts[key, default: ""] }, set: { controller.drafts[key] = $0 }), axis: .vertical)
                 .textFieldStyle(.plain).font(.system(size: 13)).lineLimit(2...8)
@@ -886,37 +913,14 @@ struct ComposerCard: View {
                         .foregroundStyle(controller.drafts[key, default: ""].isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
                 }.buttonStyle(.plain)
             }
-            status
+            if agentName == nil, let error = controller.spawnError {
+                Text(error).font(.system(size: 11)).foregroundStyle(.red)
+            }
         }
-        .padding(14)
-        .background(Theme.row)
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke, lineWidth: 1))
-        .onAppear { controller.loadSpawnChoices() }
     }
 
     private func submit() {
         if agentName == nil { controller.spawn() } else { controller.send(key) }
-    }
-
-    /// One line at the foot, always the same height: the inbox's quiet state or a start error; in a conversation,
-    /// what is going on with the agent.
-    @ViewBuilder private var status: some View {
-        HStack(spacing: 6) {
-            switch mode {
-            case .newAgent:
-                if let error = controller.spawnError { Text(error).foregroundStyle(.red) }
-                else if quiet { Text("All quiet. Nothing needs you.") }
-            case .agent(let agent):
-                // A stopped session says nothing here: the grey dot already does, and a message restarts it.
-                if controller.waitingOn(agent) {
-                    Spinner().frame(width: 10, height: 10)
-                    Text("Waiting for \(controller.store.displayName(of: agent))…")
-                } else if controller.store.screens[agent] != nil { Text("Keys go to the agent's screen.") }
-            }
-        }
-        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-        .frame(height: 14, alignment: .leading)
     }
 
     /// A small pill: icon, current value, chevron. Opens one of Zero's selectors; reads pressed while it is open.
