@@ -687,11 +687,14 @@ struct AgentTimeline: View {
     var body: some View {
         let open = controller.cards.filter { !$0.state.isFinal }
         let history = controller.cards.filter { $0.state.isFinal }
-        // Everything final folds into "Earlier", your messages the moment they are sent, except the agent's
-        // latest reply when nothing has happened since: that one is the card you read.
-        let last = history.last
-        let recent = last?.kind == .note ? [last!] : []
-        let earlier = Array(history.dropLast(recent.count).suffix(40))
+        // The latest exchange stays in view: your last message on the right and what the agent said since on the
+        // left, with a placeholder holding the reply's place while it works. Everything before folds into
+        // "Earlier", so sending again moves the previous exchange up into the list and opens a new one below.
+        let start = history.lastIndex(where: { $0.kind == .message })
+            ?? history.lastIndex(where: { $0.kind == .note }) ?? history.endIndex
+        let recent = Array(history[start...])
+        let earlier = Array(history[..<start].suffix(40))
+        let waiting = controller.agentFilter.map { controller.waitingOn($0) } ?? false
 
         if !earlier.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
@@ -717,17 +720,27 @@ struct AgentTimeline: View {
             .padding(14).frame(maxWidth: .infinity, alignment: .leading)
             .card()
         }
-        ForEach(recent) { ask in CardView(ask: ask, controller: controller, focus: focus).id(ask.id) }
+        ForEach(recent) { ask in
+            CardView(ask: ask, controller: controller, focus: focus).id(ask.id)
+                // Yours rises out of the composer; a reply takes the placeholder's place.
+                .transition(ask.kind == .message ? .move(edge: .bottom).combined(with: .opacity) : .opacity)
+        }
+        if waiting, let agent = controller.agentFilter {
+            HStack(spacing: 8) {
+                Spinner().frame(width: 10, height: 10)
+                Text("\(speaker(agent)) is working…").font(.system(size: 13)).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 12)
+            .background(Theme.card)
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke, lineWidth: 1))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .id("waiting")
+            .transition(.opacity)
+        }
         ForEach(open) { ask in CardView(ask: ask, controller: controller, focus: focus).id(ask.id) }
         if let agent = controller.agentFilter, let screen = controller.store.screens[agent] {
             ScreenCard(agent: agent, screen: screen, controller: controller)
-        }
-        if let agent = controller.agentFilter, controller.waitingOn(agent) {
-            HStack(spacing: 8) {
-                Spinner().frame(width: 10, height: 10)
-                Text("Waiting for \(controller.store.displayName(of: agent))…").font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-            .padding(.leading, 14)
         }
         if let agent = controller.agentFilter, controller.store.canMessage(agent) {
             ComposerCard(controller: controller, focus: focus, mode: .agent(agent))
@@ -1004,19 +1017,18 @@ struct CardView: View {
     /// dismiss; delivery trouble shows underneath.
     private var messageBubble: some View {
         VStack(alignment: .trailing, spacing: 4) {
-            HStack(alignment: .bottom, spacing: 8) {
-                Spacer(minLength: 36)
+            HuggingWidth(max: 260) {
                 Text(ask.body).font(.system(size: 13)).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(Theme.row).clipShape(RoundedRectangle(cornerRadius: 14))
-                Text(ask.createdAt.formatted(date: .omitted, time: .shortened))
-                    .font(.system(size: 10)).monospacedDigit().foregroundStyle(.tertiary).padding(.bottom, 8)
+                    .padding(.horizontal, 14).padding(.vertical, 12)
             }
+            .background(Theme.row)
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke, lineWidth: 1))
             if let status = ask.status, status.hasPrefix("failed") {
-                Text(status).font(.system(size: 11)).foregroundStyle(.red).padding(.trailing, 44)
+                Text(status).font(.system(size: 11)).foregroundStyle(.red).padding(.trailing, 6)
             } else if let status = ask.status, ["sending", "starting", "resuming"].contains(status) {
-                Text(status.prefix(1).uppercased() + status.dropFirst() + "…").font(.system(size: 11)).foregroundStyle(.tertiary).padding(.trailing, 44)
+                Text(status.prefix(1).uppercased() + status.dropFirst() + "…").font(.system(size: 11)).foregroundStyle(.tertiary).padding(.trailing, 6)
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
