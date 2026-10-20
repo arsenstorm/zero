@@ -626,13 +626,14 @@ struct AgentTimeline: View {
     var body: some View {
         let open = controller.cards.filter { !$0.state.isFinal }
         let history = controller.cards.filter { $0.state.isFinal }
-        // Everything before the agent's latest note folds into "Earlier"; the note and your messages since stay as cards.
-        let split: ([Ask], [Ask]) = {
-            if let i = history.lastIndex(where: { $0.kind == .note }) { return (Array(history[..<i]), Array(history[i...])) }
-            return (history.filter { $0.kind != .message }, history.filter { $0.kind == .message })
-        }()
-        let earlier = Array(split.0.suffix(8))
-        let recent = split.1
+        // Everything final folds into "Earlier", your messages the moment they are sent, except the agent's
+        // latest reply when nothing has happened since: that one is the card you read.
+        let last = history.last
+        let recent = last?.kind == .note ? [last!] : []
+        let earlier = Array(history.dropLast(recent.count).suffix(8))
+        let waiting = open.isEmpty && last?.kind == .message
+            && ["sent", "sending", "starting", "resuming"].contains(last?.status ?? "")
+            && controller.agentFilter.map { controller.store.screens[$0] == nil } == true
         if !earlier.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Earlier").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
@@ -651,6 +652,13 @@ struct AgentTimeline: View {
         }
         ForEach(recent) { ask in CardView(ask: ask, controller: controller, focus: focus).id(ask.id) }
         ForEach(open) { ask in CardView(ask: ask, controller: controller, focus: focus).id(ask.id) }
+        if waiting, let agent = controller.agentFilter {
+            HStack(spacing: 8) {
+                Spinner().frame(width: 10, height: 10)
+                Text("Waiting for \(controller.store.displayName(of: agent))…").font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            .padding(.leading, 14)
+        }
         if let agent = controller.agentFilter, let screen = controller.store.screens[agent] {
             ScreenCard(agent: agent, screen: screen, controller: controller)
         }
@@ -967,36 +975,44 @@ struct CardView: View {
 
     private var card: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Who and what on the left, when on the right.
-            HStack(spacing: 8) {
-                Text(ask.kind == .message ? "You" : controller.store.displayName(of: ask.agent.name)).font(.system(size: 12, weight: .medium))
-                if let context {
-                    Text(context).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                if ask.state == .running {
-                    Button("Stop") { controller.store.cancelRun(ask.id) }
-                        .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.red)
-                } else if ask.state.isFinal {
-                    // Finished: the clock time it landed, not an age that keeps counting.
-                    Text((ask.answeredAt ?? ask.createdAt).formatted(date: .omitted, time: .shortened))
-                        .font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
-                } else {
-                    TimelineView(.periodic(from: .now, by: 1)) { timeline in
-                        Text(statusLine(now: timeline.date)).font(.system(size: 12)).monospacedDigit()
-                            .foregroundStyle(.secondary).lineLimit(1)
+            if ask.kind != .note {
+                // Who and what on the left, when on the right.
+                HStack(spacing: 8) {
+                    Text(ask.kind == .message ? "You" : controller.store.displayName(of: ask.agent.name)).font(.system(size: 12, weight: .medium))
+                    if let context {
+                        Text(context).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    if ask.state == .running {
+                        Button("Stop") { controller.store.cancelRun(ask.id) }
+                            .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.red)
+                    } else if ask.state.isFinal {
+                        // Finished: the clock time it landed, not an age that keeps counting.
+                        Text((ask.answeredAt ?? ask.createdAt).formatted(date: .omitted, time: .shortened))
+                            .font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+                    } else {
+                        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                            Text(statusLine(now: timeline.date)).font(.system(size: 12)).monospacedDigit()
+                                .foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                    if ask.state.isFinal && ask.kind != .note {
+                        Button { controller.dismiss(ask.id) } label: {
+                            Image(systemName: "xmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.secondary)
+                                .frame(width: 20, height: 20).contentShape(Rectangle())
+                        }.buttonStyle(.plain).offset(x: 4)
                     }
                 }
-                if ask.state.isFinal && ask.kind != .note {
-                    Button { controller.dismiss(ask.id) } label: {
-                        Image(systemName: "xmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.secondary)
-                            .frame(width: 20, height: 20).contentShape(Rectangle())
-                    }.buttonStyle(.plain).offset(x: 4)
-                }
+                .frame(height: 20)
             }
-            .frame(height: 20)
             if ask.kind == .note {
-                MarkdownText(ask.body) // agents write Markdown; fenced code gets a block of its own
+                // An agent's words, nothing else over them: the Markdown body, then a small time underneath.
+                MarkdownText(ask.body)
+                HStack(spacing: 6) {
+                    if ask.status == "blocked" { Text("Blocked").font(.system(size: 10, weight: .medium)).foregroundStyle(.red) }
+                    Text((ask.answeredAt ?? ask.createdAt).formatted(date: .omitted, time: .shortened))
+                        .font(.system(size: 10)).monospacedDigit().foregroundStyle(.tertiary)
+                }
             } else {
                 Text(headline).font(.system(size: 15, weight: .semibold))
                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
