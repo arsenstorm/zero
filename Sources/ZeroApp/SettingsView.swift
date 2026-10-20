@@ -266,7 +266,7 @@ private struct IntegrationsPage: View {
                 OnboardingRow(icon: "square.stack", picture: choiceIcon("solo"), title: "Solo", detail: "Starts agents and carries your messages.") {
                     Text(soloStatus).font(.system(size: 12)).foregroundStyle(.secondary)
                 }
-                OnboardingRow(icon: "link", title: "Linear", detail: linearDetail) {
+                OnboardingRow(icon: "link", picture: choiceIcon("linear"), title: "Linear", detail: linearDetail) {
                     if connecting { ProgressView().controlSize(.small) }
                     else {
                         RowButton(title: "Connect") {
