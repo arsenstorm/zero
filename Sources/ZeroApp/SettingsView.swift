@@ -43,7 +43,7 @@ struct SettingsView: View {
             }
             .background(Theme.card)
         }
-        .frame(width: 760, height: 520)
+        .frame(width: 760, height: 552) // the whole window, title bar included
         .ignoresSafeArea() // under the transparent title bar too, so the sidebar runs to the window's top
     }
 

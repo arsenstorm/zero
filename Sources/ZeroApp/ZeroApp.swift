@@ -231,7 +231,7 @@ final class Panel: NSPanel {
             window.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden
-            window.setContentSize(NSSize(width: 760, height: 520))
+            window.setContentSize(NSSize(width: 760, height: 552))
             window.isReleasedWhenClosed = false
             window.center()
             settingsWindow = window
