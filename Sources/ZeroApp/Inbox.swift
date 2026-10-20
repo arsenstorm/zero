@@ -1139,9 +1139,19 @@ struct CardView: View {
         switch ask.kind {
         case .note, .message: return nil
         case .run: return ask.title == "Run a command" ? nil : ask.title
-        case .permission: return "Permission"
+        case .permission: return nil
         default: return ask.body.isEmpty ? nil : ask.title
         }
+    }
+
+    /// Where the command runs, when that isn't simply the agent's own folder.
+    private var folder: String? { ask.cwd == ask.agent.cwd ? nil : ask.cwd }
+
+    /// Under the question: the agent's name when cards from several agents share the inbox, and the context.
+    private var byline: String? {
+        let who = controller.agentFilter == nil ? controller.store.displayName(of: ask.agent.name) : nil
+        let parts = [who, context].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     /// The headline is the question itself; for a run ask it is always the same question.
@@ -1191,11 +1201,15 @@ struct CardView: View {
     private var card: some View {
         VStack(alignment: .leading, spacing: 12) {
             if ask.kind != .note {
-                // Who and what on the left, when on the right.
-                HStack(spacing: 8) {
-                    Text(ask.kind == .message ? "You" : controller.store.displayName(of: ask.agent.name)).font(.system(size: 12, weight: .medium))
-                    if let context {
-                        Text(context).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                // The question leads, with when on the right; beneath it, who (in the inbox, where cards from
+                // several agents sit together) and the agent's own title for it.
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(headline).font(.system(size: 15, weight: .semibold))
+                            .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                        if let byline {
+                            Text(byline).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                        }
                     }
                     Spacer(minLength: 8)
                     if ask.state == .running {
@@ -1211,22 +1225,18 @@ struct CardView: View {
                                 .foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
-                    if ask.state.isFinal && ask.kind != .note {
+                    if ask.state.isFinal {
                         Button { controller.dismiss(ask.id) } label: {
                             Image(systemName: "xmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.secondary)
                                 .frame(width: 20, height: 20).contentShape(Rectangle())
                         }.buttonStyle(.plain).offset(x: 4)
                     }
                 }
-                .frame(height: 20)
             }
             if ask.kind == .note {
                 // An agent's words and nothing else; the time is in Earlier once the card folds away.
                 MarkdownText(ask.body, cwd: ask.agent.cwd ?? ask.cwd)
                 if ask.status == "blocked" { Text("Blocked").font(.system(size: 11, weight: .medium)).foregroundStyle(.red) }
-            } else {
-                Text(headline).font(.system(size: 15, weight: .semibold))
-                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             }
             // Why the agent wants it, in its own words.
             if (ask.kind == .run || ask.kind == .permission) && !ask.body.isEmpty {
@@ -1240,10 +1250,11 @@ struct CardView: View {
                     Text(command).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
                         .lineLimit(commandIsLong && !commandExpanded ? Self.collapsedLines : nil)
                         .fixedSize(horizontal: false, vertical: true)
-                    if ask.cwd != nil || commandIsLong {
+                    if folder != nil || commandIsLong {
                         HStack {
-                            if let cwd = ask.cwd {
-                                Text(cwd.replacingOccurrences(of: NSHomeDirectory(), with: "~")).font(.system(size: 10)).foregroundStyle(.secondary)
+                            if let folder {
+                                Text(folder.replacingOccurrences(of: NSHomeDirectory(), with: "~")).font(.system(size: 10)).foregroundStyle(.secondary)
+                                    .lineLimit(1).truncationMode(.middle)
                             }
                             Spacer()
                             if commandIsLong {
