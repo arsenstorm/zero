@@ -226,7 +226,9 @@ final class Panel: NSPanel {
     @objc func openSettings() {
         if settingsWindow == nil {
             let view = SettingsView(settings: settings, store: store, inbox: inbox, showOnboarding: { [weak self] in self?.openOnboarding() })
-            let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+            let host = NSHostingController(rootView: view)
+            host.sizingOptions = [] // the window's size is set below; the layout fills it
+            let window = NSWindow(contentViewController: host)
             window.title = "Zero Settings"
             window.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
             window.titlebarAppearsTransparent = true

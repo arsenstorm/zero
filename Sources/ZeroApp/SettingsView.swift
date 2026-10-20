@@ -43,20 +43,15 @@ struct SettingsView: View {
             }
             .background(Theme.card)
         }
-        .frame(width: 760, height: 552) // the whole window, title bar included
+        // The whole window, title bar included, however tall AppKit makes it.
+        .frame(minWidth: 760, maxWidth: .infinity, minHeight: 552, maxHeight: .infinity)
+        .background(Theme.card)
         .ignoresSafeArea() // under the transparent title bar too, so the sidebar runs to the window's top
     }
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 8) {
-                ZeroMark(small: true).frame(width: 20, height: 19)
-                Text("Zero").font(.system(size: 15, weight: .semibold))
-                Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
-                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
-                    .padding(.horizontal, 6).padding(.vertical, 2).background(Theme.keycap).clipShape(Capsule())
-            }
-            .padding(.horizontal, 12).padding(.top, 44).padding(.bottom, 18)
+            header.padding(.horizontal, -8).padding(.bottom, 10)
             ForEach(Page.allCases) { item in
                 Button { page = item } label: {
                     HStack(spacing: 10) {
@@ -71,11 +66,33 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
             }
-            Spacer()
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 8)
         .frame(width: 200)
+        .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.composer)
+    }
+
+    /// The heading as a blueprint, inverted against the app: black with white lines and lettering in light mode,
+    /// white with black in dark. The window's buttons sit on it; its foot fades into the sidebar.
+    private var header: some View {
+        ZStack(alignment: .bottomLeading) {
+            Theme.knob
+            Blueprint().foregroundStyle(Theme.onKnob)
+            HStack(spacing: 8) {
+                ZeroMark(small: true).frame(width: 20, height: 19)
+                Text("Zero").font(.system(size: 15, weight: .semibold))
+                Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
+                    .font(.system(size: 10, weight: .semibold))
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .overlay(Capsule().strokeBorder(Theme.onKnob.opacity(0.5), lineWidth: 1))
+            }
+            .foregroundStyle(Theme.onKnob)
+            .padding(.horizontal, 20).padding(.bottom, 22)
+        }
+        .frame(height: 104)
+        .mask(LinearGradient(stops: [.init(color: .black, location: 0.75), .init(color: .black.opacity(0), location: 1)], startPoint: .top, endPoint: .bottom))
     }
 
     @ViewBuilder private var content: some View {
@@ -378,5 +395,44 @@ struct HotKeyRecorder: View {
                                     kVK_UpArrow: "↑", kVK_DownArrow: "↓", kVK_LeftArrow: "←", kVK_RightArrow: "→"]
         let key = names[Int(event.keyCode)] ?? (event.charactersIgnoringModifiers ?? "?").uppercased()
         return parts.joined() + " " + key
+    }
+}
+
+/// A drafting-table backdrop: a fine grid, a dashed circle with its crosshair, a dashed rectangle, a dimension
+/// line with end ticks, and a few plus marks, all faint, with a soft light over the top right.
+private struct Blueprint: View {
+    var body: some View {
+        Canvas { context, size in
+            let ink = GraphicsContext.Shading.foreground
+            var grid = Path()
+            stride(from: 0, through: size.width, by: 12).forEach { x in grid.move(to: CGPoint(x: x, y: 0)); grid.addLine(to: CGPoint(x: x, y: size.height)) }
+            stride(from: 0, through: size.height, by: 12).forEach { y in grid.move(to: CGPoint(x: 0, y: y)); grid.addLine(to: CGPoint(x: size.width, y: y)) }
+            context.opacity = 0.07
+            context.stroke(grid, with: ink, lineWidth: 0.5)
+            context.opacity = 0.35
+            let dashed = StrokeStyle(lineWidth: 0.8, dash: [3, 3])
+            let center = CGPoint(x: size.width - 70, y: 46)
+            context.stroke(Path(ellipseIn: CGRect(x: center.x - 18, y: center.y - 18, width: 36, height: 36)), with: ink, style: dashed)
+            var cross = Path()
+            cross.move(to: CGPoint(x: center.x - 7, y: center.y)); cross.addLine(to: CGPoint(x: center.x + 7, y: center.y))
+            cross.move(to: CGPoint(x: center.x, y: center.y - 7)); cross.addLine(to: CGPoint(x: center.x, y: center.y + 7))
+            context.stroke(cross, with: ink, lineWidth: 0.8)
+            context.stroke(Path(CGRect(x: size.width - 66, y: 76, width: 50, height: 20)), with: ink, style: dashed) // clear of the badge
+            var dimension = Path()
+            let x = size.width - 16
+            dimension.move(to: CGPoint(x: x, y: 14)); dimension.addLine(to: CGPoint(x: x, y: 70))
+            dimension.move(to: CGPoint(x: x - 4, y: 14)); dimension.addLine(to: CGPoint(x: x + 4, y: 14))
+            dimension.move(to: CGPoint(x: x - 4, y: 70)); dimension.addLine(to: CGPoint(x: x + 4, y: 70))
+            context.stroke(dimension, with: ink, lineWidth: 0.8)
+            var plus = Path()
+            for p in [CGPoint(x: size.width - 120, y: 30), CGPoint(x: 110, y: 18), CGPoint(x: 150, y: 64)] {
+                plus.move(to: CGPoint(x: p.x - 3, y: p.y)); plus.addLine(to: CGPoint(x: p.x + 3, y: p.y))
+                plus.move(to: CGPoint(x: p.x, y: p.y - 3)); plus.addLine(to: CGPoint(x: p.x, y: p.y + 3))
+            }
+            context.stroke(plus, with: ink, lineWidth: 0.8)
+            context.opacity = 0.16
+            context.fill(Path(ellipseIn: CGRect(x: size.width - 150, y: -70, width: 180, height: 140)),
+                         with: .radialGradient(Gradient(colors: [.white, .clear]), center: CGPoint(x: size.width - 60, y: 0), startRadius: 0, endRadius: 90))
+        }
     }
 }
