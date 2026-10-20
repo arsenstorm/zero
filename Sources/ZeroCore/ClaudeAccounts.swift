@@ -19,8 +19,10 @@ public final class ClaudeAccounts {
     /// The share of a limit used, 0–100, in the 5-hour and 7-day windows.
     public struct Usage: Sendable { public let fiveHour: Double?; public let sevenDay: Double? }
 
+    /// Which usage limit auto-switch watches; `either` switches when one of the two reaches the threshold.
+    public enum Window: String, CaseIterable, Sendable { case fiveHour, weekly, either }
+
     public static let shared = ClaudeAccounts()
-    public static let threshold = 98.0
     static let claudeService = "Claude Code-credentials"
 
     public private(set) var accounts: [Account] = []
@@ -28,6 +30,13 @@ public final class ClaudeAccounts {
     public private(set) var usage: [String: Usage] = [:]
     public var autoSwitch: Bool {
         didSet { UserDefaults.standard.set(autoSwitch, forKey: "claudeAutoSwitch") }
+    }
+    /// The share of a limit, in percent, at which auto-switch moves on.
+    public var threshold: Double {
+        didSet { UserDefaults.standard.set(threshold, forKey: "claudeAutoSwitchThreshold") }
+    }
+    public var window: Window {
+        didSet { UserDefaults.standard.set(window.rawValue, forKey: "claudeAutoSwitchWindow") }
     }
     /// Called after the active account changes, so models can be fetched for it.
     public var onSwitch: (() -> Void)?
@@ -38,6 +47,8 @@ public final class ClaudeAccounts {
 
     init() {
         autoSwitch = UserDefaults.standard.object(forKey: "claudeAutoSwitch") as? Bool ?? true
+        threshold = UserDefaults.standard.object(forKey: "claudeAutoSwitchThreshold") as? Double ?? 98
+        window = UserDefaults.standard.string(forKey: "claudeAutoSwitchWindow").flatMap(Window.init(rawValue:)) ?? .either
         accounts = (try? Data(contentsOf: Self.file)).flatMap { try? JSONDecoder().decode([Account].self, from: $0) } ?? []
         if accounts.isEmpty { importSwitcher() }
         active = Self.activeEmail()
@@ -114,14 +125,21 @@ public final class ClaudeAccounts {
             guard let token = Self.read(Self.slot(account.email)).flatMap(Self.accessToken) else { continue }
             usage[account.email] = await Self.fetchUsage(token)
         }
-        guard switching, autoSwitch, let active, let current = usage[active], Self.exhausted(current) else { return }
+        guard switching, autoSwitch, let active, let current = usage[active], exhausted(current) else { return }
         let others = accounts.filter { $0.email != active }
-        let target = others.first { usage[$0.email].map { !Self.exhausted($0) } ?? false } ?? others.first { usage[$0.email] == nil }
+        let target = others.first { usage[$0.email].map { !exhausted($0) } ?? false } ?? others.first { usage[$0.email] == nil }
         if let target { switchTo(target.email) }
     }
 
-    static func exhausted(_ usage: Usage) -> Bool {
-        max(usage.fiveHour ?? 0, usage.sevenDay ?? 0) >= threshold
+    func exhausted(_ usage: Usage) -> Bool { Self.exhausted(usage, at: threshold, watching: window) }
+
+    static func exhausted(_ usage: Usage, at threshold: Double, watching window: Window) -> Bool {
+        let used = switch window {
+        case .fiveHour: usage.fiveHour ?? 0
+        case .weekly: usage.sevenDay ?? 0
+        case .either: max(usage.fiveHour ?? 0, usage.sevenDay ?? 0)
+        }
+        return used >= threshold
     }
 
     /// Copies Claude Code's current sign-in into the active account's slot: Claude Code rotates its tokens, and

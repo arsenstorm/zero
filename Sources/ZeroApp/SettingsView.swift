@@ -304,7 +304,7 @@ private final class ClaudeAdding {
     }
 }
 
-/// The Claude Code accounts Zero switches between, auto-switch, and the Zero plugin.
+/// The Zero plugin, auto-switch, and the Claude Code accounts Zero switches between.
 private struct ClaudeAccountsSheet: View {
     let adding: ClaudeAdding
     @Environment(\.dismiss) private var dismiss
@@ -314,38 +314,17 @@ private struct ClaudeAccountsSheet: View {
     @State private var switchError: String?
 
     private var accounts: ClaudeAccounts { ClaudeAccounts.shared }
+    private static let thresholds: [Double] = [80, 85, 90, 95, 98, 100]
 
     var body: some View {
+        @Bindable var accounts = accounts
         VStack(alignment: .leading, spacing: 0) {
             Text("Claude Code accounts").font(.system(size: 17, weight: .semibold)).padding(.bottom, 4)
             Text("Agents and your terminal use the active account.").font(.system(size: 12)).foregroundStyle(.secondary)
                 .padding(.bottom, 12)
             Rows {
-                ForEach(accounts.accounts) { account in
-                    HStack(spacing: 12) {
-                        (choiceIcon("claude") ?? Image(systemName: "person.crop.circle")).resizable().aspectRatio(contentMode: .fit)
-                            .frame(width: 20, height: 20).frame(width: 22)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(account.email).font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                            Text(detail(account)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                        }
-                        Spacer(minLength: 12)
-                        if account.email == accounts.active {
-                            Text("Active").font(.system(size: 12)).foregroundStyle(.secondary)
-                        } else {
-                            HStack(spacing: 6) {
-                                RowButton(title: "Remove") { accounts.remove(account.email) }
-                                RowButton(title: "Switch") { switchError = accounts.switchTo(account.email) }
-                            }
-                        }
-                    }
-                    .padding(.vertical, 12)
-                }
-                OnboardingRow(icon: "arrow.left.arrow.right", title: "Auto-switch",
-                              detail: "Switches at \(Int(ClaudeAccounts.threshold))% of a usage limit.") {
-                    Switch(isOn: Binding(get: { accounts.autoSwitch }, set: { accounts.autoSwitch = $0 }))
-                }
-                OnboardingRow(icon: "puzzlepiece.extension", title: "Zero plugin", detail: "Asks and progress come to your inbox.") {
+                OnboardingRow(icon: "puzzlepiece.extension", picture: Image(nsImage: appTile), title: "Zero plugin",
+                              detail: "Asks and progress come to your inbox.") {
                     if let plugin {
                         Switch(isOn: Binding(get: { plugin }, set: { on in
                             self.plugin = nil
@@ -359,33 +338,133 @@ private struct ClaudeAccountsSheet: View {
                         ProgressView().controlSize(.small)
                     }
                 }
+                OnboardingRow(icon: "arrow.left.arrow.right", title: "Auto-switch", detail: "Moves to the account with the most room left.") {
+                    Switch(isOn: $accounts.autoSwitch)
+                }
+                // Always shown, dimmed while auto-switch is off, so turning it on moves nothing.
+                OnboardingRow(icon: "gauge.with.dots.needle.67percent", title: "Switch at", detail: "Checked every 5 minutes.") {
+                    HStack(spacing: 8) {
+                        Picker("Limit", selection: $accounts.window) {
+                            Text("5 hours").tag(ClaudeAccounts.Window.fiveHour)
+                            Text("Weekly").tag(ClaudeAccounts.Window.weekly)
+                            Text("Either").tag(ClaudeAccounts.Window.either)
+                        }
+                        .pickerStyle(.segmented).labelsHidden().fixedSize()
+                        Picker("Threshold", selection: $accounts.threshold) {
+                            ForEach(Self.thresholds, id: \.self) { Text("\(Int($0))%").tag($0) }
+                        }
+                        .pickerStyle(.menu).labelsHidden().fixedSize()
+                    }
+                    .disabled(!accounts.autoSwitch).opacity(accounts.autoSwitch ? 1 : 0.5)
+                }
             }
+            table.padding(.top, 16)
             ForEach([switchError, adding.error, pluginError].compactMap { $0 }, id: \.self) { error in
                 Text(error).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3).padding(.top, 8)
             }
             HStack {
-                ZStack {
-                    RowButton(title: "Add account") { adding.add() }.opacity(adding.busy ? 0 : 1)
-                    if adding.busy { ProgressView().controlSize(.small) }
-                }
                 Spacer()
                 SolidButton(title: "Done") { dismiss() }
             }
             .padding(.top, 20)
         }
         .padding(24)
-        .frame(width: 480)
+        .frame(width: 560)
         .task { plugin = await ClaudePlugin.isInstalled() }
     }
 
-    /// "Max · 21% of 5 hours, 67% of 7 days".
-    private func detail(_ account: ClaudeAccounts.Account) -> String {
-        var parts = [account.plan.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Claude"]
-        if let usage = accounts.usage[account.email] {
-            let windows = [usage.fiveHour.map { "\(Int($0))% of 5 hours" }, usage.sevenDay.map { "\(Int($0))% of 7 days" }].compactMap { $0 }
-            if !windows.isEmpty { parts.append(windows.joined(separator: ", ")) }
+    private static let usageWidth: CGFloat = 64
+    private static let actionsWidth: CGFloat = 84
+
+    /// One row per account: who, how much of each limit is used, and what can be done with it.
+    private var table: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Text("Account").frame(maxWidth: .infinity, alignment: .leading)
+                Text("5 hours").frame(width: Self.usageWidth, alignment: .trailing)
+                Text("Weekly").frame(width: Self.usageWidth, alignment: .trailing)
+                ZStack(alignment: .trailing) {
+                    RowButton(title: "Add account") { adding.add() }.opacity(adding.busy ? 0 : 1)
+                    if adding.busy { ProgressView().controlSize(.small) }
+                }
+                .frame(minWidth: Self.actionsWidth, alignment: .trailing)
+            }
+            .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+            .padding(.horizontal, 12).frame(height: 40)
+            .background(Theme.composer)
+            ForEach(accounts.accounts) { account in
+                Rectangle().fill(Theme.stroke).frame(height: 1)
+                HStack(spacing: 12) {
+                    (choiceIcon("claude") ?? Image(systemName: "person.crop.circle")).resizable().aspectRatio(contentMode: .fit)
+                        .frame(width: 18, height: 18)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(account.email).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                        Text(account.plan.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Claude")
+                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    percent(accounts.usage[account.email]?.fiveHour)
+                    percent(accounts.usage[account.email]?.sevenDay)
+                    Group {
+                        if account.email == accounts.active {
+                            Label("Active", systemImage: "checkmark.circle.fill").labelStyle(.titleAndIcon)
+                                .font(.system(size: 12, weight: .medium)).foregroundStyle(.green)
+                        } else {
+                            HStack(spacing: 6) {
+                                IconButton(symbol: "trash", help: "Remove") { accounts.remove(account.email) }
+                                IconButton(symbol: "arrow.left.arrow.right", help: "Switch to this account") {
+                                    switchError = accounts.switchTo(account.email)
+                                }
+                            }
+                        }
+                    }
+                    .frame(minWidth: Self.actionsWidth, alignment: .trailing)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 10)
+            }
         }
-        return parts.joined(separator: " · ")
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
+    }
+
+    /// "22%", or a dash when the account's usage isn't known (its token has lapsed since it was last active).
+    private func percent(_ value: Double?) -> some View {
+        Text(value.map { "\(Int($0))%" } ?? "–").font(.system(size: 12)).monospacedDigit()
+            .foregroundStyle(value == nil ? .tertiary : .primary)
+            .frame(width: Self.usageWidth, alignment: .trailing)
+    }
+}
+
+/// Zero's app icon without the margin macOS icons carry, so it fills a row's picture slot like the other logos,
+/// and with a faint edge, since its white tile would otherwise vanish on a white sheet.
+@MainActor private let appTile: NSImage = {
+    let size = NSSize(width: 64, height: 64)
+    return NSImage(size: size, flipped: false) { rect in
+        let tile = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 14, yRadius: 14)
+        NSGraphicsContext.saveGraphicsState()
+        tile.addClip()
+        // The tile is 824 of the icon's 1024 points, centred.
+        let scale = 1024.0 / 824.0
+        NSApp.applicationIconImage.draw(in: rect.insetBy(dx: -rect.width * (scale - 1) / 2, dy: -rect.height * (scale - 1) / 2))
+        NSGraphicsContext.restoreGraphicsState()
+        NSColor(white: 0, alpha: 0.12).setStroke()
+        tile.lineWidth = 1
+        tile.stroke()
+        return true
+    }
+}()
+
+/// A round button with one symbol, for row actions; `help` names it on hover.
+private struct IconButton: View {
+    let symbol: String
+    let help: String
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 11, weight: .semibold)).foregroundStyle(.primary)
+                .frame(width: 26, height: 26).background(Theme.chip).clipShape(Circle())
+        }
+        .buttonStyle(PressableStyle()).help(help).accessibilityLabel(help)
     }
 }
 
