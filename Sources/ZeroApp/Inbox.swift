@@ -622,6 +622,9 @@ final class SpinnerView: NSView {
 struct AgentTimeline: View {
     @Bindable var controller: InboxController
     var focus: FocusState<String?>.Binding
+    /// The Earlier list's natural height, so it is only as tall as its rows up to the cap.
+    @State private var earlierHeight: CGFloat = 0
+    private static let earlierCap: CGFloat = 138 // six rows
 
     var body: some View {
         let open = controller.cards.filter { !$0.state.isFinal }
@@ -630,22 +633,31 @@ struct AgentTimeline: View {
         // latest reply when nothing has happened since: that one is the card you read.
         let last = history.last
         let recent = last?.kind == .note ? [last!] : []
-        let earlier = Array(history.dropLast(recent.count).suffix(8))
+        let earlier = Array(history.dropLast(recent.count).suffix(40))
         let waiting = open.isEmpty && last?.kind == .message
             && ["sent", "sending", "starting", "resuming"].contains(last?.status ?? "")
             && controller.agentFilter.map { controller.store.screens[$0] == nil } == true
         if !earlier.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Earlier").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                ForEach(earlier) { ask in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
-                            Text(shortAge(ask.answeredAt ?? ask.createdAt, now: context.date))
-                                .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).frame(width: 30, alignment: .trailing)
+                // Six rows at most, the newest in view, the edges fading where more is past them.
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(earlier) { ask in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                TimelineView(.periodic(from: .now, by: 1)) { context in
+                                    Text(shortAge(ask.answeredAt ?? ask.createdAt, now: context.date))
+                                        .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).frame(width: 30, alignment: .trailing)
+                                }
+                                Text(summary(ask)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                            }
                         }
-                        Text(summary(ask)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                     }
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { earlierHeight = $0 }
                 }
+                .defaultScrollAnchor(.bottom)
+                .frame(height: min(earlierHeight, Self.earlierCap))
+                .scrollEdgeFades(20)
             }
             .padding(14).frame(maxWidth: .infinity, alignment: .leading)
             .card()
@@ -672,9 +684,11 @@ struct AgentTimeline: View {
         }
     }
 
+    /// A transcript line: who said it, then the first line of what they said.
     private func summary(_ ask: Ask) -> String {
         switch ask.kind {
-        case .note: return ask.body.split(whereSeparator: \.isNewline).first.map(String.init) ?? ask.body // one line, not a paragraph cut mid-way
+        case .note where ask.status == "closed": return "Closed"
+        case .note: return speaker(ask.agent.name) + ": " + (ask.body.split(whereSeparator: \.isNewline).first.map(String.init) ?? ask.body)
         case .message: return "You: " + ask.body
         case .run: return "\(ask.title) · " + (ask.state == .declined ? "rejected" : "ran, exit \(ask.exitCode ?? 0)")
         default: return "\(ask.title) · " + (ask.state == .declined ? "rejected" : (ask.answer ?? "answered"))
@@ -1072,6 +1086,7 @@ struct CardView: View {
             }
             footer
         }
+        .frame(maxWidth: .infinity, alignment: .leading) // a one-word reply still gets the whole card
         .opacity(dimmed ? 0.45 : 1)
         .padding(14)
         .background(Theme.card)
@@ -1356,6 +1371,14 @@ struct PillView: View {
             Button("Quit Zero") { NSApp.terminate(nil) }
         }
     }
+}
+
+/// "claude-120" speaks as "Claude", "codex-12" as "Codex"; a name without a process number speaks as itself.
+func speaker(_ agent: String) -> String {
+    let parts = agent.split(separator: "-")
+    guard parts.count > 1, let last = parts.last, last.allSatisfy(\.isNumber) else { return agent }
+    let base = parts.dropLast().joined(separator: "-")
+    return base.prefix(1).uppercased() + base.dropFirst()
 }
 
 /// Markdown the way agents write it: paragraphs with inline emphasis and `code`, and fenced blocks set in

@@ -48,8 +48,6 @@ struct SelectorView: View {
     @Bindable var controller: InboxController
     @Bindable var state: SelectorState
     @FocusState private var focused: Bool
-    @State private var moreAbove = false
-    @State private var moreBelow = false
 
     /// Models get two panes, the list and its details, centred on the inbox; projects a single list on the chip.
     static func width(_ kind: SelectorKind) -> CGFloat { kind == .runtime ? 2 * paneWidth : 272 }
@@ -105,29 +103,7 @@ struct SelectorView: View {
             VStack(spacing: 1) { ForEach(rows) { rowView($0) } }
                 .padding(.horizontal, 6).padding(.vertical, 4)
         }
-        .onScrollGeometryChange(for: [Bool].self) { g in
-            [g.contentOffset.y > 1, g.contentOffset.y + g.containerSize.height < g.contentSize.height - 1]
-        } action: { _, more in moreAbove = more[0]; moreBelow = more[1] }
-        .mask(edgeFades)
-    }
-
-    /// The list fades out at an edge with more rows past it, a hint that it scrolls. Nothing in the mask changes
-    /// size: the strips are fixed and punch their fade out of the solid mask, and only their opacity animates.
-    /// (A strip that grew from 0 pt animated its first layout, and with it the whole mask, over the rows.)
-    private var edgeFades: some View {
-        ZStack {
-            Color.black
-            VStack(spacing: 0) {
-                LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 28)
-                    .blendMode(.destinationOut).opacity(moreAbove ? 1 : 0)
-                    .animation(.easeOut(duration: 0.15), value: moreAbove)
-                Spacer(minLength: 0)
-                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: 28)
-                    .blendMode(.destinationOut).opacity(moreBelow ? 1 : 0)
-                    .animation(.easeOut(duration: 0.15), value: moreBelow)
-            }
-        }
-        .compositingGroup()
+        .scrollEdgeFades()
     }
 
     private var tabs: some View {
@@ -329,4 +305,39 @@ struct EffortSlider: View {
         }
         .frame(height: knob + 4)
     }
+}
+
+/// A scroll view fades out at an edge with more content past it, a hint that it scrolls. Nothing in the mask
+/// changes size: the strips are fixed and punch their fade out of the solid mask, and only their opacity
+/// animates. (A strip that grew from 0 pt animated its first layout, and with it the whole mask, over the rows.)
+struct ScrollEdgeFades: ViewModifier {
+    var fade: CGFloat = 28
+    @State private var moreAbove = false
+    @State private var moreBelow = false
+
+    func body(content: Content) -> some View {
+        content
+            .onScrollGeometryChange(for: [Bool].self) { g in
+                [g.contentOffset.y > 1, g.contentOffset.y + g.containerSize.height < g.contentSize.height - 1]
+            } action: { _, more in moreAbove = more[0]; moreBelow = more[1] }
+            .mask(
+                ZStack {
+                    Color.black
+                    VStack(spacing: 0) {
+                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: fade)
+                            .blendMode(.destinationOut).opacity(moreAbove ? 1 : 0)
+                            .animation(.easeOut(duration: 0.15), value: moreAbove)
+                        Spacer(minLength: 0)
+                        LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: fade)
+                            .blendMode(.destinationOut).opacity(moreBelow ? 1 : 0)
+                            .animation(.easeOut(duration: 0.15), value: moreBelow)
+                    }
+                }
+                .compositingGroup()
+            )
+    }
+}
+
+extension View {
+    func scrollEdgeFades(_ fade: CGFloat = 28) -> some View { modifier(ScrollEdgeFades(fade: fade)) }
 }
