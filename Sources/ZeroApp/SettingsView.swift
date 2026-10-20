@@ -270,7 +270,7 @@ private struct IntegrationsPage: View {
             Rows {
                 OnboardingRow(icon: "sparkle", picture: choiceIcon("claude"), title: "Claude Code", detail: claudeDetail) {
                     if ClaudeAccounts.shared.accounts.isEmpty {
-                        if claude.busy { ProgressView().controlSize(.small) } else { RowButton(title: "Connect") { claude.add() } }
+                        if claude.busy { ProgressView().controlSize(.small) } else { RowButton(title: "Add account") { claude.add() } }
                     } else {
                         RowButton(title: "Configure") { showingClaude = true }
                     }
@@ -399,7 +399,7 @@ private struct ClaudeAccountsSheet: View {
                 Text("5 hours").frame(width: Self.usageWidth)
                 Text("Weekly").frame(width: Self.usageWidth)
                 ZStack(alignment: .trailing) {
-                    ChipButton(symbol: "plus", title: "Add account") { adding.add() }.opacity(adding.busy ? 0 : 1)
+                    IconButton(symbol: "plus", help: "Add account") { adding.add() }.opacity(adding.busy ? 0 : 1)
                     if adding.busy { ProgressView().controlSize(.small) }
                 }
                 .frame(minWidth: Self.actionsWidth, alignment: .trailing)
@@ -468,20 +468,6 @@ private struct ClaudeAccountsSheet: View {
         return true
     }
 }()
-
-/// A quiet capsule with a symbol and a word, for an action that sits beside icon buttons.
-private struct ChipButton: View {
-    let symbol: String
-    let title: String
-    let action: () -> Void
-    var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: symbol).labelStyle(.titleAndIcon).font(.system(size: 12, weight: .medium)).foregroundStyle(.primary)
-                .fixedSize().padding(.horizontal, 10).frame(height: 26).background(Theme.chip).clipShape(Capsule())
-        }
-        .buttonStyle(PressableStyle())
-    }
-}
 
 /// A round button with one symbol, for row actions; `help` names it on hover.
 private struct IconButton: View {
