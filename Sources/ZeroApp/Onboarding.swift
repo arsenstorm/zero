@@ -154,7 +154,8 @@ struct OnboardingRow<Trailing: View>: View {
                 Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
-            trailing()
+            // A fixed slot, so a spinner turning into a button or a tick moves nothing beside it.
+            trailing().frame(width: 128, alignment: .trailing)
         }
         .padding(.vertical, 12)
     }
