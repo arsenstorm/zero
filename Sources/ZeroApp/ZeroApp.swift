@@ -477,10 +477,15 @@ enum Preview {
         store.choose(pendingAgain.id, option: 0)
         let controller = InboxController(store: store)
         let settings = Settings()
+        // ZERO_APPEARANCE=light|dark picks the appearance the dynamic colours resolve in.
+        let appearance = NSAppearance(named: ProcessInfo.processInfo.environment["ZERO_APPEARANCE"] == "light" ? .aqua : .darkAqua)!
+        NSApplication.shared.appearance = appearance
         func write(_ view: some View, _ name: String) {
-            let renderer = ImageRenderer(content: view)
+            let renderer = ImageRenderer(content: view.environment(\.colorScheme, appearance.name == .aqua ? .light : .dark))
             renderer.scale = 4
-            guard let cg = renderer.cgImage else { return }
+            var image: CGImage?
+            appearance.performAsCurrentDrawingAppearance { image = renderer.cgImage }
+            guard let cg = image else { return }
             let rep = NSBitmapImageRep(cgImage: cg)
             try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: dir).appendingPathComponent(name))
         }
@@ -518,6 +523,12 @@ enum Preview {
         empty.spawnRuntimes = [SpawnChoice(id: "6", name: "Claude"), SpawnChoice(id: "7", name: "Codex")]
         empty.spawnTarget = "10"; empty.spawnRuntime = "6"
         write(ComposerPreview(controller: empty).padding(12).background(Color(white: 0.5)), "composer.png")
+        // The model selector, on real catalogues.
+        let selector = SelectorState(kind: .runtime)
+        selector.sections = empty.selectorSections(for: .runtime)
+        selector.tab = selector.sections.first?.id
+        selector.highlighted = selector.sections.first?.rows.first?.id
+        write(SelectorView(controller: empty, state: selector).padding(12).background(Color(white: 0.5)), "selector.png")
     }
 }
 

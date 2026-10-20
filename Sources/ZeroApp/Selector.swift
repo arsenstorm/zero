@@ -143,7 +143,7 @@ struct SelectorView: View {
                     }
                     .foregroundStyle(active ? .primary : .secondary)
                     .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(active ? Theme.keycap : .clear)
+                    .background(active ? Theme.row : .clear) // the row tint: a key cap's grey is too heavy on the card
                     .clipShape(Capsule())
                     .contentShape(Capsule())
                 }
