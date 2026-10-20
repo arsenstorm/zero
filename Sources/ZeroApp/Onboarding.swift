@@ -170,7 +170,7 @@ struct OnboardingRow<Trailing: View>: View {
 }
 
 /// A small solid button for a row: black in light mode, white in dark; greyed and inert when disabled.
-private struct RowButton: View {
+struct RowButton: View {
     let title: String
     var enabled = true
     var action: () -> Void = {}
