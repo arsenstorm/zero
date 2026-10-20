@@ -863,22 +863,25 @@ struct ComposerCard: View {
     private var starting: Bool { agentName == nil && controller.spawning }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // The quiet card runs on behind the composer by one corner radius, square-cornered there, so white shows
+        // in the composer's top corners and the two read as one piece; the composer's own corners end the stack.
+        VStack(alignment: .leading, spacing: quiet ? -18 : 0) {
             if quiet {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("All quiet.").font(.system(size: 15, weight: .semibold))
                     Text("Nothing needs you. Start something.").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
-                .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14).padding(.bottom, 18).frame(maxWidth: .infinity, alignment: .leading)
                 .background(Theme.card)
+                .clipShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18))
+                .overlay(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18).strokeBorder(Theme.stroke, lineWidth: 1))
             }
             composer
                 .padding(14)
                 .background(Theme.row)
-                .overlay(alignment: .top) { if quiet { Rectangle().fill(Theme.stroke).frame(height: 1) } }
+                .clipShape(RoundedRectangle(cornerRadius: 18))
+                .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke, lineWidth: 1))
         }
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke, lineWidth: 1))
         .onAppear { controller.loadSpawnChoices() }
     }
 
