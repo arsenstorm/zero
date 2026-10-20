@@ -1079,8 +1079,8 @@ struct CardView: View {
             }
             footer
         }
-        // A reply hugs its text like a chat bubble, up to about 70% of the column, and sits left.
-        .frame(maxWidth: ask.kind == .note ? 220 : .infinity, alignment: .leading)
+        // A reply hugs its text like a chat bubble, up to about 65% of the column, and sits left.
+        .modifier(BubbleWidth(hug: ask.kind == .note, max: 220))
         .opacity(dimmed ? 0.45 : 1)
         .padding(.horizontal, 14).padding(.vertical, ask.kind == .note ? 12 : 14)
         .background(Theme.card)
@@ -1474,5 +1474,27 @@ struct ScreenCard: View {
         while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeLast() }
         while lines.first?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeFirst() }
         return lines.map { $0.trimmingCharacters(in: .whitespaces).isEmpty ? "" : $0 }.joined(separator: "\n")
+    }
+}
+
+/// Chat-bubble width: the content is offered up to `max` points and the view takes exactly what it uses, so a
+/// short line gets a short bubble. (A `maxWidth` frame claims the whole cap whenever the column offers it.)
+struct BubbleWidth: ViewModifier {
+    let hug: Bool
+    let max: CGFloat
+    func body(content: Content) -> some View {
+        if hug { HuggingWidth(max: max) { content } } else { content.frame(maxWidth: .infinity, alignment: .leading) }
+    }
+}
+
+struct HuggingWidth: Layout {
+    let max: CGFloat
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = min(proposal.width ?? max, max)
+        let size = subviews.first?.sizeThatFits(ProposedViewSize(width: width, height: nil)) ?? .zero
+        return CGSize(width: min(size.width, width), height: size.height)
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
     }
 }

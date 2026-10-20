@@ -538,6 +538,9 @@ enum Preview {
         let talking = InboxController(store: chat)
         talking.agentFilter = "claude-7"
         write(TimelinePreview(controller: talking).padding(12).background(Color(white: 0.5)), "chat.png")
+        var short = Ask(kind: .note, title: "Replied", body: "Hi. What do you want to work on?", agent: claude); short.status = "done"
+        _ = chat.create(short)
+        write(TimelinePreview(controller: talking).padding(12).background(Color(white: 0.5)), "chat-short.png")
         var second = Ask(kind: .message, title: "Message", body: "and the retry logic?", agent: claude); second.status = "sent"
         _ = chat.create(second)
         write(TimelinePreview(controller: talking).padding(12).background(Color(white: 0.5)), "chat-waiting.png")
