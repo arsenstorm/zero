@@ -77,22 +77,23 @@ struct SettingsView: View {
     /// The heading as a blueprint, inverted against the app: black with white lines and lettering in light mode,
     /// white with black in dark. The window's buttons sit on it; its foot fades into the sidebar.
     private var header: some View {
-        ZStack(alignment: .bottomLeading) {
-            Theme.knob
-            Blueprint().foregroundStyle(Theme.onKnob)
-            HStack(spacing: 8) {
-                ZeroMark(small: true).frame(width: 20, height: 19)
-                Text("Zero").font(.system(size: 15, weight: .semibold))
+        ZStack(alignment: .topLeading) {
+            // The panel fades out on an eased curve (a straight ramp bands); only the drawing blurs as it goes,
+            // since blurring a flat fill just smudges its edge.
+            Theme.knob.mask(LinearGradient(stops: ProgressiveBlur<EmptyView>.eased, startPoint: .top, endPoint: .bottom))
+            ProgressiveBlur { Blueprint().foregroundStyle(Theme.onKnob) }
+            HStack(spacing: 7) {
+                ZeroMark(small: true).frame(width: 16, height: 15)
+                Text("Zero").font(.system(size: 13, weight: .semibold))
                 Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
-                    .font(.system(size: 10, weight: .semibold))
-                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .font(.system(size: 9, weight: .semibold))
+                    .padding(.horizontal, 5).padding(.vertical, 1.5)
                     .overlay(Capsule().strokeBorder(Theme.onKnob.opacity(0.5), lineWidth: 1))
             }
             .foregroundStyle(Theme.onKnob)
-            .padding(.horizontal, 20).padding(.bottom, 22)
+            .padding(.leading, 20).padding(.top, 44) // just under the window's buttons
         }
-        .frame(height: 104)
-        .mask(LinearGradient(stops: [.init(color: .black, location: 0.75), .init(color: .black.opacity(0), location: 1)], startPoint: .top, endPoint: .bottom))
+        .frame(height: 96)
     }
 
     @ViewBuilder private var content: some View {
@@ -434,5 +435,38 @@ private struct Blueprint: View {
             context.fill(Path(ellipseIn: CGRect(x: size.width - 150, y: -70, width: 180, height: 140)),
                          with: .radialGradient(Gradient(colors: [.white, .clear]), center: CGPoint(x: size.width - 60, y: 0), startRadius: 0, endRadius: 90))
         }
+    }
+}
+
+/// A progressive blur: the content is sharp at the top and dissolves toward the bottom, each layer more blurred
+/// and shown over a lower band, the last fading out entirely, so the edge melts instead of cutting off.
+private struct ProgressiveBlur<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    private static var layers: [(blur: CGFloat, from: CGFloat, to: CGFloat)] {
+        [(0, 0.0, 0.78), (2, 0.72, 0.86), (4, 0.82, 0.93), (7, 0.9, 1.0)]
+    }
+    var body: some View {
+        ZStack {
+            ForEach(Array(Self.layers.enumerated()), id: \.offset) { index, layer in
+                content().blur(radius: layer.blur, opaque: false)
+                    .mask(LinearGradient(stops: band(layer.from, layer.to, last: index == Self.layers.count - 1), startPoint: .top, endPoint: .bottom))
+            }
+        }
+        .compositingGroup()
+        .mask(LinearGradient(stops: Self.eased, startPoint: .top, endPoint: .bottom))
+    }
+
+    /// Solid to clear on an ease-in-out curve over the bottom quarter.
+    static var eased: [Gradient.Stop] {
+        [(0.0, 1.0), (0.76, 1.0), (0.82, 0.92), (0.88, 0.7), (0.93, 0.42), (0.97, 0.16), (1.0, 0.0)]
+            .map { Gradient.Stop(color: .black.opacity($0.1), location: $0.0) }
+    }
+
+    /// Opaque over its band, ramping in at the top of it; a layer's band overlaps the next so there are no seams.
+    private func band(_ from: CGFloat, _ to: CGFloat, last: Bool) -> [Gradient.Stop] {
+        let ramp = (to - from) / 3
+        return [.init(color: .clear, location: max(0, from - 0.001)), .init(color: from == 0 ? .black : .clear, location: from),
+                .init(color: .black, location: min(1, from + ramp)), .init(color: .black, location: to),
+                .init(color: last ? .black : .clear, location: min(1, to + ramp))]
     }
 }
