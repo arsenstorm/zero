@@ -235,13 +235,13 @@ final class AgentCheck {
         Task {
             claude = await ShellTool.version("claude") != nil
             codex = await ShellTool.version("codex") != nil
-            plugin = await ClaudePlugin.isInstalled()
+            plugin = ClaudePlugin.isInstalled
         }
     }
 
     func addPlugin() {
         plugin = nil
-        Task { pluginError = await ClaudePlugin.install(); plugin = await ClaudePlugin.isInstalled() }
+        Task { pluginError = await ClaudePlugin.install(); plugin = ClaudePlugin.isInstalled }
     }
 }
 

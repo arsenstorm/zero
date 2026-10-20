@@ -272,7 +272,7 @@ private struct IntegrationsPage: View {
                     if ClaudeAccounts.shared.accounts.isEmpty {
                         if claude.busy { ProgressView().controlSize(.small) } else { RowButton(title: "Connect") { claude.add() } }
                     } else {
-                        RowButton(title: "View accounts") { showingClaude = true }
+                        RowButton(title: "Configure") { showingClaude = true }
                     }
                 }
                 OnboardingRow(icon: "chevron.left.forwardslash.chevron.right", picture: choiceIcon("openai"), title: "Codex", detail: "Start Codex agents from Zero.") {
@@ -324,8 +324,8 @@ private final class ClaudeAdding {
 private struct ClaudeAccountsSheet: View {
     let adding: ClaudeAdding
     @Environment(\.dismiss) private var dismiss
-    /// nil while it is being checked or changed.
-    @State private var plugin: Bool?
+    /// nil while it is being changed.
+    @State private var plugin: Bool? = ClaudePlugin.isInstalled
     @State private var pluginError: String?
     @State private var switchError: String?
 
@@ -335,7 +335,7 @@ private struct ClaudeAccountsSheet: View {
     var body: some View {
         @Bindable var accounts = accounts
         VStack(alignment: .leading, spacing: 0) {
-            Text("Claude Code accounts").font(.system(size: 17, weight: .semibold)).padding(.bottom, 4)
+            Text("Claude Code settings").font(.system(size: 17, weight: .semibold)).padding(.bottom, 4)
             Text("Agents and your terminal use the active account.").font(.system(size: 12)).foregroundStyle(.secondary)
                 .padding(.bottom, 12)
             Rows {
@@ -347,7 +347,7 @@ private struct ClaudeAccountsSheet: View {
                             pluginError = nil
                             Task {
                                 if on { pluginError = await ClaudePlugin.install() } else { await ClaudePlugin.uninstall() }
-                                self.plugin = await ClaudePlugin.isInstalled()
+                                self.plugin = ClaudePlugin.isInstalled
                             }
                         }))
                     } else {
@@ -386,7 +386,6 @@ private struct ClaudeAccountsSheet: View {
         }
         .padding(24)
         .frame(width: 560)
-        .task { plugin = await ClaudePlugin.isInstalled() }
     }
 
     private static let usageWidth: CGFloat = 64
@@ -397,10 +396,10 @@ private struct ClaudeAccountsSheet: View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Text("Account").frame(maxWidth: .infinity, alignment: .leading)
-                Text("5 hours").frame(width: Self.usageWidth, alignment: .trailing)
-                Text("Weekly").frame(width: Self.usageWidth, alignment: .trailing)
+                Text("5 hours").frame(width: Self.usageWidth)
+                Text("Weekly").frame(width: Self.usageWidth)
                 ZStack(alignment: .trailing) {
-                    RowButton(title: "Add account") { adding.add() }.opacity(adding.busy ? 0 : 1)
+                    ChipButton(symbol: "plus", title: "Add account") { adding.add() }.opacity(adding.busy ? 0 : 1)
                     if adding.busy { ProgressView().controlSize(.small) }
                 }
                 .frame(minWidth: Self.actionsWidth, alignment: .trailing)
@@ -447,7 +446,7 @@ private struct ClaudeAccountsSheet: View {
     private func percent(_ value: Double?) -> some View {
         Text(value.map { "\(Int($0))%" } ?? "–").font(.system(size: 12)).monospacedDigit()
             .foregroundStyle(value == nil ? .tertiary : .primary)
-            .frame(width: Self.usageWidth, alignment: .trailing)
+            .frame(width: Self.usageWidth)
     }
 }
 
@@ -469,6 +468,20 @@ private struct ClaudeAccountsSheet: View {
         return true
     }
 }()
+
+/// A quiet capsule with a symbol and a word, for an action that sits beside icon buttons.
+private struct ChipButton: View {
+    let symbol: String
+    let title: String
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol).labelStyle(.titleAndIcon).font(.system(size: 12, weight: .medium)).foregroundStyle(.primary)
+                .fixedSize().padding(.horizontal, 10).frame(height: 26).background(Theme.chip).clipShape(Capsule())
+        }
+        .buttonStyle(PressableStyle())
+    }
+}
 
 /// A round button with one symbol, for row actions; `help` names it on hover.
 private struct IconButton: View {

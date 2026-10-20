@@ -6,14 +6,18 @@ import Foundation
 enum ClaudePlugin {
     static var bundled: String { Bundle.main.resourceURL!.appendingPathComponent("plugin").path }
 
-    static func isInstalled() async -> Bool {
-        (await shell("claude plugin list 2>/dev/null")).contains("zero@zero")
+    /// Read from Claude Code's record of installed plugins, which is instant, rather than `claude plugin list`.
+    static var isInstalled: Bool {
+        let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/plugins/installed_plugins.json")
+        guard let data = try? Data(contentsOf: file), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let plugins = json["plugins"] as? [String: Any] else { return false }
+        return plugins["zero@zero"] != nil
     }
 
     static func install() async -> String? {
         let path = bundled.replacingOccurrences(of: "'", with: "'\\''")
         let out = await shell("claude plugin marketplace add '\(path)' 2>&1; claude plugin marketplace update zero 2>&1; claude plugin install zero@zero 2>&1")
-        return await isInstalled() ? nil : out
+        return isInstalled ? nil : out
     }
 
     static func uninstall() async { _ = await shell("claude plugin uninstall zero@zero 2>&1") }
