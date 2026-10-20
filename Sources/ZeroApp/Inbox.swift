@@ -460,7 +460,8 @@ struct InboxView: View {
                     }
                     // One frosted surface under the stack, so the gaps between cards never show raw desktop.
                     .padding(8)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
+                    // Thin, not ultra-thin: in light mode the thinnest material took whatever colour sat behind it.
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))
                     // A conversation, and the quiet inbox, hang from the bar's bottom line: the composer is always
                     // there, whatever is above it, so the eye never has to find it. A list of asks centres its card.
                     .frame(minHeight: pinsBottom ? controller.barHeight : 0, alignment: .bottom)
@@ -553,9 +554,10 @@ enum Theme {
     static let code = dynamic(dark: NSColor(white: 0, alpha: 0.35), light: NSColor(white: 0, alpha: 0.05))
     static let pill = dynamic(dark: NSColor(white: 0, alpha: 0.9), light: NSColor(white: 1, alpha: 0.96))
     // Opaque, so a border is one colour along its length whatever sits behind each segment.
-    static let hairline = dynamic(dark: NSColor(white: 0.30, alpha: 1), light: NSColor(white: 0.85, alpha: 1))
-    static let stroke = dynamic(dark: NSColor(white: 0.24, alpha: 1), light: NSColor(white: 0.86, alpha: 1))
-    static let selectedStroke = dynamic(dark: NSColor(white: 0.45, alpha: 1), light: NSColor(white: 0.65, alpha: 1))
+    // Light strokes sit a step above the key-cap grey (L 0.92 against 0.91): an outline, not a frame.
+    static let hairline = dynamic(dark: NSColor(white: 0.30, alpha: 1), light: NSColor(white: 0.88, alpha: 1))
+    static let stroke = dynamic(dark: NSColor(white: 0.24, alpha: 1), light: NSColor(white: 0.89, alpha: 1))
+    static let selectedStroke = dynamic(dark: NSColor(white: 0.45, alpha: 1), light: NSColor(white: 0.70, alpha: 1))
     /// Key cap fills for a chosen option: deeper in dark mode so the white digit keeps its contrast.
     static let greenCap = dynamic(dark: NSColor(red: 0.16, green: 0.55, blue: 0.27, alpha: 1), light: NSColor.systemGreen)
     static let orangeCap = dynamic(dark: NSColor(red: 0.78, green: 0.45, blue: 0.08, alpha: 1), light: NSColor.systemOrange)
@@ -936,7 +938,7 @@ struct ComposerCard: View {
                     .rotationEffect(.degrees(open ? 180 : 0))
             }
             .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(Theme.keycap.opacity(open ? 1 : 0.8)).clipShape(Capsule())
+            .background(Theme.keycap).clipShape(Capsule()) // solid: at 80% over the row it went muddy in light mode
             .overlay(Capsule().strokeBorder(open ? Theme.selectedStroke : .clear, lineWidth: 1))
         }
         .buttonStyle(.plain)
@@ -1114,7 +1116,7 @@ struct CardView: View {
         }
         // A reply hugs its text like a chat bubble, up to about 65% of the column, and sits left.
         .modifier(BubbleWidth(hug: ask.kind == .note, max: 220))
-        .opacity(dimmed ? 0.45 : 1)
+        .opacity(dimmed ? 0.55 : 1) // 0.45 left light-mode text with too small an L gap to read
         .padding(.horizontal, 14).padding(.vertical, ask.kind == .note ? 12 : 14)
         .background(Theme.card)
         .clipShape(RoundedRectangle(cornerRadius: 18))
