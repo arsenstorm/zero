@@ -581,8 +581,9 @@ struct InboxView: View {
                             }
                         }
                     }
-                    // One frosted surface under the stack, so the gaps between cards never show raw desktop.
-                    .padding(8)
+                    // One frosted surface under the stack, so the gaps between cards never show raw desktop. Its
+                    // inset matches the 10 pt between cards, so the edges read as one more gap.
+                    .padding(10)
                     // Thin, not ultra-thin: in light mode the thinnest material took whatever colour sat behind it.
                     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))
                     // A conversation, and the quiet inbox, hang from the bar's bottom line: the composer is always
