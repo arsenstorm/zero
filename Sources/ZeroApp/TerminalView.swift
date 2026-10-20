@@ -102,3 +102,94 @@ final class ContainedScrollView: NSScrollView {
         outer.reflectScrolledClipView(clip)
     }
 }
+
+/// SwiftUI rows inside a `ContainedScrollView`: as tall as the rows up to `cap`, opened at the bottom, the
+/// same wheel hand-off as a run's output, and the edge fades. For the Earlier list.
+struct ContainedList<Content: View>: View {
+    let cap: CGFloat
+    var fade: CGFloat = 20
+    @ViewBuilder let content: () -> Content
+    @State private var contentHeight: CGFloat = 0
+    @State private var moreAbove = false
+    @State private var moreBelow = false
+
+    var body: some View {
+        HostedScroll(content: content(), contentHeight: $contentHeight, moreAbove: $moreAbove, moreBelow: $moreBelow)
+            .frame(height: min(contentHeight, cap))
+            .mask(EdgeFadeMask(above: moreAbove, below: moreBelow, fade: fade))
+    }
+}
+
+private struct HostedScroll<Content: View>: NSViewRepresentable {
+    let content: Content
+    @Binding var contentHeight: CGFloat
+    @Binding var moreAbove: Bool
+    @Binding var moreBelow: Bool
+
+    /// Flipped, so y grows downward like the text view and `ContainedScrollView`'s edge tests hold; the hosting
+    /// view sits inside it (NSHostingView's own flippedness cannot be overridden).
+    final class Document: NSView {
+        override var isFlipped: Bool { true }
+        var hosting: NSHostingView<Content>? { subviews.first as? NSHostingView<Content> }
+    }
+
+    final class Coordinator {
+        var observer: Any?
+        var stuckToBottom = true
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> ContainedScrollView {
+        let scroll = ContainedScrollView()
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        scroll.verticalScroller?.controlSize = .mini
+        scroll.verticalScrollElasticity = .none
+        let document = Document()
+        let hosting = NSHostingView(rootView: content)
+        hosting.sizingOptions = [.intrinsicContentSize] // the rows are one line each, so height needs no width
+        document.addSubview(hosting)
+        scroll.documentView = document
+        scroll.contentView.postsBoundsChangedNotifications = true
+        context.coordinator.observer = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main) { [weak scroll] _ in
+            guard let scroll else { return }
+            report(scroll, context.coordinator)
+        }
+        return scroll
+    }
+
+    func updateNSView(_ scroll: ContainedScrollView, context: Context) {
+        guard let document = scroll.documentView as? Document, let hosting = document.hosting else { return }
+        hosting.rootView = content
+        let width = scroll.contentView.bounds.width > 0 ? scroll.contentView.bounds.width : scroll.bounds.width
+        hosting.layoutSubtreeIfNeeded()
+        let height = max(0, hosting.intrinsicContentSize.height)
+        if document.frame.size != NSSize(width: width, height: height) {
+            document.frame = NSRect(x: 0, y: 0, width: width, height: height)
+            hosting.frame = document.bounds
+        }
+        // New rows arrive at the bottom; stay there unless the list was scrolled away from it.
+        if context.coordinator.stuckToBottom {
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, height - scroll.contentView.bounds.height)))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+        DispatchQueue.main.async {
+            if contentHeight != height { contentHeight = height }
+            report(scroll, context.coordinator)
+        }
+    }
+
+    private func report(_ scroll: ContainedScrollView, _ coordinator: Coordinator) {
+        guard let document = scroll.documentView else { return }
+        let visible = scroll.contentView.bounds
+        let above = visible.minY > 1
+        let below = visible.maxY < document.frame.height - 1
+        coordinator.stuckToBottom = !below
+        if moreAbove != above { moreAbove = above }
+        if moreBelow != below { moreBelow = below }
+    }
+}

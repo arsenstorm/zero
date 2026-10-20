@@ -622,8 +622,6 @@ final class SpinnerView: NSView {
 struct AgentTimeline: View {
     @Bindable var controller: InboxController
     var focus: FocusState<String?>.Binding
-    /// The Earlier list's natural height, so it is only as tall as its rows up to the cap.
-    @State private var earlierHeight: CGFloat = 0
     private static let earlierCap: CGFloat = 138 // six rows
 
     var body: some View {
@@ -640,8 +638,9 @@ struct AgentTimeline: View {
         if !earlier.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Earlier").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                // Six rows at most, the newest in view, the edges fading where more is past them.
-                ScrollView(.vertical, showsIndicators: false) {
+                // Six rows at most, the newest in view, scrolling contained like a run's output, with the edges
+                // fading where more is past them.
+                ContainedList(cap: Self.earlierCap) {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(earlier) { ask in
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -653,11 +652,8 @@ struct AgentTimeline: View {
                             }
                         }
                     }
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { earlierHeight = $0 }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .defaultScrollAnchor(.bottom)
-                .frame(height: min(earlierHeight, Self.earlierCap))
-                .scrollEdgeFades(20)
             }
             .padding(14).frame(maxWidth: .infinity, alignment: .leading)
             .card()

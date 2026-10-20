@@ -320,21 +320,30 @@ struct ScrollEdgeFades: ViewModifier {
             .onScrollGeometryChange(for: [Bool].self) { g in
                 [g.contentOffset.y > 1, g.contentOffset.y + g.containerSize.height < g.contentSize.height - 1]
             } action: { _, more in moreAbove = more[0]; moreBelow = more[1] }
-            .mask(
-                ZStack {
-                    Color.black
-                    VStack(spacing: 0) {
-                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: fade)
-                            .blendMode(.destinationOut).opacity(moreAbove ? 1 : 0)
-                            .animation(.easeOut(duration: 0.15), value: moreAbove)
-                        Spacer(minLength: 0)
-                        LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: fade)
-                            .blendMode(.destinationOut).opacity(moreBelow ? 1 : 0)
-                            .animation(.easeOut(duration: 0.15), value: moreBelow)
-                    }
-                }
-                .compositingGroup()
-            )
+            .mask(EdgeFadeMask(above: moreAbove, below: moreBelow, fade: fade))
+    }
+}
+
+/// The mask behind the fades: solid, with two fixed strips that punch a gradient out of it when there is more
+/// past that edge. Only their opacity animates, so the mask never moves over the content.
+struct EdgeFadeMask: View {
+    let above: Bool
+    let below: Bool
+    var fade: CGFloat = 28
+    var body: some View {
+        ZStack {
+            Color.black
+            VStack(spacing: 0) {
+                LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: fade)
+                    .blendMode(.destinationOut).opacity(above ? 1 : 0)
+                    .animation(.easeOut(duration: 0.15), value: above)
+                Spacer(minLength: 0)
+                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: fade)
+                    .blendMode(.destinationOut).opacity(below ? 1 : 0)
+                    .animation(.easeOut(duration: 0.15), value: below)
+            }
+        }
+        .compositingGroup()
     }
 }
 
