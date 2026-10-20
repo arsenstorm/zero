@@ -1,0 +1,7 @@
+{
+  "name": "zero",
+  "owner": { "name": "Arsen Shkrumelyak" },
+  "plugins": [
+    { "name": "zero", "source": "./", "description": "Agents reach Arsen through Zero." }
+  ]
+}

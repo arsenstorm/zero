@@ -9,6 +9,9 @@ struct SettingsView: View {
     let inbox: InboxController
     @State private var microphones: [(name: String, uid: String)] = []
     @State private var newPattern = ""
+    /// nil while it is being checked or changed.
+    @State private var claudePlugin: Bool?
+    @State private var pluginError: String?
 
     private func addPattern() {
         let pattern = newPattern.trimmingCharacters(in: .whitespaces)
@@ -71,6 +74,21 @@ struct SettingsView: View {
                     Text("Drag to reorder the bar. Close removes an agent until it speaks again.").font(.caption).foregroundStyle(.secondary)
                 }
             }
+            Section("Agent integration") {
+                Toggle("Claude Code plugin", isOn: Binding(get: { claudePlugin ?? false }, set: { on in
+                    claudePlugin = nil
+                    pluginError = nil
+                    Task {
+                        if on { pluginError = await ClaudePlugin.install() } else { await ClaudePlugin.uninstall() }
+                        claudePlugin = await ClaudePlugin.isInstalled()
+                    }
+                }))
+                .disabled(claudePlugin == nil)
+                Text("Gives Claude Code the zero skill. Sessions Zero starts are told to reach you only through Zero, and a turn may only end on Zero's ending line. Sessions you run yourself are left alone.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let pluginError { Text(pluginError).font(.caption).foregroundStyle(.secondary).lineLimit(4) }
+            }
+            .task { claudePlugin = await ClaudePlugin.isInstalled() }
             Section("Adapters") {
                 ForEach(store.adapters, id: \.name) { adapter in
                     LabeledContent(adapter.name.capitalized) {

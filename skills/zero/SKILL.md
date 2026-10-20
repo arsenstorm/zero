@@ -73,6 +73,19 @@ removes what it has consumed.
 
 Zero names you by `ZERO_AGENT`, or by your Solo process id. If neither is set, export `ZERO_AGENT` once at the start to a stable short name: the ticket id or your role (`ENG-9429`, `app-lead`). Why: one dot per name; a changing name scatters your history across several dots.
 
+## Ending a turn
+
+When Zero runs your session, every turn ends with exactly one of these as its last line, after you have done what it says. Zero's stop check reads it; a turn without one is sent back to you.
+
+```
+[zero: done]            the work is finished and you posted zero note --done
+[zero: asked k3x9qa]    you asked with --async and wait for that answer (the id it printed)
+[zero: blocked]         you cannot go on and posted zero note --blocked
+[zero: working]         you are pausing between steps and posted a note on where you are
+```
+
+Why: a need parked in prose ("waiting for your go") reaches no one. The ending line makes the state explicit, so Zero can tell a finished turn from a stuck one.
+
 ## Messages from Arsen
 
 He can type to you from Zero at any time. His text arrives as a prompt in your session. Treat it as an instruction that supersedes the brief.

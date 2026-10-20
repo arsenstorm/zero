@@ -185,7 +185,9 @@ public struct SoloAdapter: AgentAdapter {
     /// a block starts at a "⏺"/"●" line, tool calls (followed by "⎿", or named like `Bash(`) are skipped, and the
     /// turn ends at the "· done" line or the next prompt. ponytail: screen scraping; Solo has no message API.
     public static func lastReply(in screen: String, after prompt: String) -> String? {
+        // Zero's ending line ("[zero: done]") is for the stop check, not for Arsen.
         let lines = screen.components(separatedBy: "\n")
+            .filter { $0.range(of: #"^\s*(⏺|●)?\s*\[zero: [a-z]+( [A-Za-z0-9]+)?\]\s*$"#, options: .regularExpression) == nil }
         let needle = String(prompt.prefix(40))
         var start = 0
         for (index, line) in lines.enumerated() {
@@ -306,6 +308,9 @@ public struct SoloAdapter: AgentAdapter {
         var arguments: [String: Any] = ["project_id": projectID, "agent_tool_id": toolID, "include_agent_instructions": false]
         var extra: [String] = []
         if let model, !model.id.isEmpty { extra += ["--model", model.id] }
+        // Marks the session as Zero's, so the Zero plugin's hooks hold it to Zero's rules (no spaces: Solo
+        // keeps the command as one string and resuming splits it on them).
+        if runtime.name.lowercased().contains("claude") { extra += ["--settings", #"{"env":{"ZERO_MANAGED":"1"}}"#] }
         if let level = settings["reasoning"], !level.isEmpty {
             if model?.provider == "Anthropic" { extra += ["--effort", level] }
             else if runtime.name.lowercased().contains("codex") { extra += ["-c", "model_reasoning_effort=\"\(level)\""] }
@@ -402,7 +407,10 @@ public struct SoloAdapter: AgentAdapter {
             session = screen.range(of: "--resume ([0-9a-f-]{36})", options: .regularExpression).map { String(screen[$0].dropFirst("--resume ".count)) }
         }
         if let session {
-            var words = command.split(separator: " ").map(String.init)
+            // Solo shell-quotes arguments in the command it shows ('{"env":…}'); the quotes are not part of them.
+            var words = command.split(separator: " ").map { word -> String in
+                word.count >= 2 && word.first == "'" && word.last == "'" ? String(word.dropFirst().dropLast()) : String(word)
+            }
             let executable = words.first ?? "claude"
             words = Array(words.dropFirst())
             if let i = words.firstIndex(of: "--resume"), i + 1 < words.count { words.removeSubrange(i...(i + 1)) }

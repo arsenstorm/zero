@@ -207,6 +207,11 @@ public final class Store {
         }
         // What Zero has learned about the agent (its process, session, label) carries into every later item,
         // whether it was made from an older copy of the identity or came from the CLI with a bare name.
+        // An agent Zero started is "claude-120" to Zero but calls the CLI as "solo-120": same process, same agent.
+        if identity(of: ask.agent.name) == nil, let pid = ask.agent.soloProcessID,
+           let owner = asks.last(where: { $0.agent.soloProcessID == pid })?.agent.name {
+            ask.agent.name = owner
+        }
         if let known = identity(of: ask.agent.name) {
             ask.agent.soloProcessID = ask.agent.soloProcessID ?? known.soloProcessID
             ask.agent.soloProjectID = ask.agent.soloProjectID ?? known.soloProjectID

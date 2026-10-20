@@ -19,6 +19,8 @@ bundle: build
 	cp Resources/Info.plist $(APP)/Contents/Info.plist
 	mkdir -p $(APP)/Contents/Resources
 	cp Resources/icons/*.png $(APP)/Contents/Resources/
+	rm -rf $(APP)/Contents/Resources/plugin && mkdir -p $(APP)/Contents/Resources/plugin
+	cp -R .claude-plugin hooks skills $(APP)/Contents/Resources/plugin/
 	cp drop-client/target/release/zero-drop $(APP)/Contents/Resources/zero-drop-darwin-arm64
 	cp drop-client/target/x86_64-unknown-linux-musl/release/zero-drop $(APP)/Contents/Resources/zero-drop-linux-x86_64
 	cp drop-client/target/aarch64-unknown-linux-musl/release/zero-drop $(APP)/Contents/Resources/zero-drop-linux-aarch64
