@@ -548,6 +548,8 @@ enum Theme {
     }
     static let card = dynamic(dark: NSColor(white: 0.11, alpha: 1), light: NSColor(white: 1, alpha: 1))
     static let row = dynamic(dark: NSColor(white: 0.16, alpha: 1), light: NSColor(white: 0.94, alpha: 1))
+    /// The composer's well: in light mode only a breath under the card, so it reads as a field, not a slab.
+    static let composer = dynamic(dark: NSColor(white: 0.16, alpha: 1), light: NSColor(white: 0.975, alpha: 1))
     static let keycap = dynamic(dark: NSColor(white: 0.22, alpha: 1), light: NSColor(white: 0.88, alpha: 1))
     /// A fully solid knob; `.primary` is a translucent label colour.
     static let knob = dynamic(dark: .white, light: .black)
@@ -880,7 +882,7 @@ struct ComposerCard: View {
             }
             composer
                 .padding(14)
-                .background(Theme.row)
+                .background(Theme.composer)
                 .clipShape(RoundedRectangle(cornerRadius: 18))
                 .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke, lineWidth: 1))
         }
