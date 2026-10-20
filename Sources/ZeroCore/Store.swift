@@ -44,8 +44,18 @@ public final class Store {
 
     public func identity(of agent: String) -> AgentIdentity? { asks.last { $0.agent.name == agent }?.agent }
 
-    /// The name to show for an agent: the runtime's label when it has one, else the key.
-    public func displayName(of agent: String) -> String { identity(of: agent)?.label ?? agent }
+    /// The name to show for an agent: Arsen's own name for it, else the runtime's label, else the key.
+    public func displayName(of agent: String) -> String { names[agent] ?? identity(of: agent)?.label ?? agent }
+
+    /// Names Arsen gave agents; they win over the runtime's labels, which change as a session's title does.
+    public private(set) var names: [String: String] = UserDefaults.standard.dictionary(forKey: "agentNames") as? [String: String] ?? [:]
+
+    /// Gives the agent a name of Arsen's; an empty one goes back to the runtime's label.
+    public func rename(_ agent: String, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        names[agent] = trimmed.isEmpty ? nil : trimmed
+        UserDefaults.standard.set(names, forKey: "agentNames")
+    }
 
     /// True when some adapter can deliver text into this agent's session.
     public func canMessage(_ agent: String) -> Bool {

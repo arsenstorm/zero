@@ -192,6 +192,10 @@ private struct DictationPage: View {
 private struct AgentsPage: View {
     @Bindable var settings: Settings
     let store: Store
+    /// The agent being renamed, and the name typed so far.
+    @State private var editing: String?
+    @State private var draft = ""
+    @FocusState private var focused: Bool
     var body: some View {
         let names = agentNames
         if names.isEmpty {
@@ -202,9 +206,21 @@ private struct AgentsPage: View {
                     ForEach(names, id: \.self) { name in
                         HStack(spacing: 10) {
                             Circle().fill(AgentStatus.of(store.asks.filter { $0.agent.name == name }).color).frame(width: 8, height: 8)
-                            Text(store.displayName(of: name)).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                            if editing == name {
+                                TextField("Name", text: $draft, prompt: Text(store.identity(of: name)?.label ?? name))
+                                    .textFieldStyle(.plain).font(.system(size: 13, weight: .medium)).focused($focused)
+                                    .onSubmit { store.rename(name, to: draft); editing = nil }
+                                    .onExitCommand { editing = nil }
+                            } else {
+                                Text(store.displayName(of: name)).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                            }
                             Spacer()
-                            RowButton(title: "Close") { store.closeAgent(name) }
+                            IconButton(symbol: "pencil", help: "Rename") {
+                                draft = store.names[name] ?? store.displayName(of: name)
+                                editing = name
+                                focused = true
+                            }
+                            IconButton(symbol: "trash", help: "Remove from the bar") { store.closeAgent(name) }
                         }
                         .padding(.vertical, 4)
                         .listRowBackground(Color.clear)
@@ -216,7 +232,7 @@ private struct AgentsPage: View {
                     }
                 }
                 .listStyle(.plain).scrollContentBackground(.hidden).frame(height: 320)
-                Text("Drag to reorder the bar. A closed agent comes back when it next asks you something.")
+                Text("Drag to reorder the bar. A removed agent comes back when it next asks you something.")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             }
         }
