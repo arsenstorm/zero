@@ -251,7 +251,9 @@ final class InboxController {
     /// True in an agent's view when an adapter can carry a message into that agent's session.
     var composable: Bool { agentFilter.map { store.canMessage($0) } ?? false }
     /// Only then does the inbox take the keyboard.
-    var takesKeys: Bool { answerable || composable }
+    var takesKeys: Bool { answerable || composable || screenOpen }
+    /// A terminal screen is open for the agent in view: keys go to it.
+    var screenOpen: Bool { agentFilter.map { store.screens[$0] != nil } ?? false }
 
     func composerKey(_ agent: String) -> String { "msg:" + agent }
 
@@ -325,6 +327,12 @@ final class InboxController {
         let key = event.charactersIgnoringModifiers ?? ""
         if event.keyCode == 53 { // escape
             if selector != nil { closeSelector(); return true }
+            if let agent = agentFilter, store.screens[agent] != nil, !editing {
+                // Cancels whatever the agent has open and closes the screen here.
+                store.press([27], on: agent)
+                store.closeScreen(of: agent)
+                return true
+            }
             if dictatingFor != nil { stopDictation(); return true }
             if let selected, textOption[selected] != nil { cancelTextOption(selected); event.window?.makeFirstResponder(nil); return true }
             if let last = lastAnswered, store.takeBack(last) { cancelAdvance(); selected = last; return true }
@@ -334,6 +342,16 @@ final class InboxController {
             return true
         }
         if editing || !event.modifierFlags.intersection([.command, .control, .option]).isEmpty { return false }
+        if let agent = agentFilter, store.screens[agent] != nil {
+            // The screen has the keyboard: arrows, Enter and any character go to the agent's terminal.
+            let keys: [UInt16: [UInt8]] = [126: [27, 91, 65], 125: [27, 91, 66], 123: [27, 91, 68], 124: [27, 91, 67], 36: [13], 51: [127]]
+            if let bytes = keys[event.keyCode] { store.press(bytes, on: agent); return true }
+            if let scalar = key.unicodeScalars.first, !CharacterSet.controlCharacters.contains(scalar) {
+                store.press(Array(key.utf8), on: agent)
+                return true
+            }
+            return false
+        }
         switch event.keyCode {
         case 126: move(-1); return true
         case 125: move(1); return true
@@ -628,6 +646,9 @@ struct AgentTimeline: View {
         }
         ForEach(recent) { ask in CardView(ask: ask, controller: controller, focus: focus).id(ask.id) }
         ForEach(open) { ask in CardView(ask: ask, controller: controller, focus: focus).id(ask.id) }
+        if let agent = controller.agentFilter, let screen = controller.store.screens[agent] {
+            ScreenCard(agent: agent, screen: screen, controller: controller)
+        }
         if let agent = controller.agentFilter, controller.store.canMessage(agent) {
             Composer(controller: controller, agent: agent, focus: focus)
         }
@@ -1357,5 +1378,58 @@ struct MarkdownText: View {
 
     private func attributed(_ prose: String) -> AttributedString {
         (try? AttributedString(markdown: prose, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(prose)
+    }
+}
+
+/// The agent's terminal, in Zero, for the pickers slash commands open: the rendered screen below its
+/// separator, keys for the pointer (the keyboard already goes straight through), and a close.
+struct ScreenCard: View {
+    let agent: String
+    let screen: String
+    @Bindable var controller: InboxController
+
+    private static let keys: [(String, [UInt8])] = [("↑", [27, 91, 65]), ("↓", [27, 91, 66]), ("←", [27, 91, 68]), ("→", [27, 91, 67]), ("⏎", [13]), ("Esc", [27])]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text("Screen").font(.system(size: 12, weight: .medium))
+                Text(controller.store.displayName(of: agent)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 8)
+                ForEach(Self.keys, id: \.0) { label, bytes in
+                    Button { controller.store.press(bytes, on: agent) } label: {
+                        Text(label).font(.system(size: 11, weight: .semibold)).monospacedDigit()
+                            .frame(minWidth: 22, minHeight: 20).padding(.horizontal, 4)
+                            .background(Theme.keycap).clipShape(RoundedRectangle(cornerRadius: 6))
+                    }.buttonStyle(.plain)
+                }
+                Button { controller.store.closeScreen(of: agent) } label: {
+                    Image(systemName: "xmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.secondary)
+                        .frame(width: 20, height: 20).contentShape(Rectangle())
+                }.buttonStyle(.plain).offset(x: 4)
+            }
+            .frame(height: 20)
+            Text(visible.isEmpty ? "Waiting for the agent's screen…" : visible)
+                .font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10).background(Theme.code).clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .padding(14)
+        .card()
+    }
+
+    /// What the agent has open: everything below its last separator line, else the last 20 lines, with the
+    /// blank run at the end gone.
+    private var visible: String {
+        var lines = screen.components(separatedBy: "\n")
+        if let separator = lines.lastIndex(where: { $0.hasPrefix("▔▔▔") || $0.hasPrefix("───") }) {
+            lines = Array(lines[(separator + 1)...])
+        } else {
+            lines = Array(lines.suffix(20))
+        }
+        while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeLast() }
+        while lines.first?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeFirst() }
+        return lines.map { $0.trimmingCharacters(in: .whitespaces).isEmpty ? "" : $0 }.joined(separator: "\n")
     }
 }

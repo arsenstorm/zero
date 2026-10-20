@@ -50,3 +50,19 @@ func soloAdapterSpawnsAnAgent() async throws {
     await store.relabel(identity)
     print("label:", await store.displayName(of: identity.name))
 }
+
+/// Live: the agent's screen comes back, keys go in. `ZERO_SOLO_SCREEN_PID=124 ZERO_SOLO_PROJECT=13 swift test --filter soloAdapterScreen`.
+@Test(.enabled(if: ProcessInfo.processInfo.environment["ZERO_SOLO_SCREEN_PID"] != nil))
+func soloAdapterScreenAndKeys() async throws {
+    let env = ProcessInfo.processInfo.environment
+    let agent = AgentIdentity(name: "t", host: "mac", soloProcessID: Int(env["ZERO_SOLO_SCREEN_PID"]!), soloProjectID: env["ZERO_SOLO_PROJECT"].flatMap(Int.init))
+    let adapter = SoloAdapter()
+    let screen = await adapter.screen(of: agent)
+    #expect(screen?.isEmpty == false)
+    try await adapter.send("/model", to: agent)
+    try await Task.sleep(for: .seconds(1))
+    let picker = try await adapter.press([27, 91, 66], on: agent) // down
+    #expect(picker?.contains("Select model") == true)
+    let after = try await adapter.press([27], on: agent) // esc
+    print("after esc has picker:", after?.contains("Select model") == true)
+}

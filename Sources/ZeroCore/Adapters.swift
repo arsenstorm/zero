@@ -30,6 +30,10 @@ public protocol AgentAdapter: Sendable {
     func reply(from agent: AgentIdentity, to text: String) async -> String?
     /// What the runtime calls the agent now, when that is more than the tool's generic name.
     func displayName(for agent: AgentIdentity) async -> String?
+    /// The agent's rendered screen, for slash commands whose pickers live in its terminal.
+    func screen(of agent: AgentIdentity) async -> String?
+    /// Raw keys into the agent's terminal (arrows, Enter, Esc, a digit); returns the screen just after.
+    func press(_ bytes: [UInt8], on agent: AgentIdentity) async throws -> String?
     /// Starting agents: where they can run, what runs them, and the start itself. Default: not supported.
     var canSpawn: Bool { get }
     func spawnTargets() async throws -> [SpawnChoice]
@@ -47,6 +51,8 @@ public protocol AgentAdapter: Sendable {
 public extension AgentAdapter {
     func reply(from agent: AgentIdentity, to text: String) async -> String? { nil }
     func displayName(for agent: AgentIdentity) async -> String? { nil }
+    func screen(of agent: AgentIdentity) async -> String? { nil }
+    func press(_ bytes: [UInt8], on agent: AgentIdentity) async throws -> String? { nil }
     var canSpawn: Bool { false }
     func spawnTargets() async throws -> [SpawnChoice] { [] }
     func spawnRuntimes() async throws -> [SpawnChoice] { [] }
@@ -81,6 +87,21 @@ public struct SoloAdapter: AgentAdapter {
         var arguments: [String: Any] = ["process_id": processID, "input": text, "submit": true]
         if let project = agent.soloProjectID { arguments["project_id"] = project }
         _ = try await resultText(of: call(tool: "send_input", arguments: arguments))
+    }
+
+    public func screen(of agent: AgentIdentity) async -> String? {
+        guard let processID = agent.soloProcessID else { return nil }
+        var arguments: [String: Any] = ["process_id": processID, "lines": 40]
+        if let project = agent.soloProjectID { arguments["project_id"] = project }
+        return try? await resultText(of: call(tool: "get_process_output", arguments: arguments))
+    }
+
+    public func press(_ bytes: [UInt8], on agent: AgentIdentity) async throws -> String? {
+        guard let processID = agent.soloProcessID else { throw AdapterError("\(agent.name) has no Solo process id") }
+        var arguments: [String: Any] = ["process_id": processID, "bytes": bytes.map(Int.init), "wait_ms": 350]
+        if let project = agent.soloProjectID { arguments["project_id"] = project }
+        let result = try await resultJSON(of: call(tool: "send_input", arguments: arguments)) as? [String: Any]
+        return result?["output"] as? String
     }
 
     /// Solo renames a session after its first task ("Ready word reply"); the tool's own name is not a label.

@@ -15,6 +15,9 @@ public final class Store {
     @ObservationIgnored public var onChange: ((Ask) -> Void)?
     @ObservationIgnored public var onOutput: ((Ask, String) -> Void)?
 
+    /// Agents whose terminal screen is open in Zero (after a slash command), with the latest rendering.
+    public private(set) var screens: [String: String] = [:]
+    @ObservationIgnored private var screenPolls: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var timers: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var processes: [String: Process] = [:]
     @ObservationIgnored private let logURL: URL?
@@ -95,6 +98,33 @@ public final class Store {
         if let last = asks.last(where: { $0.agent.name == identity.name }) { log(last) }
     }
 
+    /// Shows the agent's terminal in Zero and keeps it fresh every second until closed.
+    public func openScreen(of agent: String) {
+        guard let identity = identity(of: agent), let adapter = adapters.first(where: { $0.canReach(identity) }) else { return }
+        screenPolls[agent]?.cancel()
+        screens[agent] = screens[agent] ?? ""
+        screenPolls[agent] = Task { [weak self] in
+            while !Task.isCancelled {
+                if let screen = await adapter.screen(of: identity), let self, screens[agent] != nil { screens[agent] = screen }
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+    }
+
+    public func closeScreen(of agent: String) {
+        screenPolls[agent]?.cancel()
+        screenPolls[agent] = nil
+        screens[agent] = nil
+    }
+
+    /// Keys into the agent's terminal; the screen updates from what comes straight back.
+    public func press(_ bytes: [UInt8], on agent: String) {
+        guard let identity = identity(of: agent), let adapter = adapters.first(where: { $0.canReach(identity) }) else { return }
+        Task { [weak self] in
+            if let screen = try? await adapter.press(bytes, on: identity), let self, screens[agent] != nil { screens[agent] = screen }
+        }
+    }
+
     /// The agent's answer to something Arsen sent comes back as a note from it, so the exchange reads in Zero.
     private func watchReply(from identity: AgentIdentity, to text: String, via adapter: AgentAdapter) {
         Task { [weak self] in
@@ -119,7 +149,9 @@ public final class Store {
             guard let adapter = adapters.first(where: { $0.canReach(identity) }) else { throw AdapterError("No way to reach \(agent)") }
             try await adapter.send(text, to: identity)
             update(created.id) { $0.status = "sent" }
-            watchReply(from: identity, to: text, via: adapter)
+            // A slash command opens something in the agent's terminal, so that screen comes to Zero; a message
+            // gets an answer, which is read back when it lands.
+            if text.hasPrefix("/") { openScreen(of: agent) } else { watchReply(from: identity, to: text, via: adapter) }
         } catch {
             update(created.id) { $0.status = "failed: \(error.localizedDescription)" }
         }
