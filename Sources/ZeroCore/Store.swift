@@ -165,36 +165,28 @@ public final class Store {
     }
 
     /// Sends Arsen's text into the agent's session and records it in the timeline as sent or failed.
-    public func message(_ text: String, to agent: String) async {
-        guard var identity = identity(of: agent) else { return }
-        var item = Ask(kind: .message, title: "Message", body: text, agent: identity)
-        item.status = "sending"
-        let created = create(item)
-        do {
-            guard let adapter = adapters.first(where: { $0.canReach(identity) }) else { throw AdapterError("No way to reach \(agent)") }
-            // A stopped session is brought back first, with its conversation when the runtime can; a send that
-            // fails because the session is gone gets the same treatment once.
-            func revive() async throws {
-                update(created.id) { $0.status = "resuming" }
-                identity = try await adapter.revive(identity)
-                rebind(agent, to: identity)
-                offline.remove(agent)
-            }
-            if offline.contains(agent) { try await revive() }
-            do {
-                try await adapter.send(text, to: identity)
-            } catch where "\(error)".lowercased().contains("closed") {
-                try await revive()
-                try await adapter.send(text, to: identity)
-            }
-            update(created.id) { $0.status = "sent" }
-            // A slash command opens something in the agent's terminal, so that screen comes to Zero; a message
-            // gets an answer, which is read back when it lands.
-            if text.hasPrefix("/") { openScreen(of: agent) } else { watchReply(from: identity, to: text, via: adapter) }
-        } catch {
-            update(created.id) { $0.status = "failed: \(error.localizedDescription)" }
+    /// Delivers Arsen's words to the agent's session, starting it again first when it is not running. The
+    /// message joins the timeline only once it has arrived; a failure throws and leaves nothing behind.
+    public func message(_ text: String, to agent: String) async throws {
+        guard var identity = identity(of: agent) else { throw AdapterError("Zero doesn't know \(agent)") }
+        guard let adapter = adapters.first(where: { $0.canReach(identity) }) else { throw AdapterError("No way to reach \(agent)") }
+        // An agent from before sessions were recorded: its session is the one that began with its first prompt.
+        if identity.session == nil,
+           let first = asks.first(where: { $0.agent.name == agent && $0.kind == .message })?.body,
+           let session = await adapter.findSession(for: identity, firstPrompt: first) {
+            identity.session = session
+            rebind(agent, to: identity)
         }
-        if let final = ask(created.id) { log(final) }
+        let connected = try await adapter.connect(identity)
+        if connected != identity { rebind(agent, to: connected); identity = connected }
+        offline.remove(agent)
+        try await adapter.send(text, to: identity)
+        var item = Ask(kind: .message, title: "Message", body: text, agent: identity)
+        item.status = "sent"
+        _ = create(item)
+        // A slash command opens something in the agent's terminal, so that screen comes to Zero; a message
+        // gets an answer, which is read back when it lands.
+        if text.hasPrefix("/") { openScreen(of: agent) } else { watchReply(from: identity, to: text, via: adapter) }
     }
 
     public func ask(_ id: String) -> Ask? { asks.first { $0.id == id } }

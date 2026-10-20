@@ -32,6 +32,8 @@ public protocol AgentAdapter: Sendable {
     func displayName(for agent: AgentIdentity) async -> String?
     /// The runtime's session id for an agent that was just given `firstPrompt`, once it exists.
     func session(for agent: AgentIdentity, firstPrompt: String) async -> String?
+    /// The same, looked up once without waiting for it to appear.
+    func findSession(for agent: AgentIdentity, firstPrompt: String) async -> String?
     /// The agent's rendered screen, for slash commands whose pickers live in its terminal.
     func screen(of agent: AgentIdentity) async -> String?
     /// Raw keys into the agent's terminal (arrows, Enter, Esc, a digit); returns the screen just after.
@@ -40,9 +42,9 @@ public protocol AgentAdapter: Sendable {
     func switchModel(of agent: AgentIdentity, to model: SpawnChoice, level: String?) async throws
     /// Names of the given agents whose session is not running right now.
     func offline(among agents: [AgentIdentity]) async -> Set<String>
-    /// Brings a stopped agent back, with its conversation when the runtime can resume one; returns the identity
-    /// to use from now on (the session may live in a new process).
-    func revive(_ agent: AgentIdentity) async throws -> AgentIdentity
+    /// The identity to deliver to now: the agent's session running somewhere, started again if it is not
+    /// (with its conversation when the runtime can resume one). Its process may differ from the one passed in.
+    func connect(_ agent: AgentIdentity) async throws -> AgentIdentity
     /// Starting agents: where they can run, what runs them, and the start itself. Default: not supported.
     var canSpawn: Bool { get }
     func spawnTargets() async throws -> [SpawnChoice]
@@ -61,11 +63,12 @@ public extension AgentAdapter {
     func reply(from agent: AgentIdentity, to text: String) async -> String? { nil }
     func displayName(for agent: AgentIdentity) async -> String? { nil }
     func session(for agent: AgentIdentity, firstPrompt: String) async -> String? { nil }
+    func findSession(for agent: AgentIdentity, firstPrompt: String) async -> String? { nil }
     func screen(of agent: AgentIdentity) async -> String? { nil }
     func press(_ bytes: [UInt8], on agent: AgentIdentity) async throws -> String? { nil }
     func switchModel(of agent: AgentIdentity, to model: SpawnChoice, level: String?) async throws { throw AdapterError("\(name) cannot change \(agent.name)'s model") }
     func offline(among agents: [AgentIdentity]) async -> Set<String> { [] }
-    func revive(_ agent: AgentIdentity) async throws -> AgentIdentity { throw AdapterError("\(name) cannot restart \(agent.name)") }
+    func connect(_ agent: AgentIdentity) async throws -> AgentIdentity { agent }
     var canSpawn: Bool { false }
     func spawnTargets() async throws -> [SpawnChoice] { [] }
     func spawnRuntimes() async throws -> [SpawnChoice] { [] }
@@ -137,6 +140,11 @@ public struct SoloAdapter: AgentAdapter {
 
     /// Project paths do not move; one lookup each, so title checks every few seconds stay local file reads.
     nonisolated(unsafe) private static var projectPaths: [Int: String] = [:]
+    public func findSession(for agent: AgentIdentity, firstPrompt: String) async -> String? {
+        guard let project = agent.soloProjectID, let cwd = await projectPath(project) else { return nil }
+        return ClaudeSessions.find(prompt: firstPrompt, cwd: cwd)
+    }
+
     private func projectPath(_ id: Int) async -> String? {
         if let cached = Self.projectPaths[id] { return cached }
         let rows = (try? await resultJSON(of: call(tool: "list_projects", arguments: [:])) as? [[String: Any]]) ?? []
@@ -363,32 +371,53 @@ public struct SoloAdapter: AgentAdapter {
         return result
     }
 
-    /// A stopped Claude Code leaves "claude --resume <id>" on its screen: a new process with the old arguments plus
-    /// that flag continues the conversation, and the dead one is closed. Anything else is simply started again.
-    public func revive(_ agent: AgentIdentity) async throws -> AgentIdentity {
-        guard let processID = agent.soloProcessID, let projectID = agent.soloProjectID else { throw AdapterError("\(agent.name) has no Solo process") }
-        let status = try await resultJSON(of: call(tool: "get_process_status", arguments: ["process_id": processID, "project_id": projectID])) as? [String: Any] ?? [:]
-        if (status["status"] as? String) == "Running" { return agent }
-        let command = (status["command"] as? String) ?? ""
-        // The session Zero recorded for the agent; failing that, the hint a Claude that quit leaves on its screen.
-        let screen = (try? await resultText(of: call(tool: "get_process_output", arguments: ["process_id": processID, "project_id": projectID, "lines": 60]))) ?? ""
-        let session = agent.session.map { Substring($0) }
-            ?? screen.range(of: "--resume ([0-9a-f-]{36})", options: .regularExpression).map { screen[$0].dropFirst("--resume ".count) }
-        let executable = command.split(separator: " ").first.map(String.init) ?? ""
-        let tools = (try? await resultJSON(of: call(tool: "list_agent_tools", arguments: [:])) as? [[String: Any]]) ?? []
-        let tool = tools.first { (($0["command"] as? String) ?? "").split(separator: " ").first.map(String.init) == executable }
-        if executable == "claude", let session, let toolID = tool?["id"] as? Int {
-            let extra = command.split(separator: " ").dropFirst().map(String.init) + ["--resume", String(session)]
-            let created = try await resultJSON(of: call(tool: "spawn_agent", arguments: ["project_id": projectID, "agent_tool_id": toolID, "extra_args": extra, "include_agent_instructions": false])) as? [String: Any] ?? [:]
-            guard let newID = created["process_id"] as? Int else { throw AdapterError("Solo did not return a process id") }
-            _ = try? await call(tool: "close_process", arguments: ["process_id": processID, "project_id": projectID])
-            var revived = agent
-            revived.soloProcessID = newID
-            try await waitUntilReady(newID, in: projectID, name: agent.name)
-            return revived
+    /// Messages go to the agent's session, not to a process: Solo only hosts it. The process Zero last knew is
+    /// used while it still runs that session; failing that, any running process already on the session (resumed
+    /// by hand in Solo, say); failing that, a new process continues the session with `--resume`, keeping the
+    /// launch arguments, and the old process is closed. Without a known session a stopped process is restarted.
+    public func connect(_ agent: AgentIdentity) async throws -> AgentIdentity {
+        guard let projectID = agent.soloProjectID else { throw AdapterError("\(agent.name) has no Solo project") }
+        let rows = (try await resultJSON(of: call(tool: "list_processes", arguments: ["project_id": projectID])) as? [[String: Any]] ?? [])
+            .filter { ($0["kind"] as? String) == "agent" }
+        let running = { (row: [String: Any]) in (row["status"] as? String) == "Running" }
+        let known = rows.first { ($0["id"] as? Int) == agent.soloProcessID }
+        if let known, running(known) { return agent }
+        if let session = agent.session,
+           let host = rows.first(where: { running($0) && (($0["command"] as? String) ?? "").contains(session) }),
+           let id = host["id"] as? Int {
+            var moved = agent
+            moved.soloProcessID = id
+            return moved
         }
-        _ = try await resultText(of: call(tool: "start_process", arguments: ["process_id": processID, "project_id": projectID]))
-        try await waitUntilReady(processID, in: projectID, name: agent.name)
+        let command = (known?["command"] as? String) ?? ""
+        var session = agent.session
+        if session == nil, let pid = agent.soloProcessID, known != nil {
+            // A Claude that quit leaves "claude --resume <id>" on its screen.
+            let screen = (try? await resultText(of: call(tool: "get_process_output", arguments: ["process_id": pid, "project_id": projectID, "lines": 60]))) ?? ""
+            session = screen.range(of: "--resume ([0-9a-f-]{36})", options: .regularExpression).map { String(screen[$0].dropFirst("--resume ".count)) }
+        }
+        if let session {
+            var words = command.split(separator: " ").map(String.init)
+            let executable = words.first ?? "claude"
+            words = Array(words.dropFirst())
+            if let i = words.firstIndex(of: "--resume"), i + 1 < words.count { words.removeSubrange(i...(i + 1)) }
+            let tools = (try? await resultJSON(of: call(tool: "list_agent_tools", arguments: [:])) as? [[String: Any]]) ?? []
+            guard let toolID = tools.first(where: { (($0["command"] as? String) ?? "").split(separator: " ").first.map(String.init) == executable })?["id"] as? Int
+            else { throw AdapterError("Solo has no \(executable) tool to resume the session with") }
+            let created = try await resultJSON(of: call(tool: "spawn_agent", arguments: [
+                "project_id": projectID, "agent_tool_id": toolID, "extra_args": words + ["--resume", session], "include_agent_instructions": false,
+            ])) as? [String: Any] ?? [:]
+            guard let newID = created["process_id"] as? Int else { throw AdapterError("Solo did not return a process id") }
+            if let old = agent.soloProcessID, known != nil { _ = try? await call(tool: "close_process", arguments: ["process_id": old, "project_id": projectID]) }
+            var resumed = agent
+            resumed.soloProcessID = newID
+            resumed.session = session
+            try await waitUntilReady(newID, in: projectID, name: agent.name)
+            return resumed
+        }
+        guard let pid = agent.soloProcessID, known != nil else { throw AdapterError("\(agent.label ?? agent.name)'s session is gone") }
+        _ = try await resultText(of: call(tool: "start_process", arguments: ["process_id": pid, "project_id": projectID]))
+        try await waitUntilReady(pid, in: projectID, name: agent.name)
         return agent
     }
 

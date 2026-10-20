@@ -51,6 +51,9 @@ final class InboxController {
 
     /// The model each running agent was switched to from Zero, by agent name; nothing recorded means whatever it started with.
     var agentModels: [String: String] = (UserDefaults.standard.dictionary(forKey: "agentModels") as? [String: String]) ?? [:]
+    /// Agents a message is on its way to, and why the last one did not arrive.
+    var delivering: Set<String> = []
+    var deliveryError: [String: String] = [:]
     /// The agent a runtime selector is open for; nil means the new-agent composer.
     var selectorAgent: String?
 
@@ -183,7 +186,10 @@ final class InboxController {
     /// Chat order, oldest at the top. Inbox: open asks, plus what was answered since the inbox opened.
     /// Agent view: that agent's timeline. Expired asks never show.
     var cards: [Ask] {
-        if let agentFilter { return store.asks.filter { $0.agent.name == agentFilter && $0.state != .expired } }
+        if let agentFilter {
+            // Messages that never arrived (from before delivery confirmed first) are not part of the conversation.
+            return store.asks.filter { $0.agent.name == agentFilter && $0.state != .expired && !(($0.status ?? "").hasPrefix("failed") && $0.kind == .message) }
+        }
         return store.asks.filter {
             $0.kind != .note && $0.kind != .message && $0.state != .expired
                 && (!$0.state.isFinal || ($0.answeredAt ?? .distantPast) >= inboxOpenedAt)
@@ -253,9 +259,24 @@ final class InboxController {
             drafts[key] = text
             spawn()
         } else if key.hasPrefix("msg:") {
+            // The words stay in the composer, read-only, until they have reached the agent; a failure leaves them
+            // there to send again.
             let agent = String(key.dropFirst(4))
+            drafts[key] = text
+            guard !delivering.contains(agent) else { return }
+            delivering.insert(agent)
+            deliveryError[agent] = nil
             if text.hasPrefix("/") { NSApp.keyWindow?.makeFirstResponder(nil) } // the screen that opens takes the keys
-            Task { await store.message(text, to: agent) }
+            Task {
+                do {
+                    try await store.message(text, to: agent)
+                    if drafts[key] == text { drafts[key] = nil }
+                } catch {
+                    deliveryError[agent] = "Couldn't reach \(speaker(agent)). Your message is still here."
+                    NSLog("zero: message to \(agent) failed: \(error)")
+                }
+                delivering.remove(agent)
+            }
         } else if let index = textOption[key] {
             textOption[key] = nil
             lastAnswered = key
@@ -879,7 +900,9 @@ struct ComposerCard: View {
     private var placeholder: String {
         agentName.map { "Message \(controller.store.displayName(of: $0))…" } ?? "What should a new agent work on?"
     }
-    private var starting: Bool { agentName == nil && controller.spawning }
+    /// Busy: the agent being started, or the message on its way to the agent.
+    private var starting: Bool { agentName.map { controller.delivering.contains($0) } ?? controller.spawning }
+    private var error: String? { agentName.map { controller.deliveryError[$0] } ?? controller.spawnError }
 
     var body: some View {
         // The quiet card runs on behind the composer by one corner radius, square-cornered there, so white shows
@@ -935,8 +958,8 @@ struct ComposerCard: View {
                         .foregroundStyle(controller.drafts[key, default: ""].isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
                 }.buttonStyle(.plain)
             }
-            if agentName == nil, let error = controller.spawnError {
-                Text(error).font(.system(size: 11)).foregroundStyle(.red)
+            if let error {
+                Label(error, systemImage: "exclamationmark.circle").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
             }
         }
     }
@@ -1025,10 +1048,8 @@ struct CardView: View {
             .background(Theme.row)
             .clipShape(RoundedRectangle(cornerRadius: 18))
             .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke, lineWidth: 1))
-            if let status = ask.status, status.hasPrefix("failed") {
-                Text(status).font(.system(size: 11)).foregroundStyle(.red).padding(.trailing, 6)
-            } else if let status = ask.status, ["sending", "starting", "resuming"].contains(status) {
-                Text(status.prefix(1).uppercased() + status.dropFirst() + "…").font(.system(size: 11)).foregroundStyle(.tertiary).padding(.trailing, 6)
+            if ask.status == "starting" {
+                Text("Starting…").font(.system(size: 11)).foregroundStyle(.tertiary).padding(.trailing, 6)
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
