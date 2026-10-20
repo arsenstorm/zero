@@ -196,8 +196,8 @@ struct SelectorView: View {
                     .frame(height: 14)
                     .padding(.top, 16)
                     EffortSlider(levels: row.levels.map(\.id), picked: picked) { level in
-                        row.pick()
                         if let id = row.modelID { controller.setSpawnSetting(modelID: id, key: "reasoning", value: level) }
+                        row.pick() // after the level is saved: for a running agent the pick sends it along
                         state.sections = controller.selectorSections(for: state.kind)
                     }
                     .padding(.top, 6)

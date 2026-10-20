@@ -49,6 +49,29 @@ final class InboxController {
     /// Per-model configuration Arsen picked in the preview card, such as a reasoning level.
     var spawnSettings: [String: [String: String]] = (UserDefaults.standard.dictionary(forKey: "spawnSettings") as? [String: [String: String]]) ?? [:]
 
+    /// The model each running agent was switched to from Zero, by agent name; nothing recorded means whatever it started with.
+    var agentModels: [String: String] = (UserDefaults.standard.dictionary(forKey: "agentModels") as? [String: String]) ?? [:]
+    /// The agent a runtime selector is open for; nil means the new-agent composer.
+    var selectorAgent: String?
+
+    /// Remembers the pick and tells the agent, with the level saved for that model.
+    func setAgentModel(_ agent: String, model: SpawnChoice) {
+        agentModels[agent] = model.id
+        UserDefaults.standard.set(agentModels, forKey: "agentModels")
+        let level = spawnSettings[model.id]?["reasoning"] ?? model.defaultLevel
+        Task { try? await store.switchModel(of: agent, to: model, level: level) }
+    }
+
+    /// The runtime an existing agent runs on, by its name ("claude-120" runs on the "Claude" tool).
+    func runtime(of agent: String) -> SpawnChoice? { spawnRuntimes.first { $0.name.lowercased() == speaker(agent).lowercased() } }
+
+    /// True while the last thing in an agent's timeline is a message of Arsen's still awaiting its answer.
+    func waitingOn(_ agent: String) -> Bool {
+        let items = store.asks.filter { $0.agent.name == agent && $0.state != .expired }
+        guard !items.contains(where: { !$0.state.isFinal }), let last = items.last, store.screens[agent] == nil else { return false }
+        return last.kind == .message && ["sent", "sending", "starting", "resuming"].contains(last.status ?? "")
+    }
+
     func setSpawnSetting(modelID: String, key: String, value: String) {
         spawnSettings[modelID, default: [:]][key] = value
         UserDefaults.standard.set(spawnSettings, forKey: "spawnSettings")
@@ -89,19 +112,22 @@ final class InboxController {
         case .runtime:
             _ = modelsVersion
             guard let adapter = store.spawners.first else { return [] }
-            return spawnRuntimes.map { runtime in
+            // For a running agent: only its own runtime's models, the pick going to that agent.
+            let agent = selectorAgent
+            let runtimes = agent.flatMap { runtime(of: $0) }.map { [$0] } ?? spawnRuntimes
+            return runtimes.map { runtime in
                 let models = adapter.spawnModels(for: runtime)
                 let rows: [SelectorRow] = models.isEmpty
                     ? [SelectorRow(id: runtime.id, title: runtime.name, provider: runtime.provider, providerIcon: choiceIcon(runtime.icon),
                                    detail: runtime.detail, context: nil, levels: [], defaultLevel: nil, modelID: nil,
-                                   selected: runtime.id == spawnRuntime) { [weak self] in self?.spawnRuntime = runtime.id }]
+                                   selected: runtime.id == spawnRuntime) { [weak self] in if agent == nil { self?.spawnRuntime = runtime.id } }]
                     : models.map { model in
-                        SelectorRow(id: runtime.id + "/" + model.id, title: model.name, provider: model.provider ?? runtime.provider,
+                        let selected = agent.map { agentModels[$0] == model.id } ?? (runtime.id == spawnRuntime && model.id == spawnModel)
+                        return SelectorRow(id: runtime.id + "/" + model.id, title: model.name, provider: model.provider ?? runtime.provider,
                                     providerIcon: choiceIcon(model.icon ?? runtime.icon), detail: model.detail, context: model.context,
                                     levels: model.levels, defaultLevel: model.defaultLevel, modelID: model.id.isEmpty ? runtime.id + "/default" : model.id,
-                                    selected: runtime.id == spawnRuntime && model.id == spawnModel) { [weak self] in
-                            self?.spawnRuntime = runtime.id
-                            self?.spawnModel = model.id
+                                    selected: selected) { [weak self] in
+                            if let agent { self?.setAgentModel(agent, model: model) } else { self?.spawnRuntime = runtime.id; self?.spawnModel = model.id }
                         }
                     }
                 return SelectorSection(id: runtime.id, title: runtime.provider ?? runtime.name, icon: choiceIcon(runtime.icon), rows: rows)
@@ -407,6 +433,9 @@ struct InboxView: View {
     @Bindable var controller: InboxController
     @FocusState private var focus: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Edge scrolling for the agent view; the ask list still centres by id through the reader.
+    @State private var position = ScrollPosition()
+    private var pinsBottom: Bool { controller.agentFilter != nil || controller.cards.isEmpty }
 
     var body: some View {
         GeometryReader { geo in
@@ -422,7 +451,7 @@ struct InboxView: View {
                                     .transition(.asymmetric(insertion: .identity, removal: .opacity.animation(.easeIn(duration: 0.15))))
                             }
                             if controller.canSpawn {
-                                NewAgentCard(controller: controller, focus: $focus, quiet: controller.cards.isEmpty)
+                                ComposerCard(controller: controller, focus: $focus, mode: .newAgent, quiet: controller.cards.isEmpty)
                             } else if controller.cards.isEmpty {
                                 Text("All quiet.").font(.callout).foregroundStyle(.secondary)
                                     .frame(maxWidth: .infinity).padding(18).card()
@@ -432,6 +461,9 @@ struct InboxView: View {
                     // One frosted surface under the stack, so the gaps between cards never show raw desktop.
                     .padding(8)
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
+                    // A conversation, and the quiet inbox, hang from the bar's bottom line: the composer is always
+                    // there, whatever is above it, so the eye never has to find it. A list of asks centres its card.
+                    .frame(minHeight: pinsBottom ? controller.barHeight : 0, alignment: .bottom)
                     // Padding equal to the gap between panel edge and bar edge: scrolled to either end, the list
                     // stops level with the bar's top or bottom, and a list no taller than the bar cannot scroll.
                     .padding(.vertical, max(0, (geo.size.height - controller.barHeight) / 2))
@@ -440,6 +472,16 @@ struct InboxView: View {
                     .animation(reduceMotion || controller.switching ? nil : .timingCurve(0.32, 0.72, 0, 1, duration: 0.22),
                                value: controller.cards.map { "\($0.id)/\($0.state.rawValue)" })
                 }
+                // An agent's conversation sits at its end and stays there as it grows or the Earlier list sizes
+                // itself; the composer never leaves the bar's bottom line. The ask list keeps centring its card.
+                .scrollPosition($position)
+                .defaultScrollAnchor(pinsBottom ? .bottom : nil)
+                .defaultScrollAnchor(pinsBottom ? .bottom : nil, for: .sizeChanges)
+                // A panel resize (another screen, say) drops the offset to the top; the conversation goes back to its end.
+                .onScrollGeometryChange(for: CGFloat.self) { $0.containerSize.height } action: { _, _ in
+                    if pinsBottom { position.scrollTo(edge: .bottom) }
+                }
+                .onChange(of: controller.barHeight) { _, _ in if pinsBottom { position.scrollTo(edge: .bottom) } }
                 .onChange(of: controller.cards.map(\.id)) { _, _ in
                     // A new card pushes the stack: re-centre so the cards above drift up as it takes its place.
                     controller.ensureSelection()
@@ -456,6 +498,7 @@ struct InboxView: View {
                     LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 40)
                 })
                 .onAppear { center(proxy) }
+                .onChange(of: controller.agentFilter) { _, _ in center(proxy) }
                 .onChange(of: controller.scrollRequest) {
                     if controller.scrollAnimated && !reduceMotion {
                         withAnimation(.timingCurve(0.32, 0.72, 0, 1, duration: 0.25)) { center(proxy) }
@@ -473,8 +516,16 @@ struct InboxView: View {
         .onChange(of: focus) { _, id in controller.focusedReply = id }
     }
 
-    /// The selected card goes to the bar's centre line, as far as the scroll limits allow.
+    /// The selected card goes to the bar's centre line, as far as the scroll limits allow; an agent's
+    /// conversation goes to its end, the composer on the bar's bottom line.
     private func center(_ proxy: ScrollViewProxy) {
+        if pinsBottom {
+            // To the end, now and again once the conversation just switched in has been laid out. (Scrolling
+            // to an id at the end through the reader never moved it; the edge request does.)
+            position.scrollTo(edge: .bottom)
+            DispatchQueue.main.async { position.scrollTo(edge: .bottom) }
+            return
+        }
         guard let id = controller.selected else { return }
         proxy.scrollTo(id, anchor: .center)
     }
@@ -622,7 +673,10 @@ final class SpinnerView: NSView {
 struct AgentTimeline: View {
     @Bindable var controller: InboxController
     var focus: FocusState<String?>.Binding
-    private static let earlierCap: CGFloat = 138 // six rows
+    private static let earlierRow: CGFloat = 16, earlierGap: CGFloat = 8
+    private static func earlierHeight(_ rows: Int) -> CGFloat {
+        min(CGFloat(rows) * earlierRow + CGFloat(max(rows - 1, 0)) * earlierGap, 6 * earlierRow + 5 * earlierGap) // six rows at most
+    }
 
     var body: some View {
         let open = controller.cards.filter { !$0.state.isFinal }
@@ -632,16 +686,14 @@ struct AgentTimeline: View {
         let last = history.last
         let recent = last?.kind == .note ? [last!] : []
         let earlier = Array(history.dropLast(recent.count).suffix(40))
-        let waiting = open.isEmpty && last?.kind == .message
-            && ["sent", "sending", "starting", "resuming"].contains(last?.status ?? "")
-            && controller.agentFilter.map { controller.store.screens[$0] == nil } == true
+
         if !earlier.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Earlier").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                 // Six rows at most, the newest in view, scrolling contained like a run's output, with the edges
                 // fading where more is past them.
-                ContainedList(cap: Self.earlierCap) {
-                    VStack(alignment: .leading, spacing: 8) {
+                ContainedList(height: Self.earlierHeight(earlier.count)) {
+                    VStack(alignment: .leading, spacing: Self.earlierGap) {
                         ForEach(earlier) { ask in
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -650,6 +702,7 @@ struct AgentTimeline: View {
                                 }
                                 Text(summary(ask)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                             }
+                            .frame(height: Self.earlierRow)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -660,18 +713,11 @@ struct AgentTimeline: View {
         }
         ForEach(recent) { ask in CardView(ask: ask, controller: controller, focus: focus).id(ask.id) }
         ForEach(open) { ask in CardView(ask: ask, controller: controller, focus: focus).id(ask.id) }
-        if waiting, let agent = controller.agentFilter {
-            HStack(spacing: 8) {
-                Spinner().frame(width: 10, height: 10)
-                Text("Waiting for \(controller.store.displayName(of: agent))…").font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-            .padding(.leading, 14)
-        }
         if let agent = controller.agentFilter, let screen = controller.store.screens[agent] {
             ScreenCard(agent: agent, screen: screen, controller: controller)
         }
         if let agent = controller.agentFilter, controller.store.canMessage(agent) {
-            Composer(controller: controller, agent: agent, focus: focus)
+            ComposerCard(controller: controller, focus: focus, mode: .agent(agent))
         }
         if open.isEmpty && recent.isEmpty && earlier.isEmpty {
             Text("Nothing from this agent yet").font(.callout).foregroundStyle(.secondary)
@@ -727,36 +773,6 @@ struct ReplyBox: View {
 
 /// The composer's box: flush with its card's sides and bottom, bottom corners on the card's radius, and a top
 /// edge whose ends sweep up into the card's walls (concave fillets), so no sliver of card shows beside a corner.
-struct ComposerBoxShape: Shape {
-    var fillet: CGFloat = 12
-    var cardRadius: CGFloat = 18
-
-    func path(in rect: CGRect) -> Path {
-        var path = topEdge(in: rect)
-        let w = rect.maxX, h = rect.maxY, R = cardRadius
-        path.addLine(to: CGPoint(x: w, y: h - R))
-        path.addArc(center: CGPoint(x: w - R, y: h - R), radius: R, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
-        path.addLine(to: CGPoint(x: R, y: h))
-        path.addArc(center: CGPoint(x: R, y: h - R), radius: R, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
-        path.closeSubpath()
-        return path
-    }
-
-    /// Wall to wall: down the left fillet, across, up the right fillet. Stroked on its own as the box's hairline.
-    func topEdge(in rect: CGRect) -> Path {
-        let w = rect.maxX, r = fillet
-        var path = Path()
-        path.move(to: CGPoint(x: 0, y: 0))
-        path.addArc(center: CGPoint(x: r, y: 0), radius: r, startAngle: .degrees(180), endAngle: .degrees(90), clockwise: true)
-        path.addLine(to: CGPoint(x: w - r, y: r))
-        path.addArc(center: CGPoint(x: w - r, y: 0), radius: r, startAngle: .degrees(90), endAngle: .degrees(0), clockwise: true)
-        return path
-    }
-}
-
-struct ComposerTopEdge: Shape {
-    func path(in rect: CGRect) -> Path { ComposerBoxShape().topEdge(in: rect) }
-}
 
 /// An icon the app bundles for an adapter's choice (claude, openai, solo), by resource name. Built once.
 @MainActor private var iconCache: [String: Image] = [:]
@@ -802,78 +818,105 @@ private func onWhiteTile(_ mark: NSImage) -> NSImage {
 /// Start a new agent from the inbox. One composer box: the prompt on top, and beneath it a toolbar with where
 /// and with what it runs (chips opening Zero's own pickers) and the mic and send on the right. When nothing is
 /// open it is the whole inbox, headed "All quiet."
-struct NewAgentCard: View {
+
+/// The composer, the same card everywhere: the prompt or message, pills for where and with what, and a status
+/// line at its foot. In the inbox it starts an agent (project, runtime and model); in a conversation it messages
+/// that agent (its model only, since a conversation does not change project). Its height never changes between
+/// the two, so it sits still on the bar's bottom line as views switch.
+struct ComposerCard: View {
+    enum Mode { case newAgent, agent(String) }
     @Bindable var controller: InboxController
     var focus: FocusState<String?>.Binding
-    let quiet: Bool
+    let mode: Mode
+    var quiet = false
     @State private var projectAnchor = CGRect.zero
     @State private var runtimeAnchor = CGRect.zero
 
-    private var runtime: SpawnChoice? { controller.spawnRuntimes.first { $0.id == controller.spawnRuntime } }
-    private var model: SpawnChoice? { controller.spawnModels.first { $0.id == controller.spawnModel } }
+    private var agentName: String? { if case .agent(let name) = mode { return name } else { return nil } }
+    private var key: String { agentName.map { controller.composerKey($0) } ?? InboxController.newAgentKey }
+    private var runtime: SpawnChoice? {
+        agentName.flatMap { controller.runtime(of: $0) } ?? controller.spawnRuntimes.first { $0.id == controller.spawnRuntime }
+    }
+    private var model: SpawnChoice? {
+        if let agentName {
+            guard let id = controller.agentModels[agentName], let runtime else { return nil }
+            return controller.store.spawners.first?.spawnModels(for: runtime).first { $0.id == id }
+        }
+        return controller.spawnModels.first { $0.id == controller.spawnModel }
+    }
     private var project: SpawnChoice? { controller.spawnTargets.first { $0.id == controller.spawnTarget } }
     /// The model's effort level, when it has levels: the one picked for it, else its default.
     private var effort: String? {
         guard let model, !model.levels.isEmpty else { return nil }
         return (controller.spawnSettings[model.id]?["reasoning"] ?? model.defaultLevel).map { effortLabel($0, short: true) }
     }
+    private var placeholder: String {
+        agentName.map { "Message \(controller.store.displayName(of: $0))…" } ?? "What should a new agent work on?"
+    }
+    private var starting: Bool { agentName == nil && controller.spawning }
 
     var body: some View {
-        let key = InboxController.newAgentKey
-        // The box's flat top edge is 12 pt below where the box begins, so 2 pt here puts it 14 pt under the text,
-        // the same as the card's padding above the headline.
-        VStack(alignment: .leading, spacing: 2) {
-            if quiet {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("All quiet.").font(.system(size: 15, weight: .semibold))
-                    Text("Nothing needs you. Start something.").font(.system(size: 12)).foregroundStyle(.secondary)
-                }
-            }
-            // Flush with the card's sides and bottom; the card's own 14 pt inside, so the prompt's text starts
-            // exactly under the headline. The top edge's fillets add their 12 pt above the content.
-            VStack(alignment: .leading, spacing: 12) {
-                TextField("What should a new agent work on?",
-                          text: Binding(get: { controller.drafts[key, default: ""] }, set: { controller.drafts[key] = $0 }),
-                          axis: .vertical)
-                    .textFieldStyle(.plain).font(.system(size: 13)).lineLimit(2...8)
-                    .focused(focus, equals: key)
-                    .disabled(controller.spawning) // the prompt stays put, read-only, until the agent is up
-                    .onSubmit { controller.spawn() }
-                HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 12) {
+            TextField(placeholder, text: Binding(get: { controller.drafts[key, default: ""] }, set: { controller.drafts[key] = $0 }), axis: .vertical)
+                .textFieldStyle(.plain).font(.system(size: 13)).lineLimit(2...8)
+                .focused(focus, equals: key)
+                .disabled(starting) // the prompt stays put, read-only, until the agent is up
+                .onSubmit(submit)
+            HStack(spacing: 6) {
+                if agentName == nil {
                     // Where: grouped by adapter, each project with its path.
                     chip(icon: choiceIcon(project?.icon) ?? Image(systemName: "folder"), title: project?.name ?? "Project",
-                         open: controller.selector?.kind == .project) { controller.openSelector(.project, anchor: projectAnchor) }
+                         open: controller.selector?.kind == .project) { controller.selectorAgent = nil; controller.openSelector(.project, anchor: projectAnchor) }
                         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { projectAnchor = $0 }
-                    // With what: runtime and model in one pick; the chip shows the runtime's icon and the model's name.
-                    chip(icon: choiceIcon(runtime?.icon) ?? Image(systemName: "apple.terminal"),
-                         title: model.map { $0.id.isEmpty ? (runtime?.name ?? "Default") : $0.name + (effort.map { " · " + $0 } ?? "") } ?? runtime?.name ?? "Runtime",
-                         open: controller.selector?.kind == .runtime) { controller.openSelector(.runtime, anchor: runtimeAnchor) }
-                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { runtimeAnchor = $0 }
-                    Spacer(minLength: 8)
-                    if controller.spawning {
-                        Spinner().frame(width: 12, height: 12).padding(.trailing, 4)
-                    }
-                    Button { controller.toggleDictation() } label: {
-                        Image(systemName: controller.dictatingFor == key ? "waveform" : "mic")
-                            .foregroundStyle(controller.dictatingFor == key ? .red : .secondary)
-                    }.buttonStyle(.plain)
-                    Button { controller.spawn() } label: {
-                        Image(systemName: "arrow.up.circle.fill").font(.system(size: 18))
-                            .foregroundStyle(controller.drafts[key, default: ""].isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
-                    }.buttonStyle(.plain)
                 }
+                // With what: the runtime's icon and the model's name (an agent's own runtime name until a model is picked for it).
+                chip(icon: choiceIcon(runtime?.icon) ?? Image(systemName: "apple.terminal"),
+                     title: model.map { $0.id.isEmpty ? (runtime?.name ?? "Default") : $0.name + (effort.map { " · " + $0 } ?? "") }
+                        ?? agentName.map(speaker) ?? runtime?.name ?? "Runtime",
+                     open: controller.selector?.kind == .runtime) { controller.selectorAgent = agentName; controller.openSelector(.runtime, anchor: runtimeAnchor) }
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { runtimeAnchor = $0 }
+                Spacer(minLength: 8)
+                if starting { Spinner().frame(width: 12, height: 12).padding(.trailing, 4) }
+                Button { controller.toggleDictation() } label: {
+                    Image(systemName: controller.dictatingFor == key ? "waveform" : "mic")
+                        .foregroundStyle(controller.dictatingFor == key ? .red : .secondary)
+                }.buttonStyle(.plain)
+                Button(action: submit) {
+                    Image(systemName: "arrow.up.circle.fill").font(.system(size: 18))
+                        .foregroundStyle(controller.drafts[key, default: ""].isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
+                }.buttonStyle(.plain)
             }
-            .padding(.horizontal, 14).padding(.bottom, 14).padding(.top, 10 + 12)
-            .background(ComposerBoxShape().fill(Theme.row))
-            .overlay(ComposerTopEdge().stroke(Theme.stroke, lineWidth: 1))
-            .padding(.horizontal, -14).padding(.bottom, -14)
-            if let error = controller.spawnError {
-                Text(error).font(.system(size: 12)).foregroundStyle(.red).padding(.top, 14)
-            }
+            status
         }
         .padding(14)
-        .card()
+        .background(Theme.row)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke, lineWidth: 1))
         .onAppear { controller.loadSpawnChoices() }
+    }
+
+    private func submit() {
+        if agentName == nil { controller.spawn() } else { controller.send(key) }
+    }
+
+    /// One line at the foot, always the same height: the inbox's quiet state or a start error; in a conversation,
+    /// what is going on with the agent.
+    @ViewBuilder private var status: some View {
+        HStack(spacing: 6) {
+            switch mode {
+            case .newAgent:
+                if let error = controller.spawnError { Text(error).foregroundStyle(.red) }
+                else if quiet { Text("All quiet. Nothing needs you.") }
+            case .agent(let agent):
+                // A stopped session says nothing here: the grey dot already does, and a message restarts it.
+                if controller.waitingOn(agent) {
+                    Spinner().frame(width: 10, height: 10)
+                    Text("Waiting for \(controller.store.displayName(of: agent))…")
+                } else if controller.store.screens[agent] != nil { Text("Keys go to the agent's screen.") }
+            }
+        }
+        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+        .frame(height: 14, alignment: .leading)
     }
 
     /// A small pill: icon, current value, chevron. Opens one of Zero's selectors; reads pressed while it is open.
@@ -890,23 +933,6 @@ struct NewAgentCard: View {
             .overlay(Capsule().strokeBorder(open ? Theme.selectedStroke : .clear, lineWidth: 1))
         }
         .buttonStyle(.plain)
-    }
-}
-
-/// Your message to an agent, when nothing is waiting: typing lands here, Enter sends it through the adapter.
-struct Composer: View {
-    @Bindable var controller: InboxController
-    let agent: String
-    var focus: FocusState<String?>.Binding
-
-    var body: some View {
-        let key = controller.composerKey(agent)
-        ReplyBox(placeholder: "Message \(controller.store.displayName(of: agent))…",
-                 text: Binding(get: { controller.drafts[key, default: ""] }, set: { controller.drafts[key] = $0 }),
-                 key: key, focus: focus, dictating: controller.dictatingFor == key,
-                 onMic: { controller.toggleDictation() }, onSend: { controller.send(key) })
-            .padding(4)
-            .card()
     }
 }
 

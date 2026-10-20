@@ -36,6 +36,8 @@ public protocol AgentAdapter: Sendable {
     func screen(of agent: AgentIdentity) async -> String?
     /// Raw keys into the agent's terminal (arrows, Enter, Esc, a digit); returns the screen just after.
     func press(_ bytes: [UInt8], on agent: AgentIdentity) async throws -> String?
+    /// Changes the model (and effort) of a running agent, where its runtime has a command for that.
+    func switchModel(of agent: AgentIdentity, to model: SpawnChoice, level: String?) async throws
     /// Names of the given agents whose session is not running right now.
     func offline(among agents: [AgentIdentity]) async -> Set<String>
     /// Brings a stopped agent back, with its conversation when the runtime can resume one; returns the identity
@@ -61,6 +63,7 @@ public extension AgentAdapter {
     func session(for agent: AgentIdentity, firstPrompt: String) async -> String? { nil }
     func screen(of agent: AgentIdentity) async -> String? { nil }
     func press(_ bytes: [UInt8], on agent: AgentIdentity) async throws -> String? { nil }
+    func switchModel(of agent: AgentIdentity, to model: SpawnChoice, level: String?) async throws { throw AdapterError("\(name) cannot change \(agent.name)'s model") }
     func offline(among agents: [AgentIdentity]) async -> Set<String> { [] }
     func revive(_ agent: AgentIdentity) async throws -> AgentIdentity { throw AdapterError("\(name) cannot restart \(agent.name)") }
     var canSpawn: Bool { false }
@@ -334,6 +337,16 @@ public struct SoloAdapter: AgentAdapter {
             if !dialog { return }
         }
         throw AdapterError("\(name) started, but it is waiting at a dialog in Solo. Answer it there, then message the agent.")
+    }
+
+    /// Claude Code takes `/model <id>` and `/effort <level>` as slash commands; Codex's picker is interactive.
+    public func switchModel(of agent: AgentIdentity, to model: SpawnChoice, level: String?) async throws {
+        guard model.provider == "Anthropic" else { throw AdapterError("Only a Claude agent can change model while running") }
+        try await send("/model \(model.id)", to: agent)
+        if let level, !level.isEmpty {
+            try await Task.sleep(for: .seconds(1))
+            try await send("/effort \(level)", to: agent)
+        }
     }
 
     /// One `list_processes` per project the agents live in; anything not "Running" is offline.

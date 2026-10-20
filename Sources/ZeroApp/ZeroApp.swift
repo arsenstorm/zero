@@ -565,7 +565,7 @@ private struct ComposerPreview: View {
     @Bindable var controller: InboxController
     @FocusState private var focus: String?
     var body: some View {
-        NewAgentCard(controller: controller, focus: $focus, quiet: true).frame(width: 380)
+        ComposerCard(controller: controller, focus: $focus, mode: .newAgent, quiet: true).frame(width: 380)
     }
 }
 

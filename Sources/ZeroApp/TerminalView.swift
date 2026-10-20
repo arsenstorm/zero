@@ -103,26 +103,26 @@ final class ContainedScrollView: NSScrollView {
     }
 }
 
-/// SwiftUI rows inside a `ContainedScrollView`: as tall as the rows up to `cap`, opened at the bottom, the
-/// same wheel hand-off as a run's output, and the edge fades. For the Earlier list.
+/// SwiftUI rows inside a `ContainedScrollView`, `height` tall, opened at the bottom, with the same wheel
+/// hand-off as a run's output and the edge fades. For the Earlier list. The height is the caller's to compute
+/// (its rows are one line each): measured from AppKit it arrived a run loop late, and the outer list, having
+/// just scrolled to its end, was thrown back to the top by the size change.
 struct ContainedList<Content: View>: View {
-    let cap: CGFloat
+    let height: CGFloat
     var fade: CGFloat = 20
     @ViewBuilder let content: () -> Content
-    @State private var contentHeight: CGFloat = 0
     @State private var moreAbove = false
     @State private var moreBelow = false
 
     var body: some View {
-        HostedScroll(content: content(), contentHeight: $contentHeight, moreAbove: $moreAbove, moreBelow: $moreBelow)
-            .frame(height: min(contentHeight, cap))
+        HostedScroll(content: content(), moreAbove: $moreAbove, moreBelow: $moreBelow)
+            .frame(height: height)
             .mask(EdgeFadeMask(above: moreAbove, below: moreBelow, fade: fade))
     }
 }
 
 private struct HostedScroll<Content: View>: NSViewRepresentable {
     let content: Content
-    @Binding var contentHeight: CGFloat
     @Binding var moreAbove: Bool
     @Binding var moreBelow: Bool
 
@@ -177,14 +177,17 @@ private struct HostedScroll<Content: View>: NSViewRepresentable {
             scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, height - scroll.contentView.bounds.height)))
             scroll.reflectScrolledClipView(scroll.contentView)
         }
-        DispatchQueue.main.async {
-            if contentHeight != height { contentHeight = height }
-            report(scroll, context.coordinator)
-        }
+        DispatchQueue.main.async { report(scroll, context.coordinator) }
     }
 
     private func report(_ scroll: ContainedScrollView, _ coordinator: Coordinator) {
-        guard let document = scroll.documentView else { return }
+        guard let document = scroll.documentView as? Document else { return }
+        // The clip's width is only known once the scroll view is laid out, after the last update: follow it here.
+        let width = scroll.contentView.bounds.width
+        if width > 0, document.frame.width != width {
+            document.frame.size.width = width
+            document.hosting?.frame = document.bounds
+        }
         let visible = scroll.contentView.bounds
         let above = visible.minY > 1
         let below = visible.maxY < document.frame.height - 1
