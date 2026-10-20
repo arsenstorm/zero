@@ -33,7 +33,8 @@ final class Server {
         guard let request = client.receive(Request.self) else { client.close(); return }
         switch request.op {
         case "create":
-            guard let incoming = request.ask else { return reject(client, "create needs an ask") }
+            guard var incoming = request.ask else { return reject(client, "create needs an ask") }
+            if request.wait == false { incoming.waits = false }
             let ask = onMain { store.create(incoming) }
             try? client.send(Response(op: "created", id: ask.id))
             if request.wait ?? true { park(client, id: ask.id) } else { client.close() }

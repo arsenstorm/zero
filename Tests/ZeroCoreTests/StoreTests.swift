@@ -74,3 +74,18 @@ private func store() -> Store {
     #expect(SoloAdapter.codexDisplayName("GPT-5.5") == "GPT 5.5")
     #expect(SoloAdapter.codexDisplayName("Daybreak Blue") == "Daybreak Blue")
 }
+
+@MainActor @Test func asyncAnswersAreDeliveredAndShowWhenTheyCannotBe() async throws {
+    let s = store()
+    var unwaited = Ask(kind: .choice, title: "Pick", options: ["Yes", "No"], agent: agent)
+    unwaited.waits = false
+    let a = s.create(unwaited)
+    s.choose(a.id, option: 0)
+    try await Task.sleep(for: .seconds(0.3))
+    #expect(s.ask(a.id)?.state == .answered)
+    #expect(s.ask(a.id)?.delivery == .failed) // no adapter can reach "test"
+    let b = s.create(Ask(kind: .choice, title: "Pick", options: ["Yes", "No"], agent: agent))
+    s.choose(b.id, option: 0)
+    try await Task.sleep(for: .seconds(0.3))
+    #expect(s.ask(b.id)?.delivery == nil) // a waiting agent reads its own answer
+}

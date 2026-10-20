@@ -178,6 +178,37 @@ public final class Store {
     /// Delivers Arsen's words to the agent's session, starting it again first when it is not running. The
     /// message joins the timeline only once it has arrived; a failure throws and leaves nothing behind.
     public func message(_ text: String, to agent: String) async throws {
+        let (identity, adapter) = try await reach(agent, with: text)
+        var item = Ask(kind: .message, title: "Message", body: text, agent: identity)
+        item.status = "sent"
+        _ = create(item)
+        // A slash command opens something in the agent's terminal, so that screen comes to Zero; a message
+        // gets an answer, which is read back when it lands.
+        if ClaudeCommands.isBuiltIn(text) { openScreen(of: agent) } else { watchReply(from: identity, to: text, via: adapter) }
+    }
+
+    /// Types an answer into the session of an agent that asked with --async and so isn't waiting for it.
+    /// Its delivery shows on the answer: sending, then delivered, or failed (and `retry` tries again).
+    public func deliverAnswer(_ id: String) {
+        guard let ask = ask(id), ask.waits == false, ask.kind != .run, ask.state == .answered || ask.state == .declined else { return }
+        let text = ask.state == .answered
+            ? "Arsen answered your ask \(id) (\"\(ask.title)\"): \(ask.answer ?? "")"
+            : "Arsen declined your ask \(id) (\"\(ask.title)\")" + (ask.answer.map { ": \($0)" } ?? ".")
+        update(id) { $0.delivery = .sending }
+        Task {
+            do {
+                let (identity, adapter) = try await reach(ask.agent.name, with: text)
+                update(id) { $0.delivery = .delivered }
+                watchReply(from: identity, to: text, via: adapter)
+            } catch {
+                update(id) { $0.delivery = .failed }
+            }
+            if let ask = self.ask(id) { log(ask) }
+        }
+    }
+
+    /// Connects to the agent's session and types `text` into it.
+    private func reach(_ agent: String, with text: String) async throws -> (AgentIdentity, AgentAdapter) {
         guard var identity = identity(of: agent) else { throw AdapterError("Zero doesn't know \(agent)") }
         guard let adapter = adapters.first(where: { $0.canReach(identity) }) else { throw AdapterError("No way to reach \(agent)") }
         // An agent from before sessions were recorded: its session is the one that began with its first prompt.
@@ -191,12 +222,7 @@ public final class Store {
         if connected != identity { rebind(agent, to: connected); identity = connected }
         offline.remove(agent)
         try await adapter.send(text, to: identity)
-        var item = Ask(kind: .message, title: "Message", body: text, agent: identity)
-        item.status = "sent"
-        _ = create(item)
-        // A slash command opens something in the agent's terminal, so that screen comes to Zero; a message
-        // gets an answer, which is read back when it lands.
-        if ClaudeCommands.isBuiltIn(text) { openScreen(of: agent) } else { watchReply(from: identity, to: text, via: adapter) }
+        return (identity, adapter)
     }
 
     public func ask(_ id: String) -> Ask? { asks.first { $0.id == id } }
@@ -324,6 +350,7 @@ public final class Store {
             if let exitCode { $0.exitCode = exitCode }
         }
         if let ask = ask(id) { log(ask) }
+        if state == .answered || state == .declined { deliverAnswer(id) }
     }
 
     private func update(_ id: String, _ change: (inout Ask) -> Void) {

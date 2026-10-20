@@ -59,7 +59,8 @@ func agentIdentity() -> AgentIdentity {
         ?? "shell-\(getppid())"
     return AgentIdentity(name: name, host: ProcessInfo.processInfo.hostName,
                          cwd: FileManager.default.currentDirectoryPath,
-                         soloProcessID: env["SOLO_PROCESS_ID"].flatMap(Int.init), ticket: flag("ticket"))
+                         soloProcessID: env["SOLO_PROCESS_ID"].flatMap(Int.init), soloProjectID: env["SOLO_PROJECT_ID"].flatMap(Int.init),
+                         ticket: flag("ticket"))
 }
 
 func follow(_ socket: UnixSocket) -> Never {

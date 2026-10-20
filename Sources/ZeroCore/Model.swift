@@ -46,6 +46,13 @@ public struct Ask: Codable, Identifiable, Sendable {
     public var status: String?
     /// Index of the option Arsen picked, when he picked one.
     public var choice: Int?
+    /// False when the agent asked with --async and ended its turn: nothing waits for the answer, so Zero types
+    /// it into the agent's session instead.
+    public var waits: Bool?
+    /// How that typed answer is getting on; nil when the agent reads the answer itself.
+    public var delivery: Delivery?
+
+    public enum Delivery: String, Codable, Sendable { case sending, delivered, failed }
 
     /// An option ending with "…" asks for text: picking it opens an input, and the answer is "label: text".
     public static func expectsText(_ option: String) -> Bool { option.hasSuffix("…") || option.hasSuffix("...") }

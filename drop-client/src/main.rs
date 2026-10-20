@@ -25,6 +25,8 @@ struct Agent {
     cwd: Option<String>,
     #[serde(rename = "soloProcessID")]
     solo_process_id: Option<i64>,
+    #[serde(rename = "soloProjectID", default)]
+    solo_project_id: Option<i64>,
     ticket: Option<String>,
 }
 
@@ -50,6 +52,9 @@ struct Ask {
     exit_code: Option<i32>,
     #[serde(default)]
     status: Option<String>,
+    /// False with --async: nothing waits for the answer, so Zero types it into the agent's session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    waits: Option<bool>,
 }
 
 fn fail(message: &str, code: i32) -> ! {
@@ -164,7 +169,9 @@ impl Drop {
             name,
             host: hostname(),
             cwd: env::current_dir().ok().map(|p| p.to_string_lossy().to_string()),
-            solo_process_id: None,
+            // Set when Solo started the agent on this Mac; Zero reaches its session through Solo.
+            solo_process_id: env::var("SOLO_PROCESS_ID").ok().and_then(|id| id.parse().ok()),
+            solo_project_id: env::var("SOLO_PROJECT_ID").ok().and_then(|id| id.parse().ok()),
             ticket: args.flag("ticket").cloned(),
         }
     }
@@ -192,6 +199,7 @@ impl Drop {
             answer: None,
             exit_code: None,
             status,
+            waits: if args.has("async") { Some(false) } else { None },
         };
         fs::create_dir_all(self.asks()).ok();
         fs::create_dir_all(self.answers()).ok();

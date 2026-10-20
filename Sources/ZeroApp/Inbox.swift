@@ -694,9 +694,12 @@ enum Theme {
     /// Key cap fills for a chosen option: deeper in dark mode so the white digit keeps its contrast.
     static let greenCap = dynamic(dark: NSColor(red: 0.16, green: 0.55, blue: 0.27, alpha: 1), light: NSColor.systemGreen)
     static let orangeCap = dynamic(dark: NSColor(red: 0.78, green: 0.45, blue: 0.08, alpha: 1), light: NSColor.systemOrange)
-    /// Pastel surfaces for a chosen option: delivered (mint) and still sendable (apricot).
+    static let redCap = dynamic(dark: NSColor(red: 0.75, green: 0.22, blue: 0.20, alpha: 1), light: NSColor.systemRed)
+    /// Pastel surfaces for a chosen option: delivered (mint), still sendable or on its way (apricot), and
+    /// not delivered (rose).
     static let greenRow = dynamic(dark: NSColor(red: 0.13, green: 0.25, blue: 0.16, alpha: 1), light: NSColor(red: 0.87, green: 0.96, blue: 0.89, alpha: 1))
     static let orangeRow = dynamic(dark: NSColor(red: 0.30, green: 0.22, blue: 0.12, alpha: 1), light: NSColor(red: 0.99, green: 0.93, blue: 0.85, alpha: 1))
+    static let redRow = dynamic(dark: NSColor(red: 0.32, green: 0.14, blue: 0.14, alpha: 1), light: NSColor(red: 0.99, green: 0.89, blue: 0.89, alpha: 1))
 }
 
 /// 45s, 31m, 2h, 3d.
@@ -1265,14 +1268,17 @@ struct CardView: View {
                             .background(Theme.row).clipShape(RoundedRectangle(cornerRadius: 10))
                     } else {
                         // Not `.disabled`: that greys the whole label, chosen row included. Decided rows just ignore clicks.
-                        Button { controller.choose(index, on: ask.id) } label: {
+                        // A decided row takes a click only to retry an answer that didn't reach the agent.
+                        let retry = decided && ask.choice == index && ask.delivery == .failed
+                        Button { if retry { controller.store.deliverAnswer(ask.id) } else if !decided { controller.choose(index, on: ask.id) } } label: {
                             optionRow(decided && ask.choice == index ? (ask.answer ?? option) : option,
                                       key: "\(index + 1)", chosen: decided && ask.choice == index, decided: decided)
-                        }.buttonStyle(.plain).allowsHitTesting(!decided)
+                        }.buttonStyle(.plain).allowsHitTesting(!decided || retry)
                     }
                 }
                 if decided, ask.options.isEmpty, let answer = ask.answer, ask.kind != .run {
-                    optionRow(answer, key: nil, chosen: true, decided: true)
+                    Button { controller.store.deliverAnswer(ask.id) } label: { optionRow(answer, key: nil, chosen: true, decided: true) }
+                        .buttonStyle(.plain).allowsHitTesting(ask.delivery == .failed)
                 }
                 }
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { if $0 > 0 { controller.measured[ask.id] = (commandHeight, $0) } }
@@ -1348,10 +1354,11 @@ struct CardView: View {
     }
 
     private func optionRow(_ text: String, key: String?, chosen: Bool, decided: Bool) -> some View {
-        let settled = ask.state.isFinal
-        let tint: Color = chosen ? (settled ? .green : .orange) : .clear
-        let surface: Color = chosen ? (settled ? Theme.greenRow : Theme.orangeRow) : Theme.row
-        let cap: Color = chosen ? (settled ? Theme.greenCap : Theme.orangeCap) : Theme.keycap
+        // An answer Zero types into an agent that isn't waiting stays orange until it lands, and goes red if it can't.
+        let failed = ask.delivery == .failed
+        let settled = ask.state.isFinal && ask.delivery != .sending && !failed
+        let surface: Color = chosen ? (failed ? Theme.redRow : settled ? Theme.greenRow : Theme.orangeRow) : Theme.row
+        let cap: Color = chosen ? (failed ? Theme.redCap : settled ? Theme.greenCap : Theme.orangeCap) : Theme.keycap
         return HStack(spacing: 10) {
             if let key {
                 Text(key).font(.system(size: 10, weight: .bold)).frame(width: 18, height: 18)
@@ -1364,7 +1371,10 @@ struct CardView: View {
             Spacer()
             if chosen {
                 ZStack {
-                    if settled {
+                    if failed {
+                        Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(.red)
+                            .transition(.opacity)
+                    } else if settled {
                         Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(.green)
                             .transition(.opacity)
                     } else {
@@ -1376,10 +1386,12 @@ struct CardView: View {
         .padding(.horizontal, 10).padding(.vertical, 8)
         .background(surface)
         .clipShape(RoundedRectangle(cornerRadius: 10))
+        .help(chosen && failed ? "Couldn't reach the agent. Click to try again." : "")
         .opacity(decided && !chosen ? 0.4 : 1)
         // Colour only: surface, key cap and icon ease between states; the row itself never moves.
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: ask.state)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: ask.choice)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: ask.delivery)
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
