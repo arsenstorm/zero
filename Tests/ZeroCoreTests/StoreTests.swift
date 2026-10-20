@@ -89,3 +89,28 @@ private func store() -> Store {
     try await Task.sleep(for: .seconds(0.3))
     #expect(s.ask(b.id)?.delivery == nil) // a waiting agent reads its own answer
 }
+
+/// Solo as far as cleanup sees it: "gone" is closed there, and stops are recorded.
+private final class FakeRuntime: AgentAdapter, @unchecked Sendable {
+    let name = "fake"
+    var closed: Set<String> = []
+    var stopped: [String] = []
+    func canReach(_ agent: AgentIdentity) -> Bool { true }
+    func send(_ text: String, to agent: AgentIdentity) async throws {}
+    func gone(among agents: [AgentIdentity]) async -> Set<String> { Set(agents.map(\.name)).intersection(closed) }
+    func stop(_ agent: AgentIdentity) async { stopped.append(agent.name) }
+}
+
+@MainActor @Test func agentsClosedInTheRuntimeLeaveTheBarAndRemovedOnesStop() async throws {
+    let runtime = FakeRuntime()
+    let s = Store(logURL: nil, adapters: [runtime])
+    _ = s.create(Ask(kind: .note, title: "Hi", agent: AgentIdentity(name: "a", host: "mac")))
+    _ = s.create(Ask(kind: .note, title: "Hi", agent: AgentIdentity(name: "b", host: "mac")))
+    runtime.closed = ["a"]
+    await s.refreshLiveness()
+    #expect(s.isClosed("a") && !s.isClosed("b"))
+    #expect(runtime.stopped.isEmpty) // already gone: nothing to stop
+    s.closeAgent("b")
+    try await Task.sleep(for: .seconds(0.1))
+    #expect(runtime.stopped == ["b"])
+}

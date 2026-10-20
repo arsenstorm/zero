@@ -43,6 +43,10 @@ public protocol AgentAdapter: Sendable {
     func switchModel(of agent: AgentIdentity, to model: SpawnChoice?, level: String?) async throws
     /// Names of the given agents whose session is not running right now.
     func offline(among agents: [AgentIdentity]) async -> Set<String>
+    /// Of `agents`, those whose process is gone from the runtime altogether (closed, not just stopped).
+    func gone(among agents: [AgentIdentity]) async -> Set<String>
+    /// Stops the agent's process, keeping its session so a message can resume it.
+    func stop(_ agent: AgentIdentity) async
     /// The identity to deliver to now: the agent's session running somewhere, started again if it is not
     /// (with its conversation when the runtime can resume one). Its process may differ from the one passed in.
     func connect(_ agent: AgentIdentity) async throws -> AgentIdentity
@@ -69,6 +73,8 @@ public extension AgentAdapter {
     func press(_ bytes: [UInt8], on agent: AgentIdentity) async throws -> String? { nil }
     func switchModel(of agent: AgentIdentity, to model: SpawnChoice?, level: String?) async throws { throw AdapterError("\(name) cannot change \(agent.name)'s model") }
     func offline(among agents: [AgentIdentity]) async -> Set<String> { [] }
+    func gone(among agents: [AgentIdentity]) async -> Set<String> { [] }
+    func stop(_ agent: AgentIdentity) async {}
     func connect(_ agent: AgentIdentity) async throws -> AgentIdentity { agent }
     var canSpawn: Bool { false }
     func spawnTargets() async throws -> [SpawnChoice] { [] }
@@ -369,13 +375,26 @@ public struct SoloAdapter: AgentAdapter {
 
     /// One `list_processes` per project the agents live in; anything not "Running" is offline.
     public func offline(among agents: [AgentIdentity]) async -> Set<String> {
+        await processes(of: agents) { rows, pid in rows.first { $0["id"] as? Int == pid }?["status"] as? String != "Running" }
+    }
+
+    public func gone(among agents: [AgentIdentity]) async -> Set<String> {
+        await processes(of: agents) { rows, pid in !rows.contains { $0["id"] as? Int == pid } }
+    }
+
+    public func stop(_ agent: AgentIdentity) async {
+        guard let pid = agent.soloProcessID, let project = agent.soloProjectID else { return }
+        _ = try? await call(tool: "stop_process", arguments: ["process_id": pid, "project_id": project])
+    }
+
+    /// The agents whose process `matches` in its project's process list. A project Solo couldn't list counts
+    /// for nobody, so a hiccup never reads as every agent gone.
+    private func processes(of agents: [AgentIdentity], _ matches: ([[String: Any]], Int) -> Bool) async -> Set<String> {
         var result: Set<String> = []
-        let projects = Set(agents.compactMap(\.soloProjectID))
-        for project in projects {
+        for project in Set(agents.compactMap(\.soloProjectID)) {
             guard let rows = try? await resultJSON(of: call(tool: "list_processes", arguments: ["project_id": project])) as? [[String: Any]] else { continue }
-            let running = Set(rows.compactMap { ($0["status"] as? String) == "Running" ? $0["id"] as? Int : nil })
             for agent in agents where agent.soloProjectID == project {
-                if let pid = agent.soloProcessID, !running.contains(pid) { result.insert(agent.name) }
+                if let pid = agent.soloProcessID, matches(rows, pid) { result.insert(agent.name) }
             }
         }
         return result

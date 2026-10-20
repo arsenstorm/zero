@@ -21,9 +21,12 @@ public final class Store {
     public func refreshLiveness() async {
         var identities: [String: AgentIdentity] = [:]
         for ask in asks where ask.state != .expired { identities[ask.agent.name] = ask.agent }
-        var gone: Set<String> = []
-        for adapter in adapters { gone.formUnion(await adapter.offline(among: Array(identities.values))) }
-        if gone != offline { offline = gone }
+        var stopped: Set<String> = []
+        for adapter in adapters { stopped.formUnion(await adapter.offline(among: Array(identities.values))) }
+        if stopped != offline { offline = stopped }
+        // Closed in Solo, not just stopped: nothing left to resume, so it leaves the bar too.
+        let open = identities.values.filter { !isClosed($0.name) }
+        for adapter in adapters { for name in await adapter.gone(among: open) { closeAgent(name, stop: false) } }
         // Titles arrive on their own schedule; with the session known this is a local file read.
         for identity in identities.values where identity.session != nil { await relabel(identity) }
     }
@@ -308,12 +311,18 @@ public final class Store {
 
     /// Arsen closed the agent: a closing note goes in its timeline, so its dot leaves and the close survives
     /// a relaunch. Anything the agent says afterwards reopens it.
-    public func closeAgent(_ name: String) {
+    /// Takes the agent out of the bar and, unless its process is already gone, stops it, keeping its session:
+    /// a message resumes it, and it comes back by itself when it next asks something.
+    public func closeAgent(_ name: String, stop: Bool = true) {
         guard let last = asks.last(where: { $0.agent.name == name }) else { return }
-        var note = Ask(kind: .note, title: "Closed", body: "Closed by Arsen", agent: last.agent)
+        var note = Ask(kind: .note, title: "Closed", body: stop ? "Closed by Arsen" : "Closed in its runtime", agent: last.agent)
         note.status = "closed"
         _ = create(note)
+        guard stop, let adapter = adapters.first(where: { $0.canReach(last.agent) }) else { return }
+        Task { await adapter.stop(last.agent) }
     }
+
+    public func isClosed(_ name: String) -> Bool { asks.last { $0.agent.name == name && $0.kind != .message }?.status == "closed" }
 
     public func appendOutput(_ id: String, _ chunk: String) {
         guard let i = asks.firstIndex(where: { $0.id == id }) else { return }

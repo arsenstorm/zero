@@ -220,7 +220,7 @@ private struct AgentsPage: View {
                                 editing = name
                                 focused = true
                             }
-                            IconButton(symbol: "trash", help: "Remove from the bar") { store.closeAgent(name) }
+                            IconButton(symbol: "trash", help: "Remove and stop") { store.closeAgent(name) }
                         }
                         .padding(.vertical, 4)
                         .listRowBackground(Color.clear)
@@ -232,7 +232,7 @@ private struct AgentsPage: View {
                     }
                 }
                 .listStyle(.plain).scrollContentBackground(.hidden).frame(height: 320)
-                Text("Drag to reorder the bar. A removed agent comes back when it next asks you something.")
+                Text("Drag to reorder the bar. Removing an agent stops it; it comes back when it next asks you something.")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             }
         }

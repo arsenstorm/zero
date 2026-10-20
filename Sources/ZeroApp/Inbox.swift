@@ -1537,7 +1537,7 @@ struct PillView: View {
                     .zIndex(drag?.name == name ? 1 : 0)
                     .onHover { if $0, drag == nil { peek(name) } }
                     .help(controller.store.displayName(of: name))
-                    .contextMenu { Button("Close \(name)") { controller.store.closeAgent(name) } }
+                    .contextMenu { Button("Remove and stop \(name)") { controller.store.closeAgent(name) } }
                     // One gesture for click and drag, so they never compete: a press that moves under 4 pt selects;
                     // a longer one drags the dot with the pointer and drops it into the nearest slot.
                     // Global space: the dot moves with the drag, so a local translation would cancel itself out.
