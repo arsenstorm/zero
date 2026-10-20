@@ -122,6 +122,12 @@ final class Panel: NSPanel {
     private var openedByIntent = false
     private var pointerWasInside = false
 
+    // Opening Zero again, from the Dock or Finder, opens Settings.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openSettings()
+        return false
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         do { try server.start() } catch { NSLog("zero: server failed: \(error)") }
@@ -214,8 +220,7 @@ final class Panel: NSPanel {
         let menu = NSMenu()
         menu.addItem(withTitle: "Open Log", action: #selector(openLog), keyEquivalent: "")
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Welcome to Zero…", action: #selector(openOnboarding), keyEquivalent: "")
-        menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        menu.addItem(withTitle: "Show onboarding", action: #selector(openOnboarding), keyEquivalent: "")
         menu.addItem(withTitle: "Quit Zero", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         for item in menu.items where item.action != #selector(NSApplication.terminate(_:)) { item.target = self }
         statusItem.menu = menu
