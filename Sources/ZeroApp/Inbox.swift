@@ -1052,7 +1052,8 @@ struct CardView: View {
             }
             // Options carry the state: the chosen row goes orange with a spinner while it can still be taken back,
             // then green with a tick once delivered. The rest dim. A typed answer shows as a row of its own.
-            if ask.state != .expired && !(ask.kind == .run && (ask.state == .running || ask.state == .answered)) {
+            // Not for a reply: an empty options stack still cost the column's 12 pt below the text.
+            if ask.kind != .note && ask.state != .expired && !(ask.kind == .run && (ask.state == .running || ask.state == .answered)) {
                 let decided = ask.state != .waiting
                 VStack(spacing: 12) {
                 ForEach(Array(ask.options.enumerated()), id: \.offset) { index, option in
@@ -1078,12 +1079,14 @@ struct CardView: View {
             }
             footer
         }
-        .frame(maxWidth: .infinity, alignment: .leading) // a one-word reply still gets the whole card
+        // A reply hugs its text like a chat bubble, up to about 70% of the column, and sits left.
+        .frame(maxWidth: ask.kind == .note ? 220 : .infinity, alignment: .leading)
         .opacity(dimmed ? 0.45 : 1)
         .padding(.horizontal, 14).padding(.vertical, ask.kind == .note ? 12 : 14)
         .background(Theme.card)
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke, lineWidth: 1))
+        .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .onHover { if $0, ask.state == .waiting { controller.select(ask.id) } }
         .onTapGesture { controller.select(ask.id) }
