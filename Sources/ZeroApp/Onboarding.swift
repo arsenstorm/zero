@@ -50,17 +50,17 @@ struct OnboardingView: View {
                 AgentsStep()
             }
         case .permissions:
-            StepPage(title: "Permissions", detail: "Each one is optional. Zero asks for nothing else, and reads your Claude Code sign-in without ever showing a Keychain prompt.") {
+            StepPage(title: "Permissions", detail: "Each one is optional, and Zero needs no other access.") {
                 PermissionsStep()
             }
         case .habits:
-            StepPage(title: "Make it yours", detail: "Change any of these later in Settings, from the menu bar.") {
+            StepPage(title: "Make it yours", detail: "Change these later in **Zero menu bar icon → Settings**.") {
                 VStack(spacing: 0) {
                     OnboardingRow(icon: "keyboard", title: "Talk hotkey", detail: "Opens the inbox on the oldest ask and starts dictation.") {
                         HotKeyRecorder(settings: settings, minWidth: nil)
                     }
                     Divider()
-                    OnboardingRow(icon: "power", title: "Open at login", detail: "So agents can always reach you.") {
+                    OnboardingRow(icon: "power", title: "Launch Zero at login", detail: "So agents can always reach you.") {
                         Toggle("", isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 })).labelsHidden().toggleStyle(.switch)
                     }
                     Divider()
@@ -70,7 +70,7 @@ struct OnboardingView: View {
                 }
             }
         case .tryIt:
-            StepPage(title: "Try it", detail: "Zero will send you an ask, the way an agent would. Answer it in the inbox with 1.") {
+            StepPage(title: "Try it", detail: "Zero sends you an ask the way an agent would. Answer it in the inbox with 1.") {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("zero approve \"Zero is set up. Finish onboarding?\"")
                         .font(.system(size: 12, design: .monospaced)).padding(12)
@@ -78,7 +78,7 @@ struct OnboardingView: View {
                         .background(Theme.code).clipShape(RoundedRectangle(cornerRadius: 10))
                     Text("Agents send this from their terminal. It waits until you answer, then carries on.")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
-                    SolidButton(title: "Send me an ask", action: tryIt).padding(.top, 6)
+                    SolidButton(title: "Send test ask", action: tryIt).padding(.top, 6)
                 }
             }
         }
@@ -120,7 +120,8 @@ struct OnboardingView: View {
 /// A title, a line under it, and the step's content.
 private struct StepPage<Content: View>: View {
     let title: String
-    let detail: String
+    /// Markdown, so a menu path can be bold.
+    let detail: LocalizedStringKey
     @ViewBuilder let content: () -> Content
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -161,6 +162,22 @@ struct OnboardingRow<Trailing: View>: View {
     }
 }
 
+/// A small solid button for a row: black in light mode, white in dark; greyed and inert when disabled.
+private struct RowButton: View {
+    let title: String
+    var enabled = true
+    var action: () -> Void = {}
+    var body: some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(enabled ? AnyShapeStyle(Theme.onKnob) : AnyShapeStyle(.tertiary))
+                .padding(.horizontal, 12).frame(height: 26)
+                .background(enabled ? AnyShapeStyle(Theme.knob) : AnyShapeStyle(Theme.keycap)).clipShape(Capsule())
+        }
+        .buttonStyle(PressableStyle()).disabled(!enabled)
+    }
+}
+
 /// Black in light mode, white in dark: the one primary action on a page.
 struct SolidButton: View {
     let title: String
@@ -191,10 +208,7 @@ private struct StatusControl: View {
             Label("Allowed", systemImage: "checkmark.circle.fill").labelStyle(.titleAndIcon)
                 .font(.system(size: 12, weight: .medium)).foregroundStyle(.green)
         } else {
-            Button(action: action) {
-                Text(label).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.onKnob)
-                    .padding(.horizontal, 12).frame(height: 26).background(Theme.knob).clipShape(Capsule())
-            }.buttonStyle(PressableStyle())
+            RowButton(title: label, action: action)
         }
     }
 }
@@ -211,15 +225,12 @@ private struct AgentsStep: View {
                 if case .some(.some) = claude {
                     if let plugin {
                         if plugin {
-                            Label("Plugin on", systemImage: "checkmark.circle.fill").font(.system(size: 12, weight: .medium)).foregroundStyle(.green)
+                            Label("Plugin added", systemImage: "checkmark.circle.fill").font(.system(size: 12, weight: .medium)).foregroundStyle(.green)
                         } else {
-                            Button {
+                            RowButton(title: "Add plugin") {
                                 self.plugin = nil
                                 Task { pluginError = await ClaudePlugin.install(); self.plugin = await ClaudePlugin.isInstalled() }
-                            } label: {
-                                Text("Add the plugin").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.onKnob)
-                                    .padding(.horizontal, 12).frame(height: 26).background(Theme.knob).clipShape(Capsule())
-                            }.buttonStyle(PressableStyle())
+                            }
                         }
                     } else {
                         ProgressView().controlSize(.small)
@@ -228,7 +239,9 @@ private struct AgentsStep: View {
             }
             if let pluginError { Text(pluginError).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
             Divider()
-            OnboardingRow(icon: "chevron.left.forwardslash.chevron.right", picture: choiceIcon("openai"), title: "Codex", detail: codexDetail) { EmptyView() }
+            OnboardingRow(icon: "chevron.left.forwardslash.chevron.right", picture: choiceIcon("openai"), title: "Codex", detail: codexDetail) {
+                if case .some(.some) = codex { RowButton(title: "Coming soon", enabled: false) }
+            }
         }
         .task {
             claude = .some(await ShellTool.version("claude"))
@@ -240,8 +253,8 @@ private struct AgentsStep: View {
     private var claudeDetail: String {
         switch claude {
         case .none: return "Looking…"
-        case .some(.none): return "Not found on this Mac. Install Claude Code, then come back to this step."
-        case .some(.some(let version)): return "Found, \(version). " + (plugin == true ? "Agents Zero starts will ask you here." : "Add the Zero plugin so agents ask you here.")
+        case .some(.none): return "Not found on this Mac. Install Claude Code, then return to this step."
+        case .some(.some(let version)): return "Version \(version.versionNumber). " + (plugin == true ? "Agents Zero starts ask you here." : "The Zero plugin makes agents ask you here.")
         }
     }
 
@@ -249,7 +262,7 @@ private struct AgentsStep: View {
         switch codex {
         case .none: return "Looking…"
         case .some(.none): return "Not found on this Mac."
-        case .some(.some(let version)): return "Found, \(version). Zero starts Codex agents; its Codex plugin comes next."
+        case .some(.some(let version)): return "Version \(version.versionNumber). Zero starts Codex agents."
         }
     }
 }
@@ -323,5 +336,12 @@ enum ShellTool {
             let line = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             return line.isEmpty ? "installed" : line
         }.value
+    }
+}
+
+private extension String {
+    /// "2.1.304 (Claude Code)" and "codex-cli 0.160.1" both read "2.1.304", "0.160.1".
+    var versionNumber: String {
+        range(of: #"\d+(\.\d+)+"#, options: .regularExpression).map { String(self[$0]) } ?? self
     }
 }
