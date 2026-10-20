@@ -14,6 +14,7 @@ struct OnboardingView: View {
     enum Step: Int, CaseIterable { case welcome, agents, permissions, habits, tryIt }
     @State private var step = Step.welcome
     @State private var forward = true
+    @State private var agents = AgentCheck()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -28,6 +29,7 @@ struct OnboardingView: View {
         }
         .frame(width: 560, height: 600)
         .background(Theme.card)
+        .onAppear { agents.run() } // from the first page, so the agents page opens already answered
     }
 
     @ViewBuilder private var page: some View {
@@ -48,7 +50,7 @@ struct OnboardingView: View {
             .frame(maxWidth: .infinity)
         case .agents:
             StepPage(title: "Your agents", detail: "Zero works with the coding agents on this Mac. The Zero plugin teaches them to ask you here instead of waiting in a terminal you are not watching.") {
-                AgentsStep()
+                AgentsStep(check: agents)
             }
         case .permissions:
             StepPage(title: "Permissions", detail: "Each one is optional, and Zero needs no other access.") {
@@ -214,56 +216,49 @@ private struct StatusControl: View {
     }
 }
 
-private struct AgentsStep: View {
-    @State private var claude: String?? = .none // nil while looking; .some(nil) when absent
-    @State private var codex: String?? = .none
-    @State private var plugin: Bool?
-    @State private var pluginError: String?
+/// What is on this Mac, looked up once when onboarding opens: nobody installs an agent halfway through.
+@MainActor @Observable
+final class AgentCheck {
+    var claude: Bool?
+    var codex: Bool?
+    var plugin: Bool?
+    var pluginError: String?
+    private var started = false
 
-    var body: some View {
-        VStack(spacing: 0) {
-            OnboardingRow(icon: "sparkle", picture: choiceIcon("claude"), title: "Claude Code", detail: claudeDetail) {
-                if case .some(.some) = claude {
-                    if let plugin {
-                        if plugin {
-                            Label("Plugin added", systemImage: "checkmark.circle.fill").font(.system(size: 12, weight: .medium)).foregroundStyle(.green)
-                        } else {
-                            RowButton(title: "Add plugin") {
-                                self.plugin = nil
-                                Task { pluginError = await ClaudePlugin.install(); self.plugin = await ClaudePlugin.isInstalled() }
-                            }
-                        }
-                    } else {
-                        ProgressView().controlSize(.small)
-                    }
-                }
-            }
-            if let pluginError { Text(pluginError).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
-            Divider()
-            OnboardingRow(icon: "chevron.left.forwardslash.chevron.right", picture: choiceIcon("openai"), title: "Codex", detail: codexDetail) {
-                if case .some(.some) = codex { RowButton(title: "Coming soon", enabled: false) }
-            }
-        }
-        .task {
-            claude = .some(await ShellTool.version("claude"))
-            codex = .some(await ShellTool.version("codex"))
+    func run() {
+        guard !started else { return }
+        started = true
+        Task {
+            claude = await ShellTool.version("claude") != nil
+            codex = await ShellTool.version("codex") != nil
             plugin = await ClaudePlugin.isInstalled()
         }
     }
 
-    private var claudeDetail: String {
-        switch claude {
-        case .none: return "Looking…"
-        case .some(.none): return "Not installed on this Mac."
-        case .some(.some): return plugin == true ? "Claude agents ask you here." : "The plugin makes Claude agents ask you here."
-        }
+    func addPlugin() {
+        plugin = nil
+        Task { pluginError = await ClaudePlugin.install(); plugin = await ClaudePlugin.isInstalled() }
     }
+}
 
-    private var codexDetail: String {
-        switch codex {
-        case .none: return "Looking…"
-        case .some(.none): return "Not installed on this Mac."
-        case .some(.some): return "Zero starts Codex agents."
+private struct AgentsStep: View {
+    let check: AgentCheck
+
+    var body: some View {
+        VStack(spacing: 0) {
+            OnboardingRow(icon: "sparkle", picture: choiceIcon("claude"), title: "Claude Code", detail: "The plugin makes Claude agents ask you here.") {
+                switch (check.claude, check.plugin) {
+                case (false, _): RowButton(title: "Not installed", enabled: false)
+                case (true, true): Label("Plugin added", systemImage: "checkmark.circle.fill").font(.system(size: 12, weight: .medium)).foregroundStyle(.green)
+                case (true, false): RowButton(title: "Add plugin") { check.addPlugin() }
+                default: ProgressView().controlSize(.small)
+                }
+            }
+            if let error = check.pluginError { Text(error).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
+            Divider()
+            OnboardingRow(icon: "chevron.left.forwardslash.chevron.right", picture: choiceIcon("openai"), title: "Codex", detail: "Zero starts Codex agents.") {
+                RowButton(title: check.codex == false ? "Not installed" : "Coming soon", enabled: false)
+            }
         }
     }
 }
@@ -352,8 +347,8 @@ private struct BarGlyph: View {
 
 private struct BarOutline: Shape {
     func path(in rect: CGRect) -> Path {
-        let edge = rect.maxX - 0.6, width: CGFloat = 12, fillet: CGFloat = 3
-        let top = rect.minY + 3, bottom = rect.maxY - 3, left = edge - width, radius: CGFloat = 5
+        let edge = rect.maxX - 3.6, width: CGFloat = 9, fillet: CGFloat = 3
+        let top = rect.minY + 3, bottom = rect.maxY - 3, left = edge - width, radius: CGFloat = 4.5
         var path = Path()
         path.move(to: CGPoint(x: edge, y: rect.minY))
         path.addLine(to: CGPoint(x: edge, y: top - fillet))
