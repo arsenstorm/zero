@@ -3,7 +3,7 @@
 //! folder the Mac sees reaches Arsen with it.
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{env, fs, process, thread};
@@ -11,7 +11,7 @@ use std::{env, fs, process, thread};
 const USAGE: &str = "usage:
   zero ask     \"question\" [--option A --option B ...] [--title T] [--body B] [--code 'snippet']
   zero approve \"what you want to do\" [--body B] [--code 'snippet']
-  zero run     'command' [--cwd DIR] [--title T]
+  zero run     'command' --why \"what you need the output for\" [--cwd DIR] [--title T]
   zero note    \"where you are now\" [--blocked | --done]
   zero wait    <id>
   zero status  <id>
@@ -261,6 +261,36 @@ fn submit(drop: &Drop, args: &Args, ask: Ask) -> ! {
     drop.wait(&ask.id)
 }
 
+/// The ask a PermissionRequest hook input becomes, as Zero.app's `Ask.permission` builds it: what the tool will
+/// do, why (the agent's latest words in its transcript), the command or target, and the folder.
+fn permission(input: &str) -> Option<(String, String, String, Option<String>)> {
+    let json: serde_json::Value = serde_json::from_str(input).ok()?;
+    let tool = json["tool_name"].as_str()?;
+    let field = |key: &str| json["tool_input"][key].as_str().map(str::to_string);
+    let (what, code) = match tool {
+        "Bash" => (field("description").map(|d| d.trim_end_matches('?').to_string()).unwrap_or_else(|| "Run a command".into()), field("command").unwrap_or_default()),
+        "Write" => ("Write a file".into(), field("file_path").unwrap_or_default()),
+        "Edit" | "MultiEdit" | "NotebookEdit" => ("Edit a file".into(), field("file_path").or_else(|| field("notebook_path")).unwrap_or_default()),
+        "WebFetch" => ("Fetch a page".into(), field("url").unwrap_or_default()),
+        other => (format!("Use {other}"), json["tool_input"].to_string()),
+    };
+    let why = json["transcript_path"].as_str().and_then(last_words).unwrap_or_default();
+    Some((what, why, code.chars().take(2000).collect(), json["cwd"].as_str().map(str::to_string)))
+}
+
+/// The latest assistant text in a Claude Code transcript, trimmed to 500 characters.
+fn last_words(path: &str) -> Option<String> {
+    let data = fs::read(path).ok()?;
+    let tail = &data[data.len().saturating_sub(400_000)..];
+    String::from_utf8_lossy(tail).lines().rev().find_map(|line| {
+        let entry: serde_json::Value = serde_json::from_str(line).ok()?;
+        if entry["type"] != "assistant" { return None; }
+        let text = entry["message"]["content"].as_array()?.iter().rev().find(|c| c["type"] == "text")?["text"].as_str()?.trim().to_string();
+        if text.is_empty() { return None; }
+        Some(if text.chars().count() > 500 { text.chars().take(500).collect::<String>() + "…" } else { text })
+    })
+}
+
 fn main() {
     let args = Args::parse();
     let drop = Drop::here();
@@ -281,12 +311,25 @@ fn main() {
             let ask = drop.create(&args, "approve", what, args.flag("body").cloned().unwrap_or_default(), options, args.flag("code").cloned(), None);
             submit(&drop, &args, ask)
         }
+        "permission" => {
+            // Claude Code's PermissionRequest hook input on stdin; the plugin's hook turns the exit code into its decision.
+            let mut input = String::new();
+            std::io::stdin().read_to_string(&mut input).ok();
+            let (title, why, code, cwd) = permission(&input).unwrap_or_else(|| fail("zero: no permission request on stdin", 1));
+            let options = vec!["Allow".into(), "Deny".into(), "Deny, and say why…".into()];
+            let ask = drop.create(&args, "permission", title, why, options, Some(code), cwd);
+            submit(&drop, &args, ask)
+        }
         "run" => {
             let command = first().unwrap_or_else(|| fail(USAGE, 1));
+            if args.flag("why").is_none() && args.flag("body").is_none() {
+                fail("zero run needs --why: say what you need the output for, so Arsen knows what he is running", 1)
+            }
             let options = vec!["Run".into(), "Reject".into(), "Suggest something else…".into()];
             let cwd = args.flag("cwd").cloned().or_else(|| env::current_dir().ok().map(|p| p.to_string_lossy().to_string()));
             let title = args.flag("title").cloned().unwrap_or_else(|| "Run a command".into());
-            let ask = drop.create(&args, "run", title, args.flag("body").cloned().unwrap_or_default(), options, Some(command), cwd);
+            let why = args.flag("why").or(args.flag("body")).cloned().unwrap_or_default();
+            let ask = drop.create(&args, "run", title, why, options, Some(command), cwd);
             submit(&drop, &args, ask)
         }
         "note" => {

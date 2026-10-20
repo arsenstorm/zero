@@ -1139,6 +1139,7 @@ struct CardView: View {
         switch ask.kind {
         case .note, .message: return nil
         case .run: return ask.title == "Run a command" ? nil : ask.title
+        case .permission: return "Permission"
         default: return ask.body.isEmpty ? nil : ask.title
         }
     }
@@ -1153,6 +1154,7 @@ struct CardView: View {
             case .declined: return "Command rejected"
             default: return "Allow this command?"
             }
+        case .permission: return ask.title + "?"
         case .note, .message: return ask.body
         default: return ask.body.isEmpty ? ask.title : ask.body
         }
@@ -1226,8 +1228,10 @@ struct CardView: View {
                 Text(headline).font(.system(size: 15, weight: .semibold))
                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             }
-            if ask.kind == .run && !ask.body.isEmpty {
+            // Why the agent wants it, in its own words.
+            if (ask.kind == .run || ask.kind == .permission) && !ask.body.isEmpty {
                 Text(ask.body).font(.system(size: 13)).foregroundStyle(.secondary).textSelection(.enabled)
+                    .lineLimit(6).fixedSize(horizontal: false, vertical: true)
             }
             if ask.kind == .run && (ask.state == .running || ask.state == .answered) {
                 terminal

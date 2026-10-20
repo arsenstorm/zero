@@ -12,7 +12,9 @@ Zero is the only way a need for Arsen reaches him. An ask written into a plan or
 
 ```
 Something only Arsen can produce
-├── A fact behind his access (a production count, a console read, a tunnel) → zero run
+├── A command you can't or mustn't run yourself: blocked or denied, needs his Mac, his credentials or
+│   production access (a production count, a console read, a tunnel) → zero run --why
+├── A fact behind his access (a production count, a console read, a tunnel) → zero run --why
 ├── A yes or no on a plan, a PR, a scope change → zero approve
 ├── A pick between concrete alternatives → zero ask --option A --option B
 └── Words: a decision you cannot frame as options → zero ask "question"
@@ -26,7 +28,8 @@ If you can decide it yourself from the ticket, the code, or the conventions, dec
 ```bash
 zero ask "Which count should scope ENG-9429?" --option "Sources on free teams" --option "All sources" --option "Something else…"
 zero approve "Open the PR as draft now" --body "3 files, specs green on bench-3"
-zero run 'bin/production console <<< "puts Source.count"' --cwd "$APP_PATH" --title "ENG-9429 scope"
+zero run 'bin/production console <<< "puts Source.count"' --cwd "$APP_PATH" --title "ENG-9429 scope" \
+  --why "How many sources exist decides whether the fix needs a migration"
 zero note "Specs green; sizing the fix"            # working (blue)
 zero note --blocked "Vault certificate expired"     # red
 zero note --done "PR #4821 open, CI green"          # green
@@ -47,7 +50,11 @@ Blocking is the default because you need the answer to continue. When you cannot
 
 ## Running on his Mac
 
-`zero run` executes the exact command in an interactive zsh on his Mac after he presses one key, so his PATH, rbenv and `op` apply. Use it for reads he alone can perform. Never put a write to production in a `run`; ask for approval of the plan instead and let him run that himself. One command per ask. Pass `--cwd` so relative paths resolve where you mean.
+`zero run` executes the exact command in an interactive zsh on his Mac after he presses one key, so his PATH, rbenv and `op` apply. Use it for reads he alone can perform, and whenever a command you need was blocked or denied. Never print a command for him to paste, and never stop because a command was refused: ask with `zero run`. Never put a write to production in a `run`; ask for approval of the plan instead and let him run that himself. One command per ask. Pass `--cwd` so relative paths resolve where you mean.
+
+`--why` is required: one sentence on what the output is for and what you will do with it. Why: he is about to run something on his own machine; a command without a reason is one he cannot judge, so he rejects it.
+
+When Zero runs your session, Claude Code's own permission prompts reach him in Zero too: the tool call waits until he allows or denies it, and the card shows your latest words as the reason. So say why before a call that may need permission.
 
 ## Where you are
 

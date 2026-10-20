@@ -1,7 +1,8 @@
 import Foundation
 
 /// `note` needs no answer: it is an agent saying where it is. `message` goes the other way: Arsen to the agent.
-public enum AskKind: String, Codable, Sendable { case question, choice, approve, run, note, message }
+/// `permission` is Claude Code asking to use a tool in a session nobody watches: the plugin's hook brings it here.
+public enum AskKind: String, Codable, Sendable { case question, choice, approve, run, note, message, permission }
 
 public enum AskState: String, Codable, Sendable {
     case waiting, pending, running, answered, declined, expired
@@ -64,6 +65,42 @@ public struct Ask: Codable, Identifiable, Sendable {
         self.command = command; self.cwd = cwd; self.agent = agent
         createdAt = Date(); expiresAt = createdAt.addingTimeInterval(ttl)
         state = .waiting; output = ""
+    }
+
+    /// A permission ask from Claude Code's PermissionRequest hook input: what the tool will do as the headline
+    /// (Bash's own description of the command, else the tool and its target), the command or target in the code
+    /// block, and why, in the agent's own latest words from its transcript.
+    public static func permission(hook: Data, agent: AgentIdentity, ttl: TimeInterval) -> Ask? {
+        guard let json = try? JSONSerialization.jsonObject(with: hook) as? [String: Any], let tool = json["tool_name"] as? String else { return nil }
+        let input = json["tool_input"] as? [String: Any] ?? [:]
+        let (what, code): (String, String) = switch tool {
+        case "Bash": ((input["description"] as? String).map { $0.hasSuffix("?") ? String($0.dropLast()) : $0 } ?? "Run a command", input["command"] as? String ?? "")
+        case "Edit", "MultiEdit", "Write", "NotebookEdit": ("\(tool == "Write" ? "Write" : "Edit") a file", input["file_path"] as? String ?? input["notebook_path"] as? String ?? "")
+        case "WebFetch": ("Fetch a page", input["url"] as? String ?? "")
+        default: ("Use \(tool)", (try? JSONSerialization.data(withJSONObject: input, options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? "")
+        }
+        let why = (json["transcript_path"] as? String).flatMap(lastWords) ?? ""
+        return Ask(kind: .permission, title: what, body: why, options: ["Allow", "Deny", "Deny, and say why…"],
+                   command: String(code.prefix(2000)), cwd: json["cwd"] as? String, agent: agent, ttl: ttl)
+    }
+
+    /// The agent's last words before the tool call: the latest assistant text in its transcript, trimmed.
+    static func lastWords(_ transcript: String) -> String? {
+        guard let handle = FileHandle(forReadingAtPath: transcript) else { return nil }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: size > 400_000 ? size - 400_000 : 0)
+        let tail = String(decoding: handle.readDataToEndOfFile(), as: UTF8.self)
+        for line in tail.split(separator: "\n").reversed() {
+            guard let entry = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any], entry["type"] as? String == "assistant",
+                  let content = (entry["message"] as? [String: Any])?["content"] as? [[String: Any]] else { continue }
+            if let text = content.last(where: { $0["type"] as? String == "text" })?["text"] as? String,
+               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.count > 500 ? String(trimmed.prefix(500)) + "…" : trimmed
+            }
+        }
+        return nil
     }
 
     public static func newID() -> String {

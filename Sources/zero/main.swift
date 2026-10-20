@@ -9,7 +9,7 @@ func usage() -> Never {
       zero ask     "question" [--option A --option B ...] [--title T] [--body B] [--code 'command or snippet']
                    an option ending with "…" asks Arsen for text; the answer is then "label: text"
       zero approve "what you want to do" [--body B] [--code 'command or snippet']   (Yes / No / Suggest something else…)
-      zero run     'command' [--cwd DIR] [--title T]
+      zero run     'command' --why "what you need the output for" [--cwd DIR] [--title T]
       zero note    "where you are now" [--blocked | --done]   (no answer; sets your agent's dot: working, blocked, done)
       zero wait    <id>
       zero status  <id>
@@ -118,9 +118,14 @@ case "approve":
     guard let what = positional.first else { usage() }
     create(Ask(kind: .approve, title: what, body: flag("body") ?? "", options: ["Yes", "No", "Suggest something else…"],
                command: flag("code"), agent: agentIdentity(), ttl: ttl))
+case "permission":
+    // Claude Code's PermissionRequest hook input on stdin; the plugin's hook turns the exit code into its decision.
+    guard let ask = Ask.permission(hook: FileHandle.standardInput.readDataToEndOfFile(), agent: agentIdentity(), ttl: ttl) else { fail("zero: no permission request on stdin") }
+    create(ask)
 case "run":
     guard let shell = positional.first else { usage() }
-    create(Ask(kind: .run, title: flag("title") ?? "Run a command", body: flag("body") ?? "",
+    guard flag("why") != nil || flag("body") != nil else { fail("zero run needs --why: say what you need the output for, so Arsen knows what he is running") }
+    create(Ask(kind: .run, title: flag("title") ?? "Run a command", body: flag("why") ?? flag("body") ?? "",
                options: ["Run", "Reject", "Suggest something else…"],
                command: shell, cwd: flag("cwd") ?? FileManager.default.currentDirectoryPath, agent: agentIdentity(), ttl: ttl))
 case "note":

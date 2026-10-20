@@ -285,7 +285,7 @@ public final class Store {
     }
 
     /// For approve and run, every option after the first is a decline, with or without a reason.
-    private func declines(_ ask: Ask, _ index: Int) -> Bool { (ask.kind == .approve || ask.kind == .run) && index >= 1 }
+    private func declines(_ ask: Ask, _ index: Int) -> Bool { (ask.kind == .approve || ask.kind == .run || ask.kind == .permission) && index >= 1 }
 
     /// Typed reply. On a run card, text can only be a decline reason.
     public func reply(_ id: String, text: String) {
