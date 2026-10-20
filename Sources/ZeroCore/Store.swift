@@ -118,7 +118,7 @@ public final class Store {
         if let last = asks.last(where: { $0.agent.name == identity.name }) { log(last) }
     }
 
-    public func switchModel(of agent: String, to model: SpawnChoice, level: String?) async throws {
+    public func switchModel(of agent: String, to model: SpawnChoice?, level: String?) async throws {
         guard let identity = identity(of: agent), let adapter = adapters.first(where: { $0.canReach(identity) }) else { throw AdapterError("No way to reach \(agent)") }
         try await adapter.switchModel(of: identity, to: model, level: level)
     }

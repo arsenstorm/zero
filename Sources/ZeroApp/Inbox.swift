@@ -57,12 +57,31 @@ final class InboxController {
     /// The agent a runtime selector is open for; nil means the new-agent composer.
     var selectorAgent: String?
 
-    /// Remembers the pick and tells the agent, with the level saved for that model.
+    @ObservationIgnored private var modelSwitches: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var appliedModels: [String: (model: String, level: String?)] = [:]
+
+    /// Remembers the pick and tells the agent once the picking has settled: dragging the effort slider picks on
+    /// every step, so each pick restarts a short wait, switches run one after another, and only the model or
+    /// level that actually changed is sent.
     func setAgentModel(_ agent: String, model: SpawnChoice) {
         agentModels[agent] = model.id
         UserDefaults.standard.set(agentModels, forKey: "agentModels")
-        let level = spawnSettings[model.id]?["reasoning"] ?? model.defaultLevel
-        Task { try? await store.switchModel(of: agent, to: model, level: level) }
+        let previous = modelSwitches[agent]
+        previous?.cancel()
+        modelSwitches[agent] = Task { [weak self] in
+            await previous?.value
+            try? await Task.sleep(for: .milliseconds(700))
+            guard let self, !Task.isCancelled else { return }
+            let level = spawnSettings[model.id]?["reasoning"] ?? model.defaultLevel
+            let last = appliedModels[agent]
+            guard last?.model != model.id || last?.level != level else { return }
+            do {
+                try await store.switchModel(of: agent, to: last?.model == model.id ? nil : model, level: last?.level == level ? nil : level)
+                appliedModels[agent] = (model.id, level)
+            } catch {
+                NSLog("zero: model switch for \(agent) failed: \(error)")
+            }
+        }
     }
 
     /// The runtime an existing agent runs on, by its name ("claude-120" runs on the "Claude" tool).

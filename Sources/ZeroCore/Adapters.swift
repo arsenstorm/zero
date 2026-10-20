@@ -39,7 +39,8 @@ public protocol AgentAdapter: Sendable {
     /// Raw keys into the agent's terminal (arrows, Enter, Esc, a digit); returns the screen just after.
     func press(_ bytes: [UInt8], on agent: AgentIdentity) async throws -> String?
     /// Changes the model (and effort) of a running agent, where its runtime has a command for that.
-    func switchModel(of agent: AgentIdentity, to model: SpawnChoice, level: String?) async throws
+    /// Either may be nil: only what changed is sent.
+    func switchModel(of agent: AgentIdentity, to model: SpawnChoice?, level: String?) async throws
     /// Names of the given agents whose session is not running right now.
     func offline(among agents: [AgentIdentity]) async -> Set<String>
     /// The identity to deliver to now: the agent's session running somewhere, started again if it is not
@@ -66,7 +67,7 @@ public extension AgentAdapter {
     func findSession(for agent: AgentIdentity, firstPrompt: String) async -> String? { nil }
     func screen(of agent: AgentIdentity) async -> String? { nil }
     func press(_ bytes: [UInt8], on agent: AgentIdentity) async throws -> String? { nil }
-    func switchModel(of agent: AgentIdentity, to model: SpawnChoice, level: String?) async throws { throw AdapterError("\(name) cannot change \(agent.name)'s model") }
+    func switchModel(of agent: AgentIdentity, to model: SpawnChoice?, level: String?) async throws { throw AdapterError("\(name) cannot change \(agent.name)'s model") }
     func offline(among agents: [AgentIdentity]) async -> Set<String> { [] }
     func connect(_ agent: AgentIdentity) async throws -> AgentIdentity { agent }
     var canSpawn: Bool { false }
@@ -348,11 +349,15 @@ public struct SoloAdapter: AgentAdapter {
     }
 
     /// Claude Code takes `/model <id>` and `/effort <level>` as slash commands; Codex's picker is interactive.
-    public func switchModel(of agent: AgentIdentity, to model: SpawnChoice, level: String?) async throws {
-        guard model.provider == "Anthropic" else { throw AdapterError("Only a Claude agent can change model while running") }
-        try await send("/model \(model.id)", to: agent)
+    /// Each command gets the prompt to itself: typed while the previous one is still being handled, Claude Code
+    /// appends it to that line ("/model x/effort high").
+    public func switchModel(of agent: AgentIdentity, to model: SpawnChoice?, level: String?) async throws {
+        if let model {
+            guard model.provider == "Anthropic" else { throw AdapterError("Only a Claude agent can change model while running") }
+            try await send("/model \(model.id)", to: agent)
+        }
         if let level, !level.isEmpty {
-            try await Task.sleep(for: .seconds(1))
+            if model != nil { try await Task.sleep(for: .milliseconds(1500)) }
             try await send("/effort \(level)", to: agent)
         }
     }
