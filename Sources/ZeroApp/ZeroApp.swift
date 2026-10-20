@@ -2,7 +2,6 @@ import AppKit
 import Carbon.HIToolbox
 import ServiceManagement
 import SwiftUI
-import UserNotifications
 import ZeroCore
 
 @main
@@ -102,7 +101,7 @@ final class Panel: NSPanel {
     }
 }
 
-@MainActor final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+@MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = Store()
     private lazy var server = Server(store: store)
     private lazy var drops = DropWatcher(store: store)
@@ -149,7 +148,6 @@ final class Panel: NSPanel {
             guard let self, event.window === inboxPanel else { return event }
             return inbox.handle(event) ? nil : event
         }
-        UNUserNotificationCenter.current().delegate = self // permission is asked for in onboarding, not at every launch
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { [weak self] _ in
             DispatchQueue.main.async { self?.updateDock() }
         }
@@ -476,15 +474,6 @@ final class Panel: NSPanel {
         guard ask.kind != .note, ask.kind != .message else { return }
         layout()
         NSSound(named: "Glass")?.play()
-    }
-
-    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        [.banner, .sound]
-    }
-
-    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        if let id = response.notification.request.content.userInfo["id"] as? String { inbox.select(id) }
-        open(byIntent: true)
     }
 
     private var hotKeyHandlerInstalled = false

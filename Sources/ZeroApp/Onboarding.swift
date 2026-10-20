@@ -1,7 +1,6 @@
 import AVFoundation
 import Speech
 import SwiftUI
-import UserNotifications
 
 /// Zero's first run: what it is, the agents it works with, the permissions it needs, a few habits, and one real
 /// ask to answer. Its own centred window; Zero stays a menu bar app once it closes.
@@ -272,7 +271,6 @@ private struct AgentsStep: View {
 /// trip to System Settings), so a page always opens on its real state instead of flipping from "Allow".
 @MainActor @Observable
 final class PermissionCheck {
-    var notifications: UNAuthorizationStatus?
     var microphone = AVCaptureDevice.authorizationStatus(for: .audio)
     var speech = SFSpeechRecognizer.authorizationStatus()
     private var observer: Any?
@@ -288,21 +286,6 @@ final class PermissionCheck {
     func refresh() {
         microphone = AVCaptureDevice.authorizationStatus(for: .audio)
         speech = SFSpeechRecognizer.authorizationStatus()
-        Task { notifications = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus }
-    }
-
-    /// macOS shows its prompt only while the answer is undecided; after a "Don't Allow" the switch lives in System
-    /// Settings, so the button goes there.
-    func allowNotifications() {
-        Task {
-            if notifications == .notDetermined {
-                do { _ = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) }
-                catch { NSLog("zero: notification permission: \(error)") }
-                refresh()
-                if notifications != .denied { return }
-            }
-            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.arsen.zero")!)
-        }
     }
 
     func allowMicrophone() {
