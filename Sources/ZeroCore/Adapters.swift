@@ -28,6 +28,8 @@ public protocol AgentAdapter: Sendable {
     func send(_ text: String, to agent: AgentIdentity) async throws
     /// What the agent said back to `text`, once it has finished its turn; nil when the adapter cannot tell.
     func reply(from agent: AgentIdentity, to text: String) async -> String?
+    /// What the runtime calls the agent now, when that is more than the tool's generic name.
+    func displayName(for agent: AgentIdentity) async -> String?
     /// Starting agents: where they can run, what runs them, and the start itself. Default: not supported.
     var canSpawn: Bool { get }
     func spawnTargets() async throws -> [SpawnChoice]
@@ -44,6 +46,7 @@ public protocol AgentAdapter: Sendable {
 
 public extension AgentAdapter {
     func reply(from agent: AgentIdentity, to text: String) async -> String? { nil }
+    func displayName(for agent: AgentIdentity) async -> String? { nil }
     var canSpawn: Bool { false }
     func spawnTargets() async throws -> [SpawnChoice] { [] }
     func spawnRuntimes() async throws -> [SpawnChoice] { [] }
@@ -78,6 +81,16 @@ public struct SoloAdapter: AgentAdapter {
         var arguments: [String: Any] = ["process_id": processID, "input": text, "submit": true]
         if let project = agent.soloProjectID { arguments["project_id"] = project }
         _ = try await resultText(of: call(tool: "send_input", arguments: arguments))
+    }
+
+    /// Solo renames a session after its first task ("Ready word reply"); the tool's own name is not a label.
+    public func displayName(for agent: AgentIdentity) async -> String? {
+        guard let processID = agent.soloProcessID else { return nil }
+        var arguments: [String: Any] = ["process_id": processID]
+        if let project = agent.soloProjectID { arguments["project_id"] = project }
+        guard let status = try? await resultJSON(of: call(tool: "get_process_status", arguments: arguments)) as? [String: Any],
+              let name = status["name"] as? String, !name.isEmpty else { return nil }
+        return ["claude", "codex", "agent", "claude code"].contains(name.lowercased()) ? nil : name
     }
 
     /// Solo reports only busy or idle, so the reply is read off the agent's screen: wait for it to start

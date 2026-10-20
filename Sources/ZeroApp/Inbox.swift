@@ -291,12 +291,14 @@ final class InboxController {
         focusedReply = nil
         Task {
             do {
-                let identity = try await store.spawn(prompt: prompt, adapter: adapter, target: target, runtime: runtime, model: model, settings: settings)
-                // Up: clear the composer and go to the agent. On failure the prompt stays for another try.
+                let identity = try await store.spawn(prompt: prompt, adapter: adapter, target: target, runtime: runtime, model: model,
+                                                     settings: settings, started: { [weak self] name in self?.show(agent: name) })
+                // Up: clear the composer; the view follows the agent from its provisional name to the real one.
                 drafts[Self.newAgentKey] = nil
-                show(agent: identity.name)
+                if agentFilter?.hasPrefix("starting-") == true { agentFilter = identity.name }
             } catch {
                 spawnError = error.localizedDescription
+                show(agent: nil) // back to the composer, prompt still there, with the error under it
             }
             spawning = false
         }
@@ -855,7 +857,7 @@ struct Composer: View {
 
     var body: some View {
         let key = controller.composerKey(agent)
-        ReplyBox(placeholder: "Message \(agent)…",
+        ReplyBox(placeholder: "Message \(controller.store.displayName(of: agent))…",
                  text: Binding(get: { controller.drafts[key, default: ""] }, set: { controller.drafts[key] = $0 }),
                  key: key, focus: focus, dictating: controller.dictatingFor == key,
                  onMic: { controller.toggleDictation() }, onSend: { controller.send(key) })
@@ -930,8 +932,8 @@ struct CardView: View {
             }
             if let status = ask.status, status.hasPrefix("failed") {
                 Text(status).font(.system(size: 11)).foregroundStyle(.red).padding(.trailing, 44)
-            } else if ask.status == "sending" {
-                Text("Sending…").font(.system(size: 11)).foregroundStyle(.tertiary).padding(.trailing, 44)
+            } else if ask.status == "sending" || ask.status == "starting" {
+                Text(ask.status == "starting" ? "Starting…" : "Sending…").font(.system(size: 11)).foregroundStyle(.tertiary).padding(.trailing, 44)
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
@@ -941,7 +943,7 @@ struct CardView: View {
         VStack(alignment: .leading, spacing: 12) {
             // Who and what on the left, when on the right.
             HStack(spacing: 8) {
-                Text(ask.kind == .message ? "You" : ask.agent.name).font(.system(size: 12, weight: .medium))
+                Text(ask.kind == .message ? "You" : controller.store.displayName(of: ask.agent.name)).font(.system(size: 12, weight: .medium))
                 if let context {
                     Text(context).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                 }
@@ -967,9 +969,12 @@ struct CardView: View {
                 }
             }
             .frame(height: 20)
-            Text(headline).font(.system(size: ask.kind == .note || ask.kind == .message ? 13 : 15,
-                                        weight: ask.kind == .note || ask.kind == .message ? .regular : .semibold))
-                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            if ask.kind == .note {
+                MarkdownText(ask.body) // agents write Markdown; fenced code gets a block of its own
+            } else {
+                Text(headline).font(.system(size: 15, weight: .semibold))
+                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
             if ask.kind == .run && !ask.body.isEmpty {
                 Text(ask.body).font(.system(size: 13)).foregroundStyle(.secondary).textSelection(.enabled)
             }
@@ -1063,7 +1068,7 @@ struct CardView: View {
         case .waiting:
             // Only a free-text question has its own reply box; option cards answer through their options.
             if ask.options.isEmpty {
-                ReplyBox(placeholder: "Reply to \(ask.agent.name)…",
+                ReplyBox(placeholder: "Reply to \(controller.store.displayName(of: ask.agent.name))…",
                          text: Binding(get: { controller.drafts[ask.id, default: ""] }, set: { controller.drafts[ask.id] = $0 }),
                          key: ask.id, focus: focus, dictating: dictating,
                          onMic: { controller.select(ask.id); controller.toggleDictation() }, onSend: { controller.send(ask.id) })
@@ -1263,7 +1268,7 @@ struct PillView: View {
                     .animation(drag?.name == name || reduceMotion ? nil : .snappy(duration: 0.2), value: dropIndex(in: agents.map(\.0)))
                     .zIndex(drag?.name == name ? 1 : 0)
                     .onHover { if $0, drag == nil { peek(name) } }
-                    .help(name)
+                    .help(controller.store.displayName(of: name))
                     .contextMenu { Button("Close \(name)") { controller.store.closeAgent(name) } }
                     // One gesture for click and drag, so they never compete: a press that moves under 4 pt selects;
                     // a longer one drags the dot with the pointer and drops it into the nearest slot.
@@ -1304,5 +1309,53 @@ struct PillView: View {
             Button("Settings…") { (NSApp.delegate as? AppDelegate)?.openSettings() }
             Button("Quit Zero") { NSApp.terminate(nil) }
         }
+    }
+}
+
+/// Markdown the way agents write it: paragraphs with inline emphasis and `code`, and fenced blocks set in
+/// monospace on their own surface. ponytail: fences and inline syntax only; headings and lists read as text.
+struct MarkdownText: View {
+    let text: String
+
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                switch segment {
+                case .prose(let prose):
+                    Text(attributed(prose)).font(.system(size: 13)).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .code(let code):
+                    Text(code).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.code).clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+            }
+        }
+    }
+
+    private enum Segment { case prose(String), code(String) }
+
+    /// Split on ``` fences; a language tag after the opening fence is dropped.
+    private var segments: [Segment] {
+        var result: [Segment] = []
+        var inCode = false
+        var buffer: [String] = []
+        func flush() {
+            let joined = buffer.joined(separator: "\n").trimmingCharacters(in: .newlines)
+            if !joined.isEmpty { result.append(inCode ? .code(joined) : .prose(joined)) }
+            buffer = []
+        }
+        for line in text.components(separatedBy: "\n") {
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") { flush(); inCode.toggle() } else { buffer.append(line) }
+        }
+        flush()
+        return result
+    }
+
+    private func attributed(_ prose: String) -> AttributedString {
+        (try? AttributedString(markdown: prose, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(prose)
     }
 }

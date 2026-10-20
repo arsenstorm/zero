@@ -31,11 +31,22 @@ func soloAdapterSpawnsAnAgent() async throws {
     let target = try await adapter.spawnTargets().first { $0.id == project }!
     let runtime = try await adapter.spawnRuntimes().first { $0.name == "Claude" }!
     let prompt = "Reply with the single word ready, then stop."
-    let identity = try await adapter.spawn(prompt: prompt, target: target, runtime: runtime, model: nil, settings: [:])
+    // Through the store: a provisional agent first, rebound to the real one, then the reply and Solo's label.
+    let store = await Store(logURL: nil, adapters: [adapter])
+    var provisional: String?
+    let identity = try await store.spawn(prompt: prompt, adapter: adapter, target: target, runtime: runtime, model: nil, started: { provisional = $0 })
+    #expect(provisional?.hasPrefix("starting-") == true)
     #expect(identity.soloProcessID != nil)
-    print("spawned", identity.name, identity.soloProcessID ?? -1)
-    // And the agent's answer comes back off its screen.
-    let reply = await adapter.reply(from: identity, to: prompt)
-    print("reply:", reply ?? "nil")
-    #expect(reply?.lowercased().contains("ready") == true)
+    let names = await store.asks.map(\.agent.name)
+    #expect(names == [identity.name])
+    print("spawned", identity.name, identity.soloProcessID ?? -1, "provisional:", provisional ?? "nil")
+    for _ in 0..<60 {
+        try await Task.sleep(for: .seconds(2))
+        if await store.asks.contains(where: { $0.kind == .note }) { break }
+    }
+    let note = await store.asks.last { $0.kind == .note }
+    print("reply:", note?.body ?? "nil")
+    #expect(note?.body.lowercased().contains("ready") == true)
+    await store.relabel(identity)
+    print("label:", await store.displayName(of: identity.name))
 }

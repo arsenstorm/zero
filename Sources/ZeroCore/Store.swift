@@ -28,6 +28,9 @@ public final class Store {
 
     public func identity(of agent: String) -> AgentIdentity? { asks.last { $0.agent.name == agent }?.agent }
 
+    /// The name to show for an agent: the runtime's label when it has one, else the key.
+    public func displayName(of agent: String) -> String { identity(of: agent)?.label ?? agent }
+
     /// True when some adapter can deliver text into this agent's session.
     public func canMessage(_ agent: String) -> Bool {
         guard let identity = identity(of: agent) else { return false }
@@ -38,14 +41,47 @@ public final class Store {
 
     /// Starts a new agent through an adapter and records the first prompt in its timeline, so it appears in
     /// the bar at once with what Arsen asked of it.
+    /// `started` gets the provisional agent's name at once: it is in the bar with a blue dot and the prompt
+    /// before Solo has answered, then rebound to the real identity.
     public func spawn(prompt: String, adapter: AgentAdapter, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?,
-                      settings: [String: String] = [:]) async throws -> AgentIdentity {
-        let identity = try await adapter.spawn(prompt: prompt, target: target, runtime: runtime, model: model, settings: settings)
-        var item = Ask(kind: .message, title: "Message", body: prompt, agent: identity)
-        item.status = "sent"
-        _ = create(item)
-        watchReply(from: identity, to: prompt, via: adapter)
-        return identity
+                      settings: [String: String] = [:], started: (String) -> Void = { _ in }) async throws -> AgentIdentity {
+        let provisional = AgentIdentity(name: "starting-" + Ask.newID(), host: ProcessInfo.processInfo.hostName, label: "Starting \(runtime.name)…")
+        var item = Ask(kind: .message, title: "Message", body: prompt, agent: provisional)
+        item.status = "starting"
+        let message = create(item)
+        started(provisional.name)
+        do {
+            let identity = try await adapter.spawn(prompt: prompt, target: target, runtime: runtime, model: model, settings: settings)
+            rebind(provisional.name, to: identity)
+            update(message.id) { $0.status = "sent" }
+            if let sent = ask(message.id) { log(sent) }
+            watchReply(from: identity, to: prompt, via: adapter)
+            Task { await relabel(identity) }
+            return identity
+        } catch {
+            // Gone from everywhere: expired items never show, and the log's last line for it says so.
+            update(message.id) { $0.state = .expired; $0.answeredAt = Date() }
+            if let gone = ask(message.id) { log(gone) }
+            throw error
+        }
+    }
+
+    /// Moves everything recorded under a provisional agent to the identity the adapter reported.
+    private func rebind(_ provisional: String, to identity: AgentIdentity) {
+        for i in asks.indices where asks[i].agent.name == provisional {
+            asks[i].agent = identity
+            log(asks[i])
+            onChange?(asks[i])
+        }
+    }
+
+    /// Takes the runtime's current name for the agent as its label (logged on its latest item, which is the
+    /// one `identity(of:)` reads back after a relaunch).
+    public func relabel(_ identity: AgentIdentity) async {
+        guard let adapter = adapters.first(where: { $0.canReach(identity) }),
+              let label = await adapter.displayName(for: identity), label != self.identity(of: identity.name)?.label else { return }
+        for i in asks.indices where asks[i].agent.name == identity.name { asks[i].agent.label = label }
+        if let last = asks.last(where: { $0.agent.name == identity.name }) { log(last) }
     }
 
     /// The agent's answer to something Arsen sent comes back as a note from it, so the exchange reads in Zero.
@@ -55,6 +91,10 @@ public final class Store {
             var note = Ask(kind: .note, title: "Replied", body: reply, agent: identity, ttl: 7 * 86400)
             note.status = "done"
             _ = create(note)
+            // Solo titles the session a little after its first answer, so look once now and once later.
+            await relabel(identity)
+            try? await Task.sleep(for: .seconds(30))
+            await relabel(identity)
         }
     }
 

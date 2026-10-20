@@ -415,7 +415,7 @@ final class Panel: NSPanel {
         guard ask.kind != .note else { return }
         layout()
         let content = UNMutableNotificationContent()
-        content.title = ask.agent.name
+        content.title = store.displayName(of: ask.agent.name)
         content.subtitle = ask.kind == .run ? "wants to run a command" : "needs your answer"
         content.body = ask.title
         content.sound = .default
