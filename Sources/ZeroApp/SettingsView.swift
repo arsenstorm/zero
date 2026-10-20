@@ -51,7 +51,7 @@ struct SettingsView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 2) {
-            header.padding(.horizontal, -8).padding(.bottom, 10)
+            header.padding(.horizontal, -8).padding(.bottom, -6)
             ForEach(Page.allCases) { item in
                 Button { page = item } label: {
                     HStack(spacing: 10) {
@@ -89,7 +89,7 @@ struct SettingsView: View {
             .foregroundStyle(Theme.onKnob)
             .padding(.leading, 20).padding(.top, 44) // just under the window's buttons
         }
-        .frame(height: 96)
+        .frame(height: 118) // its fade ends just above the first page
     }
 
     @ViewBuilder private var content: some View {
