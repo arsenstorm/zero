@@ -15,6 +15,7 @@ struct OnboardingView: View {
     @State private var step = Step.welcome
     @State private var forward = true
     @State private var agents = AgentCheck()
+    @State private var permissions = PermissionCheck()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -29,7 +30,8 @@ struct OnboardingView: View {
         }
         .frame(width: 560, height: 600)
         .background(Theme.card)
-        .onAppear { agents.run() } // from the first page, so the agents page opens already answered
+        // From the first page, so later pages open already answered rather than changing in front of you.
+        .onAppear { agents.run(); permissions.run() }
     }
 
     @ViewBuilder private var page: some View {
@@ -54,7 +56,7 @@ struct OnboardingView: View {
             }
         case .permissions:
             StepPage(title: "Permissions", detail: "Each one is optional, and Zero needs no other access.") {
-                PermissionsStep()
+                PermissionsStep(check: permissions)
             }
         case .habits:
             StepPage(title: "Make it yours", detail: "Change these later in **Zero menu bar icon → Settings**.") {
@@ -261,41 +263,73 @@ private struct AgentsStep: View {
     }
 }
 
+/// Permission states, read when onboarding opens and again whenever Zero comes back to the front (after a
+/// trip to System Settings), so a page always opens on its real state instead of flipping from "Allow".
+@MainActor @Observable
+final class PermissionCheck {
+    var notifications: UNAuthorizationStatus?
+    var microphone = AVCaptureDevice.authorizationStatus(for: .audio)
+    var speech = SFSpeechRecognizer.authorizationStatus()
+    private var observer: Any?
+
+    func run() {
+        guard observer == nil else { return }
+        refresh()
+        observer = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }
+    }
+
+    func refresh() {
+        microphone = AVCaptureDevice.authorizationStatus(for: .audio)
+        speech = SFSpeechRecognizer.authorizationStatus()
+        Task { notifications = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus }
+    }
+
+    /// macOS shows its prompt only while the answer is undecided; after a "Don't Allow" the switch lives in System
+    /// Settings, so the button goes there.
+    func allowNotifications() {
+        Task {
+            if notifications == .notDetermined {
+                do { _ = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) }
+                catch { NSLog("zero: notification permission: \(error)") }
+                refresh()
+                if notifications != .denied { return }
+            }
+            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.arsen.zero")!)
+        }
+    }
+
+    func allowMicrophone() {
+        if microphone == .notDetermined { Task { _ = await AVCaptureDevice.requestAccess(for: .audio); refresh() } }
+        else { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!) }
+    }
+
+    func allowSpeech() {
+        if speech == .notDetermined { SFSpeechRecognizer.requestAuthorization { _ in Task { @MainActor in self.refresh() } } }
+        else { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")!) }
+    }
+}
+
 private struct PermissionsStep: View {
-    @State private var notifications = false
-    @State private var microphone = false
-    @State private var speech = false
+    let check: PermissionCheck
 
     var body: some View {
         VStack(spacing: 0) {
             OnboardingRow(icon: "bell.badge", title: "Notifications", detail: "So asks reach you in any app.") {
-                StatusControl(done: notifications, label: "Allow") {
-                    Task {
-                        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
-                        await refresh()
-                    }
+                if let status = check.notifications {
+                    StatusControl(done: status == .authorized || status == .provisional, label: "Allow") { check.allowNotifications() }
                 }
             }
             Divider()
             OnboardingRow(icon: "mic", title: "Microphone", detail: "To dictate a reply instead of typing it.") {
-                StatusControl(done: microphone, label: "Allow") {
-                    Task { _ = await AVCaptureDevice.requestAccess(for: .audio); await refresh() }
-                }
+                StatusControl(done: check.microphone == .authorized, label: "Allow") { check.allowMicrophone() }
             }
             Divider()
             OnboardingRow(icon: "waveform", title: "Speech recognition", detail: "Turns what you say into text, on this Mac.") {
-                StatusControl(done: speech, label: "Allow") {
-                    SFSpeechRecognizer.requestAuthorization { _ in Task { @MainActor in await refresh() } }
-                }
+                StatusControl(done: check.speech == .authorized, label: "Allow") { check.allowSpeech() }
             }
         }
-        .task { await refresh() }
-    }
-
-    private func refresh() async {
-        notifications = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus == .authorized
-        microphone = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        speech = SFSpeechRecognizer.authorizationStatus() == .authorized
     }
 }
 
