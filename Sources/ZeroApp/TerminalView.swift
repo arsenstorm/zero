@@ -113,11 +113,24 @@ struct ContainedList<Content: View>: View {
     @ViewBuilder let content: () -> Content
     @State private var moreAbove = false
     @State private var moreBelow = false
+    /// The fades take their first state as they are, without fading in: a list opening scrolled to its end should
+    /// show its top fade at once, not draw the eye to it. Only scrolling after that animates them.
+    @State private var settled = false
 
     var body: some View {
-        HostedScroll(content: content(), moreAbove: $moreAbove, moreBelow: $moreBelow)
+        HostedScroll(content: content(),
+                     moreAbove: Binding(get: { moreAbove }, set: { value in quietly { moreAbove = value } }),
+                     moreBelow: Binding(get: { moreBelow }, set: { value in quietly { moreBelow = value } }))
             .frame(height: height)
             .mask(EdgeFadeMask(above: moreAbove, below: moreBelow, fade: fade))
+            .task { try? await Task.sleep(for: .milliseconds(400)); settled = true }
+    }
+
+    /// Without animation until the list has settled.
+    private func quietly(_ change: () -> Void) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = !settled
+        withTransaction(transaction, change)
     }
 }
 

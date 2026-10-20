@@ -845,6 +845,7 @@ struct AgentTimeline: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .id(controller.agentFilter) // each agent's list starts fresh, fades included
             }
             .padding(14).frame(maxWidth: .infinity, alignment: .leading)
             .card()
