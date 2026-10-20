@@ -550,6 +550,8 @@ enum Theme {
     static let row = dynamic(dark: NSColor(white: 0.16, alpha: 1), light: NSColor(white: 0.94, alpha: 1))
     /// The composer's well: in light mode only a breath under the card, so it reads as a field, not a slab.
     static let composer = dynamic(dark: NSColor(white: 0.16, alpha: 1), light: NSColor(white: 0.975, alpha: 1))
+    /// The composer's pills: one step under its light well rather than the key caps' heavier grey.
+    static let chip = dynamic(dark: NSColor(white: 0.22, alpha: 1), light: NSColor(white: 0.93, alpha: 1))
     static let keycap = dynamic(dark: NSColor(white: 0.22, alpha: 1), light: NSColor(white: 0.88, alpha: 1))
     /// A fully solid knob; `.primary` is a translucent label colour.
     static let knob = dynamic(dark: .white, light: .black)
@@ -940,7 +942,7 @@ struct ComposerCard: View {
                     .rotationEffect(.degrees(open ? 180 : 0))
             }
             .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(Theme.keycap).clipShape(Capsule()) // solid: at 80% over the row it went muddy in light mode
+            .background(Theme.chip).clipShape(Capsule())
             .overlay(Capsule().strokeBorder(open ? Theme.selectedStroke : .clear, lineWidth: 1))
         }
         .buttonStyle(.plain)
