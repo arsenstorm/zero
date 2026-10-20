@@ -186,7 +186,7 @@ public final class Store {
         _ = create(item)
         // A slash command opens something in the agent's terminal, so that screen comes to Zero; a message
         // gets an answer, which is read back when it lands.
-        if text.hasPrefix("/") { openScreen(of: agent) } else { watchReply(from: identity, to: text, via: adapter) }
+        if ClaudeCommands.isBuiltIn(text) { openScreen(of: agent) } else { watchReply(from: identity, to: text, via: adapter) }
     }
 
     public func ask(_ id: String) -> Ask? { asks.first { $0.id == id } }

@@ -51,6 +51,82 @@ final class InboxController {
 
     /// The model each running agent was switched to from Zero, by agent name; nothing recorded means whatever it started with.
     var agentModels: [String: String] = (UserDefaults.standard.dictionary(forKey: "agentModels") as? [String: String]) ?? [:]
+    /// The "/" or "@" suggestions open under a composer: for which composer, at which word, and the pick.
+    struct MentionState {
+        let key: String
+        let trigger: MentionTrigger
+        var items: [Mention]
+        var selected: Int
+    }
+    var mention: MentionState?
+    /// Caret positions a composer should take after Zero changed its text (an accepted suggestion).
+    var caretRequest: [String: Int] = [:]
+    @ObservationIgnored private var mentionTask: Task<Void, Never>?
+
+    static func isComposerKey(_ key: String) -> Bool { key == newAgentKey || key.hasPrefix("msg:") }
+
+    /// The folder a composer's "@" looks in: the agent's project, or the project picked for a new agent.
+    func projectPath(for key: String) -> String? {
+        let raw: String?
+        if key.hasPrefix("msg:") {
+            raw = store.identity(of: String(key.dropFirst(4)))?.soloProjectID.flatMap { id in spawnTargets.first { $0.id == String(id) }?.detail }
+        } else {
+            raw = spawnTargets.first { $0.id == spawnTarget }?.detail
+        }
+        return raw.map { ($0 as NSString).expandingTildeInPath }
+    }
+
+    func updateMention(key: String, trigger: MentionTrigger?) {
+        mentionTask?.cancel()
+        guard let trigger else { if mention?.key == key { mention = nil }; return }
+        let path = projectPath(for: key)
+        if trigger.symbol == "/" {
+            let query = trigger.query.lowercased()
+            let all = ClaudeCommands.all(projectPath: path)
+            let name = { (m: Mention) in m.insert.dropFirst().lowercased() }
+            let starts = all.filter { name($0).hasPrefix(query) }
+            let contains = all.filter { !name($0).hasPrefix(query) && name($0).contains(query) }
+            showMention(key: key, trigger: trigger, items: Array((starts + contains).prefix(8)))
+        } else {
+            guard let path else { mention = nil; return }
+            mentionTask = Task { [weak self] in
+                let files = await ProjectFiles.list(path)
+                guard let self, !Task.isCancelled else { return }
+                showMention(key: key, trigger: trigger,
+                            items: ProjectFiles.match(trigger.query, in: files).map { Mention(kind: .file, insert: "@" + $0, detail: nil) })
+            }
+        }
+    }
+
+    private func showMention(key: String, trigger: MentionTrigger, items: [Mention]) {
+        guard !items.isEmpty else { mention = nil; return }
+        let sameWord = mention?.key == key && mention?.trigger.range.location == trigger.range.location
+        mention = MentionState(key: key, trigger: trigger, items: items, selected: sameWord ? min(mention?.selected ?? 0, items.count - 1) : 0)
+    }
+
+    /// Arrows move, Tab or Return takes the highlighted suggestion, Esc closes the list.
+    func mentionKey(_ key: ComposeKey, for composer: String) -> Bool {
+        guard var state = mention, state.key == composer else { return false }
+        switch key {
+        case .up: state.selected = max(0, state.selected - 1); mention = state
+        case .down: state.selected = min(state.items.count - 1, state.selected + 1); mention = state
+        case .accept: acceptMention(state.selected)
+        case .dismiss: mention = nil
+        }
+        return true
+    }
+
+    /// Replaces the typed word with the suggestion and a space, and puts the caret after it.
+    func acceptMention(_ index: Int) {
+        guard let state = mention, state.items.indices.contains(index) else { return }
+        let insert = state.items[index].insert + " "
+        let text = drafts[state.key, default: ""] as NSString
+        guard NSMaxRange(state.trigger.range) <= text.length else { mention = nil; return }
+        drafts[state.key] = text.replacingCharacters(in: state.trigger.range, with: insert)
+        caretRequest[state.key] = state.trigger.range.location + (insert as NSString).length
+        mention = nil
+    }
+
     /// Agents a message is on its way to, and why the last one did not arrive.
     var delivering: Set<String> = []
     var deliveryError: [String: String] = [:]
@@ -395,6 +471,7 @@ final class InboxController {
         let editing = event.window?.firstResponder is NSTextView
         let key = event.charactersIgnoringModifiers ?? ""
         if event.keyCode == 53 { // escape
+            if mention != nil { mention = nil; return true }
             if selector != nil { closeSelector(); return true }
             if let agent = agentFilter, store.screens[agent] != nil, !editing {
                 // Cancels whatever the agent has open and closes the screen here.
@@ -554,7 +631,10 @@ struct InboxView: View {
         }
         .frame(width: 380)
         .onChange(of: controller.focusedReply) { _, id in focus = id }
-        .onChange(of: focus) { _, id in controller.focusedReply = id }
+        // The composers are text views outside SwiftUI's focus system: its nil for them is not a blur.
+        .onChange(of: focus) { _, id in
+            if id != nil || !(controller.focusedReply.map(InboxController.isComposerKey) ?? false) { controller.focusedReply = id }
+        }
     }
 
     /// The selected card goes to the bar's centre line, as far as the scroll limits allow; an agent's
@@ -899,6 +979,8 @@ struct ComposerCard: View {
     var quiet = false
     @State private var projectAnchor = CGRect.zero
     @State private var runtimeAnchor = CGRect.zero
+    @State private var fieldHeight = ComposeField.lineHeight * 2
+    @State private var mentionHeight: CGFloat = 0
 
     private var agentName: String? { if case .agent(let name) = mode { return name } else { return nil } }
     private var key: String { agentName.map { controller.composerKey($0) } ?? InboxController.newAgentKey }
@@ -945,16 +1027,31 @@ struct ComposerCard: View {
                 .clipShape(RoundedRectangle(cornerRadius: 18))
                 .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke, lineWidth: 1))
         }
+        // Suggestions for "/" and "@" sit just above the composer, over whatever is there.
+        .overlay(alignment: .top) {
+            if let state = controller.mention, state.key == key, controller.focusedReply == key {
+                MentionList(state: state, pick: { controller.acceptMention($0) }, hover: { controller.mention?.selected = $0 })
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { mentionHeight = $0 }
+                    .offset(y: -mentionHeight - 6)
+            }
+        }
         .onAppear { controller.loadSpawnChoices() }
     }
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 12) {
-            TextField(placeholder, text: Binding(get: { controller.drafts[key, default: ""] }, set: { controller.drafts[key] = $0 }), axis: .vertical)
-                .textFieldStyle(.plain).font(.system(size: 13)).lineLimit(2...8)
-                .focused(focus, equals: key)
-                .disabled(starting) // the prompt stays put, read-only, until the agent is up
-                .onSubmit(submit)
+            ComposeField(text: Binding(get: { controller.drafts[key, default: ""] }, set: { controller.drafts[key] = $0 }),
+                         placeholder: placeholder, focused: controller.focusedReply == key,
+                         editable: !starting, // the words stay put, read-only, while they go out
+                         caret: controller.caretRequest[key], onCaretApplied: { controller.caretRequest[key] = nil },
+                         onFocus: { focused in
+                             if focused { controller.focusedReply = key } else if controller.focusedReply == key { controller.focusedReply = nil }
+                         },
+                         onSubmit: submit,
+                         onTrigger: { controller.updateMention(key: key, trigger: $0) },
+                         onKey: { controller.mentionKey($0, for: key) },
+                         height: $fieldHeight)
+                .frame(height: fieldHeight)
             HStack(spacing: 6) {
                 if agentName == nil {
                     // Where: grouped by adapter, each project with its path.
@@ -1589,5 +1686,48 @@ struct HuggingWidth: Layout {
     }
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         subviews.first?.place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
+    }
+}
+
+/// The "/" and "@" suggestions: commands and skills with what they do, files by name with their folder.
+struct MentionList: View {
+    let state: InboxController.MentionState
+    let pick: (Int) -> Void
+    let hover: (Int) -> Void
+
+    var body: some View {
+        VStack(spacing: 1) {
+            ForEach(Array(state.items.enumerated()), id: \.element.id) { index, item in
+                Button { pick(index) } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: item.kind == .file ? "doc" : "command").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 14)
+                        Text(title(item)).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                        if let detail = detail(item) {
+                            Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                                .truncationMode(item.kind == .file ? .head : .tail)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 10).frame(height: 28)
+                    .background(index == state.selected ? Theme.row : .clear)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { if $0 { hover(index) } }
+            }
+        }
+        .padding(6)
+        .card()
+    }
+
+    private func title(_ item: Mention) -> String {
+        item.kind == .file ? "@" + (item.insert.dropFirst() as Substring).split(separator: "/").last.map(String.init)! : item.insert
+    }
+
+    private func detail(_ item: Mention) -> String? {
+        guard item.kind == .file else { return item.detail }
+        let dir = (String(item.insert.dropFirst()) as NSString).deletingLastPathComponent
+        return dir.isEmpty ? nil : dir
     }
 }

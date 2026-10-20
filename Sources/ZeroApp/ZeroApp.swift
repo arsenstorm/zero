@@ -132,13 +132,6 @@ final class Panel: NSPanel {
         applySettings()
         settings.onChange = { [weak self] in self?.applySettings() }
         registerHotKey()
-        // Which sessions are still running, for the bar's dots and for resuming before a message.
-        Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.store.refreshLiveness() }
-        }.fire()
-        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.trackPointer() }
-        }
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.window === inboxPanel else { return event }
             return inbox.handle(event) ? nil : event
