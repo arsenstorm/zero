@@ -61,7 +61,7 @@ struct OnboardingView: View {
         case .habits:
             StepPage(title: "Make it yours", detail: "Change these later in **Zero menu bar icon → Settings**.") {
                 VStack(spacing: 0) {
-                    OnboardingRow(icon: "keyboard", title: "Talk hotkey", detail: "Opens the inbox on the oldest ask and starts dictation.") {
+                    OnboardingRow(icon: "keyboard", title: "Talk hotkey", detail: "Opens the inbox and starts dictation.") {
                         HotKeyRecorder(settings: settings, minWidth: nil)
                     }
                     Divider()
@@ -69,7 +69,7 @@ struct OnboardingView: View {
                         Toggle("", isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 })).labelsHidden().toggleStyle(.switch)
                     }
                     Divider()
-                    OnboardingRow(icon: "display.2", title: "Follow the active screen", detail: "The bar moves to the screen you are working on.") {
+                    OnboardingRow(icon: "display.2", title: "Follow the active screen", detail: "The bar moves to the screen you use.") {
                         Toggle("", isOn: $settings.followActiveScreen).labelsHidden().toggleStyle(.switch)
                     }
                 }
@@ -160,7 +160,7 @@ struct OnboardingRow<Trailing: View>: View {
             .frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 13, weight: .semibold))
-                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1) // one line, always
             }
             Spacer(minLength: 12)
             // A fixed slot, so a spinner turning into a button or a tick moves nothing beside it.
