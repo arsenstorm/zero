@@ -4,8 +4,11 @@ import SwiftUI
 /// The word being typed at the caret when it starts with "/" or "@": what to suggest for, and where it sits.
 struct MentionTrigger: Equatable {
     let symbol: Character
+    /// What is typed before the caret, which is what suggestions match.
     let query: String
     let range: NSRange
+    /// The whole word, past the caret too: a pick replaces all of it, so "/a|rsenstorm" becomes "/animations".
+    let word: NSRange
 }
 
 enum ComposeKey { case up, down, accept, dismiss }
@@ -136,7 +139,10 @@ struct ComposeField: NSViewRepresentable {
             guard start < caret.location else { return nil }
             let word = text.substring(with: NSRange(location: start, length: caret.location - start))
             guard let symbol = word.first, symbol == "/" || symbol == "@" else { return nil }
-            return MentionTrigger(symbol: symbol, query: String(word.dropFirst()), range: NSRange(location: start, length: caret.location - start))
+            var end = caret.location
+            while end < text.length, let scalar = UnicodeScalar(text.character(at: end)), !CharacterSet.whitespacesAndNewlines.contains(scalar) { end += 1 }
+            return MentionTrigger(symbol: symbol, query: String(word.dropFirst()), range: NSRange(location: start, length: caret.location - start),
+                                  word: NSRange(location: start, length: end - start))
         }
 
         /// Tokens in semibold dark yellow; their rounded yellow pills are drawn by the view behind the text.

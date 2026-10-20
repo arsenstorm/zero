@@ -116,14 +116,17 @@ final class InboxController {
         return true
     }
 
-    /// Replaces the typed word with the suggestion and a space, and puts the caret after it.
+    /// Replaces the whole word under the caret with the suggestion, adds a space unless one already follows,
+    /// and puts the caret after that space.
     func acceptMention(_ index: Int) {
         guard let state = mention, state.items.indices.contains(index) else { return }
-        let insert = state.items[index].insert + " "
         let text = drafts[state.key, default: ""] as NSString
-        guard NSMaxRange(state.trigger.range) <= text.length else { mention = nil; return }
-        drafts[state.key] = text.replacingCharacters(in: state.trigger.range, with: insert)
-        caretRequest[state.key] = state.trigger.range.location + (insert as NSString).length
+        let word = state.trigger.word
+        guard NSMaxRange(word) <= text.length else { mention = nil; return }
+        let spaced = NSMaxRange(word) < text.length && text.substring(with: NSRange(location: NSMaxRange(word), length: 1)).rangeOfCharacter(from: .whitespacesAndNewlines) != nil
+        let insert = state.items[index].insert + (spaced ? "" : " ")
+        drafts[state.key] = text.replacingCharacters(in: word, with: insert)
+        caretRequest[state.key] = word.location + (insert as NSString).length + (spaced ? 1 : 0)
         mention = nil
     }
 
