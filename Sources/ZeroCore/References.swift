@@ -3,16 +3,14 @@ import Foundation
 /// Linear issues ("OPS-3096", "eng-9559"), pull requests ("#12846", "app#12846") and commits ("064c6bb7b5") in
 /// what agents write, as links.
 public enum References {
-    // ponytail: Acme's workspace and team keys; Settings fields when Zero has a second Linear user.
-    public static let linearWorkspace = "acme"
-    /// Only these prefixes are issues, so "UTF-8" and "SHA-256" stay text.
-    static let linearTeams: Set<String> = ["ENG", "OPS", "WEB"]
     private static let pattern = try! NSRegularExpression(pattern:
         #"\b([A-Za-z]{1,5})-(\d+)\b|(?:\b([\w.-]+/[\w.-]+|[\w.-]+))?#(\d+)\b|\b([0-9a-f]{7,40})\b"#)
 
     /// Each reference's range in `text` (UTF-16, as NSString counts) and where it goes. A bare "#123" or commit
-    /// needs `repo` ("owner/name"); "name#123" takes `repo`'s owner. `linearApp` opens issues in Linear's app.
-    public static func find(in text: String, repo: String?, linearApp: Bool) -> [(range: NSRange, url: URL)] {
+    /// needs `repo` ("owner/name"); "name#123" takes `repo`'s owner. Issues are ids whose prefix is a team in
+    /// `linear` (team key → workspace URL key, from the connected workspaces), so "UTF-8" stays text.
+    /// `linearApp` opens them in Linear's app.
+    public static func find(in text: String, repo: String?, linear: [String: String], linearApp: Bool) -> [(range: NSRange, url: URL)] {
         let ns = text as NSString
         func group(_ match: NSTextCheckingResult, _ i: Int) -> String? {
             match.range(at: i).location == NSNotFound ? nil : ns.substring(with: match.range(at: i))
@@ -20,8 +18,8 @@ public enum References {
         return pattern.matches(in: text, range: NSRange(location: 0, length: ns.length)).compactMap { match in
             let link: String?
             if let team = group(match, 1)?.uppercased(), let number = group(match, 2) {
-                guard linearTeams.contains(team) else { return nil }
-                let path = "\(linearWorkspace)/issue/\(team)-\(number)"
+                guard let workspace = linear[team] else { return nil }
+                let path = "\(workspace)/issue/\(team)-\(number)"
                 link = linearApp ? "linear://\(path)" : "https://linear.app/\(path)"
             } else if let number = group(match, 4) {
                 let target: String? = switch group(match, 3) {

@@ -1588,7 +1588,7 @@ struct MarkdownText: View {
         repo = cwd.flatMap(References.repo(of:))
     }
 
-    private static let linearApp = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "linear://\(References.linearWorkspace)")!) != nil
+    private static let linearApp = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "linear://")!) != nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1629,7 +1629,7 @@ struct MarkdownText: View {
     /// Linear issues and pull requests become links, except inside `code` and links the agent already wrote.
     private func attributed(_ prose: String) -> AttributedString {
         var result = (try? AttributedString(markdown: prose, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(prose)
-        for (range, url) in References.find(in: String(result.characters), repo: repo, linearApp: Self.linearApp) {
+        for (range, url) in References.find(in: String(result.characters), repo: repo, linear: Linear.shared.teams, linearApp: Self.linearApp) {
             guard let span = Range(range, in: result) else { continue }
             let plain = result[span].runs.allSatisfy { $0.link == nil && !($0.inlinePresentationIntent?.contains(.code) ?? false) }
             if plain { result[span].link = url }

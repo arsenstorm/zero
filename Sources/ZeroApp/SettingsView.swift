@@ -236,6 +236,12 @@ private struct IntegrationsPage: View {
     @State private var plugin: Bool?
     @State private var pluginError: String?
     @State private var refreshing = false
+    @State private var connecting = false
+    @State private var linearError: String?
+
+    private var linearDetail: String {
+        Linear.shared.workspaces.isEmpty ? "Issue ids in messages open in Linear." : "Connect another workspace."
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -260,6 +266,24 @@ private struct IntegrationsPage: View {
                 OnboardingRow(icon: "square.stack", picture: choiceIcon("solo"), title: "Solo", detail: "Starts agents and carries your messages.") {
                     Text(soloStatus).font(.system(size: 12)).foregroundStyle(.secondary)
                 }
+                OnboardingRow(icon: "link", title: "Linear", detail: linearDetail) {
+                    if connecting { ProgressView().controlSize(.small) }
+                    else {
+                        RowButton(title: "Connect") {
+                            connecting = true
+                            linearError = nil
+                            Task {
+                                linearError = await Linear.shared.connect { NSWorkspace.shared.open($0) }
+                                connecting = false
+                            }
+                        }
+                    }
+                }
+                ForEach(Linear.shared.workspaces) { workspace in
+                    OnboardingRow(icon: "building.2", title: workspace.name, detail: "Teams \(workspace.teams.joined(separator: ", ")).") {
+                        RowButton(title: "Remove") { Linear.shared.remove(workspace.urlKey) }
+                    }
+                }
                 OnboardingRow(icon: "list.bullet", title: "Claude models", detail: account.map { "For \($0)." } ?? "For your Claude Code account.") {
                     if refreshing { ProgressView().controlSize(.small) }
                     else {
@@ -274,6 +298,7 @@ private struct IntegrationsPage: View {
                 }
             }
             if let pluginError { Text(pluginError).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3) }
+            if let linearError { Text(linearError).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3) }
         }
         .task { plugin = await ClaudePlugin.isInstalled() }
     }

@@ -131,6 +131,7 @@ final class Panel: NSPanel {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         do { try server.start() } catch { NSLog("zero: server failed: \(error)") }
+        Task { await Linear.shared.refresh() }
         let serverChanged = store.onChange
         store.onChange = { [weak self] ask in serverChanged?(ask); self?.drops.changed(ask) }
         store.onCreate = { [weak self] ask in self?.arrived(ask) }
