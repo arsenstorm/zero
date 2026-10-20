@@ -83,7 +83,7 @@ struct SettingsView: View {
             Theme.knob.mask(LinearGradient(stops: ProgressiveBlur<EmptyView>.eased, startPoint: .top, endPoint: .bottom))
             ProgressiveBlur { Blueprint().foregroundStyle(Theme.onKnob) }
             HStack(spacing: 8) {
-                ZeroMark(small: true).frame(width: 21, height: 20)
+                ZeroMark(small: true).frame(width: 28, height: 27)
                 Text("Zero").font(.system(size: 17, weight: .semibold))
             }
             .foregroundStyle(Theme.onKnob)
