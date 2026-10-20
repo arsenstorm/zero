@@ -18,6 +18,9 @@ public enum ClaudeModels {
     }
 
     /// What we know right now, without touching the network.
+    /// True once the models endpoint has answered for the signed-in account.
+    public static var hasCache: Bool { accountID().flatMap { UserDefaults.standard.data(forKey: "claudeModels." + $0) } != nil }
+
     public static func cached() -> [SpawnChoice] {
         let fromAPI = (accountID().flatMap { UserDefaults.standard.data(forKey: "claudeModels." + $0) })
             .flatMap { try? JSONDecoder().decode([Entry].self, from: $0) } ?? []

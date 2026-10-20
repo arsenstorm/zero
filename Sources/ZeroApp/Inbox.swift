@@ -228,6 +228,7 @@ final class InboxController {
             spawn()
         } else if key.hasPrefix("msg:") {
             let agent = String(key.dropFirst(4))
+            if text.hasPrefix("/") { NSApp.keyWindow?.makeFirstResponder(nil) } // the screen that opens takes the keys
             Task { await store.message(text, to: agent) }
         } else if let index = textOption[key] {
             textOption[key] = nil
@@ -273,7 +274,9 @@ final class InboxController {
                 if spawnTarget == nil || !targets.contains(where: { $0.id == spawnTarget }) { spawnTarget = targets.first?.id }
                 if spawnRuntime == nil || !runtimes.contains(where: { $0.id == spawnRuntime }) { spawnRuntime = runtimes.first?.id }
             }
-            if await adapter.refreshModels() {
+            // Only when there is no list for this account yet: the refresh reads Claude Code's sign-in from the
+            // Keychain, and macOS asks about that every time Claude Code rewrites the item. Settings has a button.
+            if !ClaudeModels.hasCache, await adapter.refreshModels() {
                 modelsVersion += 1
                 if let selector { selector.sections = selectorSections(for: selector.kind) }
             }
@@ -341,9 +344,10 @@ final class InboxController {
             hide()
             return true
         }
-        if editing || !event.modifierFlags.intersection([.command, .control, .option]).isEmpty { return false }
+        if !event.modifierFlags.intersection([.command, .control, .option]).isEmpty { return false }
         if let agent = agentFilter, store.screens[agent] != nil {
-            // The screen has the keyboard: arrows, Enter and any character go to the agent's terminal.
+            // The screen has the keyboard, whatever had focus: arrows, Enter and any character go to the agent's
+            // terminal. (With the message box still focused after sending "/resume", nothing reached the picker.)
             let keys: [UInt16: [UInt8]] = [126: [27, 91, 65], 125: [27, 91, 66], 123: [27, 91, 68], 124: [27, 91, 67], 36: [13], 51: [127]]
             if let bytes = keys[event.keyCode] { store.press(bytes, on: agent); return true }
             if let scalar = key.unicodeScalars.first, !CharacterSet.controlCharacters.contains(scalar) {
@@ -352,6 +356,7 @@ final class InboxController {
             }
             return false
         }
+        if editing { return false }
         switch event.keyCode {
         case 126: move(-1); return true
         case 125: move(1); return true

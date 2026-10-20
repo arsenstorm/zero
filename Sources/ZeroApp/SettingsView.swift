@@ -77,6 +77,9 @@ struct SettingsView: View {
                     if let account = adapter.spawnNote(for: SpawnChoice(id: "", name: "Claude")) {
                         LabeledContent("Claude account") { Text(account).foregroundStyle(.secondary) }
                         Text("New Claude agents run under this account. Switching accounts stays with your switcher for now.").font(.caption).foregroundStyle(.secondary)
+                        Button("Refresh model list") { Task { if await adapter.refreshModels() { inbox.modelsVersion += 1 } } }
+                        Text("Asks Anthropic for this account's models. It reads Claude Code's sign-in from the Keychain, which macOS may ask you to allow; Zero never does this on its own.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 Text("How Zero delivers your messages into an agent's session.").font(.caption).foregroundStyle(.secondary)
