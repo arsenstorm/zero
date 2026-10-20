@@ -251,7 +251,7 @@ private struct AgentsStep: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            OnboardingRow(icon: "sparkle", picture: choiceIcon("claude"), title: "Claude Code", detail: "The plugin makes Claude agents ask you here.") {
+            OnboardingRow(icon: "sparkle", picture: choiceIcon("claude"), title: "Claude Code", detail: "Questions, approvals and progress come to your inbox.") {
                 switch (check.claude, check.plugin) {
                 case (false, _): RowButton(title: "Not installed", enabled: false)
                 case (true, true): Label("Plugin added", systemImage: "checkmark.circle.fill").font(.system(size: 12, weight: .medium)).foregroundStyle(.green)
@@ -261,7 +261,7 @@ private struct AgentsStep: View {
             }
             if let error = check.pluginError { Text(error).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
             Divider()
-            OnboardingRow(icon: "chevron.left.forwardslash.chevron.right", picture: choiceIcon("openai"), title: "Codex", detail: "Zero starts Codex agents.") {
+            OnboardingRow(icon: "chevron.left.forwardslash.chevron.right", picture: choiceIcon("openai"), title: "Codex", detail: "Start Codex agents from Zero's composer.") {
                 RowButton(title: check.codex == false ? "Not installed" : "Coming soon", enabled: false)
             }
         }
