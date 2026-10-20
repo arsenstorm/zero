@@ -1,10 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1342 1284" fill="none">
   <title>Protruding cube outline</title>
   <g stroke="#000000" stroke-width="16.0" stroke-linejoin="round" stroke-linecap="round">
-    <!-- Rear edges exposed by the three displaced faces -->
+    <!-- Rear edges exposed by the three displaced faces, pushed out from the centre for a wider gap -->
+    <g transform="translate(671 588) scale(1.07) translate(-671 -588)">
     <path d="M344 346 L316 330 Q309 325 317 320 L666 116 Q672 112 678 116 L1026 320 Q1034 325 1027 330 L1000 346"/>
     <path d="M280 456 L251 439 Q243 435 243 445 L243 850 Q243 855 249 859 L598 1060 Q608 1066 608 1055 L608 1023"/>
     <path d="M1064 456 L1092 439 Q1100 435 1100 445 L1100 850 Q1100 855 1094 859 L745 1060 Q735 1066 735 1055 L735 1023"/>
+    </g>
     <!-- Three independently offset faces -->
     <path d="M285 379 L635 176 Q645 170 645 182 L645 581 Q645 591 636 596 L290 797 Q280 803 280 791 L280 389 Q280 382 285 379 Z"/>
     <path d="M709 176 L1059 379 Q1064 382 1064 389 L1064 791 Q1064 803 1054 797 L708 596 Q699 591 699 581 L699 182 Q699 170 709 176 Z"/>
