@@ -24,6 +24,8 @@ public final class Linear {
 
     public static let shared = Linear()
     public private(set) var workspaces: [Workspace] = []
+    /// Moves when a logo lands on disk, so views showing one read it again.
+    public private(set) var logos = 0
 
     init() { workspaces = Keychain.load() }
 
@@ -59,6 +61,7 @@ public final class Linear {
             workspaces.removeAll { $0.urlKey == workspace.urlKey }
             workspaces.append(workspace)
             Keychain.save(workspaces)
+            await cacheLogo(workspace)
             return nil
         } catch {
             return "Couldn't connect Linear: \(error.localizedDescription)"
@@ -68,6 +71,21 @@ public final class Linear {
     public func remove(_ urlKey: String) {
         workspaces.removeAll { $0.urlKey == urlKey }
         Keychain.save(workspaces)
+        try? FileManager.default.removeItem(at: Self.logoFile(urlKey))
+    }
+
+    /// Each workspace's logo, kept on disk so the connections sheet shows it straight away.
+    public nonisolated static func logoFile(_ urlKey: String) -> URL {
+        Paths.dir.appendingPathComponent("linear").appendingPathComponent("\(urlKey).logo")
+    }
+
+    private func cacheLogo(_ workspace: Workspace) async {
+        guard let url = workspace.logo, let (data, response) = try? await URLSession.shared.data(from: url),
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return }
+        let file = Self.logoFile(workspace.urlKey)
+        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: file)
+        logos += 1
     }
 
     /// New teams since the last look, refreshing tokens on the way. A workspace that refuses stays as it was.
@@ -75,6 +93,7 @@ public final class Linear {
         for (index, workspace) in workspaces.enumerated() {
             guard let fresh = try? await Self.updated(workspace) else { continue }
             workspaces[index] = fresh
+            await cacheLogo(fresh)
         }
         Keychain.save(workspaces)
     }

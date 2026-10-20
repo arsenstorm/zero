@@ -364,13 +364,15 @@ private struct LinearConnections: View {
     }
 }
 
-/// The workspace's own logo from Linear, or its initial on a tile while that loads or when it has none.
+/// The workspace's own logo, from Zero's copy of it, or its initial on a tile when it has none.
 private struct WorkspaceLogo: View {
     let workspace: Linear.Workspace
     var body: some View {
-        AsyncImage(url: workspace.logo) { phase in
-            if let image = phase.image { image.resizable().aspectRatio(contentMode: .fill) }
-            else {
+        let _ = Linear.shared.logos
+        Group {
+            if let image = NSImage(contentsOf: Linear.logoFile(workspace.urlKey)) {
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+            } else {
                 Text(workspace.name.prefix(1).uppercased()).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.keycap)
             }
