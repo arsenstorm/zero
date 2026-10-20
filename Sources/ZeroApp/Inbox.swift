@@ -674,7 +674,7 @@ struct AgentTimeline: View {
 
     private func summary(_ ask: Ask) -> String {
         switch ask.kind {
-        case .note: return ask.body
+        case .note: return ask.body.split(whereSeparator: \.isNewline).first.map(String.init) ?? ask.body // one line, not a paragraph cut mid-way
         case .message: return "You: " + ask.body
         case .run: return "\(ask.title) · " + (ask.state == .declined ? "rejected" : "ran, exit \(ask.exitCode ?? 0)")
         default: return "\(ask.title) · " + (ask.state == .declined ? "rejected" : (ask.answer ?? "answered"))

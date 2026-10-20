@@ -527,12 +527,34 @@ enum Preview {
         empty.spawnRuntimes = [SpawnChoice(id: "6", name: "Claude"), SpawnChoice(id: "7", name: "Codex")]
         empty.spawnTarget = "10"; empty.spawnRuntime = "6"
         write(ComposerPreview(controller: empty).padding(12).background(Color(white: 0.5)), "composer.png")
+        // An agent's conversation: a reply card with Markdown, and a sent message still waiting.
+        let chat = Store(logURL: nil)
+        let claude = AgentIdentity(name: "claude-7", host: "mac", soloProcessID: 7, soloProjectID: 13, label: "Checkout spec fix")
+        var first = Ask(kind: .message, title: "Message", body: "fix the flaky checkout spec", agent: claude); first.status = "sent"
+        _ = chat.create(first)
+        var reply = Ask(kind: .note, title: "Replied", body: "Found it: the spec raced the mailer.\n\n```ruby\nperform_enqueued_jobs do\n  post :create\nend\n```\n\nPushed as `a1b2c3`.", agent: claude)
+        reply.status = "done"
+        _ = chat.create(reply)
+        let talking = InboxController(store: chat)
+        talking.agentFilter = "claude-7"
+        write(TimelinePreview(controller: talking).padding(12).background(Color(white: 0.5)), "chat.png")
+        var second = Ask(kind: .message, title: "Message", body: "and the retry logic?", agent: claude); second.status = "sent"
+        _ = chat.create(second)
+        write(TimelinePreview(controller: talking).padding(12).background(Color(white: 0.5)), "chat-waiting.png")
         // The model selector, on real catalogues.
         let selector = SelectorState(kind: .runtime)
         selector.sections = empty.selectorSections(for: .runtime)
         selector.tab = selector.sections.first?.id
         selector.highlighted = selector.sections.first?.rows.first?.id
         write(SelectorView(controller: empty, state: selector).padding(12).background(Color(white: 0.5)), "selector.png")
+    }
+}
+
+private struct TimelinePreview: View {
+    @Bindable var controller: InboxController
+    @FocusState private var focus: String?
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) { AgentTimeline(controller: controller, focus: $focus) }.frame(width: 380)
     }
 }
 
