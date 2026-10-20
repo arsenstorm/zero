@@ -254,16 +254,16 @@ private struct AgentsStep: View {
     private var claudeDetail: String {
         switch claude {
         case .none: return "Looking…"
-        case .some(.none): return "Not found on this Mac. Install Claude Code, then return to this step."
-        case .some(.some(let version)): return "Version \(version.versionNumber). " + (plugin == true ? "Agents Zero starts ask you here." : "The Zero plugin makes agents ask you here.")
+        case .some(.none): return "Not installed on this Mac."
+        case .some(.some): return plugin == true ? "Claude agents ask you here." : "The plugin makes Claude agents ask you here."
         }
     }
 
     private var codexDetail: String {
         switch codex {
         case .none: return "Looking…"
-        case .some(.none): return "Not found on this Mac."
-        case .some(.some(let version)): return "Version \(version.versionNumber). Zero starts Codex agents."
+        case .some(.none): return "Not installed on this Mac."
+        case .some(.some): return "Zero starts Codex agents."
         }
     }
 }
@@ -340,22 +340,31 @@ enum ShellTool {
     }
 }
 
-private extension String {
-    /// "2.1.304 (Claude Code)" and "codex-cli 0.160.1" both read "2.1.304", "0.160.1".
-    var versionNumber: String {
-        range(of: #"\d+(\.\d+)+"#, options: .regularExpression).map { String(self[$0]) } ?? self
+/// The bar in miniature, as it sits on the screen: the screen's edge runs down the right, curves into the bar's
+/// top, round its left side and bottom, and curves back out into the edge.
+private struct BarGlyph: View {
+    var body: some View {
+        // The tray symbol's size and weight, centred in the same slot, so the two read as a pair.
+        BarOutline().stroke(.secondary, style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
+            .frame(width: 16, height: 18)
     }
 }
 
-/// The bar in miniature: a capsule standing on its end with three agents' dots in it, one of them needing you.
-private struct BarGlyph: View {
-    var body: some View {
-        VStack(spacing: 2.5) {
-            Circle().fill(.blue).frame(width: 4, height: 4)
-            Circle().fill(.orange).frame(width: 4, height: 4)
-            Circle().fill(.green).frame(width: 4, height: 4)
-        }
-        .frame(width: 10, height: 22)
-        .overlay(Capsule().strokeBorder(.secondary, lineWidth: 1.2))
+private struct BarOutline: Shape {
+    func path(in rect: CGRect) -> Path {
+        let edge = rect.maxX - 0.6, width: CGFloat = 12, fillet: CGFloat = 3
+        let top = rect.minY + 3, bottom = rect.maxY - 3, left = edge - width, radius: CGFloat = 5
+        var path = Path()
+        path.move(to: CGPoint(x: edge, y: rect.minY))
+        path.addLine(to: CGPoint(x: edge, y: top - fillet))
+        path.addQuadCurve(to: CGPoint(x: edge - fillet, y: top), control: CGPoint(x: edge, y: top))
+        path.addLine(to: CGPoint(x: left + radius, y: top))
+        path.addQuadCurve(to: CGPoint(x: left, y: top + radius), control: CGPoint(x: left, y: top))
+        path.addLine(to: CGPoint(x: left, y: bottom - radius))
+        path.addQuadCurve(to: CGPoint(x: left + radius, y: bottom), control: CGPoint(x: left, y: bottom))
+        path.addLine(to: CGPoint(x: edge - fillet, y: bottom))
+        path.addQuadCurve(to: CGPoint(x: edge, y: bottom + fillet), control: CGPoint(x: edge, y: bottom))
+        path.addLine(to: CGPoint(x: edge, y: rect.maxY))
+        return path
     }
 }
