@@ -292,7 +292,8 @@ public struct SoloAdapter: AgentAdapter {
         let processes = try await resultJSON(of: call(tool: "list_processes", arguments: ["project_id": projectID])) as? [[String: Any]] ?? []
         let executable = command?.split(separator: " ").first.map(String.init)
         return processes.first { process in
-            guard (process["kind"] as? String) == "agent", (process["status"] as? String) == "Exited" else { return false }
+            // "Exited" ended on its own, "Stopped" was stopped in Solo; either one is free to start again.
+            guard (process["kind"] as? String) == "agent", ["Exited", "Stopped"].contains((process["status"] as? String) ?? "") else { return false }
             guard let executable else { return true }
             return ((process["command"] as? String) ?? "").split(separator: " ").first.map(String.init) == executable
         }

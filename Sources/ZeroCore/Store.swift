@@ -51,7 +51,9 @@ public final class Store {
         let message = create(item)
         started(provisional.name)
         do {
-            let identity = try await adapter.spawn(prompt: prompt, target: target, runtime: runtime, model: model, settings: settings)
+            var identity = try await adapter.spawn(prompt: prompt, target: target, runtime: runtime, model: model, settings: settings)
+            // Solo's own session titles are not in its API, so the label is the gist of what Arsen asked.
+            identity.label = Self.gist(of: prompt) ?? "\(runtime.name) \(identity.soloProcessID.map(String.init) ?? "")".trimmingCharacters(in: .whitespaces)
             rebind(provisional.name, to: identity)
             update(message.id) { $0.status = "sent" }
             if let sent = ask(message.id) { log(sent) }
@@ -64,6 +66,15 @@ public final class Store {
             if let gone = ask(message.id) { log(gone) }
             throw error
         }
+    }
+
+    /// The first line of a prompt, cut to five words, as an agent's label; nil when it is too short to name anything.
+    nonisolated public static func gist(of prompt: String) -> String? {
+        let line = prompt.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        let words = line.split(separator: " ").map { $0.trimmingCharacters(in: .punctuationCharacters.subtracting(["'"])) }.filter { !$0.isEmpty }
+        guard words.count >= 3 else { return nil }
+        let kept = words.prefix(5).joined(separator: " ")
+        return kept.prefix(1).uppercased() + kept.dropFirst() + (words.count > 5 ? "…" : "")
     }
 
     /// Moves everything recorded under a provisional agent to the identity the adapter reported.
