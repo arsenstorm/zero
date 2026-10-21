@@ -146,6 +146,14 @@ final class Panel: NSPanel {
         inbox.presentSelector = { [weak self] anchor in self?.showSelector(anchorInInbox: anchor) }
         inbox.dismissSelector = { [weak self] in self?.hideSelector() }
         makePanels()
+        // Whatever put it there (a click, picking "Something else…", a key), a text box in the inbox holding the
+        // keyboard makes Zero the active app, so dictation and paste tools that target the active app land in it.
+        responderWatch = inboxPanel.observe(\.firstResponder, options: [.new]) { [weak self] panel, _ in
+            MainActor.assumeIsolated {
+                guard panel.firstResponder is NSTextView else { return }
+                self?.activateForTyping()
+            }
+        }
         makeStatusItem()
         applySettings()
         settings.onChange = { [weak self] in self?.applySettings() }
@@ -449,6 +457,8 @@ final class Panel: NSPanel {
         main.addItem(edit)
         return main
     }
+
+    private var responderWatch: NSKeyValueObservation?
 
     /// The app that was in front before Zero took it for typing; it comes back when the inbox closes.
     private var returnTo: NSRunningApplication?
