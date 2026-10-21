@@ -202,7 +202,9 @@ case "prompt":
     else {
         // Zero's own inbox messages look typed; Zero knows what it sent. Unknown without Zero: treat as typed.
         let socket = try? UnixSocket.connect(path: Paths.socket)
-        try? socket?.send(Request(op: "prompt", ask: Ask(kind: .message, title: "Prompt", body: prompt, agent: agentIdentity())))
+        var identity = agentIdentity()
+        identity.session = session.isEmpty ? nil : session // so Zero can name the agent by its session's title
+        try? socket?.send(Request(op: "prompt", ask: Ask(kind: .message, title: "Prompt", body: prompt, agent: identity)))
         source = socket?.receive(Response.self)?.message ?? "human"
     }
     try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

@@ -277,6 +277,14 @@ public final class Store {
     /// and "human" comes back. Runs stay open: only Arsen can run them, whatever he typed.
     public func prompted(_ identity: AgentIdentity, text: String) -> String {
         let name = resolve(identity)
+        // The hook knows the agent's Claude session, which an agent reaching Zero through the CLI never said:
+        // with it, the agent is named by its session's title instead of its process number.
+        if let session = identity.session, var known = self.identity(of: name), known.session != session {
+            known.session = session
+            known.label = nil
+            rebind(name, to: known)
+            Task { await relabel(known) }
+        }
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let recent = (sent[name] ?? []).filter { Date().timeIntervalSince($0.at) < 600 }
         if recent.contains(where: { clean.hasPrefix(String($0.text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120))) }) { return "zero" }

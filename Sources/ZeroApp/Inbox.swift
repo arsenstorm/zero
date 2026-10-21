@@ -1228,6 +1228,7 @@ struct CardView: View {
 
     @State private var commandExpanded = false
     @State private var scriptExpanded = false
+    @State private var detailExpanded = false
     /// False until the entrance has played; cards already seen start true.
     @State private var entered = false
     /// Heights of the command box and the options while waiting; the terminal takes exactly their space.
@@ -1240,7 +1241,8 @@ struct CardView: View {
         switch ask.kind {
         case .note, .message: return nil
         case .run: return ask.title == "Run a command" ? nil : ask.title
-        case .permission: return nil
+        // An approval's title is the request itself, the headline; its body is the detail beneath.
+        case .permission, .approve: return nil
         default: return ask.body.isEmpty ? nil : ask.title
         }
     }
@@ -1269,6 +1271,7 @@ struct CardView: View {
             default: return "Allow this command?"
             }
         case .permission: return ask.title + "?"
+        case .approve: return ask.title.hasSuffix("?") ? ask.title : ask.title + "?"
         case .note, .message: return ask.body
         default: return ask.body.isEmpty ? ask.title : ask.body
         }
@@ -1328,10 +1331,14 @@ struct CardView: View {
                 MarkdownText(ask.body, cwd: ask.agent.cwd ?? ask.cwd)
                 if ask.status == "blocked" { Text("Blocked").font(.system(size: 11, weight: .medium)).foregroundStyle(.red) }
             }
-            // Why the agent wants it, in its own words.
-            if (ask.kind == .run || ask.kind == .permission) && !ask.body.isEmpty {
+            // Why the agent wants it, or what it found, in its own words: six lines, the rest a click away.
+            if [.run, .permission, .approve].contains(ask.kind) && !ask.body.isEmpty {
                 Text(ask.body).font(.system(size: 13)).foregroundStyle(.secondary).textSelection(.enabled)
-                    .lineLimit(6).fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(detailExpanded ? nil : 6).fixedSize(horizontal: false, vertical: true)
+                if ask.body.count > 360 {
+                    Button(detailExpanded ? "Show less" : "Show more") { detailExpanded.toggle() }
+                        .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                }
             }
             if ask.kind == .run && (ask.state == .running || ask.state == .answered) {
                 terminal
