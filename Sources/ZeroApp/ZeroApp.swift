@@ -141,6 +141,7 @@ final class Panel: NSPanel {
         store.onChange = { [weak self] ask in serverChanged?(ask); self?.drops.changed(ask) }
         store.onCreate = { [weak self] ask in self?.arrived(ask) }
         inbox.hide = { [weak self] in self?.hideInbox() }
+        inbox.onTyping = { [weak self] typing in if typing { self?.activateForTyping() } }
         inbox.presentSelector = { [weak self] anchor in self?.showSelector(anchorInInbox: anchor) }
         inbox.dismissSelector = { [weak self] in self?.hideSelector() }
         makePanels()
@@ -423,8 +424,24 @@ final class Panel: NSPanel {
         inbox.requestScroll()
     }
 
+    /// The app that was in front before Zero took it for typing; it comes back when the inbox closes.
+    private var returnTo: NSRunningApplication?
+
+    /// The panel takes keys without making Zero the active app, but dictation and clipboard tools (Raycast,
+    /// macOS dictation) type or paste into the active app. While Arsen types in the inbox, Zero is that app.
+    private func activateForTyping() {
+        guard !NSApp.isActive else { return }
+        returnTo = NSWorkspace.shared.frontmostApplication
+        NSApp.activate()
+        inboxPanel.makeKey()
+    }
+
     private func hideInbox() {
         inboxPanel.orderOut(nil)
+        if let app = returnTo, NSApp.isActive, settingsWindow?.isVisible != true, onboardingWindow?.isVisible != true {
+            app.activate()
+        }
+        returnTo = nil
         inbox.agentFilter = nil
         openedByIntent = false
         inbox.pinned = false

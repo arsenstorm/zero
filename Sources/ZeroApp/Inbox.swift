@@ -10,7 +10,9 @@ final class InboxController {
     let dictation = Dictation()
     var selected: String?
     var drafts: [String: String] = [:]
-    var focusedReply: String?
+    var focusedReply: String? { didSet { if (focusedReply != nil) != (oldValue != nil) { onTyping?(focusedReply != nil) } } }
+    /// Told when a text box in the inbox gains or loses focus, so Zero can be the active app while Arsen types.
+    @ObservationIgnored var onTyping: ((Bool) -> Void)?
     var dictatingFor: String?
     var agentFilter: String?
     /// True while the inbox is pinned open by a click; the pinned control shows a pin badge.
