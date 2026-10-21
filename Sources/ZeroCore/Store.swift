@@ -193,10 +193,8 @@ public final class Store {
     /// Types an answer into the session of an agent that asked with --async and so isn't waiting for it.
     /// Its delivery shows on the answer: sending, then delivered, or failed (and `retry` tries again).
     public func deliverAnswer(_ id: String) {
-        guard let ask = ask(id), ask.waits == false, ask.kind != .run, ask.state == .answered || ask.state == .declined else { return }
-        let text = ask.state == .answered
-            ? "Arsen answered your ask \(id) (\"\(ask.title)\"): \(ask.answer ?? "")"
-            : "Arsen declined your ask \(id) (\"\(ask.title)\")" + (ask.answer.map { ": \($0)" } ?? ".")
+        guard let ask = ask(id), ask.waits == false, [.answered, .declined, .expired].contains(ask.state) else { return }
+        let text = Self.deliveryText(ask)
         update(id) { $0.delivery = .sending }
         Task {
             do {
@@ -208,6 +206,30 @@ public final class Store {
             }
             if let ask = self.ask(id) { log(ask) }
         }
+    }
+
+    /// What an agent that isn't waiting is told: the answer, or for a run, whether it ran, its exit code and the
+    /// end of its output, since that is what the agent asked for.
+    static func deliveryText(_ ask: Ask) -> String {
+        let id = ask.id
+        if ask.state == .expired {
+            return "Your ask \(id) (\"\(ask.title)\") expired without an answer from Arsen. Decide without it or ask again."
+        }
+        guard ask.kind == .run else {
+            return ask.state == .answered
+                ? "Arsen answered your ask \(id) (\"\(ask.title)\"): \(ask.answer ?? "")"
+                : "Arsen declined your ask \(id) (\"\(ask.title)\")" + (ask.answer.map { ": \($0)" } ?? ".")
+        }
+        let command = ask.command ?? ""
+        guard ask.state == .answered else {
+            return "Arsen rejected your command \(id) (`\(command)`)" + (ask.answer.map { ": \($0)" } ?? ".")
+        }
+        let code = ask.exitCode ?? 0
+        let lines = ask.output.split(separator: "\n", omittingEmptySubsequences: false).suffix(40).joined(separator: "\n")
+        let tail = String(lines.suffix(3000)).trimmingCharacters(in: .whitespacesAndNewlines)
+        let verdict = code == 0 ? "It succeeded (exit 0)." : "It FAILED with exit \(code)."
+        return "Arsen ran your command \(id) (`\(command)`). \(verdict) "
+            + (tail.isEmpty ? "It printed nothing." : "Last of its output:\n```\n\(tail)\n```")
     }
 
     /// Connects to the agent's session and types `text` into it.
@@ -262,13 +284,16 @@ public final class Store {
         log(ask)
         onCreate?(ask)
         guard ask.kind != .note, ask.kind != .message else { return ask }
-        let id = ask.id
+        scheduleExpiry(ask.id, in: ttl)
+        return ask
+    }
+
+    private func scheduleExpiry(_ id: String, in seconds: TimeInterval) {
         timers["expire-" + id] = Task {
-            try? await Task.sleep(for: .seconds(ttl))
+            try? await Task.sleep(for: .seconds(max(0, seconds)))
             guard !Task.isCancelled else { return }
             self.expire(id)
         }
-        return ask
     }
 
     /// Picks option `index` (0-based). The second option of approve/run means decline.
@@ -368,7 +393,7 @@ public final class Store {
             if let exitCode { $0.exitCode = exitCode }
         }
         if let ask = ask(id) { log(ask) }
-        if state == .answered || state == .declined { deliverAnswer(id) }
+        if state == .answered || state == .declined || state == .expired { deliverAnswer(id) }
     }
 
     private func update(_ id: String, _ change: (inout Ask) -> Void) {
@@ -449,14 +474,18 @@ public final class Store {
         for ask in all { latestPerAgent[ask.agent.name] = ask.id }
         asks = all.compactMap { ask in
             var ask = ask
-            if !ask.state.isFinal {
+            // A relaunch doesn't end what agents are waiting for: an open ask runs on to its own expiry. A
+            // staged answer was about to land, so it waits again; a command that was running died with Zero.
+            if ask.state == .pending { ask.state = .waiting; ask.answer = nil; ask.choice = nil }
+            if ask.state == .running {
                 ask.state = .expired
                 ask.answeredAt = Date()
                 log(ask)
-                return ask
             }
+            if ask.state == .waiting { return ask }
             let recent = (ask.answeredAt ?? ask.createdAt) > cutoff
             return recent || latestPerAgent[ask.agent.name] == ask.id ? ask : nil
         }
+        for ask in asks where ask.state == .waiting { scheduleExpiry(ask.id, in: ask.expiresAt.timeIntervalSinceNow) }
     }
 }

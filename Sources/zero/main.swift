@@ -63,8 +63,23 @@ func agentIdentity() -> AgentIdentity {
                          ticket: flag("ticket"))
 }
 
-func follow(_ socket: UnixSocket) -> Never {
-    while let response = socket.receive(Response.self) {
+/// Prints the ask's progress and exits with its outcome. If Zero.app goes away mid-wait (it was restarted, say),
+/// reconnects for up to ten minutes and waits on the same ask, since Zero keeps open asks across a relaunch.
+func follow(_ first: UnixSocket, id: String) -> Never {
+    var socket = first
+    var lost: Date?
+    while true {
+        guard let response = socket.receive(Response.self) else {
+            let since = lost ?? Date()
+            lost = since
+            guard Date().timeIntervalSince(since) < 600 else { fail("zero: Zero.app closed the connection") }
+            Thread.sleep(forTimeInterval: 2)
+            guard let again = try? UnixSocket.connect(path: Paths.socket) else { continue }
+            socket = again
+            try? socket.send(Request(op: "wait", id: id))
+            continue
+        }
+        lost = nil
         switch response.op {
         case "output":
             if let chunk = response.chunk { FileHandle.standardOutput.write(Data(chunk.utf8)) }
@@ -94,7 +109,6 @@ func follow(_ socket: UnixSocket) -> Never {
             break
         }
     }
-    fail("zero: Zero.app closed the connection")
 }
 
 func create(_ ask: Ask) -> Never {
@@ -103,7 +117,7 @@ func create(_ ask: Ask) -> Never {
     guard let reply = socket.receive(Response.self), reply.op == "created", let id = reply.id else { fail("zero: no reply from Zero.app") }
     if async { print(id); exit(0) }
     stderr("zero: waiting on ask \(id)")
-    follow(socket)
+    follow(socket, id: id)
 }
 
 switch command {
@@ -139,7 +153,7 @@ case "wait":
     guard let id = positional.first else { usage() }
     let socket = connect()
     try? socket.send(Request(op: "wait", id: id))
-    follow(socket)
+    follow(socket, id: id)
 case "status":
     guard let id = positional.first else { usage() }
     let socket = connect()

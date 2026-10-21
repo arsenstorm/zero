@@ -123,3 +123,27 @@ private final class FakeRuntime: AgentAdapter, @unchecked Sendable {
     #expect(s.isClosed(agent.name))
     #expect(!s.canStop(agent.name)) // no adapter reaches it
 }
+
+@MainActor @Test func runResultsTellTheAgentTheExitCodeAndOutput() {
+    var run = Ask(kind: .run, title: "Count", command: "sh count.sh", agent: agent)
+    run.state = .answered
+    run.exitCode = 1
+    run.output = "count.sh: line 3: psql: command not found\n"
+    let text = Store.deliveryText(run)
+    #expect(text.contains("FAILED with exit 1") && text.contains("psql: command not found") && text.contains("sh count.sh"))
+    run.state = .declined
+    run.answer = "use the replica"
+    #expect(Store.deliveryText(run) == "Arsen rejected your command \(run.id) (`sh count.sh`): use the replica")
+}
+
+@MainActor @Test func openAsksSurviveARelaunchAndExpiryReachesAsyncAgents() {
+    let log = FileManager.default.temporaryDirectory.appendingPathComponent("asks-\(UUID()).jsonl")
+    defer { try? FileManager.default.removeItem(at: log) }
+    let first = Store(logURL: log)
+    let open = first.create(Ask(kind: .question, title: "Merge?", agent: agent))
+    let relaunched = Store(logURL: log)
+    #expect(relaunched.ask(open.id)?.state == .waiting)
+    var expired = Ask(kind: .question, title: "Merge?", agent: agent)
+    expired.state = .expired
+    #expect(Store.deliveryText(expired).contains("expired without an answer"))
+}
