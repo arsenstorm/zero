@@ -43,6 +43,9 @@ Blocking is the default because you need the answer to continue. When you cannot
 ## Writing the ask
 
 - The question is the headline: one line, under twelve words, ending in a question mark ("Commit the reworked title morph?"). Everything else (what you changed, how to check it, what's queued next) goes in `--body`, which shows in smaller text beneath it. Zero refuses a question over 140 characters. Why: it is read in a card beside a dozen others, at a glance; a paragraph as the headline buries the one thing he must decide.
+- `--body` is two or three plain sentences, 280 characters at most: what the problem is, what you recommend, and what it costs or risks. Zero refuses longer. Anything more (the full diff, the log, every case you checked) goes in a file; give its path. Why: he decides from the card; detail he has to dig through is detail he skips.
+- Write like you would say it to him: whole words and ordinary sentences. No abbreviations, no semicolon chains, no shorthand like "pre-fix cb grants [d,p] grp", no file:line lists unless the line is the point. Why: he reads a dozen cards at a glance, often between other things; a sentence he has to decode costs more than a longer one he doesn't.
+- Lead with what he needs to decide or know, not the history of how you got there.
 - A command, a snippet, or a path goes in `--code`, never in the question text. Why: Zero shows code in a monospace block; in prose it reads as a sentence and is easy to misread.
 - `--title` is the ticket id or the feature name, two or three words. It is context in the card's header, not a sentence.
 - Choices go in `--option`, never as (a)/(b)/(c) in the question: Zero refuses those, since he can only answer them by typing.

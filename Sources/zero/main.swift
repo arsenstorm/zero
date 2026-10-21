@@ -60,6 +60,12 @@ func shortHeadline(_ text: String) {
     fail("zero: keep the question to one short line (about 12 words, ending in ?) and put the details in --body; this one is \(text.count) characters")
 }
 
+/// The text under a question is two or three plain sentences; anything longer goes in a file the agent links.
+func shortDetail(_ text: String?, flag name: String) {
+    guard let text, text.count > 280 else { return }
+    fail("zero: keep --\(name) to two or three plain sentences (280 characters; this is \(text.count)): the problem, what you recommend and why. Put anything longer in a file and give its path")
+}
+
 func connect() -> UnixSocket {
     do { return try UnixSocket.connect(path: Paths.socket) } catch { fail("zero: Zero.app is not running (\(error))") }
 }
@@ -157,6 +163,7 @@ case "ask":
         fail("zero: put the choices in --option, one each (the first is the one you recommend), not as (a)/(b) in the question")
     }
     shortHeadline(question)
+    shortDetail(flag("body"), flag: "body")
     let title = flag("title") ?? flag("ticket") ?? question
     var ask = Ask(kind: options.isEmpty ? .question : .choice, title: title, body: title == question ? "" : question, options: options,
                   command: flag("code"), agent: agentIdentity(), ttl: ttl)
@@ -165,6 +172,7 @@ case "ask":
 case "approve":
     guard let what = positional.first else { usage() }
     shortHeadline(what)
+    shortDetail(flag("body"), flag: "body")
     create(Ask(kind: .approve, title: what, body: flag("body") ?? "", options: ["Yes", "No", "Suggest something else…"],
                command: flag("code"), agent: agentIdentity(), ttl: ttl))
 case "permission":
@@ -229,6 +237,7 @@ case "prompt":
 case "run":
     guard let shell = positional.first else { usage() }
     guard flag("why") != nil || flag("body") != nil else { fail("zero run needs --why: say what you need the output for, so Arsen knows what he is running") }
+    shortDetail(flag("why") ?? flag("body"), flag: "why")
     let folder = flag("cwd") ?? FileManager.default.currentDirectoryPath
     var run = Ask(kind: .run, title: flag("title") ?? flag("ticket") ?? "Run a command", body: flag("why") ?? flag("body") ?? "",
                   options: ["Run", "Reject", "Suggest something else…"], command: shell, cwd: folder, agent: agentIdentity(), ttl: ttl)

@@ -1359,12 +1359,30 @@ struct CardView: View {
             }
             // Why the agent wants it, or what it found, in its own words: six lines, the rest a click away.
             if let supporting, !supporting.isEmpty {
-                Text(supporting).font(.system(size: 13)).foregroundStyle(.secondary).textSelection(.enabled)
-                    .lineLimit(detailExpanded ? nil : 6).fixedSize(horizontal: false, vertical: true)
-                if supporting.count > 360 {
-                    Button(detailExpanded ? "Show less" : "Show more") { detailExpanded.toggle() }
-                        .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                // Three lines; a longer one fades out on its last line instead of being cut mid-word, and a
+                // click on the text opens it in place. No button and no extra row.
+                let long = supporting.count > 180
+                let folded = long && !detailExpanded
+                Group {
+                    // Folded, a click opens it; selecting text would take that click. Open, it is selectable.
+                    if folded {
+                        Text(supporting).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(3, reservesSpace: true)
+                    } else {
+                        Text(supporting).font(.system(size: 13)).foregroundStyle(.secondary).textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
+                    .mask {
+                        VStack(spacing: 0) {
+                            Color.black
+                            LinearGradient(colors: [.black, folded ? .clear : .black], startPoint: .top, endPoint: .bottom)
+                                .frame(height: 16)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { if long { withAnimation(.easeOut(duration: 0.2)) { detailExpanded.toggle() } } }
+                    .pointerStyle(long ? .link : nil)
+                    .help(long ? (detailExpanded ? "Click to fold" : "Click to read it all") : "")
             }
             if ask.kind == .run && (ask.state == .running || ask.state == .answered) {
                 terminal

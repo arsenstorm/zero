@@ -333,6 +333,16 @@ fn short_headline(text: &str) {
     }
 }
 
+/// The text under a question is two or three plain sentences; anything longer goes in a file the agent links.
+fn short_detail(text: Option<&String>, name: &str) {
+    if let Some(text) = text {
+        let n = text.chars().count();
+        if n > 280 {
+            fail(&format!("zero: keep --{name} to two or three plain sentences (280 characters; this is {n}): the problem, what you recommend and why. Put anything longer in a file and give its path"), 1)
+        }
+    }
+}
+
 /// The script a run executes, when it is a readable text file: `sh|bash|zsh <file> …` or `<file> …`.
 fn script_of(command: &str, cwd: Option<&str>) -> Option<String> {
     let words: Vec<&str> = command.split_whitespace().collect();
@@ -352,6 +362,7 @@ fn main() {
         "ask" => {
             let question = first().unwrap_or_else(|| fail(USAGE, 1));
             short_headline(&question);
+            short_detail(args.flag("body"), "body");
             let options = args.flags.get("option").cloned().unwrap_or_default();
             // Choices written into the question can only be answered by typing; as options they take one key.
             if options.is_empty() && (question.contains("(a)") && question.contains("(b)") || question.contains("(1)") && question.contains("(2)")) {
@@ -368,6 +379,7 @@ fn main() {
         "approve" => {
             let what = first().unwrap_or_else(|| fail(USAGE, 1));
             short_headline(&what);
+            short_detail(args.flag("body"), "body");
             let options = vec!["Yes".into(), "No".into(), "Suggest something else…".into()];
             let ask = drop.create(&args, "approve", what, args.flag("body").cloned().unwrap_or_default(), options, args.flag("code").cloned(), None);
             submit(&drop, &args, ask)
@@ -411,6 +423,7 @@ fn main() {
         }
         "run" => {
             let command = first().unwrap_or_else(|| fail(USAGE, 1));
+            short_detail(args.flag("why").or(args.flag("body")), "why");
             if args.flag("why").is_none() && args.flag("body").is_none() {
                 fail("zero run needs --why: say what you need the output for, so Arsen knows what he is running", 1)
             }
