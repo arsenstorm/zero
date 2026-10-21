@@ -1,6 +1,6 @@
 {
   "name": "zero",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Agents reach Arsen through Zero: the zero skill, Zero's rules at session start, and a stop check that every turn ends with Zero's ending.",
   "author": { "name": "Arsen Shkrumelyak" },
   "skills": "./skills/",

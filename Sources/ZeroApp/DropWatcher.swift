@@ -57,6 +57,12 @@ final class DropWatcher {
             prepare(drop)
             let asks = drop.appendingPathComponent("asks")
             guard let files = try? FileManager.default.contentsOfDirectory(at: asks, includingPropertiesForKeys: nil) else { continue }
+            // `zero withdraw` from a drop: "<id>.withdraw", holding the reason.
+            for file in files where file.pathExtension == "withdraw" {
+                let reason = (try? String(contentsOf: file, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+                store.withdraw(file.deletingPathExtension().lastPathComponent, reason: reason?.isEmpty == false ? reason : nil)
+                try? FileManager.default.removeItem(at: file)
+            }
             for file in files where file.pathExtension == "json" {
                 let key = drop.path + "/" + file.lastPathComponent
                 guard !ingested.contains(key) else { continue }

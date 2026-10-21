@@ -56,6 +56,11 @@ public struct Ask: Codable, Identifiable, Sendable {
     public var delivery: Delivery?
 
     public enum Delivery: String, Codable, Sendable { case sending, delivered, failed }
+    /// For a run of a script file (`sh path`, or the path itself): the script, so Arsen can read what will run.
+    public var script: String?
+    /// A run asking for exactly the command another agent's open run already asks for: it shares that run's
+    /// card and outcome instead of showing a second one.
+    public var sameAs: String?
 
     /// An option ending with "…" asks for text: picking it opens an input, and the answer is "label: text".
     public static func expectsText(_ option: String) -> Bool { option.hasSuffix("…") || option.hasSuffix("...") }
@@ -82,7 +87,10 @@ public struct Ask: Codable, Identifiable, Sendable {
         default: ("Use \(tool)", (try? JSONSerialization.data(withJSONObject: input, options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? "")
         }
         let why = (json["transcript_path"] as? String).flatMap(lastWords) ?? ""
-        return Ask(kind: .permission, title: what, body: why, options: ["Allow", "Deny", "Deny, and say why…"],
+        // "Always allow" applies the rule Claude Code itself suggests for this request, so offered only with one.
+        let suggested = !((json["permission_suggestions"] as? [Any]) ?? []).isEmpty
+        let options = suggested ? ["Allow", "Always allow", "Deny", "Deny, and say why…"] : ["Allow", "Deny", "Deny, and say why…"]
+        return Ask(kind: .permission, title: what, body: why, options: options,
                    command: String(code.prefix(2000)), cwd: json["cwd"] as? String, agent: agent, ttl: ttl)
     }
 
@@ -103,6 +111,21 @@ public struct Ask: Codable, Identifiable, Sendable {
             }
         }
         return nil
+    }
+
+    /// The script a run command executes, when it is a readable file: `sh|bash|zsh <file> …` or `<file> …`.
+    public static func script(of command: String, cwd: String?) -> String? {
+        let words = command.split(separator: " ").map(String.init)
+        guard let first = words.first else { return nil }
+        let path = ["sh", "bash", "zsh"].contains(first) ? (words.count > 1 ? words[1] : "") : first
+        guard !path.isEmpty, !path.hasPrefix("-") else { return nil }
+        let expanded = (path as NSString).expandingTildeInPath
+        let full = expanded.hasPrefix("/") ? expanded : ((cwd ?? FileManager.default.currentDirectoryPath) as NSString).appendingPathComponent(expanded)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: full, isDirectory: &isDirectory), !isDirectory.boolValue,
+              let text = try? String(contentsOfFile: full, encoding: .utf8) else { return nil }
+        // A compiled program isn't something to read; a script is, at least its first screens of it.
+        return text.count > 6000 ? String(text.prefix(6000)) + "\n…" : text
     }
 
     public static func newID() -> String {

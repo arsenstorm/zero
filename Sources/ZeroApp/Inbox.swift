@@ -293,7 +293,7 @@ final class InboxController {
             return store.asks.filter { $0.agent.name == agentFilter && $0.state != .expired && !(($0.status ?? "").hasPrefix("failed") && $0.kind == .message) }
         }
         return store.asks.filter {
-            $0.kind != .note && $0.kind != .message && $0.state != .expired
+            $0.kind != .note && $0.kind != .message && $0.state != .expired && $0.sameAs == nil
                 && (!$0.state.isFinal || ($0.answeredAt ?? .distantPast) >= inboxOpenedAt)
         }
     }
@@ -1225,6 +1225,7 @@ struct CardView: View {
     private var dimmed: Bool { ask.state == .waiting && !selected && controller.cards.filter { $0.state == .waiting }.count > 1 }
 
     @State private var commandExpanded = false
+    @State private var scriptExpanded = false
     /// False until the entrance has played; cards already seen start true.
     @State private var entered = false
     /// Heights of the command box and the options while waiting; the terminal takes exactly their space.
@@ -1248,7 +1249,10 @@ struct CardView: View {
     /// Under the question: the agent's name when cards from several agents share the inbox, and the context.
     private var byline: String? {
         let who = controller.agentFilter == nil ? controller.store.displayName(of: ask.agent.name) : nil
-        let parts = [who, context].compactMap { $0 }
+        // Other agents asking for this same run wait on this card.
+        let twins = controller.store.asks.filter { $0.sameAs == ask.id && !$0.state.isFinal }.count
+        let also = twins > 0 ? "and \(twins) other agent\(twins == 1 ? "" : "s")" : nil
+        let parts = [[who, also].compactMap { $0 }.joined(separator: " "), context].compactMap { $0?.isEmpty == false ? $0 : nil }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
@@ -1334,6 +1338,17 @@ struct CardView: View {
                     Text(command).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
                         .lineLimit(commandIsLong && !commandExpanded ? Self.collapsedLines : nil)
                         .fixedSize(horizontal: false, vertical: true)
+                    // The script the command runs, so what Arsen approves is what he can read.
+                    if let script = ask.script {
+                        Rectangle().fill(Theme.stroke).frame(height: 1)
+                        Text(script.trimmingCharacters(in: .whitespacesAndNewlines)).font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary).textSelection(.enabled)
+                            .lineLimit(scriptExpanded ? nil : 12).fixedSize(horizontal: false, vertical: true)
+                        if script.split(separator: "\n").count > 12 {
+                            Button(scriptExpanded ? "Show less" : "Show the whole script") { scriptExpanded.toggle() }
+                                .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                        }
+                    }
                     if folder != nil || commandIsLong {
                         HStack {
                             if let folder {

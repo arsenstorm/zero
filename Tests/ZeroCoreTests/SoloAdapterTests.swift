@@ -93,3 +93,12 @@ func soloAdapterScreenAndKeys() async throws {
     let after = try await adapter.press([27], on: agent) // esc
     print("after esc has picker:", after?.contains("Select model") == true)
 }
+
+@Test func draftsAreReadFromTheInputBoxOnly() {
+    let rule = String(repeating: "─", count: 40)
+    let typing = "❯ old prompt in the scrollback\n⏺ reply\n\(rule)\n❯ let's leave this\n\(rule)\n  ⏵⏵ auto mode on"
+    #expect(SoloAdapter.draft(in: typing) == "let's leave this")
+    #expect(SoloAdapter.draft(in: "\(rule)\n❯ \n\(rule)") == "")
+    #expect(SoloAdapter.draft(in: "\(rule)\n❯ Try \"refactor x\"\n\(rule)") == "")
+    #expect(SoloAdapter.draft(in: "no box here") == nil)
+}

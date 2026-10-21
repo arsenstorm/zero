@@ -33,6 +33,7 @@ zero run 'bin/production console <<< "puts Source.count"' --cwd "$APP_PATH" --ti
 zero note "Specs green; sizing the fix"            # working (blue)
 zero note --blocked "Vault certificate expired"     # red
 zero note --done "PR #4821 open, CI green"          # green
+zero withdraw k3x9qa --reason "Answered in the chat" # take back an ask that no longer needs him
 ```
 
 Every call blocks until he answers and prints the answer on stdout. Exit 0 answered, 2 declined (the reason, if any, on stderr), 3 expired. For `run`, stdout is the command's output and the exit code is the command's own.
@@ -44,13 +45,17 @@ Blocking is the default because you need the answer to continue. When you cannot
 - The question is the headline, under twelve words, ending in a question mark. Why: it is read in a card beside a dozen others, at a glance.
 - A command, a snippet, or a path goes in `--code`, never in the question text. Why: Zero shows code in a monospace block; in prose it reads as a sentence and is easy to misread.
 - `--title` is the ticket id or the feature name, two or three words. It is context in the card's header, not a sentence.
+- Choices go in `--option`, never as (a)/(b)/(c) in the question: Zero refuses those, since he can only answer them by typing.
 - Two or three options. The first is the one you recommend. When you want his words, make the last option end with `…` ("Something else…"): picking it opens an input and his text comes back as `label: text`. Never make the only decline path a typed one. Why: he must be able to say no in one key press.
 - One decision per ask. Three questions in one card get one answer.
 - Never ask the same thing twice. If he declined, do what the decline says or stop and report.
+- When an open ask no longer needs him (he answered in the chat, your lead decided, the PR got merged), `zero withdraw <id>` it. Never write "you can ignore it": a card left open is one he may still answer, late and wrongly.
 
 ## Running on his Mac
 
 `zero run` executes the exact command in an interactive zsh on his Mac after he presses one key, so his PATH, rbenv and `op` apply. Use it for reads he alone can perform, and whenever a command you need was blocked or denied. Never print a command for him to paste, and never stop because a command was refused: ask with `zero run`. Never put a write to production in a `run`; ask for approval of the plan instead and let him run that himself. One command per ask. Pass `--cwd` so relative paths resolve where you mean.
+
+When the command is a script file (`sh path/to/script.sh`), Zero shows him its contents, so he can read what he approves. Never offer a command you haven't checked exists: a missing script comes back as exit 126 and wastes his approval.
 
 `--why` is required: one sentence on what the output is for and what you will do with it. Why: he is about to run something on his own machine; a command without a reason is one he cannot judge, so he rejects it.
 
@@ -58,7 +63,15 @@ When Zero runs your session, Claude Code's own permission prompts reach him in Z
 
 ## Where you are
 
-Post a `note` when you start, at each milestone, and when you finish. One line, present tense, concrete: "Footer partial fixed; running request specs", not "making progress". `--blocked` the moment you cannot continue without something; `--done` when the deliverable exists. Why: your dot in his bar is coloured by your last note; a stale note misleads him.
+Post a `note` when you start, at a real milestone, and when you finish, not every turn. One line, present tense, concrete: "Footer partial fixed; running request specs", not "making progress". A note within ten minutes of your last one replaces it. `--blocked` the moment you cannot continue without something; `--done` when the deliverable exists. Why: your dot in his bar is coloured by your last note; a stale note misleads him, and a stream of restatements buries the ones that matter.
+
+## When he is at the keyboard
+
+If Arsen typed the prompt in your terminal (Zero tells you so at the start of the turn), he is reading you: answer him in the chat, ask your questions there, and skip notes and the `[zero: …]` ending for that turn. When you write to him, Zero takes back the questions you had open, since he is answering in the chat.
+
+## Working from a brief
+
+If a lead agent started you from a BRIEF, FIX, REVIEW or TEST file, report to that lead the way the brief says, not to Arsen: no Zero notes, no asks, no `[zero: …]` endings. The one exception is a command only Arsen can run on his Mac: ask for that with `zero run --why`. Why: the lead decides and batches what reaches him; a worker writing to him directly is noise he cannot act on.
 
 ## Away from Arsen's Mac
 

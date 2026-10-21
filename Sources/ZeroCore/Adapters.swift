@@ -107,9 +107,26 @@ public struct SoloAdapter: AgentAdapter {
 
     public func send(_ text: String, to agent: AgentIdentity) async throws {
         guard let processID = agent.soloProcessID else { throw AdapterError("\(agent.name) has no Solo process id") }
+        // Typing into a half-written prompt would join Arsen's words and Zero's into one message: wait for an
+        // empty input, for up to 45 s, then give up so the delivery shows as failed and can be retried.
+        for attempt in 0..<23 {
+            guard let screen = await screen(of: agent), let draft = Self.draft(in: screen), !draft.isEmpty else { break }
+            if attempt == 22 { throw AdapterError("Arsen is typing in \(agent.label ?? agent.name)'s terminal") }
+            try await Task.sleep(for: .seconds(2))
+        }
         var arguments: [String: Any] = ["process_id": processID, "input": text, "submit": true]
         if let project = agent.soloProjectID { arguments["project_id"] = project }
         _ = try await resultText(of: call(tool: "send_input", arguments: arguments))
+    }
+
+    /// What sits in Claude Code's input box on a rendered screen: the "❯" line between its two rules. nil when
+    /// no input box is in view; empty when the box is empty or shows only its placeholder hint.
+    static func draft(in screen: String) -> String? {
+        let lines = screen.components(separatedBy: "\n")
+        guard let index = lines.lastIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("❯") }),
+              index > 0, lines[index - 1].contains("────") else { return nil }
+        let text = lines[index].trimmingCharacters(in: .whitespaces).dropFirst().trimmingCharacters(in: .whitespaces)
+        return text.hasPrefix("Try \"") ? "" : text
     }
 
     public func screen(of agent: AgentIdentity) async -> String? {
@@ -129,9 +146,16 @@ public struct SoloAdapter: AgentAdapter {
 
     /// Claude titles its sessions a little after the first exchange ("Pong reply"); that title is the label.
     /// Solo's own API never exposes a title, so nothing comes from it.
+    /// Claude's own title for the session; for an agent without a known session (one that reached Zero through
+    /// the CLI), the name its process has in Solo, unless that is just the tool's name.
     public func displayName(for agent: AgentIdentity) async -> String? {
-        guard let session = agent.session, let project = agent.soloProjectID, let cwd = await projectPath(project) else { return nil }
-        return ClaudeSessions.title(of: session, cwd: cwd)
+        guard let project = agent.soloProjectID else { return nil }
+        if let session = agent.session, let cwd = await projectPath(project) { return ClaudeSessions.title(of: session, cwd: cwd) }
+        guard let pid = agent.soloProcessID,
+              let rows = try? await resultJSON(of: call(tool: "list_processes", arguments: ["project_id": project])) as? [[String: Any]],
+              let name = rows.first(where: { $0["id"] as? Int == pid })?["name"] as? String,
+              !["claude", "codex", "agent", "terminal"].contains(name.lowercased()) else { return nil }
+        return name
     }
 
     /// The session file appears once Claude has taken the first prompt, sometimes only with its answer; looks

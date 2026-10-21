@@ -147,3 +147,44 @@ private final class FakeRuntime: AgentAdapter, @unchecked Sendable {
     expired.state = .expired
     #expect(Store.deliveryText(expired).contains("expired without an answer"))
 }
+
+@MainActor @Test func stalledScreensAreRecognised() {
+    #expect(Store.trouble(in: "⏺ working\n⎿ Not logged in · Please run /login\n❯ ") == "Not logged in · Please run /login")
+    #expect(Store.trouble(in: "⏺ All tests pass.\n❯ ") == nil)
+}
+
+@MainActor @Test func typedPromptsWithdrawOpenQuestionsButNotRuns() {
+    let s = store()
+    let question = s.create(Ask(kind: .choice, title: "Merge?", options: ["Yes", "No"], agent: agent))
+    let run = s.create(Ask(kind: .run, title: "Count", command: "sh c.sh", agent: agent))
+    #expect(s.prompted(agent, text: "go ahead and merge it") == "human")
+    #expect(s.ask(question.id)?.state == .expired && s.ask(question.id)?.status == "withdrawn")
+    #expect(s.ask(run.id)?.state == .waiting)
+}
+
+@MainActor @Test func repeatNotesRewriteTheLastOne() {
+    let s = store()
+    let first = s.create(Ask(kind: .note, title: "Update", body: "Running specs", agent: agent))
+    let second = s.create(Ask(kind: .note, title: "Update", body: "Still running specs", agent: agent))
+    #expect(first.id == second.id && s.ask(first.id)?.body == "Still running specs")
+    var done = Ask(kind: .note, title: "Update", body: "Specs green", agent: agent)
+    done.status = "done"
+    #expect(s.create(done).id != first.id)
+}
+
+@MainActor @Test func identicalRunsShareOneCardAndOutcome() async throws {
+    let s = store()
+    let a = s.create(Ask(kind: .run, title: "Renew", options: ["Run", "Reject"], command: "bin/wbtui", cwd: "/tmp", agent: agent))
+    let b = s.create(Ask(kind: .run, title: "Renew", options: ["Run", "Reject"], command: "bin/wbtui", cwd: "/tmp", agent: AgentIdentity(name: "other", host: "mac")))
+    #expect(b.sameAs == a.id)
+    s.choose(a.id, option: 1) // Reject: the outcome both agents get, without running anything here
+    try await Task.sleep(for: .seconds(0.3))
+    #expect(s.ask(a.id)?.state == .declined && s.ask(b.id)?.state == .declined)
+}
+
+@Test func permissionAsksOfferAlwaysAllowOnlyWithASuggestion() {
+    let with = #"{"tool_name":"Bash","tool_input":{"command":"bench restart"},"permission_suggestions":[{"type":"addRules"}]}"#
+    let without = #"{"tool_name":"Bash","tool_input":{"command":"bench restart"}}"#
+    #expect(Ask.permission(hook: Data(with.utf8), agent: agent, ttl: 60)?.options.contains("Always allow") == true)
+    #expect(Ask.permission(hook: Data(without.utf8), agent: agent, ttl: 60)?.options.contains("Always allow") == false)
+}

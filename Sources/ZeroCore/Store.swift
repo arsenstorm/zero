@@ -28,7 +28,35 @@ public final class Store {
         let open = identities.values.filter { !isClosed($0.name) }
         for adapter in adapters { for name in await adapter.gone(among: open) { closeAgent(name, stop: false) } }
         // Titles arrive on their own schedule; with the session known this is a local file read.
-        for identity in identities.values where identity.session != nil { await relabel(identity) }
+        for identity in identities.values where identity.session != nil || (identity.soloProcessID != nil && identity.label == nil) {
+            await relabel(identity)
+        }
+        // Once a minute, a look at each running agent's screen for trouble it can't report itself.
+        livenessTicks += 1
+        if livenessTicks % 12 == 1 {
+            for identity in identities.values where !offline.contains(identity.name) && !isClosed(identity.name) {
+                guard let adapter = adapters.first(where: { $0.canReach(identity) }), let screen = await adapter.screen(of: identity),
+                      let trouble = Self.trouble(in: screen), reportedTrouble[identity.name] != trouble else { continue }
+                reportedTrouble[identity.name] = trouble
+                var note = Ask(kind: .note, title: "Stuck", body: "Claude Code stopped: \(trouble)", agent: identity)
+                note.status = "blocked"
+                _ = create(note)
+            }
+        }
+    }
+
+    private var livenessTicks = 0
+    /// The trouble line last reported per agent, so each one is posted once.
+    private var reportedTrouble: [String: String] = [:]
+
+    /// A line on an agent's screen that means it has stopped and can't say so: signed out, out of usage, or an
+    /// API error ending its turn. nil when the screen shows none.
+    static func trouble(in screen: String) -> String? {
+        let tail = screen.components(separatedBy: "\n").suffix(25)
+        let signs = ["Please run /login", "Not logged in", "OAuth access token is invalid", "usage limit", "Credit balance is too low",
+                     "API Error: 5", "API Error: 401", "API Error: 403"]
+        return tail.reversed().first { line in signs.contains { line.localizedCaseInsensitiveContains($0) } }
+            .map { $0.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "⏺⎿ ")) }
     }
 
     /// Agents whose terminal screen is open in Zero (after a slash command), with the latest rendering.
@@ -193,7 +221,8 @@ public final class Store {
     /// Types an answer into the session of an agent that asked with --async and so isn't waiting for it.
     /// Its delivery shows on the answer: sending, then delivered, or failed (and `retry` tries again).
     public func deliverAnswer(_ id: String) {
-        guard let ask = ask(id), ask.waits == false, [.answered, .declined, .expired].contains(ask.state) else { return }
+        guard let ask = ask(id), ask.waits == false, ask.status != "withdrawn", ask.sameAs == nil || ask.state != .expired,
+              [.answered, .declined, .expired].contains(ask.state) else { return }
         let text = Self.deliveryText(ask)
         update(id) { $0.delivery = .sending }
         Task {
@@ -232,6 +261,38 @@ public final class Store {
             + (tail.isEmpty ? "It printed nothing." : "Last of its output:\n```\n\(tail)\n```")
     }
 
+    /// Takes back an open ask: the agent withdrew it, or Arsen answered it some other way. Nobody is told.
+    public func withdraw(_ id: String, reason: String?) {
+        guard let ask = ask(id), !ask.state.isFinal else { return }
+        timers[id]?.cancel()
+        update(id) { $0.status = "withdrawn"; $0.answer = reason; $0.choice = nil }
+        finish(id, state: .expired)
+    }
+
+    /// What Zero typed into each agent's session lately, so a prompt Zero caused isn't taken for Arsen typing.
+    private var sent: [String: [(text: String, at: Date)]] = [:]
+
+    /// A prompt arrived in an agent's session (the plugin's prompt hook reports it). "zero" when Zero typed it;
+    /// otherwise Arsen did, in the terminal, so the agent's open questions are answered there: they are withdrawn,
+    /// and "human" comes back. Runs stay open: only Arsen can run them, whatever he typed.
+    public func prompted(_ identity: AgentIdentity, text: String) -> String {
+        let name = resolve(identity)
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let recent = (sent[name] ?? []).filter { Date().timeIntervalSince($0.at) < 600 }
+        if recent.contains(where: { clean.hasPrefix(String($0.text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120))) }) { return "zero" }
+        for ask in asks where ask.agent.name == name && ask.kind != .run && ask.sameAs == nil && (ask.state == .waiting || ask.state == .pending) {
+            withdraw(ask.id, reason: "Arsen replied in the chat")
+        }
+        return "human"
+    }
+
+    /// The name Zero knows an agent by: its own, or that of the agent with the same Solo process.
+    private func resolve(_ identity: AgentIdentity) -> String {
+        if self.identity(of: identity.name) == nil, let pid = identity.soloProcessID,
+           let owner = asks.last(where: { $0.agent.soloProcessID == pid })?.agent.name { return owner }
+        return identity.name
+    }
+
     /// Connects to the agent's session and types `text` into it.
     private func reach(_ agent: String, with text: String) async throws -> (AgentIdentity, AgentAdapter) {
         guard var identity = identity(of: agent) else { throw AdapterError("Zero doesn't know \(agent)") }
@@ -246,6 +307,8 @@ public final class Store {
         let connected = try await adapter.connect(identity)
         if connected != identity { rebind(agent, to: connected); identity = connected }
         offline.remove(agent)
+        sent[agent, default: []].append((text, Date()))
+        sent[agent] = Array(sent[agent]!.suffix(10))
         try await adapter.send(text, to: identity)
         return (identity, adapter)
     }
@@ -269,16 +332,33 @@ public final class Store {
         // What Zero has learned about the agent (its process, session, label) carries into every later item,
         // whether it was made from an older copy of the identity or came from the CLI with a bare name.
         // An agent Zero started is "claude-120" to Zero but calls the CLI as "solo-120": same process, same agent.
-        if identity(of: ask.agent.name) == nil, let pid = ask.agent.soloProcessID,
-           let owner = asks.last(where: { $0.agent.soloProcessID == pid })?.agent.name {
-            ask.agent.name = owner
-        }
+        ask.agent.name = resolve(ask.agent)
         if let known = identity(of: ask.agent.name) {
             ask.agent.soloProcessID = ask.agent.soloProcessID ?? known.soloProcessID
             ask.agent.soloProjectID = ask.agent.soloProjectID ?? known.soloProjectID
             ask.agent.session = ask.agent.session ?? known.session
             ask.agent.label = ask.agent.label ?? known.label
             ask.agent.account = ask.agent.account ?? known.account
+        }
+        // Saying where it is again within ten minutes, with nothing else in between, rewrites the last note
+        // instead of adding a row: the bar shows the latest, and the inbox doesn't fill with restatements.
+        if ask.kind == .note, ask.status == nil,
+           let i = asks.lastIndex(where: { $0.agent.name == ask.agent.name && $0.kind != .message }),
+           asks[i].kind == .note, asks[i].status == nil, ask.createdAt.timeIntervalSince(asks[i].createdAt) < 600 {
+            asks[i].body = ask.body
+            asks[i].title = ask.title
+            asks[i].createdAt = ask.createdAt
+            asks[i].answeredAt = ask.createdAt
+            log(asks[i])
+            onChange?(asks[i])
+            return asks[i]
+        }
+        // A run another agent already asked for, unanswered: one card, one run, both told the outcome.
+        if ask.kind == .run, let original = asks.last(where: {
+            $0.kind == .run && $0.state == .waiting && $0.sameAs == nil && $0.command == ask.command && $0.cwd == ask.cwd
+                && ask.createdAt.timeIntervalSince($0.createdAt) < 600
+        }) {
+            ask.sameAs = original.id
         }
         asks.append(ask)
         log(ask)
@@ -311,7 +391,10 @@ public final class Store {
     }
 
     /// For approve and run, every option after the first is a decline, with or without a reason.
-    private func declines(_ ask: Ask, _ index: Int) -> Bool { (ask.kind == .approve || ask.kind == .run || ask.kind == .permission) && index >= 1 }
+    private func declines(_ ask: Ask, _ index: Int) -> Bool {
+        if ask.kind == .permission { return ask.options.indices.contains(index) && ask.options[index].hasPrefix("Deny") }
+        return (ask.kind == .approve || ask.kind == .run) && index >= 1
+    }
 
     /// Typed reply. On a run card, text can only be a decline reason.
     public func reply(_ id: String, text: String) {
@@ -340,7 +423,7 @@ public final class Store {
     /// Takes the agent out of the bar and, unless its process is already gone, stops it, keeping its session:
     /// a message resumes it, and it comes back by itself when it next asks something.
     public func closeAgent(_ name: String, stop: Bool = true) {
-        guard let last = asks.last(where: { $0.agent.name == name }) else { return }
+        guard let last = asks.last(where: { $0.agent.name == name }), !isClosed(name) || hasOpenAsks(name) else { return }
         // Its open asks go with it: one waiting for an answer would keep it in the bar as needing Arsen.
         for ask in asks where ask.agent.name == name && (ask.state == .waiting || ask.state == .pending) { expire(ask.id) }
         var note = Ask(kind: .note, title: "Closed", body: stop ? "Closed by Arsen" : "Closed in its runtime", agent: last.agent)
@@ -354,6 +437,10 @@ public final class Store {
     public func canStop(_ name: String) -> Bool {
         guard let identity = identity(of: name) else { return false }
         return !offline.contains(name) && adapters.contains { $0.canReach(identity) }
+    }
+
+    private func hasOpenAsks(_ name: String) -> Bool {
+        asks.contains { $0.agent.name == name && ($0.state == .waiting || $0.state == .pending) }
     }
 
     public func isClosed(_ name: String) -> Bool { asks.last { $0.agent.name == name && $0.kind != .message }?.status == "closed" }
@@ -394,6 +481,12 @@ public final class Store {
         }
         if let ask = ask(id) { log(ask) }
         if state == .answered || state == .declined || state == .expired { deliverAnswer(id) }
+        if let done = ask(id) {
+            for twin in asks where twin.sameAs == id && !twin.state.isFinal {
+                update(twin.id) { $0.output = done.output; $0.answer = done.answer; $0.choice = done.choice }
+                finish(twin.id, state: state, exitCode: done.exitCode)
+            }
+        }
     }
 
     private func update(_ id: String, _ change: (inout Ask) -> Void) {

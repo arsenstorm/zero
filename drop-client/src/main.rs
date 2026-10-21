@@ -13,9 +13,10 @@ const USAGE: &str = "usage:
   zero approve \"what you want to do\" [--body B] [--code 'snippet']
   zero run     'command' --why \"what you need the output for\" [--cwd DIR] [--title T]
   zero note    \"where you are now\" [--blocked | --done]
+  zero withdraw <id> [--reason \"why\"]   (take back an open ask that no longer needs Arsen)
   zero wait    <id>
   zero status  <id>
-common: --async --agent NAME ($ZERO_AGENT) --ticket ID --ttl MINUTES
+common: --async --agent NAME ($ZERO_AGENT) --ticket ID (shown as the ask's context) --ttl MINUTES --help
 exit: 0 answered (answer on stdout; for run, its output and exit code), 2 declined, 3 expired";
 
 #[derive(Serialize, Deserialize)]
@@ -55,6 +56,9 @@ struct Ask {
     /// False with --async: nothing waits for the answer, so Zero types it into the agent's session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     waits: Option<bool>,
+    /// A run's script file, shown to Arsen beside the command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    script: Option<String>,
 }
 
 fn fail(message: &str, code: i32) -> ! {
@@ -114,6 +118,10 @@ impl Args {
         let mut raw = env::args().skip(1);
         let command = raw.next().unwrap_or_else(|| fail(USAGE, 1));
         let raw: Vec<String> = raw.collect();
+        if matches!(command.as_str(), "help" | "--help" | "-h") || raw.iter().any(|a| a == "--help" || a == "-h") {
+            println!("{USAGE}");
+            process::exit(0)
+        }
         let mut flags: HashMap<String, Vec<String>> = HashMap::new();
         let mut positional = Vec::new();
         let mut i = 0;
@@ -156,6 +164,8 @@ impl Drop {
             .flag("agent")
             .cloned()
             .or_else(|| env::var("ZERO_AGENT").ok())
+            // An agent Solo runs on this Mac is known to Zero by its process, whichever folder it calls from.
+            .or_else(|| env::var("SOLO_PROCESS_ID").ok().map(|id| format!("solo-{id}")))
             .unwrap_or_else(|| {
                 let parent = self.root.parent();
                 let leaf = |p: Option<&Path>| p.and_then(Path::file_name).map(|n| n.to_string_lossy().to_string());
@@ -177,6 +187,12 @@ impl Drop {
     }
 
     fn create(&self, args: &Args, kind: &str, title: String, body: String, options: Vec<String>, command: Option<String>, cwd: Option<String>) -> Ask {
+        let ask = self.create_unsent(args, kind, title, body, options, command, cwd);
+        self.send(&ask);
+        ask
+    }
+
+    fn create_unsent(&self, args: &Args, kind: &str, title: String, body: String, options: Vec<String>, command: Option<String>, cwd: Option<String>) -> Ask {
         let ttl: f64 = args.flag("ttl").and_then(|t| t.parse().ok()).unwrap_or(0.0) * 60.0;
         let status = if kind == "note" {
             if args.has("blocked") { Some("blocked".into()) } else if args.has("done") { Some("done".into()) } else { None }
@@ -200,28 +216,41 @@ impl Drop {
             exit_code: None,
             status,
             waits: if args.has("async") { Some(false) } else { None },
+            script: None,
         };
         fs::create_dir_all(self.asks()).ok();
         fs::create_dir_all(self.answers()).ok();
-        let tmp = self.asks().join(format!("{}.json.tmp", ask.id));
-        fs::write(&tmp, serde_json::to_vec(&ask).unwrap()).unwrap_or_else(|e| fail(&format!("zero: cannot write ask: {e}"), 1));
-        fs::rename(&tmp, self.asks().join(format!("{}.json", ask.id))).unwrap_or_else(|e| fail(&format!("zero: cannot write ask: {e}"), 1));
         ask
     }
 
+    /// Writes the ask atomically, so Zero never reads half a file.
+    fn send(&self, ask: &Ask) {
+        let tmp = self.asks().join(format!("{}.json.tmp", ask.id));
+        fs::write(&tmp, serde_json::to_vec(&ask).unwrap()).unwrap_or_else(|e| fail(&format!("zero: cannot write ask: {e}"), 1));
+        fs::rename(&tmp, self.asks().join(format!("{}.json", ask.id))).unwrap_or_else(|e| fail(&format!("zero: cannot write ask: {e}"), 1));
+    }
+
     fn wait(&self, id: &str) -> ! {
+        match self.wait_ask(id) {
+            Some(ask) => finish(ask),
+            None => fail("expired", 3),
+        }
+    }
+
+    /// The answered ask, once its answer file lands; None after 48 hours.
+    fn wait_ask(&self, id: &str) -> Option<Ask> {
         let path = self.answers().join(format!("{id}.json"));
         let started = Instant::now();
         while started.elapsed() < Duration::from_secs(48 * 3600) {
             if let Ok(data) = fs::read(&path) {
                 if let Ok(ask) = serde_json::from_slice::<Ask>(&data) {
                     fs::remove_file(&path).ok();
-                    finish(ask);
+                    return Some(ask);
                 }
             }
             thread::sleep(Duration::from_millis(500));
         }
-        fail("expired", 3)
+        None
     }
 }
 
@@ -291,6 +320,17 @@ fn last_words(path: &str) -> Option<String> {
     })
 }
 
+/// The script a run executes, when it is a readable text file: `sh|bash|zsh <file> …` or `<file> …`.
+fn script_of(command: &str, cwd: Option<&str>) -> Option<String> {
+    let words: Vec<&str> = command.split_whitespace().collect();
+    let first = *words.first()?;
+    let path = if matches!(first, "sh" | "bash" | "zsh") { *words.get(1)? } else { first };
+    if path.starts_with('-') { return None; }
+    let full = if path.starts_with('/') { PathBuf::from(path) } else { PathBuf::from(cwd.unwrap_or(".")).join(path) };
+    let text = fs::read_to_string(full).ok()?;
+    Some(if text.chars().count() > 6000 { text.chars().take(6000).collect::<String>() + "\n…" } else { text })
+}
+
 fn main() {
     let args = Args::parse();
     let drop = Drop::here();
@@ -299,6 +339,10 @@ fn main() {
         "ask" => {
             let question = first().unwrap_or_else(|| fail(USAGE, 1));
             let options = args.flags.get("option").cloned().unwrap_or_default();
+            // Choices written into the question can only be answered by typing; as options they take one key.
+            if options.is_empty() && (question.contains("(a)") && question.contains("(b)") || question.contains("(1)") && question.contains("(2)")) {
+                fail("zero: put the choices in --option, one each (the first is the one you recommend), not as (a)/(b) in the question", 1)
+            }
             let title = args.flag("title").cloned().unwrap_or_else(|| question.clone());
             let body = args.flag("body").cloned().unwrap_or_else(|| if title == question { String::new() } else { question.clone() });
             let kind = if options.is_empty() { "question" } else { "choice" };
@@ -312,13 +356,41 @@ fn main() {
             submit(&drop, &args, ask)
         }
         "permission" => {
-            // Claude Code's PermissionRequest hook input on stdin; the plugin's hook turns the exit code into its decision.
+            // Claude Code's PermissionRequest hook input on stdin; Arsen's answer goes back as the hook's decision.
+            // If the ask expires, nothing is printed and Claude Code's own permission flow carries on.
             let mut input = String::new();
             std::io::stdin().read_to_string(&mut input).ok();
             let (title, why, code, cwd) = permission(&input).unwrap_or_else(|| fail("zero: no permission request on stdin", 1));
-            let options = vec!["Allow".into(), "Deny".into(), "Deny, and say why…".into()];
+            let suggestions = serde_json::from_str::<serde_json::Value>(&input).ok()
+                .and_then(|j| j.get("permission_suggestions").cloned())
+                .filter(|s| s.as_array().map_or(false, |a| !a.is_empty()));
+            let mut options: Vec<String> = vec!["Allow".into()];
+            if suggestions.is_some() { options.push("Always allow".into()); }
+            options.extend(["Deny".into(), "Deny, and say why…".into()]);
             let ask = drop.create(&args, "permission", title, why, options, Some(code), cwd);
-            submit(&drop, &args, ask)
+            let done = drop.wait_ask(&ask.id).unwrap_or_else(|| process::exit(0));
+            let decision = match done.state.as_str() {
+                "answered" => {
+                    let mut d = serde_json::json!({"behavior": "allow"});
+                    if done.answer.as_deref() == Some("Always allow") { if let Some(s) = suggestions { d["updatedPermissions"] = s; } }
+                    d
+                }
+                "declined" => {
+                    let reason = done.answer.unwrap_or_default();
+                    let reason = reason.split_once(": ").map(|(_, r)| r.to_string()).unwrap_or_default();
+                    let message = if reason.is_empty() { "Arsen said no in Zero".to_string() } else { format!("Arsen said no in Zero: {reason}") };
+                    serde_json::json!({"behavior": "deny", "message": message})
+                }
+                _ => process::exit(0),
+            };
+            println!("{}", serde_json::json!({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}}));
+            process::exit(0)
+        }
+        "withdraw" => {
+            let id = first().unwrap_or_else(|| fail(USAGE, 1));
+            fs::create_dir_all(drop.asks()).ok();
+            fs::write(drop.asks().join(format!("{id}.withdraw")), args.flag("reason").cloned().unwrap_or_default())
+                .unwrap_or_else(|e| fail(&format!("zero: {e}"), 1));
         }
         "run" => {
             let command = first().unwrap_or_else(|| fail(USAGE, 1));
@@ -329,12 +401,15 @@ fn main() {
             let cwd = args.flag("cwd").cloned().or_else(|| env::current_dir().ok().map(|p| p.to_string_lossy().to_string()));
             let title = args.flag("title").cloned().unwrap_or_else(|| "Run a command".into());
             let why = args.flag("why").or(args.flag("body")).cloned().unwrap_or_default();
-            let ask = drop.create(&args, "run", title, why, options, Some(command), cwd);
+            let script = script_of(&command, cwd.as_deref());
+            let mut ask = drop.create_unsent(&args, "run", title, why, options, Some(command), cwd);
+            ask.script = script;
+            drop.send(&ask);
             submit(&drop, &args, ask)
         }
         "note" => {
             let text = first().unwrap_or_else(|| fail(USAGE, 1));
-            drop.create(&args, "note", "Update".into(), text, vec![], None, None);
+            drop.create(&args, "note", args.flag("ticket").cloned().unwrap_or_else(|| "Update".into()), text, vec![], None, None);
         }
         "wait" => drop.wait(&first().unwrap_or_else(|| fail(USAGE, 1))),
         "status" => {

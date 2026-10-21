@@ -45,6 +45,17 @@ final class Server {
             guard let id = request.id, let ask = onMain({ store.ask(id) }) else { return reject(client, "no such ask \(request.id ?? "")") }
             try? client.send(Response(op: "ask", ask: ask))
             client.close()
+        case "withdraw":
+            guard let id = request.id else { return reject(client, "withdraw needs an id") }
+            onMain { store.withdraw(id, reason: request.text) }
+            try? client.send(Response(op: "withdrawn", id: id))
+            client.close()
+        case "prompt":
+            // The plugin's prompt hook: who typed what just arrived in the agent's session.
+            guard let ask = request.ask else { return reject(client, "prompt needs the agent and its text") }
+            let source = onMain { store.prompted(ask.agent, text: ask.body) }
+            try? client.send(Response(op: "prompt", message: source))
+            client.close()
         case "list":
             try? client.send(Response(op: "asks", asks: onMain { store.asks }))
             client.close()
