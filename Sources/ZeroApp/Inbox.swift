@@ -596,7 +596,8 @@ struct InboxView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Edge scrolling for the agent view; the ask list still centres by id through the reader.
     @State private var position = ScrollPosition()
-    private var pinsBottom: Bool { controller.agentFilter != nil || controller.newAgentOpen || controller.cards.isEmpty }
+    /// Views with a composer hang from the bar's bottom line; the inbox list centres on the bar.
+    private var pinsBottom: Bool { controller.agentFilter != nil || controller.newAgentOpen }
 
     var body: some View {
         GeometryReader { geo in
@@ -621,9 +622,10 @@ struct InboxView: View {
                     .padding(10)
                     // Thin, not ultra-thin: in light mode the thinnest material took whatever colour sat behind it.
                     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))
-                    // A conversation, and the quiet inbox, hang from the bar's bottom line: the composer is always
-                    // there, whatever is above it, so the eye never has to find it. A list of asks centres its card.
-                    .frame(minHeight: pinsBottom ? controller.barHeight : 0, alignment: .bottom)
+                    // A conversation and the new-agent view hang from the bar's bottom line: the composer is always
+                    // there, whatever is above it, so the eye never has to find it. The inbox (its asks, or All
+                    // quiet) centres on the bar, level with the controls that opened it.
+                    .frame(minHeight: controller.barHeight, alignment: pinsBottom ? .bottom : .center)
                     // Padding equal to the gap between panel edge and bar edge: scrolled to either end, the list
                     // stops level with the bar's top or bottom, and a list no taller than the bar cannot scroll.
                     .padding(.vertical, max(0, (geo.size.height - controller.barHeight) / 2))
