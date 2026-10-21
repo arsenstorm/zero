@@ -1298,7 +1298,7 @@ struct CardView: View {
     private var card: some View {
         VStack(alignment: .leading, spacing: 12) {
             if ask.kind != .note {
-                // The question leads, with when on the right; beneath it, who (in the inbox, where cards from
+                // The question leads; beneath it, who (in the inbox, where cards from
                 // several agents sit together) and the agent's own title for it.
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     VStack(alignment: .leading, spacing: 3) {
@@ -1309,24 +1309,10 @@ struct CardView: View {
                         }
                     }
                     Spacer(minLength: 8)
+                    // No time and no dismiss: a finished card folds into Earlier, or leaves the inbox when it next opens.
                     if ask.state == .running {
                         Button("Stop") { controller.store.cancelRun(ask.id) }
                             .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.red)
-                    } else if ask.state.isFinal {
-                        // Finished: the clock time it landed, not an age that keeps counting.
-                        Text((ask.answeredAt ?? ask.createdAt).formatted(date: .omitted, time: .shortened))
-                            .font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
-                    } else {
-                        TimelineView(.periodic(from: .now, by: 1)) { timeline in
-                            Text(statusLine(now: timeline.date)).font(.system(size: 12)).monospacedDigit()
-                                .foregroundStyle(.secondary).lineLimit(1)
-                        }
-                    }
-                    if ask.state.isFinal {
-                        Button { controller.dismiss(ask.id) } label: {
-                            Image(systemName: "xmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.secondary)
-                                .frame(width: 20, height: 20).contentShape(Rectangle())
-                        }.buttonStyle(.plain).offset(x: 4)
                     }
                 }
             }
@@ -1515,10 +1501,6 @@ struct CardView: View {
             .padding(.horizontal, 10)
     }
 
-    private func statusLine(now: Date) -> String {
-        if ask.kind == .message { return "\(ask.status ?? "sent") · \(shortAge(ask.createdAt, now: now))" }
-        return shortAge(ask.createdAt, now: now)
-    }
 }
 
 /// The small pin that marks whichever control the inbox is pinned on.
