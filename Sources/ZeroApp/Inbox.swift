@@ -44,11 +44,13 @@ final class InboxController {
     }
 
     func show(agent: String?) {
-        expandedEarlier = nil
-        holdTop = false
         let wasNew = newAgentOpen
         newAgentOpen = false
+        // Hovering the control for the view already shown changes nothing: what Arsen opened stays open and
+        // where it is.
         guard agentFilter != agent || wasNew else { return }
+        expandedEarlier = nil
+        holdTop = false
         switching = true
         agentFilter = agent
         seen.formUnion(cards.map(\.id))
