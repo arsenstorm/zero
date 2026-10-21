@@ -114,3 +114,12 @@ private final class FakeRuntime: AgentAdapter, @unchecked Sendable {
     try await Task.sleep(for: .seconds(0.1))
     #expect(runtime.stopped == ["b"])
 }
+
+@MainActor @Test func removingAnAgentWithdrawsItsOpenAsks() {
+    let s = store()
+    let a = s.create(Ask(kind: .question, title: "Merge?", agent: agent))
+    s.closeAgent(agent.name)
+    #expect(s.ask(a.id)?.state == .expired)
+    #expect(s.isClosed(agent.name))
+    #expect(!s.canStop(agent.name)) // no adapter reaches it
+}

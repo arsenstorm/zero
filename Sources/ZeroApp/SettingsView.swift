@@ -220,7 +220,7 @@ private struct AgentsPage: View {
                                 editing = name
                                 focused = true
                             }
-                            IconButton(symbol: "trash", help: "Remove and stop") { store.closeAgent(name) }
+                            IconButton(symbol: "trash", help: store.canStop(name) ? "Remove and stop" : "Remove") { store.closeAgent(name) }
                         }
                         .padding(.vertical, 4)
                         .listRowBackground(Color.clear)

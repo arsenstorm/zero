@@ -316,11 +316,19 @@ public final class Store {
     /// a message resumes it, and it comes back by itself when it next asks something.
     public func closeAgent(_ name: String, stop: Bool = true) {
         guard let last = asks.last(where: { $0.agent.name == name }) else { return }
+        // Its open asks go with it: one waiting for an answer would keep it in the bar as needing Arsen.
+        for ask in asks where ask.agent.name == name && (ask.state == .waiting || ask.state == .pending) { expire(ask.id) }
         var note = Ask(kind: .note, title: "Closed", body: stop ? "Closed by Arsen" : "Closed in its runtime", agent: last.agent)
         note.status = "closed"
         _ = create(note)
         guard stop, let adapter = adapters.first(where: { $0.canReach(last.agent) }) else { return }
         Task { await adapter.stop(last.agent) }
+    }
+
+    /// True when removing the agent would also stop a process: Zero can reach it and it is running.
+    public func canStop(_ name: String) -> Bool {
+        guard let identity = identity(of: name) else { return false }
+        return !offline.contains(name) && adapters.contains { $0.canReach(identity) }
     }
 
     public func isClosed(_ name: String) -> Bool { asks.last { $0.agent.name == name && $0.kind != .message }?.status == "closed" }
