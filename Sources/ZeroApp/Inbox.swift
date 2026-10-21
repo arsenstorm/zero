@@ -628,6 +628,12 @@ struct InboxView: View {
                     if pinsBottom { position.scrollTo(edge: .bottom) }
                 }
                 .onChange(of: controller.barHeight) { _, _ in if pinsBottom { position.scrollTo(edge: .bottom) } }
+                // Content that settles its height after the switch (a card measuring itself, text laying out) would
+                // otherwise leave the conversation short of its end until something else redrew it: pinned again
+                // whenever its height changes, so the composer stays on the bar's bottom line throughout.
+                .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, _ in
+                    if pinsBottom { position.scrollTo(edge: .bottom) }
+                }
                 .onChange(of: controller.cards.map(\.id)) { _, _ in
                     // A new card pushes the stack: re-centre so the cards above drift up as it takes its place.
                     controller.ensureSelection()
