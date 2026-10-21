@@ -24,14 +24,18 @@ final class InboxController {
     @ObservationIgnored var measured: [String: (command: CGFloat, options: CGFloat)] = [:]
 
     /// Changes the view with no animation and no card entrances.
-    /// The new-agent composer's height as last laid out, so the empty inbox's card matches it.
+    /// The composer's height as last laid out: the empty inbox's card matches it, and conversations centre it.
     var composerHeight: CGFloat = 100
 
     /// The new-agent view: just the composer, opened from the bar's + button.
     var newAgentOpen = false
+    /// Set while Arsen opens something in place (a card's text, an Earlier row): the view keeps its top where it
+    /// is, so the opening only grows downward. Cleared when the view or its cards change.
+    var holdTop = false
 
     func showNewAgent() {
         guard !newAgentOpen else { return }
+        holdTop = false
         switching = true
         agentFilter = nil
         newAgentOpen = true
@@ -41,6 +45,7 @@ final class InboxController {
 
     func show(agent: String?) {
         expandedEarlier = nil
+        holdTop = false
         let wasNew = newAgentOpen
         newAgentOpen = false
         guard agentFilter != agent || wasNew else { return }
@@ -596,8 +601,14 @@ struct InboxView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Edge scrolling for the agent view; the ask list still centres by id through the reader.
     @State private var position = ScrollPosition()
-    /// Views with a composer hang from the bar's bottom line; the inbox list centres on the bar.
-    private var pinsBottom: Bool { controller.agentFilter != nil || controller.newAgentOpen }
+    /// The stack's top within the bar's frame, kept while an opening grows it downward.
+    @State private var heldTop: CGFloat = 0
+    /// An agent's conversation stays at its end, its composer on the bar's centre line; the inbox and the
+    /// new-agent composer simply centre on the bar. So the composer, or the empty inbox, is always in one place.
+    private var pinsBottom: Bool { controller.agentFilter != nil }
+    /// Each view starts from a fresh scroll position at its end: reusing the last view's carried its offset into
+    /// the next, which showed it low for a moment before it settled.
+    private var viewKey: String { controller.newAgentOpen ? "+new" : (controller.agentFilter ?? "inbox") }
 
     var body: some View {
         GeometryReader { geo in
@@ -622,10 +633,18 @@ struct InboxView: View {
                     .padding(10)
                     // Thin, not ultra-thin: in light mode the thinnest material took whatever colour sat behind it.
                     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))
-                    // A conversation and the new-agent view hang from the bar's bottom line: the composer is always
-                    // there, whatever is above it, so the eye never has to find it. The inbox (its asks, or All
-                    // quiet) centres on the bar, level with the controls that opened it.
-                    .frame(minHeight: controller.barHeight, alignment: pinsBottom ? .bottom : .center)
+                    // The composer, or the empty inbox, sits on the bar's centre line in every view, whatever is above
+                    // it, so the eye never has to find it.
+                    // A conversation ends with its composer centred on the bar, where the new-agent composer and the
+                    // empty inbox sit; the 10 pt is the surface's inset around the composer.
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named("stack")).minY } action: { top in
+                        if !controller.holdTop { heldTop = top }
+                    }
+                    .padding(.bottom, pinsBottom ? max(0, controller.barHeight / 2 - controller.composerHeight / 2 - 10) : 0)
+                    // Opening something in place: pinned at the top it had, so it grows downward only.
+                    .padding(.top, controller.holdTop ? heldTop : 0)
+                    .frame(minHeight: controller.barHeight, alignment: controller.holdTop ? .top : (pinsBottom ? .bottom : .center))
+                    .coordinateSpace(name: "stack")
                     // Padding equal to the gap between panel edge and bar edge: scrolled to either end, the list
                     // stops level with the bar's top or bottom, and a list no taller than the bar cannot scroll.
                     .padding(.vertical, max(0, (geo.size.height - controller.barHeight) / 2))
@@ -635,10 +654,10 @@ struct InboxView: View {
                                value: controller.cards.map { "\($0.id)/\($0.state.rawValue)" })
                 }
                 // An agent's conversation sits at its end and stays there as it grows or the Earlier list sizes
-                // itself; the composer never leaves the bar's bottom line. The ask list keeps centring its card.
+                // itself. The ask list keeps centring its card.
                 .scrollPosition($position)
                 .defaultScrollAnchor(pinsBottom ? .bottom : nil)
-                .defaultScrollAnchor(pinsBottom ? .bottom : nil, for: .sizeChanges)
+                .defaultScrollAnchor(pinsBottom && !controller.holdTop ? .bottom : nil, for: .sizeChanges)
                 // A panel resize (another screen, say) drops the offset to the top; the conversation goes back to its end.
                 .onScrollGeometryChange(for: CGFloat.self) { $0.containerSize.height } action: { _, _ in
                     if pinsBottom { position.scrollTo(edge: .bottom) }
@@ -648,10 +667,11 @@ struct InboxView: View {
                 // otherwise leave the conversation short of its end until something else redrew it: pinned again
                 // whenever its height changes, so the composer stays on the bar's bottom line throughout.
                 .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, _ in
-                    if pinsBottom { position.scrollTo(edge: .bottom) }
+                    if pinsBottom && !controller.holdTop { position.scrollTo(edge: .bottom) }
                 }
                 .onChange(of: controller.cards.map(\.id)) { _, _ in
                     // A new card pushes the stack: re-centre so the cards above drift up as it takes its place.
+                    controller.holdTop = false
                     controller.ensureSelection()
                     if controller.switching || reduceMotion {
                         center(proxy)
@@ -666,7 +686,10 @@ struct InboxView: View {
                     LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 40)
                 })
                 .onAppear { center(proxy) }
-                .onChange(of: controller.agentFilter) { _, _ in center(proxy) }
+                .onChange(of: viewKey) { _, _ in
+                    position = ScrollPosition(edge: pinsBottom ? .bottom : .top)
+                    center(proxy)
+                }
                 .onChange(of: controller.scrollRequest) {
                     if controller.scrollAnimated && !reduceMotion {
                         withAnimation(.timingCurve(0.32, 0.72, 0, 1, duration: 0.25)) { center(proxy) }
@@ -988,6 +1011,7 @@ private struct EarlierRow: View {
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture {
+            controller.holdTop = true
             withAnimation(.easeOut(duration: 0.2)) { controller.expandedEarlier = open ? nil : ask.id }
         }
     }
@@ -1016,7 +1040,7 @@ private struct EarlierRow: View {
     }
 }
 
-/// The empty inbox: the composer's colour, edge and height, centred, with the bar's inbox icon. New agents start
+/// The empty inbox: the composer's colour, edge and height, centred on the bar, with the bar's inbox icon. New agents start
 /// from the bar's + button.
 struct QuietCard: View {
     let controller: InboxController
@@ -1024,8 +1048,7 @@ struct QuietCard: View {
         VStack(spacing: 6) {
             Image(systemName: "tray").font(.system(size: 22, weight: .regular)).foregroundStyle(.secondary)
                 .padding(.bottom, 4)
-            Text("All quiet.").font(.system(size: 15, weight: .semibold))
-            Text("Nothing needs you right now.").font(.system(size: 12)).foregroundStyle(.secondary)
+            Text("Inbox empty").font(.system(size: 15, weight: .semibold))
         }
         .multilineTextAlignment(.center)
         .padding(.horizontal, 14)
@@ -1162,7 +1185,7 @@ struct ComposerCard: View {
             composer
                 .padding(14)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-                    if agentName == nil, height > 0, abs(controller.composerHeight - height) > 0.5 { controller.composerHeight = height }
+                    if height > 0, abs(controller.composerHeight - height) > 0.5 { controller.composerHeight = height }
                 }
                 // The whole box focuses the text, not just its line: a click in the padding or between the chips
                 // starts typing. The chips and buttons keep their own clicks.
@@ -1258,6 +1281,14 @@ struct CardView: View {
     let ask: Ask
     @Bindable var controller: InboxController
     var focus: FocusState<String?>.Binding
+
+    init(ask: Ask, controller: InboxController, focus: FocusState<String?>.Binding) {
+        self.ask = ask
+        self.controller = controller
+        self.focus = focus
+        // A card already seen is shown as it is from its first frame, even in a view built afresh.
+        _entered = State(initialValue: controller.seen.contains(ask.id))
+    }
 
     private var selected: Bool { controller.selected == ask.id }
     private var dictating: Bool { controller.dictatingFor == ask.id }
@@ -1401,7 +1432,11 @@ struct CardView: View {
                         }
                     }
                     .contentShape(Rectangle())
-                    .onTapGesture { if long { withAnimation(.easeOut(duration: 0.2)) { detailExpanded.toggle() } } }
+                    .onTapGesture {
+                        guard long else { return }
+                        controller.holdTop = true
+                        withAnimation(.easeOut(duration: 0.2)) { detailExpanded.toggle() }
+                    }
                     .pointerStyle(long ? .link : nil)
                     .help(long ? (detailExpanded ? "Click to fold" : "Click to read it all") : "")
             }
@@ -1419,7 +1454,7 @@ struct CardView: View {
                             .foregroundStyle(.secondary).textSelection(.enabled)
                             .lineLimit(scriptExpanded ? nil : 12).fixedSize(horizontal: false, vertical: true)
                         if script.split(separator: "\n").count > 12 {
-                            Button(scriptExpanded ? "Show less" : "Show the whole script") { scriptExpanded.toggle() }
+                            Button(scriptExpanded ? "Show less" : "Show the whole script") { controller.holdTop = true; scriptExpanded.toggle() }
                                 .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                         }
                     }
@@ -1431,7 +1466,7 @@ struct CardView: View {
                             }
                             Spacer()
                             if commandIsLong {
-                                Button(commandExpanded ? "Show less" : "Show all") { commandExpanded.toggle() }
+                                Button(commandExpanded ? "Show less" : "Show all") { controller.holdTop = true; commandExpanded.toggle() }
                                     .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                             }
                         }
