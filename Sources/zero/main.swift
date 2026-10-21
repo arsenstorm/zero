@@ -148,6 +148,18 @@ func create(_ ask: Ask, finish: (Ask) -> Never = outcome) -> Never {
     follow(socket, id: id, finish: finish)
 }
 
+/// Asks one thing and waits for its outcome, without exiting: for hooks that ask several things in a row.
+/// nil when Zero can't be reached.
+func askAndWait(_ ask: Ask) -> Ask? {
+    guard let socket = try? UnixSocket.connect(path: Paths.socket) else { return nil }
+    try? socket.send(Request(op: "create", ask: ask, wait: true))
+    guard let reply = socket.receive(Response.self), reply.op == "created" else { return nil }
+    while let response = socket.receive(Response.self) {
+        if response.op == "done" { return response.ask }
+    }
+    return nil
+}
+
 /// Prints a hook's JSON answer to Claude Code and exits 0.
 func hookReply(_ object: [String: Any]) -> Never {
     if let data = try? JSONSerialization.data(withJSONObject: object) { FileHandle.standardOutput.write(data + Data("\n".utf8)) }
@@ -179,6 +191,8 @@ case "permission":
     // Claude Code's PermissionRequest hook input on stdin; Arsen's answer goes back as the hook's decision. If Zero
     // can't be reached or the ask expires, nothing is printed and Claude Code's own permission flow carries on.
     let hook = FileHandle.standardInput.readDataToEndOfFile()
+    // Claude Code's own questions are answered by the question hook, as questions, not as a permission.
+    if (((try? JSONSerialization.jsonObject(with: hook)) as? [String: Any])?["tool_name"] as? String) == "AskUserQuestion" { exit(0) }
     guard let ask = Ask.permission(hook: hook, agent: agentIdentity(), ttl: ttl) else { fail("zero: no permission request on stdin") }
     let suggestions = ((try? JSONSerialization.jsonObject(with: hook)) as? [String: Any])?["permission_suggestions"] as? [Any] ?? []
     create(ask) { done in
@@ -194,6 +208,31 @@ case "permission":
             exit(0)
         }
     }
+case "question":
+    // Claude Code's PreToolUse hook input for its AskUserQuestion tool: each question becomes a Zero question,
+    // and the answers go back as the tool's input, so its terminal picker never shows. Anything short of answers
+    // for all of them prints nothing, and the picker shows in the terminal as usual.
+    let hook = (try? JSONSerialization.jsonObject(with: FileHandle.standardInput.readDataToEndOfFile())) as? [String: Any] ?? [:]
+    guard let input = hook["tool_input"] as? [String: Any], let questions = input["questions"] as? [[String: Any]], !questions.isEmpty else { exit(0) }
+    var answers: [String: String] = [:]
+    for item in questions {
+        guard let question = item["question"] as? String else { exit(0) }
+        let options = (item["options"] as? [[String: Any]] ?? []).compactMap { $0["label"] as? String }
+        let descriptions = (item["options"] as? [[String: Any]] ?? []).compactMap { option -> String? in
+            guard let label = option["label"] as? String, let text = option["description"] as? String, !text.isEmpty else { return nil }
+            return "\(label): \(text)"
+        }
+        let several = item["multiSelect"] as? Bool == true
+        var ask = Ask(kind: .choice, title: item["header"] as? String ?? question, body: question,
+                      options: options + [several ? "Several, or something else…" : "Something else…"],
+                      cwd: hook["cwd"] as? String, agent: agentIdentity(), ttl: ttl)
+        ask.detail = descriptions.isEmpty ? nil : descriptions.joined(separator: "\n")
+        guard let done = askAndWait(ask), done.state == .answered, let answer = done.answer else { exit(0) }
+        answers[question] = options.contains(answer) ? answer : (reason(done) ?? answer)
+    }
+    var updated = input
+    updated["answers"] = answers
+    hookReply(["hookSpecificOutput": ["hookEventName": "PreToolUse", "permissionDecision": "allow", "updatedInput": updated]])
 case "withdraw":
     guard let id = positional.first else { usage() }
     let socket = connect()

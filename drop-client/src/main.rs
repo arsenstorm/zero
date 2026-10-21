@@ -389,6 +389,9 @@ fn main() {
             // If the ask expires, nothing is printed and Claude Code's own permission flow carries on.
             let mut input = String::new();
             std::io::stdin().read_to_string(&mut input).ok();
+            if serde_json::from_str::<serde_json::Value>(&input).ok().and_then(|j| j["tool_name"].as_str().map(str::to_string)).as_deref() == Some("AskUserQuestion") {
+                process::exit(0) // answered by the question hook, as questions
+            }
             let (title, why, code, cwd) = permission(&input).unwrap_or_else(|| fail("zero: no permission request on stdin", 1));
             let suggestions = serde_json::from_str::<serde_json::Value>(&input).ok()
                 .and_then(|j| j.get("permission_suggestions").cloned())
@@ -413,6 +416,42 @@ fn main() {
                 _ => process::exit(0),
             };
             println!("{}", serde_json::json!({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}}));
+            process::exit(0)
+        }
+        "question" => {
+            // Claude Code's PreToolUse hook input for AskUserQuestion: each question becomes a Zero question and the
+            // answers go back as the tool's input. Anything short of all answers prints nothing.
+            let mut raw = String::new();
+            std::io::stdin().read_to_string(&mut raw).ok();
+            let hook: serde_json::Value = serde_json::from_str(&raw).unwrap_or_else(|_| process::exit(0));
+            let mut input = hook["tool_input"].clone();
+            let questions = input["questions"].as_array().cloned().unwrap_or_default();
+            if questions.is_empty() { process::exit(0) }
+            let mut answers = serde_json::Map::new();
+            for item in questions {
+                let question = item["question"].as_str().unwrap_or_else(|| process::exit(0)).to_string();
+                let opts = item["options"].as_array().cloned().unwrap_or_default();
+                let labels: Vec<String> = opts.iter().filter_map(|o| o["label"].as_str().map(str::to_string)).collect();
+                let details: Vec<String> = opts.iter().filter_map(|o| {
+                    let (l, d) = (o["label"].as_str()?, o["description"].as_str()?);
+                    if d.is_empty() { None } else { Some(format!("{l}: {d}")) }
+                }).collect();
+                let several = item["multiSelect"].as_bool() == Some(true);
+                let mut options = labels.clone();
+                options.push(if several { "Several, or something else…".into() } else { "Something else…".into() });
+                let title = item["header"].as_str().map(str::to_string).unwrap_or_else(|| question.clone());
+                let cwd = hook["cwd"].as_str().map(str::to_string);
+                let mut ask = drop.create_unsent(&args, "choice", title, question.clone(), options, None, cwd);
+                if !details.is_empty() { ask.detail = Some(details.join("\n")); }
+                drop.send(&ask);
+                let done = drop.wait_ask(&ask.id).unwrap_or_else(|| process::exit(0));
+                if done.state != "answered" { process::exit(0) }
+                let answer = done.answer.unwrap_or_default();
+                let value = if labels.contains(&answer) { answer } else { answer.split_once(": ").map(|(_, t)| t.to_string()).unwrap_or(answer) };
+                answers.insert(question, serde_json::Value::String(value));
+            }
+            input["answers"] = serde_json::Value::Object(answers);
+            println!("{}", serde_json::json!({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow", "updatedInput": input}}));
             process::exit(0)
         }
         "withdraw" => {
