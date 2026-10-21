@@ -378,7 +378,9 @@ final class Panel: NSPanel {
             openInbox: { [weak self] in self?.pin(agent: nil) },
             selectAgent: { [weak self] name in self?.pin(agent: name) },
             moveHere: { [weak self] in self?.pinnedDisplay = nil; self?.layout() },
-            peek: { [weak self] agent in self?.peek(agent) })))
+            peek: { [weak self] agent in self?.peek(agent) },
+            openNewAgent: { [weak self] in self?.pinNewAgent() },
+            peekNewAgent: { [weak self] in self?.peekNewAgent() })))
         // Tall and transparent so the bar can morph inside it; the transparent rest is click-through.
         // Without clearing sizingOptions the hosting view shrinks the window to its content, top edge fixed.
         pillHosting.sizingOptions = []
@@ -464,6 +466,7 @@ final class Panel: NSPanel {
     private func hideInbox() {
         inboxPanel.orderOut(nil)
         keyboardFront = nil
+        inbox.newAgentOpen = false
         if let app = returnTo, NSApp.isActive, settingsWindow?.isVisible != true, onboardingWindow?.isVisible != true {
             app.activate()
         }
@@ -477,9 +480,23 @@ final class Panel: NSPanel {
 
     /// A click on a pill control pins the inbox open on that view; the same click again unpins and closes it.
     private func pin(agent: String?) {
-        if openedByIntent && inboxPanel.isVisible && inbox.agentFilter == agent { hideInbox(); return }
+        if openedByIntent && inboxPanel.isVisible && inbox.agentFilter == agent && !inbox.newAgentOpen { hideInbox(); return }
         inbox.show(agent: agent)
         open(byIntent: true)
+    }
+
+    /// The bar's + button: the new-agent composer, pinned open with the keyboard; again closes it.
+    private func pinNewAgent() {
+        if openedByIntent && inboxPanel.isVisible && inbox.newAgentOpen { hideInbox(); return }
+        inbox.showNewAgent()
+        open(byIntent: true)
+        inbox.focusedReply = InboxController.newAgentKey
+    }
+
+    private func peekNewAgent() {
+        inbox.showNewAgent()
+        if !inboxPanel.isVisible { open(byIntent: false) }
+        if !openedByIntent { syncKeyboard() }
     }
 
     /// Hovering a pill control peeks the inbox (open asks, or one agent). It takes the keyboard while open so 1, 2, 3
@@ -671,7 +688,7 @@ private struct ComposerPreview: View {
     @Bindable var controller: InboxController
     @FocusState private var focus: String?
     var body: some View {
-        ComposerCard(controller: controller, focus: $focus, mode: .newAgent, quiet: true).frame(width: 380)
+        ComposerCard(controller: controller, focus: $focus, mode: .newAgent).frame(width: 380)
     }
 }
 

@@ -24,9 +24,26 @@ final class InboxController {
     @ObservationIgnored var measured: [String: (command: CGFloat, options: CGFloat)] = [:]
 
     /// Changes the view with no animation and no card entrances.
+    /// The new-agent composer's height as last laid out, so the empty inbox's card matches it.
+    var composerHeight: CGFloat = 100
+
+    /// The new-agent view: just the composer, opened from the bar's + button.
+    var newAgentOpen = false
+
+    func showNewAgent() {
+        guard !newAgentOpen else { return }
+        switching = true
+        agentFilter = nil
+        newAgentOpen = true
+        requestScroll(animated: false)
+        DispatchQueue.main.async { self.switching = false }
+    }
+
     func show(agent: String?) {
         expandedEarlier = nil
-        guard agentFilter != agent else { return }
+        let wasNew = newAgentOpen
+        newAgentOpen = false
+        guard agentFilter != agent || wasNew else { return }
         switching = true
         agentFilter = agent
         seen.formUnion(cards.map(\.id))
@@ -401,7 +418,7 @@ final class InboxController {
     /// True when the cards in view include something to answer.
     var answerable: Bool { cards.contains { $0.state == .waiting } }
     /// True in an agent's view when an adapter can carry a message into that agent's session.
-    var composable: Bool { agentFilter.map { store.canMessage($0) } ?? false }
+    var composable: Bool { newAgentOpen || (agentFilter.map { store.canMessage($0) } ?? false) }
     /// Only then does the inbox take the keyboard.
     var takesKeys: Bool { answerable || composable || screenOpen }
     /// A terminal screen is open for the agent in view: keys go to it.
@@ -472,7 +489,7 @@ final class InboxController {
                 if agentFilter?.hasPrefix("starting-") == true { agentFilter = identity.name }
             } catch {
                 spawnError = error.localizedDescription
-                show(agent: nil) // back to the composer, prompt still there, with the error under it
+                showNewAgent() // back to the composer, prompt still there, with the error under it
             }
             spawning = false
         }
@@ -487,7 +504,7 @@ final class InboxController {
             if let index = ask.options.firstIndex(where: Ask.expectsText) { textOption[selected] = index; return selected }
         }
         if let agentFilter, store.canMessage(agentFilter) { return composerKey(agentFilter) }
-        if agentFilter == nil, canSpawn { return Self.newAgentKey }
+        if newAgentOpen, canSpawn { return Self.newAgentKey }
         return nil
     }
 
@@ -579,14 +596,16 @@ struct InboxView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Edge scrolling for the agent view; the ask list still centres by id through the reader.
     @State private var position = ScrollPosition()
-    private var pinsBottom: Bool { controller.agentFilter != nil || controller.cards.isEmpty }
+    private var pinsBottom: Bool { controller.agentFilter != nil || controller.newAgentOpen || controller.cards.isEmpty }
 
     var body: some View {
         GeometryReader { geo in
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 10) {
-                        if controller.agentFilter != nil {
+                        if controller.newAgentOpen {
+                            ComposerCard(controller: controller, focus: $focus, mode: .newAgent)
+                        } else if controller.agentFilter != nil {
                             AgentTimeline(controller: controller, focus: $focus)
                         } else {
                             ForEach(controller.cards) { ask in
@@ -594,12 +613,7 @@ struct InboxView: View {
                                     .id(ask.id)
                                     .transition(.asymmetric(insertion: .identity, removal: .opacity.animation(.easeIn(duration: 0.15))))
                             }
-                            if controller.canSpawn {
-                                ComposerCard(controller: controller, focus: $focus, mode: .newAgent, quiet: controller.cards.isEmpty)
-                            } else if controller.cards.isEmpty {
-                                Text("All quiet.").font(.callout).foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity).padding(18).card()
-                            }
+                            if controller.cards.isEmpty { QuietCard(controller: controller) }
                         }
                     }
                     // One frosted surface under the stack, so the gaps between cards never show raw desktop. Its
@@ -1000,6 +1014,26 @@ private struct EarlierRow: View {
     }
 }
 
+/// The empty inbox: the composer's colour, edge and height, centred, with the bar's inbox icon. New agents start
+/// from the bar's + button.
+struct QuietCard: View {
+    let controller: InboxController
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "tray").font(.system(size: 22, weight: .regular)).foregroundStyle(.secondary)
+                .padding(.bottom, 4)
+            Text("All quiet.").font(.system(size: 15, weight: .semibold))
+            Text("Nothing needs you right now.").font(.system(size: 12)).foregroundStyle(.secondary)
+        }
+        .multilineTextAlignment(.center)
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, minHeight: controller.composerHeight)
+        .background(Theme.composer)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke, lineWidth: 1))
+    }
+}
+
 /// The text box used for replies and messages: the text column stops at ~80% of the width and wraps there,
 /// growing a line at a time; the mic and send buttons stay pinned to the bottom-right corner.
 struct ReplyBox: View {
@@ -1077,20 +1111,15 @@ private func onWhiteTile(_ mark: NSImage) -> NSImage {
     return tile
 }
 
-/// Start a new agent from the inbox. One composer box: the prompt on top, and beneath it a toolbar with where
-/// and with what it runs (chips opening Zero's own pickers) and the mic and send on the right. When nothing is
-/// open it is the whole inbox, headed "All quiet."
-
-/// The composer, the same card everywhere: the prompt or message and pills for where and with what. In the inbox
-/// it starts an agent (project, runtime and model); in a conversation it messages that agent (its model only, since
-/// a conversation does not change project). When the inbox is quiet, "All quiet." sits flush on top of it in the
-/// same card. It hangs from the bar's bottom line in every view, so it does not move as views switch.
+/// The composer, the same card everywhere: the prompt or message and pills for where and with what. Behind the
+/// bar's + button it starts an agent (project, runtime and model); in a conversation it messages that agent (its
+/// model only, since a conversation does not change project). It hangs from the bar's bottom line in every view,
+/// so it does not move as views switch.
 struct ComposerCard: View {
     enum Mode { case newAgent, agent(String) }
     @Bindable var controller: InboxController
     var focus: FocusState<String?>.Binding
     let mode: Mode
-    var quiet = false
     @State private var projectAnchor = CGRect.zero
     @State private var runtimeAnchor = CGRect.zero
     @State private var fieldHeight = ComposeField.lineHeight * 2
@@ -1127,22 +1156,12 @@ struct ComposerCard: View {
     private var error: String? { agentName.map { controller.deliveryError[$0] } ?? controller.spawnError }
 
     var body: some View {
-        // The quiet card is a card of its own above the composer, grey and centred, with the bar's inbox icon.
         VStack(alignment: .leading, spacing: 10) {
-            if quiet {
-                VStack(spacing: 6) {
-                    Image(systemName: "tray").font(.system(size: 22, weight: .regular)).foregroundStyle(.secondary)
-                        .padding(.bottom, 4)
-                    Text("All quiet.").font(.system(size: 15, weight: .semibold))
-                    Text("Nothing needs you. Start something.").font(.system(size: 12)).foregroundStyle(.secondary)
-                }
-                .multilineTextAlignment(.center)
-                .padding(.vertical, 22).padding(.horizontal, 14).frame(maxWidth: .infinity)
-                .background(Theme.row)
-                .clipShape(RoundedRectangle(cornerRadius: 18))
-            }
             composer
                 .padding(14)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                    if agentName == nil, height > 0, abs(controller.composerHeight - height) > 0.5 { controller.composerHeight = height }
+                }
                 // The whole box focuses the text, not just its line: a click in the padding or between the chips
                 // starts typing. The chips and buttons keep their own clicks.
                 .contentShape(RoundedRectangle(cornerRadius: 18))
@@ -1619,6 +1638,8 @@ struct PillView: View {
     let moveHere: () -> Void
     /// Hovering a control peeks: nil for the open asks, a name for that agent's timeline.
     let peek: (String?) -> Void
+    var openNewAgent: () -> Void = {}
+    var peekNewAgent: () -> Void = {}
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// A dot being dragged up or down the bar, and how far.
     @State private var drag: (name: String, y: CGFloat)?
@@ -1626,9 +1647,11 @@ struct PillView: View {
 
     init(controller: InboxController, settings: Settings, openInbox: @escaping () -> Void,
          selectAgent: @escaping (String) -> Void, moveHere: @escaping () -> Void,
-         peek: @escaping (String?) -> Void = { _ in }, previewHovered: String? = nil) {
+         peek: @escaping (String?) -> Void = { _ in }, openNewAgent: @escaping () -> Void = {}, peekNewAgent: @escaping () -> Void = {},
+         previewHovered: String? = nil) {
         self.controller = controller; self.settings = settings
         self.openInbox = openInbox; self.selectAgent = selectAgent; self.moveHere = moveHere; self.peek = peek
+        self.openNewAgent = openNewAgent; self.peekNewAgent = peekNewAgent
     }
 
     /// Every agent that has spoken and has not been closed, with its status. Expired asks don't count.
@@ -1667,9 +1690,9 @@ struct PillView: View {
         let selected = controller.agentFilter
         VStack(spacing: 2) {
             Image(systemName: "tray").font(.system(size: 13, weight: .medium))
-                .foregroundStyle(selected == nil ? .primary : .secondary)
+                .foregroundStyle(selected == nil && !controller.newAgentOpen ? .primary : .secondary)
                 .overlay(alignment: .topTrailing) {
-                    if controller.pinned && selected == nil {
+                    if controller.pinned && selected == nil && !controller.newAgentOpen {
                         PinBadge().offset(x: 4, y: -6)
                     } else if waiting > 0 {
                         Circle().fill(Color.red).frame(width: 7, height: 7).offset(x: 3, y: -3)
@@ -1680,6 +1703,18 @@ struct PillView: View {
             .onHover { if $0 { peek(nil) } }
             .onTapGesture(perform: openInbox)
             .help("Open asks")
+            if controller.canSpawn {
+                Image(systemName: "plus").font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(controller.newAgentOpen ? .primary : .secondary)
+                    .overlay(alignment: .topTrailing) {
+                        if controller.pinned && controller.newAgentOpen { PinBadge().offset(x: 4, y: -6) }
+                    }
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+                    .onHover { if $0 { peekNewAgent() } }
+                    .onTapGesture(perform: openNewAgent)
+                    .help("Start a new agent")
+            }
             if !agents.isEmpty {
                 Rectangle().fill(Theme.hairline).frame(width: 18, height: 1).padding(.vertical, 4)
             }
