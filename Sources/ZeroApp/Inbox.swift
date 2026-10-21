@@ -1116,18 +1116,19 @@ struct ComposerCard: View {
     private var error: String? { agentName.map { controller.deliveryError[$0] } ?? controller.spawnError }
 
     var body: some View {
-        // The quiet card runs on behind the composer by one corner radius, square-cornered there, so white shows
-        // in the composer's top corners and the two read as one piece; the composer's own corners end the stack.
-        VStack(alignment: .leading, spacing: quiet ? -18 : 0) {
+        // The quiet card is a card of its own above the composer, grey and centred, with the bar's inbox icon.
+        VStack(alignment: .leading, spacing: 10) {
             if quiet {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(spacing: 6) {
+                    Image(systemName: "tray").font(.system(size: 22, weight: .regular)).foregroundStyle(.secondary)
+                        .padding(.bottom, 4)
                     Text("All quiet.").font(.system(size: 15, weight: .semibold))
                     Text("Nothing needs you. Start something.").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
-                .padding(14).padding(.bottom, 18).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Theme.card)
-                .clipShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18))
-                .overlay(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18).strokeBorder(Theme.stroke, lineWidth: 1))
+                .multilineTextAlignment(.center)
+                .padding(.vertical, 22).padding(.horizontal, 14).frame(maxWidth: .infinity)
+                .background(Theme.row)
+                .clipShape(RoundedRectangle(cornerRadius: 18))
             }
             composer
                 .padding(14)
