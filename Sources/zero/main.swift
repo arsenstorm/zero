@@ -6,9 +6,10 @@ func fail(_ message: String, _ code: Int32 = 1) -> Never { stderr(message); exit
 func usage(help: Bool = false) -> Never {
     let text = """
     usage:
-      zero ask     "question" [--option A --option B ...] [--title T] [--body B] [--code 'command or snippet']
+      zero ask     "short question?" [--option A --option B ...] [--body "details"] [--title T] [--code 'command or snippet']
+                   the question is one line (about 12 words); the details Arsen may need go in --body
                    an option ending with "…" asks Arsen for text; the answer is then "label: text"
-      zero approve "what you want to do" [--body B] [--code 'command or snippet']   (Yes / No / Suggest something else…)
+      zero approve "what you want to do" [--body "details"] [--code 'command or snippet']   (Yes / No / Suggest something else…)
       zero run     'command' --why "what you need the output for" [--cwd DIR] [--title T]
                    runs on Arsen's Mac after he presses Run; a script file's contents are shown to him
       zero note    "where you are now" [--blocked | --done]   (no answer; sets your agent's dot: working, blocked, done)
@@ -52,6 +53,12 @@ while i < args.count {
 func flag(_ key: String) -> String? { flags[key]?.last }
 let async = flag("async") != nil
 let ttl = (flag("ttl").flatMap(Double.init) ?? 0) * 60 // 0: let the app apply its default expiry
+
+/// A question or a request is the headline of its card; the reasoning behind it belongs in --body.
+func shortHeadline(_ text: String) {
+    guard text.count > 140 else { return }
+    fail("zero: keep the question to one short line (about 12 words, ending in ?) and put the details in --body; this one is \(text.count) characters")
+}
 
 func connect() -> UnixSocket {
     do { return try UnixSocket.connect(path: Paths.socket) } catch { fail("zero: Zero.app is not running (\(error))") }
@@ -149,12 +156,15 @@ case "ask":
     if options.isEmpty, question.range(of: #"\((a|1)\).*\((b|2)\)"#, options: .regularExpression) != nil {
         fail("zero: put the choices in --option, one each (the first is the one you recommend), not as (a)/(b) in the question")
     }
-    let title = flag("title") ?? question
-    create(Ask(kind: options.isEmpty ? .question : .choice, title: title,
-               body: flag("body") ?? (title == question ? "" : question), options: options,
-               command: flag("code"), agent: agentIdentity(), ttl: ttl))
+    shortHeadline(question)
+    let title = flag("title") ?? flag("ticket") ?? question
+    var ask = Ask(kind: options.isEmpty ? .question : .choice, title: title, body: title == question ? "" : question, options: options,
+                  command: flag("code"), agent: agentIdentity(), ttl: ttl)
+    ask.detail = flag("body")
+    create(ask)
 case "approve":
     guard let what = positional.first else { usage() }
+    shortHeadline(what)
     create(Ask(kind: .approve, title: what, body: flag("body") ?? "", options: ["Yes", "No", "Suggest something else…"],
                command: flag("code"), agent: agentIdentity(), ttl: ttl))
 case "permission":

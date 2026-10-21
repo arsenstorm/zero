@@ -56,6 +56,8 @@ public struct Ask: Codable, Identifiable, Sendable {
     public var delivery: Delivery?
 
     public enum Delivery: String, Codable, Sendable { case sending, delivered, failed }
+    /// For a question: what Arsen may want to know to answer it, shown in smaller text under the question.
+    public var detail: String?
     /// For a run of a script file (`sh path`, or the path itself): the script, so Arsen can read what will run.
     public var script: String?
     /// A run asking for exactly the command another agent's open run already asks for: it shares that run's

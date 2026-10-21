@@ -9,7 +9,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{env, fs, process, thread};
 
 const USAGE: &str = "usage:
-  zero ask     \"question\" [--option A --option B ...] [--title T] [--body B] [--code 'snippet']
+  zero ask     \"short question?\" [--option A --option B ...] [--body \"details\"] [--title T] [--code 'snippet']
+               the question is one line (about 12 words); the details Arsen may need go in --body
   zero approve \"what you want to do\" [--body B] [--code 'snippet']
   zero run     'command' --why \"what you need the output for\" [--cwd DIR] [--title T]
   zero note    \"where you are now\" [--blocked | --done]
@@ -56,6 +57,9 @@ struct Ask {
     /// False with --async: nothing waits for the answer, so Zero types it into the agent's session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     waits: Option<bool>,
+    /// A question's supporting text, shown under it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
     /// A run's script file, shown to Arsen beside the command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     script: Option<String>,
@@ -217,6 +221,7 @@ impl Drop {
             status,
             waits: if args.has("async") { Some(false) } else { None },
             script: None,
+            detail: None,
         };
         fs::create_dir_all(self.asks()).ok();
         fs::create_dir_all(self.answers()).ok();
@@ -320,6 +325,14 @@ fn last_words(path: &str) -> Option<String> {
     })
 }
 
+/// A question or a request is the headline of its card; the reasoning behind it belongs in --body.
+fn short_headline(text: &str) {
+    let n = text.chars().count();
+    if n > 140 {
+        fail(&format!("zero: keep the question to one short line (about 12 words, ending in ?) and put the details in --body; this one is {n} characters"), 1)
+    }
+}
+
 /// The script a run executes, when it is a readable text file: `sh|bash|zsh <file> …` or `<file> …`.
 fn script_of(command: &str, cwd: Option<&str>) -> Option<String> {
     let words: Vec<&str> = command.split_whitespace().collect();
@@ -338,19 +351,23 @@ fn main() {
     match args.command.as_str() {
         "ask" => {
             let question = first().unwrap_or_else(|| fail(USAGE, 1));
+            short_headline(&question);
             let options = args.flags.get("option").cloned().unwrap_or_default();
             // Choices written into the question can only be answered by typing; as options they take one key.
             if options.is_empty() && (question.contains("(a)") && question.contains("(b)") || question.contains("(1)") && question.contains("(2)")) {
                 fail("zero: put the choices in --option, one each (the first is the one you recommend), not as (a)/(b) in the question", 1)
             }
-            let title = args.flag("title").cloned().unwrap_or_else(|| question.clone());
-            let body = args.flag("body").cloned().unwrap_or_else(|| if title == question { String::new() } else { question.clone() });
+            let title = args.flag("title").or(args.flag("ticket")).cloned().unwrap_or_else(|| question.clone());
+            let body = if title == question { String::new() } else { question.clone() };
             let kind = if options.is_empty() { "question" } else { "choice" };
-            let ask = drop.create(&args, kind, title, body, options, args.flag("code").cloned(), None);
+            let mut ask = drop.create_unsent(&args, kind, title, body, options, args.flag("code").cloned(), None);
+            ask.detail = args.flag("body").cloned();
+            drop.send(&ask);
             submit(&drop, &args, ask)
         }
         "approve" => {
             let what = first().unwrap_or_else(|| fail(USAGE, 1));
+            short_headline(&what);
             let options = vec!["Yes".into(), "No".into(), "Suggest something else…".into()];
             let ask = drop.create(&args, "approve", what, args.flag("body").cloned().unwrap_or_default(), options, args.flag("code").cloned(), None);
             submit(&drop, &args, ask)

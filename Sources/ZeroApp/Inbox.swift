@@ -923,6 +923,9 @@ private struct EarlierDetail: View {
                 if !ask.body.isEmpty, ask.body != ask.title {
                     Text(ask.body).font(.system(size: 12)).foregroundStyle(.secondary).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }
+                if let detail = ask.detail, !detail.isEmpty {
+                    Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                }
                 if let command = ask.command, !command.isEmpty {
                     Text(ask.kind == .run && !ask.output.isEmpty ? "$ \(command)\n\(ask.output.suffix(2000))" : command)
                         .font(.system(size: 11, design: .monospaced)).textSelection(.enabled).lineLimit(14)
@@ -1256,6 +1259,15 @@ struct CardView: View {
     /// Where the command runs, when that isn't simply the agent's own folder.
     private var folder: String? { ask.cwd == ask.agent.cwd ? nil : ask.cwd }
 
+    /// The text under the question: why a run or permission is wanted, an approval's detail, a question's --body.
+    private var supporting: String? {
+        switch ask.kind {
+        case .run, .permission, .approve: ask.body
+        case .question, .choice: ask.detail
+        default: nil
+        }
+    }
+
     /// Under the question: the agent's name when cards from several agents share the inbox, and the context.
     private var byline: String? {
         let who = controller.agentFilter == nil ? controller.store.displayName(of: ask.agent.name) : nil
@@ -1338,10 +1350,10 @@ struct CardView: View {
                 if ask.status == "blocked" { Text("Blocked").font(.system(size: 11, weight: .medium)).foregroundStyle(.red) }
             }
             // Why the agent wants it, or what it found, in its own words: six lines, the rest a click away.
-            if [.run, .permission, .approve].contains(ask.kind) && !ask.body.isEmpty {
-                Text(ask.body).font(.system(size: 13)).foregroundStyle(.secondary).textSelection(.enabled)
+            if let supporting, !supporting.isEmpty {
+                Text(supporting).font(.system(size: 13)).foregroundStyle(.secondary).textSelection(.enabled)
                     .lineLimit(detailExpanded ? nil : 6).fixedSize(horizontal: false, vertical: true)
-                if ask.body.count > 360 {
+                if supporting.count > 360 {
                     Button(detailExpanded ? "Show less" : "Show more") { detailExpanded.toggle() }
                         .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                 }
