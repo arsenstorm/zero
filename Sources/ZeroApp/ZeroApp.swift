@@ -130,6 +130,7 @@ final class Panel: NSPanel {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        NSApp.mainMenu = Self.editMenu()
         do { try server.start() } catch { NSLog("zero: server failed: \(error)") }
         Task { await Linear.shared.refresh() }
         ClaudeAccounts.shared.onSwitch = { [weak self] in
@@ -424,6 +425,29 @@ final class Panel: NSPanel {
         inbox.requestScroll()
     }
 
+    /// Zero shows no menu bar, but ⌘V, ⌘C, ⌘X, ⌘A and ⌘Z reach a text box only through menu items with those
+    /// keys: without this, paste did nothing in the composer.
+    private static func editMenu() -> NSMenu {
+        let main = NSMenu()
+        let app = NSMenuItem()
+        app.submenu = NSMenu()
+        app.submenu?.addItem(withTitle: "Quit Zero", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        main.addItem(app)
+        let edit = NSMenuItem()
+        let menu = NSMenu(title: "Edit")
+        menu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = menu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.submenu = menu
+        main.addItem(edit)
+        return main
+    }
+
     /// The app that was in front before Zero took it for typing; it comes back when the inbox closes.
     private var returnTo: NSRunningApplication?
 
@@ -433,11 +457,13 @@ final class Panel: NSPanel {
         guard !NSApp.isActive else { return }
         returnTo = NSWorkspace.shared.frontmostApplication
         NSApp.activate()
+        keyboardFront = NSRunningApplication.current
         inboxPanel.makeKey()
     }
 
     private func hideInbox() {
         inboxPanel.orderOut(nil)
+        keyboardFront = nil
         if let app = returnTo, NSApp.isActive, settingsWindow?.isVisible != true, onboardingWindow?.isVisible != true {
             app.activate()
         }
@@ -468,8 +494,16 @@ final class Panel: NSPanel {
     /// It keeps it until it closes: handing it back mid-hover meant hiding and re-showing the panel, a visible flash.
     private func syncKeyboard() {
         guard inbox.takesKeys || openedByIntent, !inboxPanel.isKeyWindow else { return }
+        // Another app came forward since the inbox took the keyboard (Raycast, Spotlight, a click elsewhere):
+        // taking it back would close that app's window, so leave it until the inbox opens again.
+        let front = NSWorkspace.shared.frontmostApplication
+        if let owner = keyboardFront, front != owner, front != NSRunningApplication.current { return }
+        keyboardFront = front
         inboxPanel.makeKey()
     }
+
+    /// The app in front when the inbox last took the keyboard.
+    private var keyboardFront: NSRunningApplication?
 
     /// Entering the cards gives them the keyboard. While the inbox is open, the whole strip from its left edge to
     /// the screen edge is a safe zone (pill, gap, and the way up or down to the cards), so only moving left past

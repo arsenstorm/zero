@@ -1143,6 +1143,14 @@ struct ComposerCard: View {
             }
             composer
                 .padding(14)
+                // The whole box focuses the text, not just its line: a click in the padding or between the chips
+                // starts typing. The chips and buttons keep their own clicks.
+                .contentShape(RoundedRectangle(cornerRadius: 18))
+                .onTapGesture {
+                    // Already the focused box but not holding the keyboard (another app took it): set it again.
+                    if controller.focusedReply == key { controller.focusedReply = nil }
+                    DispatchQueue.main.async { controller.focusedReply = key }
+                }
                 .background(Theme.composer)
                 .clipShape(RoundedRectangle(cornerRadius: 18))
                 .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke, lineWidth: 1))
