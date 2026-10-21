@@ -256,6 +256,7 @@ public final class Store {
             ask.agent.soloProjectID = ask.agent.soloProjectID ?? known.soloProjectID
             ask.agent.session = ask.agent.session ?? known.session
             ask.agent.label = ask.agent.label ?? known.label
+            ask.agent.account = ask.agent.account ?? known.account
         }
         asks.append(ask)
         log(ask)

@@ -21,6 +21,8 @@ public struct AgentIdentity: Codable, Hashable, Sendable {
     public var label: String?
     /// The runtime's session id (a Claude Code session), so the conversation can be resumed and titled.
     public var session: String?
+    /// The Claude account the agent runs as, when it was started as one other than Claude Code's active account.
+    public var account: String?
 
     public init(name: String, host: String, cwd: String? = nil, soloProcessID: Int? = nil, soloProjectID: Int? = nil, ticket: String? = nil, label: String? = nil, session: String? = nil) {
         self.name = name; self.host = host; self.cwd = cwd; self.soloProcessID = soloProcessID; self.soloProjectID = soloProjectID; self.ticket = ticket; self.label = label; self.session = session

@@ -407,6 +407,9 @@ final class InboxController {
 
     func composerKey(_ agent: String) -> String { "msg:" + agent }
 
+    /// The Claude account a new agent starts as; nil is Claude Code's active account.
+    var spawnAccount: String?
+
     /// The Earlier row opened into its full card, if any.
     var expandedEarlier: String?
 
@@ -452,7 +455,8 @@ final class InboxController {
               let target = spawnTargets.first(where: { $0.id == spawnTarget }),
               let runtime = spawnRuntimes.first(where: { $0.id == spawnRuntime }) else { return }
         let model = spawnModels.first { $0.id == spawnModel }
-        let settings = model.flatMap { spawnSettings[$0.id] } ?? [:]
+        var settings = model.flatMap { spawnSettings[$0.id] } ?? [:]
+        if let account = spawnAccount, model?.provider == "Anthropic" { settings["account"] = account }
         if dictatingFor == Self.newAgentKey { stopDictation() }
         spawning = true
         spawnError = nil
@@ -1099,6 +1103,11 @@ struct ComposerCard: View {
         guard let model, !model.levels.isEmpty else { return nil }
         return (controller.spawnSettings[model.id]?["reasoning"] ?? model.defaultLevel).map { effortLabel($0, short: true) }
     }
+    /// The account the agent runs as, when it isn't the active one: the part of the address before the @.
+    private var account: String? {
+        let email = agentName.map { controller.store.identity(of: $0)?.account } ?? (model?.provider == "Anthropic" ? controller.spawnAccount : nil)
+        return email.flatMap { $0 }.map { String($0.split(separator: "@").first ?? Substring($0)) }
+    }
     private var placeholder: String {
         agentName.map { "Message \(controller.store.displayName(of: $0))…" } ?? "What should a new agent work on?"
     }
@@ -1162,7 +1171,7 @@ struct ComposerCard: View {
                 }
                 // With what: the runtime's icon and the model's name (an agent's own runtime name until a model is picked for it).
                 chip(icon: choiceIcon(runtime?.icon) ?? Image(systemName: "apple.terminal"),
-                     title: model.map { $0.id.isEmpty ? (runtime?.name ?? "Default") : $0.name + (effort.map { " · " + $0 } ?? "") }
+                     title: model.map { $0.id.isEmpty ? (runtime?.name ?? "Default") : $0.name + (effort.map { " · " + $0 } ?? "") + (account.map { " · " + $0 } ?? "") }
                         ?? agentName.map(speaker) ?? runtime?.name ?? "Runtime",
                      open: controller.selector?.kind == .runtime) { controller.selectorAgent = agentName; controller.openSelector(.runtime, anchor: runtimeAnchor) }
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { runtimeAnchor = $0 }

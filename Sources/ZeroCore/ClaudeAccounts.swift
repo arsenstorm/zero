@@ -27,6 +27,8 @@ public final class ClaudeAccounts {
 
     public private(set) var accounts: [Account] = []
     public private(set) var active: String?
+    /// Accounts with a long-lived token of their own, so a single agent can run as them.
+    public private(set) var perAgent: Set<String> = []
     public private(set) var usage: [String: Usage] = [:]
     public var autoSwitch: Bool {
         didSet { UserDefaults.standard.set(autoSwitch, forKey: "claudeAutoSwitch") }
@@ -53,6 +55,27 @@ public final class ClaudeAccounts {
         if accounts.isEmpty { importSwitcher() }
         active = Self.activeEmail()
         if let active, !accounts.contains(where: { $0.email == active }) { captureActive() }
+        perAgent = Set(accounts.map(\.email).filter { AgentLaunch.token($0) != nil })
+    }
+
+    /// Mints a year-long token for `email` with `claude setup-token` (Arsen signs in as that account in the
+    /// browser) and keeps it in the Keychain. Returns an error to show, or nil.
+    public func setUpPerAgent(_ email: String) async -> String? {
+        let output = await Self.setupToken()
+        // The token can wrap across lines in the terminal UI; it has no spaces of its own.
+        let joined = output.replacingOccurrences(of: #"\u{1B}\[[0-9;?]*[A-Za-z]"#, with: "", options: .regularExpression)
+            .components(separatedBy: .whitespacesAndNewlines).joined()
+        guard let range = joined.range(of: #"sk-ant-oat01-[A-Za-z0-9_-]{20,}"#, options: .regularExpression) else {
+            return "Claude Code didn't give a token. Try again and finish signing in."
+        }
+        guard AgentLaunch.save(String(joined[range]), for: email) else { return "Couldn't keep the token in the Keychain." }
+        perAgent.insert(email)
+        return nil
+    }
+
+    public func removePerAgent(_ email: String) {
+        AgentLaunch.delete(email)
+        perAgent.remove(email)
     }
 
     /// Checks usage now and every five minutes after.
@@ -102,6 +125,7 @@ public final class ClaudeAccounts {
 
     public func remove(_ email: String) {
         guard email != active else { return }
+        removePerAgent(email)
         accounts.removeAll { $0.email == email }
         usage[email] = nil
         _ = Self.delete(Self.slot(email))
@@ -267,6 +291,23 @@ public final class ClaudeAccounts {
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// `claude setup-token` under a pseudo-terminal (it is an interactive screen), its whole output.
+    private static func setupToken() async -> String {
+        await Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/script")
+            process.arguments = ["-q", "/dev/null", "/bin/zsh", "-lc", "claude setup-token"]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+            process.standardInput = FileHandle.nullDevice
+            guard (try? process.run()) != nil else { return "" }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            return String(decoding: data, as: UTF8.self)
+        }.value
+    }
+
     /// `claude` from a login shell, so it is the one on Arsen's PATH.
     private static func claude(_ arguments: String) async -> String {
         await Task.detached {
@@ -281,5 +322,66 @@ public final class ClaudeAccounts {
             process.waitUntilExit()
             return process.terminationStatus == 0 ? "" : String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         }.value
+    }
+}
+
+/// Starting one agent as a particular account. Claude Code takes `CLAUDE_CODE_OAUTH_TOKEN` from its settings
+/// once, at start, so the token goes into a settings file only Arsen can read, the agent starts with
+/// `--settings <file>`, and once it is up the file is rewritten without the token. Solo keeps the launch
+/// arguments, so they name the file and never hold the token itself. The tokens live in the Keychain.
+public enum AgentLaunch {
+    static let folder = Paths.dir.appendingPathComponent("claude/launch")
+    static func service(_ email: String) -> String { "Zero Claude token: \(email)" }
+
+    /// A new launch file for `email`, holding its token. nil when the account has no token.
+    public static func arm(_ email: String) -> String? {
+        arm(email, at: folder.appendingPathComponent("\(UUID().uuidString).json").path)
+    }
+
+    /// Puts `email`'s token back into an existing launch file, before the agent is started again.
+    @discardableResult
+    public static func arm(_ email: String, at path: String) -> String? {
+        guard let token = token(email) else { return nil }
+        return write(["ZERO_MANAGED": "1", "CLAUDE_CODE_OAUTH_TOKEN": token], to: path) ? path : nil
+    }
+
+    /// The agent is up: the file keeps only what any later start of it needs.
+    public static func scrub(_ path: String) { _ = write(["ZERO_MANAGED": "1"], to: path) }
+
+    /// The launch file named in an agent's arguments, if it has one.
+    public static func file(in arguments: [String]) -> String? {
+        guard let index = arguments.firstIndex(of: "--settings"), arguments.indices.contains(index + 1) else { return nil }
+        let path = arguments[index + 1]
+        return path.hasPrefix(folder.path) ? path : nil
+    }
+
+    private static func write(_ env: [String: String], to path: String) -> Bool {
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        guard let data = try? JSONSerialization.data(withJSONObject: ["env": env]) else { return false }
+        guard FileManager.default.createFile(atPath: path, contents: data, attributes: [.posixPermissions: 0o600]) else { return false }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
+        return true
+    }
+
+    static func token(_ email: String) -> String? { security(["find-generic-password", "-s", service(email), "-w"]) }
+
+    static func save(_ token: String, for email: String) -> Bool {
+        security(["add-generic-password", "-U", "-s", service(email), "-a", email, "-w", token]) != nil
+    }
+
+    static func delete(_ email: String) { _ = security(["delete-generic-password", "-s", service(email)]) }
+
+    private static func security(_ arguments: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

@@ -202,6 +202,20 @@ struct SelectorView: View {
                     }
                     .padding(.top, 6)
                 }
+                // Which account a new Claude agent runs as, once more than the active one can.
+                if controller.selectorAgent == nil, row.provider == "Anthropic", !ClaudeAccounts.shared.perAgent.isEmpty {
+                    HStack {
+                        Text("Account").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                        Spacer()
+                        Picker("Account", selection: $controller.spawnAccount) {
+                            Text("Active account").tag(String?.none)
+                            ForEach(ClaudeAccounts.shared.perAgent.sorted(), id: \.self) { Text($0).tag(Optional($0)) }
+                        }
+                        .pickerStyle(.menu).labelsHidden().fixedSize().controlSize(.small)
+                    }
+                    .frame(height: 20)
+                    .padding(.top, 14)
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 14).padding(.vertical, 14)

@@ -328,6 +328,8 @@ private struct ClaudeAccountsSheet: View {
     @State private var plugin: Bool? = ClaudePlugin.isInstalled
     @State private var pluginError: String?
     @State private var switchError: String?
+    /// The account whose single-agent token is being set up, while Arsen signs in in the browser.
+    @State private var settingUp: String?
 
     private var accounts: ClaudeAccounts { ClaudeAccounts.shared }
     private static let thresholds: [Double] = [80, 85, 90, 95, 98, 100]
@@ -389,7 +391,7 @@ private struct ClaudeAccountsSheet: View {
     }
 
     private static let usageWidth: CGFloat = 64
-    private static let actionsWidth: CGFloat = 84
+    private static let actionsWidth: CGFloat = 116
 
     /// One row per account: who, how much of each limit is used, and what can be done with it.
     private var table: some View {
@@ -420,16 +422,15 @@ private struct ClaudeAccountsSheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     percent(accounts.usage[account.email]?.fiveHour)
                     percent(accounts.usage[account.email]?.sevenDay)
-                    Group {
+                    HStack(spacing: 6) {
+                        singleAgent(account.email)
                         if account.email == accounts.active {
                             Label("Active", systemImage: "checkmark.circle.fill").labelStyle(.titleAndIcon)
                                 .font(.system(size: 12, weight: .medium)).foregroundStyle(.green)
                         } else {
-                            HStack(spacing: 6) {
-                                IconButton(symbol: "trash", help: "Remove") { accounts.remove(account.email) }
-                                IconButton(symbol: "arrow.left.arrow.right", help: "Switch to this account") {
-                                    switchError = accounts.switchTo(account.email)
-                                }
+                            IconButton(symbol: "trash", help: "Remove") { accounts.remove(account.email) }
+                            IconButton(symbol: "arrow.left.arrow.right", help: "Switch to this account") {
+                                switchError = accounts.switchTo(account.email)
                             }
                         }
                     }
@@ -440,6 +441,26 @@ private struct ClaudeAccountsSheet: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
+    }
+
+    /// A key: set up (filled) means one agent can be started as this account, whatever the active one is.
+    @ViewBuilder private func singleAgent(_ email: String) -> some View {
+        if settingUp == email {
+            ProgressView().controlSize(.small).frame(width: 26, height: 26)
+        } else if accounts.perAgent.contains(email) {
+            IconButton(symbol: "key.fill", help: "Single agents can run as this account. Click to remove its token.") {
+                accounts.removePerAgent(email)
+            }
+        } else {
+            IconButton(symbol: "key", help: "Let single agents run as this account: sign in as \(email) in the browser") {
+                settingUp = email
+                switchError = nil
+                Task {
+                    switchError = await accounts.setUpPerAgent(email)
+                    settingUp = nil
+                }
+            }
+        }
     }
 
     /// "22%", or a dash when the account's usage isn't known (its token has lapsed since it was last active).
