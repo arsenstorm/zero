@@ -37,22 +37,28 @@ final class InboxController {
         guard !newAgentOpen else { return }
         holdTop = false
         switching = true
-        agentFilter = nil
-        newAgentOpen = true
+        cut { agentFilter = nil; newAgentOpen = true }
         requestScroll(animated: false)
         DispatchQueue.main.async { self.switching = false }
     }
 
+    /// A view switch is a cut: nothing fades or slides across it.
+    private func cut(_ change: () -> Void) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction, change)
+    }
+
     func show(agent: String?) {
         let wasNew = newAgentOpen
-        newAgentOpen = false
+        cut { newAgentOpen = false }
         // Hovering the control for the view already shown changes nothing: what Arsen opened stays open and
         // where it is.
         guard agentFilter != agent || wasNew else { return }
         expandedEarlier = nil
         holdTop = false
         switching = true
-        agentFilter = agent
+        cut { agentFilter = agent }
         seen.formUnion(cards.map(\.id))
         ensureSelection()
         requestScroll(animated: false)
@@ -625,7 +631,7 @@ struct InboxView: View {
                             ForEach(controller.cards) { ask in
                                 CardView(ask: ask, controller: controller, focus: $focus)
                                     .id(ask.id)
-                                    .transition(.asymmetric(insertion: .identity, removal: .opacity.animation(.easeIn(duration: 0.15))))
+                                    .transition(.asymmetric(insertion: .identity, removal: .opacity)) // the fade comes from the stack's animation, which a view switch turns off
                             }
                             if controller.cards.isEmpty { QuietCard(controller: controller) }
                         }
