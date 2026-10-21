@@ -76,7 +76,17 @@ public final class Store {
     public func identity(of agent: String) -> AgentIdentity? { asks.last { $0.agent.name == agent }?.agent }
 
     /// The name to show for an agent: Arsen's own name for it, else the runtime's label, else the key.
-    public func displayName(of agent: String) -> String { names[agent] ?? identity(of: agent)?.label ?? agent }
+    public func displayName(of agent: String) -> String {
+        if let name = names[agent] { return name }
+        let identity = identity(of: agent)
+        if let label = identity?.label { return label }
+        // A process number means nothing to Arsen; until the session's title is known, say where it works.
+        if agent.range(of: #"^(solo|claude|shell)-\d+$"#, options: .regularExpression) != nil,
+           let folder = identity?.cwd.map({ ($0 as NSString).lastPathComponent }), !folder.isEmpty {
+            return "Claude in \(folder)"
+        }
+        return agent
+    }
 
     /// Names Arsen gave agents; they win over the runtime's labels, which change as a session's title does.
     public private(set) var names: [String: String] = UserDefaults.standard.dictionary(forKey: "agentNames") as? [String: String] ?? [:]

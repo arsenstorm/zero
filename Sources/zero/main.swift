@@ -208,15 +208,19 @@ case "prompt":
     let session = (input["session_id"] as? String ?? "").replacingOccurrences(of: "/", with: "")
     let folder = Paths.dir.appendingPathComponent("presence")
     let file = folder.appendingPathComponent(session.isEmpty ? "unknown" : session)
-    let previous = (try? String(contentsOf: file, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+    // "<source> <unix time>": the stop hook reads the first word.
+    let saved = (try? String(contentsOf: file, encoding: .utf8))?.split(separator: " ")
+    let previous = saved?.first.map(String.init)
+    let typedRecently = previous == "human" && (saved?.dropFirst().first.flatMap { Double($0) }).map { Date().timeIntervalSince1970 - $0 < 600 } == true
     let machinery = ["[Solo timer", "<task-notification>", "<system-reminder>", "Caveat:"].contains { prompt.hasPrefix($0) }
     let zeroSaid = ["Arsen answered your ask", "Arsen declined your ask", "Arsen ran your command", "Arsen rejected your command", "Your ask "]
         .contains { prompt.hasPrefix($0) }
     let brief = prompt.range(of: #"\b(BRIEF|FIX|REVIEW|TEST)[\w.-]*\.md\b"#, options: .regularExpression) != nil
     var source: String
     if previous == "worker" || brief { source = "worker" }
-    else if machinery { source = "zero" } // a timer or a background result: Zero's rules apply again
-    else if zeroSaid { source = "zero" }
+    // A timer, a background result or Zero's answer arriving while Arsen is in the chat (often mid-turn) doesn't
+    // mean he left: within ten minutes of his last typed prompt the turn stays his. After that, Zero's rules again.
+    else if machinery || zeroSaid { source = typedRecently ? "human" : "zero" }
     else {
         // Zero's own inbox messages look typed; Zero knows what it sent. Unknown without Zero: treat as typed.
         let socket = try? UnixSocket.connect(path: Paths.socket)
@@ -226,7 +230,8 @@ case "prompt":
         source = socket?.receive(Response.self)?.message ?? "human"
     }
     try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-    try? source.write(to: file, atomically: true, encoding: .utf8)
+    let stamp = source == "human" && typedRecently && (machinery || zeroSaid) ? (saved?.dropFirst().first.map(String.init) ?? "") : String(Int(Date().timeIntervalSince1970))
+    try? "\(source) \(stamp)".write(to: file, atomically: true, encoding: .utf8)
     let context: String? = switch source {
     case "human": "Arsen typed this in the terminal and is at the keyboard: answer him here in the chat. This turn needs no Zero note and no [zero: …] ending, and anything you'd ask him, ask here."
     case "worker": "You were started from a brief by a lead agent: report to that lead as the brief says, not to Arsen. Don't post Zero notes or asks and don't end turns with [zero: …]. Only use zero run, with --why, for a command only Arsen can run on his Mac."

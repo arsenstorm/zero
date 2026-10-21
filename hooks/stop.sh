@@ -7,7 +7,7 @@ input=$(cat)
 case "$input" in *'"stop_hook_active":true'*) exit 0 ;; esac # already sent back once: let it stop
 # Arsen typed this turn's prompt in the terminal, or a lead runs this worker: neither needs a Zero ending.
 session=$(printf '%s' "$input" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
-presence=$(cat "$HOME/.zero/presence/$session" 2>/dev/null)
+presence=$(cut -d' ' -f1 "$HOME/.zero/presence/$session" 2>/dev/null)
 case "$presence" in human|worker) exit 0 ;; esac
 ending='\[zero: (done|asked [A-Za-z0-9]+|blocked|working)\]'
 # The input carries the turn's last message; the transcript may not have it written yet when this runs.
