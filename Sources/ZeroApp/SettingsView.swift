@@ -512,55 +512,72 @@ private struct IconButton: View {
     }
 }
 
-/// Signing in for a single-agent token: the code box while the browser is open, then "Token added", which
-/// closes by itself. A sign-in that needs no code closes as soon as the token checks out.
+/// Signing in for a single-agent token: the code box while the browser is open, then the outcome, which stays
+/// until Arsen closes it. A sign-in that needs no code goes straight to the outcome.
 private struct TokenDialog: View {
     let accounts: ClaudeAccounts
     @Environment(\.dismiss) private var dismiss
     @State private var code = ""
 
+    private var hasCode: Bool { !code.trimmingCharacters(in: .whitespaces).isEmpty }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(spacing: 0) {
             switch accounts.tokenStatus {
             case .signingIn(let email):
-                Text("Sign in as \(email)").font(.system(size: 15, weight: .semibold))
-                Text("Your browser opened Claude's sign-in. If it shows a code, paste it here.").font(.system(size: 12)).foregroundStyle(.secondary)
-                TextField("Code", text: $code).textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced)).onSubmit(submit)
-                HStack {
-                    Spacer()
+                header(symbol: "key.fill", tint: Theme.knob, title: "Sign in as \(email)",
+                       detail: "Claude's sign-in is open in your browser. If it shows a code, paste it here.")
+                TextField("Paste the code", text: $code)
+                    .textFieldStyle(.plain).font(.system(size: 13, design: .monospaced))
+                    .padding(.horizontal, 12).frame(height: 36)
+                    .background(Theme.composer).clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke, lineWidth: 1))
+                    .onSubmit(submit)
+                    .padding(.top, 18)
+                buttons {
                     RowButton(title: "Cancel") { dismiss() }
-                    RowButton(title: "Add", enabled: !code.trimmingCharacters(in: .whitespaces).isEmpty, action: submit)
+                    SolidButton(title: "Add token", action: submit).opacity(hasCode ? 1 : 0.4).disabled(!hasCode)
                 }
             case .checking(let email):
-                HStack(spacing: 10) {
-                    ProgressView().controlSize(.small)
-                    Text("Checking the token for \(email)…").font(.system(size: 13))
-                }
+                header(symbol: "key.fill", tint: Theme.knob, title: "Checking the token", detail: "Making sure Claude accepts the token for \(email).")
+                ProgressView().controlSize(.small).padding(.top, 18).frame(height: 36)
+                buttons { RowButton(title: "Cancel") { dismiss() } }
             case .added(let email):
-                Label("Token added for \(email)", systemImage: "checkmark.circle.fill").font(.system(size: 13, weight: .medium)).foregroundStyle(.green)
-                Text("Single agents can now run as this account.").font(.system(size: 12)).foregroundStyle(.secondary)
+                header(symbol: "checkmark", tint: .green, title: "Token added",
+                       detail: "Single agents can now run as \(email). Pick it under Account when you start one.")
+                buttons { SolidButton(title: "Done") { dismiss() } }
             case .failed(let email, let reason):
-                Text("No token for \(email)").font(.system(size: 15, weight: .semibold))
-                Text(reason).font(.system(size: 12)).foregroundStyle(.secondary)
-                HStack {
-                    Spacer()
+                header(symbol: "xmark", tint: .red, title: "No token for \(email)", detail: reason)
+                buttons {
                     RowButton(title: "Close") { dismiss() }
-                    RowButton(title: "Try again") { code = ""; accounts.beginPerAgent(email) }
+                    SolidButton(title: "Try again") { code = ""; accounts.beginPerAgent(email) }
                 }
             case nil:
                 EmptyView()
             }
         }
-        .padding(20)
-        .frame(width: 380)
-        .onChange(of: accounts.tokenStatus) { _, status in
-            guard case .added = status else { return }
-            Task { try? await Task.sleep(for: .seconds(1.5)); if case .added = accounts.tokenStatus { accounts.tokenStatus = nil } }
+        .padding(24)
+        .frame(width: 400)
+    }
+
+    /// A round icon for the state, the title, and one line on what is happening.
+    private func header(symbol: String, tint: Color, title: String, detail: String) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: symbol).font(.system(size: 17, weight: .semibold)).foregroundStyle(.white)
+                .frame(width: 44, height: 44).background(tint).clipShape(Circle())
+            Text(title).font(.system(size: 15, weight: .semibold)).multilineTextAlignment(.center)
+            Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func buttons(@ViewBuilder _ content: () -> some View) -> some View {
+        HStack(spacing: 8) { Spacer(); content() }.padding(.top, 20)
     }
 
     private func submit() {
-        guard !code.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        guard hasCode else { return }
         accounts.submitPerAgent(code: code)
     }
 }

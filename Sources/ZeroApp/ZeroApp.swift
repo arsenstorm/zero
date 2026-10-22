@@ -236,6 +236,7 @@ final class Panel: NSPanel {
         let menu = NSMenu()
         menu.addItem(withTitle: "Open Log", action: #selector(openLog), keyEquivalent: "")
         menu.addItem(.separator())
+        menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         menu.addItem(withTitle: "Show onboarding", action: #selector(openOnboarding), keyEquivalent: "")
         menu.addItem(withTitle: "Quit Zero", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         for item in menu.items where item.action != #selector(NSApplication.terminate(_:)) { item.target = self }
