@@ -12,7 +12,7 @@ struct SettingsView: View {
     var showOnboarding: () -> Void = {}
 
     enum Page: String, CaseIterable, Identifiable {
-        case general = "General", inbox = "Inbox", dictation = "Dictation", agents = "Agents"
+        case general = "General", inbox = "Inbox", dictation = "Dictation", agents = "Agents", projects = "Projects"
         case integrations = "Integrations", dropFolders = "Drop folders", advanced = "Advanced"
         var id: String { rawValue }
         var icon: String {
@@ -21,6 +21,7 @@ struct SettingsView: View {
             case .inbox: "tray"
             case .dictation: "mic"
             case .agents: "circle.grid.2x1"
+            case .projects: "square.stack.3d.up"
             case .integrations: "puzzlepiece.extension"
             case .dropFolders: "folder"
             case .advanced: "gearshape.2"
@@ -100,6 +101,7 @@ struct SettingsView: View {
         case .agents: AgentsPage(settings: settings, store: store)
         case .integrations: IntegrationsPage(store: store, inbox: inbox)
         case .dropFolders: DropFoldersPage(settings: settings)
+        case .projects: ProjectsPage(inbox: inbox)
         case .advanced: AdvancedPage(showOnboarding: showOnboarding)
         }
     }
@@ -653,6 +655,56 @@ private struct WorkspaceLogo: View {
             }
         }
         .frame(width: 22, height: 22).clipShape(RoundedRectangle(cornerRadius: 5))
+    }
+}
+
+/// The folders Zero's own agents start in. Each agent runs in a Rex session of its own, so it keeps running
+/// whether or not Zero is open.
+private struct ProjectsPage: View {
+    let inbox: InboxController
+    @State private var folders = RexAdapter.projects
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(RexAdapter.executable == nil
+                 ? "Zero runs its own agents in Rex. Install Rex to start agents in these folders."
+                 : "New agents can start in these folders. Each runs in its own Rex session and keeps running when Zero closes.")
+                .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if !folders.isEmpty {
+                Rows {
+                    ForEach(folders, id: \.self) { folder in
+                        HStack(spacing: 10) {
+                            Image(systemName: "folder").foregroundStyle(.secondary).frame(width: 18)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text((folder as NSString).lastPathComponent).font(.system(size: 13, weight: .medium))
+                                Text(folder.replacingOccurrences(of: NSHomeDirectory(), with: "~")).font(.system(size: 11))
+                                    .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                            }
+                            Spacer()
+                            RowButton(title: "Remove") { save(folders.filter { $0 != folder }) }
+                        }
+                        .padding(.vertical, 10)
+                    }
+                }
+            }
+            HStack {
+                RowButton(title: "Add folder…") {
+                    let panel = NSOpenPanel()
+                    panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
+                    panel.allowsMultipleSelection = true
+                    if panel.runModal() == .OK {
+                        save(folders + panel.urls.map(\.path).filter { !folders.contains($0) })
+                    }
+                }
+                Spacer()
+            }
+        }
+    }
+
+    private func save(_ list: [String]) {
+        folders = list
+        UserDefaults.standard.set(list, forKey: RexAdapter.projectsKey)
+        inbox.loadSpawnChoices(force: true)
     }
 }
 

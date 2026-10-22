@@ -658,7 +658,7 @@ enum Preview {
         // The empty inbox: "All quiet." and the new-agent composer, with example choices.
         let empty = InboxController(store: Store(logURL: nil))
         empty.spawnTargets = [SpawnChoice(id: "10", name: "Acme"), SpawnChoice(id: "13", name: "zero")]
-        empty.spawnRuntimes = [SpawnChoice(id: "6", name: "Claude"), SpawnChoice(id: "7", name: "Codex")]
+        empty.runtimesByAdapter = ["Solo": [SpawnChoice(id: "6", name: "Claude"), SpawnChoice(id: "7", name: "Codex")]]
         empty.spawnTarget = "10"; empty.spawnRuntime = "6"
         write(ComposerPreview(controller: empty).padding(12).background(Color(white: 0.5)), "composer.png")
         // An agent's conversation: a reply card with Markdown, and a sent message still waiting.

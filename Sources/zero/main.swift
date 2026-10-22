@@ -72,14 +72,17 @@ func connect() -> UnixSocket {
 
 func agentIdentity() -> AgentIdentity {
     let env = ProcessInfo.processInfo.environment
-    let name = flag("agent") ?? env["ZERO_AGENT"]
-        ?? env["SOLO_PROCESS_ID"].map { "solo-\($0)" }
-        ?? env["HF_SESSION_ID"].map { "hf-\($0)" }
-        ?? "shell-\(getppid())"
-    return AgentIdentity(name: name, host: ProcessInfo.processInfo.hostName,
+    let solo: String? = env["SOLO_PROCESS_ID"].map { "solo-" + $0 }
+    let rex: String? = env["REX_BLOCK"].map { "rex-" + String($0.suffix(6)) }
+    let hyperfocus: String? = env["HF_SESSION_ID"].map { "hf-" + $0 }
+    let name: String = flag("agent") ?? env["ZERO_AGENT"] ?? solo ?? rex ?? hyperfocus ?? "shell-\(getppid())"
+    var identity = AgentIdentity(name: name, host: ProcessInfo.processInfo.hostName,
                          cwd: FileManager.default.currentDirectoryPath,
                          soloProcessID: env["SOLO_PROCESS_ID"].flatMap(Int.init), soloProjectID: env["SOLO_PROJECT_ID"].flatMap(Int.init),
                          ticket: flag("ticket"))
+    // Inside a Rex terminal: Zero reaches the agent through Rex.
+    if let block = env["REX_BLOCK"] { identity.runtime = "rex"; identity.ref = block; identity.refGroup = env["REX_SESSION"] }
+    return identity
 }
 
 /// Prints the ask's progress and exits with its outcome. If Zero.app goes away mid-wait (it was restarted, say),

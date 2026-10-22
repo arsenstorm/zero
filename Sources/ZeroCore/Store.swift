@@ -67,7 +67,7 @@ public final class Store {
     @ObservationIgnored private let logURL: URL?
     @ObservationIgnored public let adapters: [AgentAdapter]
 
-    public init(logURL: URL? = Paths.log, adapters: [AgentAdapter] = [SoloAdapter()]) {
+    public init(logURL: URL? = Paths.log, adapters: [AgentAdapter] = [SoloAdapter(), RexAdapter()]) {
         self.logURL = logURL
         self.adapters = adapters
         load()
@@ -306,8 +306,9 @@ public final class Store {
 
     /// The name Zero knows an agent by: its own, or that of the agent with the same Solo process.
     private func resolve(_ identity: AgentIdentity) -> String {
-        if self.identity(of: identity.name) == nil, let pid = identity.soloProcessID,
-           let owner = asks.last(where: { $0.agent.soloProcessID == pid })?.agent.name { return owner }
+        guard self.identity(of: identity.name) == nil else { return identity.name }
+        if let pid = identity.soloProcessID, let owner = asks.last(where: { $0.agent.soloProcessID == pid })?.agent.name { return owner }
+        if let ref = identity.ref, let owner = asks.last(where: { $0.agent.ref == ref })?.agent.name { return owner }
         return identity.name
     }
 
@@ -357,6 +358,10 @@ public final class Store {
             ask.agent.session = ask.agent.session ?? known.session
             ask.agent.label = ask.agent.label ?? known.label
             ask.agent.account = ask.agent.account ?? known.account
+            ask.agent.runtime = ask.agent.runtime ?? known.runtime
+            ask.agent.ref = ask.agent.ref ?? known.ref
+            ask.agent.refGroup = ask.agent.refGroup ?? known.refGroup
+            ask.agent.launch = ask.agent.launch ?? known.launch
         }
         // Saying where it is again within ten minutes, with nothing else in between, rewrites the last note
         // instead of adding a row: the bar shows the latest, and the inbox doesn't fill with restatements.

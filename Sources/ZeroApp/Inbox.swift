@@ -65,11 +65,27 @@ final class InboxController {
         DispatchQueue.main.async { self.switching = false }
     }
     /// The new-agent composer: choices loaded from the spawning adapter, last picks remembered.
+    /// Every spawning adapter's projects, and which adapter each one belongs to; the runtimes follow the project's
+    /// adapter (Solo's tools, or Claude and Codex in Rex), the pick kept by name across them.
     var spawnTargets: [SpawnChoice] = []
-    var spawnRuntimes: [SpawnChoice] = []
-    var spawnTarget: String? = UserDefaults.standard.string(forKey: "lastSpawnTarget") {
-        didSet { UserDefaults.standard.set(spawnTarget, forKey: "lastSpawnTarget") }
+    var spawnRuntimes: [SpawnChoice] { spawnAdapter.flatMap { runtimesByAdapter[$0.name] } ?? [] }
+    @ObservationIgnored var targetAdapter: [String: String] = [:]
+    var runtimesByAdapter: [String: [SpawnChoice]] = [:]
+    var spawnAdapter: AgentAdapter? {
+        let owner = spawnTarget.flatMap { targetAdapter[$0] }
+        return store.spawners.first { $0.name == owner } ?? store.spawners.first
     }
+    var spawnTarget: String? = UserDefaults.standard.string(forKey: "lastSpawnTarget") {
+        didSet {
+            UserDefaults.standard.set(spawnTarget, forKey: "lastSpawnTarget")
+            // Another adapter's project: the same runtime there, by name, else its first.
+            if let current = spawnRuntime, !spawnRuntimes.contains(where: { $0.id == current }) {
+                let name = oldRuntimeName(current)
+                spawnRuntime = spawnRuntimes.first { $0.name == name }?.id ?? spawnRuntimes.first?.id
+            }
+        }
+    }
+    private func oldRuntimeName(_ id: String) -> String? { runtimesByAdapter.values.joined().first { $0.id == id }?.name }
     var spawnRuntime: String? = UserDefaults.standard.string(forKey: "lastSpawnRuntime") {
         didSet { UserDefaults.standard.set(spawnRuntime, forKey: "lastSpawnRuntime") }
     }
@@ -197,7 +213,15 @@ final class InboxController {
     }
 
     /// The runtime an existing agent runs on, by its name ("claude-120" runs on the "Claude" tool).
-    func runtime(of agent: String) -> SpawnChoice? { spawnRuntimes.first { $0.name.lowercased() == speaker(agent).lowercased() } }
+    func runtime(of agent: String) -> SpawnChoice? {
+        let own = adapter(of: agent).flatMap { runtimesByAdapter[$0.name] } ?? spawnRuntimes
+        return own.first { $0.name.lowercased() == speaker(agent).lowercased() }
+    }
+
+    /// The adapter that reaches this agent: Solo, Rex, or whichever runs it.
+    func adapter(of agent: String) -> AgentAdapter? {
+        store.identity(of: agent).flatMap { identity in store.adapters.first { $0.canReach(identity) } }
+    }
 
     /// True while the last thing in an agent's timeline is a message of Arsen's still awaiting its answer.
     func waitingOn(_ agent: String) -> Bool {
@@ -238,16 +262,22 @@ final class InboxController {
     func selectorSections(for kind: SelectorKind) -> [SelectorSection] {
         switch kind {
         case .project:
-            return [SelectorSection(id: "solo", title: "Solo projects", icon: choiceIcon("solo"), rows: spawnTargets.map { choice in
-                SelectorRow(id: choice.id, title: choice.name, provider: choice.provider, providerIcon: choiceIcon(choice.icon),
-                            detail: choice.detail, context: nil, levels: [], defaultLevel: nil, modelID: nil,
-                            selected: choice.id == spawnTarget) { [weak self] in self?.spawnTarget = choice.id }
-            })]
+            // One group per adapter: Solo's projects, then the folders Zero runs in Rex.
+            return store.spawners.compactMap { adapter in
+                let targets = spawnTargets.filter { targetAdapter[$0.id] == adapter.name }
+                guard !targets.isEmpty else { return nil }
+                return SelectorSection(id: adapter.name, title: adapter.name == "Rex" ? "Zero projects" : "\(adapter.name) projects",
+                                       icon: choiceIcon(adapter.name == "Rex" ? "rex" : "solo"), rows: targets.map { choice in
+                    SelectorRow(id: choice.id, title: choice.name, provider: choice.provider, providerIcon: choiceIcon(choice.icon),
+                                detail: choice.detail, context: nil, levels: [], defaultLevel: nil, modelID: nil,
+                                selected: choice.id == spawnTarget) { [weak self] in self?.spawnTarget = choice.id }
+                })
+            }
         case .runtime:
             _ = modelsVersion
-            guard let adapter = store.spawners.first else { return [] }
             // For a running agent: only its own runtime's models, the pick going to that agent.
             let agent = selectorAgent
+            guard let adapter = agent.flatMap({ self.adapter(of: $0) }) ?? spawnAdapter else { return [] }
             let runtimes = agent.flatMap { runtime(of: $0) }.map { [$0] } ?? spawnRuntimes
             return runtimes.map { runtime in
                 let models = adapter.spawnModels(for: runtime)
@@ -269,8 +299,8 @@ final class InboxController {
         }
     }
     /// Models for the chosen runtime, and the pick remembered per runtime.
-    var spawnModels: [SpawnChoice] { _ = modelsVersion; return store.spawners.first.flatMap { adapter in spawnRuntimes.first { $0.id == spawnRuntime }.map { adapter.spawnModels(for: $0) } } ?? [] }
-    var spawnNote: String? { store.spawners.first.flatMap { adapter in spawnRuntimes.first { $0.id == spawnRuntime }.flatMap { adapter.spawnNote(for: $0) } } }
+    var spawnModels: [SpawnChoice] { _ = modelsVersion; return spawnAdapter.flatMap { adapter in spawnRuntimes.first { $0.id == spawnRuntime }.map { adapter.spawnModels(for: $0) } } ?? [] }
+    var spawnNote: String? { spawnAdapter.flatMap { adapter in spawnRuntimes.first { $0.id == spawnRuntime }.flatMap { adapter.spawnNote(for: $0) } } }
     var spawnModel: String? {
         get { spawnRuntime.flatMap { UserDefaults.standard.string(forKey: "lastSpawnModel.\($0)") } ?? spawnModels.first?.id }
         set { if let spawnRuntime { UserDefaults.standard.set(newValue, forKey: "lastSpawnModel.\(spawnRuntime)") } }
@@ -461,16 +491,25 @@ final class InboxController {
     /// Bumped when a model list changes, so views that compute from the adapters re-read.
     var modelsVersion = 0
 
-    func loadSpawnChoices() {
+    /// `force`: read the projects again (Settings changed Zero's folders).
+    func loadSpawnChoices(force: Bool = false) {
         guard let adapter = store.spawners.first else { return }
         Task {
-            if spawnTargets.isEmpty {
-                let targets = (try? await adapter.spawnTargets()) ?? []
-                let runtimes = (try? await adapter.spawnRuntimes()) ?? []
+            if spawnTargets.isEmpty || force {
+                var targets: [SpawnChoice] = []
+                var owners: [String: String] = [:]
+                var runtimes: [String: [SpawnChoice]] = [:]
+                for spawner in store.spawners {
+                    let mine = (try? await spawner.spawnTargets()) ?? []
+                    for target in mine { owners[target.id] = spawner.name }
+                    targets += mine
+                    runtimes[spawner.name] = (try? await spawner.spawnRuntimes()) ?? []
+                }
+                targetAdapter = owners
+                runtimesByAdapter = runtimes
                 spawnTargets = targets
-                spawnRuntimes = runtimes
                 if spawnTarget == nil || !targets.contains(where: { $0.id == spawnTarget }) { spawnTarget = targets.first?.id }
-                if spawnRuntime == nil || !runtimes.contains(where: { $0.id == spawnRuntime }) { spawnRuntime = runtimes.first?.id }
+                if spawnRuntime == nil || !spawnRuntimes.contains(where: { $0.id == spawnRuntime }) { spawnRuntime = spawnRuntimes.first?.id }
             }
             // Only when there is no list for this account yet: the refresh reads Claude Code's sign-in from the
             // Keychain, and macOS asks about that every time Claude Code rewrites the item. Settings has a button.
@@ -483,7 +522,7 @@ final class InboxController {
 
     func spawn() {
         let prompt = drafts[Self.newAgentKey, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty, !spawning, let adapter = store.spawners.first,
+        guard !prompt.isEmpty, !spawning, let adapter = spawnAdapter,
               let target = spawnTargets.first(where: { $0.id == spawnTarget }),
               let runtime = spawnRuntimes.first(where: { $0.id == spawnRuntime }) else { return }
         let model = spawnModels.first { $0.id == spawnModel }
@@ -1166,7 +1205,7 @@ struct ComposerCard: View {
     private var model: SpawnChoice? {
         if let agentName {
             guard let id = controller.agentModels[agentName], let runtime else { return nil }
-            return controller.store.spawners.first?.spawnModels(for: runtime).first { $0.id == id }
+            return controller.adapter(of: agentName)?.spawnModels(for: runtime).first { $0.id == id }
         }
         return controller.spawnModels.first { $0.id == controller.spawnModel }
     }
@@ -1781,6 +1820,9 @@ struct PillView: View {
                     .onHover { if $0, drag == nil { peek(name) } }
                     .help(controller.store.displayName(of: name))
                     .contextMenu {
+                        if let identity = controller.store.identity(of: name), identity.runtime == "rex" {
+                            Button("Open in Rex") { Task { await RexAdapter.reveal(identity) } }
+                        }
                         Button(controller.store.canStop(name) ? "Remove and stop \(name)" : "Remove \(name)") { controller.store.closeAgent(name) }
                     }
                     // One gesture for click and drag, so they never compete: a press that moves under 4 pt selects;
