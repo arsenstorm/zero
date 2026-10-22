@@ -328,8 +328,9 @@ private struct ClaudeAccountsSheet: View {
     @State private var plugin: Bool? = ClaudePlugin.isInstalled
     @State private var pluginError: String?
     @State private var switchError: String?
-    /// The account whose single-agent token is being set up, while Arsen signs in in the browser.
-    @State private var settingUp: String?
+    /// The code from the browser for the token being set up, and whether it is on its way.
+    @State private var code = ""
+    @State private var submitting = false
 
     private var accounts: ClaudeAccounts { ClaudeAccounts.shared }
     private static let thresholds: [Double] = [80, 85, 90, 95, 98, 100]
@@ -377,6 +378,7 @@ private struct ClaudeAccountsSheet: View {
                 }
             }
             table.padding(.top, 16)
+            codeEntry
             ForEach([switchError, adding.error, pluginError].compactMap { $0 }, id: \.self) { error in
                 Text(error).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3).padding(.top, 8)
             }
@@ -388,6 +390,7 @@ private struct ClaudeAccountsSheet: View {
         }
         .padding(24)
         .frame(width: 560)
+        .onDisappear { accounts.cancelPerAgent() }
     }
 
     private static let usageWidth: CGFloat = 64
@@ -445,7 +448,7 @@ private struct ClaudeAccountsSheet: View {
 
     /// A key: set up (filled) means one agent can be started as this account, whatever the active one is.
     @ViewBuilder private func singleAgent(_ email: String) -> some View {
-        if settingUp == email {
+        if accounts.settingUp?.email == email {
             ProgressView().controlSize(.small).frame(width: 26, height: 26)
         } else if accounts.perAgent.contains(email) {
             IconButton(symbol: "key.fill", help: "Single agents can run as this account. Click to remove its token.") {
@@ -453,13 +456,36 @@ private struct ClaudeAccountsSheet: View {
             }
         } else {
             IconButton(symbol: "key", help: "Let single agents run as this account: sign in as \(email) in the browser") {
-                settingUp = email
-                switchError = nil
-                Task {
-                    switchError = await accounts.setUpPerAgent(email)
-                    settingUp = nil
+                code = ""
+                switchError = accounts.beginPerAgent(email)
+            }
+        }
+    }
+
+    /// While Claude Code's sign-in is open in the browser: the box for the code it shows.
+    @ViewBuilder private var codeEntry: some View {
+        if let email = accounts.settingUp?.email {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Sign in as \(email) in your browser, then paste the code it shows.").font(.system(size: 12)).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    TextField("Code", text: $code).textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced))
+                        .onSubmit(submitCode)
+                    if submitting { ProgressView().controlSize(.small) }
+                    else { RowButton(title: "Add", enabled: !code.trimmingCharacters(in: .whitespaces).isEmpty, action: submitCode) }
+                    IconButton(symbol: "xmark", help: "Cancel") { accounts.cancelPerAgent() }
                 }
             }
+            .padding(.top, 12)
+        }
+    }
+
+    private func submitCode() {
+        guard !submitting, !code.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        submitting = true
+        Task {
+            switchError = await accounts.finishPerAgent(code: code)
+            submitting = false
+            code = ""
         }
     }
 

@@ -58,17 +58,51 @@ public final class ClaudeAccounts {
         perAgent = Set(accounts.map(\.email).filter { AgentLaunch.token($0) != nil })
     }
 
-    /// Mints a year-long token for `email` with `claude setup-token` (Arsen signs in as that account in the
-    /// browser) and keeps it in the Keychain. Returns an error to show, or nil.
-    public func setUpPerAgent(_ email: String) async -> String? {
-        let output = await Self.setupToken()
-        // The token can wrap across lines in the terminal UI; it has no spaces of its own.
-        let joined = output.replacingOccurrences(of: #"\u{1B}\[[0-9;?]*[A-Za-z]"#, with: "", options: .regularExpression)
-            .components(separatedBy: .whitespacesAndNewlines).joined()
-        guard let range = joined.range(of: #"sk-ant-oat01-[A-Za-z0-9_-]{20,}"#, options: .regularExpression) else {
-            return "Claude Code didn't give a token. Try again and finish signing in."
+    /// A `claude setup-token` in progress: Arsen signs in in the browser, which shows a code he pastes back here.
+    public private(set) var settingUp: (email: String, setup: TokenSetup)?
+
+    /// Starts minting a year-long token for `email`. Claude Code opens the sign-in page; once Arsen has signed in
+    /// as that account, the page shows a code for `finishPerAgent(code:)`. Returns an error to show, or nil.
+    public func beginPerAgent(_ email: String) -> String? {
+        cancelPerAgent()
+        let setup = TokenSetup()
+        guard setup.start() else { return "Couldn't start Claude Code's sign-in." }
+        settingUp = (email, setup)
+        // Some sign-ins finish without a code: watch for the token for ten minutes either way.
+        Task {
+            for _ in 0..<600 {
+                try? await Task.sleep(for: .seconds(1))
+                guard settingUp?.setup === setup else { return }
+                if let token = setup.token() { keep(token, for: email); return }
+            }
+            if settingUp?.setup === setup { cancelPerAgent() }
         }
-        guard AgentLaunch.save(String(joined[range]), for: email) else { return "Couldn't keep the token in the Keychain." }
+        return nil
+    }
+
+    /// Hands the code from the browser to Claude Code and waits for the token. Returns an error to show, or nil.
+    public func finishPerAgent(code: String) async -> String? {
+        guard let (email, setup) = settingUp else { return nil }
+        setup.send(code.trimmingCharacters(in: .whitespacesAndNewlines))
+        for _ in 0..<30 {
+            try? await Task.sleep(for: .seconds(1))
+            if settingUp == nil { return perAgent.contains(email) ? nil : "Couldn't keep the token in the Keychain." }
+            if let token = setup.token() { return keep(token, for: email) }
+            if !setup.running { break }
+        }
+        cancelPerAgent()
+        return "Claude Code didn't accept that code. Try again: sign in as \(email), then paste the new code."
+    }
+
+    public func cancelPerAgent() {
+        settingUp?.setup.stop()
+        settingUp = nil
+    }
+
+    @discardableResult
+    private func keep(_ token: String, for email: String) -> String? {
+        cancelPerAgent()
+        guard AgentLaunch.save(token, for: email) else { return "Couldn't keep the token in the Keychain." }
         perAgent.insert(email)
         return nil
     }
@@ -291,23 +325,6 @@ public final class ClaudeAccounts {
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// `claude setup-token` under a pseudo-terminal (it is an interactive screen), its whole output.
-    private static func setupToken() async -> String {
-        await Task.detached {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/script")
-            process.arguments = ["-q", "/dev/null", "/bin/zsh", "-lc", "claude setup-token"]
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
-            process.standardInput = FileHandle.nullDevice
-            guard (try? process.run()) != nil else { return "" }
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            return String(decoding: data, as: UTF8.self)
-        }.value
-    }
-
     /// `claude` from a login shell, so it is the one on Arsen's PATH.
     private static func claude(_ arguments: String) async -> String {
         await Task.detached {
@@ -383,5 +400,49 @@ public enum AgentLaunch {
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { return nil }
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// `claude setup-token` under a pseudo-terminal (it is an interactive screen), with its input kept open so the
+/// code from the browser can be typed into it, and its output collected to read the token from.
+public final class TokenSetup: @unchecked Sendable {
+    private let process = Process()
+    private let input = Pipe()
+    private let output = Pipe()
+    private let lock = NSLock()
+    private var text = ""
+
+    public init() {}
+
+    func start() -> Bool {
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/script")
+        process.arguments = ["-q", "/dev/null", "/bin/zsh", "-lc", "claude setup-token"]
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = output
+        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let chunk = String(decoding: handle.availableData, as: UTF8.self)
+            self?.lock.withLock { self?.text += chunk }
+        }
+        return (try? process.run()) != nil
+    }
+
+    var running: Bool { process.isRunning }
+
+    func send(_ code: String) {
+        try? input.fileHandleForWriting.write(contentsOf: Data((code + "\r").utf8))
+    }
+
+    /// The token once Claude Code has printed it. It can wrap across lines on its screen and has no spaces itself.
+    func token() -> String? {
+        let screen = lock.withLock { text }
+        let joined = screen.replacingOccurrences(of: #"\u{1B}\[[0-9;?]*[A-Za-z]"#, with: "", options: .regularExpression)
+            .components(separatedBy: .whitespacesAndNewlines).joined()
+        return joined.range(of: #"sk-ant-oat01-[A-Za-z0-9_-]{20,}"#, options: .regularExpression).map { String(joined[$0]) }
+    }
+
+    func stop() {
+        output.fileHandleForReading.readabilityHandler = nil
+        if process.isRunning { process.terminate() }
     }
 }
