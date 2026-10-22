@@ -270,12 +270,12 @@ final class InboxController {
     func selectorSections(for kind: SelectorKind) -> [SelectorSection] {
         switch kind {
         case .project:
-            // One group per adapter: Solo's projects, then the folders Zero runs in Rex.
+            // One group per adapter: Solo's projects, then the folders Zero starts its own agents in.
             return store.spawners.compactMap { adapter in
                 let targets = spawnTargets.filter { targetAdapter[$0.id] == adapter.name }
                 guard !targets.isEmpty else { return nil }
-                return SelectorSection(id: adapter.name, title: adapter.name == "Rex" ? "Zero projects" : "\(adapter.name) projects",
-                                       icon: choiceIcon(adapter.name == "Rex" ? "rex" : "solo"), rows: targets.map { choice in
+                return SelectorSection(id: adapter.name, title: adapter is SoloAdapter ? "Solo projects" : "Zero projects",
+                                       icon: choiceIcon(adapter is SoloAdapter ? "solo" : adapter.name == "Rex" ? "rex" : "zero"), rows: targets.map { choice in
                     SelectorRow(id: choice.id, title: choice.name, provider: choice.provider, providerIcon: choiceIcon(choice.icon),
                                 detail: choice.detail, context: nil, levels: [], defaultLevel: nil, modelID: nil,
                                 selected: choice.id == spawnTarget) { [weak self] in self?.spawnTarget = choice.id }
@@ -1161,8 +1161,12 @@ struct ReplyBox: View {
 }
 
 private func buildChoiceIcon(_ name: String) -> Image? {
-    if name == "solo" {
-        let icon = NSWorkspace.shared.icon(forFile: "/Applications/Solo.app").copy() as! NSImage
+    // Apps' own icons: Solo's, Rex's, and Zero's for its own terminals.
+    let apps: [String: String?] = ["solo": "/Applications/Solo.app", "rex": NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.superlogical.rex")?.path,
+                "zero": Bundle.main.bundlePath]
+    if let entry = apps[name] {
+        guard let path = entry else { return nil }
+        let icon = NSWorkspace.shared.icon(forFile: path).copy() as! NSImage
         icon.size = NSSize(width: 16, height: 16)
         return Image(nsImage: icon)
     }

@@ -67,7 +67,7 @@ public final class Store {
     @ObservationIgnored private let logURL: URL?
     @ObservationIgnored public let adapters: [AgentAdapter]
 
-    public init(logURL: URL? = Paths.log, adapters: [AgentAdapter] = [SoloAdapter(), RexAdapter()]) {
+    public init(logURL: URL? = Paths.log, adapters: [AgentAdapter] = [SoloAdapter(), HostAdapter(), RexAdapter()]) {
         self.logURL = logURL
         self.adapters = adapters
         load()

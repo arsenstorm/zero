@@ -254,6 +254,11 @@ private struct IntegrationsPage: View {
     @State private var showingClaude = false
     @State private var linear = LinearConnecting()
     @State private var showingLinear = false
+    @State private var rexOn = UserDefaults.standard.bool(forKey: RexAdapter.enabledKey)
+
+    private var rexDetail: String {
+        rexOn && RexAdapter.executable != nil ? "New agents start in Rex." : "Start new agents in Rex instead of Zero's terminals."
+    }
 
     private var claudeDetail: String {
         ClaudeAccounts.shared.active.map { "Signed in as \($0)." } ?? "Asks and progress come to your inbox."
@@ -282,6 +287,17 @@ private struct IntegrationsPage: View {
                 }
                 OnboardingRow(icon: "square.stack", picture: choiceIcon("solo"), title: "Solo", detail: "Starts agents and carries your messages.") {
                     Text(soloStatus).font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                OnboardingRow(icon: "terminal", picture: choiceIcon("rex"), title: "Rex", detail: rexDetail) {
+                    if RexAdapter.executable == nil {
+                        Text("Not installed").font(.system(size: 12)).foregroundStyle(.secondary)
+                    } else {
+                        Toggle("", isOn: Binding(get: { rexOn }, set: { on in
+                            rexOn = on
+                            UserDefaults.standard.set(on, forKey: RexAdapter.enabledKey)
+                            inbox.loadSpawnChoices(force: true)
+                        })).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    }
                 }
                 OnboardingRow(icon: "link", picture: choiceIcon("linear"), title: "Linear", detail: linearDetail) {
                     if Linear.shared.workspaces.isEmpty {
@@ -658,17 +674,15 @@ private struct WorkspaceLogo: View {
     }
 }
 
-/// The folders Zero's own agents start in. Each agent runs in a Rex session of its own, so it keeps running
-/// whether or not Zero is open.
+/// The folders Zero's own agents start in. Each runs in a terminal of its own (Zero's, or Rex's when Rex is on),
+/// so it keeps running whether or not Zero is open.
 private struct ProjectsPage: View {
     let inbox: InboxController
-    @State private var folders = RexAdapter.projects
+    @State private var folders = Projects.folders
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(RexAdapter.executable == nil
-                 ? "Zero runs its own agents in Rex. Install Rex to start agents in these folders."
-                 : "New agents can start in these folders. Each runs in its own Rex session and keeps running when Zero closes.")
+            Text("New agents can start in these folders. Each runs in its own terminal and keeps running when Zero closes.")
                 .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if !folders.isEmpty {
                 Rows {
@@ -703,7 +717,7 @@ private struct ProjectsPage: View {
 
     private func save(_ list: [String]) {
         folders = list
-        UserDefaults.standard.set(list, forKey: RexAdapter.projectsKey)
+        UserDefaults.standard.set(list, forKey: Projects.key)
         inbox.loadSpawnChoices(force: true)
     }
 }
