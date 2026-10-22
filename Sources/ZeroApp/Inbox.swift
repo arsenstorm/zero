@@ -1838,6 +1838,9 @@ struct PillView: View {
                         if let identity = controller.store.identity(of: name), identity.runtime == "rex" {
                             Button("Open in Rex") { Task { await RexAdapter.reveal(identity) } }
                         }
+                        if let identity = controller.store.identity(of: name), identity.runtime == "zero", let ref = identity.ref {
+                            Button("Open in Terminal") { HostAdapter.reveal(ref) }
+                        }
                         Button(controller.store.canStop(name) ? "Remove and stop \(name)" : "Remove \(name)") { controller.store.closeAgent(name) }
                     }
                     // One gesture for click and drag, so they never compete: a press that moves under 4 pt selects;

@@ -26,6 +26,15 @@ public struct HostAdapter: TerminalAdapter {
         return terminal.running ? .running : .exited
     }
 
+    /// Shows the agent's terminal in the Mac's terminal app, through `zero attach` in a .command file it opens.
+    public static func reveal(_ ref: String) {
+        let file = Paths.dir.appendingPathComponent("attach-\(ref.suffix(6)).command")
+        let cli = URL(fileURLWithPath: HostLink.executable).deletingLastPathComponent().appendingPathComponent("zero-cli").path
+        try? "#!/bin/sh\nclear\nexec '\(cli)' attach \(ref)\n".write(to: file, atomically: true, encoding: .utf8)
+        chmod(file.path, 0o755)
+        _ = try? Process.run(URL(fileURLWithPath: "/usr/bin/open"), arguments: [file.path])
+    }
+
     /// The agent's terminal if its program runs; otherwise a new one resuming the conversation, the old one closed.
     public func connect(_ agent: AgentIdentity) async throws -> AgentIdentity {
         guard let ref = agent.ref else { throw AdapterError("\(agent.name) has no terminal") }

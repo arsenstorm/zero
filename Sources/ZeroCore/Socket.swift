@@ -77,6 +77,12 @@ public final class UnixSocket {
         }
     }
 
+    /// Bytes read past the last line, for a connection that switches from lines to a raw stream.
+    public func takeBuffered() -> Data {
+        defer { buffer.removeAll() }
+        return buffer
+    }
+
     public func write(line: String) throws {
         let bytes = Array((line + "\n").utf8)
         try bytes.withUnsafeBytes { raw in

@@ -8,7 +8,7 @@ public enum HostLink {
     public static let version = 1
 
     public struct Request: Codable, Sendable {
-        /// hello | spawn | write | screen | state | close | list
+        /// hello | spawn | write | screen | state | resize | close | list | attach
         public var op: String
         public var id: String?
         public var cwd: String?

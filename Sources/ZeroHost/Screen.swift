@@ -50,6 +50,29 @@ final class Screen {
         options.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN
         options.unwrap = unwrap
         options.trim = true
+        return format(options)
+    }
+
+    /// The screen as escape sequences that draw it again, colours, modes and cursor included: what an attaching
+    /// terminal is shown first.
+    func redraw() -> String {
+        var options = GhosttyFormatterTerminalOptions()
+        options.size = MemoryLayout<GhosttyFormatterTerminalOptions>.size
+        options.emit = GHOSTTY_FORMATTER_FORMAT_VT
+        options.extra.size = MemoryLayout<GhosttyFormatterTerminalExtra>.size
+        options.extra.modes = true
+        options.extra.scrolling_region = true
+        options.extra.keyboard = true
+        options.extra.screen.size = MemoryLayout<GhosttyFormatterScreenExtra>.size
+        options.extra.screen.cursor = true
+        options.extra.screen.style = true
+        options.extra.screen.hyperlink = true
+        options.extra.screen.kitty_keyboard = true
+        options.extra.screen.charsets = true
+        return format(options)
+    }
+
+    private func format(_ options: GhosttyFormatterTerminalOptions) -> String {
         var formatter: GhosttyFormatter?
         guard ghostty_formatter_terminal_new(nil, &formatter, terminal, options) == GHOSTTY_SUCCESS else { return "" }
         defer { ghostty_formatter_free(formatter) }

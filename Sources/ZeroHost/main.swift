@@ -28,10 +28,13 @@ final class Terminal {
     private(set) var pid: pid_t = 0
     private(set) var exitCode: Int32?
     private var reader: DispatchSourceRead?
+    /// Terminals attached with `zero attach`: each gets the program's output as it comes.
+    var viewers: [Int32: UnixSocket] = [:]
+    private let columns: Int, rows: Int
     private var exitWatch: DispatchSourceProcess?
 
     init(id: String, label: String, cwd: String, argv: [String], columns: Int, rows: Int) {
-        self.id = id; self.label = label; self.cwd = cwd; self.argv = argv
+        self.id = id; self.label = label; self.cwd = cwd; self.argv = argv; self.columns = columns; self.rows = rows
         screen = Screen(columns: columns, rows: rows)
     }
 
@@ -76,7 +79,11 @@ final class Terminal {
             guard let self else { return }
             var buffer = [UInt8](repeating: 0, count: 65536)
             let count = read(self.master, &buffer, buffer.count)
-            if count > 0 { self.screen.feed(Data(buffer[0..<count])) } else { self.reader?.cancel() }
+            guard count > 0 else { self.reader?.cancel(); return }
+            let output = Data(buffer[0..<count])
+            self.screen.feed(output)
+            // ponytail: written inline, so a stalled viewer stalls the host; a per-viewer queue if that ever bites
+            for viewer in self.viewers.values { output.withUnsafeBytes { _ = Darwin.write(viewer.fd, $0.baseAddress!, $0.count) } }
         }
         reader.resume()
         self.reader = reader
@@ -109,6 +116,29 @@ final class Terminal {
         var size = winsize(ws_row: UInt16(rows), ws_col: UInt16(columns), ws_xpixel: 0, ws_ypixel: 0)
         _ = ioctl(master, TIOCSWINSZ, &size)
         screen.resize(columns: columns, rows: rows)
+    }
+
+    /// Shows the terminal in another one, at that one's size, until it lets go: the screen as it is, then the
+    /// program's output as it comes, while what is typed there goes to the program. Runs on the client's thread.
+    func attach(_ client: UnixSocket, columns: Int?, rows: Int?) {
+        queue.sync {
+            if let columns, let rows { resize(columns: columns, rows: rows) }
+            let redraw = Data(("\u{1B}[H\u{1B}[2J" + screen.redraw()).utf8)
+            redraw.withUnsafeBytes { _ = Darwin.write(client.fd, $0.baseAddress!, $0.count) }
+            viewers[client.fd] = client
+        }
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let count = read(client.fd, &buffer, buffer.count)
+            guard count > 0 else { break }
+            let input = Data(buffer[0..<count])
+            queue.async { self.write(input) }
+        }
+        queue.sync {
+            viewers[client.fd] = nil
+            // Back to the size Zero reads it at, once nobody is looking.
+            if viewers.isEmpty { resize(columns: self.columns, rows: self.rows) }
+        }
     }
 
     /// Ends the program and lets go of the terminal.
@@ -187,6 +217,14 @@ Thread.detachNewThread {
         Thread.detachNewThread {
             defer { client.close() }
             guard let request = client.receive(HostLink.Request.self) else { return }
+            if request.op == "attach" {
+                guard let terminal = queue.sync(execute: { request.id.flatMap { terminals[$0] } }) else {
+                    try? client.send(HostLink.Response(ok: false, error: "no such terminal")); return
+                }
+                try? client.send(HostLink.Response(ok: true, terminal: queue.sync { terminal.summary }))
+                terminal.attach(client, columns: request.columns, rows: request.rows)
+                return
+            }
             let response = queue.sync { handle(request) }
             try? client.send(response)
         }
