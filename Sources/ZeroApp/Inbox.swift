@@ -27,6 +27,14 @@ final class InboxController {
     /// The composer's height as last laid out: the empty inbox's card matches it, and conversations centre it.
     var composerHeight: CGFloat = 100
 
+    /// Where each of the bar's controls sits, in its window (top-left origin), keyed by agent name or one of the
+    /// two slots below. The app matches the pointer against these: a hover handler only answered over what a
+    /// control draws, an 11 pt dot.
+    @ObservationIgnored var barSlots: [String: CGRect] = [:]
+    static let inboxSlot = "\u{0}inbox", newSlot = "\u{0}new"
+    /// The control the bar last opened from the pointer, so moving within it doesn't reopen it.
+    @ObservationIgnored var barHover: String?
+
     /// The new-agent view: just the composer, opened from the bar's + button.
     var newAgentOpen = false
     /// Set while Arsen opens something in place (a card's text, an Earlier row): the view keeps its top where it
@@ -1727,6 +1735,7 @@ struct PillView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// A dot being dragged up or down the bar, and how far.
     @State private var drag: (name: String, y: CGFloat)?
+
     private let slot: CGFloat = 28
 
     init(controller: InboxController, settings: Settings, openInbox: @escaping () -> Void,
@@ -1784,7 +1793,7 @@ struct PillView: View {
                 }
                 .frame(width: 32, height: 32)
             .contentShape(Rectangle())
-            .onHover { if $0 { peek(nil) } }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { controller.barSlots[InboxController.inboxSlot] = $0 }
             .onTapGesture(perform: openInbox)
             .help("Open asks")
             if controller.canSpawn {
@@ -1795,7 +1804,7 @@ struct PillView: View {
                     }
                     .frame(width: 32, height: 32)
                     .contentShape(Rectangle())
-                    .onHover { if $0 { peekNewAgent() } }
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { controller.barSlots[InboxController.newSlot] = $0 }
                     .onTapGesture(perform: openNewAgent)
                     .help("Start a new agent")
             }
@@ -1812,12 +1821,14 @@ struct PillView: View {
                     }
                     .scaleEffect(scale(name))
                     .animation(reduceMotion ? nil : .smooth(duration: 0.15), value: scale(name))
-                    .frame(width: 32, height: slot)
-                    .contentShape(Rectangle())
                     .offset(y: drag?.name == name ? drag!.y : shift(of: name, in: agents.map(\.0)))
                     .animation(drag?.name == name || reduceMotion ? nil : .snappy(duration: 0.2), value: dropIndex(in: agents.map(\.0)))
+                    // The whole slot, not just the dot, answers the pointer: full bar width, and the gap halves
+                    // above and below it, so the slots meet and there is no dead space between dots.
+                    .frame(width: 32, height: slot)
+                    .contentShape(Rectangle())
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { controller.barSlots[name] = $0 }
                     .zIndex(drag?.name == name ? 1 : 0)
-                    .onHover { if $0, drag == nil { peek(name) } }
                     .help(controller.store.displayName(of: name))
                     .contextMenu {
                         if let identity = controller.store.identity(of: name), identity.runtime == "rex" {

@@ -496,6 +496,22 @@ final class Panel: NSPanel {
         open(byIntent: true)
     }
 
+    /// The bar's control under the pointer opens its view: each control's slot spans the bar's width and meets
+    /// its neighbours, so the pointer never has to find the dot itself.
+    private func hoverBar(at mouse: NSPoint) {
+        guard pill.isVisible, pill.frame.contains(mouse), NSEvent.pressedMouseButtons == 0 else { inbox.barHover = nil; return }
+        let local = pill.convertPoint(fromScreen: mouse)
+        let point = CGPoint(x: local.x, y: pill.frame.height - local.y) // SwiftUI's global space runs top down
+        let under = inbox.barSlots.first { $0.value.insetBy(dx: -8, dy: -1).contains(point) }?.key
+        guard let under, under != inbox.barHover else { if under == nil { inbox.barHover = nil }; return }
+        inbox.barHover = under
+        switch under {
+        case InboxController.inboxSlot: peek(nil)
+        case InboxController.newSlot: peekNewAgent()
+        default: peek(under)
+        }
+    }
+
     /// The bar's + button: the new-agent composer, pinned open with the keyboard; again closes it.
     private func pinNewAgent() {
         if openedByIntent && inboxPanel.isVisible && inbox.newAgentOpen { hideInbox(); return }
@@ -538,6 +554,7 @@ final class Panel: NSPanel {
     /// the cards, or to another screen, closes it.
     private func trackPointer() {
         let mouse = NSEvent.mouseLocation
+        hoverBar(at: mouse)
         // "Follow the active screen": move whenever the pointer is on a different display than Zero.
         if settings.followActiveScreen, let here = NSScreen.screens.first(where: { $0.frame.contains(mouse) }),
            here.displayID != pinnedDisplay {
