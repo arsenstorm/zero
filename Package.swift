@@ -7,6 +7,10 @@ let package = Package(
     targets: [
         .target(name: "ZeroCore"),
         .executableTarget(name: "zero", dependencies: ["ZeroCore"]),
+        // Ghostty's terminal engine, built from source by `make ghostty` (see the Makefile).
+        .binaryTarget(name: "GhosttyVt", path: "Vendor/GhosttyVt.xcframework"),
+        // Keeps Zero's own agents' terminals running, whether or not Zero is open.
+        .executableTarget(name: "zero-host", dependencies: ["ZeroCore", "GhosttyVt"], path: "Sources/ZeroHost"),
         .executableTarget(name: "ZeroApp", dependencies: ["ZeroCore"],
                           linkerSettings: [.linkedFramework("Carbon")]),
         .testTarget(name: "ZeroCoreTests", dependencies: ["ZeroCore"]),
