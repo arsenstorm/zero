@@ -328,9 +328,7 @@ private struct ClaudeAccountsSheet: View {
     @State private var plugin: Bool? = ClaudePlugin.isInstalled
     @State private var pluginError: String?
     @State private var switchError: String?
-    /// The code from the browser for the token being set up, and whether it is on its way.
-    @State private var code = ""
-    @State private var submitting = false
+
 
     private var accounts: ClaudeAccounts { ClaudeAccounts.shared }
     private static let thresholds: [Double] = [80, 85, 90, 95, 98, 100]
@@ -378,7 +376,6 @@ private struct ClaudeAccountsSheet: View {
                 }
             }
             table.padding(.top, 16)
-            codeEntry
             ForEach([switchError, adding.error, pluginError].compactMap { $0 }, id: \.self) { error in
                 Text(error).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3).padding(.top, 8)
             }
@@ -391,6 +388,10 @@ private struct ClaudeAccountsSheet: View {
         .padding(24)
         .frame(width: 560)
         .onDisappear { accounts.cancelPerAgent() }
+        .sheet(isPresented: Binding(get: { accounts.tokenStatus != nil },
+                                    set: { if !$0 { accounts.cancelPerAgent(); accounts.tokenStatus = nil } })) {
+            TokenDialog(accounts: accounts)
+        }
     }
 
     private static let usageWidth: CGFloat = 64
@@ -427,11 +428,13 @@ private struct ClaudeAccountsSheet: View {
                     percent(accounts.usage[account.email]?.sevenDay)
                     HStack(spacing: 6) {
                         singleAgent(account.email)
-                        if account.email == accounts.active {
-                            Label("Active", systemImage: "checkmark.circle.fill").labelStyle(.titleAndIcon)
-                                .font(.system(size: 12, weight: .medium)).foregroundStyle(.green)
+                        let active = account.email == accounts.active
+                        IconButton(symbol: "trash", help: active ? "Switch to another account before removing this one" : "Remove",
+                                   enabled: !active) { accounts.remove(account.email) }
+                        if active {
+                            // Solid, like the token key: this is the account Claude Code runs as.
+                            IconButton(symbol: "checkmark", help: "The account Claude Code uses now", filled: true) {}
                         } else {
-                            IconButton(symbol: "trash", help: "Remove") { accounts.remove(account.email) }
                             IconButton(symbol: "arrow.left.arrow.right", help: "Switch to this account") {
                                 switchError = accounts.switchTo(account.email)
                             }
@@ -446,46 +449,21 @@ private struct ClaudeAccountsSheet: View {
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
     }
 
-    /// A key: set up (filled) means one agent can be started as this account, whatever the active one is.
+    /// The key: solid once the account has a working token of its own, so a single agent can run as it.
     @ViewBuilder private func singleAgent(_ email: String) -> some View {
-        if accounts.settingUp?.email == email {
+        switch accounts.tokenStatus {
+        case .signingIn(email), .checking(email):
             ProgressView().controlSize(.small).frame(width: 26, height: 26)
-        } else if accounts.perAgent.contains(email) {
-            IconButton(symbol: "key.fill", help: "Single agents can run as this account. Click to remove its token.") {
-                accounts.removePerAgent(email)
-            }
-        } else {
-            IconButton(symbol: "key", help: "Let single agents run as this account: sign in as \(email) in the browser") {
-                code = ""
-                switchError = accounts.beginPerAgent(email)
-            }
-        }
-    }
-
-    /// While Claude Code's sign-in is open in the browser: the box for the code it shows.
-    @ViewBuilder private var codeEntry: some View {
-        if let email = accounts.settingUp?.email {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Sign in as \(email) in your browser, then paste the code it shows.").font(.system(size: 12)).foregroundStyle(.secondary)
-                HStack(spacing: 8) {
-                    TextField("Code", text: $code).textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced))
-                        .onSubmit(submitCode)
-                    if submitting { ProgressView().controlSize(.small) }
-                    else { RowButton(title: "Add", enabled: !code.trimmingCharacters(in: .whitespaces).isEmpty, action: submitCode) }
-                    IconButton(symbol: "xmark", help: "Cancel") { accounts.cancelPerAgent() }
+        default:
+            if accounts.perAgent.contains(email) {
+                IconButton(symbol: "key.fill", help: "Single agents can run as \(email). Click to remove its token.", filled: true) {
+                    accounts.removePerAgent(email)
+                }
+            } else {
+                IconButton(symbol: "key", help: "Let single agents run as \(email): sign in as it in the browser") {
+                    accounts.beginPerAgent(email)
                 }
             }
-            .padding(.top, 12)
-        }
-    }
-
-    private func submitCode() {
-        guard !submitting, !code.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        submitting = true
-        Task {
-            switchError = await accounts.finishPerAgent(code: code)
-            submitting = false
-            code = ""
         }
     }
 
@@ -520,13 +498,70 @@ private struct ClaudeAccountsSheet: View {
 private struct IconButton: View {
     let symbol: String
     let help: String
+    var enabled = true
+    /// Solid black (white in dark mode) with the symbol in the opposite colour: a state that is on.
+    var filled = false
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 11, weight: .semibold)).foregroundStyle(.primary)
-                .frame(width: 26, height: 26).background(Theme.chip).clipShape(Circle())
+            Image(systemName: symbol).font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(filled ? AnyShapeStyle(Theme.onKnob) : enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+                .frame(width: 26, height: 26).background(filled ? Theme.knob : Theme.chip).clipShape(Circle())
         }
-        .buttonStyle(PressableStyle()).help(help).accessibilityLabel(help)
+        .buttonStyle(PressableStyle()).disabled(!enabled).help(help).accessibilityLabel(help)
+    }
+}
+
+/// Signing in for a single-agent token: the code box while the browser is open, then "Token added", which
+/// closes by itself. A sign-in that needs no code closes as soon as the token checks out.
+private struct TokenDialog: View {
+    let accounts: ClaudeAccounts
+    @Environment(\.dismiss) private var dismiss
+    @State private var code = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            switch accounts.tokenStatus {
+            case .signingIn(let email):
+                Text("Sign in as \(email)").font(.system(size: 15, weight: .semibold))
+                Text("Your browser opened Claude's sign-in. If it shows a code, paste it here.").font(.system(size: 12)).foregroundStyle(.secondary)
+                TextField("Code", text: $code).textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced)).onSubmit(submit)
+                HStack {
+                    Spacer()
+                    RowButton(title: "Cancel") { dismiss() }
+                    RowButton(title: "Add", enabled: !code.trimmingCharacters(in: .whitespaces).isEmpty, action: submit)
+                }
+            case .checking(let email):
+                HStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text("Checking the token for \(email)…").font(.system(size: 13))
+                }
+            case .added(let email):
+                Label("Token added for \(email)", systemImage: "checkmark.circle.fill").font(.system(size: 13, weight: .medium)).foregroundStyle(.green)
+                Text("Single agents can now run as this account.").font(.system(size: 12)).foregroundStyle(.secondary)
+            case .failed(let email, let reason):
+                Text("No token for \(email)").font(.system(size: 15, weight: .semibold))
+                Text(reason).font(.system(size: 12)).foregroundStyle(.secondary)
+                HStack {
+                    Spacer()
+                    RowButton(title: "Close") { dismiss() }
+                    RowButton(title: "Try again") { code = ""; accounts.beginPerAgent(email) }
+                }
+            case nil:
+                EmptyView()
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
+        .onChange(of: accounts.tokenStatus) { _, status in
+            guard case .added = status else { return }
+            Task { try? await Task.sleep(for: .seconds(1.5)); if case .added = accounts.tokenStatus { accounts.tokenStatus = nil } }
+        }
+    }
+
+    private func submit() {
+        guard !code.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        accounts.submitPerAgent(code: code)
     }
 }
 

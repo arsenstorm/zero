@@ -58,53 +58,71 @@ public final class ClaudeAccounts {
         perAgent = Set(accounts.map(\.email).filter { AgentLaunch.token($0) != nil })
     }
 
-    /// A `claude setup-token` in progress: Arsen signs in in the browser, which shows a code he pastes back here.
+    /// A `claude setup-token` in progress: Arsen signs in in the browser, which may show a code he pastes back.
     public private(set) var settingUp: (email: String, setup: TokenSetup)?
+    /// What the single-agent sign-in dialog shows: signing in, the token added, or why it failed.
+    public enum TokenStatus: Equatable, Sendable { case signingIn(String), checking(String), added(String), failed(String, String) }
+    public var tokenStatus: TokenStatus?
 
-    /// Starts minting a year-long token for `email`. Claude Code opens the sign-in page; once Arsen has signed in
-    /// as that account, the page shows a code for `finishPerAgent(code:)`. Returns an error to show, or nil.
-    public func beginPerAgent(_ email: String) -> String? {
+    /// Starts minting a year-long token for `email`: Claude Code opens the sign-in page in the browser.
+    public func beginPerAgent(_ email: String) {
         cancelPerAgent()
         let setup = TokenSetup()
-        guard setup.start() else { return "Couldn't start Claude Code's sign-in." }
+        guard setup.start() else { tokenStatus = .failed(email, "Couldn't start Claude Code's sign-in."); return }
         settingUp = (email, setup)
+        tokenStatus = .signingIn(email)
         // Some sign-ins finish without a code: watch for the token for ten minutes either way.
         Task {
             for _ in 0..<600 {
                 try? await Task.sleep(for: .seconds(1))
                 guard settingUp?.setup === setup else { return }
-                if let token = setup.token() { keep(token, for: email); return }
+                if let token = setup.token() { await keep(token, for: email); return }
+                if !setup.running { break }
             }
-            if settingUp?.setup === setup { cancelPerAgent() }
+            if settingUp?.setup === setup { fail(email, "Claude Code's sign-in ended without a token. Try again.") }
         }
-        return nil
     }
 
-    /// Hands the code from the browser to Claude Code and waits for the token. Returns an error to show, or nil.
-    public func finishPerAgent(code: String) async -> String? {
-        guard let (email, setup) = settingUp else { return nil }
+    /// Hands the code from the browser to Claude Code; the watch above picks up the token it prints.
+    public func submitPerAgent(code: String) {
+        guard let (email, setup) = settingUp else { return }
+        tokenStatus = .checking(email)
         setup.send(code.trimmingCharacters(in: .whitespacesAndNewlines))
-        for _ in 0..<30 {
-            try? await Task.sleep(for: .seconds(1))
-            if settingUp == nil { return perAgent.contains(email) ? nil : "Couldn't keep the token in the Keychain." }
-            if let token = setup.token() { return keep(token, for: email) }
-            if !setup.running { break }
-        }
-        cancelPerAgent()
-        return "Claude Code didn't accept that code. Try again: sign in as \(email), then paste the new code."
     }
 
     public func cancelPerAgent() {
         settingUp?.setup.stop()
         settingUp = nil
+        if case .signingIn = tokenStatus { tokenStatus = nil }
+        if case .checking = tokenStatus { tokenStatus = nil }
     }
 
-    @discardableResult
-    private func keep(_ token: String, for email: String) -> String? {
-        cancelPerAgent()
-        guard AgentLaunch.save(token, for: email) else { return "Couldn't keep the token in the Keychain." }
+    private func fail(_ email: String, _ reason: String) {
+        settingUp?.setup.stop()
+        settingUp = nil
+        tokenStatus = .failed(email, reason)
+    }
+
+    /// Keeps the token only once Claude accepts it, so a token misread off the screen is never saved.
+    private func keep(_ token: String, for email: String) async {
+        tokenStatus = .checking(email)
+        settingUp?.setup.stop()
+        settingUp = nil
+        guard await Self.works(token) else { return fail(email, "Claude didn't accept the token. Try again.") }
+        guard AgentLaunch.save(token, for: email) else { return fail(email, "Couldn't keep the token in the Keychain.") }
         perAgent.insert(email)
-        return nil
+        tokenStatus = .added(email)
+    }
+
+    /// A small read Claude only answers for a working sign-in: its list of models.
+    static func works(_ token: String) async -> Bool {
+        var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/models?limit=1")!)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        request.timeoutInterval = 15
+        guard let (_, response) = try? await URLSession.shared.data(for: request) else { return false }
+        return (response as? HTTPURLResponse)?.statusCode == 200
     }
 
     public func removePerAgent(_ email: String) {
@@ -416,7 +434,8 @@ public final class TokenSetup: @unchecked Sendable {
 
     func start() -> Bool {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/script")
-        process.arguments = ["-q", "/dev/null", "/bin/zsh", "-lc", "claude setup-token"]
+        // Wide enough that the token, about 110 characters, prints on one line instead of wrapping.
+        process.arguments = ["-q", "/dev/null", "/bin/zsh", "-lc", "stty cols 400 rows 50; claude setup-token"]
         process.standardInput = input
         process.standardOutput = output
         process.standardError = output
@@ -433,12 +452,15 @@ public final class TokenSetup: @unchecked Sendable {
         try? input.fileHandleForWriting.write(contentsOf: Data((code + "\r").utf8))
     }
 
-    /// The token once Claude Code has printed it. It can wrap across lines on its screen and has no spaces itself.
+    /// The token once Claude Code has printed it, on one line of its (wide) screen. Control sequences (colours,
+    /// cursor moves, links) are taken out first, so none can cut it short.
     func token() -> String? {
         let screen = lock.withLock { text }
-        let joined = screen.replacingOccurrences(of: #"\u{1B}\[[0-9;?]*[A-Za-z]"#, with: "", options: .regularExpression)
-            .components(separatedBy: .whitespacesAndNewlines).joined()
-        return joined.range(of: #"sk-ant-oat01-[A-Za-z0-9_-]{20,}"#, options: .regularExpression).map { String(joined[$0]) }
+        let plain = screen
+            .replacingOccurrences(of: #"\u{1B}\][^\u{07}\u{1B}]*(\u{07}|\u{1B}\\)"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\u{1B}\[[0-9;?<>=]*[ -/]*[@-~]"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\u{1B}[()][A-Za-z0-9]"#, with: "", options: .regularExpression)
+        return plain.range(of: #"sk-ant-oat01-[A-Za-z0-9_-]{40,}"#, options: .regularExpression).map { String(plain[$0]) }
     }
 
     func stop() {
