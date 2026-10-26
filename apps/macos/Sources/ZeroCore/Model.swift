@@ -174,7 +174,8 @@ public struct Response: Codable, Sendable {
 
 public enum Paths {
     public static let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".zero")
-    public static let socket = dir.appendingPathComponent("zero.sock").path
+    /// ~/.zero/zero.sock, or the one ZERO_SOCKET names (a test inbox, say).
+    public static let socket = ProcessInfo.processInfo.environment["ZERO_SOCKET"] ?? dir.appendingPathComponent("zero.sock").path
     public static let log = dir.appendingPathComponent("asks.jsonl")
 }
 

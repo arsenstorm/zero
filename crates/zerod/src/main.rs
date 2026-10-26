@@ -17,13 +17,17 @@ async fn main() {
     setsid();
     let zero = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(".zero");
     let (mut home, mut socket) = (zero.join("zerod"), zero.join("zerod.sock"));
+    // The inbox, served on the `zero` CLI's socket, with the log the app kept.
+    let (mut cli_socket, mut asks_log): (Option<PathBuf>, PathBuf) = (None, zero.join("asks.jsonl"));
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match (arg.as_str(), args.next()) {
             ("--home", Some(value)) => home = value.into(),
             ("--socket", Some(value)) => socket = value.into(),
+            ("--cli-socket", Some(value)) => cli_socket = Some(value.into()),
+            ("--asks", Some(value)) => asks_log = value.into(),
             _ => {
-                eprintln!("usage: zerod [--home DIR] [--socket PATH]");
+                eprintln!("usage: zerod [--home DIR] [--socket PATH] [--cli-socket PATH] [--asks FILE]");
                 std::process::exit(2);
             }
         }
@@ -39,6 +43,12 @@ async fn main() {
             std::process::exit(1);
         }
     };
+    if let Some(cli_socket) = cli_socket {
+        let inbox = zerod::inbox::Inbox::open(Some(asks_log), vec![]);
+        tokio::spawn(async move {
+            if let Err(error) = zerod::cli::serve(inbox, cli_socket).await { eprintln!("zerod: the CLI socket stopped: {error}") }
+        });
+    }
     let mut terminate = signal(SignalKind::terminate()).expect("a SIGTERM handler");
     eprintln!("zerod: {} sessions, listening on {}", daemon.list().len(), socket.display());
     // Codex processes end with the daemon: their input closes when it exits.

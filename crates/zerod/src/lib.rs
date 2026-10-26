@@ -5,6 +5,7 @@ pub mod acp;
 pub mod adapter;
 pub mod ask;
 pub mod claude;
+pub mod cli;
 pub mod codex;
 pub mod core;
 pub mod daemon;
