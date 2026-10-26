@@ -1,0 +1,143 @@
+//! Claude Code through its own headless mode (`claude -p` with stream-json both ways and permission prompts on
+//! stdio), on real output (tests/fixtures/claude-*, recorded from Claude Code 2.1.310 on Haiku, every request
+//! allowed). Zero runs the installed `claude` and never touches its sign-in.
+
+mod common;
+
+use common::replay;
+use serde_json::json;
+use zerod::core::Core;
+use zerod::model::{ApprovalKind, Change, ChoiceKind, Conversation, ItemKind, ItemStatus, Provider, Status};
+
+fn approvals(changes: &[Change]) -> Vec<zerod::model::Approval> {
+    changes.iter().filter_map(|c| match c { Change::Approval { approval } => Some(approval.clone()), _ => None }).collect()
+}
+
+#[test]
+fn a_command_claude_may_run_reads_as_the_users_words_the_command_and_the_answer() {
+    let (core, changes) = replay(Provider::Claude, "claude-command");
+    let conversation = core.conversation();
+    assert_eq!(conversation.thread.as_deref(), Some("de7c0e2b-badd-439a-a46b-9e187476cb40"));
+    assert_eq!(conversation.model.as_deref(), Some("claude-haiku-5-5"));
+    assert_eq!((conversation.status, conversation.turn.clone()), (Status::Idle, None));
+    let kinds: Vec<&ItemKind> = conversation.items.iter().map(|i| &i.kind).collect();
+    assert!(matches!(kinds[0], ItemKind::User { text } if text.starts_with("Run the shell command uname -s")), "Claude doesn't echo it; Zero records what it sent");
+    assert!(matches!(kinds[1], ItemKind::Command { command, output, cwd, .. } if command == "uname -s" && output == "Darwin" && cwd == "/work/project"));
+    assert_eq!(conversation.items[1].status, ItemStatus::Done);
+    assert!(matches!(kinds[2], ItemKind::Agent { text, final_answer: true } if text == "The command printed `Darwin`."));
+    assert_eq!(kinds.len(), 3, "nothing else: no empty thinking, no status lines");
+    assert!(approvals(&changes).is_empty(), "read-only, so Claude's own rules allowed it");
+    // The answer streamed in before the finished message replaced it.
+    let answer = &conversation.items[2].id;
+    assert!(changes.iter().any(|c| matches!(c, Change::Delta { item, .. } if item == answer)));
+}
+
+#[test]
+fn a_command_that_needs_permission_asks_with_claudes_own_choices() {
+    let (core, changes) = replay(Provider::Claude, "claude-command-approval");
+    let asked = approvals(&changes);
+    assert_eq!(asked.len(), 1);
+    let approval = &asked[0];
+    assert_eq!(approval.kind, ApprovalKind::Command);
+    assert_eq!(approval.title, "Run mkdir -p build && touch build/marker");
+    assert_eq!(approval.command.as_deref(), Some("mkdir -p build && touch build/marker"));
+    assert_eq!(approval.reason.as_deref(), Some("Create build directory and touch marker file"));
+    assert_eq!(approval.item.as_deref(), Some("toolu_01Aa95da16TUjcCj1ouaN4Z9"));
+    let offered: Vec<_> = approval.choices.iter().map(|c| (c.label.as_str(), c.kind)).collect();
+    assert_eq!(offered, [
+        ("Allow", ChoiceKind::Allow),
+        ("Always allow Bash(mkdir -p build), Bash(touch build/marker)", ChoiceKind::AllowAlways),
+        ("Deny", ChoiceKind::Deny),
+        ("Deny and stop", ChoiceKind::Stop),
+    ]);
+    let conversation = core.conversation();
+    assert!(conversation.approvals.is_empty(), "answering it settled it");
+    assert!(matches!(&conversation.items.last().unwrap().kind, ItemKind::Agent { text, final_answer: true } if text == "done"));
+    assert!(matches!(&conversation.items[1].kind, ItemKind::Command { output, .. } if output.is_empty()), "Claude's \"completed with no output\" is not output");
+}
+
+#[test]
+fn each_choice_answers_claudes_permission_request_as_the_sdk_would() {
+    let request = json!({"type": "control_request", "request_id": "r1", "request": {
+        "subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": "make"}, "tool_use_id": "t1",
+        "permission_suggestions": [{"type": "addRules", "rules": [{"toolName": "Bash", "ruleContent": "make"}], "behavior": "allow", "destination": "localSettings"}]}});
+    let answer = |choice: ChoiceKind| {
+        let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+        core.receive(&request);
+        let approval = core.conversation().approvals[0].clone();
+        let id = approval.choices.iter().find(|c| c.kind == choice).unwrap().id.clone();
+        core.answer(&approval.id, &id).unwrap()["response"].clone()
+    };
+    assert_eq!(answer(ChoiceKind::Allow), json!({"subtype": "success", "request_id": "r1", "response": {"behavior": "allow", "updatedInput": {"command": "make"}}}));
+    let always = answer(ChoiceKind::AllowAlways)["response"].clone();
+    assert_eq!(always["updatedPermissions"], request["request"]["permission_suggestions"]);
+    assert_eq!(answer(ChoiceKind::Deny)["response"], json!({"behavior": "deny", "message": "Denied in Zero"}));
+    assert_eq!(answer(ChoiceKind::Stop)["response"], json!({"behavior": "deny", "message": "Denied in Zero", "interrupt": true}));
+}
+
+#[test]
+fn a_file_write_reads_as_the_file_with_its_contents_and_asks_first() {
+    let (core, changes) = replay(Provider::Claude, "claude-file-change");
+    let conversation = core.conversation();
+    let write = conversation.items.iter().find(|i| matches!(i.kind, ItemKind::FileChange { .. })).unwrap();
+    let ItemKind::FileChange { changes: files } = &write.kind else { unreachable!() };
+    assert_eq!((files[0].path.as_str(), files[0].kind.as_str(), files[0].diff.as_str()), ("/work/project/hello.txt", "add", "hello from zero\n"));
+    assert_eq!(write.status, ItemStatus::Done);
+    let approval = approvals(&changes).remove(0);
+    assert_eq!(approval.kind, ApprovalKind::FileChange);
+    assert_eq!(approval.title, "Write hello.txt");
+    assert_eq!(approval.changes, *files);
+    // Claude suggests switching the session to accepting edits: that's "for this session", not "always".
+    let offered: Vec<_> = approval.choices.iter().map(|c| (c.label.as_str(), c.kind)).collect();
+    assert_eq!(offered[1], ("Allow all edits this session", ChoiceKind::AllowSession));
+    assert!(matches!(&conversation.items.last().unwrap().kind, ItemKind::Agent { text, final_answer: true } if text == "done"));
+}
+
+#[test]
+fn an_edit_shows_what_it_replaces() {
+    let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+    core.receive(&json!({"type": "assistant", "message": {"id": "m1", "content": [{"type": "tool_use", "id": "t1", "name": "Edit",
+        "input": {"file_path": "/work/project/a.rs", "old_string": "let a = 1;\nlet b = 2;", "new_string": "let a = 3;"}}]}}));
+    let ItemKind::FileChange { changes } = &core.conversation().items[0].kind else { panic!() };
+    assert_eq!((changes[0].kind.as_str(), changes[0].diff.as_str()), ("update", "-let a = 1;\n-let b = 2;\n+let a = 3;\n"));
+}
+
+#[test]
+fn a_message_sent_mid_turn_queues_and_the_session_is_idle_once_both_are_done() {
+    let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+    let user = |text: &str| json!({"type": "user", "message": {"role": "user", "content": text}});
+    let result = json!({"type": "result", "subtype": "success", "is_error": false, "result": "ok"});
+    core.sent(&user("first"));
+    core.sent(&user("and also this"));
+    assert_eq!(core.conversation().status, Status::Working);
+    core.receive(&result);
+    assert_eq!(core.conversation().status, Status::Working, "the queued message is still to come");
+    core.receive(&result);
+    assert_eq!(core.conversation().status, Status::Idle);
+}
+
+#[test]
+fn a_failed_turn_and_a_request_zero_cannot_answer_both_say_so() {
+    let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+    core.sent(&json!({"type": "user", "message": {"role": "user", "content": "hi"}}));
+    core.receive(&json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "Not logged in · Please run /login"}));
+    assert_eq!(core.conversation().error.as_deref(), Some("Not logged in · Please run /login"));
+    assert_eq!(core.conversation().status, Status::Idle);
+
+    let effects = core.receive(&json!({"type": "control_request", "request_id": "r9", "request": {"subtype": "request_user_dialog"}}));
+    assert_eq!(effects.replies[0], json!({"type": "control_response", "response": {"subtype": "error", "request_id": "r9", "error": "Zero can't answer request_user_dialog yet"}}));
+    assert!(matches!(&core.conversation().items.last().unwrap().kind, ItemKind::Notice { error: true, .. }));
+}
+
+#[test]
+fn claude_runs_unmodified_with_its_own_sign_in_and_zeros_plugin_out_of_the_way() {
+    let mut conversation = Conversation::new("s1", Provider::Claude, "/work/project");
+    conversation.thread = Some("3f1c2b8a-0000-4000-8000-000000000001".into());
+    let fresh = Provider::Claude.command(&conversation, false, Some("haiku"), Some("low"));
+    assert_eq!(fresh[..4], ["/bin/zsh", "-lic", "exec \"$@\"", "zsh"]);
+    let args = fresh[4..].join(" ");
+    assert_eq!(args, "claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages \
+        --permission-prompt-tool stdio --session-id 3f1c2b8a-0000-4000-8000-000000000001 --model haiku --effort low");
+    let resumed = Provider::Claude.command(&conversation, true, None, None)[4..].join(" ");
+    assert!(resumed.ends_with("--resume 3f1c2b8a-0000-4000-8000-000000000001"), "{resumed}");
+}

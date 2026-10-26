@@ -1,0 +1,134 @@
+//! Codex through `codex app-server`, on real output (tests/fixtures/codex-*, recorded from codex-cli 0.160.1 with
+//! its approvals accepted): what each turn becomes in Zero's model.
+
+mod common;
+
+use common::replay;
+use serde_json::json;
+use zerod::core::Core;
+use zerod::model::{ApprovalKind, Change, ChoiceKind, Conversation, ItemKind, ItemStatus, Provider, Status};
+
+fn approvals(changes: &[Change]) -> Vec<zerod::model::Approval> {
+    changes.iter().filter_map(|c| match c { Change::Approval { approval } => Some(approval.clone()), _ => None }).collect()
+}
+
+fn core() -> Core {
+    let mut core = Core::new(Conversation::new("s1", Provider::Codex, "/work/project"));
+    core.sent(&json!({"id": "z3", "method": "turn/start", "params": {}}));
+    core
+}
+
+#[test]
+fn a_command_turn_reads_as_messages_and_a_command_with_its_output() {
+    let (core, _) = replay(Provider::Codex, "codex-command");
+    let conversation = core.conversation();
+    assert_eq!(conversation.thread.as_deref(), Some("01a177f4-5525-7141-bfb3-f350d91476d6"));
+    assert_eq!(conversation.model.as_deref(), Some("gpt-6-sol"));
+    assert_eq!(conversation.status, Status::Idle);
+    assert_eq!(conversation.turn, None);
+    assert!(conversation.approvals.is_empty());
+    assert!(matches!(&conversation.items[0].kind, ItemKind::User { text } if text.starts_with("Run the shell command `ls -la`")));
+    let command = conversation.items.iter().find(|item| matches!(item.kind, ItemKind::Command { .. })).unwrap();
+    let ItemKind::Command { command: line, cwd, output, exit_code, .. } = &command.kind else { unreachable!() };
+    assert_eq!(line, "ls -la", "shown without Codex's /bin/zsh -lc wrapper");
+    assert_eq!(cwd, "/work/project");
+    assert!(output.starts_with("total 0"), "{output}");
+    assert_eq!(*exit_code, Some(0));
+    assert_eq!(command.status, ItemStatus::Done);
+    let ItemKind::Agent { text, final_answer } = &conversation.items.last().unwrap().kind else { panic!("last is the answer") };
+    assert!(*final_answer);
+    assert!(text.contains("empty"), "{text}");
+    // Reasoning with an empty summary says nothing, so it isn't an item.
+    assert!(!conversation.items.iter().any(|item| matches!(item.kind, ItemKind::Reasoning { .. })));
+}
+
+#[test]
+fn a_command_approval_offers_exactly_what_codex_offers_and_closes_when_codex_resolves_it() {
+    let (_, changes) = replay(Provider::Codex, "codex-command");
+    let approval = approvals(&changes).remove(0);
+    assert_eq!(approval.kind, ApprovalKind::Command);
+    assert_eq!(approval.title, "Run ls -la");
+    assert_eq!(approval.command.as_deref(), Some("ls -la"));
+    assert_eq!(approval.cwd.as_deref(), Some("/work/project"));
+    let offered: Vec<_> = approval.choices.iter().map(|c| (c.label.as_str(), c.kind)).collect();
+    assert_eq!(offered, [("Allow", ChoiceKind::Allow), ("Always allow ls -la", ChoiceKind::AllowAlways), ("Deny and stop", ChoiceKind::Stop)]);
+    assert!(changes.iter().any(|change| matches!(change, Change::Resolved { approval: id } if *id == approval.id)));
+}
+
+#[test]
+fn each_choice_answers_in_codexs_own_words() {
+    let mut core = core();
+    let request = json!({"id": 4, "method": "item/commandExecution/requestApproval", "params": {
+        "itemId": "c1", "command": "/bin/zsh -lc 'ls -la'", "cwd": "/work/project",
+        "availableDecisions": ["accept", {"acceptWithExecpolicyAmendment": {"execpolicy_amendment": ["ls", "-la"]}}, "cancel"]}});
+    core.receive(&request);
+    let id = core.conversation().approvals[0].id.clone();
+    let always = core.conversation().approvals[0].choices[1].id.clone();
+    let line = core.answer(&id, &always).unwrap();
+    assert_eq!(line, json!({"id": 4, "result": {"decision": {"acceptWithExecpolicyAmendment": {"execpolicy_amendment": ["ls", "-la"]}}}}));
+    assert_eq!(core.conversation().approvals.len(), 1, "open until Codex says it resolved it");
+    assert!(core.answer(&id, "no-such-choice").is_err());
+    assert!(core.answer("no-such-approval", &always).is_err());
+}
+
+#[test]
+fn a_file_change_reads_as_the_file_and_its_diff() {
+    let (core, changes) = replay(Provider::Codex, "codex-file-change");
+    let conversation = core.conversation();
+    let change = conversation.items.iter().find(|item| matches!(item.kind, ItemKind::FileChange { .. })).unwrap();
+    let ItemKind::FileChange { changes: files } = &change.kind else { unreachable!() };
+    assert_eq!((files[0].path.as_str(), files[0].kind.as_str(), files[0].diff.as_str()), ("/work/project/hello.txt", "add", "hello from zero\n"));
+    assert_eq!(change.status, ItemStatus::Done);
+    assert!(conversation.diff.as_deref().unwrap().contains("+++ b/hello.txt"));
+
+    let asked = approvals(&changes);
+    assert_eq!(asked.len(), 2, "the file, then reading it back");
+    assert_eq!(asked[0].kind, ApprovalKind::FileChange);
+    assert_eq!(asked[0].title, "Add hello.txt");
+    assert_eq!(asked[0].item.as_deref(), Some(change.id.as_str()));
+    assert_eq!(asked[0].changes, *files, "what will change, shown with the question");
+    // A file approval lists no decisions of its own; Codex's file decisions are the fallback.
+    let kinds: Vec<_> = asked[0].choices.iter().map(|c| c.kind).collect();
+    assert_eq!(kinds, [ChoiceKind::Allow, ChoiceKind::AllowSession, ChoiceKind::Deny, ChoiceKind::Stop]);
+    assert!(conversation.approvals.is_empty(), "both were resolved");
+}
+
+#[test]
+fn streamed_deltas_build_the_text_before_the_item_completes() {
+    let mut core = core();
+    core.receive(&json!({"method": "item/started", "params": {"turnId": "u", "item": {"type": "agentMessage", "id": "m1", "text": "", "phase": "final_answer"}}}));
+    for delta in ["Hel", "lo"] {
+        core.receive(&json!({"method": "item/agentMessage/delta", "params": {"turnId": "u", "itemId": "m1", "delta": delta}}));
+    }
+    let item = &core.conversation().items[0];
+    assert!(matches!(&item.kind, ItemKind::Agent { text, .. } if text == "Hello"));
+    assert_eq!(item.status, ItemStatus::Running);
+}
+
+#[test]
+fn a_request_zero_cannot_answer_yet_is_refused_with_a_notice() {
+    let mut core = core();
+    let effects = core.receive(&json!({"id": 7, "method": "item/tool/requestUserInput", "params": {"itemId": "x"}}));
+    assert_eq!(effects.replies[0]["id"], json!(7));
+    assert!(effects.replies[0]["error"]["message"].as_str().unwrap().contains("item/tool/requestUserInput"));
+    assert!(matches!(&core.conversation().items[0].kind, ItemKind::Notice { text, error: true } if text.contains("item/tool/requestUserInput")));
+}
+
+#[test]
+fn a_failed_turn_says_why_and_the_session_is_idle_again() {
+    let mut core = core();
+    core.receive(&json!({"method": "turn/started", "params": {"turn": {"id": "u", "status": "inProgress"}}}));
+    assert_eq!(core.conversation().status, Status::Working);
+    core.receive(&json!({"method": "turn/completed", "params": {"turn": {"id": "u", "status": "failed", "error": {"message": "usage limit reached"}}}}));
+    let conversation = core.conversation();
+    assert_eq!((conversation.turn.clone(), conversation.status), (None, Status::Idle));
+    assert_eq!(conversation.error.as_deref(), Some("usage limit reached"));
+    assert!(matches!(&conversation.items.last().unwrap().kind, ItemKind::Notice { text, error: true } if text == "usage limit reached"));
+}
+
+#[test]
+fn an_error_answer_to_zeros_request_becomes_a_notice() {
+    let mut core = core();
+    core.receive(&json!({"id": "z3", "error": {"code": -32600, "message": "thread not found"}}));
+    assert_eq!(core.conversation().error.as_deref(), Some("turn/start failed: thread not found"));
+}

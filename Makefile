@@ -4,8 +4,12 @@ APP    = build/Zero.app
 BIN    = $(MACOS)/.build/release
 LINUX  = x86_64-unknown-linux-musl aarch64-unknown-linux-musl
 
-build: drop ghostty
+build: drop ghostty zerod
 	swift build -c release --package-path $(MACOS)
+
+# zerod, Zero's daemon (crates/zerod): owns agent sessions whether or not the app is open.
+zerod:
+	cargo build --release -p zerod
 
 # Ghostty's terminal engine (libghostty-vt), built from Ghostty's own source at a pinned commit with Zig
 # (brew install zig). Only the macOS slice is kept, as $(MACOS)/Vendor/GhosttyVt.xcframework (not in git).
@@ -60,4 +64,4 @@ test:
 	cargo test --workspace
 	swift test --package-path $(MACOS)
 
-.PHONY: build ghostty drop bundle install run test
+.PHONY: build zerod ghostty drop bundle install run test
