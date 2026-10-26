@@ -6,8 +6,15 @@ use std::path::PathBuf;
 use tokio::net::UnixStream;
 use tokio::signal::unix::{SignalKind, signal};
 
+unsafe extern "C" {
+    safe fn setsid() -> i32;
+}
+
 #[tokio::main]
 async fn main() {
+    // A session of its own, so the app that started it quitting (or the terminal it ran in closing) doesn't end it.
+    // From a shell it is already a group leader and this fails, harmlessly.
+    setsid();
     let zero = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(".zero");
     let (mut home, mut socket) = (zero.join("zerod"), zero.join("zerod.sock"));
     let mut args = std::env::args().skip(1);
