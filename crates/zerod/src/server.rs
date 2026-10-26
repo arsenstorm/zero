@@ -2,6 +2,8 @@
 //! "result"}` or `{"id", "ok": false, "error"}`; requests run concurrently, so answers can come out of order.
 //! After `subscribe`, the connection also gets `{"event": "session", "conversation"}` (a snapshot) and
 //! `{"event": "change", "session", "seq", "change"}`; a client applies a change only if its `seq` follows its copy.
+//! After `inbox`, it gets `{"event": "asks", "asks", "offline", "reachable"}` (a snapshot), then `{"event": "ask", "ask"}`,
+//! `{"event": "output", "ask", "chunk"}`, `{"event": "removed", "ask"}` and `{"event": "agents", "offline", "reachable"}`.
 
 use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
@@ -15,6 +17,8 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::daemon::Daemon;
+use crate::drops::Drops;
+use crate::inbox::{Inbox, InboxEvent};
 use crate::model::{Permissions, Provider};
 
 pub const VERSION: u64 = 1;
@@ -44,20 +48,64 @@ struct Request {
     command: Option<String>,
     minutes: Option<u64>,
     force: Option<bool>,
+    /// An ask's id; for `create`, the ask itself.
+    ask: Option<Value>,
+    keep: Option<bool>,
+    option: Option<usize>,
+    /// An agent's name in the inbox.
+    agent: Option<String>,
+    stop: Option<bool>,
+    keys: Option<Vec<u8>>,
+    #[serde(flatten)]
+    settings: Settings,
+}
+
+/// What the app's settings say about the inbox; kept in zerod's home, so they hold before the app has connected.
+#[derive(serde::Serialize, Deserialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Settings {
+    /// Seconds an answer can be taken back.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub take_back: Option<f64>,
+    /// Seconds an ask without its own expiry waits.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<i64>,
+    /// The folders that are drops.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub patterns: Option<Vec<String>>,
+}
+
+impl Settings {
+    pub fn load(home: &std::path::Path) -> Settings {
+        std::fs::read(home.join("settings.json")).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default()
+    }
+
+    pub fn apply(&self, inbox: &Inbox, drops: Option<&Drops>) {
+        inbox.configure(std::time::Duration::from_secs_f64(self.take_back.unwrap_or(2.0).max(0.0)), self.ttl.unwrap_or(3600));
+        if let (Some(drops), Some(patterns)) = (drops, &self.patterns) { drops.set_patterns(patterns.clone()) }
+    }
+}
+
+/// What a connection reaches: the sessions, the inbox, and the drops feeding it.
+#[derive(Clone)]
+pub struct Zerod {
+    pub daemon: Arc<Daemon>,
+    pub inbox: Arc<Inbox>,
+    pub drops: Option<Arc<Drops>>,
 }
 
 /// Serves until the listener fails. The socket is the owner's only: whoever can write to it runs agents.
-pub async fn serve(daemon: Arc<Daemon>, socket: PathBuf) -> std::io::Result<()> {
+pub async fn serve(zerod: Zerod, socket: PathBuf) -> std::io::Result<()> {
     let _ = std::fs::remove_file(&socket);
     let listener = UnixListener::bind(&socket)?;
     std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
     loop {
         let (stream, _) = listener.accept().await?;
-        tokio::spawn(connection(daemon.clone(), stream));
+        tokio::spawn(connection(zerod.clone(), stream));
     }
 }
 
-async fn connection(daemon: Arc<Daemon>, stream: UnixStream) {
+async fn connection(zerod: Zerod, stream: UnixStream) {
     let (read, mut write) = stream.into_split();
     let (out, mut lines_out) = mpsc::unbounded_channel::<Value>();
     let writer = tokio::spawn(async move {
@@ -67,7 +115,7 @@ async fn connection(daemon: Arc<Daemon>, stream: UnixStream) {
             if write.write_all(&line).await.is_err() { break }
         }
     });
-    let mut subscription = None;
+    let (mut subscription, mut inbox) = (None, None);
     let mut lines = BufReader::new(read).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         // An unknown provider is refused here, as a bad request: zerod only starts what it has an adapter for. The
@@ -81,26 +129,35 @@ async fn connection(daemon: Arc<Daemon>, stream: UnixStream) {
             }
         };
         if request.op == "subscribe" {
-            if subscription.is_none() { subscription = Some(tokio::spawn(subscribe(daemon.clone(), out.clone()))) }
+            if subscription.is_none() { subscription = Some(tokio::spawn(subscribe(zerod.daemon.clone(), out.clone()))) }
             let _ = out.send(json!({"id": request.id, "ok": true, "result": null}));
             continue;
         }
-        let (daemon, out) = (daemon.clone(), out.clone());
+        if request.op == "inbox" {
+            if inbox.is_none() { inbox = Some(tokio::spawn(follow_inbox(zerod.inbox.clone(), out.clone()))) }
+            let _ = out.send(json!({"id": request.id, "ok": true, "result": null}));
+            continue;
+        }
+        let (zerod, out) = (zerod.clone(), out.clone());
         tokio::spawn(async move {
             let id = request.id.clone();
-            let answer = match handle(&daemon, request).await {
+            let answer = match handle(&zerod, request).await {
                 Ok(result) => json!({"id": id, "ok": true, "result": result}),
                 Err(error) => json!({"id": id, "ok": false, "error": error}),
             };
             let _ = out.send(answer);
         });
     }
-    if let Some(subscription) = subscription { subscription.abort() }
+    for task in [subscription, inbox].into_iter().flatten() { task.abort() }
     drop(out);
     let _ = writer.await;
 }
 
-async fn handle(daemon: &Daemon, request: Request) -> Result<Value, String> {
+async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
+    let (daemon, inbox) = (&zerod.daemon, &zerod.inbox);
+    let ask = || request.ask.as_ref().and_then(|a| a.as_str()).map(String::from).ok_or("Which ask?");
+    let agent = || request.agent.clone().ok_or("Which agent?");
+    let option = || request.option.ok_or("Which option?");
     let session = || request.session.clone().ok_or("Which session?");
     let model = request.model.as_deref();
     let effort = request.effort.as_deref();
@@ -164,6 +221,35 @@ async fn handle(daemon: &Daemon, request: Request) -> Result<Value, String> {
                 "error": c.failure.as_ref().map(|f| &f.message), "stalled": c.stalled,
             })).collect::<Vec<_>>()))
         }
+        // The inbox.
+        "create" => {
+            let incoming: crate::ask::Ask = serde_json::from_value(request.ask.clone().ok_or("Create which ask?")?).map_err(|e| format!("Not an ask: {e}"))?;
+            Ok(json!(inbox.create(incoming, request.keep.unwrap_or(false))))
+        }
+        "asks" => Ok(json!(inbox.asks())),
+        "choose" => { inbox.choose(&ask()?, option()?); Ok(Value::Null) }
+        "answerAsk" => { inbox.answer(&ask()?, option()?, request.text.as_deref().unwrap_or("")); Ok(Value::Null) }
+        "reply" => { inbox.reply(&ask()?, request.text.as_deref().ok_or("Reply with text")?); Ok(Value::Null) }
+        "takeBack" => Ok(json!(inbox.take_back(&ask()?))),
+        "withdraw" => { inbox.withdraw(&ask()?, request.text.as_deref()); Ok(Value::Null) }
+        "dismiss" => { inbox.dismiss(&ask()?); Ok(Value::Null) }
+        "cancelRun" => { inbox.cancel_run(&ask()?); Ok(Value::Null) }
+        "deliver" => { inbox.deliver_answer(&ask()?); Ok(Value::Null) }
+        "message" => inbox.message(request.text.as_deref().ok_or("Message with text")?, &agent()?).await.map(|_| Value::Null),
+        "close" => { inbox.close_agent(&agent()?, request.stop.unwrap_or(true)); Ok(Value::Null) }
+        "screen" => Ok(json!(inbox.screen(&agent()?).await)),
+        "press" => inbox.press(&agent()?, request.keys.as_deref().unwrap_or_default()).await.map(|screen| json!(screen)),
+        "switchModel" => inbox.switch_model(&agent()?, model, effort).await.map(|_| Value::Null),
+        "configure" => {
+            let mut settings = Settings::load(daemon.home());
+            let given = request.settings.clone();
+            settings.take_back = given.take_back.or(settings.take_back);
+            settings.ttl = given.ttl.or(settings.ttl);
+            settings.patterns = given.patterns.or(settings.patterns);
+            settings.apply(inbox, zerod.drops.as_deref());
+            let _ = std::fs::write(daemon.home().join("settings.json"), serde_json::to_vec_pretty(&settings).unwrap_or_default());
+            Ok(Value::Null)
+        }
         other => Err(format!("Unknown op {other}")),
     }
 }
@@ -202,6 +288,27 @@ async fn subscribe(daemon: Arc<Daemon>, out: mpsc::UnboundedSender<Value>) {
                 },
             },
             Err(broadcast::error::RecvError::Lagged(_)) => daemon.sessions().into_iter().all(|s| snapshot(&mut known, s.snapshot())),
+            Err(broadcast::error::RecvError::Closed) => return,
+        };
+        if !sent { return }
+    }
+}
+
+/// The inbox's asks, then each change; one that falls behind gets a fresh snapshot.
+async fn follow_inbox(inbox: Arc<Inbox>, out: mpsc::UnboundedSender<Value>) {
+    let mut events = inbox.subscribe();
+    let snapshot = |inbox: &Inbox| {
+        let (offline, reachable) = inbox.agents();
+        out.send(json!({"event": "asks", "asks": inbox.asks(), "offline": offline, "reachable": reachable})).is_ok()
+    };
+    if !snapshot(&inbox) { return }
+    loop {
+        let sent = match events.recv().await {
+            Ok(InboxEvent::Ask(ask)) => out.send(json!({"event": "ask", "ask": ask})).is_ok(),
+            Ok(InboxEvent::Output { id, chunk }) => out.send(json!({"event": "output", "ask": id, "chunk": chunk})).is_ok(),
+            Ok(InboxEvent::Removed(id)) => out.send(json!({"event": "removed", "ask": id})).is_ok(),
+            Ok(InboxEvent::Agents { offline, reachable }) => out.send(json!({"event": "agents", "offline": offline, "reachable": reachable})).is_ok(),
+            Err(broadcast::error::RecvError::Lagged(_)) => snapshot(&inbox),
             Err(broadcast::error::RecvError::Closed) => return,
         };
         if !sent { return }

@@ -54,7 +54,7 @@ async fn harness(name: &str) -> Harness {
     let socket = home.join("zerod.sock");
     let (seen, commands) = (Arc::new(Mutex::new(vec![])), Arc::new(Mutex::new(vec![])));
     let daemon = Daemon::open(&home, runtime(seen.clone(), commands.clone())).unwrap();
-    tokio::spawn(zerod::server::serve(daemon, socket.clone()));
+    tokio::spawn(zerod::server::serve(zerod::server::Zerod { daemon, inbox: zerod::inbox::Inbox::open(None, vec![]), drops: None }, socket.clone()));
     for _ in 0..100 {
         if UnixStream::connect(&socket).await.is_ok() { break }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -202,7 +202,7 @@ async fn sessions_survive_a_daemon_restart_and_a_message_resumes_one() {
     // Another daemon on the same home: the session is there, offline, with its history.
     let socket = h.home.join("again.sock");
     let daemon = Daemon::open(&h.home, runtime(h.seen.clone(), h.commands.clone())).unwrap();
-    tokio::spawn(zerod::server::serve(daemon, socket.clone()));
+    tokio::spawn(zerod::server::serve(zerod::server::Zerod { daemon, inbox: zerod::inbox::Inbox::open(None, vec![]), drops: None }, socket.clone()));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let mut again = Client::connect(&socket).await;
     let listed = again.call(json!({"op": "list"})).await;
@@ -277,4 +277,27 @@ async fn a_lead_spawns_names_waits_on_and_reads_a_worker_over_the_socket() {
     assert!(all["result"].as_array().unwrap().iter().any(|c| c["attention"] == "done"));
     let impatient = client.call(json!({"op": "wait", "sessions": [lead], "timeout": 0})).await;
     assert_eq!(impatient["ok"], false, "the lead is still working: {impatient}");
+}
+
+#[tokio::test]
+async fn the_inbox_is_followed_and_answered_over_the_socket() {
+    let h = harness("server-inbox").await;
+    let mut client = Client::connect(&h.socket).await;
+    client.call(json!({"op": "configure", "takeBack": 0.02, "ttl": 600, "patterns": ["~/drops/*"]})).await;
+    let kept: Value = serde_json::from_slice(&std::fs::read(h.home.join("settings.json")).unwrap()).unwrap();
+    assert_eq!(kept, json!({"takeBack": 0.02, "ttl": 600, "patterns": ["~/drops/*"]}), "kept for the next start");
+    client.call(json!({"op": "inbox"})).await;
+    let snapshot = client.event().await;
+    assert_eq!((snapshot["event"].as_str(), &snapshot["asks"]), (Some("asks"), &json!([])));
+    let ask = json!({"id": "", "kind": "choice", "title": "Ship it?", "options": ["Yes", "No"], "agent": {"name": "codex-1", "host": "mac"},
+                     "createdAt": "2026-01-01T00:00:00Z", "expiresAt": "2026-01-01T00:00:00Z", "state": "waiting", "output": ""});
+    let created = client.call(json!({"op": "create", "ask": ask})).await["result"].clone();
+    let id = created["id"].as_str().unwrap().to_string();
+    assert_eq!(client.event().await["ask"]["id"], id.as_str());
+    client.call(json!({"op": "choose", "ask": id, "option": 0})).await;
+    loop {
+        let event = client.event().await;
+        if event["ask"]["state"] == "answered" { assert_eq!(event["ask"]["answer"], "Yes"); break }
+    }
+    assert_eq!(client.call(json!({"op": "choose", "ask": id})).await["error"], "Which option?");
 }

@@ -56,6 +56,8 @@ pub enum InboxEvent {
     Output { id: String, chunk: String },
     /// Dismissed from the inbox.
     Removed(String),
+    /// Which agents' sessions aren't running, and which Zero can type into, when either changes.
+    Agents { offline: Vec<String>, reachable: Vec<String> },
 }
 
 /// What's kept of a run's output: the end, since that's where results and errors are.
@@ -69,6 +71,8 @@ struct State {
     /// What Zero typed into each agent lately, so a prompt it caused isn't taken for the user typing.
     sent: HashMap<String, Vec<(String, Time)>>,
     reported: HashMap<String, String>,
+    /// The last `Agents` event, to send the next only when it differs.
+    agents: (Vec<String>, Vec<String>),
     ticks: u64,
     take_back: Duration,
     default_ttl: i64,
@@ -88,7 +92,7 @@ impl Inbox {
         let inbox = Arc::new_cyclic(|me| Inbox {
             state: Mutex::new(State {
                 asks: vec![], timers: HashMap::new(), runs: HashMap::new(), offline: HashSet::new(), sent: HashMap::new(),
-                reported: HashMap::new(), ticks: 0, take_back: Duration::from_secs(2), default_ttl: 3600,
+                reported: HashMap::new(), agents: Default::default(), ticks: 0, take_back: Duration::from_secs(2), default_ttl: 3600,
             }),
             events, log, runtimes, me: me.clone(),
         });
@@ -376,8 +380,9 @@ impl Inbox {
         let _ = self.events.send(InboxEvent::Output { id: id.into(), chunk: chunk.into() });
     }
 
-    /// Types the answer into the session of an agent that asked with --async and so isn't waiting for it.
-    fn deliver_answer(&self, id: &str) {
+    /// Types the answer into the session of an agent that asked with --async and so isn't waiting for it; again
+    /// when the user retries a failed delivery.
+    pub fn deliver_answer(&self, id: &str) {
         let Some(ask) = self.ask(id) else { return };
         if ask.waits != Some(false) || ask.status.as_deref() == Some("withdrawn") || (ask.same_as.is_some() && ask.state == AskState::Expired)
             || !ask.state.is_final() { return }
@@ -472,6 +477,17 @@ impl Inbox {
 
     fn runtime_for(&self, identity: &AgentIdentity) -> Option<Arc<dyn Runtime>> {
         self.runtimes.iter().find(|r| r.can_reach(identity)).cloned()
+    }
+
+    /// The agents whose sessions aren't running, and those Zero can reach, by name and sorted.
+    pub fn agents(&self) -> (Vec<String>, Vec<String>) {
+        let mut offline: Vec<String> = self.offline().into_iter().collect();
+        let mut identities: HashMap<String, AgentIdentity> = HashMap::new();
+        for ask in self.asks() { identities.insert(ask.agent.name.clone(), ask.agent); }
+        let mut reachable: Vec<String> = identities.into_values().filter(|i| self.runtime_for(i).is_some()).map(|i| i.name).collect();
+        offline.sort();
+        reachable.sort();
+        (offline, reachable)
     }
 
     pub fn can_message(&self, name: &str) -> bool {
@@ -581,6 +597,10 @@ impl Inbox {
             for name in runtime.gone(&open).await { self.close_agent(&name, false) }
         }
         for identity in all.iter().filter(|i| i.session.is_some() || (i.solo_process_id.is_some() && i.label.is_none())) { self.relabel(identity).await }
+        let agents = self.agents();
+        if std::mem::replace(&mut self.lock().agents, agents.clone()) != agents {
+            let _ = self.events.send(InboxEvent::Agents { offline: agents.0, reachable: agents.1 });
+        }
         let tick = { let mut state = self.lock(); state.ticks += 1; state.ticks };
         if tick % 12 != 1 { return }
         for identity in all.iter().filter(|i| !stopped.contains(&i.name) && !self.is_closed(&i.name)) {

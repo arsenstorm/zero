@@ -57,3 +57,26 @@ fn every_runtime_starts_through_the_login_shell_so_its_path_is_arsens() {
     }
     assert_eq!(Provider::Codex.command(&Conversation::new("s1", Provider::Codex, "/"), false, None, None)[4..], ["codex", "app-server"]);
 }
+
+#[test]
+fn two_daemons_started_at_once_on_one_home_leave_one_running() {
+    let dir = temp_dir("process-lock");
+    let start = |socket: &str| std::process::Command::new(env!("CARGO_BIN_EXE_zerod"))
+        .args(["--home", dir.join("data").to_str().unwrap(), "--socket", dir.join(socket).to_str().unwrap()])
+        .stderr(std::process::Stdio::piped()).spawn().unwrap();
+    let mut both = [start("a.sock"), start("b.sock")];
+    let mut ended = None;
+    for _ in 0..500 {
+        ended = both.iter_mut().position(|d| d.try_wait().unwrap().is_some());
+        if ended.is_some() { break }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let ended = ended.expect("one of them left");
+    let mut said = String::new();
+    std::io::Read::read_to_string(&mut both[ended].stderr.take().unwrap(), &mut said).unwrap();
+    assert!(said.contains("another zerod has"), "{said}");
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let other = &mut both[1 - ended];
+    assert!(other.try_wait().unwrap().is_none(), "the other keeps running");
+    other.kill().unwrap();
+}

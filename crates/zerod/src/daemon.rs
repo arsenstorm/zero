@@ -95,6 +95,11 @@ impl Daemon {
         Ok(daemon)
     }
 
+    /// Where sessions and the daemon's own files are kept.
+    pub fn home(&self) -> &Path {
+        &self.home
+    }
+
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
         self.events.subscribe()
     }
