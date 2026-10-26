@@ -1,16 +1,18 @@
 //! The daemon's sessions: started in a folder, kept under `<home>/sessions/<id>/`, loaded again at start-up,
-//! and resumed with a new runtime process whenever one is wanted.
+//! and resumed with a new runtime process whenever one is wanted. A session can start others (a lead and its
+//! workers): each worker's outcome is put to its lead as a message once the lead is between turns.
 
+use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex, Weak};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::broadcast;
 
 use crate::claude;
-use crate::model::{Conversation, Event, Permissions, Provider, Status};
+use crate::model::{Attention, Change, Conversation, Event, Permissions, Provider, Status};
 use crate::process;
 use crate::session::{Session, Transport};
 
@@ -28,6 +30,25 @@ pub struct Daemon {
     sessions: Mutex<Vec<Session>>,
     events: broadcast::Sender<Event>,
     runtime: Runtime,
+    /// Each session's attention as last seen, to tell when a worker stops working.
+    attention: Mutex<HashMap<String, Attention>>,
+    /// Word for a session that it hasn't been given yet (it was busy or offline), kept in its folder as pending.json.
+    pending: Mutex<HashMap<String, Vec<String>>>,
+}
+
+/// How a lead starts a worker; anything left out comes from the lead.
+#[derive(Default, Clone, Debug)]
+pub struct Options {
+    pub cwd: Option<String>,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub permissions: Option<Permissions>,
+    pub label: Option<String>,
+    pub ticket: Option<String>,
+}
+
+fn busy(attention: Attention) -> bool {
+    matches!(attention, Attention::Working | Attention::Starting)
 }
 
 impl Daemon {
@@ -38,14 +59,34 @@ impl Daemon {
         let (events, _) = broadcast::channel(4096);
         let mut dirs: Vec<PathBuf> = std::fs::read_dir(&root)?.filter_map(|entry| entry.ok().map(|e| e.path())).filter(|p| p.is_dir()).collect();
         dirs.sort(); // ids sort by when they were made
-        let mut sessions = vec![];
+        let (mut sessions, mut attention, mut pending) = (vec![], HashMap::new(), HashMap::new());
         for dir in dirs {
             match Session::load(&dir, events.clone()) {
-                Ok(session) => sessions.push(session),
+                Ok(session) => {
+                    let conversation = session.snapshot();
+                    attention.insert(conversation.id.clone(), conversation.attention());
+                    if let Ok(words) = std::fs::read(dir.join("pending.json")).map(|data| serde_json::from_slice::<Vec<String>>(&data).unwrap_or_default())
+                        && !words.is_empty() { pending.insert(conversation.id.clone(), words); }
+                    sessions.push(session);
+                }
                 Err(error) => eprintln!("zerod: skipped {}: {error}", dir.display()),
             }
         }
-        Ok(Arc::new(Daemon { home: home.into(), sessions: Mutex::new(sessions), events, runtime }))
+        let daemon = Arc::new(Daemon {
+            home: home.into(), sessions: Mutex::new(sessions), events, runtime, attention: Mutex::new(attention), pending: Mutex::new(pending),
+        });
+        let mut heard = daemon.events.subscribe();
+        let weak: Weak<Daemon> = Arc::downgrade(&daemon);
+        tokio::spawn(async move {
+            loop {
+                match heard.recv().await {
+                    Ok(event) => match weak.upgrade() { Some(daemon) => daemon.heard(&event.session), None => return },
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        });
+        Ok(daemon)
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
@@ -71,13 +112,30 @@ impl Daemon {
 
     /// Starts a session in `cwd` with `prompt` as its first turn; returns its id at once, while the runtime starts.
     pub fn start(&self, provider: Provider, cwd: &str, prompt: &str, model: Option<&str>, effort: Option<&str>, permissions: Permissions) -> Result<String, String> {
+        let options = Options { cwd: Some(cwd.into()), model: model.map(Into::into), effort: effort.map(Into::into), permissions: Some(permissions), ..Default::default() };
+        self.create(provider, prompt, options, None)
+    }
+
+    /// A worker of `lead`: in the lead's folder, with the lead's permissions, unless told otherwise.
+    pub fn spawn(&self, lead: &str, provider: Provider, prompt: &str, mut options: Options) -> Result<String, String> {
+        let parent = self.get(lead).ok_or_else(|| format!("No session {lead} to lead it"))?;
+        options.cwd = options.cwd.or(Some(parent.cwd));
+        options.permissions = options.permissions.or(Some(parent.permissions));
+        self.create(provider, prompt, options, Some(lead.to_string()))
+    }
+
+    fn create(&self, provider: Provider, prompt: &str, options: Options, parent: Option<String>) -> Result<String, String> {
+        let cwd = options.cwd.as_deref().unwrap_or("");
+        let (model, effort) = (options.model.as_deref(), options.effort.as_deref());
         let folder = Path::new(cwd);
         if !folder.is_absolute() || !folder.is_dir() { return Err(format!("{cwd} isn't a folder")) }
         if prompt.trim().is_empty() { return Err("A session starts with something to do".into()) }
         let id = new_id();
         let dir = self.home.join("sessions").join(&id);
         let mut conversation = Conversation::new(&id, provider, cwd);
-        conversation.permissions = permissions;
+        conversation.permissions = options.permissions.unwrap_or_default();
+        conversation.parent = parent;
+        conversation.branch = branch(folder);
         // Claude takes its conversation's id from Zero, so the session can be resumed even if it never answered.
         if provider == Provider::Claude { conversation.thread = Some(claude::new_session_id()) }
         let session = Session::new(conversation.clone(), Some(dir.clone()), self.events.clone()).map_err(|e| e.to_string())?;
@@ -90,7 +148,9 @@ impl Daemon {
             }
         };
         self.sessions.lock().unwrap().push(session.clone());
+        self.attention.lock().unwrap().insert(id.clone(), Attention::Starting);
         session.announce();
+        if options.label.is_some() || options.ticket.is_some() { session.change(Change::Named { label: options.label.clone(), ticket: options.ticket.clone() }) }
         let (prompt, model, effort) = (prompt.to_string(), model.map(String::from), effort.map(String::from));
         tokio::spawn(async move {
             if let Err(error) = session.start(transport, &prompt, model.as_deref(), effort.as_deref()).await {
@@ -131,12 +191,111 @@ impl Daemon {
         self.session(id)?.answer(question, answers).await
     }
 
+    /// Names a session and says what it's for.
+    pub fn label(&self, id: &str, label: Option<&str>, ticket: Option<&str>) -> Result<(), String> {
+        self.session(id)?.change(Change::Named { label: label.map(Into::into), ticket: ticket.map(Into::into) });
+        Ok(())
+    }
+
+    /// The sessions `lead` started.
+    pub fn workers(&self, lead: &str) -> Vec<Conversation> {
+        self.list().into_iter().filter(|c| c.parent.as_deref() == Some(lead)).collect()
+    }
+
+    pub fn last_answer(&self, id: &str) -> Option<String> {
+        self.get(id)?.answer().map(String::from)
+    }
+
+    /// Waits until every one of `ids` (or, with `any`, one of them) has stopped working, whether finished, failed,
+    /// stuck or waiting on the user, up to `timeout`; returns them as they are then.
+    pub async fn wait(&self, ids: &[String], any: bool, timeout: Duration) -> Result<Vec<Conversation>, String> {
+        let mut events = self.events.subscribe();
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let now: Vec<Conversation> = ids.iter().map(|id| self.get(id).ok_or_else(|| format!("No session {id}"))).collect::<Result<_, _>>()?;
+            let settled = |c: &Conversation| !busy(c.attention());
+            if if any { now.iter().any(settled) } else { now.iter().all(settled) } { return Ok(now) }
+            if tokio::time::timeout_at(deadline, events.recv()).await.is_err() {
+                return Err(format!("Still working after {} minutes", timeout.as_secs() / 60));
+            }
+        }
+    }
+
+    /// Something changed in `id`: a worker that has come to an end (or just got stuck) tells its lead, and a session
+    /// between turns gets the word waiting for it. The session is read as it is now, which may be several events on
+    /// from the one heard, so a worker can seem to go straight from waiting on the user to done: anything still under
+    /// way counts as before, anything ended as now.
+    fn heard(&self, id: &str) {
+        let Some(conversation) = self.get(id) else { return };
+        let now = conversation.attention();
+        let before = self.attention.lock().unwrap().insert(id.into(), now);
+        let under_way = |a: Attention| matches!(a, Attention::Starting | Attention::Working | Attention::NeedsYou | Attention::Stuck);
+        let ended = matches!(now, Attention::Done | Attention::Failed | Attention::Limited | Attention::Offline | Attention::Idle);
+        let came_to_an_end = before.is_some_and(under_way) && ended;
+        let got_stuck = now == Attention::Stuck && before != Some(Attention::Stuck);
+        if let Some(lead) = &conversation.parent && (came_to_an_end || got_stuck) {
+            self.tell(lead, report(&conversation, now));
+        }
+        if matches!(now, Attention::Done | Attention::Idle) { self.deliver(id) }
+    }
+
+    /// Keeps `words` for `id` until it can take them.
+    fn tell(&self, id: &str, words: String) {
+        self.pending.lock().unwrap().entry(id.into()).or_default().push(words);
+        self.keep_pending(id);
+        if self.get(id).is_some_and(|c| matches!(c.attention(), Attention::Done | Attention::Idle)) { self.deliver(id) }
+    }
+
+    fn deliver(&self, id: &str) {
+        let Ok(session) = self.session(id) else { return };
+        if !session.is_attached() { return }
+        let Some(words) = self.pending.lock().unwrap().remove(id) else { return };
+        self.keep_pending(id);
+        let text = words.join("\n\n");
+        tokio::spawn(async move {
+            // ponytail: word that fails to go through is dropped with a notice; keep it if sends start failing in practice.
+            if let Err(error) = session.send(&text, None, None).await { session.report(&format!("Couldn't pass on: {error}")) }
+        });
+    }
+
+    fn keep_pending(&self, id: &str) {
+        let words = self.pending.lock().unwrap().get(id).cloned().unwrap_or_default();
+        let file = self.home.join("sessions").join(id).join("pending.json");
+        let _ = if words.is_empty() { std::fs::remove_file(file) } else { std::fs::write(file, serde_json::to_vec(&words).unwrap_or_default()) };
+    }
+
     pub fn stop(&self, id: &str) -> Result<(), String> {
         let session = self.session(id)?;
         if session.snapshot().status == Status::Offline { return Err(format!("{id} isn't running")) }
         session.stop();
         Ok(())
     }
+}
+
+/// What a lead is told when a worker stops working, and how to answer it.
+fn report(worker: &Conversation, attention: Attention) -> String {
+    let mut name = worker.label.clone().unwrap_or_else(|| worker.id.clone());
+    if let Some(ticket) = &worker.ticket { name = format!("{name} ({ticket})") }
+    let what = match attention {
+        Attention::Done => {
+            let answer = worker.answer().unwrap_or("");
+            let answer = if answer.chars().count() > 4000 { answer.chars().take(4000).collect::<String>() + "…" } else { answer.to_string() };
+            format!("finished: {answer}")
+        }
+        Attention::Failed => format!("failed: {}", worker.failure.as_ref().map(|f| f.message.as_str()).unwrap_or("no reason given")),
+        Attention::Stuck => format!("looks stuck: {}", worker.stalled.as_deref().unwrap_or("no progress")),
+        Attention::Limited => "hit a usage limit".into(),
+        Attention::Offline => "stopped: its process ended".into(),
+        _ => "stopped without an answer".into(),
+    };
+    format!("Worker {name} {what}\n\n(It is session {}: `zero send {} \"…\"` to reply to it, `zero wait {}` to wait on it.)", worker.id, worker.id, worker.id)
+}
+
+/// The branch a folder's repository has checked out; none outside a repository.
+fn branch(folder: &Path) -> Option<String> {
+    let output = std::process::Command::new("git").args(["symbolic-ref", "--short", "HEAD"]).current_dir(folder)
+        .stderr(std::process::Stdio::null()).output().ok()?;
+    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string()).filter(|b| !b.is_empty())
 }
 
 /// Sortable by creation: milliseconds since 1970, then a counter, in hex.

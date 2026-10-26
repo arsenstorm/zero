@@ -35,6 +35,12 @@ struct Request {
     choice: Option<String>,
     question: Option<String>,
     answers: Option<crate::adapter::Answers>,
+    label: Option<String>,
+    ticket: Option<String>,
+    sessions: Option<Vec<String>>,
+    any: Option<bool>,
+    /// Seconds.
+    timeout: Option<u64>,
 }
 
 /// Serves until the listener fails. The socket is the owner's only: whoever can write to it runs agents.
@@ -118,6 +124,28 @@ async fn handle(daemon: &Daemon, request: Request) -> Result<Value, String> {
             let question = request.question.as_deref().ok_or("Which question?")?;
             let answers = request.answers.as_ref().ok_or("Answer with answers")?;
             daemon.answer(&session()?, question, answers).await.map(|_| Value::Null)
+        }
+        "spawn" => {
+            let lead = session()?;
+            let provider = match request.provider { Some(provider) => provider, None => daemon.get(&lead).ok_or_else(|| format!("No session {lead}"))?.provider };
+            let options = crate::daemon::Options {
+                cwd: request.cwd.clone(), model: request.model.clone(), effort: request.effort.clone(), permissions: request.permissions,
+                label: request.label.clone(), ticket: request.ticket.clone(),
+            };
+            let id = daemon.spawn(&lead, provider, request.prompt.as_deref().unwrap_or(""), options)?;
+            Ok(json!({"session": id}))
+        }
+        "label" => daemon.label(&session()?, request.label.as_deref(), request.ticket.as_deref()).map(|_| Value::Null),
+        "workers" => Ok(json!(daemon.workers(&session()?))),
+        "result" => Ok(json!({"answer": daemon.last_answer(&session()?)})),
+        "wait" => {
+            let ids = request.sessions.clone().ok_or("Wait on which sessions?")?;
+            let timeout = std::time::Duration::from_secs(request.timeout.unwrap_or(30 * 60));
+            let settled = daemon.wait(&ids, request.any.unwrap_or(false), timeout).await?;
+            Ok(json!(settled.iter().map(|c| json!({
+                "id": c.id, "label": c.label, "ticket": c.ticket, "attention": c.attention(), "answer": c.answer(),
+                "error": c.failure.as_ref().map(|f| &f.message), "stalled": c.stalled,
+            })).collect::<Vec<_>>()))
         }
         other => Err(format!("Unknown op {other}")),
     }

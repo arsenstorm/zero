@@ -34,14 +34,18 @@ private struct Sidebar: View {
     let workspace: Workspace
     @Binding var selected: String?
 
-    /// Sessions grouped by their project's folder, newest project first as zerod sent them.
+    /// Sessions grouped by their project's folder, newest project first as zerod sent them; a lead's workers follow it.
     private var projects: [(folder: String, sessions: [Conversation])] {
         var groups: [(String, [Conversation])] = []
-        for conversation in workspace.conversations {
+        let all = workspace.conversations
+        let leads = all.filter { lead in lead.parent == nil || !all.contains { $0.id == lead.parent } }
+        for conversation in leads {
             if let i = groups.firstIndex(where: { $0.0 == conversation.cwd }) { groups[i].1.append(conversation) }
             else { groups.append((conversation.cwd, [conversation])) }
         }
-        return groups.map { (folder: $0.0, sessions: $0.1.reversed()) }.reversed()
+        return groups.map { group in
+            (folder: group.0, sessions: group.1.reversed().flatMap { lead in [lead] + all.filter { $0.parent == lead.id } })
+        }.reversed()
     }
 
     var body: some View {
@@ -51,7 +55,7 @@ private struct Sidebar: View {
             ForEach(projects, id: \.folder) { project in
                 Section((project.folder as NSString).lastPathComponent) {
                     ForEach(project.sessions) { conversation in
-                        SessionRow(conversation: conversation).tag(conversation.id)
+                        SessionRow(conversation: conversation).tag(conversation.id).padding(.leading, conversation.parent == nil ? 0 : 14)
                     }
                 }
             }
@@ -79,7 +83,7 @@ private struct SessionRow: View {
     }
 
     private var detail: String {
-        [conversation.provider.title, conversation.model].compactMap { $0 }.joined(separator: " · ")
+        [conversation.ticket, conversation.provider.title, conversation.model, conversation.branch].compactMap { $0 }.joined(separator: " · ")
     }
 
     /// The bar's colours: orange it needs you, blue it works, green it is idle with an answer, grey offline.

@@ -30,11 +30,16 @@ pub fn replay(provider: Provider, name: &str) -> (Core, Vec<Change>) {
     (core, changes)
 }
 
-/// Everything Zero wrote to the runtime, in order.
+/// Everything Zero wrote to the runtime, in order; and, once the script has run out, a way to say more.
 #[derive(Clone, Default)]
-pub struct Seen(Arc<Mutex<Vec<Value>>>);
+pub struct Seen(Arc<Mutex<Vec<Value>>>, Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<Value>>>>);
 
 impl Seen {
+    /// Has the runtime say `message` (after its script has played).
+    pub fn say(&self, message: Value) {
+        if let Some(say) = self.1.lock().unwrap().as_ref() { let _ = say.send(message); }
+    }
+
     pub fn all(&self) -> Vec<Value> {
         self.0.lock().unwrap().clone()
     }
@@ -94,6 +99,8 @@ pub fn play(script: Vec<Value>) -> (Transport, Seen) {
     let (runtime_read, mut runtime_write) = tokio::io::split(runtime_side);
     let seen = Seen::default();
     let recorder = seen.clone();
+    let (say, mut said) = tokio::sync::mpsc::unbounded_channel::<Value>();
+    *seen.1.lock().unwrap() = Some(say);
     tokio::spawn(async move {
         let mut lines = BufReader::new(runtime_read).lines();
         // Recorded ids of Zero's requests → the ids Zero used this time.
@@ -114,7 +121,23 @@ pub fn play(script: Vec<Value>) -> (Transport, Seen) {
                 if recorded["type"] == "control_request" { ids.insert(key(&recorded["request_id"]), said["request_id"].clone()); }
             }
         }
-        wait(&mut lines, &mut runtime_write, &recorder, &|_| false).await;
+        // The script is over: keep answering what Zero says, and say what the test asks for.
+        loop {
+            tokio::select! {
+                line = lines.next_line() => {
+                    let Ok(Some(line)) = line else { return };
+                    let message: Value = serde_json::from_str(&line).unwrap();
+                    recorder.0.lock().unwrap().push(message.clone());
+                    if message.get("method").is_some() && message.get("id").is_some() {
+                        write(&mut runtime_write, &json!({"jsonrpc": "2.0", "id": message["id"], "result": {}})).await;
+                    }
+                    if message["type"] == "control_request" {
+                        write(&mut runtime_write, &json!({"type": "control_response", "response": {"subtype": "success", "request_id": message["request_id"], "response": {}}})).await;
+                    }
+                }
+                Some(message) = said.recv() => write(&mut runtime_write, &message).await,
+            }
+        }
     });
     (Transport::new(zero_read, zero_write), seen)
 }

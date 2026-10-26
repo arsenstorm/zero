@@ -27,11 +27,12 @@ struct Harness {
 
 fn runtime(seen: Arc<Mutex<Vec<Seen>>>, commands: Arc<Mutex<Vec<Vec<String>>>>) -> Runtime {
     Arc::new(move |conversation: &Conversation, _dir: &std::path::Path, argv: &[String]| {
+        let codex_before = commands.lock().unwrap().iter().any(|a| a.iter().any(|w| w == "codex"));
         commands.lock().unwrap().push(argv.to_vec());
         let mut all = seen.lock().unwrap();
         let script = match conversation.provider {
             Provider::Claude => fixture("claude-command"),
-            _ if all.is_empty() => fixture("codex-command"),
+            _ if !codex_before => fixture("codex-command"),
             _ => {
                 let thread = "01a177f4-5525-7141-bfb3-f350d91476d6";
                 vec![
@@ -243,4 +244,33 @@ async fn a_session_can_start_unrestricted_and_keeps_it_across_a_restart() {
 
     let daemon = Daemon::open(&h.home, runtime(h.seen.clone(), h.commands.clone())).unwrap();
     assert_eq!(daemon.get(&session).unwrap().permissions, zerod::model::Permissions::Unrestricted);
+}
+
+#[tokio::test]
+async fn a_lead_spawns_names_waits_on_and_reads_a_worker_over_the_socket() {
+    let h = harness("server-leads").await;
+    let mut client = Client::connect(&h.socket).await;
+    let lead = client.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "lead", "permissions": "unrestricted"})).await;
+    let lead = lead["result"]["session"].as_str().unwrap().to_string();
+    let spawned = client.call(json!({"op": "spawn", "session": lead, "provider": "codex", "prompt": "ls", "label": "Listing", "ticket": "WEB-7"})).await;
+    assert_eq!(spawned["ok"], true, "{spawned}");
+    let worker = spawned["result"]["session"].as_str().unwrap().to_string();
+    let workers = client.call(json!({"op": "workers", "session": lead})).await;
+    assert_eq!(workers["result"][0]["id"], worker.as_str());
+    assert_eq!(workers["result"][0]["permissions"], "unrestricted", "the lead's mode");
+    assert_eq!(workers["result"][0]["ticket"], "WEB-7");
+
+    // The recording asks for an approval; an unrestricted worker has zerod allow it, so nobody has to.
+    let waited = client.call(json!({"op": "wait", "sessions": [worker], "timeout": 5})).await;
+    assert_eq!(waited["result"][0]["attention"], "done", "{waited}");
+    assert!(waited["result"][0]["answer"].as_str().unwrap().contains("The directory is empty"));
+    let result = client.call(json!({"op": "result", "session": worker})).await;
+    assert!(result["result"]["answer"].as_str().unwrap().contains("The directory is empty"));
+
+    let named = client.call(json!({"op": "label", "session": worker, "label": "Files", "ticket": null})).await;
+    assert_eq!(named["ok"], true);
+    let listed = client.call(json!({"op": "workers", "session": lead})).await;
+    assert_eq!((&listed["result"][0]["label"], &listed["result"][0]["ticket"]), (&json!("Files"), &json!(null)));
+    let impatient = client.call(json!({"op": "wait", "sessions": [lead], "timeout": 0})).await;
+    assert_eq!(impatient["ok"], false, "the lead is still working: {impatient}");
 }

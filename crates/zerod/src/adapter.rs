@@ -77,14 +77,15 @@ pub fn after_approval(conversation: &Conversation, settled: &str) -> Change {
 }
 
 /// What every agent zerod runs is told about working in Zero, where the provider takes extra instructions (Claude's
-/// appended system prompt, Codex's developer instructions; OpenCode has no way over ACP). Arsen reads the
-/// conversation in Zero, so it isn't the inbox rules for unattended terminals: just where commands only he can run go,
-/// and the writes that stay his.
-pub const INSTRUCTIONS: &str = "You are working in Zero, Arsen's workspace for coding agents: he reads this conversation there and \
+/// appended system prompt, Codex's developer instructions; OpenCode has no way over ACP). The user reads the
+/// conversation in Zero, so it isn't the inbox rules for unattended terminals: just where commands only they can run
+/// go, and that what other people will see stays the user's call.
+pub const INSTRUCTIONS: &str = "You are working in Zero, a workspace for coding agents: the user reads this conversation there and \
 answers your questions and approvals in it, so ask in the conversation as you normally would. For a command you can't or \
-mustn't run yourself (it needs his Mac, his credentials or production), ask him to run it with `zero run 'command' --why \
-'what you need the output for'` and wait for its output; never print a command for him to paste. Don't merge, mark a pull \
-request ready, request reviewers, or post to Linear or Slack unless he asked you to.";
+mustn't run yourself (it needs the user's own machine, their credentials or production access), ask them to run it with \
+`zero run 'command' --why 'what you need the output for'` and wait for its output; never print a command for them to paste. \
+Don't take actions other people will see, such as merging, marking a pull request ready, requesting reviews or posting \
+messages, unless the user asked you to.";
 
 /// `args` run through Arsen's login shell, so his PATH (nvm, ~/.local/bin, Homebrew) finds the provider's CLI.
 pub fn login_shell(args: &[&str]) -> Vec<String> {

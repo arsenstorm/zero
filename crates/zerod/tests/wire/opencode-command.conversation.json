@@ -3,6 +3,10 @@
   "provider": "opencode",
   "cwd": "/work/project",
   "permissions": "auto",
+  "label": null,
+  "ticket": null,
+  "branch": null,
+  "parent": null,
   "thread": "ses_e87e7ec46ffe1ztiRcXd8Xelqy",
   "title": null,
   "model": "opencode-go/beam-free",
@@ -12,7 +16,7 @@
   "error": null,
   "items": [
     {
-      "id": "user-4",
+      "id": "user-3",
       "turn": "z4",
       "kind": {
         "type": "user",
@@ -21,7 +25,7 @@
       "status": "done"
     },
     {
-      "id": "agent_thought-6",
+      "id": "agent_thought-5",
       "turn": "z4",
       "kind": {
         "type": "reasoning",
@@ -43,7 +47,7 @@
       "status": "done"
     },
     {
-      "id": "agent_thought-11",
+      "id": "agent_thought-10",
       "turn": "z4",
       "kind": {
         "type": "reasoning",
@@ -52,7 +56,7 @@
       "status": "done"
     },
     {
-      "id": "agent_message-12",
+      "id": "agent_message-11",
       "turn": "z4",
       "kind": {
         "type": "agent",
@@ -68,5 +72,5 @@
   "failure": null,
   "stalled": null,
   "diff": null,
-  "seq": 16
+  "seq": 15
 }

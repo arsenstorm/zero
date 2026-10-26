@@ -78,6 +78,10 @@ struct Meta {
     cwd: String,
     #[serde(default)]
     permissions: Permissions,
+    #[serde(default)]
+    parent: Option<String>,
+    #[serde(default)]
+    branch: Option<String>,
     /// The provider's conversation id when Zero chose it (Claude's `--session-id`), before the runtime said anything.
     thread: Option<String>,
 }
@@ -89,7 +93,8 @@ impl Session {
             Some(dir) => {
                 std::fs::create_dir_all(&dir)?;
                 let meta = Meta { id: conversation.id.clone(), provider: conversation.provider, cwd: conversation.cwd.clone(),
-                                  permissions: conversation.permissions, thread: conversation.thread.clone() };
+                                  permissions: conversation.permissions, parent: conversation.parent.clone(), branch: conversation.branch.clone(),
+                                  thread: conversation.thread.clone() };
                 std::fs::write(dir.join("meta.json"), serde_json::to_vec(&meta)?)?;
                 Some(append(&dir)?)
             }
@@ -104,6 +109,8 @@ impl Session {
         let mut conversation = Conversation::new(&meta.id, meta.provider, &meta.cwd);
         conversation.thread = meta.thread;
         conversation.permissions = meta.permissions;
+        conversation.parent = meta.parent;
+        conversation.branch = meta.branch;
         let mut core = Core::new(conversation);
         let mut lines = 0;
         if let Ok(file) = File::open(dir.join("transcript.jsonl")) {
@@ -114,6 +121,7 @@ impl Session {
                 if let Some(message) = entry.get("out") { core.sent(message); }
                 if let Some(message) = entry.get("in") { core.receive(message); }
                 if entry.get("offline").is_some() { core.offline(); }
+                if let Some(change) = entry.get("change").and_then(|c| serde_json::from_value(c.clone()).ok()) { core.change(change); }
             }
         }
         core.offline();
@@ -204,12 +212,16 @@ impl Session {
 
     /// Ends the runtime's process; the session stays, offline, to be resumed.
     pub fn stop(&self) {
-        let mut inner = self.lock();
-        match inner.child.as_mut() {
-            Some(child) => { let _ = child.start_kill(); }
-            // Without a process, closing its input is all there is.
-            None => inner.out = None,
-        }
+        let generation = {
+            let mut inner = self.lock();
+            match inner.child.as_mut() {
+                // Its output ends when it does, and that takes the session offline.
+                Some(child) => { let _ = child.start_kill(); return }
+                None => inner.generation,
+            }
+        };
+        // Without a process of its own there is nothing to wait for.
+        self.ended(generation);
     }
 
     /// Tells subscribers the session exists, before its runtime has said anything.
@@ -222,6 +234,7 @@ impl Session {
     pub fn report(&self, text: &str) {
         let mut inner = self.lock();
         let changes = inner.core.report(text);
+        for change in &changes { inner.record(json!({"change": change})); }
         inner.broadcast(changes);
     }
 
@@ -328,9 +341,10 @@ impl Session {
 
     // What the providers' flows use to talk to their runtime.
 
-    /// A change Zero makes itself, recorded nowhere but in the conversation (the transcript replays to it).
-    pub(crate) fn change(&self, change: Change) {
+    /// A change Zero makes itself (a model switched, a label given), kept in the transcript so a restart replays it.
+    pub fn change(&self, change: Change) {
         let mut inner = self.lock();
+        inner.record(json!({"change": change}));
         let change = inner.core.change(change);
         inner.broadcast(vec![change]);
     }
@@ -380,7 +394,9 @@ impl Inner {
         let conversation = self.core.conversation();
         let item = Item { id: format!("notice-{}", conversation.seq + 1), turn: conversation.turn.clone(),
                           kind: ItemKind::Notice { text: format!("Allowed without asking: {}", approval.title), error: false }, status: ItemStatus::Done };
-        let change = self.core.change(Change::Item { item });
+        let change = Change::Item { item };
+        self.record(json!({"change": change}));
+        let change = self.core.change(change);
         self.broadcast(vec![change]);
     }
 

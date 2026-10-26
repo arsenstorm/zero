@@ -14,6 +14,17 @@ pub struct Conversation {
     /// How freely the agent may act; set at start.
     #[serde(default)]
     pub permissions: Permissions,
+    /// A name given by the user or the lead that started it, and a reference for the work (an issue, a ticket).
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub ticket: Option<String>,
+    /// The git branch its folder was on when it started.
+    #[serde(default)]
+    pub branch: Option<String>,
+    /// The session that started it, for a worker.
+    #[serde(default)]
+    pub parent: Option<String>,
     /// The provider's own id for the conversation (a Codex thread), once it exists; what resuming needs.
     pub thread: Option<String>,
     pub title: Option<String>,
@@ -290,6 +301,7 @@ pub enum ChoiceKind {
 pub enum Change {
     Thread { thread: String, model: Option<String>, effort: Option<String> },
     Title { title: Option<String> },
+    Named { label: Option<String>, ticket: Option<String> },
     Status { status: Status, turn: Option<String>, error: Option<String> },
     /// Adds the item, or replaces the one with its id.
     Item { item: Item },
@@ -316,7 +328,7 @@ pub struct Event {
 impl Conversation {
     pub fn new(id: &str, provider: Provider, cwd: &str) -> Self {
         Conversation {
-            id: id.into(), provider, cwd: cwd.into(), permissions: Permissions::Auto, thread: None, title: None, model: None, effort: None,
+            id: id.into(), provider, cwd: cwd.into(), permissions: Permissions::Auto, label: None, ticket: None, branch: None, parent: None, thread: None, title: None, model: None, effort: None,
             status: Status::Starting, turn: None, error: None, items: vec![], approvals: vec![], questions: vec![], usage: None,
             failure: None, stalled: None, diff: None, seq: 0,
         }
@@ -324,6 +336,14 @@ impl Conversation {
 
     pub fn item(&self, id: &str) -> Option<&Item> {
         self.items.iter().find(|item| item.id == id)
+    }
+
+    /// The last thing the agent gave as an answer.
+    pub fn answer(&self) -> Option<&str> {
+        self.items.iter().rev().find_map(|item| match &item.kind {
+            ItemKind::Agent { text, final_answer: true } => Some(text.as_str()),
+            _ => None,
+        })
     }
 
     pub fn attention(&self) -> Attention {
@@ -351,6 +371,10 @@ impl Conversation {
                 if effort.is_some() { self.effort = effort }
             }
             Change::Title { title } => self.title = title,
+            Change::Named { label, ticket } => {
+                self.label = label;
+                self.ticket = ticket;
+            }
             Change::Status { status, turn, error } => {
                 self.status = status;
                 self.turn = turn;

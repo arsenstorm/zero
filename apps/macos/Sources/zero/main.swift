@@ -19,6 +19,16 @@ func usage(help: Bool = false) -> Never {
       zero list
       zero attach  [agent]   (shows one of Zero's own agents' terminal here to watch or type in; ⌃] lets go. No agent: lists them)
       zero say     <agent> "text"   (sends Arsen's words to the agent through Zero, as the inbox's message box does)
+    sessions Zero runs (from inside one, the session you are in is the lead):
+      zero spawn   "task" [--brief FILE] [--provider codex|claude|opencode] [--model M] [--effort E] [--cwd DIR]
+                   [--label NAME] [--ticket REF] [--permissions auto|unrestricted]
+                   starts a worker of this session (its folder and permissions unless given others) and prints its id;
+                   when it finishes, fails or gets stuck, this session is told. Outside a session: a new session here.
+      zero send    <session> "text"   (a message to a session, resumed first if it is offline)
+      zero wait    <session>... [--any] [--timeout MINUTES]   (until they stop working: finished, failed, stuck, or waiting on the user)
+      zero workers   (the sessions this one started)
+      zero result  <session>   (its last answer)
+      zero label   "name" [--ticket REF] [--session ID]   (names this session, or another)
     common: --async (print the id and return) --agent NAME ($ZERO_AGENT) --ticket ID (the ticket the ask is about,
             shown as its context) --ttl MINUTES (default from Zero's settings) --help
     exit: 0 answered (answer on stdout; for run, the command's output and exit code), 2 declined, 3 expired
@@ -39,7 +49,7 @@ while i < args.count {
     let arg = args[i]
     if arg.hasPrefix("--") {
         let key = String(arg.dropFirst(2))
-        if ["async", "blocked", "done"].contains(key) {
+        if ["async", "blocked", "done", "any"].contains(key) {
             flags[key, default: []].append("1")
         } else {
             i += 1
@@ -222,6 +232,25 @@ func attach(_ which: String?) -> Never {
     }
 }
 
+/// A session of zerod's: its ids are 16 hex digits, where an ask's are 6 letters and digits.
+func isSession(_ id: String) -> Bool { id.count == 16 && id.allSatisfy(\.isHexDigit) }
+
+/// One request to zerod, failing the command with zerod's own words.
+func zerod<T>(_ body: (ZerodLink) async throws -> T) async -> T {
+    guard let link = try? ZerodLink() else { fail("zero: Zero's daemon isn't running (open Zero)") }
+    defer { link.close() }
+    do { return try await body(link) } catch { fail("zero: \(error.localizedDescription)") }
+}
+
+/// A settled session as `zero wait` prints it: how it ended, then its answer or what's wrong.
+func describe(_ session: [String: Any]) -> String {
+    let id = session["id"] as? String ?? "?"
+    let name = (session["label"] as? String).map { "\($0) " } ?? ""
+    let attention = session["attention"] as? String ?? "?"
+    let detail = session["answer"] as? String ?? session["error"] as? String ?? session["stalled"] as? String ?? ""
+    return "\(name)\(id) \(attention)" + (detail.isEmpty ? "" : ":\n\(detail)")
+}
+
 /// Prints a hook's JSON answer to Claude Code and exits 0.
 func hookReply(_ object: [String: Any]) -> Never {
     if let data = try? JSONSerialization.data(withJSONObject: object) { FileHandle.standardOutput.write(data + Data("\n".utf8)) }
@@ -356,6 +385,9 @@ case "note":
     note.status = flag("blocked") != nil ? "blocked" : (flag("done") != nil ? "done" : nil)
     try? socket.send(Request(op: "create", ask: note, wait: false))
     guard let reply = socket.receive(Response.self), reply.op == "created" else { fail("zero: no reply from Zero.app") }
+case "wait" where positional.first.map(isSession) == true:
+    let settled = await zerod { try await $0.wait(on: positional, any: flag("any") != nil, timeout: flag("timeout").flatMap(Int.init).map { $0 * 60 }) }
+    for session in settled { print(describe(session)) }
 case "wait":
     guard let id = positional.first else { usage() }
     let socket = connect()
@@ -374,6 +406,47 @@ case "say":
     let socket = connect()
     try? socket.send(Request(op: "message", agent: positional[0], text: positional[1...].joined(separator: " ")))
     guard let reply = socket.receive(Response.self), reply.op == "created" else { fail("zero: \(socket.receive(Response.self)?.message ?? "no reply from Zero.app")") }
+case "spawn":
+    var prompt = positional.joined(separator: " ")
+    if let brief = flag("brief") {
+        let path = URL(fileURLWithPath: (brief as NSString).expandingTildeInPath, relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)).standardized.path
+        guard FileManager.default.fileExists(atPath: path) else { fail("zero: no brief at \(path)") }
+        prompt = "Read \(path) and do what it says." + (prompt.isEmpty ? "" : " " + prompt)
+    }
+    guard !prompt.isEmpty else { usage() }
+    let provider: Provider? = flag("provider").map { name in
+        guard let provider = Provider(rawValue: name) else { fail("zero: --provider is codex, claude or opencode") }
+        return provider
+    }
+    let permissions: Permissions? = flag("permissions").map { name in
+        guard let permissions = Permissions(rawValue: name) else { fail("zero: --permissions is auto or unrestricted") }
+        return permissions
+    }
+    let session = await zerod { link -> String in
+        if let lead = ProcessInfo.processInfo.environment["ZERO_SESSION"] {
+            return try await link.spawn(lead: lead, provider: provider, prompt: prompt, cwd: flag("cwd"), model: flag("model"), effort: flag("effort"),
+                                        permissions: permissions, label: flag("label"), ticket: flag("ticket"))
+        }
+        let id = try await link.start(provider: provider ?? .claude, cwd: flag("cwd") ?? FileManager.default.currentDirectoryPath, prompt: prompt,
+                                      model: flag("model"), effort: flag("effort"), permissions: permissions ?? .auto)
+        if flag("label") != nil || flag("ticket") != nil { try await link.label(session: id, label: flag("label"), ticket: flag("ticket")) }
+        return id
+    }
+    print(session)
+case "send":
+    guard positional.count >= 2 else { usage() }
+    await zerod { try await $0.send(session: positional[0], text: positional[1...].joined(separator: " ")) }
+case "workers":
+    guard let lead = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"] else { fail("zero: workers of which session? (--session ID)") }
+    let workers = await zerod { try await $0.workers(of: lead) }
+    for worker in workers { print("\(worker.id)  \(worker.attention.rawValue.padding(toLength: 9, withPad: " ", startingAt: 0))  \(Workspace.label(of: worker))\(worker.ticket.map { "  (\($0))" } ?? "")") }
+case "result":
+    guard let session = positional.first else { usage() }
+    guard let answer = await zerod({ try await $0.result(of: session) }) else { fail("zero: \(session) has no answer yet", 3) }
+    print(answer)
+case "label":
+    guard let session = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"] else { fail("zero: label which session? (--session ID)") }
+    await zerod { try await $0.label(session: session, label: positional.isEmpty ? nil : positional.joined(separator: " "), ticket: flag("ticket")) }
 case "attach":
     attach(positional.first)
 case "list":

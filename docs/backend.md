@@ -64,6 +64,10 @@ usage view, worktree and port lifecycle, coordination of leads and workers, and 
 
 ## Requirements, ranked
 
+Zero is a general tool for working with coding agents. The Acme numbers are evidence of what such a tool
+needs, not features to build: nothing in Zero knows about benches, Linear, Slack or any one team's workflow, and those
+plug in through general mechanisms.
+
 Status is against `crates/zerod` today: done, partly, missing.
 
 ### A. Make a zerod session work the way his sessions work now
@@ -94,15 +98,16 @@ Status is against `crates/zerod` today: done, partly, missing.
 
 ### B. Leads and workers, which is how most of his work runs
 
-7. **Session metadata (missing).** Ticket, branch, bench or worktree, PR, role (lead or worker), parent, and a
-   label Arsen sets. This prevents "wrong chat" and names workers by ticket, as Solo does.
-8. **Sessions that start sessions (missing).** A lead spawns a worker with a brief, sends it a line or a file
+7. **Session metadata (done: label, ticket, branch, parent; the PR comes with step 4's events).** It prevents
+   "wrong chat" and names workers by ticket.
+8. **Sessions that start sessions (done: `zero spawn`, `send`, `wait`, `workers`, `result`, `label`; a real lead hearing
+   from a real worker is in e2e.rs).** A lead spawns a worker with a brief, sends it a line or a file
    pointer, and is woken when the worker goes idle or reports. This replaces Solo timers, `send_input` and hf
    publishes for zerod sessions. It is exposed to agents through the `zero` CLI (or MCP), so a lead in any
    provider can use it.
-9. **Events into a session (missing).** GitHub, Linear and Slack events from agent-events, queued into the session
-   and delivered when it goes idle, plus "wake me when CI finishes" instead of polling loops. Bridge agent-events;
-   don't rebuild it.
+9. **Events into a session (missing).** Outside events (pull requests and CI, issue trackers, chat), queued into the
+   session and delivered when it goes idle, plus "wake me when CI finishes" instead of polling loops. A general way in
+   for event sources such as agent-events; don't rebuild them.
 10. **A usage ledger across providers (missing).** Limits and use per account and provider from what each CLI
     reports, never from calls of Zero's own. Warn before starting more agents into a limit.
 
@@ -111,15 +116,15 @@ Status is against `crates/zerod` today: done, partly, missing.
 11. **Asks owned by the session's host (partly, in Swift).** The run, approve, choice and question asks move into zerod,
     so they execute on the host that owns the session. Run output is capped: 2.5 MB of it is in the log today. Expiry
     suits the ask: approvals wait a day, and an expired ask can be asked again.
-12. **Worktrees and their runtime (missing).** Create from a base, run setup and archive scripts, never delete with
-    unpushed work, clean up after crashes, and give each workspace its ports and env. Integrate `bench` (444 ledger
-    calls) rather than replace it.
+12. **Isolated workspaces and their runtime (missing).** Git worktrees created from a base, setup and archive scripts per
+    project, never deleted with unpushed work, cleaned up after crashes, and each workspace's ports and env. Anyone's
+    own environments (Arsen's Acme benches, say) plug in through the scripts; Zero knows nothing about them.
 13. **Background processes per session (missing).** Tests, dev servers and monitors, with output, exit code and a
     hang timer (502 background runs, 358 completions).
 14. **A checkpoint per turn (missing).** A git snapshot zerod owns, since Codex's revert leaves files and ACP has no undo.
     This is the base for review: the diff per turn, then PR and CI.
-15. **zerod on other machines (missing).** Benches over SSH (554 workbench commands, drop clients already deployed),
-    with an encrypted transport.
+15. **zerod on other machines (missing).** Over SSH, with an encrypted transport. Arsen's remote work (554 workbench
+    commands, drop clients already deployed) is the first use.
 16. **A terminal for what has no protocol (missing).** Slash pickers, `!` commands. Terminals move from zero-host.
 
 ### Not now

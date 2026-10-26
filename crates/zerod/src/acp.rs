@@ -98,7 +98,8 @@ impl Acp {
         if let Some(thread) = thread && (method == "session/new" || result.get("configOptions").is_some()) {
             effects.changes.push(Change::Thread { thread, model: option("model"), effort: option("effort").filter(|e| e != "default") });
         }
-        if matches!(method.as_str(), "session/new" | "session/resume" | "session/load") && matches!(conversation.status, Status::Starting | Status::Offline) {
+        // A new session is still starting until its first prompt; a resumed one is waiting for the next.
+        if matches!(method.as_str(), "session/resume" | "session/load") && matches!(conversation.status, Status::Starting | Status::Offline) {
             effects.changes.push(Change::Status { status: Status::Idle, turn: None, error: None });
         }
     }

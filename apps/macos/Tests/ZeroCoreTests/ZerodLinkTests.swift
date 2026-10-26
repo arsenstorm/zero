@@ -75,6 +75,15 @@ private func launch(_ name: String) async throws -> (socket: String, home: URL) 
     #expect(conversation.provider == .claude)
     #expect(conversation.status == .offline)
     #expect(conversation.items.last?.kind == .agent(text: "The command printed `Darwin`.", finalAnswer: true))
+
+    // A session named over the socket, as `zero label` does, and asked for its answer, as `zero result` does.
+    try await link.label(session: conversation.id, label: "Uname check", ticket: "GH-1")
+    #expect(try await link.get(conversation.id).label == "Uname check")
+    #expect(try await link.result(of: conversation.id) == "The command printed `Darwin`.")
+    #expect(try await link.workers(of: conversation.id).isEmpty)
+    let settled = try await link.wait(on: [conversation.id], timeout: 1)
+    #expect(settled.first?["attention"] as? String == "offline")
+    await #expect(throws: ZerodError(message: "No session nope to lead it")) { _ = try await link.spawn(lead: "nope", provider: .codex, prompt: "x") }
 }
 
 private final class Heard: @unchecked Sendable {

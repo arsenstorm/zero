@@ -66,6 +66,7 @@ impl Core {
         let mut changes: Vec<Change> = self.conversation.approvals.iter().map(|a| Change::Resolved { approval: a.id.clone() }).collect();
         changes.extend(self.conversation.questions.iter().map(|q| Change::Answered { question: q.id.clone() }));
         changes.push(Change::Status { status: Status::Offline, turn: None, error: self.conversation.error.clone() });
+        if self.conversation.stalled.is_some() { changes.push(Change::Stalled { reason: None }) }
         self.apply(changes)
     }
 

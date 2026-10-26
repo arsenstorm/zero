@@ -83,7 +83,8 @@ impl Codex {
                 effort: result["reasoningEffort"].as_str().map(Into::into),
             });
             if let Some(name) = result["thread"]["name"].as_str() { effects.changes.push(Change::Title { title: Some(name.into()) }) }
-            if matches!(conversation.status, Status::Starting | Status::Offline) {
+            // A new thread is still starting until its first turn does; a resumed one is waiting for the next.
+            if method == "thread/resume" && matches!(conversation.status, Status::Starting | Status::Offline) {
                 effects.changes.push(Change::Status { status: Status::Idle, turn: None, error: None });
             }
         }

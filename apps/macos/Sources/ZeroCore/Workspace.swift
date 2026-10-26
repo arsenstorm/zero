@@ -196,8 +196,10 @@ public final class Workspace {
         return ask
     }
 
-    /// The session's title, else what it was asked first, else the provider and its folder.
+    /// The name the user or its lead gave it, else the session's title, else what it was asked first, else the
+    /// provider and its folder.
     public static func label(of conversation: Conversation) -> String {
+        if let label = conversation.label, !label.isEmpty { return label }
         if let title = conversation.title, !title.isEmpty { return title }
         for item in conversation.items {
             if case let .user(text) = item.kind, let gist = Store.gist(of: text) { return gist }

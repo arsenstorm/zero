@@ -170,6 +170,13 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
     public var provider: Provider
     public var cwd: String
     public var permissions: Permissions
+    /// A name the user or its lead gave it, and what the work is for (an issue, a ticket).
+    public var label: String?
+    public var ticket: String?
+    /// The git branch its folder was on when it started.
+    public var branch: String?
+    /// The session that started it, for a worker.
+    public var parent: String?
     /// The provider's own id for the conversation, once it has one.
     public var thread: String?
     public var title: String?
@@ -221,6 +228,7 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
             if let model { self.model = model }
             if let effort { self.effort = effort }
         case let .title(title): self.title = title
+        case let .named(label, ticket): self.label = label; self.ticket = ticket
         case let .status(status, turn, error):
             self.status = status; self.turn = turn; self.error = error
         case let .item(item):
@@ -256,6 +264,7 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
 public enum Change: Decodable, Equatable, Sendable {
     case thread(String, model: String?, effort: String?)
     case title(String?)
+    case named(label: String?, ticket: String?)
     case status(SessionStatus, turn: String?, error: String?)
     case item(ConversationItem)
     case delta(item: String, text: String)
@@ -268,7 +277,7 @@ public enum Change: Decodable, Equatable, Sendable {
     case stalled(String?)
     case diff(String?)
 
-    private enum Keys: String, CodingKey { case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason }
+    private enum Keys: String, CodingKey { case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label, ticket }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -276,6 +285,7 @@ public enum Change: Decodable, Equatable, Sendable {
         case "thread": self = .thread(try c.decode(String.self, forKey: .thread), model: try c.decodeIfPresent(String.self, forKey: .model),
                                       effort: try c.decodeIfPresent(String.self, forKey: .effort))
         case "title": self = .title(try c.decodeIfPresent(String.self, forKey: .title))
+        case "named": self = .named(label: try c.decodeIfPresent(String.self, forKey: .label), ticket: try c.decodeIfPresent(String.self, forKey: .ticket))
         case "status": self = .status(try c.decode(SessionStatus.self, forKey: .status), turn: try c.decodeIfPresent(String.self, forKey: .turn),
                                       error: try c.decodeIfPresent(String.self, forKey: .error))
         case "item": self = .item(try c.decode(ConversationItem.self, forKey: .item))
@@ -344,7 +354,8 @@ public struct ZerodError: LocalizedError, Equatable {
 /// One connection to zerod: requests answered by id (so several can be in flight), and, after `subscribe`, the
 /// sessions' snapshots and changes through `onMessage`. Blocking socket I/O on a thread of its own.
 public final class ZerodLink: @unchecked Sendable {
-    public static let socket = Paths.dir.appendingPathComponent("zerod.sock").path
+    /// ~/.zero/zerod.sock, or the one ZERO_DAEMON names (a test daemon, say).
+    public static let socket = ProcessInfo.processInfo.environment["ZERO_DAEMON"] ?? Paths.dir.appendingPathComponent("zerod.sock").path
     public static let home = Paths.dir.appendingPathComponent("zerod").path
 
     private let connection: UnixSocket
@@ -410,6 +421,37 @@ public final class ZerodLink: @unchecked Sendable {
     /// Answers an open question, every field at once: picked options, or Arsen's own words.
     public func answer(session: String, question: String, answers: [String: [String]]) async throws {
         _ = try await call("answer", ["session": session, "question": question, "answers": answers])
+    }
+
+    // Leads and workers.
+
+    /// Starts a worker of `lead`, in its folder and with its permissions unless given others.
+    public func spawn(lead: String, provider: Provider?, prompt: String, cwd: String? = nil, model: String? = nil, effort: String? = nil,
+                      permissions: Permissions? = nil, label: String? = nil, ticket: String? = nil) async throws -> String {
+        let result = try await call("spawn", ["session": lead, "provider": provider?.rawValue, "prompt": prompt, "cwd": cwd, "model": model,
+                                              "effort": effort, "permissions": permissions?.rawValue, "label": label, "ticket": ticket])
+        guard let session = (result as? [String: Any])?["session"] as? String else { throw ZerodError(message: "zerod started no session") }
+        return session
+    }
+
+    public func label(session: String, label: String?, ticket: String?) async throws {
+        _ = try await call("label", ["session": session, "label": label, "ticket": ticket])
+    }
+
+    /// The sessions `session` started, without their items.
+    public func workers(of session: String) async throws -> [Conversation] {
+        try decode([Conversation].self, from: await call("workers", ["session": session]))
+    }
+
+    /// What the session last gave as its answer.
+    public func result(of session: String) async throws -> String? {
+        ((try await call("result", ["session": session])) as? [String: Any])?["answer"] as? String
+    }
+
+    /// Waits until the sessions (or, with `any`, one of them) stop working; each as id, label, ticket, attention, answer,
+    /// error and stalled.
+    public func wait(on sessions: [String], any: Bool = false, timeout: Int? = nil) async throws -> [[String: Any]] {
+        try await call("wait", ["sessions": sessions, "any": any, "timeout": timeout]) as? [[String: Any]] ?? []
     }
 
     /// From now on `onMessage` gets every session's snapshot, then each change.

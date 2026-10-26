@@ -3,6 +3,10 @@
   "provider": "codex",
   "cwd": "/work/project",
   "permissions": "auto",
+  "label": null,
+  "ticket": null,
+  "branch": null,
+  "parent": null,
   "thread": "01a177f4-5525-7ba1-abf2-90c5952e8e77",
   "title": null,
   "model": "gpt-6-sol",
@@ -76,5 +80,5 @@
   "failure": null,
   "stalled": null,
   "diff": "diff --git a/hello.txt b/hello.txt\nnew file mode 100644\nindex 0000000000000000000000000000000000000000..05dc454a3350bbc9fc29f20d5c3995375ec072a0\n--- /dev/null\n+++ b/hello.txt\n@@ -0,0 +1 @@\n+hello from zero\n",
-  "seq": 40
+  "seq": 39
 }

@@ -80,3 +80,24 @@ async fn claude_asks_a_question_and_uses_the_answer() {
     assert!(answer(&done).unwrap().contains("amber"), "{done:#?}");
     daemon.stop(&id).unwrap();
 }
+
+#[tokio::test]
+#[ignore = "runs the real Claude Code, twice"]
+async fn a_real_lead_hears_from_its_real_worker() {
+    let home = temp_dir("e2e-lead");
+    let project = home.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let daemon = Daemon::open(&home, zerod::daemon::real_runtime()).unwrap();
+    let lead = daemon.start(Provider::Claude, project.to_str().unwrap(),
+        "You lead one worker. Reply now with only the word ready. Later a message will report what the worker found; \
+         when it does, reply with only the number it found.", Some("haiku"), None, Default::default()).unwrap();
+    until(&daemon, &lead, |c| c.status == Status::Idle && answer(c).is_some_and(|a| a.contains("ready"))).await;
+    let options = zerod::daemon::Options { label: Some("Counter".into()), model: Some("haiku".into()), ..Default::default() };
+    let worker = daemon.spawn(&lead, Provider::Claude, "Reply with only the number 4217, nothing else.", options).unwrap();
+    until(&daemon, &worker, |c| c.status == Status::Idle && answer(c).is_some_and(|a| a.contains("4217"))).await;
+    let heard = until(&daemon, &lead, |c| c.status == Status::Idle && answer(c).is_some_and(|a| a.contains("4217"))).await;
+    let told = heard.items.iter().any(|i| matches!(&i.kind, ItemKind::User { text } if text.starts_with("Worker Counter finished: 4217")));
+    assert!(told, "{heard:#?}");
+    daemon.stop(&worker).ok();
+    daemon.stop(&lead).ok();
+}
