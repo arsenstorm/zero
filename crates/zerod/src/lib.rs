@@ -9,6 +9,7 @@ pub mod cli;
 pub mod codex;
 pub mod core;
 pub mod daemon;
+pub mod drops;
 pub mod inbox;
 pub mod model;
 pub mod process;
