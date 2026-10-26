@@ -257,6 +257,7 @@ async fn a_lead_spawns_names_waits_on_and_reads_a_worker_over_the_socket() {
     let worker = spawned["result"]["session"].as_str().unwrap().to_string();
     let workers = client.call(json!({"op": "workers", "session": lead})).await;
     assert_eq!(workers["result"][0]["id"], worker.as_str());
+    assert!(workers["result"][0]["attention"].is_string(), "lists leave the items out, so zerod says how each one is doing");
     assert_eq!(workers["result"][0]["permissions"], "unrestricted", "the lead's mode");
     assert_eq!(workers["result"][0]["ticket"], "WEB-7");
 
@@ -271,6 +272,9 @@ async fn a_lead_spawns_names_waits_on_and_reads_a_worker_over_the_socket() {
     assert_eq!(named["ok"], true);
     let listed = client.call(json!({"op": "workers", "session": lead})).await;
     assert_eq!((&listed["result"][0]["label"], &listed["result"][0]["ticket"]), (&json!("Files"), &json!(null)));
+    assert_eq!(listed["result"][0]["attention"], "done", "finished, though its items aren't in the list");
+    let all = client.call(json!({"op": "list"})).await;
+    assert!(all["result"].as_array().unwrap().iter().any(|c| c["attention"] == "done"));
     let impatient = client.call(json!({"op": "wait", "sessions": [lead], "timeout": 0})).await;
     assert_eq!(impatient["ok"], false, "the lead is still working: {impatient}");
 }

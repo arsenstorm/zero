@@ -105,10 +105,12 @@ Status is against `crates/zerod` today: done, partly, missing.
    pointer, and is woken when the worker goes idle or reports. This replaces Solo timers, `send_input` and hf
    publishes for zerod sessions. It is exposed to agents through the `zero` CLI (or MCP), so a lead in any
    provider can use it.
-9. **Events into a session (missing).** Outside events (pull requests and CI, issue trackers, chat), queued into the
+9. **Events into a session (done: `zero notify`, `zero watch -- <command>`, `zero remind`; reminders don't survive a
+   daemon restart yet).** Outside events (pull requests and CI, issue trackers, chat), queued into the
    session and delivered when it goes idle, plus "wake me when CI finishes" instead of polling loops. A general way in
    for event sources such as agent-events; don't rebuild them.
-10. **A usage ledger across providers (missing).** Limits and use per account and provider from what each CLI
+10. **A usage ledger across providers (done: `zero usage`, starting into a limit refused unless forced, sessions told to
+    carry on once a limit resets).** Limits and use per account and provider from what each CLI
     reports, never from calls of Zero's own. Warn before starting more agents into a limit.
 
 ### C. The machine the work runs on

@@ -41,6 +41,9 @@ struct Request {
     any: Option<bool>,
     /// Seconds.
     timeout: Option<u64>,
+    command: Option<String>,
+    minutes: Option<u64>,
+    force: Option<bool>,
 }
 
 /// Serves until the listener fails. The socket is the owner's only: whoever can write to it runs agents.
@@ -103,12 +106,16 @@ async fn handle(daemon: &Daemon, request: Request) -> Result<Value, String> {
     let effort = request.effort.as_deref();
     match request.op.as_str() {
         "hello" => Ok(json!({"version": VERSION, "pid": std::process::id()})),
-        "list" => Ok(json!(daemon.list())),
+        "list" => Ok(json!(daemon.sessions().iter().map(|s| summary(&s.snapshot())).collect::<Vec<_>>())),
         "get" => daemon.get(&session()?).map(|c| json!(c)).ok_or_else(|| format!("No session {}", request.session.unwrap_or_default())),
         "start" => {
             let provider = request.provider.ok_or("Start needs a provider: codex, claude or opencode")?;
             let cwd = request.cwd.as_deref().ok_or("Start needs a folder")?;
-            let id = daemon.start(provider, cwd, request.prompt.as_deref().unwrap_or(""), model, effort, request.permissions.unwrap_or_default())?;
+            let options = crate::daemon::Options {
+                cwd: Some(cwd.into()), model: request.model.clone(), effort: request.effort.clone(), permissions: Some(request.permissions.unwrap_or_default()),
+                label: request.label.clone(), ticket: request.ticket.clone(), force: request.force.unwrap_or(false),
+            };
+            let id = daemon.start_with(provider, request.prompt.as_deref().unwrap_or(""), options)?;
             Ok(json!({"session": id}))
         }
         "send" => daemon.send(&session()?, request.text.as_deref().ok_or("Send needs text")?, model, effort).await.map(|_| Value::Null),
@@ -130,13 +137,23 @@ async fn handle(daemon: &Daemon, request: Request) -> Result<Value, String> {
             let provider = match request.provider { Some(provider) => provider, None => daemon.get(&lead).ok_or_else(|| format!("No session {lead}"))?.provider };
             let options = crate::daemon::Options {
                 cwd: request.cwd.clone(), model: request.model.clone(), effort: request.effort.clone(), permissions: request.permissions,
-                label: request.label.clone(), ticket: request.ticket.clone(),
+                label: request.label.clone(), ticket: request.ticket.clone(), force: request.force.unwrap_or(false),
             };
             let id = daemon.spawn(&lead, provider, request.prompt.as_deref().unwrap_or(""), options)?;
             Ok(json!({"session": id}))
         }
+        "notify" => daemon.notify(&session()?, request.text.as_deref().ok_or("Notify with text")?).map(|_| Value::Null),
+        "watch" => daemon.watch(&session()?, request.command.as_deref().ok_or("Watch which command?")?).map(|_| Value::Null),
+        "remind" => {
+            let after = std::time::Duration::from_secs(request.minutes.ok_or("Remind in how many minutes?")? * 60);
+            daemon.remind(&session()?, after, request.text.as_deref().ok_or("Remind with text")?).map(|_| Value::Null)
+        }
+        "usage" => Ok(json!(daemon.usage().into_iter().map(|(provider, usage)| json!({"provider": provider, "usage": usage})).collect::<Vec<_>>())),
         "label" => daemon.label(&session()?, request.label.as_deref(), request.ticket.as_deref()).map(|_| Value::Null),
-        "workers" => Ok(json!(daemon.workers(&session()?))),
+        "workers" => {
+            let lead = session()?;
+            Ok(json!(daemon.sessions().iter().map(|s| s.snapshot()).filter(|c| c.parent.as_deref() == Some(lead.as_str())).map(|c| summary(&c)).collect::<Vec<_>>()))
+        }
         "result" => Ok(json!({"answer": daemon.last_answer(&session()?)})),
         "wait" => {
             let ids = request.sessions.clone().ok_or("Wait on which sessions?")?;
@@ -149,6 +166,13 @@ async fn handle(daemon: &Daemon, request: Request) -> Result<Value, String> {
         }
         other => Err(format!("Unknown op {other}")),
     }
+}
+
+/// A session for a list: everything but its items, and how it's doing, which can't be told without them.
+fn summary(conversation: &crate::model::Conversation) -> Value {
+    let mut summary = json!(crate::model::Conversation { items: vec![], ..conversation.clone() });
+    summary["attention"] = json!(conversation.attention());
+    summary
 }
 
 /// Every session's snapshot, then each change after it; a session seen for the first time, or one whose changes

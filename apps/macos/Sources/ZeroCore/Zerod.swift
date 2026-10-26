@@ -438,9 +438,19 @@ public final class ZerodLink: @unchecked Sendable {
         _ = try await call("label", ["session": session, "label": label, "ticket": ticket])
     }
 
-    /// The sessions `session` started, without their items.
-    public func workers(of session: String) async throws -> [Conversation] {
-        try decode([Conversation].self, from: await call("workers", ["session": session]))
+    /// The sessions `session` started, without their items, each with how it's doing (which zerod tells, since the
+    /// items it would be worked out from are left out).
+    public func workers(of session: String) async throws -> [(Conversation, Attention)] {
+        struct Summary: Decodable {
+            let attention: Attention
+            let conversation: Conversation
+            init(from decoder: Decoder) throws {
+                conversation = try Conversation(from: decoder)
+                attention = try decoder.container(keyedBy: Key.self).decode(Attention.self, forKey: .attention)
+            }
+            enum Key: String, CodingKey { case attention }
+        }
+        return try decode([Summary].self, from: await call("workers", ["session": session])).map { ($0.conversation, $0.attention) }
     }
 
     /// What the session last gave as its answer.
@@ -452,6 +462,24 @@ public final class ZerodLink: @unchecked Sendable {
     /// error and stalled.
     public func wait(on sessions: [String], any: Bool = false, timeout: Int? = nil) async throws -> [[String: Any]] {
         try await call("wait", ["sessions": sessions, "any": any, "timeout": timeout]) as? [[String: Any]] ?? []
+    }
+
+    // Word from outside.
+
+    /// Words for a session, given when it is between turns.
+    public func notify(session: String, text: String) async throws { _ = try await call("notify", ["session": session, "text": text]) }
+
+    /// Runs `command` in the session's folder and tells the session how it ended.
+    public func watch(session: String, command: String) async throws { _ = try await call("watch", ["session": session, "command": command]) }
+
+    public func remind(session: String, minutes: Int, text: String) async throws {
+        _ = try await call("remind", ["session": session, "minutes": minutes, "text": text])
+    }
+
+    /// Each provider's limits as its CLI last reported them.
+    public func usage() async throws -> [(Provider, Usage)] {
+        struct Row: Decodable { let provider: Provider; let usage: Usage }
+        return try decode([Row].self, from: await call("usage")).map { ($0.provider, $0.usage) }
     }
 
     /// From now on `onMessage` gets every session's snapshot, then each change.

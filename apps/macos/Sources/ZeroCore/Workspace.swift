@@ -14,6 +14,17 @@ public final class Workspace {
     public var conversations: [Conversation] { mirror.order.compactMap { mirror.conversations[$0] } }
     public func conversation(_ id: String) -> Conversation? { mirror.conversations[id] }
 
+    /// Each provider's limits as last reported, from the session that heard last (zerod's own rule).
+    public var usage: [(Provider, Usage)] {
+        var latest: [(Provider, Usage)] = []
+        for conversation in conversations {
+            guard let usage = conversation.usage else { continue }
+            latest.removeAll { $0.0 == conversation.provider }
+            latest.append((conversation.provider, usage))
+        }
+        return latest
+    }
+
     @ObservationIgnored private let store: Store
     @ObservationIgnored private var link: ZerodLink?
     /// "session/approval" → the ask showing it.

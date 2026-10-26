@@ -34,6 +34,9 @@ pub struct Daemon {
     attention: Mutex<HashMap<String, Attention>>,
     /// Word for a session that it hasn't been given yet (it was busy or offline), kept in its folder as pending.json.
     pending: Mutex<HashMap<String, Vec<String>>>,
+    /// The limit resets already waited for, by session, so each is waited for once.
+    resets: Mutex<HashMap<String, i64>>,
+    me: Weak<Daemon>,
 }
 
 /// How a lead starts a worker; anything left out comes from the lead.
@@ -45,6 +48,8 @@ pub struct Options {
     pub permissions: Option<Permissions>,
     pub label: Option<String>,
     pub ticket: Option<String>,
+    /// Start even though the provider is at its usage limit.
+    pub force: bool,
 }
 
 fn busy(attention: Attention) -> bool {
@@ -72,8 +77,9 @@ impl Daemon {
                 Err(error) => eprintln!("zerod: skipped {}: {error}", dir.display()),
             }
         }
-        let daemon = Arc::new(Daemon {
+        let daemon = Arc::new_cyclic(|me| Daemon {
             home: home.into(), sessions: Mutex::new(sessions), events, runtime, attention: Mutex::new(attention), pending: Mutex::new(pending),
+            resets: Mutex::new(HashMap::new()), me: me.clone(),
         });
         let mut heard = daemon.events.subscribe();
         let weak: Weak<Daemon> = Arc::downgrade(&daemon);
@@ -116,6 +122,11 @@ impl Daemon {
         self.create(provider, prompt, options, None)
     }
 
+    /// A session of its own (no lead), with every option.
+    pub fn start_with(&self, provider: Provider, prompt: &str, options: Options) -> Result<String, String> {
+        self.create(provider, prompt, options, None)
+    }
+
     /// A worker of `lead`: in the lead's folder, with the lead's permissions, unless told otherwise.
     pub fn spawn(&self, lead: &str, provider: Provider, prompt: &str, mut options: Options) -> Result<String, String> {
         let parent = self.get(lead).ok_or_else(|| format!("No session {lead} to lead it"))?;
@@ -129,6 +140,11 @@ impl Daemon {
         let (model, effort) = (options.model.as_deref(), options.effort.as_deref());
         let folder = Path::new(cwd);
         if !folder.is_absolute() || !folder.is_dir() { return Err(format!("{cwd} isn't a folder")) }
+        if !options.force && let Some((_, usage)) = self.usage().into_iter().find(|(p, u)| *p == provider && u.limited && u.resets_at.is_none_or(|at| at > now()))
+        {
+            let until = usage.resets_at.map(|at| format!(" until {}", at)).unwrap_or_default();
+            return Err(format!("{} is at its usage limit{until}; start it anyway with force", provider.title()));
+        }
         if prompt.trim().is_empty() { return Err("A session starts with something to do".into()) }
         let id = new_id();
         let dir = self.home.join("sessions").join(&id);
@@ -221,6 +237,68 @@ impl Daemon {
         }
     }
 
+    /// Words for a session from anywhere (an event source, a script, the user): given when it is between turns, kept
+    /// on disk while it is offline.
+    pub fn notify(&self, id: &str, text: &str) -> Result<(), String> {
+        self.session(id)?;
+        self.tell(id, text.into());
+        Ok(())
+    }
+
+    /// Runs `command` in the session's folder and, when it ends, tells the session how: "wake me when CI finishes"
+    /// without a polling loop.
+    pub fn watch(&self, id: &str, command: &str) -> Result<(), String> {
+        let cwd = PathBuf::from(self.get(id).ok_or_else(|| format!("No session {id}"))?.cwd);
+        let (me, id, command) = (self.me.clone(), id.to_string(), command.to_string());
+        tokio::spawn(async move {
+            let (code, printed) = process::run(&command, &cwd, &id).await;
+            let how = code.map(|c| format!("with exit {c}")).unwrap_or_else(|| "when it was stopped".into());
+            let words = if printed.is_empty() { format!("`{command}` finished {how} and printed nothing.") } else { format!("`{command}` finished {how}:\n{printed}") };
+            if let Some(daemon) = me.upgrade() { daemon.tell(&id, words) }
+        });
+        Ok(())
+    }
+
+    /// Tells the session `text` after `after`. ponytail: held in memory, so a daemon restart forgets it; keep it on disk
+    /// beside pending.json if reminders start spanning restarts.
+    pub fn remind(&self, id: &str, after: Duration, text: &str) -> Result<(), String> {
+        self.session(id)?;
+        let (me, id, text) = (self.me.clone(), id.to_string(), text.to_string());
+        tokio::spawn(async move {
+            tokio::time::sleep(after).await;
+            if let Some(daemon) = me.upgrade() { daemon.tell(&id, text) }
+        });
+        Ok(())
+    }
+
+    /// Each provider's limits as its CLI last reported them, from the session that heard last.
+    pub fn usage(&self) -> Vec<(Provider, crate::model::Usage)> {
+        let mut latest: Vec<(Provider, crate::model::Usage)> = vec![];
+        for conversation in self.sessions().iter().map(|s| s.snapshot()) {
+            let Some(usage) = conversation.usage else { continue };
+            latest.retain(|(p, _)| *p != conversation.provider);
+            latest.push((conversation.provider, usage));
+        }
+        latest
+    }
+
+    /// A session stopped by a usage limit is told to go on once the limit has reset.
+    fn after_reset(&self, conversation: &Conversation) {
+        let Some(usage) = conversation.usage.clone().filter(|u| u.limited) else { return };
+        let Some(at) = usage.resets_at else { return };
+        if self.resets.lock().unwrap().insert(conversation.id.clone(), at) == Some(at) { return }
+        let (me, id) = (self.me.clone(), conversation.id.clone());
+        let wait = Duration::from_secs((at - now()).max(0) as u64 + 60);
+        tokio::spawn(async move {
+            tokio::time::sleep(wait).await;
+            let Some(daemon) = me.upgrade() else { return };
+            let Ok(session) = daemon.session(&id) else { return };
+            // The provider says nothing when a limit resets; the clock does.
+            session.change(Change::Usage { usage: crate::model::Usage { limited: false, resets_at: None, ..usage } });
+            daemon.tell(&id, "The usage limit has reset: carry on with what you were doing.".into());
+        });
+    }
+
     /// Something changed in `id`: a worker that has come to an end (or just got stuck) tells its lead, and a session
     /// between turns gets the word waiting for it. The session is read as it is now, which may be several events on
     /// from the one heard, so a worker can seem to go straight from waiting on the user to done: anything still under
@@ -236,6 +314,7 @@ impl Daemon {
         if let Some(lead) = &conversation.parent && (came_to_an_end || got_stuck) {
             self.tell(lead, report(&conversation, now));
         }
+        if now == Attention::Limited { self.after_reset(&conversation) }
         if matches!(now, Attention::Done | Attention::Idle) { self.deliver(id) }
     }
 
@@ -270,6 +349,10 @@ impl Daemon {
         session.stop();
         Ok(())
     }
+}
+
+fn now() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
 /// What a lead is told when a worker stops working, and how to answer it.

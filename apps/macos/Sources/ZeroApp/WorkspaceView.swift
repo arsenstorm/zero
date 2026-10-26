@@ -61,9 +61,17 @@ private struct Sidebar: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            if !workspace.connected {
-                Label("Connecting to Zero's daemon…", systemImage: "bolt.horizontal").font(.caption).foregroundStyle(.secondary).padding(10)
+            VStack(alignment: .leading, spacing: 4) {
+                if !workspace.connected {
+                    Label("Connecting to Zero's daemon…", systemImage: "bolt.horizontal").font(.caption).foregroundStyle(.secondary)
+                }
+                // What each provider last said about its limits.
+                ForEach(workspace.usage, id: \.0) { provider, usage in
+                    Text("\(provider.title)  " + usage.windows.map { "\($0.name) \(Int(($0.used * 100).rounded()))%" }.joined(separator: " · "))
+                        .font(.caption).foregroundStyle(usage.limited ? Color.orange : .secondary).lineLimit(1)
+                }
             }
+            .padding(10)
         }
     }
 }

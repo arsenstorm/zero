@@ -29,6 +29,11 @@ func usage(help: Bool = false) -> Never {
       zero workers   (the sessions this one started)
       zero result  <session>   (its last answer)
       zero label   "name" [--ticket REF] [--session ID]   (names this session, or another)
+      zero notify  <session> "text"   (words for a session, given between its turns: for event sources and scripts)
+      zero watch   [--session ID] -- command...   (runs it in the background; this session is told how it ended, so end
+                   your turn instead of polling: zero watch -- gh pr checks 42 --watch)
+      zero remind  <minutes> "text" [--session ID]   (this session is told it then)
+      zero usage   (each provider's limits as its CLI last reported them)
     common: --async (print the id and return) --agent NAME ($ZERO_AGENT) --ticket ID (the ticket the ask is about,
             shown as its context) --ttl MINUTES (default from Zero's settings) --help
     exit: 0 answered (answer on stdout; for run, the command's output and exit code), 2 declined, 3 expired
@@ -47,6 +52,8 @@ var positional: [String] = []
 var i = 0
 while i < args.count {
     let arg = args[i]
+    // After "--" everything is the command (zero watch -- gh pr checks 42 --watch).
+    if arg == "--" { positional.append(contentsOf: args[(i + 1)...]); break }
     if arg.hasPrefix("--") {
         let key = String(arg.dropFirst(2))
         if ["async", "blocked", "done", "any"].contains(key) {
@@ -439,7 +446,9 @@ case "send":
 case "workers":
     guard let lead = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"] else { fail("zero: workers of which session? (--session ID)") }
     let workers = await zerod { try await $0.workers(of: lead) }
-    for worker in workers { print("\(worker.id)  \(worker.attention.rawValue.padding(toLength: 9, withPad: " ", startingAt: 0))  \(Workspace.label(of: worker))\(worker.ticket.map { "  (\($0))" } ?? "")") }
+    for (worker, attention) in workers {
+        print("\(worker.id)  \(attention.rawValue.padding(toLength: 9, withPad: " ", startingAt: 0))  \(Workspace.label(of: worker))\(worker.ticket.map { "  (\($0))" } ?? "")")
+    }
 case "result":
     guard let session = positional.first else { usage() }
     guard let answer = await zerod({ try await $0.result(of: session) }) else { fail("zero: \(session) has no answer yet", 3) }
@@ -447,6 +456,23 @@ case "result":
 case "label":
     guard let session = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"] else { fail("zero: label which session? (--session ID)") }
     await zerod { try await $0.label(session: session, label: positional.isEmpty ? nil : positional.joined(separator: " "), ticket: flag("ticket")) }
+case "notify":
+    guard positional.count >= 2 else { usage() }
+    await zerod { try await $0.notify(session: positional[0], text: positional[1...].joined(separator: " ")) }
+case "watch" where flag("session") != nil || ProcessInfo.processInfo.environment["ZERO_SESSION"] != nil:
+    guard !positional.isEmpty, let session = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"] else { usage() }
+    await zerod { try await $0.watch(session: session, command: positional.joined(separator: " ")) }
+    print("zero: watching; this session will be told how it ends")
+case "remind":
+    guard positional.count >= 2, let minutes = Int(positional[0]),
+          let session = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"] else { usage() }
+    await zerod { try await $0.remind(session: session, minutes: minutes, text: positional[1...].joined(separator: " ")) }
+case "usage":
+    for (provider, usage) in await zerod({ try await $0.usage() }) {
+        let reset = usage.resetsAt.map { " until " + Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .omitted, time: .shortened) } ?? ""
+        let windows = usage.windows.map { "\($0.name) \(Int(($0.used * 100).rounded()))%" }.joined(separator: " · ")
+        print("\(provider.title)  \(usage.limited ? "limited\(reset)" : "ok")  \(windows)")
+    }
 case "attach":
     attach(positional.first)
 case "list":
