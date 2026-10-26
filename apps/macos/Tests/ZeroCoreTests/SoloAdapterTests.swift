@@ -23,47 +23,6 @@ func soloAdapterListsSpawnChoices() async throws {
     #expect(runtimes.contains { $0.name == "Claude" })
 }
 
-/// Starts a real agent in the project named by ZERO_SOLO_SPAWN_PROJECT and sends it one line. Costs a launch.
-@Test(.enabled(if: ProcessInfo.processInfo.environment["ZERO_SOLO_SPAWN_PROJECT"] != nil))
-func soloAdapterSpawnsAnAgent() async throws {
-    let adapter = SoloAdapter()
-    let project = ProcessInfo.processInfo.environment["ZERO_SOLO_SPAWN_PROJECT"]!
-    let target = try await adapter.spawnTargets().first { $0.id == project }!
-    let runtime = try await adapter.spawnRuntimes().first { $0.name == "Claude" }!
-    let prompt = "Reply with the single word ready, then stop."
-    // Through the store: a provisional agent first, rebound to the real one, then the reply and Solo's label.
-    let store = await Store(logURL: nil, adapters: [adapter])
-    var provisional: String?
-    let identity = try await store.spawn(prompt: prompt, adapter: adapter, target: target, runtime: runtime, model: nil, started: { provisional = $0 })
-    #expect(provisional?.hasPrefix("starting-") == true)
-    #expect(identity.soloProcessID != nil)
-    let names = await store.asks.map(\.agent.name)
-    #expect(names == [identity.name])
-    print("spawned", identity.name, identity.soloProcessID ?? -1, "provisional:", provisional ?? "nil")
-    for _ in 0..<60 {
-        try await Task.sleep(for: .seconds(2))
-        if await store.asks.contains(where: { $0.kind == .note }) { break }
-    }
-    let note = await store.asks.last { $0.kind == .note }
-    print("reply:", note?.body ?? "nil")
-    #expect(note?.body.lowercased().contains("ready") == true)
-    // The session id lands a little after the first prompt; the title a little after the first answer.
-    var session: String?
-    for _ in 0..<15 {
-        session = await store.identity(of: identity.name)?.session
-        if session != nil { break }
-        try await Task.sleep(for: .seconds(2))
-    }
-    print("session:", session ?? "nil")
-    #expect(session != nil)
-    for _ in 0..<10 {
-        await store.relabel(await store.identity(of: identity.name)!)
-        if await store.displayName(of: identity.name) != "Reply with the single word…" { break }
-        try await Task.sleep(for: .seconds(3))
-    }
-    print("label:", await store.displayName(of: identity.name))
-}
-
 /// Live: a stopped Claude comes back with its conversation. `ZERO_SOLO_REVIVE=<pid>:<project>:<session>`.
 @Test(.enabled(if: ProcessInfo.processInfo.environment["ZERO_SOLO_REVIVE"] != nil))
 func soloAdapterRevivesWithSession() async throws {

@@ -365,7 +365,23 @@ public final class ZerodLink: @unchecked Sendable {
     private var waiting: [Int: CheckedContinuation<Any, Error>] = [:]
     private var closed = false
     private var messageHandler: (@Sendable (ZerodMirror.Message) -> Void)?
+    private var inboxHandler: (@Sendable (InboxMessage) -> Void)?
     private var closeHandler: (@Sendable () -> Void)?
+
+    /// What `followInbox` brings: every ask with which agents are offline and reachable, then each change.
+    public enum InboxMessage: Sendable {
+        case asks([Ask], offline: Set<String>, reachable: Set<String>)
+        case ask(Ask)
+        case output(id: String, chunk: String)
+        case removed(String)
+        case agents(offline: Set<String>, reachable: Set<String>)
+    }
+
+    /// The inbox's snapshot and changes, on the link's reading thread.
+    public var onInbox: (@Sendable (InboxMessage) -> Void)? {
+        get { lock.withLock { inboxHandler } }
+        set { lock.withLock { inboxHandler = newValue } }
+    }
 
     /// Snapshots and changes, on the link's reading thread.
     public var onMessage: (@Sendable (ZerodMirror.Message) -> Void)? {
@@ -485,6 +501,41 @@ public final class ZerodLink: @unchecked Sendable {
     /// From now on `onMessage` gets every session's snapshot, then each change.
     public func subscribe() async throws { _ = try await call("subscribe") }
 
+    // The inbox.
+
+    /// From now on `onInbox` gets every ask, then each change.
+    public func followInbox() async throws { _ = try await call("inbox") }
+
+    /// `keep` keeps the ask's own id unless it is taken.
+    public func create(_ ask: Ask, keep: Bool = false) async throws -> Ask {
+        let object = try JSONSerialization.jsonObject(with: jsonEncoder.encode(ask))
+        let made = try await call("create", ["ask": object, "keep": keep])
+        return try jsonDecoder.decode(Ask.self, from: JSONSerialization.data(withJSONObject: made))
+    }
+
+    public func choose(_ ask: String, option: Int) async throws { _ = try await call("choose", ["ask": ask, "option": option]) }
+    /// A text option with its text.
+    public func answer(_ ask: String, option: Int, text: String) async throws { _ = try await call("answerAsk", ["ask": ask, "option": option, "text": text]) }
+    public func reply(_ ask: String, text: String) async throws { _ = try await call("reply", ["ask": ask, "text": text]) }
+    public func takeBack(_ ask: String) async throws -> Bool { try await call("takeBack", ["ask": ask]) as? Bool ?? false }
+    public func withdraw(_ ask: String, reason: String?) async throws { _ = try await call("withdraw", ["ask": ask, "text": reason]) }
+    public func dismiss(_ ask: String) async throws { _ = try await call("dismiss", ["ask": ask]) }
+    public func cancelRun(_ ask: String) async throws { _ = try await call("cancelRun", ["ask": ask]) }
+    /// Delivers an answer again, to an agent that asked with --async.
+    public func deliver(_ ask: String) async throws { _ = try await call("deliver", ["ask": ask]) }
+    public func message(_ text: String, to agent: String) async throws { _ = try await call("message", ["agent": agent, "text": text]) }
+    public func close(agent: String, stop: Bool) async throws { _ = try await call("close", ["agent": agent, "stop": stop]) }
+    public func screen(of agent: String) async throws -> String? { try await call("screen", ["agent": agent]) as? String }
+    /// Keys into the agent's terminal; the screen just after.
+    public func press(_ keys: [UInt8], on agent: String) async throws -> String? { try await call("press", ["agent": agent, "keys": keys.map(Int.init)]) as? String }
+    public func switchModel(of agent: String, model: String?, effort: String?) async throws {
+        _ = try await call("switchModel", ["agent": agent, "model": model, "effort": effort])
+    }
+    /// The inbox's settings: the take-back window and default expiry in seconds, and the drop folders' patterns.
+    public func configure(takeBack: Double, ttl: Int, patterns: [String]) async throws {
+        _ = try await call("configure", ["takeBack": takeBack, "ttl": ttl, "patterns": patterns])
+    }
+
     /// One request; nil fields are left out.
     public func call(_ op: String, _ fields: [String: Any?] = [:]) async throws -> Any {
         try await withCheckedThrowingContinuation { (answer: CheckedContinuation<Any, Error>) in
@@ -512,6 +563,22 @@ public final class ZerodLink: @unchecked Sendable {
     }
 
     private struct Snapshot: Decodable { let conversation: Conversation }
+    private struct Asks: Decodable { let asks: [Ask]; let offline: Set<String>; let reachable: Set<String> }
+    private struct OneAsk: Decodable { let ask: Ask }
+    private struct Output: Decodable { let ask: String; let chunk: String }
+    private struct Removed: Decodable { let ask: String }
+    private struct Agents: Decodable { let offline: Set<String>; let reachable: Set<String> }
+
+    private static func inbox(_ event: String, _ data: Data) -> InboxMessage? {
+        switch event {
+        case "asks": (try? jsonDecoder.decode(Asks.self, from: data)).map { .asks($0.asks, offline: $0.offline, reachable: $0.reachable) }
+        case "ask": (try? jsonDecoder.decode(OneAsk.self, from: data)).map { .ask($0.ask) }
+        case "output": (try? jsonDecoder.decode(Output.self, from: data)).map { .output(id: $0.ask, chunk: $0.chunk) }
+        case "removed": (try? jsonDecoder.decode(Removed.self, from: data)).map { .removed($0.ask) }
+        case "agents": (try? jsonDecoder.decode(Agents.self, from: data)).map { .agents(offline: $0.offline, reachable: $0.reachable) }
+        default: nil
+        }
+    }
 
     private func read() {
         while let line = connection.readLine() {
@@ -523,7 +590,7 @@ public final class ZerodLink: @unchecked Sendable {
                 case "change": (try? JSONDecoder().decode(ZerodEvent.self, from: data)).map { .change($0) }
                 default: nil
                 }
-                if let decoded { onMessage?(decoded) }
+                if let decoded { onMessage?(decoded) } else if let inbox = Self.inbox(event, data) { onInbox?(inbox) }
                 continue
             }
             guard let id = message["id"] as? Int, let answer = lock.withLock({ waiting.removeValue(forKey: id) }) else { continue }

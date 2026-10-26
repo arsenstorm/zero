@@ -103,8 +103,6 @@ final class Panel: NSPanel {
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = Store()
-    private lazy var server = Server(store: store)
-    private lazy var drops = DropWatcher(store: store)
     private lazy var inbox = InboxController(store: store)
     private var pill: Panel!
     private var inboxPanel: Panel!
@@ -134,17 +132,15 @@ final class Panel: NSPanel {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         NSApp.mainMenu = Self.editMenu()
-        do { try server.start() } catch { NSLog("zero: server failed: \(error)") }
         Task { await Linear.shared.refresh() }
         ClaudeAccounts.shared.onSwitch = { [weak self] in
             guard let self else { return }
             Task { if let adapter = self.store.spawners.first, await adapter.refreshModels() { self.inbox.modelsVersion += 1 } }
         }
         ClaudeAccounts.shared.start()
-        let serverChanged = store.onChange
-        store.onChange = { [weak self] ask in serverChanged?(ask); self?.drops.changed(ask) }
         store.onCreate = { [weak self] ask in self?.arrived(ask) }
-        workspace = Workspace(store: store)
+        Task { [store] in await store.connect() }
+        workspace = Workspace()
         Task { [workspace] in await workspace?.connect() }
         inbox.hide = { [weak self] in self?.hideInbox() }
         inbox.onTyping = { [weak self] typing in if typing { self?.activateForTyping() } }
@@ -163,10 +159,6 @@ final class Panel: NSPanel {
         applySettings()
         settings.onChange = { [weak self] in self?.applySettings() }
         registerHotKey()
-        // Which sessions are still running, for the bar's dots and for resuming before a message.
-        Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.store.refreshLiveness() }
-        }.fire()
         // The pointer: following the active screen, the inbox's safe zone, and closing a peeked inbox.
         Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.trackPointer() }
@@ -216,19 +208,17 @@ final class Panel: NSPanel {
     /// The ask an agent would send, so the first card answered is a real one; the inbox opens on it.
     private func sendSampleAsk() {
         let zero = AgentIdentity(name: "zero", host: ProcessInfo.processInfo.hostName, label: "Zero")
-        _ = store.create(Ask(kind: .approve, title: "Onboarding", body: "Zero is set up. Finish onboarding?",
+        store.create(Ask(kind: .approve, title: "Onboarding", body: "Zero is set up. Finish onboarding?",
                              options: ["Yes", "No", "Suggest something else…"], agent: zero, ttl: 600))
         pin(agent: nil)
     }
 
     private func applySettings() {
-        drops.start(patterns: settings.dropPatterns)
+        store.configure(takeBack: settings.takeBackSeconds, ttl: settings.defaultTTLMinutes * 60, patterns: settings.dropPatterns)
         inbox.autoAdvance = settings.autoAdvance
         inbox.suggestCommands = settings.suggestCommands
         inbox.suggestFiles = settings.suggestFiles
         inbox.dictation.deviceUID = settings.inputDeviceUID
-        store.takeBackDelay = settings.takeBackSeconds
-        store.defaultTTL = TimeInterval(settings.defaultTTLMinutes * 60)
         if hotKey != nil { registerHotKey() }
     }
 
@@ -637,23 +627,18 @@ extension NSScreen {
 @MainActor
 enum Preview {
     static func renderPill(to dir: String) {
-        let store = Store(logURL: nil)
         let codex = AgentIdentity(name: "codex-12", host: "mac")
         let lead = AgentIdentity(name: "app-lead", host: "mac")
-        _ = store.create(Ask(kind: .note, title: "Update", body: "Scaffolded the checkout page; installing the Stripe SDK next", agent: codex))
-        _ = store.create(Ask(kind: .choice, title: "Stripe checkout", body: "Allow this command?", options: ["Yes", "Yes, and don't ask again", "No, and tell Codex what to do differently…"],
-                             command: "npm install stripe", agent: codex))
-        _ = store.create(Ask(kind: .run, title: "Production read: Source.count", options: ["Run", "Reject", "Suggest something else…"],
-                             command: "bin/production console <<< 'puts Source.count'", cwd: "/Users/arsen/x", agent: lead))
-        store.takeBackDelay = 0.05
-        let pending = store.create(Ask(kind: .choice, title: "Deploy", body: "Deploy to staging now?", options: ["Yes", "Not yet…"], agent: lead))
-        store.choose(pending.id, option: 0)
-        let done = store.create(Ask(kind: .choice, title: "Lint", body: "Fix the 3 lint warnings too?", options: ["Yes", "Leave them"], agent: codex))
-        store.choose(done.id, option: 0)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
-        store.takeBackDelay = 60
-        let pendingAgain = store.create(Ask(kind: .choice, title: "Deploy", body: "Deploy to staging now?", options: ["Yes", "Not yet…"], agent: lead))
-        store.choose(pendingAgain.id, option: 0)
+        let store = Store(asks: [
+            made(Ask(kind: .note, title: "Update", body: "Scaffolded the checkout page; installing the Stripe SDK next", agent: codex)),
+            Ask(kind: .choice, title: "Stripe checkout", body: "Allow this command?", options: ["Yes", "Yes, and don't ask again", "No, and tell Codex what to do differently…"],
+                command: "npm install stripe", agent: codex),
+            Ask(kind: .run, title: "Production read: Source.count", options: ["Run", "Reject", "Suggest something else…"],
+                command: "bin/production console <<< 'puts Source.count'", cwd: "/Users/arsen/x", agent: lead),
+            made(Ask(kind: .choice, title: "Deploy", body: "Deploy to staging now?", options: ["Yes", "Not yet…"], agent: lead), chose: 0),
+            made(Ask(kind: .choice, title: "Lint", body: "Fix the 3 lint warnings too?", options: ["Yes", "Leave them"], agent: codex), chose: 0),
+            made(Ask(kind: .choice, title: "Deploy", body: "Deploy to staging now?", options: ["Yes", "Not yet…"], agent: lead), chose: 0, pending: true),
+        ])
         let controller = InboxController(store: store)
         let settings = Settings()
         // ZERO_APPEARANCE=light|dark picks the appearance the dynamic colours resolve in.
@@ -677,48 +662,45 @@ enum Preview {
         controller.agentFilter = nil
         write(CardStack(controller: controller).padding(12).background(Color(white: 0.5)), "cards.png")
         // The answer states on their own, with nothing else open, so nothing is dimmed.
-        let states = Store(logURL: nil)
-        states.takeBackDelay = 0.05
-        let answered = states.create(Ask(kind: .choice, title: "Lint", body: "Fix the 3 lint warnings too?", options: ["Yes", "Leave them"], agent: codex))
-        states.choose(answered.id, option: 0)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
-        states.takeBackDelay = 60
-        let sending = states.create(Ask(kind: .choice, title: "Deploy", body: "Deploy to staging now?", options: ["Yes", "Not yet…"], agent: lead))
-        states.choose(sending.id, option: 0)
+        let states = Store(asks: [
+            made(Ask(kind: .choice, title: "Lint", body: "Fix the 3 lint warnings too?", options: ["Yes", "Leave them"], agent: codex), chose: 0),
+            made(Ask(kind: .choice, title: "Deploy", body: "Deploy to staging now?", options: ["Yes", "Not yet…"], agent: lead), chose: 0, pending: true),
+        ])
         write(CardStack(controller: InboxController(store: states)).padding(12).background(Color(white: 0.5)), "states.png")
         // A run before and after completion, to compare the terminal's height with the options' space.
-        let runs = Store(logURL: nil)
-        runs.takeBackDelay = 0.05
-        let finished = runs.create(Ask(kind: .run, title: "Production read", options: ["Run", "Reject", "Suggest something else…"],
-                                       command: "echo one; echo two", cwd: "/tmp", agent: lead))
-        runs.choose(finished.id, option: 0)
-        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
-        _ = runs.create(Ask(kind: .run, title: "Production read", options: ["Run", "Reject", "Suggest something else…"],
-                            command: "echo one; echo two", cwd: "/tmp", agent: lead))
+        var finished = made(Ask(kind: .run, title: "Production read", options: ["Run", "Reject", "Suggest something else…"],
+                                command: "echo one; echo two", cwd: "/tmp", agent: lead), chose: 0)
+        finished.output = "one\ntwo\n"
+        finished.exitCode = 0
+        let runs = Store(asks: [finished, Ask(kind: .run, title: "Production read", options: ["Run", "Reject", "Suggest something else…"],
+                                              command: "echo one; echo two", cwd: "/tmp", agent: lead)])
         write(CardStack(controller: InboxController(store: runs)).padding(12).background(Color(white: 0.5)), "runs.png")
         // The empty inbox: "All quiet." and the new-agent composer, with example choices.
-        let empty = InboxController(store: Store(logURL: nil))
+        let empty = InboxController(store: Store())
         empty.spawnTargets = [SpawnChoice(id: "10", name: "Acme"), SpawnChoice(id: "13", name: "zero")]
         empty.runtimesByAdapter = ["Solo": [SpawnChoice(id: "6", name: "Claude"), SpawnChoice(id: "7", name: "Codex")]]
         empty.spawnTarget = "10"; empty.spawnRuntime = "6"
         write(ComposerPreview(controller: empty).padding(12).background(Color(white: 0.5)), "composer.png")
         // An agent's conversation: a reply card with Markdown, and a sent message still waiting.
-        let chat = Store(logURL: nil)
         let claude = AgentIdentity(name: "claude-7", host: "mac", soloProcessID: 7, soloProjectID: 13, label: "Checkout spec fix")
-        var first = Ask(kind: .message, title: "Message", body: "fix the flaky checkout spec", agent: claude); first.status = "sent"
-        _ = chat.create(first)
-        var reply = Ask(kind: .note, title: "Replied", body: "Found it: the spec raced the mailer.\n\n```ruby\nperform_enqueued_jobs do\n  post :create\nend\n```\n\nPushed as `a1b2c3`.", agent: claude)
-        reply.status = "done"
-        _ = chat.create(reply)
-        let talking = InboxController(store: chat)
+        func said(_ kind: AskKind, _ body: String, _ status: String) -> Ask {
+            var item = made(Ask(kind: kind, title: kind == .message ? "Message" : "Replied", body: body, agent: claude))
+            item.status = status
+            return item
+        }
+        let first = said(.message, "fix the flaky checkout spec", "sent")
+        let reply = said(.note, "Found it: the spec raced the mailer.\n\n```ruby\nperform_enqueued_jobs do\n  post :create\nend\n```\n\nPushed as `a1b2c3`.", "done")
+        let short = said(.note, "Hi. What do you want to work on?", "done")
+        let second = said(.message, "and the retry logic?", "sent")
+        let talking = InboxController(store: Store(asks: [first, reply]))
         talking.agentFilter = "claude-7"
         write(TimelinePreview(controller: talking).padding(12).background(Color(white: 0.5)), "chat.png")
-        var short = Ask(kind: .note, title: "Replied", body: "Hi. What do you want to work on?", agent: claude); short.status = "done"
-        _ = chat.create(short)
-        write(TimelinePreview(controller: talking).padding(12).background(Color(white: 0.5)), "chat-short.png")
-        var second = Ask(kind: .message, title: "Message", body: "and the retry logic?", agent: claude); second.status = "sent"
-        _ = chat.create(second)
-        write(TimelinePreview(controller: talking).padding(12).background(Color(white: 0.5)), "chat-waiting.png")
+        let shortly = InboxController(store: Store(asks: [first, reply, short]))
+        shortly.agentFilter = "claude-7"
+        write(TimelinePreview(controller: shortly).padding(12).background(Color(white: 0.5)), "chat-short.png")
+        let waiting = InboxController(store: Store(asks: [first, reply, short, second]))
+        waiting.agentFilter = "claude-7"
+        write(TimelinePreview(controller: waiting).padding(12).background(Color(white: 0.5)), "chat-waiting.png")
         // The model selector, on real catalogues.
         let selector = SelectorState(kind: .runtime)
         selector.sections = empty.selectorSections(for: .runtime)
@@ -726,6 +708,21 @@ enum Preview {
         selector.highlighted = selector.sections.first?.rows.first?.id
         write(SelectorView(controller: empty, state: selector).padding(12).background(Color(white: 0.5)), "selector.png")
     }
+}
+
+/// An ask as zerod would have it after a while: a note or message as made, a choice answered (or still in its take-back
+/// window when `pending`).
+@MainActor
+private func made(_ ask: Ask, chose option: Int? = nil, pending: Bool = false) -> Ask {
+    var ask = ask
+    if ask.kind == .note || ask.kind == .message { ask.state = .answered; ask.answeredAt = ask.createdAt }
+    if let option {
+        ask.state = pending ? .pending : .answered
+        ask.choice = option
+        ask.answer = ask.options[option]
+        ask.answeredAt = Date()
+    }
+    return ask
 }
 
 private struct TimelinePreview: View {

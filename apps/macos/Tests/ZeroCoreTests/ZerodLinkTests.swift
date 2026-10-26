@@ -95,3 +95,29 @@ private final class Heard: @unchecked Sendable {
         lock.withLock { snapshots.append(conversation) }
     }
 }
+
+private final class InboxHeard: @unchecked Sendable {
+    private let lock = NSLock()
+    private var messages: [ZerodLink.InboxMessage] = []
+    func add(_ message: ZerodLink.InboxMessage) { lock.withLock { messages.append(message) } }
+    var all: [ZerodLink.InboxMessage] { lock.withLock { messages } }
+}
+
+@Test func theInboxIsFollowedAndAnsweredThroughZerod() async throws {
+    let (socket, home) = try await launch("inbox")
+    let link = try ZerodLink(path: socket)
+    defer { link.close(); shutDown(socket, home) }
+    let heard = InboxHeard()
+    link.onInbox = { heard.add($0) }
+    try await link.configure(takeBack: 0.05, ttl: 600, patterns: [])
+    try await link.followInbox()
+    let ask = try await link.create(Ask(kind: .choice, title: "Ship it?", options: ["Yes", "No"], agent: AgentIdentity(name: "codex-1", host: "mac")))
+    try await link.choose(ask.id, option: 0)
+    for _ in 0..<300 {
+        if heard.all.contains(where: { if case let .ask(a) = $0 { a.id == ask.id && a.state == .answered } else { false } }) { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    guard case .asks = heard.all.first else { Issue.record("no snapshot first"); return }
+    let answered = heard.all.compactMap { if case let .ask(a) = $0, a.id == ask.id { a } else { nil } }.last
+    #expect((answered?.state, answered?.answer) == (.answered, "Yes"))
+}
