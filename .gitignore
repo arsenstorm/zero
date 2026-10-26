@@ -1,7 +1,7 @@
 .build/
 build/
+target/
 .DS_Store
 *.xcodeproj
 .swiftpm/
-drop-client/target/
-Vendor/
+apps/macos/Vendor/

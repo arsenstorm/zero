@@ -1,5 +1,5 @@
 // Renders Zero's icons from Resources/logo/logo.svg: the app icon (AppIcon.icns), the menu bar template
-// (menubar.png, menubar@2x.png) and the mark the app draws itself (mark.svg). Run: swift scripts/icons.swift
+// (menubar.png, menubar@2x.png) and the mark the app draws itself (mark.svg). Run from apps/macos: swift scripts/icons.swift
 import AppKit
 
 let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
