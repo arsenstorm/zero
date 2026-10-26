@@ -1,0 +1,36 @@
+{
+  "id": "s1",
+  "provider": "opencode",
+  "cwd": "/work/project",
+  "thread": "ses_e87e905acffea7xylYWZpKfuFt",
+  "title": null,
+  "model": "opencode/beam-free",
+  "effort": null,
+  "status": "idle",
+  "turn": null,
+  "error": "Internal error: Upstream request failed: Free models may train on request data. Allow free endpoints in your workspace's Privacy settings to use them.",
+  "items": [
+    {
+      "id": "user-4",
+      "turn": "z4",
+      "kind": {
+        "type": "user",
+        "text": "Run the shell command: mkdir -p build && touch build/marker -- then reply done."
+      },
+      "status": "done"
+    },
+    {
+      "id": "notice-6",
+      "turn": "z4",
+      "kind": {
+        "type": "notice",
+        "text": "Internal error: Upstream request failed: Free models may train on request data. Allow free endpoints in your workspace's Privacy settings to use them.",
+        "error": true
+      },
+      "status": "done"
+    }
+  ],
+  "approvals": [],
+  "diff": null,
+  "seq": 7
+}

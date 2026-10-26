@@ -1,0 +1,40 @@
+{"session":"s1","seq":1,"change":{"type":"thread","thread":"01a177f4-5525-7ba1-abf2-90c5952e8e77","model":"gpt-6-sol","effort":"high"}}
+{"session":"s1","seq":2,"change":{"type":"status","status":"idle","turn":null,"error":null}}
+{"session":"s1","seq":3,"change":{"type":"status","status":"working","turn":null,"error":null}}
+{"session":"s1","seq":4,"change":{"type":"status","status":"working","turn":"01a177f4-586d-7793-a453-abdaf1930456","error":null}}
+{"session":"s1","seq":5,"change":{"type":"item","item":{"id":"01a177f4-60d4-7d13-8dbd-5f376c45024f","turn":"01a177f4-586d-7793-a453-abdaf1930456","kind":{"type":"user","text":"Create a file named hello.txt containing the single line: hello from zero. Then reply done."},"status":"done"}}}
+{"session":"s1","seq":6,"change":{"type":"item","item":{"id":"01a177f4-60d4-7d13-8dbd-5f376c45024f","turn":"01a177f4-586d-7793-a453-abdaf1930456","kind":{"type":"user","text":"Create a file named hello.txt containing the single line: hello from zero. Then reply done."},"status":"done"}}}
+{"session":"s1","seq":7,"change":{"type":"item","item":{"id":"msg_08d71e1475022829016adf386d54ec81918b7b54c40275bf38","turn":"01a177f4-586d-7793-a453-abdaf1930456","kind":{"type":"agent","text":"","finalAnswer":false},"status":"running"}}}
+{"session":"s1","seq":8,"change":{"type":"delta","item":"msg_08d71e1475022829016adf386d54ec81918b7b54c40275bf38","text":"I"}}
+{"session":"s1","seq":9,"change":{"type":"delta","item":"msg_08d71e1475022829016adf386d54ec81918b7b54c40275bf38","text":"’ll"}}
+{"session":"s1","seq":10,"change":{"type":"delta","item":"msg_08d71e1475022829016adf386d54ec81918b7b54c40275bf38","text":" create"}}
+{"session":"s1","seq":11,"change":{"type":"delta","item":"msg_08d71e1475022829016adf386d54ec81918b7b54c40275bf38","text":" `"}}
+{"session":"s1","seq":12,"change":{"type":"delta","item":"msg_08d71e1475022829016adf386d54ec81918b7b54c40275bf38","text":"hello"}}
+{"session":"s1","seq":13,"change":{"type":"delta","item":"msg_08d71e1475022829016adf386d54ec81918b7b54c40275bf38","text":".txt"}}
+{"session":"s1","seq":14,"change":{"type":"delta","item":"msg_08d71e1475022829016adf386d54ec81918b7b54c40275bf38","text":"`"}}
+{"session":"s1","seq":15,"change":{"type":"delta","item":"msg_08d71e1475022829016adf386d54ec81918b7b54c40275bf38","text":" with"}}
+{"session":"s1","seq":16,"change":{"type":"delta","item":"msg_08d71e1475022829016adf386d54ec81918b7b54c40275bf38","text":" that"}}
+{"session":"s1","seq":17,"change":{"type":"delta","item":"msg_08d71e1475022829016adf386d54ec81918b7b54c40275bf38","text":" line"}}
+{"session":"s1","seq":18,"change":{"type":"delta","item":"msg_08d71e1475022829016adf386d54ec81918b7b54c40275bf38","text":"."}}
+{"session":"s1","seq":19,"change":{"type":"item","item":{"id":"msg_08d71e1475022829016adf386d54ec81918b7b54c40275bf38","turn":"01a177f4-586d-7793-a453-abdaf1930456","kind":{"type":"agent","text":"I’ll create `hello.txt` with that line.","finalAnswer":false},"status":"done"}}}
+{"session":"s1","seq":20,"change":{"type":"item","item":{"id":"exec-2908a173-954f-4b4c-a35f-42eda90f5199","turn":"01a177f4-586d-7793-a453-abdaf1930456","kind":{"type":"fileChange","changes":[{"path":"/work/project/hello.txt","kind":"add","movePath":null,"diff":"hello from zero\n"}]},"status":"running"}}}
+{"session":"s1","seq":21,"change":{"type":"status","status":"waiting","turn":"01a177f4-586d-7793-a453-abdaf1930456","error":null}}
+{"session":"s1","seq":22,"change":{"type":"approval","approval":{"id":"0","item":"exec-2908a173-954f-4b4c-a35f-42eda90f5199","kind":"fileChange","title":"Add hello.txt","command":null,"cwd":null,"reason":null,"changes":[{"path":"/work/project/hello.txt","kind":"add","movePath":null,"diff":"hello from zero\n"}],"choices":[{"id":"0","label":"Allow","kind":"allow"},{"id":"1","label":"Allow for this session","kind":"allowSession"},{"id":"2","label":"Deny","kind":"deny"},{"id":"3","label":"Deny and stop","kind":"stop"}]}}}
+{"session":"s1","seq":23,"change":{"type":"resolved","approval":"0"}}
+{"session":"s1","seq":24,"change":{"type":"status","status":"working","turn":"01a177f4-586d-7793-a453-abdaf1930456","error":null}}
+{"session":"s1","seq":25,"change":{"type":"item","item":{"id":"exec-2908a173-954f-4b4c-a35f-42eda90f5199","turn":"01a177f4-586d-7793-a453-abdaf1930456","kind":{"type":"fileChange","changes":[{"path":"/work/project/hello.txt","kind":"add","movePath":null,"diff":"hello from zero\n"}]},"status":"done"}}}
+{"session":"s1","seq":26,"change":{"type":"diff","diff":"diff --git a/hello.txt b/hello.txt\nnew file mode 100644\nindex 0000000000000000000000000000000000000000..05dc454a3350bbc9fc29f20d5c3995375ec072a0\n--- /dev/null\n+++ b/hello.txt\n@@ -0,0 +1 @@\n+hello from zero\n"}}
+{"session":"s1","seq":27,"change":{"type":"diff","diff":"diff --git a/hello.txt b/hello.txt\nnew file mode 100644\nindex 0000000000000000000000000000000000000000..05dc454a3350bbc9fc29f20d5c3995375ec072a0\n--- /dev/null\n+++ b/hello.txt\n@@ -0,0 +1 @@\n+hello from zero\n"}}
+{"session":"s1","seq":28,"change":{"type":"status","status":"waiting","turn":"01a177f4-586d-7793-a453-abdaf1930456","error":null}}
+{"session":"s1","seq":29,"change":{"type":"item","item":{"id":"exec-f4898c4c-c7cd-4985-85f0-febe72b4a6af","turn":"01a177f4-586d-7793-a453-abdaf1930456","kind":{"type":"command","command":"cat hello.txt","cwd":"/work/project","output":"","exitCode":null,"durationMs":null},"status":"running"}}}
+{"session":"s1","seq":30,"change":{"type":"approval","approval":{"id":"1","item":"exec-f4898c4c-c7cd-4985-85f0-febe72b4a6af","kind":"command","title":"Run cat hello.txt","command":"cat hello.txt","cwd":"/work/project","reason":null,"changes":[],"choices":[{"id":"0","label":"Allow","kind":"allow"},{"id":"1","label":"Always allow cat hello.txt","kind":"allowAlways"},{"id":"2","label":"Deny and stop","kind":"stop"}]}}}
+{"session":"s1","seq":31,"change":{"type":"resolved","approval":"1"}}
+{"session":"s1","seq":32,"change":{"type":"status","status":"working","turn":"01a177f4-586d-7793-a453-abdaf1930456","error":null}}
+{"session":"s1","seq":33,"change":{"type":"item","item":{"id":"exec-f4898c4c-c7cd-4985-85f0-febe72b4a6af","turn":"01a177f4-586d-7793-a453-abdaf1930456","kind":{"type":"command","command":"cat hello.txt","cwd":"/work/project","output":"hello from zero\n","exitCode":0,"durationMs":0},"status":"done"}}}
+{"session":"s1","seq":34,"change":{"type":"diff","diff":"diff --git a/hello.txt b/hello.txt\nnew file mode 100644\nindex 0000000000000000000000000000000000000000..05dc454a3350bbc9fc29f20d5c3995375ec072a0\n--- /dev/null\n+++ b/hello.txt\n@@ -0,0 +1 @@\n+hello from zero\n"}}
+{"session":"s1","seq":35,"change":{"type":"item","item":{"id":"msg_08d71e1475022829016adf38717ee88191870d4981249752d9","turn":"01a177f4-586d-7793-a453-abdaf1930456","kind":{"type":"agent","text":"","finalAnswer":true},"status":"running"}}}
+{"session":"s1","seq":36,"change":{"type":"delta","item":"msg_08d71e1475022829016adf38717ee88191870d4981249752d9","text":"done"}}
+{"session":"s1","seq":37,"change":{"type":"item","item":{"id":"msg_08d71e1475022829016adf38717ee88191870d4981249752d9","turn":"01a177f4-586d-7793-a453-abdaf1930456","kind":{"type":"agent","text":"done","finalAnswer":true},"status":"done"}}}
+{"session":"s1","seq":38,"change":{"type":"diff","diff":"diff --git a/hello.txt b/hello.txt\nnew file mode 100644\nindex 0000000000000000000000000000000000000000..05dc454a3350bbc9fc29f20d5c3995375ec072a0\n--- /dev/null\n+++ b/hello.txt\n@@ -0,0 +1 @@\n+hello from zero\n"}}
+{"session":"s1","seq":39,"change":{"type":"status","status":"idle","turn":"01a177f4-586d-7793-a453-abdaf1930456","error":null}}
+{"session":"s1","seq":40,"change":{"type":"status","status":"idle","turn":null,"error":null}}

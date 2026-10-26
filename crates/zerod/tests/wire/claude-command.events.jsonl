@@ -1,0 +1,12 @@
+{"session":"s1","seq":1,"change":{"type":"item","item":{"id":"user-1","turn":null,"kind":{"type":"user","text":"Run the shell command uname -s with the Bash tool, then tell me in one sentence what it printed."},"status":"done"}}}
+{"session":"s1","seq":2,"change":{"type":"status","status":"working","turn":"turn-1","error":null}}
+{"session":"s1","seq":3,"change":{"type":"thread","thread":"de7c0e2b-badd-439a-a46b-9e187476cb40","model":"claude-haiku-5-5","effort":null}}
+{"session":"s1","seq":4,"change":{"type":"item","item":{"id":"toolu_013N1umJJU8yEqYEeYsTc4s6","turn":"turn-1","kind":{"type":"command","command":"uname -s","cwd":"/work/project","output":"","exitCode":null,"durationMs":null},"status":"running"}}}
+{"session":"s1","seq":5,"change":{"type":"item","item":{"id":"toolu_013N1umJJU8yEqYEeYsTc4s6","turn":"turn-1","kind":{"type":"command","command":"uname -s","cwd":"/work/project","output":"Darwin","exitCode":null,"durationMs":null},"status":"done"}}}
+{"session":"s1","seq":6,"change":{"type":"item","item":{"id":"msg_011CgQp76isAk2TLpkkjZNUf:0","turn":"turn-1","kind":{"type":"agent","text":"","finalAnswer":false},"status":"running"}}}
+{"session":"s1","seq":7,"change":{"type":"delta","item":"msg_011CgQp76isAk2TLpkkjZNUf:0","text":"The command"}}
+{"session":"s1","seq":8,"change":{"type":"delta","item":"msg_011CgQp76isAk2TLpkkjZNUf:0","text":" printed `"}}
+{"session":"s1","seq":9,"change":{"type":"delta","item":"msg_011CgQp76isAk2TLpkkjZNUf:0","text":"Darwin`."}}
+{"session":"s1","seq":10,"change":{"type":"item","item":{"id":"msg_011CgQp76isAk2TLpkkjZNUf:0","turn":"turn-1","kind":{"type":"agent","text":"The command printed `Darwin`.","finalAnswer":false},"status":"done"}}}
+{"session":"s1","seq":11,"change":{"type":"item","item":{"id":"msg_011CgQp76isAk2TLpkkjZNUf:0","turn":"turn-1","kind":{"type":"agent","text":"The command printed `Darwin`.","finalAnswer":true},"status":"done"}}}
+{"session":"s1","seq":12,"change":{"type":"status","status":"idle","turn":null,"error":null}}

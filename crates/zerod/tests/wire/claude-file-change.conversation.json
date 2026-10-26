@@ -1,0 +1,52 @@
+{
+  "id": "s1",
+  "provider": "claude",
+  "cwd": "/work/project",
+  "thread": "57bae2a9-7b1c-48e5-9292-4004afb98a76",
+  "title": null,
+  "model": "claude-haiku-5-5",
+  "effort": null,
+  "status": "idle",
+  "turn": null,
+  "error": null,
+  "items": [
+    {
+      "id": "user-1",
+      "turn": null,
+      "kind": {
+        "type": "user",
+        "text": "Create a file named hello.txt containing exactly the line: hello from zero. Then reply done."
+      },
+      "status": "done"
+    },
+    {
+      "id": "toolu_01H7Mduu5p7Zwutnv4JqGrcG",
+      "turn": "turn-1",
+      "kind": {
+        "type": "fileChange",
+        "changes": [
+          {
+            "path": "/work/project/hello.txt",
+            "kind": "add",
+            "movePath": null,
+            "diff": "hello from zero\n"
+          }
+        ]
+      },
+      "status": "done"
+    },
+    {
+      "id": "msg_011CgQp71QdTY6fF5jeT9kea:0",
+      "turn": "turn-1",
+      "kind": {
+        "type": "agent",
+        "text": "done",
+        "finalAnswer": true
+      },
+      "status": "done"
+    }
+  ],
+  "approvals": [],
+  "diff": null,
+  "seq": 14
+}

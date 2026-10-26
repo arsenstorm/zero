@@ -1,0 +1,67 @@
+{
+  "id": "s1",
+  "provider": "opencode",
+  "cwd": "/work/project",
+  "thread": "ses_e87e7ec46ffe1ztiRcXd8Xelqy",
+  "title": null,
+  "model": "opencode-go/beam-free",
+  "effort": null,
+  "status": "idle",
+  "turn": null,
+  "error": null,
+  "items": [
+    {
+      "id": "user-4",
+      "turn": "z4",
+      "kind": {
+        "type": "user",
+        "text": "Run the shell command: mkdir -p build && touch build/marker -- then reply done."
+      },
+      "status": "done"
+    },
+    {
+      "id": "agent_thought-6",
+      "turn": "z4",
+      "kind": {
+        "type": "reasoning",
+        "text": "The user wants me to run a shell command and then reply \"done\". Let me do that."
+      },
+      "status": "done"
+    },
+    {
+      "id": "call-879a69d1-fba6-40f5-9823-b0630bba81ad",
+      "turn": "z4",
+      "kind": {
+        "type": "command",
+        "command": "mkdir -p build && touch build/marker",
+        "cwd": "/work/project",
+        "output": "(no output)",
+        "exitCode": 0,
+        "durationMs": null
+      },
+      "status": "done"
+    },
+    {
+      "id": "agent_thought-11",
+      "turn": "z4",
+      "kind": {
+        "type": "reasoning",
+        "text": "The command succeeded with no output. Now I should reply \"done\"."
+      },
+      "status": "done"
+    },
+    {
+      "id": "agent_message-12",
+      "turn": "z4",
+      "kind": {
+        "type": "agent",
+        "text": "done.",
+        "finalAnswer": true
+      },
+      "status": "done"
+    }
+  ],
+  "approvals": [],
+  "diff": null,
+  "seq": 16
+}

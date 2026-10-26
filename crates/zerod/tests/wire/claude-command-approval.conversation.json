@@ -1,0 +1,49 @@
+{
+  "id": "s1",
+  "provider": "claude",
+  "cwd": "/work/project",
+  "thread": "ee2827f3-121f-4cbb-baa9-2e3d366aaa2d",
+  "title": null,
+  "model": "claude-haiku-5-5",
+  "effort": null,
+  "status": "idle",
+  "turn": null,
+  "error": null,
+  "items": [
+    {
+      "id": "user-1",
+      "turn": null,
+      "kind": {
+        "type": "user",
+        "text": "Run the shell command: mkdir -p build && touch build/marker -- with the Bash tool, then reply done."
+      },
+      "status": "done"
+    },
+    {
+      "id": "toolu_01Aa95da16TUjcCj1ouaN4Z9",
+      "turn": "turn-1",
+      "kind": {
+        "type": "command",
+        "command": "mkdir -p build && touch build/marker",
+        "cwd": "/work/project",
+        "output": "",
+        "exitCode": null,
+        "durationMs": null
+      },
+      "status": "done"
+    },
+    {
+      "id": "msg_011CgQp8WFjg2Uncfhq73jzv:0",
+      "turn": "turn-1",
+      "kind": {
+        "type": "agent",
+        "text": "done",
+        "finalAnswer": true
+      },
+      "status": "done"
+    }
+  ],
+  "approvals": [],
+  "diff": null,
+  "seq": 14
+}

@@ -1,0 +1,14 @@
+{"session":"s1","seq":1,"change":{"type":"item","item":{"id":"user-1","turn":null,"kind":{"type":"user","text":"Create a file named hello.txt containing exactly the line: hello from zero. Then reply done."},"status":"done"}}}
+{"session":"s1","seq":2,"change":{"type":"status","status":"working","turn":"turn-1","error":null}}
+{"session":"s1","seq":3,"change":{"type":"thread","thread":"57bae2a9-7b1c-48e5-9292-4004afb98a76","model":"claude-haiku-5-5","effort":null}}
+{"session":"s1","seq":4,"change":{"type":"item","item":{"id":"toolu_01H7Mduu5p7Zwutnv4JqGrcG","turn":"turn-1","kind":{"type":"fileChange","changes":[{"path":"/work/project/hello.txt","kind":"add","movePath":null,"diff":"hello from zero\n"}]},"status":"running"}}}
+{"session":"s1","seq":5,"change":{"type":"approval","approval":{"id":"3a40fdd6-1062-42a3-9542-bd6204633598","item":"toolu_01H7Mduu5p7Zwutnv4JqGrcG","kind":"fileChange","title":"Write hello.txt","command":null,"cwd":null,"reason":"hello.txt","changes":[{"path":"/work/project/hello.txt","kind":"add","movePath":null,"diff":"hello from zero\n"}],"choices":[{"id":"allow","label":"Allow","kind":"allow"},{"id":"session","label":"Allow all edits this session","kind":"allowSession"},{"id":"deny","label":"Deny","kind":"deny"},{"id":"stop","label":"Deny and stop","kind":"stop"}]}}}
+{"session":"s1","seq":6,"change":{"type":"status","status":"waiting","turn":"turn-1","error":null}}
+{"session":"s1","seq":7,"change":{"type":"resolved","approval":"3a40fdd6-1062-42a3-9542-bd6204633598"}}
+{"session":"s1","seq":8,"change":{"type":"status","status":"working","turn":"turn-1","error":null}}
+{"session":"s1","seq":9,"change":{"type":"item","item":{"id":"toolu_01H7Mduu5p7Zwutnv4JqGrcG","turn":"turn-1","kind":{"type":"fileChange","changes":[{"path":"/work/project/hello.txt","kind":"add","movePath":null,"diff":"hello from zero\n"}]},"status":"done"}}}
+{"session":"s1","seq":10,"change":{"type":"item","item":{"id":"msg_011CgQp71QdTY6fF5jeT9kea:0","turn":"turn-1","kind":{"type":"agent","text":"","finalAnswer":false},"status":"running"}}}
+{"session":"s1","seq":11,"change":{"type":"delta","item":"msg_011CgQp71QdTY6fF5jeT9kea:0","text":"done"}}
+{"session":"s1","seq":12,"change":{"type":"item","item":{"id":"msg_011CgQp71QdTY6fF5jeT9kea:0","turn":"turn-1","kind":{"type":"agent","text":"done","finalAnswer":false},"status":"done"}}}
+{"session":"s1","seq":13,"change":{"type":"item","item":{"id":"msg_011CgQp71QdTY6fF5jeT9kea:0","turn":"turn-1","kind":{"type":"agent","text":"done","finalAnswer":true},"status":"done"}}}
+{"session":"s1","seq":14,"change":{"type":"status","status":"idle","turn":null,"error":null}}

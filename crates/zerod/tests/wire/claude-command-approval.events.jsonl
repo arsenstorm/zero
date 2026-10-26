@@ -1,0 +1,14 @@
+{"session":"s1","seq":1,"change":{"type":"item","item":{"id":"user-1","turn":null,"kind":{"type":"user","text":"Run the shell command: mkdir -p build && touch build/marker -- with the Bash tool, then reply done."},"status":"done"}}}
+{"session":"s1","seq":2,"change":{"type":"status","status":"working","turn":"turn-1","error":null}}
+{"session":"s1","seq":3,"change":{"type":"thread","thread":"ee2827f3-121f-4cbb-baa9-2e3d366aaa2d","model":"claude-haiku-5-5","effort":null}}
+{"session":"s1","seq":4,"change":{"type":"item","item":{"id":"toolu_01Aa95da16TUjcCj1ouaN4Z9","turn":"turn-1","kind":{"type":"command","command":"mkdir -p build && touch build/marker","cwd":"/work/project","output":"","exitCode":null,"durationMs":null},"status":"running"}}}
+{"session":"s1","seq":5,"change":{"type":"approval","approval":{"id":"2834359e-8d0d-4daa-91f3-0f17f8e4b1dc","item":"toolu_01Aa95da16TUjcCj1ouaN4Z9","kind":"command","title":"Run mkdir -p build && touch build/marker","command":"mkdir -p build && touch build/marker","cwd":"/work/project","reason":"Create build directory and touch marker file","changes":[],"choices":[{"id":"allow","label":"Allow","kind":"allow"},{"id":"always","label":"Always allow Bash(mkdir -p build), Bash(touch build/marker)","kind":"allowAlways"},{"id":"deny","label":"Deny","kind":"deny"},{"id":"stop","label":"Deny and stop","kind":"stop"}]}}}
+{"session":"s1","seq":6,"change":{"type":"status","status":"waiting","turn":"turn-1","error":null}}
+{"session":"s1","seq":7,"change":{"type":"resolved","approval":"2834359e-8d0d-4daa-91f3-0f17f8e4b1dc"}}
+{"session":"s1","seq":8,"change":{"type":"status","status":"working","turn":"turn-1","error":null}}
+{"session":"s1","seq":9,"change":{"type":"item","item":{"id":"toolu_01Aa95da16TUjcCj1ouaN4Z9","turn":"turn-1","kind":{"type":"command","command":"mkdir -p build && touch build/marker","cwd":"/work/project","output":"","exitCode":null,"durationMs":null},"status":"done"}}}
+{"session":"s1","seq":10,"change":{"type":"item","item":{"id":"msg_011CgQp8WFjg2Uncfhq73jzv:0","turn":"turn-1","kind":{"type":"agent","text":"","finalAnswer":false},"status":"running"}}}
+{"session":"s1","seq":11,"change":{"type":"delta","item":"msg_011CgQp8WFjg2Uncfhq73jzv:0","text":"done"}}
+{"session":"s1","seq":12,"change":{"type":"item","item":{"id":"msg_011CgQp8WFjg2Uncfhq73jzv:0","turn":"turn-1","kind":{"type":"agent","text":"done","finalAnswer":false},"status":"done"}}}
+{"session":"s1","seq":13,"change":{"type":"item","item":{"id":"msg_011CgQp8WFjg2Uncfhq73jzv:0","turn":"turn-1","kind":{"type":"agent","text":"done","finalAnswer":true},"status":"done"}}}
+{"session":"s1","seq":14,"change":{"type":"status","status":"idle","turn":null,"error":null}}

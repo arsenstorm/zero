@@ -1,0 +1,49 @@
+{
+  "id": "s1",
+  "provider": "claude",
+  "cwd": "/work/project",
+  "thread": "de7c0e2b-badd-439a-a46b-9e187476cb40",
+  "title": null,
+  "model": "claude-haiku-5-5",
+  "effort": null,
+  "status": "idle",
+  "turn": null,
+  "error": null,
+  "items": [
+    {
+      "id": "user-1",
+      "turn": null,
+      "kind": {
+        "type": "user",
+        "text": "Run the shell command uname -s with the Bash tool, then tell me in one sentence what it printed."
+      },
+      "status": "done"
+    },
+    {
+      "id": "toolu_013N1umJJU8yEqYEeYsTc4s6",
+      "turn": "turn-1",
+      "kind": {
+        "type": "command",
+        "command": "uname -s",
+        "cwd": "/work/project",
+        "output": "Darwin",
+        "exitCode": null,
+        "durationMs": null
+      },
+      "status": "done"
+    },
+    {
+      "id": "msg_011CgQp76isAk2TLpkkjZNUf:0",
+      "turn": "turn-1",
+      "kind": {
+        "type": "agent",
+        "text": "The command printed `Darwin`.",
+        "finalAnswer": true
+      },
+      "status": "done"
+    }
+  ],
+  "approvals": [],
+  "diff": null,
+  "seq": 12
+}

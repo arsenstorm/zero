@@ -1,0 +1,16 @@
+{"session":"s1","seq":1,"change":{"type":"thread","thread":"ses_e87e7ec6effeexsrna6EOV0doq","model":"opencode-go/iceman-contributor-free","effort":null}}
+{"session":"s1","seq":2,"change":{"type":"status","status":"idle","turn":null,"error":null}}
+{"session":"s1","seq":3,"change":{"type":"thread","thread":"ses_e87e7ec6effeexsrna6EOV0doq","model":"opencode-go/beam-free","effort":null}}
+{"session":"s1","seq":4,"change":{"type":"item","item":{"id":"user-4","turn":"z4","kind":{"type":"user","text":"Create a file named hello.txt containing exactly the line: hello from zero. Then reply done."},"status":"done"}}}
+{"session":"s1","seq":5,"change":{"type":"status","status":"working","turn":"z4","error":null}}
+{"session":"s1","seq":6,"change":{"type":"item","item":{"id":"agent_thought-6","turn":"z4","kind":{"type":"reasoning","text":"The user wants me to create a file named hello.txt containing exactly \"hello from zero\" and then reply \"done\". Simple task"},"status":"running"}}}
+{"session":"s1","seq":7,"change":{"type":"delta","item":"agent_thought-6","text":"."}}
+{"session":"s1","seq":8,"change":{"type":"item","item":{"id":"call-471296b6-1ab7-4c34-9e77-435a18630295","turn":"z4","kind":{"type":"fileChange","changes":[{"path":"","kind":"update","movePath":null,"diff":""}]},"status":"running"}}}
+{"session":"s1","seq":9,"change":{"type":"item","item":{"id":"call-471296b6-1ab7-4c34-9e77-435a18630295","turn":"z4","kind":{"type":"fileChange","changes":[{"path":"/work/project/hello.txt","kind":"update","movePath":null,"diff":"hello from zero\n"}]},"status":"running"}}}
+{"session":"s1","seq":10,"change":{"type":"item","item":{"id":"call-471296b6-1ab7-4c34-9e77-435a18630295","turn":"z4","kind":{"type":"fileChange","changes":[{"path":"/work/project/hello.txt","kind":"update","movePath":null,"diff":"hello from zero\n"}]},"status":"done"}}}
+{"session":"s1","seq":11,"change":{"type":"item","item":{"id":"agent_thought-11","turn":"z4","kind":{"type":"reasoning","text":"File created successfully. Now reply \"done\"."},"status":"running"}}}
+{"session":"s1","seq":12,"change":{"type":"item","item":{"id":"agent_message-12","turn":"z4","kind":{"type":"agent","text":"done","finalAnswer":false},"status":"running"}}}
+{"session":"s1","seq":13,"change":{"type":"item","item":{"id":"agent_thought-6","turn":"z4","kind":{"type":"reasoning","text":"The user wants me to create a file named hello.txt containing exactly \"hello from zero\" and then reply \"done\". Simple task."},"status":"done"}}}
+{"session":"s1","seq":14,"change":{"type":"item","item":{"id":"agent_thought-11","turn":"z4","kind":{"type":"reasoning","text":"File created successfully. Now reply \"done\"."},"status":"done"}}}
+{"session":"s1","seq":15,"change":{"type":"item","item":{"id":"agent_message-12","turn":"z4","kind":{"type":"agent","text":"done","finalAnswer":true},"status":"done"}}}
+{"session":"s1","seq":16,"change":{"type":"status","status":"idle","turn":null,"error":null}}

@@ -1,0 +1,70 @@
+{
+  "id": "s1",
+  "provider": "opencode",
+  "cwd": "/work/project",
+  "thread": "ses_e87e7ec6effeexsrna6EOV0doq",
+  "title": null,
+  "model": "opencode-go/beam-free",
+  "effort": null,
+  "status": "idle",
+  "turn": null,
+  "error": null,
+  "items": [
+    {
+      "id": "user-4",
+      "turn": "z4",
+      "kind": {
+        "type": "user",
+        "text": "Create a file named hello.txt containing exactly the line: hello from zero. Then reply done."
+      },
+      "status": "done"
+    },
+    {
+      "id": "agent_thought-6",
+      "turn": "z4",
+      "kind": {
+        "type": "reasoning",
+        "text": "The user wants me to create a file named hello.txt containing exactly \"hello from zero\" and then reply \"done\". Simple task."
+      },
+      "status": "done"
+    },
+    {
+      "id": "call-471296b6-1ab7-4c34-9e77-435a18630295",
+      "turn": "z4",
+      "kind": {
+        "type": "fileChange",
+        "changes": [
+          {
+            "path": "/work/project/hello.txt",
+            "kind": "update",
+            "movePath": null,
+            "diff": "hello from zero\n"
+          }
+        ]
+      },
+      "status": "done"
+    },
+    {
+      "id": "agent_thought-11",
+      "turn": "z4",
+      "kind": {
+        "type": "reasoning",
+        "text": "File created successfully. Now reply \"done\"."
+      },
+      "status": "done"
+    },
+    {
+      "id": "agent_message-12",
+      "turn": "z4",
+      "kind": {
+        "type": "agent",
+        "text": "done",
+        "finalAnswer": true
+      },
+      "status": "done"
+    }
+  ],
+  "approvals": [],
+  "diff": null,
+  "seq": 16
+}

@@ -1,0 +1,56 @@
+{"session":"s1","seq":1,"change":{"type":"thread","thread":"01a177f4-5525-7141-bfb3-f350d91476d6","model":"gpt-6-sol","effort":"high"}}
+{"session":"s1","seq":2,"change":{"type":"status","status":"idle","turn":null,"error":null}}
+{"session":"s1","seq":3,"change":{"type":"status","status":"working","turn":null,"error":null}}
+{"session":"s1","seq":4,"change":{"type":"status","status":"working","turn":"01a177f4-5896-7ab3-8380-084e318ba648","error":null}}
+{"session":"s1","seq":5,"change":{"type":"item","item":{"id":"01a177f4-6144-7092-8e0a-5b38d6fc3e41","turn":"01a177f4-5896-7ab3-8380-084e318ba648","kind":{"type":"user","text":"Run the shell command `ls -la` here and tell me in one sentence what you see."},"status":"done"}}}
+{"session":"s1","seq":6,"change":{"type":"item","item":{"id":"01a177f4-6144-7092-8e0a-5b38d6fc3e41","turn":"01a177f4-5896-7ab3-8380-084e318ba648","kind":{"type":"user","text":"Run the shell command `ls -la` here and tell me in one sentence what you see."},"status":"done"}}}
+{"session":"s1","seq":7,"change":{"type":"item","item":{"id":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","turn":"01a177f4-5896-7ab3-8380-084e318ba648","kind":{"type":"agent","text":"","finalAnswer":false},"status":"running"}}}
+{"session":"s1","seq":8,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":"I"}}
+{"session":"s1","seq":9,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":"’ll"}}
+{"session":"s1","seq":10,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":" run"}}
+{"session":"s1","seq":11,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":" `"}}
+{"session":"s1","seq":12,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":"ls"}}
+{"session":"s1","seq":13,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":" -"}}
+{"session":"s1","seq":14,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":"la"}}
+{"session":"s1","seq":15,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":"`"}}
+{"session":"s1","seq":16,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":" in"}}
+{"session":"s1","seq":17,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":" the"}}
+{"session":"s1","seq":18,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":" current"}}
+{"session":"s1","seq":19,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":" directory"}}
+{"session":"s1","seq":20,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":" and"}}
+{"session":"s1","seq":21,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":" summarize"}}
+{"session":"s1","seq":22,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":" the"}}
+{"session":"s1","seq":23,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":" output"}}
+{"session":"s1","seq":24,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":" in"}}
+{"session":"s1","seq":25,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":" one"}}
+{"session":"s1","seq":26,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":" sentence"}}
+{"session":"s1","seq":27,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","text":"."}}
+{"session":"s1","seq":28,"change":{"type":"item","item":{"id":"msg_01fe8af0c8f148bb016adf386cd45c8191ac969d0fb172631b","turn":"01a177f4-5896-7ab3-8380-084e318ba648","kind":{"type":"agent","text":"I’ll run `ls -la` in the current directory and summarize the output in one sentence.","finalAnswer":false},"status":"done"}}}
+{"session":"s1","seq":29,"change":{"type":"status","status":"waiting","turn":"01a177f4-5896-7ab3-8380-084e318ba648","error":null}}
+{"session":"s1","seq":30,"change":{"type":"item","item":{"id":"exec-34d055a0-8a54-4786-ab5f-0aedee05cf93","turn":"01a177f4-5896-7ab3-8380-084e318ba648","kind":{"type":"command","command":"ls -la","cwd":"/work/project","output":"","exitCode":null,"durationMs":null},"status":"running"}}}
+{"session":"s1","seq":31,"change":{"type":"approval","approval":{"id":"0","item":"exec-34d055a0-8a54-4786-ab5f-0aedee05cf93","kind":"command","title":"Run ls -la","command":"ls -la","cwd":"/work/project","reason":null,"changes":[],"choices":[{"id":"0","label":"Allow","kind":"allow"},{"id":"1","label":"Always allow ls -la","kind":"allowAlways"},{"id":"2","label":"Deny and stop","kind":"stop"}]}}}
+{"session":"s1","seq":32,"change":{"type":"resolved","approval":"0"}}
+{"session":"s1","seq":33,"change":{"type":"status","status":"working","turn":"01a177f4-5896-7ab3-8380-084e318ba648","error":null}}
+{"session":"s1","seq":34,"change":{"type":"item","item":{"id":"exec-34d055a0-8a54-4786-ab5f-0aedee05cf93","turn":"01a177f4-5896-7ab3-8380-084e318ba648","kind":{"type":"command","command":"ls -la","cwd":"/work/project","output":"total 0\ndrwxr-xr-x@  2 me  wheel   64 Oct 26 11:24 .\ndrwx------@ 11 me  wheel  352 Oct 26 11:24 ..\n","exitCode":0,"durationMs":0},"status":"done"}}}
+{"session":"s1","seq":35,"change":{"type":"item","item":{"id":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","turn":"01a177f4-5896-7ab3-8380-084e318ba648","kind":{"type":"agent","text":"","finalAnswer":true},"status":"running"}}}
+{"session":"s1","seq":36,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","text":"The"}}
+{"session":"s1","seq":37,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","text":" directory"}}
+{"session":"s1","seq":38,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","text":" is"}}
+{"session":"s1","seq":39,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","text":" empty"}}
+{"session":"s1","seq":40,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","text":";"}}
+{"session":"s1","seq":41,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","text":" `"}}
+{"session":"s1","seq":42,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","text":"ls"}}
+{"session":"s1","seq":43,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","text":" -"}}
+{"session":"s1","seq":44,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","text":"la"}}
+{"session":"s1","seq":45,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","text":"`"}}
+{"session":"s1","seq":46,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","text":" shows"}}
+{"session":"s1","seq":47,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","text":" only"}}
+{"session":"s1","seq":48,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","text":" `"}}
+{"session":"s1","seq":49,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","text":".`"}}
+{"session":"s1","seq":50,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","text":" and"}}
+{"session":"s1","seq":51,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","text":" `"}}
+{"session":"s1","seq":52,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","text":".."}}
+{"session":"s1","seq":53,"change":{"type":"delta","item":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","text":"`."}}
+{"session":"s1","seq":54,"change":{"type":"item","item":{"id":"msg_01fe8af0c8f148bb016adf386f137481918a6ebd9ebcb0d6a6","turn":"01a177f4-5896-7ab3-8380-084e318ba648","kind":{"type":"agent","text":"The directory is empty; `ls -la` shows only `.` and `..`.","finalAnswer":true},"status":"done"}}}
+{"session":"s1","seq":55,"change":{"type":"status","status":"idle","turn":"01a177f4-5896-7ab3-8380-084e318ba648","error":null}}
+{"session":"s1","seq":56,"change":{"type":"status","status":"idle","turn":null,"error":null}}
