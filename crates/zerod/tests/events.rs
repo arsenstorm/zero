@@ -135,3 +135,19 @@ async fn the_usage_view_has_each_providers_latest_limits_and_stops_new_agents_at
     assert!(w.daemon.spawn(&id, Provider::Claude, "more work", Options { force: true, ..Default::default() }).is_ok(), "unless forced");
     assert!(w.daemon.spawn(&id, Provider::Codex, "other work", Options::default()).is_ok(), "another provider isn't limited");
 }
+
+#[tokio::test]
+async fn an_async_ask_from_a_zerod_session_is_answered_into_that_session() {
+    let w = world("events-inbox");
+    let (id, seen) = idle_claude(&w).await;
+    let inbox = zerod::inbox::Inbox::open(None, vec![std::sync::Arc::new(zerod::daemon::Sessions::of(&w.daemon))]);
+    inbox.configure(Duration::from_millis(20), 3600);
+    let agent = zerod::ask::AgentIdentity { name: format!("zerod-{id}"), host: "mac".into(), runtime: Some("zerod".into()), reference: Some(id.clone()), ..Default::default() };
+    let mut ask = zerod::ask::Ask::new(zerod::ask::AskKind::Choice, "Ship it?", agent, 3600);
+    ask.options = vec!["Yes".into(), "No".into()];
+    ask.waits = Some(false);
+    let ask = inbox.create(ask, false);
+    inbox.choose(&ask.id, 0);
+    let words = seen.said("user", 2).await[1]["message"]["content"].as_str().unwrap().to_string();
+    assert_eq!(words, format!("The user answered your ask {} (\"Ship it?\"): Yes", ask.id));
+}
