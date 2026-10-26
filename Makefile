@@ -39,6 +39,7 @@ bundle: build
 	cp $(BIN)/ZeroApp $(APP)/Contents/MacOS/Zero
 	cp $(BIN)/zero $(APP)/Contents/MacOS/zero-cli
 	cp $(BIN)/zero-host $(APP)/Contents/MacOS/zero-host
+	cp target/release/zerod $(APP)/Contents/MacOS/zerod
 	cp $(MACOS)/Resources/Info.plist $(APP)/Contents/Info.plist
 	cp $(MACOS)/Resources/icons/*.png $(APP)/Contents/Resources/
 	cd $(MACOS)/Resources && cp AppIcon.icns logo/menubar.png logo/menubar@2x.png logo/mark.svg logo/mark-small.svg $(CURDIR)/$(APP)/Contents/Resources/
@@ -49,6 +50,7 @@ bundle: build
 	codesign --force --sign "$(SIGN)" $(APP)/Contents/Resources/zero-drop-darwin-arm64
 	codesign --force --sign "$(SIGN)" $(APP)/Contents/MacOS/zero-cli
 	codesign --force --sign "$(SIGN)" $(APP)/Contents/MacOS/zero-host
+	codesign --force --sign "$(SIGN)" $(APP)/Contents/MacOS/zerod
 	codesign --force --sign "$(SIGN)" $(APP)
 
 install: bundle

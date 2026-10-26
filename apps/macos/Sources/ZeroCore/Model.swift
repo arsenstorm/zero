@@ -69,6 +69,9 @@ public struct Ask: Codable, Identifiable, Sendable {
     /// A run asking for exactly the command another agent's open run already asks for: it shares that run's
     /// card and outcome instead of showing a second one.
     public var sameAs: String?
+    /// For an approval of one of zerod's sessions (agent.runtime "zerod", agent.ref the session): the approval's id
+    /// there, so the answer reaches zerod and the ask is found again after a relaunch.
+    public var request: String?
 
     /// An option ending with "…" asks for text: picking it opens an input, and the answer is "label: text".
     public static func expectsText(_ option: String) -> Bool { option.hasSuffix("…") || option.hasSuffix("...") }

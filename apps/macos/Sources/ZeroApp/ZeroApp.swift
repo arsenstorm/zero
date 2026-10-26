@@ -115,6 +115,9 @@ final class Panel: NSPanel {
     private var selectorAnchor = CGPoint.zero
     private var selectorMonitors: [Any] = []
     private var settingsWindow: NSWindow?
+    /// zerod's sessions and their approvals; made once the store's other change handlers are in place.
+    private var workspace: Workspace!
+    private var workspaceWindow: NSWindow?
     private let settings = Settings()
     private var pinnedDisplay: CGDirectDisplayID?
     private var pillHosting: FirstMouseHostingView<AnyView>!
@@ -122,9 +125,9 @@ final class Panel: NSPanel {
     private var openedByIntent = false
     private var pointerWasInside = false
 
-    // Opening Zero again, from the Dock or Finder, opens Settings.
+    // Opening Zero again, from the Dock or Finder, opens the workspace.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        openSettings()
+        openWorkspace()
         return false
     }
 
@@ -141,6 +144,8 @@ final class Panel: NSPanel {
         let serverChanged = store.onChange
         store.onChange = { [weak self] ask in serverChanged?(ask); self?.drops.changed(ask) }
         store.onCreate = { [weak self] ask in self?.arrived(ask) }
+        workspace = Workspace(store: store)
+        Task { [workspace] in await workspace?.connect() }
         inbox.hide = { [weak self] in self?.hideInbox() }
         inbox.onTyping = { [weak self] typing in if typing { self?.activateForTyping() } }
         inbox.presentSelector = { [weak self] anchor in self?.showSelector(anchorInInbox: anchor) }
@@ -179,7 +184,7 @@ final class Panel: NSPanel {
     /// Zero is in the Dock only while one of its windows (onboarding, Settings) is open; otherwise it is a menu
     /// bar app with its bar.
     private func updateDock() {
-        let windowOpen = [settingsWindow, onboardingWindow].contains { $0?.isVisible == true }
+        let windowOpen = [settingsWindow, onboardingWindow, workspaceWindow].contains { $0?.isVisible == true }
         let policy: NSApplication.ActivationPolicy = windowOpen ? .regular : .accessory
         if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
     }
@@ -234,6 +239,7 @@ final class Panel: NSPanel {
         mark?.size = NSSize(width: 18, height: 18)
         statusItem.button?.image = mark
         let menu = NSMenu()
+        menu.addItem(withTitle: "Workspace", action: #selector(openWorkspace), keyEquivalent: "0")
         menu.addItem(withTitle: "Open Log", action: #selector(openLog), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
@@ -244,6 +250,24 @@ final class Panel: NSPanel {
     }
 
     @objc private func openLog() { NSWorkspace.shared.open(Paths.log) }
+
+    @objc func openWorkspace() {
+        if workspaceWindow == nil {
+            let host = NSHostingController(rootView: WorkspaceView(workspace: workspace))
+            host.sizingOptions = []
+            let window = NSWindow(contentViewController: host)
+            window.title = "Zero"
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+            window.setContentSize(NSSize(width: 1100, height: 720))
+            window.setFrameAutosaveName("Workspace")
+            window.isReleasedWhenClosed = false
+            window.center()
+            workspaceWindow = window
+        }
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        workspaceWindow?.makeKeyAndOrderFront(nil)
+    }
 
     @objc func openSettings() {
         if settingsWindow == nil {
