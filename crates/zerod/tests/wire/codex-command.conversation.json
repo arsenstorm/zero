@@ -2,6 +2,7 @@
   "id": "s1",
   "provider": "codex",
   "cwd": "/work/project",
+  "permissions": "auto",
   "thread": "01a177f4-5525-7141-bfb3-f350d91476d6",
   "title": null,
   "model": "gpt-6-sol",
@@ -54,6 +55,10 @@
     }
   ],
   "approvals": [],
+  "questions": [],
+  "usage": null,
+  "failure": null,
+  "stalled": null,
   "diff": null,
   "seq": 56
 }

@@ -5,3 +5,4 @@
 {"session":"s1","seq":5,"change":{"type":"status","status":"working","turn":"z4","error":null}}
 {"session":"s1","seq":6,"change":{"type":"item","item":{"id":"notice-6","turn":"z4","kind":{"type":"notice","text":"Internal error: Upstream request failed: Free models may train on request data. Allow free endpoints in your workspace's Privacy settings to use them.","error":true},"status":"done"}}}
 {"session":"s1","seq":7,"change":{"type":"status","status":"idle","turn":null,"error":"Internal error: Upstream request failed: Free models may train on request data. Allow free endpoints in your workspace's Privacy settings to use them."}}
+{"session":"s1","seq":8,"change":{"type":"failed","failure":{"kind":"other","message":"Internal error: Upstream request failed: Free models may train on request data. Allow free endpoints in your workspace's Privacy settings to use them."}}}

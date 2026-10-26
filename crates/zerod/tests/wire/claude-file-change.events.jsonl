@@ -7,8 +7,9 @@
 {"session":"s1","seq":7,"change":{"type":"resolved","approval":"3a40fdd6-1062-42a3-9542-bd6204633598"}}
 {"session":"s1","seq":8,"change":{"type":"status","status":"working","turn":"turn-1","error":null}}
 {"session":"s1","seq":9,"change":{"type":"item","item":{"id":"toolu_01H7Mduu5p7Zwutnv4JqGrcG","turn":"turn-1","kind":{"type":"fileChange","changes":[{"path":"/work/project/hello.txt","kind":"add","movePath":null,"diff":"hello from zero\n"}]},"status":"done"}}}
-{"session":"s1","seq":10,"change":{"type":"item","item":{"id":"msg_011CgQp71QdTY6fF5jeT9kea:0","turn":"turn-1","kind":{"type":"agent","text":"","finalAnswer":false},"status":"running"}}}
-{"session":"s1","seq":11,"change":{"type":"delta","item":"msg_011CgQp71QdTY6fF5jeT9kea:0","text":"done"}}
-{"session":"s1","seq":12,"change":{"type":"item","item":{"id":"msg_011CgQp71QdTY6fF5jeT9kea:0","turn":"turn-1","kind":{"type":"agent","text":"done","finalAnswer":false},"status":"done"}}}
-{"session":"s1","seq":13,"change":{"type":"item","item":{"id":"msg_011CgQp71QdTY6fF5jeT9kea:0","turn":"turn-1","kind":{"type":"agent","text":"done","finalAnswer":true},"status":"done"}}}
-{"session":"s1","seq":14,"change":{"type":"status","status":"idle","turn":null,"error":null}}
+{"session":"s1","seq":10,"change":{"type":"usage","usage":{"limited":false,"resetsAt":null,"windows":[{"name":"5 hours","used":0.18,"resetsAt":1793026800},{"name":"7 days","used":0.05,"resetsAt":1793613600}]}}}
+{"session":"s1","seq":11,"change":{"type":"item","item":{"id":"msg_011CgQp71QdTY6fF5jeT9kea:0","turn":"turn-1","kind":{"type":"agent","text":"","finalAnswer":false},"status":"running"}}}
+{"session":"s1","seq":12,"change":{"type":"delta","item":"msg_011CgQp71QdTY6fF5jeT9kea:0","text":"done"}}
+{"session":"s1","seq":13,"change":{"type":"item","item":{"id":"msg_011CgQp71QdTY6fF5jeT9kea:0","turn":"turn-1","kind":{"type":"agent","text":"done","finalAnswer":false},"status":"done"}}}
+{"session":"s1","seq":14,"change":{"type":"item","item":{"id":"msg_011CgQp71QdTY6fF5jeT9kea:0","turn":"turn-1","kind":{"type":"agent","text":"done","finalAnswer":true},"status":"done"}}}
+{"session":"s1","seq":15,"change":{"type":"status","status":"idle","turn":null,"error":null}}

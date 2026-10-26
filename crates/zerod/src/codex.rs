@@ -5,13 +5,19 @@ use std::collections::HashMap;
 
 use serde_json::{Value, json};
 
-use crate::adapter::{Adapter, Effects, json_rpc_answer, key};
-use crate::model::{Approval, ApprovalKind, Change, Choice, ChoiceKind, Conversation, FileChange, Item, ItemKind, ItemStatus, Status};
+use crate::adapter::{Adapter, Answers, Effects, INSTRUCTIONS, json_rpc_answer, key};
+use crate::model::{Approval, ApprovalKind, Change, Choice, ChoiceKind, Conversation, Field, FileChange, Item, ItemKind, ItemStatus, Permissions, Question,
+                   QuestionOption, Status};
 use crate::session::{Session, Transport};
 
-/// The approval policy and sandbox Zero starts threads with: Codex's own defaults for a project you work in.
-pub const APPROVAL_POLICY: &str = "on-request";
-pub const SANDBOX: &str = "workspace-write";
+/// The approval policy and sandbox for a session's permissions. Auto is Codex's own "auto": edit and run in the
+/// project, ask for anything beyond it; unrestricted is its "full access".
+pub fn policy(permissions: Permissions) -> (&'static str, &'static str) {
+    match permissions {
+        Permissions::Auto => ("on-request", "workspace-write"),
+        Permissions::Unrestricted => ("never", "danger-full-access"),
+    }
+}
 
 #[derive(Default)]
 pub struct Codex {
@@ -48,6 +54,12 @@ impl Adapter for Codex {
         let (id, decisions) = self.requests.get(&approval.id).ok_or_else(|| format!("Codex isn't waiting on \"{}\" any more", approval.title))?;
         let decision = choice.parse::<usize>().ok().and_then(|i| decisions.get(i)).ok_or_else(|| format!("No choice {choice}"))?;
         Ok(json!({"id": id, "result": {"decision": decision}}))
+    }
+
+    fn reply(&self, question: &Question, answers: &Answers) -> Result<Value, String> {
+        let (id, _) = self.requests.get(&question.id).ok_or("Codex isn't waiting on that question any more")?;
+        let answers: serde_json::Map<String, Value> = question.fields.iter().map(|f| (f.id.clone(), json!({"answers": answers[&f.id]}))).collect();
+        Ok(json!({"id": id, "result": {"answers": answers}}))
     }
 
     fn ended(&mut self) {
@@ -90,8 +102,26 @@ impl Codex {
                 };
                 (ApprovalKind::FileChange, file_title(&changes), None, None, changes)
             }
+            "item/tool/requestUserInput" => {
+                let fields = params["questions"].as_array().cloned().unwrap_or_default().iter().map(|q| Field {
+                    id: q["id"].as_str().unwrap_or("").into(),
+                    header: q["header"].as_str().filter(|h| !h.is_empty()).map(String::from),
+                    question: q["question"].as_str().unwrap_or("").into(),
+                    options: q["options"].as_array().cloned().unwrap_or_default().iter().map(|o| QuestionOption {
+                        label: o["label"].as_str().unwrap_or("").into(),
+                        description: o["description"].as_str().filter(|d| !d.is_empty()).map(String::from),
+                    }).collect(),
+                    multiple: false,
+                    other: q["isOther"] == true,
+                    secret: q["isSecret"] == true,
+                }).collect();
+                self.requests.insert(key(id), (id.clone(), vec![]));
+                effects.changes.push(Change::Question { question: Question { id: key(id), item: params["itemId"].as_str().map(Into::into), fields } });
+                effects.changes.push(Change::Status { status: Status::Waiting, turn: conversation.turn.clone(), error: conversation.error.clone() });
+                return;
+            }
             _ => {
-                // ponytail: questions (requestUserInput), MCP elicitations and the rest are refused for now, so Codex
+                // ponytail: MCP elicitations and the rest are refused for now, so Codex
                 // never waits on something no one is shown; they become Zero questions next (docs/workspace.md).
                 effects.notice(conversation, &format!("Codex asked something Zero can't answer yet ({method}), so it was refused"), true);
                 effects.replies.push(json!({"id": id, "error": {"code": -32601, "message": format!("Zero can't answer {method} yet")}}));
@@ -170,9 +200,22 @@ fn notification(conversation: &Conversation, method: &str, params: &Value, effec
             let text = if retrying { format!("{message} (retrying)") } else { message.to_string() };
             effects.notice(conversation, &text, !retrying);
         }
+        "account/rateLimits/updated" => {
+            let limits = &params["rateLimits"];
+            let windows: Vec<crate::model::UsageWindow> = ["primary", "secondary"].iter().filter_map(|key| {
+                let window = limits.get(*key).filter(|w| w.is_object())?;
+                let minutes = window["windowDurationMins"].as_i64().unwrap_or(0);
+                let name = match minutes { 300 => "5 hours".into(), 10080 => "7 days".into(), m if m % 1440 == 0 => format!("{} days", m / 1440), m => format!("{} hours", m / 60) };
+                Some(crate::model::UsageWindow { name, used: window["usedPercent"].as_f64().unwrap_or(0.0) / 100.0, resets_at: window["resetsAt"].as_i64() })
+            }).collect();
+            let full = windows.iter().find(|w| w.used >= 1.0);
+            let usage = crate::model::Usage { limited: full.is_some(), resets_at: full.and_then(|w| w.resets_at), windows };
+            effects.changes.push(Change::Usage { usage });
+        }
         "serverRequest/resolved" => {
-            let approval = key(&params["requestId"]);
-            if conversation.approvals.iter().any(|a| a.id == approval) { effects.changes.push(Change::Resolved { approval }) }
+            let settled = key(&params["requestId"]);
+            if conversation.approvals.iter().any(|a| a.id == settled) { effects.changes.push(Change::Resolved { approval: settled }) }
+            else if conversation.questions.iter().any(|q| q.id == settled) { effects.changes.push(Change::Answered { question: settled }) }
         }
         // Hooks, MCP start-up, token use, rate limits and the rest: kept in the transcript, not shown.
         _ => {}
@@ -298,8 +341,10 @@ fn text_input(text: &str) -> Value {
 
 pub async fn start(session: &Session, transport: Transport, prompt: &str, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
     handshake(session, transport).await?;
-    let cwd = session.snapshot().cwd;
-    session.request(|id| json!({"id": id, "method": "thread/start", "params": {"cwd": cwd, "model": model, "approvalPolicy": APPROVAL_POLICY, "sandbox": SANDBOX}})).await?;
+    let conversation = session.snapshot();
+    let (approvals, sandbox) = policy(conversation.permissions);
+    session.request(|id| json!({"id": id, "method": "thread/start", "params": {"cwd": conversation.cwd, "model": model, "approvalPolicy": approvals,
+        "sandbox": sandbox, "developerInstructions": INSTRUCTIONS}})).await?;
     let thread = session.snapshot().thread.ok_or("Codex started no thread")?;
     turn(session, &thread, prompt, model, effort).await
 }
@@ -310,7 +355,9 @@ pub async fn resume(session: &Session, transport: Transport) -> Result<(), Strin
     let conversation = session.snapshot();
     let thread = conversation.thread.ok_or("This session never got as far as a thread, so there is nothing to resume")?;
     handshake(session, transport).await?;
-    let params = json!({"threadId": thread, "cwd": conversation.cwd, "approvalPolicy": APPROVAL_POLICY, "sandbox": SANDBOX, "excludeTurns": true});
+    let (approvals, sandbox) = policy(conversation.permissions);
+    let params = json!({"threadId": thread, "cwd": conversation.cwd, "approvalPolicy": approvals, "sandbox": sandbox,
+                        "developerInstructions": INSTRUCTIONS, "excludeTurns": true});
     session.request(|id| json!({"id": id, "method": "thread/resume", "params": params})).await.map(|_| ())
 }
 

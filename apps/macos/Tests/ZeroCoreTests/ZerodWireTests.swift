@@ -23,6 +23,17 @@ private let recordings = ["codex-command", "codex-file-change", "claude-command"
     #expect(expected.items.isEmpty == false)
 }
 
+/// Swift's decoder skips keys it doesn't know, so a field zerod adds would pass the test above unseen: every key in
+/// zerod's conversations has to be one the Swift model declares.
+@Test(arguments: recordings) func theAppKnowsEveryFieldZerodSends(_ name: String) throws {
+    let data = try Data(contentsOf: wire.appendingPathComponent("\(name).conversation.json"))
+    let json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    // The model's own properties, by reflection, so the list can't drift from the code.
+    let known = Set(Swift.Mirror(reflecting: Conversation(id: "", provider: .codex, cwd: "")).children.compactMap(\.label))
+    #expect(Set(json.keys).subtracting(known).isEmpty, "zerod sends \(Set(json.keys).subtracting(known)) that the app doesn't read")
+    #expect(Set(json.keys) == known, "the app expects \(known.subtracting(json.keys)) that zerod no longer sends")
+}
+
 @Test func everyKindOfItemDecodes() throws {
     let json = """
     [{"id":"a","turn":null,"status":"running","kind":{"type":"tool","name":"Read","detail":"a.rs"}},
@@ -44,4 +55,17 @@ private let recordings = ["codex-command", "codex-file-change", "claude-command"
     let json = #"{"id":"x","turn":null,"status":"done","kind":{"type":"hologram","depth":3}}"#
     let item = try JSONDecoder().decode(ConversationItem.self, from: Data(json.utf8))
     #expect(item.kind == .notice(text: "An item Zero can't show yet (hologram)", error: false))
+}
+
+/// zerod's attention table (crates/zerod/tests/wire.rs): conversations in every state the bar shows, decoded here,
+/// with the attention zerod gives each. The app's dot must say the same.
+@Test func theAppsAttentionIsZerods() throws {
+    struct Case: Decodable { let name: String; let attention: Attention; let conversation: Conversation }
+    let cases = try JSONDecoder().decode([Case].self, from: Data(contentsOf: wire.appendingPathComponent("attention.json")))
+    #expect(cases.count == 9)
+    for c in cases { #expect(c.conversation.attention == c.attention, "\(c.name)") }
+    let question = try #require(cases.first { $0.name == "question" }?.conversation.questions.first)
+    #expect(question.fields.first?.options.map(\.label) == ["Redis", "Postgres"])
+    #expect(cases.first { $0.name == "limited" }?.conversation.usage?.resetsAt == 1793030000)
+    #expect(cases.first { $0.name == "failed" }?.conversation.failure?.kind == .signIn)
 }

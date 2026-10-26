@@ -10,17 +10,26 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+use tokio::time::Instant;
+
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::Child;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::core::Core;
-use crate::model::{Change, Conversation, Event, Provider};
+use crate::model::{Change, ChoiceKind, Conversation, Event, Item, ItemKind, ItemStatus, Permissions, Provider};
 use crate::{acp, claude, codex};
 
 /// How long a request waits for its answer. Turns run long, but the requests that wait answer at once.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// When a working session counts as stuck: no word from its agent, one command running, or the same command in a row.
+/// ponytail: fixed; a setting per project if a suite legitimately runs longer.
+const SILENT: Duration = Duration::from_secs(10 * 60);
+const LONG_COMMAND: Duration = Duration::from_secs(30 * 60);
+const REPEATS: usize = 5;
+const WATCH_EVERY: Duration = Duration::from_secs(15);
 
 /// The two ends of a runtime's stdio, and its process when there is one.
 pub struct Transport {
@@ -57,6 +66,9 @@ struct Inner {
     next: u64,
     /// Bumped by each attach, so the end of an old process doesn't take a resumed session offline.
     generation: u64,
+    /// When the runtime last said anything, and when each command still running started.
+    heard: Instant,
+    running: HashMap<String, Instant>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -64,6 +76,8 @@ struct Meta {
     id: String,
     provider: Provider,
     cwd: String,
+    #[serde(default)]
+    permissions: Permissions,
     /// The provider's conversation id when Zero chose it (Claude's `--session-id`), before the runtime said anything.
     thread: Option<String>,
 }
@@ -74,7 +88,8 @@ impl Session {
         let transcript = match dir {
             Some(dir) => {
                 std::fs::create_dir_all(&dir)?;
-                let meta = Meta { id: conversation.id.clone(), provider: conversation.provider, cwd: conversation.cwd.clone(), thread: conversation.thread.clone() };
+                let meta = Meta { id: conversation.id.clone(), provider: conversation.provider, cwd: conversation.cwd.clone(),
+                                  permissions: conversation.permissions, thread: conversation.thread.clone() };
                 std::fs::write(dir.join("meta.json"), serde_json::to_vec(&meta)?)?;
                 Some(append(&dir)?)
             }
@@ -88,6 +103,7 @@ impl Session {
         let meta: Meta = serde_json::from_slice(&std::fs::read(dir.join("meta.json"))?)?;
         let mut conversation = Conversation::new(&meta.id, meta.provider, &meta.cwd);
         conversation.thread = meta.thread;
+        conversation.permissions = meta.permissions;
         let mut core = Core::new(conversation);
         let mut lines = 0;
         if let Ok(file) = File::open(dir.join("transcript.jsonl")) {
@@ -107,6 +123,7 @@ impl Session {
     fn with(core: Core, transcript: Option<File>, events: broadcast::Sender<Event>, next: u64) -> Session {
         Session(Arc::new(Mutex::new(Inner {
             core, events, transcript, out: None, child: None, waiting: HashMap::new(), answered: HashSet::new(), next, generation: 0,
+            heard: Instant::now(), running: HashMap::new(),
         })))
     }
 
@@ -175,6 +192,16 @@ impl Session {
         Ok(())
     }
 
+    /// Answers an open question, every field of it, once.
+    pub async fn answer(&self, question: &str, answers: &crate::adapter::Answers) -> Result<(), String> {
+        let mut inner = self.lock();
+        if inner.answered.contains(question) { return Err(format!("{question} was already answered")) }
+        let line = inner.core.reply(question, answers)?;
+        inner.send(line)?;
+        inner.answered.insert(question.into());
+        Ok(())
+    }
+
     /// Ends the runtime's process; the session stays, offline, to be resumed.
     pub fn stop(&self) {
         let mut inner = self.lock();
@@ -208,8 +235,16 @@ impl Session {
             inner.out = Some(out);
             inner.child = child;
             inner.answered.clear();
+            inner.heard = Instant::now();
             inner.generation
         };
+        let watched = self.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(WATCH_EVERY).await;
+                if !watched.watch(generation) { break }
+            }
+        });
         tokio::spawn(async move {
             while let Some(message) = lines_out.recv().await {
                 let mut line = serde_json::to_vec(&message).unwrap_or_default();
@@ -231,11 +266,22 @@ impl Session {
     fn receive(&self, message: Value) {
         let mut inner = self.lock();
         inner.record(json!({"in": message}));
+        inner.heard = Instant::now();
         let effects = inner.core.receive(&message);
         for change in &effects.changes {
-            if let Change::Resolved { approval } = change { inner.answered.remove(approval); }
+            if let Change::Item { item } = change {
+                if item.status == ItemStatus::Running && matches!(item.kind, ItemKind::Command { .. }) { inner.running.entry(item.id.clone()).or_insert_with(Instant::now); }
+                else { inner.running.remove(&item.id); }
+            }
         }
+        for change in &effects.changes {
+            if let Change::Resolved { approval: id } | Change::Answered { question: id } = change { inner.answered.remove(id); }
+        }
+        let asked: Vec<_> = effects.changes.iter().filter_map(|c| match c { Change::Approval { approval } => Some(approval.clone()), _ => None }).collect();
         inner.broadcast(effects.changes);
+        if inner.core.conversation().permissions == Permissions::Unrestricted {
+            for approval in asked { inner.allow(&approval); }
+        }
         if let Some((id, outcome)) = inner.core.answers(&message) && let Some(waiter) = inner.waiting.remove(&id) {
             let _ = waiter.send(outcome);
         }
@@ -253,6 +299,31 @@ impl Session {
         inner.record(json!({"offline": true}));
         let changes = inner.core.offline();
         inner.broadcast(changes);
+    }
+
+    /// Looks for a working session that has stopped making progress, and marks or clears it. False once the
+    /// process it watched is gone.
+    fn watch(&self, generation: u64) -> bool {
+        let mut inner = self.lock();
+        if inner.generation != generation || inner.out.is_none() { return false }
+        let conversation = inner.core.conversation();
+        let reason = if conversation.status != crate::model::Status::Working { None } else {
+            let longest = inner.running.iter().filter_map(|(id, started)| {
+                let elapsed = started.elapsed();
+                let command = match conversation.item(id).map(|i| &i.kind) { Some(ItemKind::Command { command, .. }) => command.clone(), _ => return None };
+                (elapsed >= LONG_COMMAND).then(|| format!("{command} has been running for {} minutes", elapsed.as_secs() / 60))
+            }).next();
+            let commands: Vec<&str> = conversation.items.iter().rev().take_while(|i| i.turn == conversation.turn || conversation.turn.is_none())
+                .filter_map(|i| match &i.kind { ItemKind::Command { command, .. } => Some(command.as_str()), _ => None }).take(REPEATS).collect();
+            let repeated = (commands.len() == REPEATS && commands.iter().all(|c| *c == commands[0])).then(|| format!("Ran {} {REPEATS} times in a row", commands[0]));
+            let silent = (inner.heard.elapsed() >= SILENT).then(|| format!("No word from {} for {} minutes", conversation.provider.title(), SILENT.as_secs() / 60));
+            longest.or(repeated).or(silent)
+        };
+        if reason != conversation.stalled {
+            let change = inner.core.change(Change::Stalled { reason });
+            inner.broadcast(vec![change]);
+        }
+        true
     }
 
     // What the providers' flows use to talk to their runtime.
@@ -299,6 +370,20 @@ impl Session {
 }
 
 impl Inner {
+    /// An unrestricted session's agent asked anyway (OpenCode can't be told per session): allowed once, never
+    /// "always", so no rule outlives the session, and noted in the conversation.
+    fn allow(&mut self, approval: &crate::model::Approval) {
+        let Some(choice) = [ChoiceKind::Allow, ChoiceKind::AllowSession].iter().find_map(|kind| approval.choices.iter().find(|c| c.kind == *kind)) else { return };
+        let Ok(line) = self.core.answer(&approval.id, &choice.id) else { return };
+        if self.send(line).is_err() { return }
+        self.answered.insert(approval.id.clone());
+        let conversation = self.core.conversation();
+        let item = Item { id: format!("notice-{}", conversation.seq + 1), turn: conversation.turn.clone(),
+                          kind: ItemKind::Notice { text: format!("Allowed without asking: {}", approval.title), error: false }, status: ItemStatus::Done };
+        let change = self.core.change(Change::Item { item });
+        self.broadcast(vec![change]);
+    }
+
     fn fresh_id(&mut self) -> String {
         let id = format!("z{}", self.next);
         self.next += 1;

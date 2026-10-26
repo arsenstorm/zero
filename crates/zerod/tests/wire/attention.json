@@ -1,0 +1,281 @@
+[
+  {
+    "attention": "starting",
+    "conversation": {
+      "approvals": [],
+      "cwd": "/w",
+      "diff": null,
+      "effort": null,
+      "error": null,
+      "failure": null,
+      "id": "s1",
+      "items": [],
+      "model": null,
+      "permissions": "auto",
+      "provider": "codex",
+      "questions": [],
+      "seq": 0,
+      "stalled": null,
+      "status": "starting",
+      "thread": null,
+      "title": null,
+      "turn": null,
+      "usage": null
+    },
+    "name": "starting"
+  },
+  {
+    "attention": "idle",
+    "conversation": {
+      "approvals": [],
+      "cwd": "/work/project",
+      "diff": null,
+      "effort": null,
+      "error": null,
+      "failure": null,
+      "id": "s1",
+      "items": [],
+      "model": null,
+      "permissions": "auto",
+      "provider": "claude",
+      "questions": [],
+      "seq": 0,
+      "stalled": null,
+      "status": "idle",
+      "thread": null,
+      "title": null,
+      "turn": null,
+      "usage": null
+    },
+    "name": "idle"
+  },
+  {
+    "attention": "done",
+    "conversation": {
+      "approvals": [],
+      "cwd": "/work/project",
+      "diff": null,
+      "effort": null,
+      "error": null,
+      "failure": null,
+      "id": "s1",
+      "items": [
+        {
+          "id": "a",
+          "kind": {
+            "finalAnswer": true,
+            "text": "Done.",
+            "type": "agent"
+          },
+          "status": "done",
+          "turn": null
+        }
+      ],
+      "model": null,
+      "permissions": "auto",
+      "provider": "claude",
+      "questions": [],
+      "seq": 0,
+      "stalled": null,
+      "status": "idle",
+      "thread": null,
+      "title": null,
+      "turn": null,
+      "usage": null
+    },
+    "name": "done"
+  },
+  {
+    "attention": "working",
+    "conversation": {
+      "approvals": [],
+      "cwd": "/work/project",
+      "diff": null,
+      "effort": null,
+      "error": null,
+      "failure": null,
+      "id": "s1",
+      "items": [],
+      "model": null,
+      "permissions": "auto",
+      "provider": "claude",
+      "questions": [],
+      "seq": 0,
+      "stalled": null,
+      "status": "working",
+      "thread": null,
+      "title": null,
+      "turn": "u",
+      "usage": null
+    },
+    "name": "working"
+  },
+  {
+    "attention": "stuck",
+    "conversation": {
+      "approvals": [],
+      "cwd": "/work/project",
+      "diff": null,
+      "effort": null,
+      "error": null,
+      "failure": null,
+      "id": "s1",
+      "items": [],
+      "model": null,
+      "permissions": "auto",
+      "provider": "claude",
+      "questions": [],
+      "seq": 0,
+      "stalled": "No word from Claude Code for 10 minutes",
+      "status": "working",
+      "thread": null,
+      "title": null,
+      "turn": "u",
+      "usage": null
+    },
+    "name": "stuck"
+  },
+  {
+    "attention": "failed",
+    "conversation": {
+      "approvals": [],
+      "cwd": "/work/project",
+      "diff": null,
+      "effort": null,
+      "error": "Not logged in",
+      "failure": {
+        "kind": "signIn",
+        "message": "Not logged in"
+      },
+      "id": "s1",
+      "items": [],
+      "model": null,
+      "permissions": "auto",
+      "provider": "claude",
+      "questions": [],
+      "seq": 0,
+      "stalled": null,
+      "status": "idle",
+      "thread": null,
+      "title": null,
+      "turn": null,
+      "usage": null
+    },
+    "name": "failed"
+  },
+  {
+    "attention": "limited",
+    "conversation": {
+      "approvals": [],
+      "cwd": "/work/project",
+      "diff": null,
+      "effort": null,
+      "error": null,
+      "failure": null,
+      "id": "s1",
+      "items": [],
+      "model": null,
+      "permissions": "auto",
+      "provider": "claude",
+      "questions": [],
+      "seq": 0,
+      "stalled": null,
+      "status": "idle",
+      "thread": null,
+      "title": null,
+      "turn": null,
+      "usage": {
+        "limited": true,
+        "resetsAt": 1793030000,
+        "windows": [
+          {
+            "name": "5 hours",
+            "resetsAt": 1793030000,
+            "used": 1.0
+          },
+          {
+            "name": "7 days",
+            "resetsAt": null,
+            "used": 0.4
+          }
+        ]
+      }
+    },
+    "name": "limited"
+  },
+  {
+    "attention": "needsYou",
+    "conversation": {
+      "approvals": [],
+      "cwd": "/work/project",
+      "diff": null,
+      "effort": null,
+      "error": null,
+      "failure": null,
+      "id": "s1",
+      "items": [],
+      "model": null,
+      "permissions": "auto",
+      "provider": "claude",
+      "questions": [
+        {
+          "fields": [
+            {
+              "header": "Cache",
+              "id": "0",
+              "multiple": false,
+              "options": [
+                {
+                  "description": "in the stack",
+                  "label": "Redis"
+                },
+                {
+                  "description": null,
+                  "label": "Postgres"
+                }
+              ],
+              "other": true,
+              "question": "Redis or Postgres?",
+              "secret": false
+            }
+          ],
+          "id": "q1",
+          "item": "t1"
+        }
+      ],
+      "seq": 0,
+      "stalled": null,
+      "status": "waiting",
+      "thread": null,
+      "title": null,
+      "turn": "u",
+      "usage": null
+    },
+    "name": "question"
+  },
+  {
+    "attention": "offline",
+    "conversation": {
+      "approvals": [],
+      "cwd": "/work/project",
+      "diff": null,
+      "effort": null,
+      "error": null,
+      "failure": null,
+      "id": "s1",
+      "items": [],
+      "model": null,
+      "permissions": "auto",
+      "provider": "claude",
+      "questions": [],
+      "seq": 0,
+      "stalled": null,
+      "status": "offline",
+      "thread": null,
+      "title": null,
+      "turn": null,
+      "usage": null
+    },
+    "name": "offline"
+  }
+]

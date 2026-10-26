@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
 use crate::claude;
-use crate::model::{Conversation, Event, Provider, Status};
+use crate::model::{Conversation, Event, Permissions, Provider, Status};
 use crate::process;
 use crate::session::{Session, Transport};
 
@@ -70,13 +70,14 @@ impl Daemon {
     }
 
     /// Starts a session in `cwd` with `prompt` as its first turn; returns its id at once, while the runtime starts.
-    pub fn start(&self, provider: Provider, cwd: &str, prompt: &str, model: Option<&str>, effort: Option<&str>) -> Result<String, String> {
+    pub fn start(&self, provider: Provider, cwd: &str, prompt: &str, model: Option<&str>, effort: Option<&str>, permissions: Permissions) -> Result<String, String> {
         let folder = Path::new(cwd);
         if !folder.is_absolute() || !folder.is_dir() { return Err(format!("{cwd} isn't a folder")) }
         if prompt.trim().is_empty() { return Err("A session starts with something to do".into()) }
         let id = new_id();
         let dir = self.home.join("sessions").join(&id);
         let mut conversation = Conversation::new(&id, provider, cwd);
+        conversation.permissions = permissions;
         // Claude takes its conversation's id from Zero, so the session can be resumed even if it never answered.
         if provider == Provider::Claude { conversation.thread = Some(claude::new_session_id()) }
         let session = Session::new(conversation.clone(), Some(dir.clone()), self.events.clone()).map_err(|e| e.to_string())?;
@@ -124,6 +125,10 @@ impl Daemon {
 
     pub async fn decide(&self, id: &str, approval: &str, choice: &str) -> Result<(), String> {
         self.session(id)?.decide(approval, choice).await
+    }
+
+    pub async fn answer(&self, id: &str, question: &str, answers: &crate::adapter::Answers) -> Result<(), String> {
+        self.session(id)?.answer(question, answers).await
     }
 
     pub fn stop(&self, id: &str) -> Result<(), String> {

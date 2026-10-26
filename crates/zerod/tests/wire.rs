@@ -6,7 +6,7 @@
 mod common;
 
 use common::replay;
-use zerod::model::{Event, Provider};
+use zerod::model::{Attention, Conversation, Event, Failure, FailureKind, Field, Item, ItemKind, ItemStatus, Provider, Question, QuestionOption, Status, Usage, UsageWindow};
 
 const RECORDINGS: [(Provider, &str); 9] = [
     (Provider::Codex, "codex-command"), (Provider::Codex, "codex-file-change"),
@@ -33,4 +33,41 @@ fn the_events_and_conversations_the_apps_decode_are_what_zerod_sends() {
         assert_eq!(std::fs::read_to_string(&events_file).unwrap_or_default(), events, "{name}: the events changed; rerun with ZERO_WIRE_UPDATE=1 if that's intended");
         assert_eq!(std::fs::read_to_string(&conversation_file).unwrap_or_default(), conversation, "{name}: the conversation changed");
     }
+}
+
+/// Conversations in every state the bar shows, and the attention zerod gives each: the Swift app must agree. They
+/// carry what no recording has yet (questions, limits, failures, stalls), so the app decodes those too.
+#[test]
+fn the_apps_attention_is_zerods() {
+    let base = || {
+        let mut c = Conversation::new("s1", Provider::Claude, "/work/project");
+        c.status = Status::Idle;
+        c
+    };
+    let answer = Item { id: "a".into(), turn: None, kind: ItemKind::Agent { text: "Done.".into(), final_answer: true }, status: ItemStatus::Done };
+    let question = Question { id: "q1".into(), item: Some("t1".into()), fields: vec![Field {
+        id: "0".into(), header: Some("Cache".into()), question: "Redis or Postgres?".into(),
+        options: vec![QuestionOption { label: "Redis".into(), description: Some("in the stack".into()) }, QuestionOption { label: "Postgres".into(), description: None }],
+        multiple: false, other: true, secret: false }] };
+    let mut cases: Vec<(&str, Conversation)> = vec![("starting", Conversation::new("s1", Provider::Codex, "/w"))];
+    cases.push(("idle", base()));
+    let mut done = base(); done.items.push(answer.clone()); cases.push(("done", done));
+    let mut working = base(); working.status = Status::Working; working.turn = Some("u".into()); cases.push(("working", working.clone()));
+    let mut stuck = working.clone(); stuck.stalled = Some("No word from Claude Code for 10 minutes".into()); cases.push(("stuck", stuck));
+    let mut failed = base(); failed.error = Some("Not logged in".into());
+    failed.failure = Some(Failure { kind: FailureKind::SignIn, message: "Not logged in".into() }); cases.push(("failed", failed));
+    let mut limited = base(); limited.usage = Some(Usage { limited: true, resets_at: Some(1793030000), windows: vec![
+        UsageWindow { name: "5 hours".into(), used: 1.0, resets_at: Some(1793030000) }, UsageWindow { name: "7 days".into(), used: 0.4, resets_at: None }] });
+    cases.push(("limited", limited));
+    let mut asking = working.clone(); asking.status = Status::Waiting; asking.questions.push(question); cases.push(("question", asking));
+    let mut offline = base(); offline.status = Status::Offline; cases.push(("offline", offline));
+    let table: Vec<serde_json::Value> = cases.into_iter()
+        .map(|(name, c)| serde_json::json!({"name": name, "attention": c.attention(), "conversation": c})).collect();
+    let attention: Vec<Attention> = table.iter().map(|case| serde_json::from_value(case["attention"].clone()).unwrap()).collect();
+    assert_eq!(attention, [Attention::Starting, Attention::Idle, Attention::Done, Attention::Working, Attention::Stuck, Attention::Failed,
+                           Attention::Limited, Attention::NeedsYou, Attention::Offline]);
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wire/attention.json");
+    let text = serde_json::to_string_pretty(&table).unwrap() + "\n";
+    if std::env::var("ZERO_WIRE_UPDATE").as_deref() == Ok("1") { std::fs::write(&file, &text).unwrap() }
+    assert_eq!(std::fs::read_to_string(&file).unwrap_or_default(), text, "the attention table changed; rerun with ZERO_WIRE_UPDATE=1 if that's intended");
 }

@@ -2,6 +2,7 @@
   "id": "s1",
   "provider": "opencode",
   "cwd": "/work/project",
+  "permissions": "auto",
   "thread": "ses_e87e905acffea7xylYWZpKfuFt",
   "title": null,
   "model": "opencode/beam-free",
@@ -31,6 +32,13 @@
     }
   ],
   "approvals": [],
+  "questions": [],
+  "usage": null,
+  "failure": {
+    "kind": "other",
+    "message": "Internal error: Upstream request failed: Free models may train on request data. Allow free endpoints in your workspace's Privacy settings to use them."
+  },
+  "stalled": null,
   "diff": null,
-  "seq": 7
+  "seq": 8
 }

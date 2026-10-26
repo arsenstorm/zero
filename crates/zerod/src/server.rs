@@ -15,7 +15,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::daemon::Daemon;
-use crate::model::Provider;
+use crate::model::{Permissions, Provider};
 
 pub const VERSION: u64 = 1;
 
@@ -24,6 +24,7 @@ struct Request {
     id: Option<Value>,
     op: String,
     provider: Option<Provider>,
+    permissions: Option<Permissions>,
     session: Option<String>,
     cwd: Option<String>,
     prompt: Option<String>,
@@ -32,6 +33,8 @@ struct Request {
     effort: Option<String>,
     approval: Option<String>,
     choice: Option<String>,
+    question: Option<String>,
+    answers: Option<crate::adapter::Answers>,
 }
 
 /// Serves until the listener fails. The socket is the owner's only: whoever can write to it runs agents.
@@ -99,7 +102,7 @@ async fn handle(daemon: &Daemon, request: Request) -> Result<Value, String> {
         "start" => {
             let provider = request.provider.ok_or("Start needs a provider: codex, claude or opencode")?;
             let cwd = request.cwd.as_deref().ok_or("Start needs a folder")?;
-            let id = daemon.start(provider, cwd, request.prompt.as_deref().unwrap_or(""), model, effort)?;
+            let id = daemon.start(provider, cwd, request.prompt.as_deref().unwrap_or(""), model, effort, request.permissions.unwrap_or_default())?;
             Ok(json!({"session": id}))
         }
         "send" => daemon.send(&session()?, request.text.as_deref().ok_or("Send needs text")?, model, effort).await.map(|_| Value::Null),
@@ -110,6 +113,11 @@ async fn handle(daemon: &Daemon, request: Request) -> Result<Value, String> {
             let approval = request.approval.as_deref().ok_or("Which approval?")?;
             let choice = request.choice.as_deref().ok_or("Which choice?")?;
             daemon.decide(&session()?, approval, choice).await.map(|_| Value::Null)
+        }
+        "answer" => {
+            let question = request.question.as_deref().ok_or("Which question?")?;
+            let answers = request.answers.as_ref().ok_or("Answer with answers")?;
+            daemon.answer(&session()?, question, answers).await.map(|_| Value::Null)
         }
         other => Err(format!("Unknown op {other}")),
     }

@@ -2,6 +2,7 @@
   "id": "s1",
   "provider": "opencode",
   "cwd": "/work/project",
+  "permissions": "auto",
   "thread": "ses_e87e7ec6effeexsrna6EOV0doq",
   "title": null,
   "model": "opencode-go/beam-free",
@@ -65,6 +66,10 @@
     }
   ],
   "approvals": [],
+  "questions": [],
+  "usage": null,
+  "failure": null,
+  "stalled": null,
   "diff": null,
   "seq": 16
 }

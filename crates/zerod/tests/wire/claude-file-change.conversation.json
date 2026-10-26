@@ -2,6 +2,7 @@
   "id": "s1",
   "provider": "claude",
   "cwd": "/work/project",
+  "permissions": "auto",
   "thread": "57bae2a9-7b1c-48e5-9292-4004afb98a76",
   "title": null,
   "model": "claude-haiku-5-5",
@@ -47,6 +48,25 @@
     }
   ],
   "approvals": [],
+  "questions": [],
+  "usage": {
+    "limited": false,
+    "resetsAt": null,
+    "windows": [
+      {
+        "name": "5 hours",
+        "used": 0.18,
+        "resetsAt": 1793026800
+      },
+      {
+        "name": "7 days",
+        "used": 0.05,
+        "resetsAt": 1793613600
+      }
+    ]
+  },
+  "failure": null,
+  "stalled": null,
   "diff": null,
-  "seq": 14
+  "seq": 15
 }

@@ -16,6 +16,10 @@ public enum Provider: String, Codable, Sendable, CaseIterable {
     }
 }
 
+/// How freely an agent acts: auto lets the provider's own judgement decide what is safe (Claude's classifier, Codex's
+/// sandbox) and brings Arsen the rest; unrestricted lets it do anything without asking.
+public enum Permissions: String, Codable, Sendable, CaseIterable { case auto, unrestricted }
+
 public enum SessionStatus: String, Decodable, Sendable { case starting, idle, working, waiting, offline }
 
 public enum ItemStatus: String, Decodable, Sendable { case running, done, failed, declined }
@@ -108,10 +112,64 @@ public struct Approval: Decodable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// The agent asking Arsen something: one or more fields answered together.
+public struct Question: Decodable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var item: String?
+    public var fields: [Field]
+    public init(id: String, item: String?, fields: [Field]) { self.id = id; self.item = item; self.fields = fields }
+}
+
+public struct Field: Decodable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var header: String?
+    public var question: String
+    public var options: [QuestionOption]
+    public var multiple: Bool
+    /// Arsen's own words are taken too.
+    public var other: Bool
+    /// Shown as dots, and never kept in Zero's log.
+    public var secret: Bool
+    public init(id: String, header: String?, question: String, options: [QuestionOption], multiple: Bool, other: Bool, secret: Bool) {
+        self.id = id; self.header = header; self.question = question; self.options = options; self.multiple = multiple; self.other = other; self.secret = secret
+    }
+}
+
+public struct QuestionOption: Decodable, Equatable, Sendable {
+    public var label: String
+    public var description: String?
+    public init(label: String, description: String?) { self.label = label; self.description = description }
+}
+
+public struct UsageWindow: Decodable, Equatable, Sendable {
+    public var name: String
+    /// The share used, 0 to 1.
+    public var used: Double
+    public var resetsAt: Int?
+}
+
+public struct Usage: Decodable, Equatable, Sendable {
+    public var limited: Bool
+    /// Unix seconds.
+    public var resetsAt: Int?
+    public var windows: [UsageWindow]
+}
+
+public enum FailureKind: String, Decodable, Sendable { case limit, signIn, network, model, other }
+
+public struct Failure: Decodable, Equatable, Sendable {
+    public var kind: FailureKind
+    public var message: String
+}
+
+/// What a session needs from Arsen, most urgent first: the bar's dot (zerod's `Conversation::attention`).
+public enum Attention: String, Decodable, Sendable { case needsYou, limited, stuck, failed, working, done, idle, offline, starting }
+
 public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
     public var id: String
     public var provider: Provider
     public var cwd: String
+    public var permissions: Permissions
     /// The provider's own id for the conversation, once it has one.
     public var thread: String?
     public var title: String?
@@ -122,16 +180,37 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
     public var error: String?
     public var items: [ConversationItem]
     public var approvals: [Approval]
+    public var questions: [Question]
+    public var usage: Usage?
+    public var failure: Failure?
+    /// Why it looks stuck, while it does.
+    public var stalled: String?
     /// The unified diff of everything the latest turn changed.
     public var diff: String?
     /// How many changes have been applied; the next change zerod sends for this session is `seq + 1`.
     public var seq: UInt64
 
     public init(id: String, provider: Provider, cwd: String) {
-        self.id = id; self.provider = provider; self.cwd = cwd; status = .starting; items = []; approvals = []; seq = 0
+        self.id = id; self.provider = provider; self.cwd = cwd; permissions = .auto; status = .starting; items = []; approvals = []; questions = []; seq = 0
     }
 
     public func item(_ id: String) -> ConversationItem? { items.first { $0.id == id } }
+
+    /// What zerod's `Conversation::attention` says, step for step.
+    public var attention: Attention {
+        if !approvals.isEmpty || !questions.isEmpty { return .needsYou }
+        if usage?.limited == true || failure?.kind == .limit { return .limited }
+        if stalled != nil { return .stuck }
+        if failure != nil { return .failed }
+        switch status {
+        case .working, .waiting: return .working
+        case .starting: return .starting
+        case .offline: return .offline
+        case .idle:
+            if case .agent(_, true)? = items.last?.kind { return .done }
+            return .idle
+        }
+    }
 
     /// What zerod's `Conversation::apply` does, step for step.
     public mutating func apply(_ change: Change) {
@@ -162,6 +241,13 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
             approvals.removeAll { $0.id == approval.id }
             approvals.append(approval)
         case let .resolved(id): approvals.removeAll { $0.id == id }
+        case let .question(question):
+            questions.removeAll { $0.id == question.id }
+            questions.append(question)
+        case let .answered(id): questions.removeAll { $0.id == id }
+        case let .usage(usage): self.usage = usage
+        case let .failed(failure): self.failure = failure
+        case let .stalled(reason): stalled = reason
         case let .diff(diff): self.diff = diff
         }
     }
@@ -175,9 +261,14 @@ public enum Change: Decodable, Equatable, Sendable {
     case delta(item: String, text: String)
     case approval(Approval)
     case resolved(String)
+    case question(Question)
+    case answered(String)
+    case usage(Usage)
+    case failed(Failure?)
+    case stalled(String?)
     case diff(String?)
 
-    private enum Keys: String, CodingKey { case type, thread, model, effort, title, status, turn, error, item, text, approval, diff }
+    private enum Keys: String, CodingKey { case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -191,6 +282,11 @@ public enum Change: Decodable, Equatable, Sendable {
         case "delta": self = .delta(item: try c.decode(String.self, forKey: .item), text: try c.decode(String.self, forKey: .text))
         case "approval": self = .approval(try c.decode(Approval.self, forKey: .approval))
         case "resolved": self = .resolved(try c.decode(String.self, forKey: .approval))
+        case "question": self = .question(try c.decode(Question.self, forKey: .question))
+        case "answered": self = .answered(try c.decode(String.self, forKey: .question))
+        case "usage": self = .usage(try c.decode(Usage.self, forKey: .usage))
+        case "failed": self = .failed(try c.decodeIfPresent(Failure.self, forKey: .failure))
+        case "stalled": self = .stalled(try c.decodeIfPresent(String.self, forKey: .reason))
         case "diff": self = .diff(try c.decodeIfPresent(String.self, forKey: .diff))
         case let other: throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "Unknown change \(other)")
         }
@@ -291,8 +387,10 @@ public final class ZerodLink: @unchecked Sendable {
     public func get(_ session: String) async throws -> Conversation { try decode(Conversation.self, from: await call("get", ["session": session])) }
 
     /// Starts a session and returns its id at once, while the provider starts.
-    public func start(provider: Provider, cwd: String, prompt: String, model: String? = nil, effort: String? = nil) async throws -> String {
-        let result = try await call("start", ["provider": provider.rawValue, "cwd": cwd, "prompt": prompt, "model": model, "effort": effort])
+    public func start(provider: Provider, cwd: String, prompt: String, model: String? = nil, effort: String? = nil,
+                      permissions: Permissions = .auto) async throws -> String {
+        let result = try await call("start", ["provider": provider.rawValue, "cwd": cwd, "prompt": prompt, "model": model, "effort": effort,
+                                              "permissions": permissions.rawValue])
         guard let session = (result as? [String: Any])?["session"] as? String else { throw ZerodError(message: "zerod started no session") }
         return session
     }
@@ -307,6 +405,11 @@ public final class ZerodLink: @unchecked Sendable {
 
     public func decide(session: String, approval: String, choice: String) async throws {
         _ = try await call("decide", ["session": session, "approval": approval, "choice": choice])
+    }
+
+    /// Answers an open question, every field at once: picked options, or Arsen's own words.
+    public func answer(session: String, question: String, answers: [String: [String]]) async throws {
+        _ = try await call("answer", ["session": session, "question": question, "answers": answers])
     }
 
     /// From now on `onMessage` gets every session's snapshot, then each change.

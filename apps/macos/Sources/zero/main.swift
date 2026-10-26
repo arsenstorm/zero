@@ -86,6 +86,8 @@ func agentIdentity() -> AgentIdentity {
     if let block = env["REX_BLOCK"] { identity.runtime = "rex"; identity.ref = block; identity.refGroup = env["REX_SESSION"] }
     // Inside one of Zero's own terminals: Zero reaches the agent through zero-host.
     if let terminal = env["ZERO_HOST_TERMINAL"] { identity.runtime = "zero"; identity.ref = terminal }
+    // A session zerod runs: its notes, asks and runs join that session's approvals in the inbox.
+    if let session = env["ZERO_SESSION"] { identity.runtime = "zerod"; identity.ref = session }
     return identity
 }
 

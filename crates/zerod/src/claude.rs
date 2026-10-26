@@ -7,9 +7,11 @@ use std::collections::HashMap;
 
 use serde_json::{Value, json};
 
-use crate::adapter::{Adapter, Effects, after_approval, login_shell};
+use crate::adapter::{Adapter, Answers, Effects, after_approval, login_shell};
 use crate::codex::file_title;
-use crate::model::{Approval, ApprovalKind, Change, Choice, ChoiceKind, Conversation, FileChange, Item, ItemKind, ItemStatus, Status};
+use crate::adapter::INSTRUCTIONS;
+use crate::model::{Approval, ApprovalKind, Change, Choice, ChoiceKind, Conversation, Field, FileChange, Item, ItemKind, ItemStatus, Permissions, Question,
+                   QuestionOption, Status};
 use crate::session::{Session, Transport};
 
 #[derive(Default)]
@@ -30,7 +32,9 @@ pub struct Claude {
 
 pub fn command(conversation: &Conversation, resume: bool, model: Option<&str>, effort: Option<&str>) -> Vec<String> {
     let mut args = vec!["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-                        "--include-partial-messages", "--permission-prompt-tool", "stdio"];
+                        "--include-partial-messages", "--permission-prompt-tool", "stdio", "--permission-mode",
+                        match conversation.permissions { Permissions::Auto => "auto", Permissions::Unrestricted => "bypassPermissions" },
+                        "--append-system-prompt", INSTRUCTIONS];
     if let Some(thread) = conversation.thread.as_deref() { args.extend([if resume { "--resume" } else { "--session-id" }, thread]) }
     if let Some(model) = model { args.extend(["--model", model]) }
     if let Some(effort) = effort { args.extend(["--effort", effort]) }
@@ -67,7 +71,8 @@ impl Adapter for Claude {
             Some("control_response") => {
                 let id = message["response"]["request_id"].as_str().unwrap_or("");
                 if self.requests.remove(id).is_none() { return vec![] }
-                vec![Change::Resolved { approval: id.into() }, after_approval(conversation, id)]
+                let settled = if conversation.questions.iter().any(|q| q.id == id) { Change::Answered { question: id.into() } } else { Change::Resolved { approval: id.into() } };
+                vec![settled, after_approval(conversation, id)]
             }
             _ => vec![],
         }
@@ -76,6 +81,15 @@ impl Adapter for Claude {
     fn receive(&mut self, conversation: &Conversation, message: &Value) -> Effects {
         let mut effects = Effects::default();
         match message["type"].as_str() {
+            // Auto mode's classifier refused a tool call: what Arsen would have to allow or do himself.
+            Some("system") if message["subtype"] == "permission_denied" => {
+                if let Some(mut item) = message["tool_use_id"].as_str().and_then(|id| conversation.item(id)).cloned() {
+                    item.status = ItemStatus::Declined;
+                    effects.changes.push(Change::Item { item });
+                }
+                let reason = message["message"].as_str().unwrap_or("Claude's permission check refused it");
+                effects.notice(conversation, &format!("Blocked: {reason}"), true);
+            }
             Some("system") if message["subtype"] == "init" => {
                 if let Some(thread) = message["session_id"].as_str() {
                     effects.changes.push(Change::Thread { thread: thread.into(), model: message["model"].as_str().map(Into::into), effort: None });
@@ -88,11 +102,13 @@ impl Adapter for Claude {
             Some("control_cancel_request") => {
                 let id = message["request_id"].as_str().unwrap_or("");
                 if self.requests.remove(id).is_some() {
-                    effects.changes.push(Change::Resolved { approval: id.into() });
+                    let settled = if conversation.questions.iter().any(|q| q.id == id) { Change::Answered { question: id.into() } } else { Change::Resolved { approval: id.into() } };
+                    effects.changes.push(settled);
                     effects.changes.push(after_approval(conversation, id));
                 }
             }
             Some("result") => self.result(conversation, message, &mut effects),
+            Some("rate_limit_event") => effects.changes.push(Change::Usage { usage: usage(&message["rate_limit_info"]) }),
             // Status lines, thinking-token counts, rate limits: kept in the transcript, not shown.
             _ => {}
         }
@@ -119,6 +135,14 @@ impl Adapter for Claude {
             other => return Err(format!("No choice {other}")),
         };
         Ok(json!({"type": "control_response", "response": {"subtype": "success", "request_id": approval.id, "response": response}}))
+    }
+
+    fn reply(&self, question: &Question, answers: &Answers) -> Result<Value, String> {
+        let (input, _) = self.requests.get(&question.id).ok_or("Claude isn't waiting on that question any more")?;
+        // AskUserQuestion's answers ride back in its input, keyed by each question's text; several picks, comma-joined.
+        let mut input = input.clone();
+        input["answers"] = question.fields.iter().map(|field| (field.question.clone(), Value::String(answers[&field.id].join(", ")))).collect::<serde_json::Map<_, _>>().into();
+        Ok(json!({"type": "control_response", "response": {"subtype": "success", "request_id": question.id, "response": {"behavior": "allow", "updatedInput": input}}}))
     }
 
     fn ended(&mut self) {
@@ -188,6 +212,24 @@ impl Claude {
             return;
         }
         let (name, input) = (request["tool_name"].as_str().unwrap_or("a tool"), &request["input"]);
+        if name == "AskUserQuestion" {
+            let fields = input["questions"].as_array().cloned().unwrap_or_default().iter().enumerate().map(|(i, q)| Field {
+                id: i.to_string(),
+                header: q["header"].as_str().map(String::from),
+                question: q["question"].as_str().unwrap_or("").into(),
+                options: q["options"].as_array().cloned().unwrap_or_default().iter().map(|o| QuestionOption {
+                    label: o["label"].as_str().unwrap_or("").into(),
+                    description: o["description"].as_str().filter(|d| !d.is_empty()).map(String::from),
+                }).collect(),
+                multiple: q["multiSelect"] == true,
+                other: true,
+                secret: false,
+            }).collect();
+            self.requests.insert(id.clone(), (input.clone(), Value::Null));
+            effects.changes.push(Change::Question { question: Question { id, item: request["tool_use_id"].as_str().map(Into::into), fields } });
+            effects.changes.push(Change::Status { status: Status::Waiting, turn: conversation.turn.clone(), error: conversation.error.clone() });
+            return;
+        }
         let reason = request["description"].as_str().or(input["description"].as_str()).map(String::from);
         let (kind, title, command, cwd, changes) = match tool(conversation, &request["tool_name"], input) {
             ItemKind::Command { command, cwd, .. } => (ApprovalKind::Command, format!("Run {command}"), Some(command), Some(cwd), vec![]),
@@ -298,6 +340,17 @@ fn remember(suggestions: &Value) -> Option<Choice> {
         return Some(Choice { id: "session".into(), label: "Allow all edits this session".into(), kind: ChoiceKind::AllowSession });
     }
     Some(Choice { id: "always".into(), label: "Always allow".into(), kind: ChoiceKind::AllowAlways })
+}
+
+/// Claude's own report of the account's limits: a status, and the use of each window.
+fn usage(info: &Value) -> crate::model::Usage {
+    let limited = info["status"] == "rejected";
+    let windows = info["unifiedWindows"].as_object().map(|windows| windows.iter().map(|(key, window)| crate::model::UsageWindow {
+        name: match key.as_str() { "five_hour" => "5 hours".into(), "seven_day" => "7 days".into(), other => other.replace('_', " ") },
+        used: window["utilization"].as_f64().unwrap_or(0.0),
+        resets_at: window["resetsAt"].as_i64(),
+    }).collect()).unwrap_or_default();
+    crate::model::Usage { limited, resets_at: if limited { info["resetsAt"].as_i64() } else { None }, windows }
 }
 
 fn text(content: &Value) -> String {

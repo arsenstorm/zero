@@ -108,10 +108,10 @@ fn streamed_deltas_build_the_text_before_the_item_completes() {
 #[test]
 fn a_request_zero_cannot_answer_yet_is_refused_with_a_notice() {
     let mut core = core();
-    let effects = core.receive(&json!({"id": 7, "method": "item/tool/requestUserInput", "params": {"itemId": "x"}}));
+    let effects = core.receive(&json!({"id": 7, "method": "mcpServer/elicitation/request", "params": {"itemId": "x"}}));
     assert_eq!(effects.replies[0]["id"], json!(7));
-    assert!(effects.replies[0]["error"]["message"].as_str().unwrap().contains("item/tool/requestUserInput"));
-    assert!(matches!(&core.conversation().items[0].kind, ItemKind::Notice { text, error: true } if text.contains("item/tool/requestUserInput")));
+    assert!(effects.replies[0]["error"]["message"].as_str().unwrap().contains("mcpServer/elicitation/request"));
+    assert!(matches!(&core.conversation().items[0].kind, ItemKind::Notice { text, error: true } if text.contains("mcpServer/elicitation/request")));
 }
 
 #[test]
@@ -131,4 +131,21 @@ fn an_error_answer_to_zeros_request_becomes_a_notice() {
     let mut core = core();
     core.receive(&json!({"id": "z3", "error": {"code": -32600, "message": "thread not found"}}));
     assert_eq!(core.conversation().error.as_deref(), Some("turn/start failed: thread not found"));
+}
+
+#[test]
+fn codexs_request_for_input_is_a_question_answered_by_question_id() {
+    let mut core = core();
+    core.receive(&json!({"id": 11, "method": "item/tool/requestUserInput", "params": {"threadId": "t", "turnId": "u", "itemId": "i1", "isBlocking": true,
+        "questions": [{"id": "env", "header": "Target", "question": "Deploy where?", "isOther": true, "isSecret": false,
+                       "options": [{"label": "Staging", "description": "safe"}, {"label": "Production", "description": "careful"}]},
+                      {"id": "token", "header": "Token", "question": "Paste the deploy token", "isOther": true, "isSecret": true, "options": null}]}}));
+    let question = core.conversation().questions[0].clone();
+    assert_eq!(question.fields.iter().map(|f| f.id.as_str()).collect::<Vec<_>>(), ["env", "token"]);
+    assert!(question.fields[1].secret);
+    assert!(question.fields[1].options.is_empty());
+    let answers = std::collections::HashMap::from([("env".to_string(), vec!["Staging".to_string()]), ("token".to_string(), vec!["s3cret".to_string()])]);
+    assert_eq!(core.reply(&question.id, &answers).unwrap(), json!({"id": 11, "result": {"answers": {"env": {"answers": ["Staging"]}, "token": {"answers": ["s3cret"]}}}}));
+    core.receive(&json!({"method": "serverRequest/resolved", "params": {"threadId": "t", "requestId": 11}}));
+    assert!(core.conversation().questions.is_empty());
 }

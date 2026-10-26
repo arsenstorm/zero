@@ -7,7 +7,7 @@ mod common;
 use common::replay;
 use serde_json::json;
 use zerod::core::Core;
-use zerod::model::{ApprovalKind, Change, ChoiceKind, Conversation, ItemKind, ItemStatus, Provider, Status};
+use zerod::model::{ApprovalKind, Change, ChoiceKind, Conversation, ItemKind, ItemStatus, Permissions, Provider, Status};
 
 fn approvals(changes: &[Change]) -> Vec<zerod::model::Approval> {
     changes.iter().filter_map(|c| match c { Change::Approval { approval } => Some(approval.clone()), _ => None }).collect()
@@ -130,14 +130,78 @@ fn a_failed_turn_and_a_request_zero_cannot_answer_both_say_so() {
 }
 
 #[test]
-fn claude_runs_unmodified_with_its_own_sign_in_and_zeros_plugin_out_of_the_way() {
+fn claude_runs_unmodified_in_auto_mode_with_zeros_rules_appended() {
     let mut conversation = Conversation::new("s1", Provider::Claude, "/work/project");
     conversation.thread = Some("3f1c2b8a-0000-4000-8000-000000000001".into());
     let fresh = Provider::Claude.command(&conversation, false, Some("haiku"), Some("low"));
     assert_eq!(fresh[..4], ["/bin/zsh", "-lic", "exec \"$@\"", "zsh"]);
-    let args = fresh[4..].join(" ");
-    assert_eq!(args, "claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages \
-        --permission-prompt-tool stdio --session-id 3f1c2b8a-0000-4000-8000-000000000001 --model haiku --effort low");
-    let resumed = Provider::Claude.command(&conversation, true, None, None)[4..].join(" ");
-    assert!(resumed.ends_with("--resume 3f1c2b8a-0000-4000-8000-000000000001"), "{resumed}");
+    let args = &fresh[4..];
+    let at = |flag: &str| args.iter().position(|a| a == flag).map(|i| args[i + 1].as_str());
+    assert_eq!(args[..8], ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
+    assert_eq!(at("--permission-prompt-tool"), Some("stdio"));
+    assert_eq!(at("--permission-mode"), Some("auto"), "Arsen's own mode: Claude's classifier decides, Zero hears what it can't");
+    assert_eq!(at("--session-id"), Some("3f1c2b8a-0000-4000-8000-000000000001"));
+    assert_eq!((at("--model"), at("--effort")), (Some("haiku"), Some("low")));
+    assert_eq!(at("--append-system-prompt"), Some(zerod::adapter::INSTRUCTIONS));
+    let resumed = Provider::Claude.command(&conversation, true, None, None);
+    assert!(resumed.windows(2).any(|w| w[0] == "--resume" && w[1] == "3f1c2b8a-0000-4000-8000-000000000001"));
+    conversation.permissions = Permissions::Unrestricted;
+    let unrestricted = Provider::Claude.command(&conversation, false, None, None);
+    assert!(unrestricted.windows(2).any(|w| w[0] == "--permission-mode" && w[1] == "bypassPermissions"));
+}
+
+#[test]
+fn a_tool_claudes_classifier_blocks_reads_as_blocked() {
+    let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+    core.receive(&json!({"type": "assistant", "message": {"id": "m1", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "git push --force"}}]}}));
+    core.receive(&json!({"type": "system", "subtype": "permission_denied", "tool_name": "Bash", "tool_use_id": "t1",
+        "message": "Git Destructive: force-pushing rewrites shared history"}));
+    let conversation = core.conversation();
+    assert_eq!(conversation.items[0].status, ItemStatus::Declined);
+    assert!(matches!(&conversation.items[1].kind, ItemKind::Notice { text, error: true } if text == "Blocked: Git Destructive: force-pushing rewrites shared history"));
+}
+
+fn ask_user_question() -> serde_json::Value {
+    json!({"type": "control_request", "request_id": "q1", "request": {"subtype": "can_use_tool", "tool_name": "AskUserQuestion", "tool_use_id": "t9",
+        "input": {"questions": [
+            {"question": "Which database should the cache use?", "header": "Cache", "multiSelect": false,
+             "options": [{"label": "Redis", "description": "Already in the stack"}, {"label": "Postgres", "description": "One less service"}]},
+            {"question": "Which checks should run?", "header": "Checks", "multiSelect": true,
+             "options": [{"label": "Lint", "description": ""}, {"label": "Tests", "description": ""}, {"label": "Types", "description": ""}]}]}}})
+}
+
+#[test]
+fn claudes_ask_user_question_is_a_question_not_an_approval() {
+    let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+    core.receive(&ask_user_question());
+    let conversation = core.conversation();
+    assert!(conversation.approvals.is_empty());
+    assert_eq!(conversation.status, Status::Waiting);
+    let question = &conversation.questions[0];
+    assert_eq!((question.id.as_str(), question.item.as_deref()), ("q1", Some("t9")));
+    assert_eq!(question.fields.len(), 2);
+    let cache = &question.fields[0];
+    assert_eq!((cache.header.as_deref(), cache.question.as_str(), cache.multiple, cache.other), (Some("Cache"), "Which database should the cache use?", false, true));
+    assert_eq!(cache.options.iter().map(|o| o.label.as_str()).collect::<Vec<_>>(), ["Redis", "Postgres"]);
+    assert_eq!(cache.options[0].description.as_deref(), Some("Already in the stack"));
+    assert!(question.fields[1].multiple);
+}
+
+#[test]
+fn answers_go_back_inside_the_tools_input_keyed_by_question() {
+    let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+    core.receive(&ask_user_question());
+    let answers = std::collections::HashMap::from([("0".to_string(), vec!["Redis".to_string()]), ("1".to_string(), vec!["Lint".into(), "Tests".into()])]);
+    let line = core.reply("q1", &answers).unwrap();
+    let response = &line["response"]["response"];
+    assert_eq!(response["behavior"], "allow");
+    assert_eq!(response["updatedInput"]["answers"], json!({"Which database should the cache use?": "Redis", "Which checks should run?": "Lint, Tests"}));
+    assert_eq!(response["updatedInput"]["questions"], ask_user_question()["request"]["input"]["questions"]);
+    core.sent(&line);
+    assert!(core.conversation().questions.is_empty(), "answered, so settled");
+    assert!(core.reply("q1", &answers).is_err());
+    let partial = std::collections::HashMap::from([("0".to_string(), vec!["Redis".to_string()])]);
+    let mut again = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+    again.receive(&ask_user_question());
+    assert!(again.reply("q1", &partial).is_err(), "every field needs an answer");
 }

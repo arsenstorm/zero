@@ -11,6 +11,9 @@ pub struct Conversation {
     pub id: String,
     pub provider: Provider,
     pub cwd: String,
+    /// How freely the agent may act; set at start.
+    #[serde(default)]
+    pub permissions: Permissions,
     /// The provider's own id for the conversation (a Codex thread), once it exists; what resuming needs.
     pub thread: Option<String>,
     pub title: Option<String>,
@@ -23,6 +26,19 @@ pub struct Conversation {
     pub error: Option<String>,
     pub items: Vec<Item>,
     pub approvals: Vec<Approval>,
+    /// What the agent asked Arsen, waiting for his answer.
+    #[serde(default)]
+    pub questions: Vec<Question>,
+    /// The usage limits the provider's CLI last reported for the account the session runs on.
+    #[serde(default)]
+    pub usage: Option<Usage>,
+    /// The current error, by kind, so Zero can say what to do about it.
+    #[serde(default)]
+    pub failure: Option<Failure>,
+    /// Why the session looks stuck, while it does: no word from the agent, a command that won't end, or the
+    /// same command over and over.
+    #[serde(default)]
+    pub stalled: Option<String>,
     /// The unified diff of everything the latest turn changed.
     pub diff: Option<String>,
     /// How many changes have been applied: a client that took a snapshot at `seq` applies only later changes.
@@ -36,6 +52,17 @@ pub enum Provider {
     Codex,
     Claude,
     Opencode,
+}
+
+/// How freely an agent acts. `Auto` is how Arsen works: the provider's own judgement decides what is safe (Claude's
+/// auto-mode classifier; Codex's on-request approvals in a workspace-write sandbox; OpenCode's own rules), and Zero
+/// hears what it won't allow alone. `Unrestricted` lets the agent do anything without asking, sandbox off.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum Permissions {
+    #[default]
+    Auto,
+    Unrestricted,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,6 +152,115 @@ pub enum ApprovalKind {
     Tool,
 }
 
+/// The agent asking Arsen something (Claude's AskUserQuestion, Codex's request for input): one or more fields answered
+/// together.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Question {
+    /// The provider's id for the request.
+    pub id: String,
+    pub item: Option<String>,
+    pub fields: Vec<Field>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Field {
+    /// What the answer is keyed by.
+    pub id: String,
+    /// A word or two naming the question ("Cache").
+    pub header: Option<String>,
+    pub question: String,
+    pub options: Vec<QuestionOption>,
+    /// More than one option may be picked.
+    pub multiple: bool,
+    /// An answer of Arsen's own words is taken too.
+    pub other: bool,
+    /// The answer is a secret: shown as dots, never logged by Zero.
+    pub secret: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionOption {
+    pub label: String,
+    pub description: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Usage {
+    /// A limit is reached: the provider won't take more until `resets_at`.
+    pub limited: bool,
+    /// Unix seconds.
+    pub resets_at: Option<i64>,
+    pub windows: Vec<UsageWindow>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageWindow {
+    /// "5 hours", "7 days".
+    pub name: String,
+    /// The share of the window used, 0 to 1.
+    pub used: f64,
+    pub resets_at: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Failure {
+    pub kind: FailureKind,
+    pub message: String,
+}
+
+/// What went wrong, as far as what Arsen can do about it: wait for a reset, sign in with the CLI, check the
+/// network, pick another model, or read the message.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum FailureKind {
+    Limit,
+    SignIn,
+    Network,
+    Model,
+    Other,
+}
+
+impl FailureKind {
+    /// From an error's text: the CLIs report failures as messages, not codes.
+    pub fn of(message: &str) -> FailureKind {
+        let text = message.to_lowercase();
+        let any = |words: &[&str]| words.iter().any(|w| text.contains(w));
+        if any(&["usage limit", "rate limit", "limit reached", "hit your limit", "quota", "credit balance"]) { return FailureKind::Limit }
+        if any(&["not logged in", "/login", "unauthorized", "oauth", "401", "403", "sign in", "authentication"]) { return FailureKind::SignIn }
+        if any(&["overloaded", "529"]) || (text.contains("model") && any(&["not available", "unavailable", "not found", "does not exist"])) {
+            return FailureKind::Model;
+        }
+        if any(&["enotfound", "network", "dns", "econnreset", "econnrefused", "timed out", "connection", "stream disconnected"]) { return FailureKind::Network }
+        FailureKind::Other
+    }
+}
+
+/// What a session needs from Arsen, most urgent first: the bar's dot.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum Attention {
+    /// A question or an approval waits for him.
+    NeedsYou,
+    /// A usage limit stopped it until it resets.
+    Limited,
+    /// It has stopped making progress (`stalled` says how).
+    Stuck,
+    /// The last turn or request failed.
+    Failed,
+    Working,
+    /// Its answer is there to read.
+    Done,
+    Idle,
+    Offline,
+    Starting,
+}
+
 /// One answer to an approval, as the provider offers it: `id` is the adapter's, `label` what Zero shows.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -161,6 +297,11 @@ pub enum Change {
     Delta { item: String, text: String },
     Approval { approval: Approval },
     Resolved { approval: String },
+    Question { question: Question },
+    Answered { question: String },
+    Usage { usage: Usage },
+    Failed { failure: Option<Failure> },
+    Stalled { reason: Option<String> },
     Diff { diff: Option<String> },
 }
 
@@ -175,13 +316,30 @@ pub struct Event {
 impl Conversation {
     pub fn new(id: &str, provider: Provider, cwd: &str) -> Self {
         Conversation {
-            id: id.into(), provider, cwd: cwd.into(), thread: None, title: None, model: None, effort: None,
-            status: Status::Starting, turn: None, error: None, items: vec![], approvals: vec![], diff: None, seq: 0,
+            id: id.into(), provider, cwd: cwd.into(), permissions: Permissions::Auto, thread: None, title: None, model: None, effort: None,
+            status: Status::Starting, turn: None, error: None, items: vec![], approvals: vec![], questions: vec![], usage: None,
+            failure: None, stalled: None, diff: None, seq: 0,
         }
     }
 
     pub fn item(&self, id: &str) -> Option<&Item> {
         self.items.iter().find(|item| item.id == id)
+    }
+
+    pub fn attention(&self) -> Attention {
+        if !self.approvals.is_empty() || !self.questions.is_empty() { return Attention::NeedsYou }
+        if self.usage.as_ref().is_some_and(|u| u.limited) || self.failure.as_ref().is_some_and(|f| f.kind == FailureKind::Limit) { return Attention::Limited }
+        if self.stalled.is_some() { return Attention::Stuck }
+        if self.failure.is_some() { return Attention::Failed }
+        match self.status {
+            Status::Working | Status::Waiting => Attention::Working,
+            Status::Starting => Attention::Starting,
+            Status::Offline => Attention::Offline,
+            Status::Idle => match self.items.last().map(|i| &i.kind) {
+                Some(ItemKind::Agent { final_answer: true, .. }) => Attention::Done,
+                _ => Attention::Idle,
+            },
+        }
     }
 
     pub fn apply(&mut self, change: Change) {
@@ -217,6 +375,14 @@ impl Conversation {
                 self.approvals.push(approval);
             }
             Change::Resolved { approval } => self.approvals.retain(|existing| existing.id != approval),
+            Change::Question { question } => {
+                self.questions.retain(|existing| existing.id != question.id);
+                self.questions.push(question);
+            }
+            Change::Answered { question } => self.questions.retain(|existing| existing.id != question),
+            Change::Usage { usage } => self.usage = Some(usage),
+            Change::Failed { failure } => self.failure = failure,
+            Change::Stalled { reason } => self.stalled = reason,
             Change::Diff { diff } => self.diff = diff,
         }
     }

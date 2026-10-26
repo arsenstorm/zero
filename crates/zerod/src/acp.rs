@@ -7,9 +7,9 @@ use std::collections::HashMap;
 
 use serde_json::{Value, json};
 
-use crate::adapter::{Adapter, Effects, after_approval, json_rpc_answer, key};
+use crate::adapter::{Adapter, Answers, Effects, after_approval, json_rpc_answer, key};
 use crate::codex::file_title;
-use crate::model::{Approval, ApprovalKind, Change, Choice, ChoiceKind, Conversation, FileChange, Item, ItemKind, ItemStatus, Status};
+use crate::model::{Approval, ApprovalKind, Change, Choice, ChoiceKind, Conversation, FileChange, Item, ItemKind, ItemStatus, Question, Status};
 use crate::session::{Session, Transport};
 
 #[derive(Default)]
@@ -69,6 +69,11 @@ impl Adapter for Acp {
     fn answer(&self, approval: &Approval, choice: &str) -> Result<Value, String> {
         let id = self.requests.get(&approval.id).ok_or_else(|| format!("The agent isn't waiting on \"{}\" any more", approval.title))?;
         Ok(json!({"jsonrpc": "2.0", "id": id, "result": {"outcome": {"outcome": "selected", "optionId": choice}}}))
+    }
+
+    /// ACP's own questions (elicitation) aren't sent by OpenCode 2.1.4; none is ever open to answer.
+    fn reply(&self, _: &Question, _: &Answers) -> Result<Value, String> {
+        Err("The agent asked no question Zero can answer".into())
     }
 
     fn ended(&mut self) {

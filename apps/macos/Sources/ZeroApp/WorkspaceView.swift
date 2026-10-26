@@ -104,6 +104,8 @@ private struct ConversationView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if let health { Label(health.text, systemImage: health.icon).font(.callout).foregroundStyle(health.color)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20).padding(.vertical, 8).background(health.color.opacity(0.08)) }
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
@@ -111,6 +113,12 @@ private struct ConversationView: View {
                         // A step waiting on an approval shows once, in the approval.
                         ForEach(conversation.items.filter { item in !conversation.approvals.contains { $0.item == item.id } }) { item in
                             ItemView(item: item, cwd: conversation.cwd).id(item.id)
+                        }
+                        ForEach(conversation.questions) { question in
+                            QuestionCard(question: question) { answers in
+                                Task { await workspace.answer(conversation.id, question: question.id, answers: answers) }
+                            }
+                            .id("question-" + question.id)
                         }
                         ForEach(conversation.approvals) { approval in
                             ApprovalCard(approval: approval, cwd: conversation.cwd) { choice in
@@ -138,6 +146,26 @@ private struct ConversationView: View {
         }
     }
 
+    /// What's wrong, and what to do about it: the session's attention beyond working or waiting.
+    private var health: (text: String, icon: String, color: Color)? {
+        switch conversation.attention {
+        case .stuck: return (conversation.stalled ?? "Stuck", "exclamationmark.arrow.circlepath", .orange)
+        case .limited:
+            let reset = (conversation.usage?.resetsAt).map { " Resets \(Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .omitted, time: .shortened))." } ?? ""
+            return ("Usage limit reached.\(reset)", "hourglass", .orange)
+        case .failed:
+            let message = conversation.failure?.message ?? conversation.error ?? "It failed"
+            let hint = switch conversation.failure?.kind {
+            case .signIn?: " Sign in with \(conversation.provider == .claude ? "claude" : conversation.provider.rawValue) in a terminal."
+            case .network?: " Check the network, then send a message to retry."
+            case .model?: " Try another model."
+            default: ""
+            }
+            return (message + hint, "exclamationmark.triangle", .red)
+        default: return nil
+        }
+    }
+
     private var placeholder: String {
         switch conversation.status {
         case .offline: "Message to resume it"
@@ -150,7 +178,8 @@ private struct ConversationView: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(Workspace.label(of: conversation)).font(.headline).lineLimit(1)
-                Text([conversation.provider.title, conversation.model, conversation.effort, (conversation.cwd as NSString).abbreviatingWithTildeInPath]
+                Text([conversation.provider.title, conversation.model, conversation.effort, conversation.permissions == .unrestricted ? "unrestricted" : nil,
+                      usage, (conversation.cwd as NSString).abbreviatingWithTildeInPath]
                     .compactMap { $0 }.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
@@ -165,6 +194,55 @@ private struct ConversationView: View {
             }
         }
         .padding(.horizontal, 20).padding(.vertical, 12)
+    }
+
+    /// "5 hours 18% · 7 days 5%": what the provider last reported for the account.
+    private var usage: String? {
+        guard let windows = conversation.usage?.windows, !windows.isEmpty else { return nil }
+        return windows.map { "\($0.name) \(Int(($0.used * 100).rounded()))%" }.joined(separator: " · ")
+    }
+}
+
+/// The agent asking: each field's options as buttons (toggles where several may be picked), its own words where it
+/// takes them, dots for a secret. Sent once every field has an answer.
+private struct QuestionCard: View {
+    let question: Question
+    let send: ([String: [String]]) -> Void
+    @State private var picked: [String: Set<String>] = [:]
+    @State private var typed: [String: String] = [:]
+
+    private func answer(_ field: Field) -> [String] {
+        let own = typed[field.id, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
+        let options = field.options.map(\.label).filter { picked[field.id, default: []].contains($0) }
+        return own.isEmpty ? options : options + [own]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(question.fields) { field in
+                VStack(alignment: .leading, spacing: 8) {
+                    if let header = field.header { Text(header.uppercased()).font(.caption.weight(.semibold)).foregroundStyle(.secondary) }
+                    Text(field.question).font(.headline)
+                    HStack {
+                        ForEach(field.options, id: \.label) { option in
+                            let on = picked[field.id, default: []].contains(option.label)
+                            Button(option.label) {
+                                if field.multiple { picked[field.id, default: []].formSymmetricDifference([option.label]) }
+                                else { picked[field.id] = on ? [] : [option.label] }
+                            }
+                            .buttonStyle(.bordered).tint(on ? .accentColor : nil).help(option.description ?? "")
+                        }
+                    }
+                    if field.secret { SecureField("Secret", text: Binding(get: { typed[field.id, default: ""] }, set: { typed[field.id] = $0 })) }
+                    else if field.other || field.options.isEmpty {
+                        TextField(field.options.isEmpty ? "Your answer" : "Or say something else", text: Binding(get: { typed[field.id, default: ""] }, set: { typed[field.id] = $0 }))
+                    }
+                }
+            }
+            Button("Answer") { send(Dictionary(uniqueKeysWithValues: question.fields.map { ($0.id, answer($0)) })) }
+                .buttonStyle(.borderedProminent).disabled(question.fields.contains { answer($0).isEmpty })
+        }
+        .padding(16).background(Theme.orangeRow, in: RoundedRectangle(cornerRadius: 16))
     }
 }
 
@@ -382,6 +460,7 @@ private struct NewSessionView: View {
     @AppStorage("workspaceProject") private var project = ""
     @State private var model = ""
     @State private var effort = ""
+    @State private var permissions = Permissions.auto
     @State private var prompt = ""
     @State private var starting = false
 
@@ -410,6 +489,11 @@ private struct NewSessionView: View {
                 }
                 .disabled(levels.isEmpty).frame(maxWidth: 220)
             }
+            Picker("Permissions", selection: $permissions) {
+                Text("Auto: \(chosen.title) decides what's safe, and asks you the rest").tag(Permissions.auto)
+                Text("Unrestricted: anything, without asking").tag(Permissions.unrestricted)
+            }
+            .pickerStyle(.radioGroup)
             Composer(draft: $prompt, placeholder: "What should \(chosen.title) do?", canSend: !starting && folders.contains(project)) { start() }
                 .padding(-16)
             Spacer()
@@ -453,7 +537,8 @@ private struct NewSessionView: View {
         guard !text.isEmpty, !starting else { return }
         starting = true
         Task {
-            if let id = await workspace.start(provider: chosen, cwd: project, prompt: text, model: model.isEmpty ? nil : model, effort: effort.isEmpty ? nil : effort) {
+            if let id = await workspace.start(provider: chosen, cwd: project, prompt: text, model: model.isEmpty ? nil : model,
+                                              effort: effort.isEmpty ? nil : effort, permissions: permissions) {
                 prompt = ""
                 started(id)
             }

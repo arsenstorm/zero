@@ -21,10 +21,11 @@ async fn a_runtime_runs_in_the_sessions_folder_with_only_what_zero_gives_it() {
     let (events, _) = broadcast::channel(16);
     let session = Session::new(Conversation::new("s1", Provider::Codex, cwd.to_str().unwrap()), None, events).unwrap();
     // Cargo sets CARGO_PKG_NAME for this test; the runtime mustn't inherit the daemon's environment.
-    let body = r#"printf '{"method":"thread/name/updated","params":{"threadName":"%s %s %s"}}\n' "$ZERO_SESSION/$ZERO_MANAGED" "${CARGO_PKG_NAME:-clean}" "$(pwd -P)"; cat >/dev/null"#;
+    let body = r#"printf '{"method":"thread/name/updated","params":{"threadName":"%s %s %s"}}\n' "$ZERO_SESSION/$ZERO_AGENT/$ZERO_MANAGED" "${CARGO_PKG_NAME:-clean}" "$(pwd -P)"; cat >/dev/null"#;
     session.attach(process::spawn(&script(body), &cwd, "s1", None).unwrap());
     let named = until(&session, |c| c.title.is_some()).await;
-    assert_eq!(named.title.unwrap(), format!("s1/0 clean {}", cwd.display()), "ZERO_MANAGED=0: Zero's Claude plugin stands down, zerod answers");
+    assert_eq!(named.title.unwrap(), format!("s1/zerod-s1/0 clean {}", cwd.display()),
+        "the session's own name for its zero calls; Zero's plugin stands down, since zerod answers and brings the rules");
 }
 
 #[tokio::test]

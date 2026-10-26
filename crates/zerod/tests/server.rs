@@ -183,6 +183,8 @@ async fn a_session_only_starts_in_a_folder_that_exists() {
     assert_eq!(unknown["ok"], false, "only the providers zerod has adapters for");
     let refused = client.call(json!({"op": "decide", "session": "nope", "approval": "0", "choice": "0"})).await;
     assert!(refused["error"].as_str().unwrap().contains("nope"));
+    let unanswerable = client.call(json!({"op": "answer", "session": "nope", "question": "q1", "answers": {"0": ["Redis"]}})).await;
+    assert!(unanswerable["error"].as_str().unwrap().contains("nope"), "{unanswerable}");
 }
 
 #[tokio::test]
@@ -226,4 +228,19 @@ async fn a_claude_session_starts_on_a_session_id_of_zeros_and_answers_through_th
     assert_eq!(done.provider, Provider::Claude);
     let command = h.commands.lock().unwrap()[0].join(" ");
     assert!(command.contains("claude -p") && command.contains("--session-id") && command.contains("--model haiku"), "{command}");
+    assert!(command.contains("--permission-mode auto"), "auto unless asked otherwise");
+}
+
+#[tokio::test]
+async fn a_session_can_start_unrestricted_and_keeps_it_across_a_restart() {
+    let h = harness("server-unrestricted").await;
+    let mut client = Client::connect(&h.socket).await;
+    let started = client.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "uname", "permissions": "unrestricted"})).await;
+    let session = started["result"]["session"].as_str().unwrap().to_string();
+    assert!(h.commands.lock().unwrap()[0].join(" ").contains("--permission-mode bypassPermissions"));
+    let refused = client.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "uname", "permissions": "yolo"})).await;
+    assert_eq!(refused["ok"], false);
+
+    let daemon = Daemon::open(&h.home, runtime(h.seen.clone(), h.commands.clone())).unwrap();
+    assert_eq!(daemon.get(&session).unwrap().permissions, zerod::model::Permissions::Unrestricted);
 }

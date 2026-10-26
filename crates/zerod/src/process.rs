@@ -21,6 +21,8 @@ pub fn spawn(argv: &[String], cwd: &Path, id: &str, stderr: Option<&Path>) -> st
         .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
         .env("TERM", "dumb")
         .env("ZERO_SESSION", id)
+        // The name its `zero` calls go by, the same the inbox shows its approvals under.
+        .env("ZERO_AGENT", format!("zerod-{id}"))
         // Zero's Claude Code plugin brings permission prompts to the inbox through hooks; zerod answers them itself.
         .env("ZERO_MANAGED", "0")
         .stdin(Stdio::piped()).stdout(Stdio::piped());

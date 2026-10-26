@@ -6,7 +6,7 @@ mod common;
 use common::{fixture, play, temp_dir, until};
 use serde_json::json;
 use tokio::sync::broadcast;
-use zerod::model::{ChoiceKind, Conversation, Event, ItemKind, Provider, Status};
+use zerod::model::{ChoiceKind, Conversation, Event, ItemKind, Permissions, Provider, Status};
 use zerod::session::Session;
 
 const CLAUDE_SESSION: &str = "3f1c2b8a-0000-4000-8000-000000000001";
@@ -51,7 +51,8 @@ async fn codex_starts_by_initializing_then_a_thread_and_its_first_turn() {
     assert_eq!(seen.methods()[..4], ["initialize", "initialized", "thread/start", "turn/start"]);
     let thread = seen.first("thread/start").unwrap();
     assert_eq!((&thread["params"]["cwd"], &thread["params"]["model"]), (&json!("/work/project"), &json!("gpt-6-sol")));
-    assert_eq!((&thread["params"]["approvalPolicy"], &thread["params"]["sandbox"]), (&json!("on-request"), &json!("workspace-write")));
+    assert_eq!((&thread["params"]["approvalPolicy"], &thread["params"]["sandbox"]), (&json!("on-request"), &json!("workspace-write")), "Codex's auto");
+    assert_eq!(thread["params"]["developerInstructions"], zerod::adapter::INSTRUCTIONS);
     let turn = seen.first("turn/start").unwrap();
     assert_eq!(turn["params"]["threadId"], "01a177f4-5525-7141-bfb3-f350d91476d6");
     assert_eq!(turn["params"]["input"][0]["text"], "Run the shell command `ls -la` here");
@@ -219,6 +220,53 @@ async fn opencode_resumes_its_session_without_replaying_it() {
     assert_eq!(seen.methods()[..2], ["initialize", "session/resume"]);
     let resume = seen.first("session/resume").unwrap();
     assert_eq!((&resume["params"]["sessionId"], &resume["params"]["cwd"]), (&json!("ses_e87e7ec46ffe1ztiRcXd8Xelqy"), &json!("/work/project")));
+}
+
+#[tokio::test]
+async fn unrestricted_codex_runs_without_approvals_or_sandbox() {
+    let (events, _) = broadcast::channel(16);
+    let mut conversation = Conversation::new("s1", Provider::Codex, "/work/project");
+    conversation.permissions = Permissions::Unrestricted;
+    let session = Session::new(conversation, None, events).unwrap();
+    let (transport, seen) = play(fixture("codex-command"));
+    session.start(transport, "ls", None, None).await.unwrap();
+    let thread = seen.first("thread/start").unwrap();
+    assert_eq!((&thread["params"]["approvalPolicy"], &thread["params"]["sandbox"]), (&json!("never"), &json!("danger-full-access")));
+}
+
+#[tokio::test]
+async fn an_unrestricted_session_has_zerod_allow_whatever_the_agent_still_asks() {
+    // OpenCode can't be told per session over ACP, so zerod answers for Arsen: once, never "always", so no rule is kept.
+    let (events, _) = broadcast::channel(4096);
+    let mut conversation = Conversation::new("s1", Provider::Opencode, "/work/project");
+    conversation.permissions = Permissions::Unrestricted;
+    let session = Session::new(conversation, None, events).unwrap();
+    let (transport, seen) = play(fixture("opencode-approval"));
+    session.start(transport, "mkdir and write", Some("opencode-go/beam-free"), None).await.unwrap();
+    let done = until(&session, answered).await;
+    for id in [0, 1] {
+        assert_eq!(seen.reply_to(&json!(id)).unwrap()["result"]["outcome"]["optionId"], "once");
+    }
+    let allowed = done.items.iter().filter(|i| matches!(&i.kind, ItemKind::Notice { text, error: false } if text.starts_with("Allowed without asking"))).count();
+    assert_eq!(allowed, 2, "each one on the record");
+}
+
+#[tokio::test]
+async fn a_question_is_answered_once_through_the_session() {
+    let (session, _) = session(Provider::Claude, None);
+    let request = json!({"in": {"type": "control_request", "request_id": "q1", "request": {"subtype": "can_use_tool", "tool_name": "AskUserQuestion",
+        "input": {"questions": [{"question": "Redis or Postgres?", "header": "Cache", "multiSelect": false,
+                                 "options": [{"label": "Redis", "description": ""}, {"label": "Postgres", "description": ""}]}]}}}});
+    let (transport, seen) = play(vec![request]);
+    session.start(transport, "plan the cache", None, None).await.unwrap();
+    until(&session, |c| !c.questions.is_empty()).await;
+    let answers = std::collections::HashMap::from([("0".to_string(), vec!["Postgres".to_string()])]);
+    assert!(session.answer("nope", &answers).await.is_err());
+    session.answer("q1", &answers).await.unwrap();
+    assert!(session.answer("q1", &answers).await.is_err(), "the first answer stands");
+    let reply = seen.said("control_response", 1).await[0].clone();
+    assert_eq!(reply["response"]["response"]["updatedInput"]["answers"]["Redis or Postgres?"], "Postgres");
+    assert!(session.snapshot().questions.is_empty());
 }
 
 // Every provider

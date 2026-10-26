@@ -3,8 +3,8 @@
 
 use serde_json::Value;
 
-use crate::adapter::{Adapter, Effects};
-use crate::model::{Change, Conversation, Status};
+use crate::adapter::{Adapter, Answers, Effects};
+use crate::model::{Change, Conversation, Failure, FailureKind, Status};
 
 pub struct Core {
     conversation: Conversation,
@@ -45,6 +45,15 @@ impl Core {
         self.adapter.answer(open, choice)
     }
 
+    /// The line that answers an open question, once every field has an answer.
+    pub fn reply(&self, question: &str, answers: &Answers) -> Result<Value, String> {
+        let open = self.conversation.questions.iter().find(|q| q.id == question).ok_or_else(|| format!("No open question {question}"))?;
+        if let Some(missing) = open.fields.iter().find(|f| answers.get(&f.id).is_none_or(|a| a.iter().all(|s| s.trim().is_empty()))) {
+            return Err(format!("\"{}\" has no answer", missing.question));
+        }
+        self.adapter.reply(open, answers)
+    }
+
     /// Applies a change Zero makes itself and returns it for the clients.
     pub fn change(&mut self, change: Change) -> Change {
         self.conversation.apply(change.clone());
@@ -55,6 +64,7 @@ impl Core {
     pub fn offline(&mut self) -> Vec<Change> {
         self.adapter.ended();
         let mut changes: Vec<Change> = self.conversation.approvals.iter().map(|a| Change::Resolved { approval: a.id.clone() }).collect();
+        changes.extend(self.conversation.questions.iter().map(|q| Change::Answered { question: q.id.clone() }));
         changes.push(Change::Status { status: Status::Offline, turn: None, error: self.conversation.error.clone() });
         self.apply(changes)
     }
@@ -66,9 +76,16 @@ impl Core {
         self.apply(effects.changes)
     }
 
-    fn apply(&mut self, changes: Vec<Change>) -> Vec<Change> {
+    /// Applies the changes, then classifies the session's error if it changed: the same for every provider.
+    fn apply(&mut self, mut changes: Vec<Change>) -> Vec<Change> {
         for change in &changes {
             self.conversation.apply(change.clone());
+        }
+        let failure = self.conversation.error.as_ref().map(|message| Failure { kind: FailureKind::of(message), message: message.clone() });
+        if failure != self.conversation.failure {
+            let change = Change::Failed { failure };
+            self.conversation.apply(change.clone());
+            changes.push(change);
         }
         changes
     }
