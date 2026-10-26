@@ -3,10 +3,12 @@
 
 pub mod acp;
 pub mod adapter;
+pub mod ask;
 pub mod claude;
 pub mod codex;
 pub mod core;
 pub mod daemon;
+pub mod inbox;
 pub mod model;
 pub mod process;
 pub mod server;
