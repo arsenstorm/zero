@@ -40,9 +40,12 @@ public struct ConversationItem: Decodable, Equatable, Sendable, Identifiable {
     public var turn: String?
     public var kind: Kind
     public var status: ItemStatus
+    /// When zerod first saw it, in milliseconds since 1970; nil from before zerod kept times.
+    public var at: Int?
 
     public enum Kind: Equatable, Sendable {
-        case user(text: String)
+        /// Your words, and the images sent with them (their files).
+        case user(text: String, images: [String] = [])
         case agent(text: String, finalAnswer: Bool)
         case reasoning(text: String)
         case plan(text: String)
@@ -52,19 +55,21 @@ public struct ConversationItem: Decodable, Equatable, Sendable, Identifiable {
         case notice(text: String, error: Bool)
     }
 
-    public init(id: String, turn: String?, kind: Kind, status: ItemStatus) {
-        self.id = id; self.turn = turn; self.kind = kind; self.status = status
+    public init(id: String, turn: String?, kind: Kind, status: ItemStatus, at: Int? = nil) {
+        self.id = id; self.turn = turn; self.kind = kind; self.status = status; self.at = at
     }
+
+    public var date: Date? { at.map { Date(timeIntervalSince1970: Double($0) / 1000) } }
 }
 
 extension ConversationItem.Kind: Decodable {
-    private enum Keys: String, CodingKey { case type, text, finalAnswer, command, cwd, output, exitCode, durationMs, changes, name, detail, error }
+    private enum Keys: String, CodingKey { case type, text, finalAnswer, command, cwd, output, exitCode, durationMs, changes, name, detail, error, images }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         let text = { try c.decode(String.self, forKey: .text) }
         switch try c.decode(String.self, forKey: .type) {
-        case "user": self = .user(text: try text())
+        case "user": self = .user(text: try text(), images: try c.decodeIfPresent([String].self, forKey: .images) ?? [])
         case "agent": self = .agent(text: try text(), finalAnswer: try c.decode(Bool.self, forKey: .finalAnswer))
         case "reasoning": self = .reasoning(text: try text())
         case "plan": self = .plan(text: try text())
@@ -281,6 +286,11 @@ public struct IntegrationItem: Codable, Equatable, Sendable, Identifiable {
     public var task: String?
 }
 
+extension IntegrationItem {
+    /// What its task is filed under, as zerod files it: an issue's key, a pull request's repository and number.
+    public var ticketKey: String { key.hasPrefix("#") ? place + key : key }
+}
+
 /// A label, or a project with its icon (an emoji's shortcode, ":fire:", or one of Linear's own names).
 public struct IntegrationTag: Codable, Equatable, Sendable, Hashable {
     public var name: String
@@ -415,7 +425,7 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
         case let .delta(id, text):
             guard let i = items.firstIndex(where: { $0.id == id }) else { return }
             switch items[i].kind {
-            case let .user(body): items[i].kind = .user(text: body + text)
+            case let .user(body, images): items[i].kind = .user(text: body + text, images: images)
             case let .agent(body, final): items[i].kind = .agent(text: body + text, finalAnswer: final)
             case let .reasoning(body): items[i].kind = .reasoning(text: body + text)
             case let .plan(body): items[i].kind = .plan(text: body + text)
@@ -516,9 +526,13 @@ public struct ZerodMirror: Sendable {
     public enum Message: Sendable {
         case session(Conversation)
         case change(ZerodEvent)
+        /// How many of a session's items came before those its snapshot carried: older pages, fetched as needed.
+        case earlier(session: String, count: Int)
     }
 
     public private(set) var conversations: [String: Conversation] = [:]
+    /// Each session's items not loaded, before the ones that are.
+    public private(set) var earlier: [String: Int] = [:]
     /// Session ids in the order they first arrived.
     public private(set) var order: [String] = []
 
@@ -533,8 +547,12 @@ public struct ZerodMirror: Sendable {
             if conversations[conversation.id] == nil { order.append(conversation.id) }
             conversations[conversation.id] = conversation
             return true
+        case let .earlier(session, count):
+            earlier[session] = count
+            return true
         case let .change(event) where event.change == .archived:
             conversations[event.session] = nil
+            earlier[event.session] = nil
             order.removeAll { $0 == event.session }
             return true
         case let .change(event):
@@ -546,6 +564,31 @@ public struct ZerodMirror: Sendable {
             return true
         }
     }
+
+    /// Older items, put before those loaded; `remaining` are still before them.
+    public mutating func prepend(_ session: String, items: [ConversationItem], remaining: Int) {
+        guard var conversation = conversations[session] else { return }
+        let loaded = Set(conversation.items.map(\.id))
+        conversation.items = items.filter { !loaded.contains($0.id) } + conversation.items
+        conversations[session] = conversation
+        earlier[session] = remaining
+    }
+
+    /// Back to the latest `keep` items: the older ones are fetched again if they're wanted.
+    public mutating func trim(_ session: String, keep: Int) {
+        guard var conversation = conversations[session], conversation.items.count > keep else { return }
+        let dropped = conversation.items.count - keep
+        conversation.items.removeFirst(dropped)
+        conversations[session] = conversation
+        earlier[session, default: 0] += dropped
+    }
+}
+
+/// A message of yours in a conversation's outline, with the start of its answer: the rail's marks.
+public struct OutlineMark: Decodable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var text: String
+    public var answer: String?
 }
 
 public struct ZerodError: LocalizedError, Equatable {
@@ -617,16 +660,16 @@ public final class ZerodLink: @unchecked Sendable {
     public func get(_ session: String) async throws -> Conversation { try decode(Conversation.self, from: await call("get", ["session": session])) }
 
     /// Starts a session and returns its id at once, while the provider starts.
-    public func start(provider: Provider, cwd: String, prompt: String, model: String? = nil, effort: String? = nil,
+    public func start(provider: Provider, cwd: String, prompt: String, images: [String] = [], model: String? = nil, effort: String? = nil,
                       permissions: Permissions = .auto) async throws -> String {
-        let result = try await call("start", ["provider": provider.rawValue, "cwd": cwd, "prompt": prompt, "model": model, "effort": effort,
+        let result = try await call("start", ["provider": provider.rawValue, "cwd": cwd, "prompt": prompt, "images": images, "model": model, "effort": effort,
                                               "permissions": permissions.rawValue])
         guard let session = (result as? [String: Any])?["session"] as? String else { throw ZerodError(message: "zerod started no session") }
         return session
     }
 
-    public func send(session: String, text: String, model: String? = nil, effort: String? = nil) async throws {
-        _ = try await call("send", ["session": session, "text": text, "model": model, "effort": effort])
+    public func send(session: String, text: String, images: [String] = [], model: String? = nil, effort: String? = nil) async throws {
+        _ = try await call("send", ["session": session, "text": text, "images": images, "model": model, "effort": effort])
     }
 
     public func interrupt(session: String) async throws { _ = try await call("interrupt", ["session": session]) }
@@ -724,6 +767,12 @@ public final class ZerodLink: @unchecked Sendable {
     }
 
     public func board() async throws -> [BoardRow] { try decode([BoardRow].self, from: await call("board")) }
+
+    /// Older items of a session: the page before `before`, or all of them from `from` up to it.
+    public func items(session: String, before: String?, from: String? = nil, limit: Int = 60) async throws -> [ConversationItem] {
+        try decode([ConversationItem].self, from: await call("items", ["session": session, "before": before, "from": from, "limit": limit]))
+    }
+    public func outline(session: String) async throws -> [OutlineMark] { try decode([OutlineMark].self, from: await call("outline", ["session": session])) }
 
     // Scratchpads: one op, `pad`, taking the same tools and arguments as the MCP server.
     public func pad<T: Decodable>(_ tool: String, _ args: [String: Any], as type: T.Type) async throws -> T {
@@ -829,7 +878,7 @@ public final class ZerodLink: @unchecked Sendable {
         try JSONDecoder().decode(T.self, from: try JSONSerialization.data(withJSONObject: result, options: .fragmentsAllowed))
     }
 
-    private struct Snapshot: Decodable { let conversation: Conversation }
+    private struct Snapshot: Decodable { let conversation: Conversation; let earlier: Int? }
     private struct Asks: Decodable { let asks: [Ask]; let offline: Set<String>; let reachable: Set<String> }
     private struct OneAsk: Decodable { let ask: Ask }
     private struct Output: Decodable { let ask: String; let chunk: String }
@@ -853,7 +902,10 @@ public final class ZerodLink: @unchecked Sendable {
             guard let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
             if let event = message["event"] as? String {
                 let decoded: ZerodMirror.Message? = switch event {
-                case "session": (try? JSONDecoder().decode(Snapshot.self, from: data)).map { .session($0.conversation) }
+                case "session": (try? JSONDecoder().decode(Snapshot.self, from: data)).map { snapshot in
+                    onMessage?(.earlier(session: snapshot.conversation.id, count: snapshot.earlier ?? 0))
+                    return .session(snapshot.conversation)
+                }
                 case "change": (try? JSONDecoder().decode(ZerodEvent.self, from: data)).map { .change($0) }
                 default: nil
                 }

@@ -19,6 +19,10 @@ enum ZeroMain {
             MainActor.assumeIsolated { Preview.renderPill(to: CommandLine.arguments[i + 1]) }
             return
         }
+        // Text drawn as the web draws it (-webkit-font-smoothing: antialiased): macOS's font smoothing thickens every
+        // stroke, which reads heavy next to the thin, crisp text people know from Codex and ChatGPT. Zero's own
+        // setting only, before AppKit draws anything.
+        UserDefaults.standard.set(0, forKey: "AppleFontSmoothing")
         let app = NSApplication.shared
         let delegate = MainActor.assumeIsolated { AppDelegate() }
         app.delegate = delegate

@@ -265,7 +265,9 @@ private struct TasksSidebar: View {
                 }
             }
             .scrollIndicators(.never)
-            footer
+            // The list has the sidebar's whole height: what's said about the daemon and usage lies over its foot, on a
+            // fade, and the last task scrolls clear of it.
+            .safeAreaInset(edge: .bottom, spacing: 0) { footer }
         }
     }
 
@@ -284,12 +286,23 @@ private struct TasksSidebar: View {
     }
 
     @ViewBuilder private var footer: some View {
+        let usage = workspace.usage.filter { !$0.1.windows.isEmpty }
+        if !workspace.connected || !usage.isEmpty {
+            footerLines(usage)
+                .padding(.horizontal, 10).padding(.top, 22)
+                .background(LinearGradient(stops: [.init(color: Theme.composer.opacity(0), location: 0), .init(color: Theme.composer, location: 0.5)],
+                                           startPoint: .top, endPoint: .bottom))
+                .padding(.horizontal, -10)
+        }
+    }
+
+    private func footerLines(_ usage: [(Provider, Usage)]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             if !workspace.connected {
                 NucleoLabel("Connecting to Zero's daemon…", icon: "plug-off", size: 12)
             }
             // What each provider last said about its limits.
-            ForEach(workspace.usage.filter { !$0.1.windows.isEmpty }, id: \.0) { provider, usage in
+            ForEach(usage, id: \.0) { provider, usage in
                 Text("\(provider.title)  " + usage.windows.map { "\($0.name) \(Int(($0.used * 100).rounded()))%" }.joined(separator: " · "))
                     .foregroundStyle(usage.limited ? Color.orange : .secondary)
             }
@@ -458,45 +471,77 @@ private struct TaskDetails: View {
     }
 
     private var details: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
+            // What it is doing, first and largest: its state, then where it is in its own words.
             if let row {
-                section("Status") {
-                    HStack(spacing: 6) { StateLabel(state: row.state) }
+                VStack(alignment: .leading, spacing: 6) {
+                    StateLabel(state: row.state).font(.system(size: 13))
                     if let needs = row.asks.first?.title ?? row.needs {
-                        Text(needs).foregroundStyle(row.asks.isEmpty ? Color.primary : .orange)
+                        Text(needs).font(.system(size: 12.5)).foregroundStyle(.orange).lineLimit(3)
+                    } else if let now = row.now {
+                        // The agent's words are Markdown: a link reads as its words, not its address.
+                        Text((try? AttributedString(markdown: now, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(now))
+                            .font(.system(size: 12.5)).foregroundStyle(.secondary).lineLimit(3).help(now)
+                    }
+                }
+                Rectangle().fill(Theme.stroke).frame(height: 1)
+            }
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 9) {
+                property("Agent") {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text([conversation.provider.title, conversation.model, conversation.effort].compactMap { $0 }.joined(separator: " · "))
+                        if conversation.permissions == .unrestricted { Text("Unrestricted").foregroundStyle(.orange) }
+                        if let usage { Text(usage).font(.system(size: 11.5)).foregroundStyle(.tertiary) }
+                    }
+                }
+                property("Where") {
+                    Button { NSWorkspace.shared.open(URL(fileURLWithPath: conversation.cwd)) } label: {
+                        Text(row?.place ?? (conversation.cwd as NSString).lastPathComponent).lineLimit(1).truncationMode(.middle)
+                    }
+                    .buttonStyle(.plain).help((conversation.cwd as NSString).abbreviatingWithTildeInPath + " — show in Finder")
+                }
+                if let branch = conversation.branch {
+                    property("Branch") { Text(branch).lineLimit(1).truncationMode(.middle).help(branch) }
+                }
+                if let ticket = conversation.ticket {
+                    property("Ticket") {
+                        if let url = ticketURL(ticket) {
+                            Button { NSWorkspace.shared.open(url) } label: { NucleoLabel(ticket, icon: "link", size: 11).foregroundStyle(Color.accentColor) }
+                                .buttonStyle(.plain).help("Open \(ticket)")
+                        } else {
+                            Text(ticket)
+                        }
                     }
                 }
             }
-            section("Agent") {
-                Text([conversation.provider.title, conversation.model, conversation.effort].compactMap { $0 }.joined(separator: " · "))
-                if conversation.permissions == .unrestricted { Text("Unrestricted").foregroundStyle(.orange) }
-                if let usage { Text(usage).foregroundStyle(.secondary) }
-            }
-            section("Folder") {
-                Text((conversation.cwd as NSString).abbreviatingWithTildeInPath).truncationMode(.middle)
-                if let branch = conversation.branch { NucleoLabel(branch, icon: "code-branch", size: 12).foregroundStyle(.secondary) }
-            }
-            if let ticket = conversation.ticket {
-                section("Ticket") { Text(ticket) }
-                TaskPads(workspace: workspace, ticket: ticket) { navigation.place = .pad($0) }
-            }
+            .font(.system(size: 12.5))
             if team.count > 1 {
-                section("Workers") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Workers").font(.system(size: 12)).foregroundStyle(.secondary)
                     ForEach(team) { member in
                         SidebarItem(member.id == lead ? "Lead" : Workspace.label(of: member), selected: (shown ?? lead) == member.id) { shown = member.id }
                             .padding(.horizontal, -10)
                     }
                 }
             }
+            if let ticket = conversation.ticket {
+                TaskPads(workspace: workspace, ticket: ticket) { navigation.place = .pad($0) }
+            }
         }
-        .font(.system(size: 12)).lineLimit(2)
     }
 
-    private func section(_ title: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(title).font(.system(size: 13, weight: .medium))
-            content().foregroundStyle(.secondary)
+    /// A row of the pane's properties: its name in a narrow column, its value beside it.
+    private func property(_ name: String, @ViewBuilder value: () -> some View) -> some View {
+        GridRow {
+            Text(name).foregroundStyle(.secondary).gridColumnAlignment(.leading).frame(width: 52, alignment: .leading)
+            value().frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// The ticket's page, from the integration's view that lists it.
+    private func ticketURL(_ ticket: String) -> URL? {
+        let link = workspace.items.values.lazy.flatMap { $0 }.first { $0.ticketKey == ticket }?.url
+        return link.flatMap { LinearLinks.url($0) }
     }
 
     /// "5 hours 18% · 7 days 5%": what the provider last reported for the account.
@@ -516,18 +561,25 @@ private struct TaskPads: View {
     @State private var state: Pad?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 8) {
             if !pads.isEmpty {
-                HStack {
-                    Text("State").font(.system(size: 13, weight: .medium))
+                HStack(spacing: 2) {
+                    Text("State").font(.system(size: 12)).foregroundStyle(.secondary)
                     Spacer()
-                    if let state { Button("Copy link") { PadLinks.copy(state.link, title: "\(ticket) state", markdown: true) }.buttonStyle(.link).font(.system(size: 11.5)) }
+                    if let state {
+                        icon("link", help: "Copy a link to it") { PadLinks.copy(state.link, title: "\(ticket) state", markdown: true) }
+                        icon("arrow-right", help: "Open it") { open(state.id) }
+                    }
                 }
                 if let state {
+                    // The pad as it reads, without its title and link; its start, fading out, the rest a click away.
                     Button { open(state.id) } label: {
-                        Text(Self.gist(state.content)).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(8)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(8)
-                            .background(Theme.composer, in: RoundedRectangle(cornerRadius: 8))
+                        MarkdownText(Self.gist(state.content), size: 12, compact: true).allowsHitTesting(false)
+                            .frame(maxWidth: .infinity, maxHeight: 220, alignment: .topLeading).clipped()
+                            .mask { VStack(spacing: 0) { Color.black; LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 36) } }
+                            .padding(10)
+                            .background(Theme.composer, in: RoundedRectangle(cornerRadius: 10))
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain).help("Open the task's state")
                 }
@@ -545,9 +597,17 @@ private struct TaskPads: View {
         }
     }
 
-    /// The pad without its title line and blank lines, so the preview starts with what's in it.
+    private func icon(_ name: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { NucleoIcon(name, size: 13).foregroundStyle(.secondary).frame(width: 24, height: 24) }
+            .buttonStyle(Hovering(radius: 6)).help(help)
+    }
+
+    /// The pad without its title and the bare link under it: the preview starts with what's in it.
     static func gist(_ content: String) -> String {
-        content.split(separator: "\n", omittingEmptySubsequences: true).filter { !$0.hasPrefix("# ") }.joined(separator: "\n")
+        var lines = content.components(separatedBy: "\n")
+        if let first = lines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }), lines[first].hasPrefix("# ") { lines.remove(at: first) }
+        lines.removeAll { line in let t = line.trimmingCharacters(in: .whitespaces); return t.hasPrefix("http") && !t.contains(" ") }
+        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
 }
@@ -616,7 +676,8 @@ private struct BoardView: View {
                                  StateLabel(state: row.state)
                                  if let needs = needs(row) { Text(needs).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(3).help(needs) }
                              },
-                             now: Text(row.now ?? "").lineLimit(3).help(row.now ?? ""),
+                             now: Text((try? AttributedString(markdown: row.now ?? "", options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(row.now ?? ""))
+                                 .lineLimit(3).help(row.now ?? ""),
                              actions: Text(""))
                     }
                     .buttonStyle(Hovering(radius: 0, hover: Theme.rowHover))
@@ -760,9 +821,17 @@ private struct TaskRow: View {
         }
     }
 
-    /// A worker's state in the sidebar's terms.
+    /// A worker's state in the sidebar's terms: how it ended its last turn, if it said, else what it's doing.
     static func state(of worker: Conversation) -> BoardRow.State {
-        switch worker.attention {
+        if [.idle, .done, .offline].contains(worker.attention), let answer = worker.items.last(where: { if case .agent(_, true) = $0.kind { true } else { false } }),
+           case let .agent(text, _) = answer.kind, let ending = ZeroEnding.split(text).1 {
+            switch ending {
+            case .done: return .done
+            case .working: return .waiting
+            case .blocked, .asked: return .needsYou
+            }
+        }
+        return switch worker.attention {
         case .needsYou: .needsYou
         case .limited, .stuck, .failed: .trouble
         case .working, .starting: .working
@@ -836,8 +905,19 @@ private struct ConversationView: View {
     let workspace: Workspace
     let conversation: Conversation
     @State private var draft = ""
+    /// Images going with the next message.
+    @State private var images: [URL] = []
+    /// Where the conversation is scrolled to, and how much of it there is: for the scrollbar drawn over it.
+    @State private var position = ScrollPosition(edge: .bottom)
+    @State private var scroll: ScrollGeometry?
+    /// Your messages in the whole conversation, for the rail.
+    @State private var outline: [OutlineMark] = []
+    /// How tall the composer is: the conversation fades out just above it.
+    @State private var composerHeight: CGFloat = 0
     /// Another provider picked for the next message; nil keeps the task's own.
     @State private var provider: Provider?
+    /// The blocks on screen, by the message of yours each answers to: the rail's bright ticks.
+    @State private var seen: [String: String] = [:]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -848,6 +928,37 @@ private struct ConversationView: View {
                 conversationPane
             }
         }
+    }
+
+    @ViewBuilder private func block(_ block: TimelineBlock) -> some View {
+        switch block {
+        case let .user(item):
+            if case let .user(text, _) = item.kind {
+                MessageBlock(text: text, date: item.date, mine: true, quote: quote, save: save) { ItemView(item: item, cwd: conversation.cwd) }
+            }
+        case let .answer(item):
+            // Zero's ending isn't shown: it's the task's state, in the sidebar, the pane and the board.
+            if case let .agent(said, _) = item.kind, case let text = ZeroEnding.split(said).0, !text.isEmpty {
+                MessageBlock(text: text, date: item.date, mine: false, quote: quote, save: save) { MarkdownText(text, cwd: conversation.cwd, size: 14.5) }
+            }
+        case let .work(_, items, start, end, live):
+            WorkBlock(items: items, start: start, end: end, live: live, cwd: conversation.cwd)
+        case let .step(item):
+            ItemView(item: item, cwd: conversation.cwd)
+        }
+    }
+
+    /// The message as a quote at the end of what's being written.
+    private func quote(_ text: String) {
+        let quoted = text.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n")
+        draft = (draft.isEmpty ? "" : draft + "\n\n") + quoted + "\n\n"
+    }
+
+    /// The message kept as a scratchpad in Saved, named by its first line.
+    private func save(_ text: String) {
+        let first = text.split(separator: "\n").first.map { String($0.prefix(60)) } ?? "Saved"
+        let title = first.replacingOccurrences(of: "/", with: "\u{2215}").trimmingCharacters(in: CharacterSet(charactersIn: "#> ").union(.whitespaces))
+        Task { await workspace.createPad(title: title.isEmpty ? "Saved" : title, folder: "Saved", content: text) }
     }
 
     private var conversationPane: some View {
@@ -866,11 +977,29 @@ private struct ConversationView: View {
                 .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20).padding(.vertical, 8).background(health.color.opacity(0.08))
             }
             ScrollViewReader { proxy in
+                // A step waiting on an approval shows once, in the approval.
+                let blocks = TimelineBlock.of(conversation.items.filter { item in !conversation.approvals.contains { $0.item == item.id } },
+                                              working: conversation.status == .working || conversation.status == .waiting)
+                let turns = TimelineBlock.turns(blocks)
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                        // A step waiting on an approval shows once, in the approval.
-                        ForEach(conversation.items.filter { item in !conversation.approvals.contains { $0.item == item.id } }) { item in
-                            ItemView(item: item, cwd: conversation.cwd).id(item.id)
+                    LazyVStack(alignment: .leading, spacing: 18) {
+                        // More above: rows standing in for it, the next page fetched as they come into view, the view
+                        // kept on what was at its top.
+                        let more = workspace.earlier(conversation.id)
+                        if more > 0 {
+                            SkeletonTurns().id("earlier-\(more)")
+                                // Anchored at the bottom, the view stays on what's read as the page goes in above.
+                                .onAppear { Task { await workspace.loadEarlier(conversation.id) } }
+                        }
+                        ForEach(blocks) { block in
+                            self.block(block)
+                                .id(block.id)
+                                .onScrollVisibilityChange(threshold: 0.05) { shown in
+                                    guard let turn = turns[block.id] else { return }
+                                    if shown { seen[block.id] = turn } else { seen[block.id] = nil }
+                                }
+                                // The list drops what's far off screen without saying it went out of view.
+                                .onDisappear { seen[block.id] = nil }
                         }
                         ForEach(conversation.questions) { question in
                             QuestionCard(question: question) { answers in
@@ -887,42 +1016,105 @@ private struct ConversationView: View {
                         if let diff = conversation.diff, conversation.status == .idle, !diff.isEmpty {
                             DisclosureGroup("Everything the last turn changed") { DiffText(diff: diff) }.padding(.top, 4)
                         }
-                        Color.clear.frame(height: 1).id("end")
+                        // Room for the composer and the fade above it: scrolled to the end, the last message sits just
+                        // above the composer, and the scrollbar is at the bottom.
+                        Color.clear.frame(height: composerHeight + 32).id("end")
                     }
-                    .padding(.vertical, 20)
+                    .padding(.top, 20)
                     .centredColumn(760)
                 }
-                .onChange(of: conversation.seq) { proxy.scrollTo("end", anchor: .bottom) }
-                .onAppear { proxy.scrollTo("end", anchor: .bottom) }
-            }
-            Composer(draft: $draft, placeholder: placeholder, canSend: conversation.status != .starting) {
-                let text = draft
-                draft = ""
-                send(text, with: provider ?? conversation.provider)
-            } controls: {
-                // Another provider for the next message: the task moves there, conversation and all.
-                ComposerMenu(label: (provider ?? conversation.provider).title) {
-                    Picker("Agent", selection: Binding(get: { provider ?? conversation.provider }, set: { provider = $0 == conversation.provider ? nil : $0 })) {
-                        ForEach(Provider.allCases, id: \.rawValue) { Text($0.title).tag($0).disabled(!Self.takeOver.contains($0)) }
+                .scrollIndicators(.never)
+                // Opened at the end, and held there as answers measure themselves and new ones come, while you're at
+                // the end; content added above (an older page) leaves what you're reading where it is.
+                .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .defaultScrollAnchor(.bottom, for: .sizeChanges)
+                .scrollPosition($position)
+                .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { _, now in scroll = now }
+                // Soft edges: at the top, there's more above; just above the composer, the text fades out before it,
+                // as Codex's does, with nothing behind the composer but the page.
+                .mask {
+                    VStack(spacing: 0) {
+                        LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: 28)
+                        Color.black
+                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 32)
+                        // Under the composer: nothing, so the conversation doesn't show at its sides.
+                        Color.clear.frame(height: composerHeight)
                     }
-                    .pickerStyle(.inline)
                 }
-                .disabled(conversation.status == .working || conversation.status == .waiting)
+                // The composer lies over the conversation's foot; the conversation runs the full height under it.
+                .overlay(alignment: .bottom) {
+                    composer.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { composerHeight = $0 }
+                }
+                // Scrolled up: a way back down, just above the composer.
+                .overlay(alignment: .bottom) {
+                    // How far the end is below what's on screen, from where it's scrolled to.
+                    if let scroll, scroll.contentSize.height + scroll.contentInsets.bottom - (scroll.contentOffset.y + scroll.containerSize.height) > 200 {
+                        Button { withAnimation { proxy.scrollTo("end", anchor: .bottom) } } label: {
+                            NucleoIcon("arrow-up", size: 14).rotationEffect(.degrees(180)).foregroundStyle(.primary)
+                                .frame(width: 32, height: 32).background(Theme.card, in: Circle())
+                                .overlay(Circle().strokeBorder(Theme.stroke))
+                        }
+                        .buttonStyle(.plain).help("Go to the latest")
+                        .padding(.bottom, composerHeight + 6)
+                        .transition(.opacity)
+                    }
+                }
+                .overlay(alignment: .trailing) { ThinScrollbar(geometry: scroll) { position.scrollTo(y: $0) }.padding(.trailing, 2) }
+                .overlay(alignment: .leading) {
+                    // Every message of yours, loaded or not, from zerod's outline of the conversation.
+                    let marks = outline.map { MessageRail.Mark(id: $0.id, text: $0.text, answer: $0.answer.map { ZeroEnding.split($0).0 }) }
+                    if marks.count > 1 {
+                        MessageRail(marks: marks, visible: Set(seen.values)) { id in
+                            Task {
+                                // Not loaded yet: everything from it down to what is, then there.
+                                if !conversation.items.contains(where: { $0.id == id }) { await workspace.loadEarlier(conversation.id, from: id) }
+                                withAnimation { proxy.scrollTo(id, anchor: .top) }
+                            }
+                        }
+                        .padding(.leading, 18).padding(.vertical, 40)
+                    }
+                }
+                // Fetched again as your messages come and go, not with every word streamed.
+                .task(id: conversation.items.count(where: { if case .user = $0.kind { true } else { false } }) + workspace.earlier(conversation.id)) {
+                    outline = await workspace.outline(conversation.id)
+                }
+                // Left, it goes back to its latest items: memory doesn't grow with every long task opened.
+                .onDisappear { workspace.trim(conversation.id) }
             }
-            .centredColumn(760).padding(.bottom, 16)
         }
+    }
+
+    private var composer: some View {
+        Composer(draft: $draft, placeholder: placeholder, canSend: conversation.status != .starting, images: $images) {
+            let (text, attached) = (draft, images.map(\.path))
+            draft = ""
+            images = []
+            send(text, images: attached, with: provider ?? conversation.provider)
+        } controls: {
+            // Another provider for the next message: the task moves there, conversation and all.
+            ComposerMenu(label: (provider ?? conversation.provider).title) {
+                Picker("Agent", selection: Binding(get: { provider ?? conversation.provider }, set: { provider = $0 == conversation.provider ? nil : $0 })) {
+                    ForEach(Provider.allCases, id: \.rawValue) { Text($0.title).tag($0).disabled(!Self.takeOver.contains($0)) }
+                }
+                .pickerStyle(.inline)
+            }
+            .disabled(conversation.status == .working || conversation.status == .waiting)
+        }
+        // A little narrower than the conversation.
+        .centredColumn(680)
+        .padding(.top, 4).padding(.bottom, 16)
     }
 
     /// The providers a task can move to: they read Zero's record natively (Claude Code resumes it, Codex imports it).
     static let takeOver: [Provider] = [.claude, .codex]
 
-    private func send(_ text: String, with chosen: Provider) {
+    private func send(_ text: String, images: [String] = [], with chosen: Provider) {
         Task {
             if chosen != conversation.provider {
                 guard await workspace.switchProvider(conversation.id, to: chosen) else { return }
                 provider = nil
             }
-            await workspace.send(conversation.id, text: text)
+            await workspace.send(conversation.id, text: text, images: images)
         }
     }
 
@@ -1002,18 +1194,26 @@ private struct QuestionCard: View {
     }
 }
 
-private struct ItemView: View {
+struct ItemView: View {
     let item: ConversationItem
     let cwd: String
 
     var body: some View {
         switch item.kind {
-        case let .user(text):
-            HStack {
-                Spacer(minLength: 80)
-                Text(text).textSelection(.enabled).padding(.horizontal, 14).padding(.vertical, 9)
-                    .background(Theme.chip, in: RoundedRectangle(cornerRadius: 16))
+        case let .user(text, images):
+            VStack(alignment: .trailing, spacing: 6) {
+                if !images.isEmpty {
+                    HStack(spacing: 6) { ForEach(images, id: \.self) { Thumbnail(path: $0, side: 120) } }
+                }
+                if !text.isEmpty {
+                    HStack {
+                        Spacer(minLength: 80)
+                        Text(text).font(.system(size: 14.5)).textSelection(.enabled).padding(.horizontal, 14).padding(.vertical, 9)
+                            .background(Theme.chip, in: RoundedRectangle(cornerRadius: 16))
+                    }
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .trailing)
         case let .agent(text, final):
             VStack(alignment: .leading, spacing: 6) {
                 MarkdownText(text, cwd: cwd)
@@ -1046,7 +1246,7 @@ private struct ItemView: View {
 }
 
 /// Copies an answer; a tick for a moment says it did.
-private struct CopyButton: View {
+struct CopyButton: View {
     let text: String
     @State private var copied = false
 
@@ -1214,15 +1414,41 @@ private struct Composer<Controls: View>: View {
     @Binding var draft: String
     let placeholder: String
     var canSend = true
+    /// Images going with the message: pasted, dropped, or picked with the +.
+    @Binding var images: [URL]
     let send: () -> Void
     @ViewBuilder var controls: Controls
+    @FocusState private var focused: Bool
+    /// Whether the text has focus, where the paste handler (AppKit's, outside SwiftUI's updates) can read it.
+    @State private var focus = FocusBox()
+    @State private var dropping = false
+    @State private var monitor: Any?
+
+    final class FocusBox { var on = false }
 
     var body: some View {
-        let ready = canSend && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let attached = images
+        let ready = canSend && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attached.isEmpty)
         VStack(alignment: .leading, spacing: 10) {
+            if !attached.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        ForEach(attached, id: \.self) { url in
+                            Thumbnail(path: url.path, remove: { images.removeAll { $0 == url } })
+                        }
+                    }
+                }
+                .scrollIndicators(.never)
+            }
             TextField(placeholder, text: $draft, axis: .vertical).textFieldStyle(.plain).font(.system(size: 14)).lineLimit(1...10)
+                .focused($focused)
+                .onChange(of: focused) { _, now in focus.on = now }
                 .onSubmit { if ready { send() } }
             HStack(spacing: 6) {
+                Button { images += Attachments.pick() } label: {
+                    NucleoIcon("plus", size: 14).foregroundStyle(.secondary).frame(width: 26, height: 26)
+                }
+                .buttonStyle(Hovering(radius: 13)).help("Attach images")
                 HStack(spacing: 6) { controls }.frame(maxWidth: .infinity, alignment: .leading)
                 Button(action: send) {
                     NucleoIcon("arrow-up", size: 13).foregroundStyle(Theme.onKnob)
@@ -1232,15 +1458,33 @@ private struct Composer<Controls: View>: View {
             }
         }
         .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 10)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.stroke))
+        // Solid, a shade lighter than the page, as Codex's is.
+        .background(Theme.composer, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(dropping ? Color.accentColor : Theme.stroke, lineWidth: dropping ? 2 : 1))
         .shadow(color: .black.opacity(0.04), radius: 8, y: 2)
+        .onDrop(of: [.fileURL, .image], isTargeted: $dropping) { providers in
+            let images = $images
+            Attachments.fromDrop(providers) { images.wrappedValue += $0 }
+            return true
+        }
+        // ⌘V with an image on the clipboard attaches it; anything else pastes into the text as usual.
+        .onAppear {
+            guard monitor == nil else { return }
+            let (focus, images) = (focus, $images)
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                guard focus.on, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command, event.charactersIgnoringModifiers == "v",
+                      let urls = Attachments.fromPasteboard(), !urls.isEmpty else { return event }
+                images.wrappedValue += urls
+                return nil
+            }
+        }
+        .onDisappear { if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil }
     }
 }
 
 extension Composer where Controls == EmptyView {
-    init(draft: Binding<String>, placeholder: String, canSend: Bool = true, send: @escaping () -> Void) {
-        self.init(draft: draft, placeholder: placeholder, canSend: canSend, send: send) { EmptyView() }
+    init(draft: Binding<String>, placeholder: String, canSend: Bool = true, images: Binding<[URL]>, send: @escaping () -> Void) {
+        self.init(draft: draft, placeholder: placeholder, canSend: canSend, images: images, send: send) { EmptyView() }
     }
 }
 
@@ -1274,6 +1518,7 @@ private struct NewTaskView: View {
     @State private var effort = ""
     @State private var permissions = Permissions.auto
     @State private var prompt = ""
+    @State private var images: [URL] = []
     @State private var starting = false
 
     private var chosen: Provider { Provider(rawValue: provider) ?? .codex }
@@ -1289,7 +1534,7 @@ private struct NewTaskView: View {
             Spacer()
             VStack(spacing: 0) {
                 projectTab
-                Composer(draft: $prompt, placeholder: "Do anything", canSend: !starting && folders.contains(project)) { start() } controls: {
+                Composer(draft: $prompt, placeholder: "Do anything", canSend: !starting && folders.contains(project), images: $images) { start() } controls: {
                     ComposerMenu(label: permissions == .auto ? "Auto" : "Unrestricted", symbol: permissions == .auto ? "wand-sparkle" : "bolt-lightning") {
                         Picker("Permissions", selection: $permissions) {
                             Text("Auto: \(chosen.title) decides what's safe, and asks you the rest").tag(Permissions.auto)
@@ -1376,12 +1621,14 @@ private struct NewTaskView: View {
 
     private func start() {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !starting else { return }
+        let attached = images.map(\.path)
+        guard !text.isEmpty || !attached.isEmpty, !starting else { return }
         starting = true
         Task {
-            if let id = await workspace.start(provider: chosen, cwd: project, prompt: text, model: model.isEmpty ? nil : model,
+            if let id = await workspace.start(provider: chosen, cwd: project, prompt: text, images: attached, model: model.isEmpty ? nil : model,
                                               effort: effort.isEmpty ? nil : effort, permissions: permissions) {
                 prompt = ""
+                images = []
                 started(id)
             }
             starting = false

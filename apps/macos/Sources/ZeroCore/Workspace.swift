@@ -89,6 +89,22 @@ public final class Workspace {
         await refreshBoard()
     }
 
+    /// How many of a session's items aren't loaded, before those that are.
+    public func earlier(_ session: String) -> Int { mirror.earlier[session] ?? 0 }
+
+    /// The page of a session's items before those loaded; with `from`, every one from that message on.
+    public func loadEarlier(_ session: String, from: String? = nil) async {
+        guard let link, earlier(session) > 0 else { return }
+        let first = conversation(session)?.items.first?.id
+        guard let page = try? await link.items(session: session, before: first, from: from) else { return }
+        mirror.prepend(session, items: page, remaining: max(0, earlier(session) - page.count))
+    }
+
+    /// Back to its latest items, as a snapshot has them: the rest is fetched again when it's wanted.
+    public func trim(_ session: String) { mirror.trim(session, keep: 40) }
+
+    public func outline(_ session: String) async -> [OutlineMark] { (try? await link?.outline(session: session)) ?? [] }
+
     public func loadPads() async {
         guard let list = try? await link?.pad("list", [:], as: PadList.self) else { return }
         if list.pads != pads { pads = list.pads }
@@ -107,6 +123,13 @@ public final class Workspace {
 
     public func createPad(in folder: String) async -> Pad? {
         let pad = await attempt { try await $0.pad("create", ["folder": folder, "title": "Untitled"], as: Pad.self) }
+        await loadPads()
+        return pad
+    }
+
+    /// A pad with something in it already (a message saved from a task).
+    public func createPad(title: String, folder: String, content: String) async -> Pad? {
+        let pad = await attempt { try await $0.pad("create", ["title": title, "folder": folder, "content": content], as: Pad.self) }
         await loadPads()
         return pad
     }
@@ -190,12 +213,12 @@ public final class Workspace {
         if rows != board { board = rows }
     }
 
-    public func start(provider: Provider, cwd: String, prompt: String, model: String?, effort: String?, permissions: Permissions = .auto) async -> String? {
-        await attempt { try await $0.start(provider: provider, cwd: cwd, prompt: prompt, model: model, effort: effort, permissions: permissions) }
+    public func start(provider: Provider, cwd: String, prompt: String, images: [String] = [], model: String?, effort: String?, permissions: Permissions = .auto) async -> String? {
+        await attempt { try await $0.start(provider: provider, cwd: cwd, prompt: prompt, images: images, model: model, effort: effort, permissions: permissions) }
     }
 
-    public func send(_ session: String, text: String, model: String? = nil, effort: String? = nil) async {
-        _ = await attempt { try await $0.send(session: session, text: text, model: model, effort: effort) }
+    public func send(_ session: String, text: String, images: [String] = [], model: String? = nil, effort: String? = nil) async {
+        _ = await attempt { try await $0.send(session: session, text: text, images: images, model: model, effort: effort) }
     }
 
     public func interrupt(_ session: String) async { _ = await attempt { try await $0.interrupt(session: session) } }
@@ -238,7 +261,7 @@ public final class Workspace {
         if let label = conversation.label, !label.isEmpty { return label }
         if let title = conversation.title, !title.isEmpty { return title }
         for item in conversation.items {
-            if case let .user(text) = item.kind, let gist = Store.gist(of: text) { return gist }
+            if case let .user(text, _) = item.kind, let gist = Store.gist(of: text) { return gist }
         }
         return "\(conversation.provider.title) in \((conversation.cwd as NSString).lastPathComponent)"
     }
