@@ -163,6 +163,8 @@ async fn rex_types_presses_enter_and_tells_running_from_gone() {
     assert!(rex.offline(&[rex_agent()]).await.contains("claude-abc123"), "exited, the terminal kept");
     std::fs::write(dir.join("process.code"), "3").unwrap();
     assert!(rex.gone(&[rex_agent()]).await.contains("claude-abc123"), "closed: no such block");
+    let session = AgentIdentity { name: "zerod-01a1".into(), runtime: Some("zerod".into()), reference: Some("01a1".into()), ..rex_agent() };
+    assert!(rex.gone(&[session]).await.is_empty(), "an agent on another runtime is none of Rex's business");
 }
 
 /// zero-host as a socket: answers each request from a table, and records them.

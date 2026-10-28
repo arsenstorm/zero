@@ -133,10 +133,11 @@ pub async fn switch_model(terminal: &dyn Terminal, agent: &AgentIdentity, model:
     Ok(())
 }
 
-/// The names among `agents` whose terminal is in `wanted`; a host that can't be reached says nothing either way.
-pub async fn states(terminal: &dyn Terminal, agents: &[AgentIdentity], wanted: State) -> HashSet<String> {
+/// The names among `agents` on this runtime whose terminal is in `wanted`; a host that can't be reached says nothing
+/// either way.
+pub async fn states<T: Terminal + Runtime>(terminal: &T, agents: &[AgentIdentity], wanted: State) -> HashSet<String> {
     let mut found = HashSet::new();
-    for agent in agents {
+    for agent in agents.iter().filter(|a| terminal.can_reach(a)) {
         if let Some(reference) = agent.reference.as_deref() && terminal.state(reference).await == wanted { found.insert(agent.name.clone()); }
     }
     found
