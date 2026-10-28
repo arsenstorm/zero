@@ -54,8 +54,10 @@ impl Core {
         self.adapter.reply(open, answers)
     }
 
-    /// Applies a change Zero makes itself and returns it for the clients.
+    /// Applies a change Zero makes itself and returns it for the clients. A switch brings the new provider's adapter, so
+    /// its lines are read its way from here on, live and on replay.
     pub fn change(&mut self, change: Change) -> Change {
+        if let Change::Switched { provider, .. } = &change { self.adapter = provider.adapter() }
         self.conversation.apply(change.clone());
         change
     }

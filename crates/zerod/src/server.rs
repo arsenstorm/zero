@@ -177,6 +177,10 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         }
         "send" => daemon.send(&session()?, request.text.as_deref().ok_or("Send needs text")?, model, effort).await.map(|_| Value::Null),
         "resume" => daemon.resume(&session()?).await.map(|_| Value::Null),
+        "switch" => {
+            let provider = request.provider.ok_or("Switch to which provider: codex, claude or opencode?")?;
+            daemon.switch(&session()?, provider, request.model.as_deref(), request.effort.as_deref()).await.map(|_| Value::Null)
+        }
         "interrupt" => daemon.interrupt(&session()?).await.map(|_| Value::Null),
         "stop" => daemon.stop(&session()?).map(|_| Value::Null),
         "decide" => {

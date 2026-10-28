@@ -354,12 +354,56 @@ pub async fn start(session: &Session, transport: Transport, prompt: &str, model:
 /// Codex client since misses those turns until `thread/turns/list` hydration is added.
 pub async fn resume(session: &Session, transport: Transport) -> Result<(), String> {
     let conversation = session.snapshot();
-    let thread = conversation.thread.ok_or("This session never got as far as a thread, so there is nothing to resume")?;
+    if conversation.thread.is_none() && conversation.items.is_empty() {
+        return Err("This session never got as far as a thread, so there is nothing to resume".into());
+    }
     handshake(session, transport).await?;
+    // Taken over from another provider: Codex imports the conversation as a thread of its own.
+    let thread = match conversation.thread.clone() {
+        Some(thread) => thread,
+        None => take_over(session, &conversation).await?,
+    };
     let (approvals, sandbox) = policy(conversation.permissions);
-    let params = json!({"threadId": thread, "cwd": conversation.cwd, "approvalPolicy": approvals, "sandbox": sandbox,
-                        "developerInstructions": INSTRUCTIONS, "excludeTurns": true});
+    let mut params = json!({"threadId": thread, "cwd": conversation.cwd, "approvalPolicy": approvals, "sandbox": sandbox,
+                            "developerInstructions": INSTRUCTIONS, "excludeTurns": true});
+    if let Some(model) = &conversation.model { params["model"] = json!(model) }
     session.request(|id| json!({"id": id, "method": "thread/resume", "params": params})).await.map(|_| ())
+}
+
+/// Codex imports Claude Code sessions it finds where Claude keeps them (not through a link), so the record goes there as a
+/// Claude Code session file just for the import, and is gone again once Codex has made its thread of it.
+async fn take_over(session: &Session, conversation: &Conversation) -> Result<String, String> {
+    let home = std::path::PathBuf::from(std::env::var("HOME").map_err(|_| "No home folder to hand the task over in")?);
+    let id = crate::claude::new_session_id();
+    let folder = crate::handoff::claude_folder(&home, &conversation.cwd);
+    let copy = folder.join(format!("{id}.jsonl"));
+    std::fs::create_dir_all(&folder).and_then(|_| std::fs::write(&copy, crate::handoff::claude_session(conversation, &id)))
+        .map_err(|e| format!("Couldn't write the conversation for Codex: {e}"))?;
+    let imported = import(session, &copy.to_string_lossy()).await;
+    let _ = std::fs::remove_file(&copy);
+    imported
+}
+
+async fn import(session: &Session, path: &str) -> Result<String, String> {
+    let detected = session.request(|id| json!({"id": id, "method": "externalAgentConfig/detect", "params": {"includeHome": true, "maxSessions": 20}})).await?;
+    let mut item = detected["items"].as_array().into_iter().flatten().find(|i| i["itemType"] == "SESSIONS").cloned()
+        .ok_or("Codex found no conversations to take over")?;
+    let ours: Vec<Value> = item["details"]["sessions"].as_array().into_iter().flatten().filter(|s| s["path"] == path).cloned().collect();
+    if ours.is_empty() { return Err("Codex didn't find the conversation Zero wrote for it".into()) }
+    item["details"]["sessions"] = Value::Array(ours);
+    let started = session.request(|id| json!({"id": id, "method": "externalAgentConfig/import", "params": {"migrationItems": [item]}})).await?;
+    let import = started["importId"].as_str().ok_or("Codex didn't start the import")?.to_string();
+    // ponytail: polls its import history; the completed notification when the adapter can hand notifications to a waiter.
+    for _ in 0..240 {
+        let read = session.request(|id| json!({"id": id, "method": "externalAgentConfig/import/readHistories"})).await?;
+        if let Some(done) = read["data"].as_array().into_iter().flatten().find(|h| h["importId"] == import.as_str()) {
+            if let Some(thread) = done["successes"].as_array().into_iter().flatten().find_map(|s| s["target"].as_str()) { return Ok(thread.into()) }
+            let why = done["failures"][0]["message"].as_str().unwrap_or("no reason given");
+            return Err(format!("Codex couldn't take over the conversation: {why}"));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    Err("Codex took too long to take over the conversation".into())
 }
 
 async fn handshake(session: &Session, transport: Transport) -> Result<(), String> {

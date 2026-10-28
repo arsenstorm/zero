@@ -200,6 +200,35 @@ impl Daemon {
         session.resume(transport).await
     }
 
+    /// Moves a task to another provider between turns. Its conversation stays Zero's; the next message starts the new
+    /// provider on it (handoff.rs): Claude Code resumes it as one of its own session files, Codex imports that file.
+    pub async fn switch(&self, id: &str, provider: Provider, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+        let session = self.session(id)?;
+        let conversation = session.snapshot();
+        if provider == conversation.provider { return Ok(()) }
+        if provider == Provider::Opencode { return Err(format!("Zero can't hand a task to {} yet", provider.title())) }
+        if matches!(conversation.status, Status::Working | Status::Waiting) {
+            return Err(format!("{} is working; stop its turn first", conversation.provider.title()));
+        }
+        if session.is_attached() {
+            session.stop();
+            for _ in 0..100 {
+                if session.snapshot().status == Status::Offline { break }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+        session.change(Change::Switched { provider, model: model.map(Into::into), effort: effort.map(Into::into) });
+        if provider == Provider::Claude {
+            let thread = claude::new_session_id();
+            let home = PathBuf::from(std::env::var("HOME").map_err(|_| "No home folder for Claude Code's sessions")?);
+            let folder = crate::handoff::claude_folder(&home, &conversation.cwd);
+            std::fs::create_dir_all(&folder).and_then(|_| std::fs::write(folder.join(format!("{thread}.jsonl")), crate::handoff::claude_session(&session.snapshot(), &thread)))
+                .map_err(|e| format!("Couldn't write the conversation for Claude Code: {e}"))?;
+            session.change(Change::Thread { thread, model: None, effort: None });
+        }
+        Ok(())
+    }
+
     pub async fn interrupt(&self, id: &str) -> Result<(), String> {
         self.session(id)?.interrupt().await
     }

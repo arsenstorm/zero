@@ -69,3 +69,13 @@ private let recordings = ["codex-command", "codex-file-change", "claude-command"
     #expect(cases.first { $0.name == "limited" }?.conversation.usage?.resetsAt == 1793030000)
     #expect(cases.first { $0.name == "failed" }?.conversation.failure?.kind == .signIn)
 }
+
+@Test func aSwitchPutsTheConversationOnAnotherProvider() throws {
+    let change = try JSONDecoder().decode(Change.self, from: Data(#"{"type":"switched","provider":"codex","model":"gpt-6-sol","effort":null}"#.utf8))
+    var conversation = Conversation(id: "s", provider: .claude, cwd: "/")
+    conversation.apply(.thread("claude-thread", model: "opus", effort: "high"))
+    conversation.apply(change)
+    #expect((conversation.provider, conversation.thread, conversation.model, conversation.effort) == (.codex, nil, "gpt-6-sol", nil))
+    #expect(conversation.items.last == ConversationItem(id: "switched-2", turn: nil, kind: .notice(text: "Continued in Codex", error: false), status: .done),
+            "the same item zerod adds, by the same id")
+}

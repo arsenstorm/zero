@@ -275,6 +275,10 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
         case let .failed(failure): self.failure = failure
         case let .stalled(reason): stalled = reason
         case let .diff(diff): self.diff = diff
+        case let .switched(provider, model, effort):
+            self.provider = provider; self.thread = nil; self.model = model; self.effort = effort
+            // As zerod does: where each provider took over, in the conversation itself.
+            items.append(ConversationItem(id: "switched-\(seq)", turn: nil, kind: .notice(text: "Continued in \(provider.title)", error: false), status: .done))
         }
     }
 }
@@ -294,8 +298,10 @@ public enum Change: Decodable, Equatable, Sendable {
     case failed(Failure?)
     case stalled(String?)
     case diff(String?)
+    /// The task moved to another provider, which starts a thread of its own from Zero's record.
+    case switched(Provider, model: String?, effort: String?)
 
-    private enum Keys: String, CodingKey { case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label, ticket }
+    private enum Keys: String, CodingKey { case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label, ticket, provider }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -316,6 +322,8 @@ public enum Change: Decodable, Equatable, Sendable {
         case "failed": self = .failed(try c.decodeIfPresent(Failure.self, forKey: .failure))
         case "stalled": self = .stalled(try c.decodeIfPresent(String.self, forKey: .reason))
         case "diff": self = .diff(try c.decodeIfPresent(String.self, forKey: .diff))
+        case "switched": self = .switched(try c.decode(Provider.self, forKey: .provider), model: try c.decodeIfPresent(String.self, forKey: .model),
+                                          effort: try c.decodeIfPresent(String.self, forKey: .effort))
         case let other: throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "Unknown change \(other)")
         }
     }
@@ -447,6 +455,10 @@ public final class ZerodLink: @unchecked Sendable {
     public func interrupt(session: String) async throws { _ = try await call("interrupt", ["session": session]) }
     public func stop(session: String) async throws { _ = try await call("stop", ["session": session]) }
     public func resume(session: String) async throws { _ = try await call("resume", ["session": session]) }
+    /// Moves the task to another provider between turns; the next message starts it there.
+    public func switchProvider(session: String, to provider: Provider, model: String?, effort: String?) async throws {
+        _ = try await call("switch", ["session": session, "provider": provider.rawValue, "model": model, "effort": effort])
+    }
 
     public func decide(session: String, approval: String, choice: String) async throws {
         _ = try await call("decide", ["session": session, "approval": approval, "choice": choice])

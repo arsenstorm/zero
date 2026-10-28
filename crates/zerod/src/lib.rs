@@ -12,6 +12,7 @@ pub mod codex;
 pub mod core;
 pub mod daemon;
 pub mod drops;
+pub mod handoff;
 pub mod host;
 pub mod inbox;
 pub mod model;

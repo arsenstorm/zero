@@ -315,6 +315,8 @@ pub enum Change {
     Failed { failure: Option<Failure> },
     Stalled { reason: Option<String> },
     Diff { diff: Option<String> },
+    /// The task moves to another provider: it starts a thread of its own there, from Zero's record (handoff.rs).
+    Switched { provider: Provider, model: Option<String>, effort: Option<String> },
 }
 
 /// A change as clients receive it: which session, and its place in that session's sequence.
@@ -408,6 +410,15 @@ impl Conversation {
             Change::Failed { failure } => self.failure = failure,
             Change::Stalled { reason } => self.stalled = reason,
             Change::Diff { diff } => self.diff = diff,
+            Change::Switched { provider, model, effort } => {
+                self.provider = provider;
+                self.thread = None;
+                self.model = model;
+                self.effort = effort;
+                // Where each provider took over, in the conversation itself (handoff.rs leaves notices out).
+                let id = format!("switched-{}", self.seq);
+                self.items.push(Item { id, turn: None, kind: ItemKind::Notice { text: format!("Continued in {}", provider.title()), error: false }, status: ItemStatus::Done });
+            }
         }
     }
 }

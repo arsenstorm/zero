@@ -73,6 +73,11 @@ public final class Workspace {
     public func stop(_ session: String) async { _ = await attempt { try await $0.stop(session: session) } }
     public func resume(_ session: String) async { _ = await attempt { try await $0.resume(session: session) } }
 
+    /// Moves the task to another provider; true once it's there.
+    public func switchProvider(_ session: String, to provider: Provider, model: String? = nil, effort: String? = nil) async -> Bool {
+        await attempt { try await $0.switchProvider(session: session, to: provider, model: model, effort: effort) } != nil
+    }
+
     /// Answered in the window, every field at once.
     public func answer(_ session: String, question: String, answers: [String: [String]]) async {
         _ = await attempt { try await $0.answer(session: session, question: question, answers: answers) }
