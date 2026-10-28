@@ -25,6 +25,32 @@ impl Host {
         Host { socket, sessions: ClaudeSessions::default(), poll: Duration::from_secs(2) }
     }
 
+    /// A task's provider terminal: a new one running `argv` in `cwd`, zero-host started first if it isn't running.
+    pub async fn open(&self, cwd: &str, argv: &[String], label: &str) -> Result<String, String> {
+        self.ready().await?;
+        let reply = self.call(json!({"op": "spawn", "cwd": cwd, "argv": argv, "label": label})).await.ok_or("Zero's terminal host didn't answer")?;
+        if reply["ok"] != true { return Err(reply["error"].as_str().unwrap_or("zero-host refused the terminal").into()) }
+        reply["terminal"]["id"].as_str().map(String::from).ok_or_else(|| "zero-host opened no terminal".into())
+    }
+
+    /// Ends the terminal's program and lets go of it.
+    pub async fn shut(&self, id: &str) {
+        let _ = self.call(json!({"op": "close", "id": id})).await;
+    }
+
+    /// zero-host, started from beside zerod (Zero.app's MacOS folder) if it isn't running; it detaches itself.
+    async fn ready(&self) -> Result<(), String> {
+        if self.call(json!({"op": "hello"})).await.is_some() { return Ok(()) }
+        let helper = std::env::current_exe().map_err(|e| e.to_string())?.with_file_name("zero-host");
+        std::process::Command::new(&helper).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+            .spawn().map_err(|e| format!("Couldn't start Zero's terminal host ({}): {e}", helper.display()))?;
+        for _ in 0..30 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if self.call(json!({"op": "hello"})).await.is_some() { return Ok(()) }
+        }
+        Err("Zero's terminal host didn't start".into())
+    }
+
     /// One request and its answer; None when zero-host isn't running.
     async fn call(&self, request: Value) -> Option<Value> {
         let stream = tokio::net::UnixStream::connect(&self.socket).await.ok()?;

@@ -44,5 +44,6 @@
   },
   "stalled": null,
   "diff": null,
+  "terminal": null,
   "seq": 7
 }

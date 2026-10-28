@@ -75,5 +75,6 @@
   "failure": null,
   "stalled": null,
   "diff": null,
+  "terminal": null,
   "seq": 15
 }

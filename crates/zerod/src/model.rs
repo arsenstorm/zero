@@ -52,8 +52,20 @@ pub struct Conversation {
     pub stalled: Option<String>,
     /// The unified diff of everything the latest turn changed.
     pub diff: Option<String>,
+    /// While the task is in its provider's own terminal (zero-host's): which one, and where Zero's record of the
+    /// provider's history stood when it opened.
+    #[serde(default)]
+    pub terminal: Option<Opened>,
     /// How many changes have been applied: a client that took a snapshot at `seq` applies only later changes.
     pub seq: u64,
+}
+
+/// A task's provider terminal: zero-host's id for it, and `mark`, how much of the provider's own history (lines of
+/// Claude Code's session file) was already in Zero's record when it opened.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Opened {
+    pub id: String,
+    pub mark: usize,
 }
 
 /// Which agent runtime a session runs on.
@@ -317,6 +329,8 @@ pub enum Change {
     Diff { diff: Option<String> },
     /// The task moves to another provider: it starts a thread of its own there, from Zero's record (handoff.rs).
     Switched { provider: Provider, model: Option<String>, effort: Option<String> },
+    /// The task went to its provider's terminal, or came back from it.
+    Terminal { terminal: Option<Opened> },
 }
 
 /// A change as clients receive it: which session, and its place in that session's sequence.
@@ -332,7 +346,7 @@ impl Conversation {
         Conversation {
             id: id.into(), provider, cwd: cwd.into(), permissions: Permissions::Auto, label: None, ticket: None, branch: None, parent: None, thread: None, title: None, model: None, effort: None,
             status: Status::Starting, turn: None, error: None, items: vec![], approvals: vec![], questions: vec![], usage: None,
-            failure: None, stalled: None, diff: None, seq: 0,
+            failure: None, stalled: None, diff: None, terminal: None, seq: 0,
         }
     }
 
@@ -410,6 +424,7 @@ impl Conversation {
             Change::Failed { failure } => self.failure = failure,
             Change::Stalled { reason } => self.stalled = reason,
             Change::Diff { diff } => self.diff = diff,
+            Change::Terminal { terminal } => self.terminal = terminal,
             Change::Switched { provider, model, effort } => {
                 self.provider = provider;
                 self.thread = None;

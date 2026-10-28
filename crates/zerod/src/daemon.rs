@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
 use crate::claude;
-use crate::model::{Attention, Change, Conversation, Event, Permissions, Provider, Status};
+use crate::model::{Attention, Change, Conversation, Event, Opened, Permissions, Provider, Status};
 use crate::process;
 use crate::session::{Session, Transport};
 
@@ -36,6 +36,8 @@ pub struct Daemon {
     pending: Mutex<HashMap<String, Vec<String>>>,
     /// The limit resets already waited for, by session, so each is waited for once.
     resets: Mutex<HashMap<String, i64>>,
+    /// The user's home (where Claude Code keeps its sessions) and zero-host's socket.
+    user: Mutex<(PathBuf, PathBuf)>,
     me: Weak<Daemon>,
 }
 
@@ -79,7 +81,7 @@ impl Daemon {
         }
         let daemon = Arc::new_cyclic(|me| Daemon {
             home: home.into(), sessions: Mutex::new(sessions), events, runtime, attention: Mutex::new(attention), pending: Mutex::new(pending),
-            resets: Mutex::new(HashMap::new()), me: me.clone(),
+            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()),
         });
         let mut heard = daemon.events.subscribe();
         let weak: Weak<Daemon> = Arc::downgrade(&daemon);
@@ -181,9 +183,104 @@ impl Daemon {
         Ok(id)
     }
 
+    /// Where the user's home and zero-host are, for a test's own.
+    pub fn place(&self, home: &Path, host: &Path) {
+        *self.user.lock().unwrap() = (home.into(), host.into());
+    }
+
+    fn host(&self) -> crate::host::Host {
+        crate::host::Host { socket: self.user.lock().unwrap().1.clone(), sessions: Default::default(), poll: Duration::from_secs(2) }
+    }
+
+    fn user_home(&self) -> PathBuf {
+        self.user.lock().unwrap().0.clone()
+    }
+
+    /// Hands the task to its provider's own terminal, on its own thread: Zero's headless process stops first, so only
+    /// one of them ever writes to the thread. Watched until its program ends, which brings the task back.
+    pub async fn open_terminal(&self, id: &str) -> Result<String, String> {
+        let session = self.session(id)?;
+        let conversation = session.snapshot();
+        if let Some(open) = &conversation.terminal { return Ok(open.id.clone()) }
+        if matches!(conversation.status, Status::Working | Status::Waiting) {
+            return Err(format!("{} is working; stop its turn first", conversation.provider.title()));
+        }
+        let argv = conversation.provider.terminal(&conversation)?;
+        self.take_offline(&session).await;
+        let mark = match conversation.provider {
+            Provider::Claude => std::fs::read_to_string(self.claude_file(&conversation)).map(|text| text.lines().count()).unwrap_or(0),
+            _ => 0,
+        };
+        let terminal = self.host().open(&conversation.cwd, &argv, &crate::bridge::label(&conversation)).await?;
+        session.change(Change::Terminal { terminal: Some(Opened { id: terminal.clone(), mark }) });
+        let (weak, task, watched) = (self.me.clone(), id.to_string(), terminal.clone());
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                let Some(daemon) = weak.upgrade() else { return };
+                if daemon.get(&task).and_then(|c| c.terminal).map(|t| t.id) != Some(watched.clone()) { return }
+                if matches!(crate::terminal::Terminal::state(&daemon.host(), &watched).await, crate::terminal::State::Exited | crate::terminal::State::Missing) {
+                    if let Err(error) = daemon.close_terminal(&task).await { eprintln!("zerod: {task} came back from its terminal badly: {error}") }
+                    return;
+                }
+            }
+        });
+        Ok(terminal)
+    }
+
+    /// Back from the provider's terminal: it closes, what happened there joins the task's record, and Zero's UI has the
+    /// task again (the next message resumes the provider headless on the same thread).
+    pub async fn close_terminal(&self, id: &str) -> Result<(), String> {
+        let session = self.session(id)?;
+        let conversation = session.snapshot();
+        let Some(open) = conversation.terminal.clone() else { return Ok(()) };
+        self.host().shut(&open.id).await;
+        session.change(Change::Terminal { terminal: None });
+        match conversation.provider {
+            Provider::Claude => {
+                let text = std::fs::read_to_string(self.claude_file(&conversation)).unwrap_or_default();
+                let records: Vec<serde_json::Value> = text.lines().skip(open.mark).filter_map(|line| serde_json::from_str(line).ok()).collect();
+                for item in crate::handoff::from_claude_session(&records) { session.change(Change::Item { item }) }
+            }
+            Provider::Codex => {
+                // Codex lets go of the thread once its terminal's program has exited, a moment after it's told to.
+                // ponytail: two more tries over about 4 s; zero-host saying when the program is gone would make it exact.
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                let mut tries = 0;
+                loop {
+                    match self.resume(id).await {
+                        Err(error) if error.contains("active writer") && tries < 2 => { tries += 1; tokio::time::sleep(Duration::from_secs(2)).await }
+                        resumed => break resumed?,
+                    }
+                }
+                crate::codex::catch_up(&session).await?;
+            }
+            // ponytail: OpenCode's terminal turns stay in OpenCode until its session export is read back.
+            Provider::Opencode => {}
+        }
+        Ok(())
+    }
+
+    fn claude_file(&self, conversation: &Conversation) -> PathBuf {
+        crate::handoff::claude_folder(&self.user_home(), &conversation.cwd).join(format!("{}.jsonl", conversation.thread.as_deref().unwrap_or("")))
+    }
+
+    /// Stops the session's process, if it has one, and waits for it to be gone.
+    async fn take_offline(&self, session: &Session) {
+        if !session.is_attached() { return }
+        session.stop();
+        for _ in 0..100 {
+            if session.snapshot().status == Status::Offline { break }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
     /// Arsen's words to a session, resuming it first if it is offline.
     pub async fn send(&self, id: &str, text: &str, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
         let session = self.session(id)?;
+        if let Some(conversation) = self.get(id) && conversation.terminal.is_some() {
+            return Err(format!("{} is open in its terminal; type there, or go back to Zero", conversation.provider.title()));
+        }
         if !session.is_attached() { self.resume(id).await? }
         session.send(text, model, effort).await
     }
@@ -197,7 +294,10 @@ impl Daemon {
         let argv = conversation.provider.command(&conversation, true, conversation.model.as_deref(), conversation.effort.as_deref());
         let transport = (self.runtime)(&conversation, &self.home.join("sessions").join(id), &argv)
             .map_err(|e| format!("{} didn't start: {e}", conversation.provider.title()))?;
-        session.resume(transport).await
+        let resumed = session.resume(transport).await;
+        // A process that didn't get the thread lets go of it; it would otherwise hold it from whoever does.
+        if resumed.is_err() { self.take_offline(&session).await }
+        resumed
     }
 
     /// Moves a task to another provider between turns. Its conversation stays Zero's; the next message starts the new
@@ -210,18 +310,12 @@ impl Daemon {
         if matches!(conversation.status, Status::Working | Status::Waiting) {
             return Err(format!("{} is working; stop its turn first", conversation.provider.title()));
         }
-        if session.is_attached() {
-            session.stop();
-            for _ in 0..100 {
-                if session.snapshot().status == Status::Offline { break }
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        }
+        if conversation.terminal.is_some() { return Err(format!("{} is open in its terminal; go back to Zero first", conversation.provider.title())) }
+        self.take_offline(&session).await;
         session.change(Change::Switched { provider, model: model.map(Into::into), effort: effort.map(Into::into) });
         if provider == Provider::Claude {
             let thread = claude::new_session_id();
-            let home = PathBuf::from(std::env::var("HOME").map_err(|_| "No home folder for Claude Code's sessions")?);
-            let folder = crate::handoff::claude_folder(&home, &conversation.cwd);
+            let folder = crate::handoff::claude_folder(&self.user_home(), &conversation.cwd);
             std::fs::create_dir_all(&folder).and_then(|_| std::fs::write(folder.join(format!("{thread}.jsonl")), crate::handoff::claude_session(&session.snapshot(), &thread)))
                 .map_err(|e| format!("Couldn't write the conversation for Claude Code: {e}"))?;
             session.change(Change::Thread { thread, model: None, effort: None });
@@ -383,6 +477,13 @@ impl Daemon {
         session.stop();
         Ok(())
     }
+}
+
+/// The user's home, and zero-host's socket in Zero's folder there.
+fn user_places() -> (PathBuf, PathBuf) {
+    let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
+    let host = home.join(".zero/host.sock");
+    (home, host)
 }
 
 fn now() -> i64 {

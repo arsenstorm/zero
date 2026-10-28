@@ -73,6 +73,9 @@ public final class Workspace {
     public func stop(_ session: String) async { _ = await attempt { try await $0.stop(session: session) } }
     public func resume(_ session: String) async { _ = await attempt { try await $0.resume(session: session) } }
 
+    public func openTerminal(_ session: String) async { _ = await attempt { try await $0.openTerminal(session: session) } }
+    public func closeTerminal(_ session: String) async { _ = await attempt { try await $0.closeTerminal(session: session) } }
+
     /// Moves the task to another provider; true once it's there.
     public func switchProvider(_ session: String, to provider: Provider, model: String? = nil, effort: String? = nil) async -> Bool {
         await attempt { try await $0.switchProvider(session: session, to: provider, model: model, effort: effort) } != nil

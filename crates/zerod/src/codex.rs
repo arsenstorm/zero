@@ -223,6 +223,24 @@ fn notification(conversation: &Conversation, method: &str, params: &Value, effec
     }
 }
 
+/// The items of the turns Zero doesn't know yet (those run in Codex's own terminal), from `thread/read`'s turns.
+pub fn new_turn_items(turns: &Value, known: &std::collections::HashSet<String>) -> Vec<Item> {
+    turns.as_array().into_iter().flatten()
+        .filter(|turn| turn["id"].as_str().is_some_and(|id| !known.contains(id)))
+        .flat_map(|turn| turn["items"].as_array().into_iter().flatten().filter_map(|value| item(value, turn["id"].as_str())).collect::<Vec<_>>())
+        .collect()
+}
+
+/// After Codex's own terminal had the thread: its turns there join the task's record.
+pub async fn catch_up(session: &Session) -> Result<(), String> {
+    let conversation = session.snapshot();
+    let thread = conversation.thread.clone().ok_or("Codex has no thread to read")?;
+    let read = session.request(|id| json!({"id": id, "method": "thread/read", "params": {"threadId": thread, "includeTurns": true}})).await?;
+    let known: std::collections::HashSet<String> = conversation.items.iter().filter_map(|i| i.turn.clone()).collect();
+    for item in new_turn_items(&read["thread"]["turns"], &known) { session.change(Change::Item { item }) }
+    Ok(())
+}
+
 fn item(value: &Value, turn: Option<&str>) -> Option<Item> {
     let id = value["id"].as_str()?.to_string();
     let text = |field: &str| value[field].as_str().unwrap_or("").to_string();

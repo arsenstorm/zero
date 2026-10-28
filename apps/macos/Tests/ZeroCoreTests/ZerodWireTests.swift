@@ -79,3 +79,11 @@ private let recordings = ["codex-command", "codex-file-change", "claude-command"
     #expect(conversation.items.last == ConversationItem(id: "switched-2", turn: nil, kind: .notice(text: "Continued in Codex", error: false), status: .done),
             "the same item zerod adds, by the same id")
 }
+
+@Test func aTaskGoesToItsTerminalAndBack() throws {
+    var conversation = Conversation(id: "s", provider: .claude, cwd: "/")
+    conversation.apply(try JSONDecoder().decode(Change.self, from: Data(#"{"type":"terminal","terminal":{"id":"term-1","mark":3}}"#.utf8)))
+    #expect(conversation.terminal == Opened(id: "term-1", mark: 3))
+    conversation.apply(try JSONDecoder().decode(Change.self, from: Data(#"{"type":"terminal","terminal":null}"#.utf8)))
+    #expect(conversation.terminal == nil)
+}

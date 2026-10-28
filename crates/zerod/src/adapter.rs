@@ -110,6 +110,21 @@ impl Provider {
         }
     }
 
+    /// The provider's own terminal UI on the task's thread, with the task's permissions and model.
+    pub fn terminal(self, conversation: &Conversation) -> Result<Vec<String>, String> {
+        let thread = conversation.thread.as_deref().ok_or_else(|| format!("{} hasn't started this task's thread yet", self.title()))?;
+        let unrestricted = conversation.permissions == crate::model::Permissions::Unrestricted;
+        let mut args: Vec<&str> = match self {
+            Provider::Claude => vec!["claude", "--resume", thread, "--permission-mode", if unrestricted { "bypassPermissions" } else { "auto" }],
+            // Its own app-server, as Zero runs Codex headless: the shared one may run with other settings, and Codex asks
+            // before using it.
+            Provider::Codex => vec!["codex", "resume", thread, "--no-daemon", if unrestricted { "--dangerously-bypass-approvals-and-sandbox" } else { "--sandbox=workspace-write" }],
+            Provider::Opencode => vec!["opencode", "--session", thread],
+        };
+        if self != Provider::Opencode && let Some(model) = conversation.model.as_deref() { args.extend(["--model", model]) }
+        Ok(login_shell(&args))
+    }
+
     /// How the provider is named to Arsen.
     pub fn title(self) -> &'static str {
         match self {

@@ -159,6 +159,14 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     public struct Waiting: Decodable, Equatable, Sendable { public var id: String; public var title: String }
 }
 
+/// A task's provider terminal (crates/zerod/src/model.rs `Opened`): zero-host's id, and how much of the provider's own
+/// history was in Zero's record when it opened.
+public struct Opened: Decodable, Equatable, Sendable {
+    public var id: String
+    public var mark: Int
+    public init(id: String, mark: Int) { self.id = id; self.mark = mark }
+}
+
 public struct UsageWindow: Decodable, Equatable, Sendable {
     public var name: String
     /// The share used, 0 to 1.
@@ -212,6 +220,8 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
     public var stalled: String?
     /// The unified diff of everything the latest turn changed.
     public var diff: String?
+    /// While the task is in its provider's own terminal: zero-host's id for it.
+    public var terminal: Opened?
     /// How many changes have been applied; the next change zerod sends for this session is `seq + 1`.
     public var seq: UInt64
 
@@ -275,6 +285,7 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
         case let .failed(failure): self.failure = failure
         case let .stalled(reason): stalled = reason
         case let .diff(diff): self.diff = diff
+        case let .terminal(terminal): self.terminal = terminal
         case let .switched(provider, model, effort):
             self.provider = provider; self.thread = nil; self.model = model; self.effort = effort
             // As zerod does: where each provider took over, in the conversation itself.
@@ -300,8 +311,10 @@ public enum Change: Decodable, Equatable, Sendable {
     case diff(String?)
     /// The task moved to another provider, which starts a thread of its own from Zero's record.
     case switched(Provider, model: String?, effort: String?)
+    /// The task went to its provider's terminal, or came back.
+    case terminal(Opened?)
 
-    private enum Keys: String, CodingKey { case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label, ticket, provider }
+    private enum Keys: String, CodingKey { case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label, ticket, provider, terminal }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -322,6 +335,7 @@ public enum Change: Decodable, Equatable, Sendable {
         case "failed": self = .failed(try c.decodeIfPresent(Failure.self, forKey: .failure))
         case "stalled": self = .stalled(try c.decodeIfPresent(String.self, forKey: .reason))
         case "diff": self = .diff(try c.decodeIfPresent(String.self, forKey: .diff))
+        case "terminal": self = .terminal(try c.decodeIfPresent(Opened.self, forKey: .terminal))
         case "switched": self = .switched(try c.decode(Provider.self, forKey: .provider), model: try c.decodeIfPresent(String.self, forKey: .model),
                                           effort: try c.decodeIfPresent(String.self, forKey: .effort))
         case let other: throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "Unknown change \(other)")
@@ -456,6 +470,13 @@ public final class ZerodLink: @unchecked Sendable {
     public func stop(session: String) async throws { _ = try await call("stop", ["session": session]) }
     public func resume(session: String) async throws { _ = try await call("resume", ["session": session]) }
     /// Moves the task to another provider between turns; the next message starts it there.
+    /// Hands the task to its provider's own terminal; zero-host's id for it.
+    public func openTerminal(session: String) async throws -> String {
+        guard let terminal = (try await call("openTerminal", ["session": session]) as? [String: Any])?["terminal"] as? String else { throw ZerodError(message: "zerod opened no terminal") }
+        return terminal
+    }
+    /// Back from the provider's terminal to Zero's UI, with what happened there.
+    public func closeTerminal(session: String) async throws { _ = try await call("closeTerminal", ["session": session]) }
     public func switchProvider(session: String, to provider: Provider, model: String?, effort: String?) async throws {
         _ = try await call("switch", ["session": session, "provider": provider.rawValue, "model": model, "effort": effort])
     }
