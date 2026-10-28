@@ -27,7 +27,7 @@ fn a_command_turn_reads_as_messages_and_a_command_with_its_output() {
     assert_eq!(conversation.status, Status::Idle);
     assert_eq!(conversation.turn, None);
     assert!(conversation.approvals.is_empty());
-    assert!(matches!(&conversation.items[0].kind, ItemKind::User { text } if text.starts_with("Run the shell command `ls -la`")));
+    assert!(matches!(&conversation.items[0].kind, ItemKind::User { text, .. } if text.starts_with("Run the shell command `ls -la`")));
     let command = conversation.items.iter().find(|item| matches!(item.kind, ItemKind::Command { .. })).unwrap();
     let ItemKind::Command { command: line, cwd, output, exit_code, .. } = &command.kind else { unreachable!() };
     assert_eq!(line, "ls -la", "shown without Codex's /bin/zsh -lc wrapper");

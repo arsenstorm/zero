@@ -83,7 +83,7 @@ fn attention_puts_what_needs_arsen_first() {
     conversation.status = Status::Idle;
     conversation.stalled = None;
     assert_eq!(conversation.attention(), Attention::Idle);
-    conversation.items.push(zerod::model::Item { id: "a".into(), turn: None, kind: zerod::model::ItemKind::Agent { text: "Done.".into(), final_answer: true }, status: zerod::model::ItemStatus::Done });
+    conversation.items.push(zerod::model::Item { at: None, id: "a".into(), turn: None, kind: zerod::model::ItemKind::Agent { text: "Done.".into(), final_answer: true }, status: zerod::model::ItemStatus::Done });
     assert_eq!(conversation.attention(), Attention::Done, "an answer is waiting to be read");
     conversation.failure = Some(zerod::model::Failure { kind: FailureKind::SignIn, message: "Not logged in".into() });
     assert_eq!(conversation.attention(), Attention::Failed);

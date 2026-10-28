@@ -4,17 +4,46 @@
 use serde_json::Value;
 
 use crate::adapter::{Adapter, Answers, Effects};
-use crate::model::{Change, Conversation, Failure, FailureKind, Status};
+use crate::model::{Change, Conversation, Failure, FailureKind, ItemKind, Status};
 
 pub struct Core {
     conversation: Conversation,
     adapter: Box<dyn Adapter>,
+    /// The time the line being read arrived (ms since 1970): new items are stamped with it. None leaves them unstamped.
+    clock: Option<i64>,
+    /// Images sent with the message on its way: they go on the next message of yours seen, however its provider
+    /// echoes it (at once, or when the turn starts).
+    attach: Vec<String>,
 }
 
 impl Core {
     pub fn new(conversation: Conversation) -> Self {
         let adapter = conversation.provider.adapter();
-        Core { conversation, adapter }
+        Core { conversation, adapter, clock: None, attach: vec![] }
+    }
+
+    /// The images sent with the next message of yours.
+    pub fn attach(&mut self, images: Vec<String>) {
+        self.attach = images;
+    }
+
+    /// Sets the time of what's read next: now when live, the transcript's record on replay.
+    pub fn at(&mut self, ms: i64) {
+        self.clock = Some(ms);
+    }
+
+    /// An item keeps the time it was first seen; a new one takes the clock's.
+    fn stamp(&mut self, change: &mut Change) {
+        let Change::Item { item } = change else { return };
+        let known = self.conversation.item(&item.id);
+        if item.at.is_none() { item.at = known.and_then(|known| known.at).or(self.clock) }
+        if let ItemKind::User { images, .. } = &mut item.kind && images.is_empty() {
+            match known.map(|k| &k.kind) {
+                Some(ItemKind::User { images: kept, .. }) if !kept.is_empty() => *images = kept.clone(),
+                None if !self.attach.is_empty() => *images = std::mem::take(&mut self.attach),
+                _ => {}
+            }
+        }
     }
 
     pub fn conversation(&self) -> &Conversation {
@@ -56,8 +85,9 @@ impl Core {
 
     /// Applies a change Zero makes itself and returns it for the clients. A switch brings the new provider's adapter, so
     /// its lines are read its way from here on, live and on replay.
-    pub fn change(&mut self, change: Change) -> Change {
+    pub fn change(&mut self, mut change: Change) -> Change {
         if let Change::Switched { provider, .. } = &change { self.adapter = provider.adapter() }
+        self.stamp(&mut change);
         self.conversation.apply(change.clone());
         change
     }
@@ -81,7 +111,8 @@ impl Core {
 
     /// Applies the changes, then classifies the session's error if it changed: the same for every provider.
     fn apply(&mut self, mut changes: Vec<Change>) -> Vec<Change> {
-        for change in &changes {
+        for change in &mut changes {
+            self.stamp(change);
             self.conversation.apply(change.clone());
         }
         let failure = self.conversation.error.as_ref().map(|message| Failure { kind: FailureKind::of(message), message: message.clone() });

@@ -38,7 +38,7 @@ impl Adapter for Acp {
                     .filter_map(|block| block["text"].as_str().map(String::from)).collect::<Vec<_>>().join("\n");
                 let turn = Some(key(id));
                 vec![
-                    Change::Item { item: Item { id: format!("user-{}", conversation.seq + 1), turn: turn.clone(), kind: ItemKind::User { text }, status: ItemStatus::Done } },
+                    Change::Item { item: Item { at: None, id: format!("user-{}", conversation.seq + 1), turn: turn.clone(), kind: ItemKind::User { text, images: vec![] }, status: ItemStatus::Done } },
                     Change::Status { status: Status::Working, turn, error: None },
                 ]
             }
@@ -150,11 +150,11 @@ impl Acp {
                 let id = format!("{}-{}", kind.trim_end_matches("_chunk"), conversation.seq + 1);
                 let item = match kind {
                     "agent_thought_chunk" => ItemKind::Reasoning { text },
-                    "user_message_chunk" => ItemKind::User { text },
+                    "user_message_chunk" => ItemKind::User { text, images: vec![] },
                     _ => ItemKind::Agent { text, final_answer: false },
                 };
                 let status = if kind == "user_message_chunk" { ItemStatus::Done } else { ItemStatus::Running };
-                effects.changes.push(Change::Item { item: Item { id: id.clone(), turn, kind: item, status } });
+                effects.changes.push(Change::Item { item: Item { at: None, id: id.clone(), turn, kind: item, status } });
                 match kind {
                     "agent_thought_chunk" => self.thinking = Some(id),
                     "agent_message_chunk" => { self.speaking = Some(id.clone()); self.said = Some(id) }
@@ -164,7 +164,7 @@ impl Acp {
             Some("tool_call") | Some("tool_call_update") => {
                 let Some(id) = update["toolCallId"].as_str() else { return };
                 let merged = self.merge(id, update);
-                effects.changes.push(Change::Item { item: Item { id: id.into(), turn, kind: tool(conversation, &merged), status: status(&merged) } });
+                effects.changes.push(Change::Item { item: Item { at: None, id: id.into(), turn, kind: tool(conversation, &merged), status: status(&merged) } });
             }
             Some("plan") => {
                 let text = update["entries"].as_array().cloned().unwrap_or_default().iter().map(|entry| {
@@ -172,7 +172,7 @@ impl Acp {
                     format!("- {mark} {}", entry["content"].as_str().unwrap_or(""))
                 }).collect::<Vec<_>>().join("\n");
                 let id = format!("plan-{}", turn.as_deref().unwrap_or("turn"));
-                effects.changes.push(Change::Item { item: Item { id, turn, kind: ItemKind::Plan { text }, status: ItemStatus::Running } });
+                effects.changes.push(Change::Item { item: Item { at: None, id, turn, kind: ItemKind::Plan { text }, status: ItemStatus::Running } });
             }
             // Usage, available commands, mode and config changes: kept in the transcript, not shown.
             _ => {}
@@ -270,12 +270,12 @@ fn status(call: &Value) -> ItemStatus {
 
 // The session's side: what Zero says to the agent, in order.
 
-pub async fn start(session: &Session, transport: Transport, prompt: &str, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+pub async fn start(session: &Session, transport: Transport, prompt: &str, images: &[String], model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
     initialize(session, transport).await?;
     let cwd = session.snapshot().cwd;
     session.request(|id| json!({"jsonrpc": "2.0", "id": id, "method": "session/new", "params": {"cwd": cwd, "mcpServers": []}})).await?;
     configure(session, model, effort).await?;
-    self::prompt(session, prompt)
+    self::prompt(session, prompt, images)
 }
 
 /// The agent's own session again, without its history replayed: the transcript already has it.
@@ -307,20 +307,28 @@ async fn configure(session: &Session, model: Option<&str>, effort: Option<&str>)
 }
 
 /// The prompt's answer comes only when the turn ends, so nothing waits on it here: the adapter ends the turn.
-fn prompt(session: &Session, text: &str) -> Result<(), String> {
+fn prompt(session: &Session, text: &str, images: &[String]) -> Result<(), String> {
     let thread = session.snapshot().thread.ok_or("The agent opened no session")?;
-    session.request_later(|id| json!({"jsonrpc": "2.0", "id": id, "method": "session/prompt", "params": {"sessionId": thread, "prompt": [{"type": "text", "text": text}]}}))
+    let prompt = blocks(text, images);
+    session.request_later(|id| json!({"jsonrpc": "2.0", "id": id, "method": "session/prompt", "params": {"sessionId": thread, "prompt": prompt}}))
+}
+
+/// Your words as ACP's prompt blocks, with each image as data.
+pub fn blocks(text: &str, images: &[String]) -> Value {
+    let mut blocks: Vec<Value> = if text.trim().is_empty() && !images.is_empty() { vec![] } else { vec![json!({"type": "text", "text": text})] };
+    blocks.extend(images.iter().filter_map(|path| crate::images::data(path)).map(|(mime, data)| json!({"type": "image", "mimeType": mime, "data": data})));
+    Value::Array(blocks)
 }
 
 /// ponytail: ACP has no steering and one prompt at a time, so a message mid-turn is refused; queue it in zerod if
 /// that gets in the way.
-pub async fn send(session: &Session, text: &str, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+pub async fn send(session: &Session, text: &str, images: &[String], model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
     let conversation = session.snapshot();
     if conversation.turn.is_some() {
         return Err(format!("{} takes one message at a time: wait for its answer, or stop it first", conversation.provider.title()));
     }
     configure(session, model, effort).await?;
-    prompt(session, text)
+    prompt(session, text, images)
 }
 
 pub async fn interrupt(session: &Session) -> Result<(), String> {

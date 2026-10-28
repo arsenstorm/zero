@@ -34,7 +34,7 @@ async fn a_claude_code_session_from_elsewhere_becomes_a_task_with_its_history() 
     let task = daemon.get(&id).unwrap();
     assert_eq!((task.status, task.thread.as_deref(), task.ticket.as_deref(), task.label.as_deref()),
                (Status::Offline, Some("5cb4036a-0000"), Some("ENG-9767"), Some("ENG-9767 Webhooks")), "taken in offline, on the session's own thread");
-    let texts: Vec<&str> = task.items.iter().filter_map(|i| match &i.kind { ItemKind::User { text } | ItemKind::Agent { text, .. } => Some(text.as_str()), _ => None }).collect();
+    let texts: Vec<&str> = task.items.iter().filter_map(|i| match &i.kind { ItemKind::User { text, .. } | ItemKind::Agent { text, .. } => Some(text.as_str()), _ => None }).collect();
     assert_eq!(texts, ["Read SUPERVISE.md and follow it for ENG-9767", "Claimed green-elk."]);
     assert_eq!(daemon.adopt(Provider::Claude, "5cb4036a-0000", cwd, options.clone()).unwrap(), id, "the same session is one task");
     assert_eq!(daemon.adopt(Provider::Claude, "nope", cwd, options).unwrap_err(), format!("No Claude Code session nope in {cwd}"));

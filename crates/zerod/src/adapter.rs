@@ -38,7 +38,7 @@ impl Effects {
     /// A notice, with an id nothing else in the conversation has: the sequence number it will be applied at.
     pub fn notice(&mut self, conversation: &Conversation, text: &str, error: bool) {
         let id = format!("notice-{}", conversation.seq + 1 + self.changes.len() as u64);
-        let item = Item { id, turn: conversation.turn.clone(), kind: ItemKind::Notice { text: text.into(), error }, status: ItemStatus::Done };
+        let item = Item { at: None, id, turn: conversation.turn.clone(), kind: ItemKind::Notice { text: text.into(), error }, status: ItemStatus::Done };
         self.changes.push(Change::Item { item });
     }
 

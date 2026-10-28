@@ -19,7 +19,7 @@ pub fn claude_session(conversation: &Conversation, session: &str) -> String {
     let mut chain = Chain { session, cwd: &conversation.cwd, parent: None, lines: vec![], calls: 0 };
     for item in &conversation.items {
         match &item.kind {
-            ItemKind::User { text } => chain.add("user", json!(text)),
+            ItemKind::User { text, .. } => chain.add("user", json!(text)),
             ItemKind::Agent { text, .. } if !text.trim().is_empty() => chain.text(text),
             ItemKind::Plan { text } => chain.text(&format!("Plan:\n{text}")),
             ItemKind::Command { command, output, exit_code, .. } => {
@@ -54,14 +54,15 @@ pub fn from_claude_session(records: &[Value]) -> Vec<Item> {
     for record in records {
         let uuid = record["uuid"].as_str().unwrap_or("");
         if record["isMeta"] == true { continue }
+        let before = items.len();
         let content = &record["message"]["content"];
         match (record["type"].as_str(), content) {
-            (Some("user"), Value::String(text)) if !text.starts_with('<') => items.push(item(uuid, 0, ItemKind::User { text: text.clone() })),
+            (Some("user"), Value::String(text)) if !text.starts_with('<') => items.push(item(uuid, 0, ItemKind::User { text: text.clone(), images: vec![] })),
             (Some("user"), Value::Array(blocks)) => {
                 for (n, block) in blocks.iter().enumerate() {
                     match block["type"].as_str() {
                         Some("text") if !block["text"].as_str().unwrap_or("").starts_with('<') =>
-                            items.push(item(uuid, n, ItemKind::User { text: block["text"].as_str().unwrap_or("").into() })),
+                            items.push(item(uuid, n, ItemKind::User { text: block["text"].as_str().unwrap_or("").into(), images: vec![] })),
                         Some("tool_result") => {
                             let output = match &block["content"] {
                                 Value::String(text) => text.clone(),
@@ -100,6 +101,7 @@ pub fn from_claude_session(records: &[Value]) -> Vec<Item> {
             }
             _ => {}
         }
+        stamp_from(record, &mut items, before);
     }
     // The last thing the agent said before you spoke again (or at the end) was its answer.
     let mut answered = false;
@@ -114,7 +116,32 @@ pub fn from_claude_session(records: &[Value]) -> Vec<Item> {
 }
 
 fn item(uuid: &str, n: usize, kind: ItemKind) -> Item {
-    Item { id: format!("claude-{uuid}-{n}"), turn: None, kind, status: ItemStatus::Done }
+    Item { id: format!("claude-{uuid}-{n}"), turn: None, kind, status: ItemStatus::Done, at: None }
+}
+
+/// The record's own time ("2026-10-27T12:23:52.151Z") on the items made from it, those from `from` on.
+fn stamp_from(record: &Value, items: &mut [Item], from: usize) {
+    let Some(at) = record["timestamp"].as_str().and_then(millis) else { return };
+    for item in &mut items[from..] { item.at = Some(at) }
+}
+
+/// An RFC 3339 UTC time in milliseconds since 1970.
+fn millis(text: &str) -> Option<i64> {
+    let (date, time) = text.trim_end_matches('Z').split_once('T')?;
+    let mut d = date.split('-').map(|p| p.parse::<i64>());
+    let (year, month, day) = (d.next()?.ok()?, d.next()?.ok()?, d.next()?.ok()?);
+    let (clock, fraction) = time.split_once('.').unwrap_or((time, "0"));
+    let mut t = clock.split(':').map(|p| p.parse::<i64>());
+    let (hour, minute, second) = (t.next()?.ok()?, t.next()?.ok()?, t.next()?.ok()?);
+    let ms: i64 = format!("{fraction:0<3}")[..3].parse().ok()?;
+    // Days since 1970 from the civil date (Howard Hinnant's algorithm).
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    Some(((days * 24 + hour) * 60 + minute) * 60_000 + second * 1000 + ms)
 }
 
 /// What a tool was pointed at: its file, pattern, address or description, else its input in brief.

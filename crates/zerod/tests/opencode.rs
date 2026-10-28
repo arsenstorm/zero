@@ -20,7 +20,7 @@ fn a_command_reads_as_the_users_words_its_thinking_the_command_and_the_answer() 
     assert_eq!(conversation.model.as_deref(), Some("opencode-go/beam-free"), "the model as set, not the one it started on");
     assert_eq!((conversation.status, conversation.turn.clone()), (Status::Idle, None));
     let kinds: Vec<&ItemKind> = conversation.items.iter().map(|i| &i.kind).collect();
-    assert!(matches!(kinds[0], ItemKind::User { text } if text.starts_with("Run the shell command: mkdir -p build")));
+    assert!(matches!(kinds[0], ItemKind::User { text, .. } if text.starts_with("Run the shell command: mkdir -p build")));
     assert!(matches!(kinds[1], ItemKind::Reasoning { text } if text.starts_with("The user wants me to run a shell command")));
     let command = conversation.items.iter().find(|i| matches!(i.kind, ItemKind::Command { .. })).unwrap();
     assert!(matches!(&command.kind, ItemKind::Command { command, cwd, output, exit_code, .. }

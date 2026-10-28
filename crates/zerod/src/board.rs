@@ -86,8 +86,16 @@ pub fn board_with(conversations: &[Conversation], asks: &[Ask], places: &HashMap
                 _ => state,
             };
         }
+        // No note of its own this turn: how it ended its turn (Zero's ending, "[zero: done]") says its state.
+        if own.is_none() && matches!(state, State::Idle | State::Done) && let Some(ending) = lead.answer().and_then(ending) {
+            state = match ending {
+                "done" => State::Done,
+                "working" => State::Waiting,
+                _ => State::NeedsYou, // blocked, or asked: either way it waits on the user
+            };
+        }
         // Its first line of prose: a table, heading or rule says nothing on its own.
-        let prose = |l: &&str| !l.is_empty() && !l.starts_with('|') && !l.starts_with('#') && !l.starts_with("---");
+        let prose = |l: &&str| !l.is_empty() && !l.starts_with('|') && !l.starts_with('#') && !l.starts_with("---") && !l.starts_with("[zero:");
         let answer = lead.answer().and_then(|a| a.lines().map(str::trim).find(prose)).map(String::from);
         Row {
             session: lead.id.clone(), task: crate::bridge::label(lead), ticket: lead.ticket.clone(), place: String::new(), online, state,
@@ -102,6 +110,20 @@ pub fn board_with(conversations: &[Conversation], asks: &[Ask], places: &HashMap
         row.place = named.or_else(|| row.ticket.as_ref().and_then(|t| places.get(t).cloned())).unwrap_or_else(|| place(folder, &folders));
     }
     rows
+}
+
+/// The ending Zero's hook has an agent close its turn with, when it's the answer's last line: "done", "blocked",
+/// "working", or "asked" (its ask's id dropped).
+pub fn ending(answer: &str) -> Option<&'static str> {
+    let last = answer.trim_end().lines().last()?.trim();
+    let inner = last.strip_prefix("[zero: ")?.strip_suffix(']')?;
+    match inner.split_whitespace().next()? {
+        "done" => Some("done"),
+        "blocked" => Some("blocked"),
+        "working" => Some("working"),
+        "asked" => Some("asked"),
+        _ => None,
+    }
 }
 
 /// What the places command printed, `[{"ticket": "ENG-1", "place": "green-elk"}, …]`, by ticket; a ticket in several

@@ -59,6 +59,8 @@ pub struct Options {
     pub ticket: Option<String>,
     /// Start even though the provider is at its usage limit.
     pub force: bool,
+    /// Images with the first message, by their files.
+    pub images: Vec<String>,
 }
 
 fn busy(attention: Attention) -> bool {
@@ -134,7 +136,7 @@ impl Daemon {
 
     /// Every session without its items: enough for a list.
     pub fn list(&self) -> Vec<Conversation> {
-        self.sessions().iter().map(|s| Conversation { items: vec![], ..s.snapshot() }).collect()
+        self.sessions().iter().map(|s| s.recent(0).0).collect()
     }
 
     /// Starts a session in `cwd` with `prompt` as its first turn; returns its id at once, while the runtime starts.
@@ -166,7 +168,7 @@ impl Daemon {
             let until = usage.resets_at.map(|at| format!(" until {}", at)).unwrap_or_default();
             return Err(format!("{} is at its usage limit{until}; start it anyway with force", provider.title()));
         }
-        if prompt.trim().is_empty() { return Err("A session starts with something to do".into()) }
+        if prompt.trim().is_empty() && options.images.is_empty() { return Err("A session starts with something to do".into()) }
         let id = new_id();
         let dir = self.home.join("sessions").join(&id);
         let mut conversation = Conversation::new(&id, provider, cwd);
@@ -188,9 +190,9 @@ impl Daemon {
         self.attention.lock().unwrap().insert(id.clone(), Attention::Starting);
         session.announce();
         if options.label.is_some() || options.ticket.is_some() { session.change(Change::Named { label: options.label.clone(), ticket: options.ticket.clone() }) }
-        let (prompt, model, effort) = (prompt.to_string(), model.map(String::from), effort.map(String::from));
+        let (prompt, model, effort, images) = (prompt.to_string(), model.map(String::from), effort.map(String::from), options.images.clone());
         tokio::spawn(async move {
-            if let Err(error) = session.start(transport, &prompt, model.as_deref(), effort.as_deref()).await {
+            if let Err(error) = session.start_with_images(transport, &prompt, &images, model.as_deref(), effort.as_deref()).await {
                 session.report(&error);
             }
         });
@@ -331,12 +333,17 @@ impl Daemon {
 
     /// Arsen's words to a session, resuming it first if it is offline.
     pub async fn send(&self, id: &str, text: &str, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+        self.send_with_images(id, text, &[], model, effort).await
+    }
+
+    /// Words with images (their files).
+    pub async fn send_with_images(&self, id: &str, text: &str, images: &[String], model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
         let session = self.session(id)?;
         if let Some(conversation) = self.get(id) && conversation.terminal.is_some() {
             return Err(format!("{} is open in its terminal; type there, or go back to Zero", conversation.provider.title()));
         }
         if !session.is_attached() { self.resume(id).await? }
-        session.send(text, model, effort).await
+        session.send_with_images(text, images, model, effort).await
     }
 
     /// ponytail: two resumes of one session at once each start a process, and the later one wins; a per-session

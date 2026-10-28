@@ -51,8 +51,14 @@ pub fn new_session_id() -> String {
     format!("{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..])
 }
 
-fn user(text: &str) -> Value {
-    json!({"type": "user", "message": {"role": "user", "content": text}})
+/// Your words as Claude Code's stream takes them, with each image as data after them.
+pub fn user_message(text: &str, images: &[String]) -> Value {
+    if images.is_empty() { return json!({"type": "user", "message": {"role": "user", "content": text}}) }
+    // An image alone has no words: an empty text block is refused.
+    let mut content: Vec<Value> = if text.trim().is_empty() { vec![] } else { vec![json!({"type": "text", "text": text})] };
+    content.extend(images.iter().filter_map(|path| crate::images::data(path))
+        .map(|(mime, data)| json!({"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}})));
+    json!({"type": "user", "message": {"role": "user", "content": content}})
 }
 
 impl Adapter for Claude {
@@ -60,7 +66,7 @@ impl Adapter for Claude {
         match message["type"].as_str() {
             Some("user") => {
                 let text = message["message"]["content"].as_str().unwrap_or("").to_string();
-                let mut changes = vec![Change::Item { item: Item { id: format!("user-{}", conversation.seq + 1), turn: conversation.turn.clone(), kind: ItemKind::User { text }, status: ItemStatus::Done } }];
+                let mut changes = vec![Change::Item { item: Item { at: None, id: format!("user-{}", conversation.seq + 1), turn: conversation.turn.clone(), kind: ItemKind::User { text, images: vec![] }, status: ItemStatus::Done } }];
                 if self.queued == 0 {
                     self.turns += 1;
                     changes.push(Change::Status { status: Status::Working, turn: Some(format!("turn-{}", self.turns)), error: None });
@@ -165,7 +171,7 @@ impl Claude {
                 *count += 1;
                 self.blocks.insert((msg.into(), index), id.clone());
                 let kind = ItemKind::Agent { text: String::new(), final_answer: false };
-                effects.changes.push(Change::Item { item: Item { id: id.clone(), turn: conversation.turn.clone(), kind, status: ItemStatus::Running } });
+                effects.changes.push(Change::Item { item: Item { at: None, id: id.clone(), turn: conversation.turn.clone(), kind, status: ItemStatus::Running } });
                 self.said = Some(id);
             }
             Some("content_block_delta") if event["delta"]["type"] == "text_delta" => {
@@ -198,7 +204,7 @@ impl Claude {
                 Some("tool_use") => (block["id"].as_str().unwrap_or("tool").into(), tool(conversation, &block["name"], &block["input"]), ItemStatus::Running),
                 _ => continue,
             };
-            effects.changes.push(Change::Item { item: Item { id, turn: turn.clone(), kind, status } });
+            effects.changes.push(Change::Item { item: Item { at: None, id, turn: turn.clone(), kind, status } });
         }
     }
 
@@ -368,9 +374,9 @@ fn basename(path: &str) -> &str {
 // The session's side: what Zero says to Claude, in order.
 
 /// Claude's process was started with the model and effort; it waits for its first message.
-pub async fn start(session: &Session, transport: Transport, prompt: &str) -> Result<(), String> {
+pub async fn start(session: &Session, transport: Transport, prompt: &str, images: &[String]) -> Result<(), String> {
     session.attach(transport);
-    session.write(user(prompt))
+    session.write(user_message(prompt, images))
 }
 
 /// Started again with `--resume`, it is the same conversation, waiting for the next message.
@@ -382,13 +388,13 @@ pub async fn resume(session: &Session, transport: Transport) -> Result<(), Strin
 
 /// A message: Claude takes it now or queues it behind the turn in progress. A new model switches first; effort
 /// is set at start (`--effort`) and stays.
-pub async fn send(session: &Session, text: &str, model: Option<&str>) -> Result<(), String> {
+pub async fn send(session: &Session, text: &str, images: &[String], model: Option<&str>) -> Result<(), String> {
     if let Some(model) = model && session.snapshot().model.as_deref() != Some(model) {
         session.request(|id| json!({"type": "control_request", "request_id": id, "request": {"subtype": "set_model", "model": model}})).await?;
         let thread = session.snapshot().thread.unwrap_or_default();
         session.change(Change::Thread { thread, model: Some(model.into()), effort: None });
     }
-    session.write(user(text))
+    session.write(user_message(text, images))
 }
 
 pub async fn interrupt(session: &Session) -> Result<(), String> {

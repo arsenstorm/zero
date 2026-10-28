@@ -123,6 +123,8 @@ impl Session {
                 lines += 1;
                 // A line cut short by a crash is the last one; everything before it still counts.
                 let Ok(entry) = serde_json::from_str::<Value>(&line?) else { continue };
+                if let Some(at) = entry["at"].as_i64() { core.at(at) }
+                if let Some(images) = entry["attach"].as_array() { core.attach(images.iter().filter_map(|i| i.as_str().map(String::from)).collect()) }
                 if let Some(message) = entry.get("out") { core.sent(message); }
                 if let Some(message) = entry.get("in") { core.receive(message); }
                 if entry.get("offline").is_some() { core.offline(); }
@@ -142,6 +144,49 @@ impl Session {
 
     pub fn snapshot(&self) -> Conversation {
         self.lock().core.conversation().clone()
+    }
+
+    /// The conversation with its latest `count` items, and how many came before them.
+    pub fn recent(&self, count: usize) -> (Conversation, usize) {
+        let inner = self.lock();
+        let conversation = inner.core.conversation();
+        let start = conversation.items.len().saturating_sub(count);
+        (conversation.with_items(conversation.items[start..].to_vec()), start)
+    }
+
+    /// Items before `before` (all of them with none): from `from` if given, else the last `limit` of them.
+    pub fn items(&self, before: Option<&str>, from: Option<&str>, limit: usize) -> Vec<Item> {
+        let inner = self.lock();
+        let items = &inner.core.conversation().items;
+        let end = before.and_then(|id| items.iter().position(|i| i.id == id)).unwrap_or(items.len());
+        let start = match from.and_then(|id| items[..end].iter().position(|i| i.id == id)) {
+            Some(start) => start,
+            None => end.saturating_sub(limit),
+        };
+        items[start..end].to_vec()
+    }
+
+    /// Each message of yours with the start of its answer: the app's rail, whole however little of the conversation
+    /// is loaded.
+    pub fn outline(&self) -> Value {
+        let inner = self.lock();
+        let items = &inner.core.conversation().items;
+        let mut marks: Vec<Value> = vec![];
+        for (index, item) in items.iter().enumerate() {
+            let ItemKind::User { text, .. } = &item.kind else { continue };
+            let answer = items[index + 1..].iter().take_while(|i| !matches!(i.kind, ItemKind::User { .. }))
+                .find_map(|i| match &i.kind { ItemKind::Agent { text, final_answer: true } => Some(text.chars().take(400).collect::<String>()), _ => None });
+            marks.push(json!({"id": item.id, "text": text.chars().take(300).collect::<String>(), "answer": answer}));
+        }
+        Value::Array(marks)
+    }
+
+    /// The conversation without its items but its latest answer: what a list and the board need.
+    pub fn summary(&self) -> Conversation {
+        let inner = self.lock();
+        let conversation = inner.core.conversation();
+        let answer = conversation.items.iter().rev().find(|i| matches!(i.kind, ItemKind::Agent { final_answer: true, .. })).cloned();
+        conversation.with_items(answer.into_iter().collect())
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -171,11 +216,25 @@ impl Session {
 
     /// Starts the runtime's side of the session, with `prompt` as its first turn.
     pub async fn start(&self, transport: Transport, prompt: &str, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+        self.start_with_images(transport, prompt, &[], model, effort).await
+    }
+
+    /// The first turn with images (their files), kept as any message's are.
+    pub async fn start_with_images(&self, transport: Transport, prompt: &str, images: &[String], model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+        self.keep_images(images);
         match self.provider() {
-            Provider::Codex => codex::start(self, transport, prompt, model, effort).await,
-            Provider::Claude => claude::start(self, transport, prompt).await,
-            Provider::Opencode => acp::start(self, transport, prompt, model, effort).await,
+            Provider::Codex => codex::start(self, transport, prompt, images, model, effort).await,
+            Provider::Claude => claude::start(self, transport, prompt, images).await,
+            Provider::Opencode => acp::start(self, transport, prompt, images, model, effort).await,
         }
+    }
+
+    /// The images go on the next message of yours, now and on replay.
+    fn keep_images(&self, images: &[String]) {
+        if images.is_empty() { return }
+        let mut inner = self.lock();
+        inner.record(json!({"attach": images}));
+        inner.core.attach(images.to_vec());
     }
 
     /// Gives an offline session a new process on its conversation.
@@ -189,12 +248,18 @@ impl Session {
 
     /// Arsen's words: steering or queued behind the turn in progress where the provider allows it, else a new turn.
     pub async fn send(&self, text: &str, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+        self.send_with_images(text, &[], model, effort).await
+    }
+
+    /// Words with images (their files): kept in the transcript first, so the message keeps them on replay.
+    pub async fn send_with_images(&self, text: &str, images: &[String], model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
         let conversation = self.snapshot();
         if !self.is_attached() { return Err(format!("{} is offline; resume it first", conversation.id)) }
+        self.keep_images(images);
         match conversation.provider {
-            Provider::Codex => codex::send(self, text, model, effort).await,
-            Provider::Claude => claude::send(self, text, model).await,
-            Provider::Opencode => acp::send(self, text, model, effort).await,
+            Provider::Codex => codex::send(self, text, images, model, effort).await,
+            Provider::Claude => claude::send(self, text, images, model).await,
+            Provider::Opencode => acp::send(self, text, images, model, effort).await,
         }
     }
 
@@ -299,7 +364,9 @@ impl Session {
 
     fn receive(&self, message: Value) {
         let mut inner = self.lock();
-        inner.record(json!({"in": message}));
+        let at = now_ms();
+        inner.record(json!({"in": message, "at": at}));
+        inner.core.at(at);
         inner.heard = Instant::now();
         let effects = inner.core.receive(&message);
         for change in &effects.changes {
@@ -365,8 +432,10 @@ impl Session {
     /// A change Zero makes itself (a model switched, a label given), kept in the transcript so a restart replays it.
     pub fn change(&self, change: Change) {
         let mut inner = self.lock();
-        inner.record(json!({"change": change}));
+        inner.core.at(now_ms());
+        // Kept as applied, so an item's time comes back with it.
         let change = inner.core.change(change);
+        inner.record(json!({"change": change}));
         inner.broadcast(vec![change]);
     }
 
@@ -413,7 +482,7 @@ impl Inner {
         if self.send(line).is_err() { return }
         self.answered.insert(approval.id.clone());
         let conversation = self.core.conversation();
-        let item = Item { id: format!("notice-{}", conversation.seq + 1), turn: conversation.turn.clone(),
+        let item = Item { at: None, id: format!("notice-{}", conversation.seq + 1), turn: conversation.turn.clone(),
                           kind: ItemKind::Notice { text: format!("Allowed without asking: {}", approval.title), error: false }, status: ItemStatus::Done };
         let change = Change::Item { item };
         self.record(json!({"change": change}));
@@ -431,7 +500,9 @@ impl Inner {
     /// ACP's prompts start turns; their answers settle approvals).
     fn send(&mut self, message: Value) -> Result<(), String> {
         let out = self.out.clone().ok_or_else(|| format!("{} isn't running", self.core.conversation().provider.title()))?;
-        self.record(json!({"out": message}));
+        let at = now_ms();
+        self.record(json!({"out": message, "at": at}));
+        self.core.at(at);
         let changes = self.core.sent(&message);
         self.broadcast(changes);
         out.send(message).map_err(|_| "The runtime isn't running".to_string())
@@ -459,4 +530,9 @@ impl Inner {
 
 fn append(dir: &Path) -> io::Result<File> {
     OpenOptions::new().create(true).append(true).open(dir.join("transcript.jsonl"))
+}
+
+/// Now, in milliseconds since 1970: when a line arrived or a change was made.
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }

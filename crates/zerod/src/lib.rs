@@ -14,6 +14,7 @@ pub mod daemon;
 pub mod drops;
 pub mod handoff;
 pub mod host;
+pub mod images;
 pub mod inbox;
 pub mod mcp;
 pub mod integrations;

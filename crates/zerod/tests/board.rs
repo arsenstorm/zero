@@ -72,7 +72,7 @@ fn a_new_turn_clears_what_the_last_note_said() {
 #[test]
 fn without_a_note_it_shows_the_agents_last_answer() {
     let mut lead = session("a", "/work/app", Status::Idle);
-    lead.items.push(Item { id: "1".into(), turn: None, kind: ItemKind::Agent { text: "PR #13336 is open.\n\nDetails follow.".into(), final_answer: true }, status: ItemStatus::Done });
+    lead.items.push(Item { at: None, id: "1".into(), turn: None, kind: ItemKind::Agent { text: "PR #13336 is open.\n\nDetails follow.".into(), final_answer: true }, status: ItemStatus::Done });
     assert_eq!(board(&[lead.clone()], &[])[0].now.as_deref(), Some("PR #13336 is open."));
     lead.items[0].kind = ItemKind::Agent { text: "## Status\n\n| Issue | PR |\n|---|---|\n\nAll four are in PR created.".into(), final_answer: true };
     assert_eq!(board(&[lead], &[])[0].now.as_deref(), Some("All four are in PR created."), "its first line of prose");
@@ -148,4 +148,22 @@ fn where_is_the_tasks_own_place_then_the_places_command_then_its_folder() {
     let wheres: Vec<(&str, &str)> = rows.iter().map(|r| (r.session.as_str(), r.place.as_str())).collect();
     assert_eq!(wheres, [("a", "green-elk"), ("b", "pink-cod, gold-bee"), ("c", "blue-fox")]);
     assert!(zerod::board::parse_places("not json").unwrap_err().starts_with("The places command printed"));
+}
+
+#[test]
+fn how_the_agent_ended_its_turn_is_the_rows_state() {
+    let ended = |text: &str| {
+        let mut lead = session("a", "/work/app", Status::Idle);
+        lead.items.push(Item { id: "1".into(), turn: None, kind: ItemKind::Agent { text: text.into(), final_answer: true }, status: ItemStatus::Done, at: None });
+        board(&[lead], &[])[0].state
+    };
+    assert_eq!(ended("PR #13336 is open.\n\n[zero: done]"), State::Done);
+    assert_eq!(ended("Can't reach staging.\n[zero: blocked]"), State::NeedsYou);
+    assert_eq!(ended("Which one?\n[zero: asked 3f2a]"), State::NeedsYou);
+    assert_eq!(ended("Waiting on CI.\n[zero: working]"), State::Waiting);
+    assert_eq!(ended("Just an answer."), State::Done, "a turn that ended in an answer was done already");
+    // The agent's own note this turn says more than its ending.
+    let mut lead = session("a", "/work/app", Status::Idle);
+    lead.items.push(Item { id: "1".into(), turn: None, kind: ItemKind::Agent { text: "Merged.\n[zero: done]".into(), final_answer: true }, status: ItemStatus::Done, at: None });
+    assert_eq!(board(&[lead], &[note("a", "Merged #1", Some("merged"), None)])[0].state, State::Merged);
 }

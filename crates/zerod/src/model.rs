@@ -111,12 +111,20 @@ pub struct Item {
     pub turn: Option<String>,
     pub kind: ItemKind,
     pub status: ItemStatus,
+    /// When zerod first saw it (or its provider's record says it happened), in milliseconds since 1970.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum ItemKind {
-    User { text: String },
+    /// Your words, and the images sent with them (their files).
+    User {
+        text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<String>,
+    },
     /// `final_answer`: the turn's answer, as opposed to commentary while working.
     Agent { text: String, final_answer: bool },
     /// A summary of the model's reasoning, where the provider gives one.
@@ -362,6 +370,17 @@ impl Conversation {
     }
 
     /// The last thing the agent gave as an answer.
+    /// Everything but its items, without copying them: for lists, the board, and snapshots that send items in pages.
+    pub fn with_items(&self, items: Vec<Item>) -> Conversation {
+        Conversation {
+            id: self.id.clone(), provider: self.provider, cwd: self.cwd.clone(), permissions: self.permissions, label: self.label.clone(),
+            ticket: self.ticket.clone(), place: self.place.clone(), branch: self.branch.clone(), parent: self.parent.clone(), thread: self.thread.clone(),
+            title: self.title.clone(), model: self.model.clone(), effort: self.effort.clone(), status: self.status, turn: self.turn.clone(),
+            error: self.error.clone(), items, approvals: self.approvals.clone(), questions: self.questions.clone(), usage: self.usage.clone(),
+            failure: self.failure.clone(), stalled: self.stalled.clone(), diff: self.diff.clone(), terminal: self.terminal.clone(), seq: self.seq,
+        }
+    }
+
     pub fn answer(&self) -> Option<&str> {
         self.items.iter().rev().find_map(|item| match &item.kind {
             ItemKind::Agent { text, final_answer: true } => Some(text.as_str()),
@@ -410,7 +429,7 @@ impl Conversation {
             Change::Delta { item, text } => {
                 if let Some(item) = self.items.iter_mut().find(|existing| existing.id == item) {
                     match &mut item.kind {
-                        ItemKind::User { text: body } | ItemKind::Agent { text: body, .. } | ItemKind::Reasoning { text: body }
+                        ItemKind::User { text: body, .. } | ItemKind::Agent { text: body, .. } | ItemKind::Reasoning { text: body }
                         | ItemKind::Plan { text: body } | ItemKind::Notice { text: body, .. } => body.push_str(&text),
                         ItemKind::Command { output, .. } => output.push_str(&text),
                         ItemKind::FileChange { .. } | ItemKind::Tool { .. } => {}
@@ -441,7 +460,7 @@ impl Conversation {
                 self.effort = effort;
                 // Where each provider took over, in the conversation itself (handoff.rs leaves notices out).
                 let id = format!("switched-{}", self.seq);
-                self.items.push(Item { id, turn: None, kind: ItemKind::Notice { text: format!("Continued in {}", provider.title()), error: false }, status: ItemStatus::Done });
+                self.items.push(Item { at: None, id, turn: None, kind: ItemKind::Notice { text: format!("Continued in {}", provider.title()), error: false }, status: ItemStatus::Done });
             }
         }
     }
@@ -452,7 +471,7 @@ mod tests {
     use super::*;
 
     fn agent(id: &str, text: &str) -> Item {
-        Item { id: id.into(), turn: None, kind: ItemKind::Agent { text: text.into(), final_answer: false }, status: ItemStatus::Running }
+        Item { at: None, id: id.into(), turn: None, kind: ItemKind::Agent { text: text.into(), final_answer: false }, status: ItemStatus::Running }
     }
 
     #[test]
@@ -469,7 +488,7 @@ mod tests {
         let mut conversation = Conversation::new("s", Provider::Codex, "/");
         conversation.apply(Change::Item { item: agent("a", "Hel") });
         let command = ItemKind::Command { command: "ls".into(), cwd: "/".into(), output: String::new(), exit_code: None, duration_ms: None };
-        conversation.apply(Change::Item { item: Item { id: "c".into(), turn: None, kind: command, status: ItemStatus::Running } });
+        conversation.apply(Change::Item { item: Item { at: None, id: "c".into(), turn: None, kind: command, status: ItemStatus::Running } });
         conversation.apply(Change::Delta { item: "a".into(), text: "lo".into() });
         conversation.apply(Change::Delta { item: "c".into(), text: "total 0\n".into() });
         conversation.apply(Change::Delta { item: "missing".into(), text: "ignored".into() });
@@ -482,7 +501,7 @@ mod tests {
     fn changes_are_tagged_with_their_type_in_camel_case() {
         let change = Change::Status { status: Status::Waiting, turn: Some("u".into()), error: None };
         assert_eq!(serde_json::to_value(change).unwrap(), serde_json::json!({"type": "status", "status": "waiting", "turn": "u", "error": null}));
-        let item = Item { id: "c".into(), turn: None, kind: ItemKind::Command { command: "ls".into(), cwd: "/".into(), output: "".into(), exit_code: Some(0), duration_ms: None }, status: ItemStatus::Done };
+        let item = Item { at: None, id: "c".into(), turn: None, kind: ItemKind::Command { command: "ls".into(), cwd: "/".into(), output: "".into(), exit_code: Some(0), duration_ms: None }, status: ItemStatus::Done };
         let json = serde_json::to_value(item).unwrap();
         assert_eq!(json["kind"]["type"], "command");
         assert_eq!(json["kind"]["exitCode"], 0);

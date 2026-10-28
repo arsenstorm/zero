@@ -21,7 +21,7 @@ fn a_command_claude_may_run_reads_as_the_users_words_the_command_and_the_answer(
     assert_eq!(conversation.model.as_deref(), Some("claude-haiku-5-5"));
     assert_eq!((conversation.status, conversation.turn.clone()), (Status::Idle, None));
     let kinds: Vec<&ItemKind> = conversation.items.iter().map(|i| &i.kind).collect();
-    assert!(matches!(kinds[0], ItemKind::User { text } if text.starts_with("Run the shell command uname -s")), "Claude doesn't echo it; Zero records what it sent");
+    assert!(matches!(kinds[0], ItemKind::User { text, .. } if text.starts_with("Run the shell command uname -s")), "Claude doesn't echo it; Zero records what it sent");
     assert!(matches!(kinds[1], ItemKind::Command { command, output, cwd, .. } if command == "uname -s" && output == "Darwin" && cwd == "/work/project"));
     assert_eq!(conversation.items[1].status, ItemStatus::Done);
     assert!(matches!(kinds[2], ItemKind::Agent { text, final_answer: true } if text == "The command printed `Darwin`."));

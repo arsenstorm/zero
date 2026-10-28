@@ -71,8 +71,14 @@ struct Request {
     item: Option<Value>,
     /// adopt: the provider's own session id, to take in as a task.
     thread: Option<String>,
+    /// send: images with the words, by their files.
+    images: Option<Vec<String>>,
     /// place: where the session runs, by name.
     place: Option<String>,
+    /// items: the page of a session's items before this one, or all of them from `from`.
+    before: Option<String>,
+    from: Option<String>,
+    limit: Option<usize>,
     #[serde(flatten)]
     settings: Settings,
 }
@@ -215,11 +221,16 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             let options = crate::daemon::Options {
                 cwd: Some(cwd.into()), model: request.model.clone(), effort: request.effort.clone(), permissions: Some(request.permissions.unwrap_or_default()),
                 label: request.label.clone(), ticket: request.ticket.clone(), force: request.force.unwrap_or(false),
+                images: request.images.clone().unwrap_or_default(),
             };
             let id = daemon.start_with(provider, request.prompt.as_deref().unwrap_or(""), options)?;
             Ok(json!({"session": id}))
         }
-        "send" => daemon.send(&session()?, request.text.as_deref().ok_or("Send needs text")?, model, effort).await.map(|_| Value::Null),
+        "send" => {
+            let images = request.images.clone().unwrap_or_default();
+            let text = request.text.as_deref().filter(|t| !t.trim().is_empty() || !images.is_empty()).ok_or("Send needs text")?;
+            daemon.send_with_images(&session()?, text, &images, model, effort).await.map(|_| Value::Null)
+        }
         "resume" => daemon.resume(&session()?).await.map(|_| Value::Null),
         "openTerminal" => daemon.open_terminal(&session()?).await.map(|terminal| json!({"terminal": terminal})),
         "adopt" => {
@@ -251,6 +262,7 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             let options = crate::daemon::Options {
                 cwd: request.cwd.clone(), model: request.model.clone(), effort: request.effort.clone(), permissions: request.permissions,
                 label: request.label.clone(), ticket: request.ticket.clone(), force: request.force.unwrap_or(false),
+                images: request.images.clone().unwrap_or_default(),
             };
             let id = daemon.spawn(&lead, provider, request.prompt.as_deref().unwrap_or(""), options)?;
             Ok(json!({"session": id}))
@@ -284,7 +296,10 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         }
         "asks" => Ok(json!(inbox.asks())),
         // Whole sessions, not the list's: a row falls back on its lead's last answer.
-        "board" => Ok(json!(crate::board::board_with(&daemon.sessions().iter().map(|s| s.snapshot()).collect::<Vec<_>>(), &inbox.asks(), &zerod.places.get()))),
+        // Each session as a summary: its latest answer for Now, not its whole conversation.
+        "board" => Ok(json!(crate::board::board_with(&daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(), &inbox.asks(), &zerod.places.get()))),
+        "items" => Ok(json!(daemon.session(&session()?)?.items(request.before.as_deref(), request.from.as_deref(), request.limit.unwrap_or(60)))),
+        "outline" => Ok(daemon.session(&session()?)?.outline()),
         "place" => daemon.set_place(&session()?, request.place.as_deref()).map(|_| Value::Null),
         "settings" => Ok(json!(Settings::load(daemon.home()))),
         "choose" => { inbox.choose(&ask()?, option()?); Ok(Value::Null) }
@@ -349,7 +364,7 @@ fn start_task(zerod: &Zerod, integration: &str, view: &str, item: Value) -> Resu
     let options = crate::daemon::Options {
         cwd: Some(match start.cwd.strip_prefix("~/") { Some(rest) => format!("{}/{rest}", std::env::var("HOME").unwrap_or_default()), None => start.cwd.clone() }),
         model: start.model.clone(), effort: start.effort.clone(), permissions: Some(permissions.unwrap_or_default()),
-        label: Some(format!("{ticket} {}", item.title)), ticket: Some(ticket), force: false,
+        label: Some(format!("{ticket} {}", item.title)), ticket: Some(ticket), force: false, images: vec![],
     };
     let session = zerod.daemon.start_with(provider, &crate::integrations::task_prompt(&start.prompt, &item, &pad), options)?;
     Ok(json!({"session": session, "existing": false, "pad": pad}))
@@ -361,18 +376,23 @@ fn summary(conversation: &crate::model::Conversation) -> Value {
     summary
 }
 
+/// How many of a session's latest items a snapshot carries.
+pub const RECENT: usize = 40;
+
 /// Every session's snapshot, then each change after it; a session seen for the first time, or one whose changes
 /// skipped ahead (the subscriber fell behind), gets a fresh snapshot instead.
 async fn subscribe(daemon: Arc<Daemon>, out: mpsc::UnboundedSender<Value>) {
     // Listening starts before the snapshots, so no change falls between the two; ones already in a snapshot are skipped.
     let mut events = daemon.subscribe();
     let mut known: HashMap<String, u64> = HashMap::new();
-    let snapshot = |known: &mut HashMap<String, u64>, conversation: crate::model::Conversation| {
+    // A snapshot carries a session's latest items and how many came before: the app asks for older pages as it needs them.
+    let snapshot = |known: &mut HashMap<String, u64>, session: &crate::session::Session| {
+        let (conversation, earlier) = session.recent(RECENT);
         known.insert(conversation.id.clone(), conversation.seq);
-        out.send(json!({"event": "session", "conversation": conversation})).is_ok()
+        out.send(json!({"event": "session", "conversation": conversation, "earlier": earlier})).is_ok()
     };
     for session in daemon.sessions() {
-        if !snapshot(&mut known, session.snapshot()) { return }
+        if !snapshot(&mut known, &session) { return }
     }
     loop {
         let sent = match events.recv().await {
@@ -382,12 +402,12 @@ async fn subscribe(daemon: Arc<Daemon>, out: mpsc::UnboundedSender<Value>) {
                     known.insert(event.session.clone(), event.seq);
                     out.send(json!({"event": "change", "session": event.session, "seq": event.seq, "change": event.change})).is_ok()
                 }
-                _ => match daemon.get(&event.session) {
-                    Some(conversation) => snapshot(&mut known, conversation),
-                    None => true,
+                _ => match daemon.session(&event.session) {
+                    Ok(session) => snapshot(&mut known, &session),
+                    Err(_) => true,
                 },
             },
-            Err(broadcast::error::RecvError::Lagged(_)) => daemon.sessions().into_iter().all(|s| snapshot(&mut known, s.snapshot())),
+            Err(broadcast::error::RecvError::Lagged(_)) => daemon.sessions().iter().all(|s| snapshot(&mut known, s)),
             Err(broadcast::error::RecvError::Closed) => return,
         };
         if !sent { return }

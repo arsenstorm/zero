@@ -181,7 +181,7 @@ fn notification(conversation: &Conversation, method: &str, params: &Value, effec
             // Reasoning only becomes an item once it says something.
             if method == "item/reasoning/summaryTextDelta" && conversation.item(item).is_none() {
                 let kind = ItemKind::Reasoning { text: String::new() };
-                effects.changes.push(Change::Item { item: Item { id: item.into(), turn: turn.map(Into::into), kind, status: ItemStatus::Running } });
+                effects.changes.push(Change::Item { item: Item { at: None, id: item.into(), turn: turn.map(Into::into), kind, status: ItemStatus::Running } });
             }
             effects.changes.push(Change::Delta { item: item.into(), text: text.into() });
         }
@@ -193,7 +193,7 @@ fn notification(conversation: &Conversation, method: &str, params: &Value, effec
                 format!("- {mark} {}", step["step"].as_str().unwrap_or(""))
             }).collect::<Vec<_>>().join("\n");
             let id = format!("plan-{}", turn.unwrap_or("turn"));
-            effects.changes.push(Change::Item { item: Item { id, turn: turn.map(Into::into), kind: ItemKind::Plan { text }, status: ItemStatus::Running } });
+            effects.changes.push(Change::Item { item: Item { at: None, id, turn: turn.map(Into::into), kind: ItemKind::Plan { text }, status: ItemStatus::Running } });
         }
         "error" => {
             let retrying = params["willRetry"].as_bool() == Some(true);
@@ -258,7 +258,7 @@ fn item(value: &Value, turn: Option<&str>) -> Option<Item> {
                 Some(other) => format!("[{other}]"),
                 None => String::new(),
             }).collect::<Vec<_>>().join("\n");
-            (ItemKind::User { text }, ItemStatus::Done)
+            (ItemKind::User { text, images: vec![] }, ItemStatus::Done)
         }
         "agentMessage" => {
             // Started with no text yet, it is still being written.
@@ -296,7 +296,7 @@ fn item(value: &Value, turn: Option<&str>) -> Option<Item> {
         "hookPrompt" | "functionCallOutput" => return None,
         other => (ItemKind::Notice { text: format!("Codex {other} (not shown in Zero yet)"), error: false }, ItemStatus::Done),
     };
-    Some(Item { id, turn: turn.map(Into::into), kind, status: state })
+    Some(Item { at: None, id, turn: turn.map(Into::into), kind, status: state })
 }
 
 /// The commands Codex parsed out of a command line, which read better than the line it wraps them in.
@@ -352,20 +352,23 @@ fn unwrap_shell(command: &str) -> String {
     command.into()
 }
 
-fn text_input(text: &str) -> Value {
-    json!([{"type": "text", "text": text, "text_elements": []}])
+/// Your words as Codex's turn input, with each image as its file.
+pub fn input(text: &str, images: &[String]) -> Value {
+    let mut parts: Vec<Value> = if text.trim().is_empty() && !images.is_empty() { vec![] } else { vec![json!({"type": "text", "text": text, "text_elements": []})] };
+    parts.extend(images.iter().map(|path| json!({"type": "localImage", "path": path})));
+    Value::Array(parts)
 }
 
 // The session's side: what Zero says to Codex, in order.
 
-pub async fn start(session: &Session, transport: Transport, prompt: &str, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+pub async fn start(session: &Session, transport: Transport, prompt: &str, images: &[String], model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
     handshake(session, transport).await?;
     let conversation = session.snapshot();
     let (approvals, sandbox) = policy(conversation.permissions);
     session.request(|id| json!({"id": id, "method": "thread/start", "params": {"cwd": conversation.cwd, "model": model, "approvalPolicy": approvals,
         "sandbox": sandbox, "developerInstructions": INSTRUCTIONS}})).await?;
     let thread = session.snapshot().thread.ok_or("Codex started no thread")?;
-    turn(session, &thread, prompt, model, effort).await
+    turn(session, &thread, input(prompt, images), model, effort).await
 }
 
 /// ponytail: the turns aren't fetched, since the transcript already has them; a thread also used from another
@@ -434,17 +437,17 @@ async fn handshake(session: &Session, transport: Transport) -> Result<(), String
 }
 
 /// Steers the turn in progress, or starts a new one.
-pub async fn send(session: &Session, text: &str, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+pub async fn send(session: &Session, text: &str, images: &[String], model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
     let conversation = session.snapshot();
     let thread = conversation.thread.ok_or("Codex hasn't started the thread yet")?;
     match conversation.turn {
-        Some(turn) => session.request(|id| json!({"id": id, "method": "turn/steer", "params": {"threadId": thread, "expectedTurnId": turn, "input": text_input(text)}})).await.map(|_| ()),
-        None => self::turn(session, &thread, text, model, effort).await,
+        Some(turn) => session.request(|id| json!({"id": id, "method": "turn/steer", "params": {"threadId": thread, "expectedTurnId": turn, "input": input(text, images)}})).await.map(|_| ()),
+        None => self::turn(session, &thread, input(text, images), model, effort).await,
     }
 }
 
-async fn turn(session: &Session, thread: &str, text: &str, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
-    session.request(|id| json!({"id": id, "method": "turn/start", "params": {"threadId": thread, "input": text_input(text), "model": model, "effort": effort}})).await?;
+async fn turn(session: &Session, thread: &str, input: Value, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+    session.request(|id| json!({"id": id, "method": "turn/start", "params": {"threadId": thread, "input": input, "model": model, "effort": effort}})).await?;
     // A turn's model and effort stay for the turns after it.
     if model.is_some() || effort.is_some() {
         session.change(Change::Thread { thread: thread.into(), model: model.map(Into::into), effort: effort.map(Into::into) });

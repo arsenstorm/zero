@@ -238,7 +238,7 @@ async fn perform(daemon: &Daemon, act: Act) -> Result<(), String> {
 /// its folder.
 pub fn label(conversation: &Conversation) -> String {
     if let Some(label) = conversation.label.as_ref().or(conversation.title.as_ref()).filter(|l| !l.is_empty()) { return label.clone() }
-    let asked = conversation.items.iter().find_map(|i| match &i.kind { ItemKind::User { text } => Inbox::gist(text), _ => None });
+    let asked = conversation.items.iter().find_map(|i| match &i.kind { ItemKind::User { text, .. } => Inbox::gist(text), _ => None });
     asked.unwrap_or_else(|| {
         let folder = std::path::Path::new(&conversation.cwd).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
         format!("{} in {folder}", conversation.provider.title())

@@ -96,7 +96,7 @@ async fn a_real_lead_hears_from_its_real_worker() {
     let worker = daemon.spawn(&lead, Provider::Claude, "Reply with only the number 4217, nothing else.", options).unwrap();
     until(&daemon, &worker, |c| c.status == Status::Idle && answer(c).is_some_and(|a| a.contains("4217"))).await;
     let heard = until(&daemon, &lead, |c| c.status == Status::Idle && answer(c).is_some_and(|a| a.contains("4217"))).await;
-    let told = heard.items.iter().any(|i| matches!(&i.kind, ItemKind::User { text } if text.starts_with("Worker Counter finished: 4217")));
+    let told = heard.items.iter().any(|i| matches!(&i.kind, ItemKind::User { text, .. } if text.starts_with("Worker Counter finished: 4217")));
     assert!(told, "{heard:#?}");
     daemon.stop(&worker).ok();
     daemon.stop(&lead).ok();

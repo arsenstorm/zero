@@ -50,7 +50,7 @@ fn claude_turn() -> Vec<Value> {
 fn claude_codes_session_file_comes_back_as_the_tasks_items() {
     let kinds: Vec<ItemKind> = zerod::handoff::from_claude_session(&claude_turn()).into_iter().map(|i| i.kind).collect();
     assert_eq!(kinds, [
-        ItemKind::User { text: "List the files".into() },
+        ItemKind::User { text: "List the files".into(), images: vec![] },
         ItemKind::Agent { text: "Listing them.".into(), final_answer: false },
         ItemKind::Command { command: "ls".into(), cwd: String::new(), output: "a.txt".into(), exit_code: Some(0), duration_ms: None },
         ItemKind::Tool { name: "Read".into(), detail: "/w/a.txt".into() },
@@ -125,7 +125,7 @@ async fn a_task_goes_to_its_terminal_and_comes_back_with_what_happened_there() {
     let conversation = session.snapshot();
     assert_eq!(conversation.terminal, None);
     let texts: Vec<String> = conversation.items.iter().filter_map(|i| match &i.kind {
-        ItemKind::User { text } | ItemKind::Agent { text, .. } => Some(text.clone()),
+        ItemKind::User { text, .. } | ItemKind::Agent { text, .. } => Some(text.clone()),
         _ => None,
     }).collect();
     assert_eq!(texts, ["hi", "List the files", "Listing them.", "There is one file, a.txt."], "the terminal's turn joins the record, the earlier one isn't repeated");
