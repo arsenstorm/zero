@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "zero": { "command": "/Applications/Zero.app/Contents/MacOS/zerod", "args": ["mcp"] }
+  }
+}
