@@ -8,7 +8,10 @@ enum Nucleo {
 
     static func image(_ label: String, fill: String = "outline", size: CGFloat = 16) -> NSImage? {
         let name = "\(label)-\(fill)"
-        let image = images[name] ?? Bundle.main.url(forResource: name, withExtension: "svg", subdirectory: "nucleo").flatMap(NSImage.init(contentsOf:))
+        // A fill that wasn't exported falls back to the outline rather than drawing nothing.
+        let file = Bundle.main.url(forResource: name, withExtension: "svg", subdirectory: "nucleo")
+            ?? Bundle.main.url(forResource: "\(label)-outline", withExtension: "svg", subdirectory: "nucleo")
+        let image = images[name] ?? file.flatMap(NSImage.init(contentsOf:))
         image?.isTemplate = true
         images[name] = image
         let sized = image?.copy() as? NSImage
@@ -24,8 +27,8 @@ struct NucleoIcon: View {
 
     /// `label` may carry its fill after a colon ("key:glyph"), for icons named in strings.
     init(_ label: String, fill: String = "outline", size: CGFloat = 16) {
-        let parts = label.split(separator: ":", maxSplits: 1).map(String.init)
-        self.label = parts[0]; self.fill = parts.count > 1 ? parts[1] : fill; self.size = size
+        let parts = label.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+        self.label = parts.first ?? ""; self.fill = parts.count > 1 ? parts[1] : fill; self.size = size
     }
 
     var body: some View {
