@@ -204,6 +204,16 @@ func handle(_ request: HostLink.Request) -> HostLink.Response {
     }
 }
 
+// The terminals follow the system between light and dark, as Zero's window does.
+// ponytail: looks every 2 s; the distributed theme notification once zero-host runs a run loop.
+let themeWatch = DispatchSource.makeTimerSource(queue: queue)
+themeWatch.schedule(deadline: .now() + 2, repeating: 2)
+themeWatch.setEventHandler {
+    let dark = Appearance.dark
+    for terminal in terminals.values where terminal.screen.dark != dark { terminal.screen.appearance(dark: dark) }
+}
+themeWatch.resume()
+
 // A session of its own: Zero quitting, or the terminal that started it closing, doesn't end its agents.
 setsid()
 signal(SIGPIPE, SIG_IGN)

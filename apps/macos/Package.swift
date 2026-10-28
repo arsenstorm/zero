@@ -11,7 +11,8 @@ let package = Package(
         .binaryTarget(name: "GhosttyVt", path: "Vendor/GhosttyVt.xcframework"),
         // Keeps Zero's own agents' terminals running, whether or not Zero is open.
         .executableTarget(name: "zero-host", dependencies: ["ZeroCore", "GhosttyVt"], path: "Sources/ZeroHost"),
-        .executableTarget(name: "ZeroApp", dependencies: ["ZeroCore"],
+        // A task's provider terminal is drawn from the same engine (GhosttyView).
+        .executableTarget(name: "ZeroApp", dependencies: ["ZeroCore", "GhosttyVt"],
                           linkerSettings: [.linkedFramework("Carbon")]),
         .testTarget(name: "ZeroCoreTests", dependencies: ["ZeroCore"]),
     ],

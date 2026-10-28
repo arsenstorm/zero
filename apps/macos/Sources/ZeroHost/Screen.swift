@@ -1,6 +1,14 @@
 import Foundation
 import GhosttyVt
 
+/// The system's appearance, read fresh each time (zero-host has no app run loop to hear it change).
+enum Appearance {
+    static var dark: Bool {
+        CFPreferencesAppSynchronize(kCFPreferencesAnyApplication)
+        return (CFPreferencesCopyAppValue("AppleInterfaceStyle" as CFString, kCFPreferencesAnyApplication) as? String) == "Dark"
+    }
+}
+
 /// One terminal's screen, kept by Ghostty's engine: the program's output goes in, the screen as text comes out,
 /// and the engine's own answers to the program's questions (cursor position, device attributes) go back to it.
 final class Screen {
@@ -28,6 +36,35 @@ final class Screen {
             Unmanaged<Screen>.fromOpaque(user).takeUnretainedValue().status = state == "clear" ? nil : (state, text)
         }
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS, unsafeBitCast(status, to: UnsafeRawPointer.self))
+        let scheme: GhosttyTerminalColorSchemeFn = { _, user, out in
+            guard let user, let out else { return false }
+            out.pointee = Unmanaged<Screen>.fromOpaque(user).takeUnretainedValue().dark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT
+            return true
+        }
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_SCHEME, unsafeBitCast(scheme, to: UnsafeRawPointer.self))
+        // Images by the Kitty graphics protocol, as the window draws them (GhosttyView): this side answers a program
+        // asking whether they're supported.
+        var limit: UInt64 = 64 << 20
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &limit)
+        appearance(dark: Appearance.dark)
+    }
+
+    /// Light or dark, as Zero's window draws its terminals (GhosttyView): its colours are what the program is told when
+    /// it asks (OSC 10/11, CSI ? 996 n), so a theme set to follow the terminal (Claude Code's "auto") matches the window.
+    private(set) var dark = false
+
+    func appearance(dark: Bool) {
+        let changed = dark != self.dark
+        self.dark = dark
+        var background = dark ? GhosttyColorRgb(r: 28, g: 28, b: 28) : GhosttyColorRgb(r: 255, g: 255, b: 255)
+        var foreground = dark ? GhosttyColorRgb(r: 255, g: 255, b: 255) : GhosttyColorRgb(r: 0, g: 0, b: 0)
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &background)
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &foreground)
+        // A program that asked to hear of changes (mode 2031) is told: CSI ? 997 ; 1 n for dark, 2 for light.
+        var report = GhosttyTerminalModeConfig(mode: ghostty_mode_new(2031, false), value: false)
+        if changed, ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_MODE, &report) == GHOSTTY_SUCCESS, report.value {
+            reply(Data("\u{1B}[?997;\(dark ? 1 : 2)n".utf8))
+        }
     }
 
     deinit { ghostty_terminal_free(terminal) }

@@ -794,7 +794,8 @@ enum Theme {
     private static func dynamic(dark: NSColor, light: NSColor) -> Color {
         Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light })
     }
-    static let card = dynamic(dark: NSColor(white: 0.11, alpha: 1), light: NSColor(white: 1, alpha: 1))
+    static let cardColor = NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 0.11, alpha: 1) : .white }
+    static let card = Color(nsColor: cardColor)
     /// A row under the pointer, a step under the sidebar's grey; the rail's active and hovered tiles.
     static let hover = dynamic(dark: NSColor(white: 0.20, alpha: 1), light: NSColor(white: 0.945, alpha: 1))
     /// A table row under the pointer: lighter than the body, so it never reads as the headings' grey.
