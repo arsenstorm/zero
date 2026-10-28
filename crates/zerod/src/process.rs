@@ -1,6 +1,7 @@
-//! Starting a runtime's process: in the session's folder, through Arsen's login shell so his PATH applies (as
-//! zero-host does for terminals), with an environment of only what an agent needs, so the daemon's own
-//! variables (or those of whatever started it) don't leak into the agent.
+//! Starting a runtime's process: in the session's folder, through the user's login shell so their PATH applies (as
+//! zero-host does for terminals), with the login environment zerod has from launchd, as the provider's CLI has when
+//! run by hand (so its own settings, a custom model provider's key say, come along; zerod never reads them). Only what
+//! would tell the agent it runs inside whatever started zerod is left out.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -9,17 +10,32 @@ use tokio::process::Command;
 
 use crate::session::Transport;
 
-/// Kept from the daemon's environment; everything else is left out.
-const KEPT: [&str; 6] = ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG"];
+/// What another agent or terminal sets for the processes it runs: an agent inheriting it would think it is nested in
+/// Claude Code (and refuse to start), speak to Zero as Solo's process, or take a Codex sandbox for its own.
+const LEFT_OUT: [&str; 11] = ["SOLO_PROCESS_ID", "SOLO_PROJECT_ID", "REX_BLOCK", "REX_SESSION", "ZERO_HOST_TERMINAL", "HF_SESSION_ID",
+                              "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CODEX_THREAD_ID", "CODEX_SANDBOX"];
+
+/// The environment a session's processes get: `login`, less what's left out, with Zero's own variables for the session.
+pub fn environment(login: impl Iterator<Item = (String, String)>, id: &str) -> Vec<(String, String)> {
+    let ours = |key: &str| key == "PATH" || key == "TERM" || key.starts_with("ZERO_");
+    let mut env: Vec<(String, String)> = login.filter(|(key, _)| !LEFT_OUT.contains(&key.as_str()) && !ours(key)).collect();
+    env.extend([
+        ("PATH", "/usr/bin:/bin:/usr/sbin:/sbin".to_string()),
+        ("TERM", "dumb".to_string()),
+        ("ZERO_SESSION", id.to_string()),
+        // The name its `zero` calls go by, the same the inbox shows its approvals under.
+        ("ZERO_AGENT", format!("zerod-{id}")),
+        // Zero's Claude Code plugin brings permission prompts to the inbox through hooks; zerod answers them itself.
+        ("ZERO_MANAGED", "0".to_string()),
+    ].map(|(k, v)| (k.to_string(), v)));
+    env
+}
 
 /// Runs `command` to its end through the same login shell and environment as the session's agent, in `cwd`: its exit
 /// code (None if it was killed) and the end of what it printed, stdout and stderr together.
 pub async fn run(command: &str, cwd: &Path, id: &str) -> (Option<i32>, String) {
     let mut shell = Command::new("/bin/zsh");
-    shell.args(["-lic", command]).current_dir(cwd).env_clear()
-        .envs(std::env::vars().filter(|(key, _)| KEPT.contains(&key.as_str())))
-        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin").env("TERM", "dumb").env("ZERO_SESSION", id)
-        .stdin(Stdio::null());
+    shell.args(["-lic", command]).current_dir(cwd).env_clear().envs(environment(std::env::vars(), id)).stdin(Stdio::null());
     match shell.output().await {
         Ok(output) => {
             let printed = String::from_utf8_lossy(&output.stdout).to_string() + &String::from_utf8_lossy(&output.stderr);
@@ -34,15 +50,7 @@ pub async fn run(command: &str, cwd: &Path, id: &str) -> (Option<i32>, String) {
 pub fn spawn(argv: &[String], cwd: &Path, id: &str, stderr: Option<&Path>) -> std::io::Result<Transport> {
     let (program, arguments) = argv.split_first().ok_or_else(|| std::io::Error::other("no command to start"))?;
     let mut command = Command::new(program);
-    command.args(arguments).current_dir(cwd).env_clear()
-        .envs(std::env::vars().filter(|(key, _)| KEPT.contains(&key.as_str())))
-        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
-        .env("TERM", "dumb")
-        .env("ZERO_SESSION", id)
-        // The name its `zero` calls go by, the same the inbox shows its approvals under.
-        .env("ZERO_AGENT", format!("zerod-{id}"))
-        // Zero's Claude Code plugin brings permission prompts to the inbox through hooks; zerod answers them itself.
-        .env("ZERO_MANAGED", "0")
+    command.args(arguments).current_dir(cwd).env_clear().envs(environment(std::env::vars(), id))
         .stdin(Stdio::piped()).stdout(Stdio::piped());
     match stderr {
         Some(path) => { command.stderr(std::fs::OpenOptions::new().create(true).append(true).open(path)?); }
