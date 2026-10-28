@@ -3,8 +3,9 @@ import Carbon.HIToolbox
 import SwiftUI
 import ZeroCore
 
-/// Settings as a sidebar of pages: each page a column of rows in onboarding's style (what it is, one line on
-/// why, its control on the right), so the two read as the same app.
+/// Settings as the workspace window shows it: a sidebar of pages in groups, and the page itself in a column centred
+/// in the rest. Each page is a card of rows in onboarding's style (what it is, one line on why, its control on the
+/// right), so the two read as the same app.
 struct SettingsView: View {
     @Bindable var settings: Settings
     let store: Store
@@ -12,8 +13,8 @@ struct SettingsView: View {
     var showOnboarding: () -> Void = {}
 
     enum Page: String, CaseIterable, Identifiable {
-        case general = "General", inbox = "Inbox", dictation = "Dictation", agents = "Agents", projects = "Projects"
-        case integrations = "Integrations", dropFolders = "Drop folders", advanced = "Advanced"
+        case general = "General", inbox = "Inbox", dictation = "Dictation", advanced = "Advanced"
+        case agents = "Agents", projects = "Projects", dropFolders = "Drop folders", integrations = "Integrations"
         var id: String { rawValue }
         var icon: String {
             switch self {
@@ -27,70 +28,33 @@ struct SettingsView: View {
             case .advanced: "gearshape.2"
             }
         }
+        /// General leads on its own, where Home's New task is, so switching between the two moves no row.
+        static let groups: [(String, [Page])] = [("Personal", [.inbox, .dictation, .advanced]), ("Agents", [.agents, .projects, .dropFolders, .integrations])]
     }
     @State private var page = Page.general
 
     var body: some View {
         HStack(spacing: 0) {
-            sidebar
+            SidebarColumn(title: "Settings") {
+                SidebarItem(Page.general.rawValue, systemImage: Page.general.icon, selected: page == .general) { page = .general }
+                ForEach(Page.groups, id: \.0) { group, pages in
+                    SidebarHeading(text: group)
+                    ForEach(pages) { item in
+                        SidebarItem(item.rawValue, systemImage: item.icon, selected: item == page) { page = item }
+                    }
+                }
+            }
             Rectangle().fill(Theme.stroke).frame(width: 1)
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(page.rawValue).font(.system(size: 22, weight: .semibold)).padding(.bottom, 18)
+                    PageTitle(text: page.rawValue).padding(.bottom, 24)
                     content
                 }
-                .padding(.horizontal, 36).padding(.top, 44).padding(.bottom, 28)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .centredColumn(680)
+                .padding(.top, 44).padding(.bottom, 28)
             }
             .background(Theme.card)
         }
-        // The whole window, title bar included, however tall AppKit makes it.
-        .frame(minWidth: 760, maxWidth: .infinity, minHeight: 552, maxHeight: .infinity)
-        .background(Theme.card)
-        .ignoresSafeArea() // under the transparent title bar too, so the sidebar runs to the window's top
-    }
-
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            header.padding(.horizontal, -8).padding(.bottom, -6)
-            ForEach(Page.allCases) { item in
-                Button { page = item } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: item.icon).font(.system(size: 13)).frame(width: 18)
-                        Text(item.rawValue).font(.system(size: 13, weight: .medium))
-                        Spacer(minLength: 0)
-                    }
-                    // The page you are on is in full colour; the rest recede, no highlight box (as in the reference).
-                    .foregroundStyle(item == page ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
-                    .padding(.horizontal, 12).frame(height: 32)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 8)
-        .frame(width: 200)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .background(Theme.composer)
-    }
-
-    /// The heading as a blueprint, inverted against the app: black with white lines and lettering in light mode,
-    /// white with black in dark. The window's buttons sit on it; its foot fades into the sidebar.
-    private var header: some View {
-        ZStack(alignment: .topLeading) {
-            // The panel fades out on an eased curve (a straight ramp bands); only the drawing blurs as it goes,
-            // since blurring a flat fill just smudges its edge.
-            Theme.knob.mask(LinearGradient(stops: ProgressiveBlur<EmptyView>.eased, startPoint: .top, endPoint: .bottom))
-            ProgressiveBlur { Blueprint().foregroundStyle(Theme.onKnob) }
-            HStack(spacing: 8) {
-                ZeroMark(small: true).frame(width: 28, height: 27)
-                Text("Zero").font(.system(size: 17, weight: .semibold))
-            }
-            .foregroundStyle(Theme.onKnob)
-            .padding(.leading, 20).padding(.top, 44) // just under the window's buttons
-        }
-        .frame(height: 118) // its fade ends just above the first page
     }
 
     @ViewBuilder private var content: some View {
@@ -107,7 +71,130 @@ struct SettingsView: View {
     }
 }
 
-/// Rows with a hairline between them.
+/// An inner sidebar: its title on a blueprint, then its rows, on the sidebar's grey.
+struct SidebarColumn<Content: View>: View {
+    let title: String
+    var width: CGFloat = 250
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            SidebarHeader(title: title).padding(.horizontal, -10).padding(.bottom, -4)
+            content()
+        }
+        .padding(.horizontal, 10)
+        .frame(width: width)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(Theme.composer)
+    }
+}
+
+/// The heading as a blueprint on drafting paper: dark lines and lettering on light grey (light on dark grey in dark
+/// mode). Its foot fades into the sidebar.
+struct SidebarHeader: View {
+    let title: String
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            // The panel fades out on an eased curve (a straight ramp bands); only the drawing blurs as it goes,
+            // since blurring a flat fill just smudges its edge.
+            Theme.blueprint.mask(LinearGradient(stops: ProgressiveBlur<EmptyView>.eased, startPoint: .top, endPoint: .bottom))
+            ProgressiveBlur { Blueprint().foregroundStyle(Theme.onBlueprint) }
+            // The mark over the rows' icons and the title over their text (10 + 10 + an 18 pt icon + 9), level with the
+            // rail's home icon (its centre 28 pt under the panel's top).
+            HStack(spacing: 9) {
+                ZeroMark(small: true).frame(width: 20, height: 19).frame(width: 18)
+                Text(title).font(.system(size: 17, weight: .semibold))
+            }
+            .foregroundStyle(Theme.onBlueprint)
+            .frame(height: 22)
+            .padding(.leading, 20).padding(.top, 17)
+        }
+        .frame(height: 96) // its fade ends just above the first row
+    }
+}
+
+struct SidebarHeading: View {
+    let text: String
+    var body: some View {
+        Text(text).font(.system(size: 13)).foregroundStyle(.secondary)
+            .padding(.horizontal, 10).padding(.top, 18).padding(.bottom, 6)
+    }
+}
+
+/// A sidebar row, as ChatGPT's: plain text, the one you are on on a soft grey pill, a lighter one under the pointer.
+/// With no icon, text alone (a recent task); a trailing icon (a task's state) keeps every row's text on one edge.
+struct SidebarItem<Icon: View>: View {
+    let title: String
+    var selected = false
+    var trailing = false
+    let action: () -> Void
+    @ViewBuilder var icon: Icon
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                if Icon.self != EmptyView.self && !trailing { icon.font(.system(size: 13)).frame(width: 18) }
+                Text(title).font(.system(size: 13)).lineLimit(1)
+                Spacer(minLength: 0)
+                if trailing { icon.font(.system(size: 12)) }
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 10).frame(height: 30)
+        }
+        .buttonStyle(Hovering(selected: selected))
+    }
+}
+
+/// A button that keeps still when pressed (no dimming) and shows a background under the pointer, and a firmer one
+/// when it is the selected place.
+struct Hovering: ButtonStyle {
+    var selected = false
+    var radius: CGFloat = 8
+    var fill = Theme.chip
+    var hover = Theme.hover
+
+    func makeBody(configuration: Configuration) -> some View { Tile(label: configuration.label, style: self) }
+
+    private struct Tile<Label: View>: View {
+        let label: Label
+        let style: Hovering
+        @State private var hovering = false
+        var body: some View {
+            label
+                .background(style.selected ? style.fill : hovering ? style.hover : .clear, in: RoundedRectangle(cornerRadius: style.radius))
+                .contentShape(RoundedRectangle(cornerRadius: style.radius))
+                .onHover { hovering = $0 }
+        }
+    }
+}
+
+extension SidebarItem where Icon == Image {
+    init(_ title: String, systemImage: String, selected: Bool = false, action: @escaping () -> Void) {
+        self.init(title: title, selected: selected, action: action) { Image(systemName: systemImage) }
+    }
+}
+
+extension SidebarItem where Icon == EmptyView {
+    init(_ title: String, selected: Bool = false, action: @escaping () -> Void) {
+        self.init(title: title, selected: selected, action: action) { EmptyView() }
+    }
+}
+
+/// A page's title.
+struct PageTitle: View {
+    let text: String
+    var body: some View { Text(text).font(.system(size: 26, weight: .semibold)).lineLimit(2) }
+}
+
+extension View {
+    /// A column at most `width` wide, centred in what's left, its contents to its leading edge.
+    func centredColumn(_ width: CGFloat) -> some View {
+        frame(maxWidth: width, alignment: .leading).padding(.horizontal, 36).frame(maxWidth: .infinity)
+    }
+}
+
+/// Rows with a hairline between them, on a card.
 private struct Rows<Content: View>: View {
     @ViewBuilder let content: () -> Content
     var body: some View {
@@ -121,6 +208,9 @@ private struct Rows<Content: View>: View {
                     child
                 }
             }
+            .padding(.horizontal, 18)
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.stroke))
         }
     }
 }

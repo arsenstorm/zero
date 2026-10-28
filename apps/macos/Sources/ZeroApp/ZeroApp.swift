@@ -26,7 +26,7 @@ enum ZeroMain {
     }
 }
 
-/// Everything configurable, persisted in UserDefaults and shown in the Settings window.
+/// Everything configurable, persisted in UserDefaults and shown in the workspace window's Settings.
 @MainActor @Observable
 final class Settings {
     private let defaults = UserDefaults.standard
@@ -112,10 +112,10 @@ final class Panel: NSPanel {
     /// The chip's point in the selector view, bottom-left origin: the card scales out of it and back into it.
     private var selectorAnchor = CGPoint.zero
     private var selectorMonitors: [Any] = []
-    private var settingsWindow: NSWindow?
     /// zerod's sessions and their approvals; made once the store's other change handlers are in place.
     private var workspace: Workspace!
     private var workspaceWindow: NSWindow?
+    private let navigation = Navigation()
     private let settings = Settings()
     private var pinnedDisplay: CGDirectDisplayID?
     private var pillHosting: FirstMouseHostingView<AnyView>!
@@ -167,16 +167,29 @@ final class Panel: NSPanel {
             guard let self, event.window === inboxPanel else { return event }
             return inbox.handle(event) ? nil : event
         }
+        // The mouse's side buttons go back and forward through the workspace window, as in a browser: as buttons 4 and
+        // 5, or as the swipe Logitech's driver sends for them (and a trackpad's swipe between pages), as Safari takes it.
+        NSEvent.addLocalMonitorForEvents(matching: [.otherMouseDown, .swipe]) { [weak self] event in
+            guard let self, event.window === workspaceWindow else { return event }
+            switch event.type {
+            case .otherMouseDown where event.buttonNumber == 3: navigation.goBack()
+            case .otherMouseDown where event.buttonNumber == 4: navigation.goForward()
+            case .swipe where event.deltaX > 0: navigation.goBack()
+            case .swipe where event.deltaX < 0: navigation.goForward()
+            default: return event
+            }
+            return nil
+        }
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { [weak self] _ in
             DispatchQueue.main.async { self?.updateDock() }
         }
         if !UserDefaults.standard.bool(forKey: "onboarded") { openOnboarding() }
     }
 
-    /// Zero is in the Dock only while one of its windows (onboarding, Settings) is open; otherwise it is a menu
+    /// Zero is in the Dock only while one of its windows (onboarding, the workspace) is open; otherwise it is a menu
     /// bar app with its bar.
     private func updateDock() {
-        let windowOpen = [settingsWindow, onboardingWindow, workspaceWindow].contains { $0?.isVisible == true }
+        let windowOpen = [onboardingWindow, workspaceWindow].contains { $0?.isVisible == true }
         let policy: NSApplication.ActivationPolicy = windowOpen ? .regular : .accessory
         if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
     }
@@ -243,11 +256,25 @@ final class Panel: NSPanel {
 
     @objc func openWorkspace() {
         if workspaceWindow == nil {
-            let host = NSHostingController(rootView: WorkspaceView(workspace: workspace))
+            let view = WorkspaceView(workspace: workspace, navigation: navigation) { [unowned self] in
+                SettingsView(settings: settings, store: store, inbox: inbox, showOnboarding: { [weak self] in self?.openOnboarding() })
+            }
+            let host = NSHostingController(rootView: view)
             host.sizingOptions = []
             let window = NSWindow(contentViewController: host)
             window.title = "Zero"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            // A compact toolbar, as Codex has: it sets the window's buttons in from the corner and carries back and
+            // forward beside them.
+            let toolbar = NSToolbar(identifier: "Workspace")
+            toolbar.delegate = self
+            toolbar.displayMode = .iconOnly
+            toolbar.allowsUserCustomization = false
+            window.toolbar = toolbar
+            window.toolbarStyle = .unifiedCompact
+            window.titlebarSeparatorStyle = .none
             window.setContentSize(NSSize(width: 1100, height: 720))
             window.setFrameAutosaveName("Workspace")
             window.isReleasedWhenClosed = false
@@ -259,24 +286,13 @@ final class Panel: NSPanel {
         workspaceWindow?.makeKeyAndOrderFront(nil)
     }
 
+    @objc func goBack() { navigation.goBack() }
+    @objc func goForward() { navigation.goForward() }
+
+    /// Settings live in the workspace window.
     @objc func openSettings() {
-        if settingsWindow == nil {
-            let view = SettingsView(settings: settings, store: store, inbox: inbox, showOnboarding: { [weak self] in self?.openOnboarding() })
-            let host = NSHostingController(rootView: view)
-            host.sizingOptions = [] // the window's size is set below; the layout fills it
-            let window = NSWindow(contentViewController: host)
-            window.title = "Zero Settings"
-            window.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
-            window.titlebarAppearsTransparent = true
-            window.titleVisibility = .hidden
-            window.setContentSize(NSSize(width: 760, height: 552))
-            window.isReleasedWhenClosed = false
-            window.center()
-            settingsWindow = window
-        }
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        settingsWindow?.makeKeyAndOrderFront(nil)
+        navigation.place = .settings
+        openWorkspace()
     }
 
     /// The selector is a panel of its own, so it can reach past the inbox's edges: the 240 pt list aligned with the
@@ -458,6 +474,11 @@ final class Panel: NSPanel {
         app.submenu = NSMenu()
         app.submenu?.addItem(withTitle: "Quit Zero", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         main.addItem(app)
+        // ⌘W closes the window and leaves Zero in the menu bar; ⌘Q quits Zero, and zerod keeps the agents running.
+        let file = NSMenuItem()
+        file.submenu = NSMenu(title: "File")
+        file.submenu?.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        main.addItem(file)
         let edit = NSMenuItem()
         let menu = NSMenu(title: "Edit")
         menu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
@@ -470,6 +491,12 @@ final class Panel: NSPanel {
         menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         edit.submenu = menu
         main.addItem(edit)
+        // Reaches the delegate through the responder chain.
+        let go = NSMenuItem()
+        go.submenu = NSMenu(title: "Go")
+        go.submenu?.addItem(withTitle: "Back", action: #selector(AppDelegate.goBack), keyEquivalent: "[")
+        go.submenu?.addItem(withTitle: "Forward", action: #selector(AppDelegate.goForward), keyEquivalent: "]")
+        main.addItem(go)
         return main
     }
 
@@ -492,7 +519,7 @@ final class Panel: NSPanel {
         inboxPanel.orderOut(nil)
         keyboardFront = nil
         inbox.newAgentOpen = false
-        if let app = returnTo, NSApp.isActive, settingsWindow?.isVisible != true, onboardingWindow?.isVisible != true {
+        if let app = returnTo, NSApp.isActive, workspaceWindow?.isVisible != true, onboardingWindow?.isVisible != true {
             app.activate()
         }
         returnTo = nil
@@ -749,5 +776,52 @@ private struct CardStack: View {
             ForEach(controller.store.asks.reversed()) { ask in CardView(ask: ask, controller: controller, focus: $focus) }
         }
         .frame(width: 380)
+    }
+}
+
+// The workspace window's toolbar: back and forward beside the window's buttons, close together as Codex's are (two
+// toolbar items would sit as far apart as AppKit spaces items).
+extension AppDelegate: NSToolbarDelegate {
+    private static let history = NSToolbarItem.Identifier("history")
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [Self.history] }
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [Self.history] }
+
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        id == Self.history ? HistoryItem(identifier: id, navigation: navigation, target: self) : nil
+    }
+}
+
+private final class HistoryItem: NSToolbarItem {
+    private let navigation: Navigation
+    private let back: NSButton
+    private let forward: NSButton
+
+    init(identifier: NSToolbarItem.Identifier, navigation: Navigation, target: AppDelegate) {
+        self.navigation = navigation
+        func button(_ symbol: String, _ label: String, _ action: Selector) -> NSButton {
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
+                .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
+            let button = NSButton(image: image ?? NSImage(), target: target, action: action)
+            button.isBordered = false
+            button.contentTintColor = .secondaryLabelColor
+            button.toolTip = label
+            button.widthAnchor.constraint(equalToConstant: 24).isActive = true
+            return button
+        }
+        back = button("arrow.left", "Back", #selector(AppDelegate.goBack))
+        forward = button("arrow.right", "Forward", #selector(AppDelegate.goForward))
+        super.init(itemIdentifier: identifier)
+        let pair = NSStackView(views: [back, forward])
+        pair.spacing = 6
+        view = pair
+        label = "Back and forward"
+        isBordered = false // no glass capsule around the pair
+    }
+
+    /// AppKit asks as the window updates; the arrows dim where there's nowhere to go.
+    override func validate() {
+        back.isEnabled = navigation.canGoBack
+        forward.isEnabled = navigation.canGoForward
     }
 }
