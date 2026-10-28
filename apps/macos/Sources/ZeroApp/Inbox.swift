@@ -1913,50 +1913,26 @@ struct MarkdownText: View {
     let text: String
     /// Where "#123" points: the GitHub repository of the agent's folder.
     var repo: String?
+    /// The body text's size; headings, code and markers scale with it. The inbox's cards are smaller than a task's page.
+    var size: CGFloat
+    /// Quieter, for a preview: headings at the text's size, code without pills, tighter spacing.
+    var compact: Bool
 
-    init(_ text: String, cwd: String? = nil) {
+    init(_ text: String, cwd: String? = nil, size: CGFloat = 13, compact: Bool = false) {
         self.text = text
         repo = cwd.flatMap(References.repo(of:))
+        self.size = size
+        self.compact = compact
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                switch segment {
-                case .prose(let prose):
-                    Text(attributed(prose)).font(.system(size: 13)).textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                case .code(let code):
-                    Text(code).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Theme.code).clipShape(RoundedRectangle(cornerRadius: 10))
-                }
-            }
-        }
-    }
-
-    private enum Segment { case prose(String), code(String) }
-
-    /// Split on ``` fences; a language tag after the opening fence is dropped.
-    private var segments: [Segment] {
-        var result: [Segment] = []
-        var inCode = false
-        var buffer: [String] = []
-        func flush() {
-            let joined = buffer.joined(separator: "\n").trimmingCharacters(in: .newlines)
-            if !joined.isEmpty { result.append(inCode ? .code(joined) : .prose(joined)) }
-            buffer = []
-        }
-        for line in text.components(separatedBy: "\n") {
-            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") { flush(); inCode.toggle() } else { buffer.append(line) }
-        }
-        flush()
-        return result
+        // Zero's own ending ("[zero: done]") is for its hook, not for reading.
+        let rendered = RichMarkdown.render(MarkdownBlock.parse(ZeroEnding.split(text).0), size: size, inline: attributed)
+        RichText(text: compact ? RichMarkdown.compact(rendered, size: size) : rendered)
     }
 
     /// Linear issues and pull requests become links, except inside `code` and links the agent already wrote.
-    private func attributed(_ prose: String) -> AttributedString {
+    func attributed(_ prose: String) -> AttributedString {
         var result = (try? AttributedString(markdown: prose, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(prose)
         for (range, url) in References.find(in: String(result.characters), repo: repo, linear: Linear.shared.teams, linearApp: LinearLinks.inApp) {
             guard let span = Range(range, in: result) else { continue }
