@@ -33,6 +33,8 @@ zero run 'bin/production console <<< "puts Source.count"' --cwd "$APP_PATH" --ti
 zero note "Specs green; sizing the fix"            # working (blue)
 zero note --blocked "Vault certificate expired"     # red
 zero note --done "PR #4821 open, CI green"          # green
+zero note --done "PR #4821 open, CI green" --needs "mark it ready and merge"   # handed to him: on his board's row
+zero note --waiting "Waits for ENG-9759 to merge"     # waiting on something other than him
 zero withdraw k3x9qa --reason "Answered in the chat" # take back an ask that no longer needs him
 ```
 
@@ -66,7 +68,7 @@ When Zero runs your session, Claude Code's own permission prompts reach him in Z
 
 ## Where you are
 
-Post a `note` when you start, at a real milestone, and when you finish, not every turn. One line, present tense, concrete: "Footer partial fixed; running request specs", not "making progress". A note within ten minutes of your last one replaces it. `--blocked` the moment you cannot continue without something; `--done` when the deliverable exists. Why: your dot in his bar is coloured by your last note; a stale note misleads him, and a stream of restatements buries the ones that matter.
+Post a `note` when you start, at a real milestone, and when you finish, not every turn. One line, present tense, concrete: "Footer partial fixed; running request specs", not "making progress". A note within ten minutes of your last one replaces it. `--blocked` the moment you cannot continue without something; `--done` when the deliverable exists; `--waiting` while you wait on something other than him (another task, a deploy). Add `--needs "…"` when something is his to do but nothing waits for it: a merge, a QA pass, a decision for later. Leave it off when nothing is his; a later note without it clears it. Why: your dot in his bar is coloured by your last note, and the note fills your row on Zero's board ("Now" and "Needs you"); a stale note misleads him, and a stream of restatements buries the ones that matter.
 
 ## When he is at the keyboard
 

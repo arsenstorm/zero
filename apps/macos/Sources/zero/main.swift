@@ -12,7 +12,9 @@ func usage(help: Bool = false) -> Never {
       zero approve "what you want to do" [--body "details"] [--code 'command or snippet']   (Yes / No / Suggest something else…)
       zero run     'command' --why "what you need the output for" [--cwd DIR] [--title T]
                    runs on Arsen's Mac after he presses Run; a script file's contents are shown to him
-      zero note    "where you are now" [--blocked | --done]   (no answer; sets your agent's dot: working, blocked, done)
+      zero note    "where you are now" [--blocked | --done | --waiting] [--needs "what Arsen should do, when he can"]
+                   (no answer; sets your agent's dot and its row on Zero's board: working, blocked, done, or
+                   waiting on something other than Arsen)
       zero withdraw <id> [--reason "why"]   (take back an open ask that no longer needs Arsen)
       zero wait    <id>
       zero status  <id>
@@ -56,7 +58,7 @@ while i < args.count {
     if arg == "--" { positional.append(contentsOf: args[(i + 1)...]); break }
     if arg.hasPrefix("--") {
         let key = String(arg.dropFirst(2))
-        if ["async", "blocked", "done", "any"].contains(key) {
+        if ["async", "blocked", "done", "waiting", "any"].contains(key) {
             flags[key, default: []].append("1")
         } else {
             i += 1
@@ -389,7 +391,9 @@ case "note":
     guard let text = positional.first else { usage() }
     let socket = connect()
     var note = Ask(kind: .note, title: flag("ticket") ?? "Update", body: text, agent: agentIdentity())
-    note.status = flag("blocked") != nil ? "blocked" : (flag("done") != nil ? "done" : nil)
+    note.status = ["blocked", "done", "waiting"].first { flag($0) != nil }
+    note.needs = flag("needs")
+    shortDetail(note.needs, flag: "needs")
     try? socket.send(Request(op: "create", ask: note, wait: false))
     guard let reply = socket.receive(Response.self), reply.op == "created" else { fail("zero: no reply from Zero.app") }
 case "wait" where positional.first.map(isSession) == true:

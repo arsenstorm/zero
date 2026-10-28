@@ -72,6 +72,8 @@ public struct Ask: Codable, Identifiable, Sendable {
     /// For an approval of one of zerod's sessions (agent.runtime "zerod", agent.ref the session): the approval's id
     /// there, so the answer reaches zerod and the ask is found again after a relaunch.
     public var request: String?
+    /// For a note: what the agent hands to Arsen without waiting for it ("mark the PR ready and merge it").
+    public var needs: String?
 
     /// An option ending with "…" asks for text: picking it opens an input, and the answer is "label: text".
     public static func expectsText(_ option: String) -> Bool { option.hasSuffix("…") || option.hasSuffix("...") }

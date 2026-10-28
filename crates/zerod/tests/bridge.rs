@@ -173,7 +173,7 @@ async fn every_session_has_a_dot_that_follows_its_attention() {
     let mut session = Conversation::new("01a1aaaa00000003", Provider::Codex, "/work");
     session.status = Status::Working;
     bridge.sync(std::slice::from_ref(&session));
-    assert_eq!(latest().status, None, "working: blue");
+    assert_eq!((latest().status, latest().request.as_deref()), (None, Some(zerod::board::ATTENTION)), "working: blue, and told from the agent's own notes");
     session.status = Status::Idle;
     session.items = vec![Item { id: "a".into(), turn: None, kind: ItemKind::Agent { text: "Done.".into(), final_answer: true }, status: ItemStatus::Done }];
     bridge.sync(std::slice::from_ref(&session));

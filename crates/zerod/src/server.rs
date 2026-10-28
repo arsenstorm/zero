@@ -227,6 +227,7 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             Ok(json!(inbox.create(incoming, request.keep.unwrap_or(false))))
         }
         "asks" => Ok(json!(inbox.asks())),
+        "board" => Ok(json!(crate::board::board(&daemon.list(), &inbox.asks()))),
         "choose" => { inbox.choose(&ask()?, option()?); Ok(Value::Null) }
         "answerAsk" => { inbox.answer(&ask()?, option()?, request.text.as_deref().unwrap_or("")); Ok(Value::Null) }
         "reply" => { inbox.reply(&ask()?, request.text.as_deref().ok_or("Reply with text")?); Ok(Value::Null) }

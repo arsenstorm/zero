@@ -127,6 +127,9 @@ pub struct Ask {
     /// For an approval or question of a zerod session: its id there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request: Option<String>,
+    /// For a note: what the agent hands to the user, without waiting for it ("mark the PR ready and merge it").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub needs: Option<String>,
 }
 
 impl Ask {
@@ -136,7 +139,7 @@ impl Ask {
             id: new_id(), kind, title: title.into(), body: String::new(), options: vec![], command: None, cwd: None, agent,
             created_at: now, expires_at: Time(now.0 + ttl_seconds), state: AskState::Waiting, answer: None, output: String::new(),
             exit_code: None, answered_at: None, status: None, choice: None, waits: None, delivery: None, detail: None, script: None,
-            same_as: None, request: None,
+            same_as: None, request: None, needs: None,
         }
     }
 

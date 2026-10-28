@@ -153,6 +153,7 @@ impl Bridge {
         let mut note = Ask::new(AskKind::Note, &label(conversation), agent, 0);
         note.body = body;
         note.status = status;
+        note.request = Some(crate::board::ATTENTION.into());
         self.inbox.create(note, false);
     }
 

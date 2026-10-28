@@ -172,6 +172,8 @@ impl Inbox {
             let last = &mut state.asks[i];
             last.body = ask.body;
             last.title = ask.title;
+            last.needs = ask.needs;
+            last.request = ask.request;
             last.created_at = ask.created_at;
             last.answered_at = Some(ask.created_at);
             let last = last.clone();

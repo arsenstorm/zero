@@ -300,4 +300,5 @@ async fn the_inbox_is_followed_and_answered_over_the_socket() {
         if event["ask"]["state"] == "answered" { assert_eq!(event["ask"]["answer"], "Yes"); break }
     }
     assert_eq!(client.call(json!({"op": "choose", "ask": id})).await["error"], "Which option?");
+    assert_eq!(client.call(json!({"op": "board"})).await["result"], json!([]), "no sessions, no rows");
 }

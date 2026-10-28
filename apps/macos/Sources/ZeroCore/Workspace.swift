@@ -10,6 +10,9 @@ public final class Workspace {
     /// Why the last request failed, for the window to show.
     public var lastError: String?
 
+    /// Every task at once (crates/zerod/src/board.rs), while the window shows it.
+    public private(set) var board: [BoardRow] = []
+
     public var conversations: [Conversation] { mirror.order.compactMap { mirror.conversations[$0] } }
     public func conversation(_ id: String) -> Conversation? { mirror.conversations[id] }
 
@@ -52,6 +55,11 @@ public final class Workspace {
     }
 
     // What the window asks of zerod.
+
+    public func refreshBoard() async {
+        guard let rows = try? await link?.board() else { return }
+        if rows != board { board = rows }
+    }
 
     public func start(provider: Provider, cwd: String, prompt: String, model: String?, effort: String?, permissions: Permissions = .auto) async -> String? {
         await attempt { try await $0.start(provider: provider, cwd: cwd, prompt: prompt, model: model, effort: effort, permissions: permissions) }

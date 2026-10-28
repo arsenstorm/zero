@@ -4,6 +4,7 @@
 pub mod acp;
 pub mod adapter;
 pub mod ask;
+pub mod board;
 pub mod bridge;
 pub mod claude;
 pub mod cli;

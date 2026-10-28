@@ -141,6 +141,24 @@ public struct QuestionOption: Decodable, Equatable, Sendable {
     public init(label: String, description: String?) { self.label = label; self.description = description }
 }
 
+/// One row of the board (crates/zerod/src/board.rs): a lead session with its workers folded in.
+public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
+    public enum State: String, Decodable, Sendable { case needsYou, trouble, working, waiting, ready, done, idle, offline }
+    public var session: String
+    public var task: String
+    public var ticket: String?
+    /// The shortest end of its folder that tells it from the other rows'.
+    public var place: String
+    public var state: State
+    public var now: String?
+    public var needs: String?
+    /// The open asks of the lead and its workers.
+    public var asks: [Waiting]
+    public var workers: Int
+    public var id: String { session }
+    public struct Waiting: Decodable, Equatable, Sendable { public var id: String; public var title: String }
+}
+
 public struct UsageWindow: Decodable, Equatable, Sendable {
     public var name: String
     /// The share used, 0 to 1.
@@ -497,6 +515,8 @@ public final class ZerodLink: @unchecked Sendable {
         struct Row: Decodable { let provider: Provider; let usage: Usage }
         return try decode([Row].self, from: await call("usage")).map { ($0.provider, $0.usage) }
     }
+
+    public func board() async throws -> [BoardRow] { try decode([BoardRow].self, from: await call("board")) }
 
     /// From now on `onMessage` gets every session's snapshot, then each change.
     public func subscribe() async throws { _ = try await call("subscribe") }

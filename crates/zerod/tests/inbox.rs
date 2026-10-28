@@ -247,9 +247,11 @@ async fn saying_where_it_is_again_rewrites_the_last_note() {
     let first = s.create(first, false);
     let mut second = Ask::new(AskKind::Note, "Update", agent("test"), 3600);
     second.body = "Still running specs".into();
+    second.needs = Some("review the plan".into());
     let second = s.create(second, false);
     assert_eq!(first.id, second.id);
-    assert_eq!(s.ask(&first.id).unwrap().body, "Still running specs");
+    let rewritten = s.ask(&first.id).unwrap();
+    assert_eq!((rewritten.body.as_str(), rewritten.needs.as_deref()), ("Still running specs", Some("review the plan")));
     let mut done = Ask::new(AskKind::Note, "Update", agent("test"), 3600);
     done.status = Some("done".into());
     assert_ne!(s.create(done, false).id, first.id);

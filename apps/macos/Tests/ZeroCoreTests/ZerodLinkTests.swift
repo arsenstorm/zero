@@ -84,6 +84,15 @@ private func launch(_ name: String) async throws -> (socket: String, home: URL) 
     let settled = try await link.wait(on: [conversation.id], timeout: 1)
     #expect(settled.first?["attention"] as? String == "offline")
     await #expect(throws: ZerodError(message: "No session nope to lead it")) { _ = try await link.spawn(lead: "nope", provider: .codex, prompt: "x") }
+
+    // Offline, it is on the board only once its agent hands the user something.
+    #expect(try await link.board().isEmpty)
+    var note = Ask(kind: .note, title: "Update", body: "Printed the kernel name", agent: AgentIdentity(name: "zerod-" + conversation.id, host: "mac"))
+    note.status = "done"
+    note.needs = "check it says Darwin"
+    _ = try await link.create(note)
+    let row = try #require(try await link.board().first)
+    #expect((row.session, row.task, row.ticket, row.state, row.now, row.needs) == (conversation.id, "Uname check", "GH-1", .ready, "Printed the kernel name", "check it says Darwin"))
 }
 
 private final class Heard: @unchecked Sendable {
