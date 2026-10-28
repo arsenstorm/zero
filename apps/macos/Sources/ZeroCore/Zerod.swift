@@ -141,14 +141,163 @@ public struct QuestionOption: Decodable, Equatable, Sendable {
     public init(label: String, description: String?) { self.label = label; self.description = description }
 }
 
+/// Integrations as zerod keeps them (crates/zerod/src/integrations.rs): GitHub and Linear, each on or off with its views,
+/// and the connected Linear workspace.
+public struct IntegrationState: Decodable, Equatable, Sendable {
+    public var settings: IntegrationSettings
+    public var linear: String?
+    /// Who the GitHub CLI is signed in as; nil when it isn't (or isn't installed).
+    public var github: String?
+}
+
+public struct IntegrationSettings: Decodable, Equatable, Sendable {
+    public var github: IntegrationSource<GitHubView>
+    public var linear: IntegrationSource<LinearView>
+}
+
+public struct IntegrationSource<View: Decodable & Equatable & Sendable>: Decodable, Equatable, Sendable {
+    public var enabled: Bool
+    public var views: [View]
+}
+
+/// A GitHub view: a search query.
+public struct GitHubView: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+    public var query: String
+    public var start: TaskStart?
+    public init(id: String = "", name: String, query: String, start: TaskStart? = nil) { self.id = id; self.name = name; self.query = query; self.start = start }
+}
+
+/// How a view's items start tasks (crates/zerod/src/integrations.rs): the folder, the agent, and a prompt that fills in
+/// {key}, {title}, {url} and {state}.
+public struct TaskStart: Codable, Equatable, Sendable {
+    public var cwd: String
+    public var prompt: String
+    public var provider: String?
+    public var model: String?
+    public var effort: String?
+    public var permissions: String?
+    public init(cwd: String, prompt: String, provider: String? = nil, model: String? = nil, effort: String? = nil, permissions: String? = nil) {
+        self.cwd = cwd; self.prompt = prompt; self.provider = provider; self.model = model; self.effort = effort; self.permissions = permissions
+    }
+}
+
+/// A task started from an item, or the one it already had, with the task's state pad.
+public struct StartedTask: Decodable, Sendable {
+    public var session: String
+    public var existing: Bool
+    public var pad: String?
+}
+
+/// A Linear view: whose issues ("me", "anyone", "nobody"), which teams and which state types (none means all).
+public struct LinearView: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+    public var assignee: String
+    public var teams: [String]
+    public var states: [String]
+    /// The teams' own states by name; when any are picked they stand in for `states` (their types).
+    public var stateNames: [String]
+    public var start: TaskStart?
+    public init(id: String = "", name: String, assignee: String = "me", teams: [String] = [], states: [String] = ["backlog", "unstarted", "started"],
+                stateNames: [String] = [], start: TaskStart? = nil) {
+        self.id = id; self.name = name; self.assignee = assignee; self.teams = teams; self.states = states; self.stateNames = stateNames; self.start = start
+    }
+}
+
+/// A Linear team and its own workflow states, in the order Linear lists them.
+public struct LinearTeam: Decodable, Sendable, Identifiable {
+    public struct State: Decodable, Sendable, Hashable {
+        public var name: String
+        public var type: String
+        public var color: String
+    }
+    public var key: String
+    public var name: String
+    public var states: [State]
+    public var id: String { key }
+}
+
+/// A scratchpad as zerod lists it (crates/zerod/src/pads.rs): a Markdown file under ~/.zero/scratchpads.
+public struct PadSummary: Decodable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var title: String
+    /// "Work/2026"; empty at the top.
+    public var folder: String
+    public var link: String
+    public var updated: Int
+}
+
+/// A heading in a pad, with its anchor (zero://pad/<id>#<slug>).
+public struct PadSection: Decodable, Equatable, Sendable, Hashable {
+    public var slug: String
+    public var title: String
+    public var level: Int
+    /// Where its heading is, from 1.
+    public var line: Int
+}
+
+/// A pad read whole: its text, the revision a write must name, and its sections.
+public struct Pad: Decodable, Equatable, Sendable {
+    public var id: String
+    public var title: String
+    public var folder: String
+    public var content: String
+    public var revision: String
+    public var sections: [PadSection]
+    public var link: String
+    public var updated: Int
+}
+
+public struct PadList: Decodable, Equatable, Sendable {
+    public var pads: [PadSummary]
+    public var folders: [String]
+}
+
+/// One row of a view: a pull request or an issue.
+public struct IntegrationItem: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var key: String
+    public var title: String
+    public var url: String
+    public var place: String
+    public var state: String
+    /// An issue's state's colour in Linear ("#f2c94c").
+    public var color: String?
+    public var checks: String?
+    public var review: String?
+    public var person: String?
+    public var priority: Int?
+    public var updated: String
+    /// An issue's state's type (started, triage…), which its icon shows.
+    public var kind: String?
+    /// An issue's labels, then its project.
+    public var tags: [IntegrationTag]?
+    /// The assignee's picture.
+    public var avatar: String?
+    public var created: String?
+    /// The task started from it, if one has been.
+    public var task: String?
+}
+
+/// A label, or a project with its icon (an emoji's shortcode, ":fire:", or one of Linear's own names).
+public struct IntegrationTag: Codable, Equatable, Sendable, Hashable {
+    public var name: String
+    public var color: String?
+    public var icon: String?
+}
+
 /// One row of the board (crates/zerod/src/board.rs): a lead session with its workers folded in.
 public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
-    public enum State: String, Decodable, Sendable { case needsYou, trouble, working, waiting, ready, done, idle, offline }
+    public enum State: String, Decodable, Sendable { case needsYou, trouble, working, waiting, done, merged, idle, offline }
     public var session: String
     public var task: String
     public var ticket: String?
     /// The shortest end of its folder that tells it from the other rows'.
     public var place: String
+    /// Offline, `state` is the one it was last known in.
+    public var online: Bool
     public var state: State
     public var now: String?
     public var needs: String?
@@ -199,6 +348,8 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
     /// A name the user or its lead gave it, and what the work is for (an issue, a ticket).
     public var label: String?
     public var ticket: String?
+    /// Where it runs, by name, when its folder doesn't say.
+    public var place: String?
     /// The git branch its folder was on when it started.
     public var branch: String?
     /// The session that started it, for a worker.
@@ -286,6 +437,8 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
         case let .stalled(reason): stalled = reason
         case let .diff(diff): self.diff = diff
         case let .terminal(terminal): self.terminal = terminal
+        case .archived: break
+        case let .place(place): self.place = place
         case let .switched(provider, model, effort):
             self.provider = provider; self.thread = nil; self.model = model; self.effort = effort
             // As zerod does: where each provider took over, in the conversation itself.
@@ -313,8 +466,12 @@ public enum Change: Decodable, Equatable, Sendable {
     case switched(Provider, model: String?, effort: String?)
     /// The task went to its provider's terminal, or came back.
     case terminal(Opened?)
+    /// The task was put away: it leaves the list.
+    case archived
+    /// Where the task runs, by name.
+    case place(String?)
 
-    private enum Keys: String, CodingKey { case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label, ticket, provider, terminal }
+    private enum Keys: String, CodingKey { case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label, ticket, provider, terminal, place }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -336,6 +493,8 @@ public enum Change: Decodable, Equatable, Sendable {
         case "stalled": self = .stalled(try c.decodeIfPresent(String.self, forKey: .reason))
         case "diff": self = .diff(try c.decodeIfPresent(String.self, forKey: .diff))
         case "terminal": self = .terminal(try c.decodeIfPresent(Opened.self, forKey: .terminal))
+        case "archived": self = .archived
+        case "place": self = .place(try c.decodeIfPresent(String.self, forKey: .place))
         case "switched": self = .switched(try c.decode(Provider.self, forKey: .provider), model: try c.decodeIfPresent(String.self, forKey: .model),
                                           effort: try c.decodeIfPresent(String.self, forKey: .effort))
         case let other: throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "Unknown change \(other)")
@@ -373,6 +532,10 @@ public struct ZerodMirror: Sendable {
         case let .session(conversation):
             if conversations[conversation.id] == nil { order.append(conversation.id) }
             conversations[conversation.id] = conversation
+            return true
+        case let .change(event) where event.change == .archived:
+            conversations[event.session] = nil
+            order.removeAll { $0 == event.session }
             return true
         case let .change(event):
             guard var conversation = conversations[event.session] else { return false }
@@ -468,6 +631,8 @@ public final class ZerodLink: @unchecked Sendable {
 
     public func interrupt(session: String) async throws { _ = try await call("interrupt", ["session": session]) }
     public func stop(session: String) async throws { _ = try await call("stop", ["session": session]) }
+    /// Puts the task away: out of the list, its files kept in zerod's archive/.
+    public func archive(session: String) async throws { _ = try await call("archive", ["session": session]) }
     public func resume(session: String) async throws { _ = try await call("resume", ["session": session]) }
     /// Moves the task to another provider between turns; the next message starts it there.
     /// Hands the task to its provider's own terminal; zero-host's id for it.
@@ -504,6 +669,15 @@ public final class ZerodLink: @unchecked Sendable {
     public func label(session: String, label: String?, ticket: String?) async throws {
         _ = try await call("label", ["session": session, "label": label, "ticket": ticket])
     }
+    /// Where the session runs, by name (a bench, a machine); nil goes back to its folder.
+    public func place(session: String, place: String?) async throws {
+        _ = try await call("place", ["session": session, "place": place])
+    }
+    /// The command that says where tasks run by ticket (zerod reruns it every minute); empty for none.
+    public func placesCommand() async throws -> String {
+        ((try await call("settings")) as? [String: Any])?["places"] as? String ?? ""
+    }
+    public func setPlacesCommand(_ command: String) async throws { _ = try await call("configure", ["places": command]) }
 
     /// The sessions `session` started, without their items, each with how it's doing (which zerod tells, since the
     /// items it would be worked out from are left out).
@@ -550,6 +724,46 @@ public final class ZerodLink: @unchecked Sendable {
     }
 
     public func board() async throws -> [BoardRow] { try decode([BoardRow].self, from: await call("board")) }
+
+    // Scratchpads: one op, `pad`, taking the same tools and arguments as the MCP server.
+    public func pad<T: Decodable>(_ tool: String, _ args: [String: Any], as type: T.Type) async throws -> T {
+        try decode(T.self, from: await call("pad", ["tool": tool, "args": args]))
+    }
+
+    // Integrations.
+    public func integrations() async throws -> IntegrationState { try decode(IntegrationState.self, from: await call("integrations")) }
+    public func setIntegration(_ integration: String, enabled: Bool) async throws -> IntegrationState {
+        try decode(IntegrationState.self, from: await call("setIntegration", ["integration": integration, "enabled": enabled]))
+    }
+    public func saveView(_ integration: String, view: some Encodable) async throws -> IntegrationState {
+        let fields = try JSONSerialization.jsonObject(with: JSONEncoder().encode(view))
+        return try decode(IntegrationState.self, from: await call("saveView", ["integration": integration, "view": fields]))
+    }
+    public func orderViews(_ integration: String, ids: [String]) async throws -> IntegrationState {
+        try decode(IntegrationState.self, from: await call("orderViews", ["integration": integration, "ids": ids]))
+    }
+    public func deleteView(_ integration: String, view: String) async throws -> IntegrationState {
+        try decode(IntegrationState.self, from: await call("deleteView", ["integration": integration, "view": view]))
+    }
+    public func viewItems(_ integration: String, view: String) async throws -> [IntegrationItem] {
+        try decode([IntegrationItem].self, from: await call("viewItems", ["integration": integration, "view": view]))
+    }
+    /// What the view last showed, however long ago; nil before it has been fetched.
+    public func cachedItems(_ integration: String, view: String) async throws -> [IntegrationItem]? {
+        try decode([IntegrationItem]?.self, from: await call("viewItems", ["integration": integration, "view": view, "cached": true]))
+    }
+    public func linearTeams(cached: Bool = false) async throws -> [LinearTeam]? { try decode([LinearTeam]?.self, from: await call("linearTeams", ["cached": cached])) }
+    /// The item's task: the one it has, or a new one from its view's template.
+    public func startTask(_ integration: String, view: String, item: IntegrationItem) async throws -> StartedTask {
+        let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(item))
+        return try decode(StartedTask.self, from: await call("startTask", ["integration": integration, "view": view, "item": object]))
+    }
+    /// The page to open in the browser; zerod waits for Linear to come back.
+    public func connectLinear() async throws -> URL {
+        guard let url = ((try await call("connectLinear")) as? [String: Any])?["url"] as? String, let link = URL(string: url) else { throw ZerodError(message: "zerod gave no Linear page") }
+        return link
+    }
+    public func disconnectLinear() async throws -> IntegrationState { try decode(IntegrationState.self, from: await call("disconnectLinear")) }
 
     /// From now on `onMessage` gets every session's snapshot, then each change.
     public func subscribe() async throws { _ = try await call("subscribe") }

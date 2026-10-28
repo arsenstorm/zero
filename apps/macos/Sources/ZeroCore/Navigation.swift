@@ -5,7 +5,7 @@ import Observation
 /// retrace it. The app moves it too (Settings… in the menu opens the window on Settings).
 @MainActor @Observable
 public final class Navigation {
-    public enum Place: Hashable, Sendable { case home, board, task(String), settings }
+    public enum Place: Hashable, Sendable { case home, board, task(String), settings, integrations, integration(String), pads, pad(String) }
 
     public var place = Place.home {
         didSet {
@@ -15,6 +15,10 @@ public final class Navigation {
     }
     /// On a task's page: the worker shown instead of its lead.
     public var worker: String?
+    /// On a scratchpad: the section a link pointed at, to scroll to once.
+    public var padSection: String?
+    /// Past the splash: the window shows its places, and the toolbar its arrows.
+    public var ready = false
     /// The pane on a task's right, open or not, as it was last left.
     public var pane = UserDefaults.standard.object(forKey: "taskPane") as? Bool ?? true {
         didSet { UserDefaults.standard.set(pane, forKey: "taskPane") }

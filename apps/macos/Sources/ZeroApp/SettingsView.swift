@@ -75,12 +75,22 @@ struct SettingsView: View {
 struct SidebarColumn<Content: View>: View {
     let title: String
     var width: CGFloat = 250
+    /// A row at the foot under a divider (an integration's Edit views), level with the rail's settings.
+    var footer: AnyView? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            SidebarHeader(title: title).padding(.horizontal, -10).padding(.bottom, -4)
+            SidebarHeader(title: title)
+                .padding(.horizontal, -10).padding(.bottom, -4)
             content()
+            if let footer {
+                Spacer(minLength: 0)
+                Rectangle().fill(Theme.stroke).frame(height: 1).padding(.horizontal, -10).padding(.bottom, 4)
+                // A 30 pt row centred 24 pt above the panel's foot, as the rail's settings is (12 + 16 from the
+                // window's, less the panel's 4).
+                footer.padding(.bottom, 9)
+            }
         }
         .padding(.horizontal, 10)
         .frame(width: width)
@@ -195,7 +205,7 @@ extension View {
 }
 
 /// Rows with a hairline between them, on a card.
-private struct Rows<Content: View>: View {
+struct Rows<Content: View>: View {
     @ViewBuilder let content: () -> Content
     var body: some View {
         _VariadicView.Tree(Divided()) { content() }
@@ -215,7 +225,7 @@ private struct Rows<Content: View>: View {
     }
 }
 
-private struct Switch: View {
+struct Switch: View {
     @Binding var isOn: Bool
     var body: some View { Toggle("", isOn: $isOn).labelsHidden().toggleStyle(.switch) }
 }
@@ -289,6 +299,15 @@ private struct AgentsPage: View {
     @State private var draft = ""
     @FocusState private var focused: Bool
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            PluginRow()
+            PlacesField().padding(.top, 20)
+            Text("Agents in the bar").font(.system(size: 15, weight: .semibold)).padding(.top, 28).padding(.bottom, 12)
+            list
+        }
+    }
+
+    @ViewBuilder private var list: some View {
         let names = agentNames
         if names.isEmpty {
             Text("No agents yet. They appear here when they first ask you something.").font(.system(size: 13)).foregroundStyle(.secondary)
@@ -340,68 +359,29 @@ private struct AgentsPage: View {
 private struct IntegrationsPage: View {
     let store: Store
     let inbox: InboxController
-    @State private var claude = ClaudeAdding()
-    @State private var showingClaude = false
-    @State private var linear = LinearConnecting()
-    @State private var showingLinear = false
     @State private var rexOn = UserDefaults.standard.bool(forKey: RexAdapter.enabledKey)
 
     private var rexDetail: String {
         rexOn && RexAdapter.executable != nil ? "New agents start in Rex." : "Start new agents in Rex instead of Zero's terminals."
     }
 
-    private var claudeDetail: String {
-        ClaudeAccounts.shared.active.map { "Signed in as \($0)." } ?? "Asks and progress come to your inbox."
-    }
-
-    private var linearDetail: String {
-        switch Linear.shared.workspaces.count {
-        case 0: "Issue ids in messages open in Linear."
-        case 1: "Connected to \(Linear.shared.workspaces[0].name)."
-        case let count: "Connected to \(count) workspaces."
-        }
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Rows {
-                OnboardingRow(icon: "sparkle", picture: choiceIcon("claude"), title: "Claude Code", detail: claudeDetail) {
-                    if ClaudeAccounts.shared.accounts.isEmpty {
-                        if claude.busy { ProgressView().controlSize(.small) } else { RowButton(title: "Add account") { claude.add() } }
-                    } else {
-                        RowButton(title: "Configure") { showingClaude = true }
-                    }
-                }
-                OnboardingRow(icon: "code", picture: choiceIcon("openai"), title: "Codex", detail: "Start Codex agents from Zero.") {
-                    RowButton(title: "Coming soon", enabled: false)
-                }
-                OnboardingRow(icon: "stack", picture: choiceIcon("solo"), title: "Solo", detail: "Starts agents and carries your messages.") {
-                    Text(soloStatus).font(.system(size: 12)).foregroundStyle(.secondary)
-                }
-                OnboardingRow(icon: "terminal", picture: choiceIcon("rex"), title: "Rex", detail: rexDetail) {
-                    if RexAdapter.executable == nil {
-                        Text("Not installed").font(.system(size: 12)).foregroundStyle(.secondary)
-                    } else {
-                        Toggle("", isOn: Binding(get: { rexOn }, set: { on in
-                            rexOn = on
-                            UserDefaults.standard.set(on, forKey: RexAdapter.enabledKey)
-                            inbox.loadSpawnChoices(force: true)
-                        })).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                    }
-                }
-                OnboardingRow(icon: "link", picture: choiceIcon("linear"), title: "Linear", detail: linearDetail) {
-                    if Linear.shared.workspaces.isEmpty {
-                        if linear.busy { ProgressView().controlSize(.small) } else { RowButton(title: "Connect") { linear.connect() } }
-                    } else {
-                        RowButton(title: "View connections") { showingLinear = true }
-                    }
+        Rows {
+            OnboardingRow(icon: "stack", picture: choiceIcon("solo"), title: "Solo", detail: "Starts agents and carries your messages.") {
+                Text(soloStatus).font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            OnboardingRow(icon: "terminal", picture: choiceIcon("rex"), title: "Rex", detail: rexDetail) {
+                if RexAdapter.executable == nil {
+                    Text("Not installed").font(.system(size: 12)).foregroundStyle(.secondary)
+                } else {
+                    Toggle("", isOn: Binding(get: { rexOn }, set: { on in
+                        rexOn = on
+                        UserDefaults.standard.set(on, forKey: RexAdapter.enabledKey)
+                        inbox.loadSpawnChoices(force: true)
+                    })).labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }
             }
-            if let error = claude.error, !showingClaude { Text(error).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3) }
-            if let error = linear.error, !showingLinear { Text(error).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3) }
         }
-        .sheet(isPresented: $showingLinear) { LinearConnections(connecting: linear) }
-        .sheet(isPresented: $showingClaude) { ClaudeAccountsSheet(adding: claude) }
     }
 
     private var soloStatus: String {
@@ -412,50 +392,54 @@ private struct IntegrationsPage: View {
     }
 }
 
-/// A Claude Code sign-in in progress, shared by the Integrations row and the accounts sheet.
-@MainActor @Observable
-private final class ClaudeAdding {
-    var busy = false
-    var error: String?
+/// The command that says where tasks run (a bench, a machine) by ticket, for the board's Where. zerod reruns it every
+/// minute; a task can also name its own with `zero label --where`.
+private struct PlacesField: View {
+    @State private var command = ""
+    @State private var saved = ""
+    @State private var link = try? ZerodLink()
 
-    func add() {
-        busy = true
-        error = nil
-        Task {
-            error = await ClaudeAccounts.shared.add()
-            busy = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Where tasks run").font(.system(size: 13, weight: .medium))
+            HStack {
+                TextField("", text: $command, prompt: Text("A command printing [{\"ticket\": \"ENG-1\", \"place\": \"my-bench\"}]"))
+                    .textFieldStyle(.roundedBorder).font(.system(size: 12).monospaced())
+                    .onSubmit(save)
+                Button("Save", action: save).disabled(command == saved)
+            }
+            Text("Shown as each task's Where, by its ticket, in place of its folder. Run in your login shell every minute.")
+                .font(.system(size: 12)).foregroundStyle(.secondary)
         }
+        .task {
+            if let current = try? await link?.placesCommand() { command = current; saved = current }
+        }
+    }
+
+    private func save() {
+        let command = command
+        Task { if (try? await link?.setPlacesCommand(command)) != nil { saved = command } }
     }
 }
 
-/// The Zero plugin, auto-switch, and the Claude Code accounts Zero switches between.
-private struct ClaudeAccountsSheet: View {
-    let adding: ClaudeAdding
-    @Environment(\.dismiss) private var dismiss
+/// The Zero plugin, which has Claude Code send its asks and progress to the inbox.
+private struct PluginRow: View {
     /// nil while it is being changed.
     @State private var plugin: Bool? = ClaudePlugin.isInstalled
-    @State private var pluginError: String?
-    @State private var switchError: String?
-
-
-    private var accounts: ClaudeAccounts { ClaudeAccounts.shared }
-    private static let thresholds: [Double] = [80, 85, 90, 95, 98, 100]
+    @State private var mcp = AgentMCP.isInstalled
+    @State private var error: String?
 
     var body: some View {
-        @Bindable var accounts = accounts
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Claude Code settings").font(.system(size: 17, weight: .semibold)).padding(.bottom, 4)
-            Text("Agents and your terminal use the active account.").font(.system(size: 12)).foregroundStyle(.secondary)
-                .padding(.bottom, 12)
+        VStack(alignment: .leading, spacing: 8) {
             Rows {
                 OnboardingRow(icon: "puzzle-piece", picture: Image(nsImage: appTile), title: "Zero plugin",
-                              detail: "Asks and progress come to your inbox.") {
+                              detail: "Configures your agents to work with Zero: asks and progress come to your inbox.") {
                     if let plugin {
                         Switch(isOn: Binding(get: { plugin }, set: { on in
                             self.plugin = nil
-                            pluginError = nil
+                            error = nil
                             Task {
-                                if on { pluginError = await ClaudePlugin.install() } else { await ClaudePlugin.uninstall() }
+                                if on { error = await ClaudePlugin.install() } else { await ClaudePlugin.uninstall() }
                                 self.plugin = ClaudePlugin.isInstalled
                             }
                         }))
@@ -463,125 +447,20 @@ private struct ClaudeAccountsSheet: View {
                         ProgressView().controlSize(.small)
                     }
                 }
-                OnboardingRow(icon: "circle-arrows-opposite-direction", title: "Auto-switch", detail: "Moves to the account with the most room left.") {
-                    Switch(isOn: $accounts.autoSwitch)
-                }
-                // Always shown, dimmed while auto-switch is off, so turning it on moves nothing.
-                OnboardingRow(icon: "gauge", title: "Switch at", detail: "Checked every 5 minutes.") {
-                    HStack(spacing: 8) {
-                        Picker("Limit", selection: $accounts.window) {
-                            Text("5 hours").tag(ClaudeAccounts.Window.fiveHour)
-                            Text("Weekly").tag(ClaudeAccounts.Window.weekly)
-                            Text("Either").tag(ClaudeAccounts.Window.either)
-                        }
-                        .pickerStyle(.segmented).labelsHidden().fixedSize()
-                        Picker("Threshold", selection: $accounts.threshold) {
-                            ForEach(Self.thresholds, id: \.self) { Text("\(Int($0))%").tag($0) }
-                        }
-                        .pickerStyle(.menu).labelsHidden().fixedSize()
-                    }
-                    .disabled(!accounts.autoSwitch).opacity(accounts.autoSwitch ? 1 : 0.5)
+                OnboardingRow(icon: "note-3", title: "Scratchpads in Codex and OpenCode",
+                              detail: "Adds Zero's MCP server to their config, as the plugin does for Claude Code.") {
+                    Switch(isOn: Binding(get: { mcp }, set: { on in
+                        error = on ? AgentMCP.install() : nil
+                        if !on { AgentMCP.uninstall() }
+                        mcp = AgentMCP.isInstalled
+                    }))
                 }
             }
-            table.padding(.top, 16)
-            ForEach([switchError, adding.error, pluginError].compactMap { $0 }, id: \.self) { error in
-                Text(error).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3).padding(.top, 8)
-            }
-            HStack {
-                Spacer()
-                SolidButton(title: "Done") { dismiss() }
-            }
-            .padding(.top, 20)
+            if let error { Text(error).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3).textSelection(.enabled) }
         }
-        .padding(24)
-        .frame(width: 560)
-        .onDisappear { accounts.cancelPerAgent() }
-        .sheet(isPresented: Binding(get: { accounts.tokenStatus != nil },
-                                    set: { if !$0 { accounts.cancelPerAgent(); accounts.tokenStatus = nil } })) {
-            TokenDialog(accounts: accounts)
-        }
-    }
-
-    private static let usageWidth: CGFloat = 64
-    private static let actionsWidth: CGFloat = 116
-
-    /// One row per account: who, how much of each limit is used, and what can be done with it.
-    private var table: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Text("Account").frame(maxWidth: .infinity, alignment: .leading)
-                Text("5 hours").frame(width: Self.usageWidth)
-                Text("Weekly").frame(width: Self.usageWidth)
-                ZStack(alignment: .trailing) {
-                    IconButton(symbol: "plus", help: "Add account") { adding.add() }.opacity(adding.busy ? 0 : 1)
-                    if adding.busy { ProgressView().controlSize(.small) }
-                }
-                .frame(minWidth: Self.actionsWidth, alignment: .trailing)
-            }
-            .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
-            .padding(.horizontal, 12).frame(height: 40)
-            .background(Theme.composer)
-            ForEach(accounts.accounts) { account in
-                Rectangle().fill(Theme.stroke).frame(height: 1)
-                HStack(spacing: 12) {
-                    (choiceIcon("claude") ?? Image(nsImage: Nucleo.image("circle-user", size: 18) ?? NSImage())).resizable().aspectRatio(contentMode: .fit)
-                        .frame(width: 18, height: 18)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(account.email).font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                        Text(account.plan.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Claude")
-                            .font(.system(size: 12)).foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    percent(accounts.usage[account.email]?.fiveHour)
-                    percent(accounts.usage[account.email]?.sevenDay)
-                    HStack(spacing: 6) {
-                        singleAgent(account.email)
-                        let active = account.email == accounts.active
-                        IconButton(symbol: "trash", help: active ? "Switch to another account before removing this one" : "Remove",
-                                   enabled: !active) { accounts.remove(account.email) }
-                        if active {
-                            // Solid, like the token key: this is the account Claude Code runs as.
-                            IconButton(symbol: "check", help: "The account Claude Code uses now", filled: true) {}
-                        } else {
-                            IconButton(symbol: "circle-arrows-opposite-direction", help: "Switch to this account") {
-                                switchError = accounts.switchTo(account.email)
-                            }
-                        }
-                    }
-                    .frame(minWidth: Self.actionsWidth, alignment: .trailing)
-                }
-                .padding(.horizontal, 12).padding(.vertical, 10)
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
-    }
-
-    /// The key: solid once the account has a working token of its own, so a single agent can run as it.
-    @ViewBuilder private func singleAgent(_ email: String) -> some View {
-        switch accounts.tokenStatus {
-        case .signingIn(email), .checking(email):
-            ProgressView().controlSize(.small).frame(width: 26, height: 26)
-        default:
-            if accounts.perAgent.contains(email) {
-                IconButton(symbol: "key:glyph", help: "Single agents can run as \(email). Click to remove its token.", filled: true) {
-                    accounts.removePerAgent(email)
-                }
-            } else {
-                IconButton(symbol: "key", help: "Let single agents run as \(email): sign in as it in the browser") {
-                    accounts.beginPerAgent(email)
-                }
-            }
-        }
-    }
-
-    /// "22%", or a dash when the account's usage isn't known (its token has lapsed since it was last active).
-    private func percent(_ value: Double?) -> some View {
-        Text(value.map { "\(Int($0))%" } ?? "–").font(.system(size: 12)).monospacedDigit()
-            .foregroundStyle(value == nil ? .tertiary : .primary)
-            .frame(width: Self.usageWidth)
     }
 }
+
 
 /// Zero's app icon without the margin macOS icons carry, so it fills a row's picture slot like the other logos,
 /// and with a faint edge, since its white tile would otherwise vanish on a white sheet.
@@ -617,150 +496,6 @@ private struct IconButton: View {
                 .frame(width: 26, height: 26).background(filled ? Theme.knob : Theme.chip).clipShape(Circle())
         }
         .buttonStyle(PressableStyle()).disabled(!enabled).help(help).accessibilityLabel(help)
-    }
-}
-
-/// Signing in for a single-agent token: the code box while the browser is open, then the outcome, which stays
-/// until Arsen closes it. A sign-in that needs no code goes straight to the outcome.
-private struct TokenDialog: View {
-    let accounts: ClaudeAccounts
-    @Environment(\.dismiss) private var dismiss
-    @State private var code = ""
-
-    private var hasCode: Bool { !code.trimmingCharacters(in: .whitespaces).isEmpty }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            switch accounts.tokenStatus {
-            case .signingIn(let email):
-                header(symbol: "key:glyph", tint: Theme.knob, title: "Sign in as \(email)",
-                       detail: "Claude's sign-in is open in your browser. If it shows a code, paste it here.")
-                TextField("Paste the code", text: $code)
-                    .textFieldStyle(.plain).font(.system(size: 13, design: .monospaced))
-                    .padding(.horizontal, 12).frame(height: 36)
-                    .background(Theme.composer).clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke, lineWidth: 1))
-                    .onSubmit(submit)
-                    .padding(.top, 18)
-                buttons {
-                    RowButton(title: "Cancel") { dismiss() }
-                    SolidButton(title: "Add token", action: submit).opacity(hasCode ? 1 : 0.4).disabled(!hasCode)
-                }
-            case .checking(let email):
-                header(symbol: "key:glyph", tint: Theme.knob, title: "Checking the token", detail: "Making sure Claude accepts the token for \(email).")
-                ProgressView().controlSize(.small).padding(.top, 18).frame(height: 36)
-                buttons { RowButton(title: "Cancel") { dismiss() } }
-            case .added(let email):
-                header(symbol: "check", tint: .green, title: "Token added",
-                       detail: "Single agents can now run as \(email). Pick it under Account when you start one.")
-                buttons { SolidButton(title: "Done") { dismiss() } }
-            case .failed(let email, let reason):
-                header(symbol: "xmark", tint: .red, title: "No token for \(email)", detail: reason)
-                buttons {
-                    RowButton(title: "Close") { dismiss() }
-                    SolidButton(title: "Try again") { code = ""; accounts.beginPerAgent(email) }
-                }
-            case nil:
-                EmptyView()
-            }
-        }
-        .padding(24)
-        .frame(width: 400)
-    }
-
-    /// A round icon for the state, the title, and one line on what is happening.
-    private func header(symbol: String, tint: Color, title: String, detail: String) -> some View {
-        VStack(spacing: 10) {
-            NucleoIcon(symbol, size: 20).foregroundStyle(.white)
-                .frame(width: 44, height: 44).background(tint).clipShape(Circle())
-            Text(title).font(.system(size: 15, weight: .semibold)).multilineTextAlignment(.center)
-            Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func buttons(@ViewBuilder _ content: () -> some View) -> some View {
-        HStack(spacing: 8) { Spacer(); content() }.padding(.top, 20)
-    }
-
-    private func submit() {
-        guard hasCode else { return }
-        accounts.submitPerAgent(code: code)
-    }
-}
-
-/// A Linear sign-in in progress, shared by the Integrations row and the connections sheet.
-@MainActor @Observable
-private final class LinearConnecting {
-    var busy = false
-    var error: String?
-
-    func connect() {
-        busy = true
-        error = nil
-        Task {
-            error = await Linear.shared.connect { NSWorkspace.shared.open($0) }
-            busy = false
-        }
-    }
-}
-
-/// The connected Linear workspaces, each with its logo and teams, and a way to add another.
-private struct LinearConnections: View {
-    let connecting: LinearConnecting
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Linear connections").font(.system(size: 17, weight: .semibold)).padding(.bottom, 4)
-            Text("Issue ids from these workspaces open in Linear.").font(.system(size: 12)).foregroundStyle(.secondary)
-                .padding(.bottom, 12)
-            Rows {
-                ForEach(Linear.shared.workspaces) { workspace in
-                    HStack(spacing: 12) {
-                        WorkspaceLogo(workspace: workspace)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(workspace.name).font(.system(size: 13, weight: .semibold))
-                            Text("Teams \(workspace.teams.joined(separator: ", ")).").font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                        }
-                        Spacer(minLength: 12)
-                        RowButton(title: "Remove") { Linear.shared.remove(workspace.urlKey) }
-                    }
-                    .padding(.vertical, 12)
-                }
-            }
-            if let error = connecting.error { Text(error).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3).padding(.top, 8) }
-            HStack {
-                ZStack {
-                    RowButton(title: "Add workspace") { connecting.connect() }.opacity(connecting.busy ? 0 : 1)
-                    if connecting.busy { ProgressView().controlSize(.small) }
-                }
-                Spacer()
-                SolidButton(title: "Done") { dismiss() }
-            }
-            .padding(.top, 20)
-        }
-        .padding(24)
-        .frame(width: 440)
-        .onChange(of: Linear.shared.workspaces.isEmpty) { _, empty in if empty { dismiss() } }
-    }
-}
-
-/// The workspace's own logo, from Zero's copy of it, or its initial on a tile when it has none.
-private struct WorkspaceLogo: View {
-    let workspace: Linear.Workspace
-    var body: some View {
-        let _ = Linear.shared.logos
-        Group {
-            if let image = NSImage(contentsOf: Linear.logoFile(workspace.urlKey)) {
-                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
-            } else {
-                Text(workspace.name.prefix(1).uppercased()).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.keycap)
-            }
-        }
-        .frame(width: 22, height: 22).clipShape(RoundedRectangle(cornerRadius: 5))
     }
 }
 

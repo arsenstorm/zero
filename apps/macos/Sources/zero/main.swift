@@ -12,7 +12,7 @@ func usage(help: Bool = false) -> Never {
       zero approve "what you want to do" [--body "details"] [--code 'command or snippet']   (Yes / No / Suggest something else…)
       zero run     'command' --why "what you need the output for" [--cwd DIR] [--title T]
                    runs on Arsen's Mac after he presses Run; a script file's contents are shown to him
-      zero note    "where you are now" [--blocked | --done | --waiting] [--needs "what Arsen should do, when he can"]
+      zero note    "where you are now" [--blocked | --done | --merged | --waiting] [--needs "what Arsen should do, when he can"]
                    (no answer; sets your agent's dot and its row on Zero's board: working, blocked, done, or
                    waiting on something other than Arsen)
       zero withdraw <id> [--reason "why"]   (take back an open ask that no longer needs Arsen)
@@ -30,12 +30,14 @@ func usage(help: Bool = false) -> Never {
       zero wait    <session>... [--any] [--timeout MINUTES]   (until they stop working: finished, failed, stuck, or waiting on the user)
       zero workers   (the sessions this one started)
       zero result  <session>   (its last answer)
-      zero label   "name" [--ticket REF] [--session ID]   (names this session, or another)
+      zero label   "name" [--ticket REF] [--where PLACE] [--session ID]   (names this session, or another; --where says where it runs,
+                   a bench or a machine, for the board's Where; --where "" goes back to its folder)
       zero notify  <session> "text"   (words for a session, given between its turns: for event sources and scripts)
       zero watch   [--session ID] -- command...   (runs it in the background; this session is told how it ended, so end
                    your turn instead of polling: zero watch -- gh pr checks 42 --watch)
       zero remind  <minutes> "text" [--session ID]   (this session is told it then)
       zero usage   (each provider's limits as its CLI last reported them)
+      zero mcp     (Zero's MCP server on stdio, giving an agent the user's scratchpads: add it as an MCP server's command)
     common: --async (print the id and return) --agent NAME ($ZERO_AGENT) --ticket ID (the ticket the ask is about,
             shown as its context) --ttl MINUTES (default from Zero's settings) --help
     exit: 0 answered (answer on stdout; for run, the command's output and exit code), 2 declined, 3 expired
@@ -46,6 +48,16 @@ func usage(help: Bool = false) -> Never {
 
 var args = Array(CommandLine.arguments.dropFirst())
 guard let command = args.first else { usage() }
+// The MCP server is zerod's own, beside this in Zero.app; it speaks on stdio, so this program becomes it.
+if command == "mcp" {
+    let here = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
+    let zerod = Bundle.main.executableURL?.resolvingSymlinksInPath().deletingLastPathComponent().appendingPathComponent("zerod").path
+        ?? here.appendingPathComponent("zerod").path
+    let argv = [zerod, "mcp"] + args.dropFirst()
+    var cArgs = argv.map { strdup($0) } + [nil]
+    execv(zerod, &cArgs)
+    fail("zero: no zerod at \(zerod)")
+}
 args.removeFirst()
 if ["help", "--help", "-h"].contains(command) || args.contains("--help") || args.contains("-h") { usage(help: true) }
 
@@ -391,7 +403,7 @@ case "note":
     guard let text = positional.first else { usage() }
     let socket = connect()
     var note = Ask(kind: .note, title: flag("ticket") ?? "Update", body: text, agent: agentIdentity())
-    note.status = ["blocked", "done", "waiting"].first { flag($0) != nil }
+    note.status = ["blocked", "done", "merged", "waiting"].first { flag($0) != nil }
     note.needs = flag("needs")
     shortDetail(note.needs, flag: "needs")
     try? socket.send(Request(op: "create", ask: note, wait: false))
@@ -459,7 +471,11 @@ case "result":
     print(answer)
 case "label":
     guard let session = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"] else { fail("zero: label which session? (--session ID)") }
-    await zerod { try await $0.label(session: session, label: positional.isEmpty ? nil : positional.joined(separator: " "), ticket: flag("ticket")) }
+    // --where alone names where it runs and leaves its name and ticket be.
+    if let place = flag("where") { await zerod { try await $0.place(session: session, place: place) } }
+    if flag("where") == nil || !positional.isEmpty || flag("ticket") != nil {
+        await zerod { try await $0.label(session: session, label: positional.isEmpty ? nil : positional.joined(separator: " "), ticket: flag("ticket")) }
+    }
 case "notify":
     guard positional.count >= 2 else { usage() }
     await zerod { try await $0.notify(session: positional[0], text: positional[1...].joined(separator: " ")) }

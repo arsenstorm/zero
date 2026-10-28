@@ -123,6 +123,14 @@ final class Panel: NSPanel {
     private var openedByIntent = false
     private var pointerWasInside = false
 
+    /// A zero://pad link, clicked anywhere: the pad, at its section.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let (id, section) = urls.lazy.compactMap(PadLinks.parse).first else { return }
+        navigation.place = .pad(id)
+        navigation.padSection = section
+        openWorkspace()
+    }
+
     // Opening Zero again, from the Dock or Finder, opens the workspace.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         openWorkspace()
@@ -133,11 +141,6 @@ final class Panel: NSPanel {
         NSApp.setActivationPolicy(.accessory)
         NSApp.mainMenu = Self.editMenu()
         Task { await Linear.shared.refresh() }
-        ClaudeAccounts.shared.onSwitch = { [weak self] in
-            guard let self else { return }
-            Task { if let adapter = self.store.spawners.first, await adapter.refreshModels() { self.inbox.modelsVersion += 1 } }
-        }
-        ClaudeAccounts.shared.start()
         store.onCreate = { [weak self] ask in self?.arrived(ask) }
         Task { [store] in await store.connect() }
         workspace = Workspace()
@@ -869,6 +872,7 @@ private final class HistoryItem: NSToolbarItem {
 
     /// AppKit asks as the window updates; the arrows dim where there's nowhere to go.
     override func validate() {
+        view?.isHidden = !navigation.ready
         back.isEnabled = navigation.canGoBack
         forward.isEnabled = navigation.canGoForward
     }

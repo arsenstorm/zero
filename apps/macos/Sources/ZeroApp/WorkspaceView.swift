@@ -11,14 +11,55 @@ struct WorkspaceView: View {
     let settings: () -> SettingsView
 
     var body: some View {
+        ZStack {
+            window.opacity(navigation.ready ? 1 : 0)
+            if !navigation.ready { ZeroMark().frame(width: 64, height: 64).foregroundStyle(.secondary).transition(.opacity) }
+        }
+        .frame(minWidth: 980, minHeight: 600)
+        .background(Theme.rail)
+        .ignoresSafeArea()
+        // The board is polled, so the sidebar stays fresh while the window is open.
+        // ponytail: polls; a board feed from zerod when two seconds is too slow.
+        .task {
+            let deadline = ContinuousClock.now + .seconds(3)
+            while !workspace.connected, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(50)) }
+            await workspace.loadIntegrations()
+            await workspace.refreshBoard()
+            show()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                await workspace.refreshBoard()
+            }
+        }
+        // Never held on the mark: a slow gh or zerod shows the window as it is.
+        .task {
+            try? await Task.sleep(for: .seconds(5))
+            show()
+        }
+    }
+
+    /// Until zerod has given the rail its integrations and the sidebar its tasks, the window shows Zero's mark alone,
+    /// with no arrows or title bar.
+    private func show() {
+        guard !navigation.ready else { return }
+        withAnimation(.easeOut(duration: 0.2)) { navigation.ready = true }
+        NSApp.windows.forEach { $0.toolbar?.validateVisibleItems() }
+    }
+
+    private var window: some View {
         HStack(spacing: 0) {
-            Rail(place: $navigation.place)
+            Rail(place: $navigation.place, workspace: workspace)
             Group {
-                if navigation.place == .settings {
-                    settings()
-                } else {
+                switch navigation.place {
+                case .settings: settings()
+                case .integrations: IntegrationsPane(workspace: workspace)
+                case .pads, .pad: ScratchpadsPage(workspace: workspace, navigation: navigation)
+                case .integration(let name):
+                    IntegrationPage(workspace: workspace, integration: Integration(rawValue: name) ?? .github, edit: { Integration.edit(name, place: &navigation.place) },
+                                    openTask: { navigation.place = .task($0) }).id(name)
+                default:
                     HStack(spacing: 0) {
-                        TasksSidebar(workspace: workspace, place: $navigation.place)
+                        TasksSidebar(workspace: workspace, navigation: navigation)
                         Rectangle().fill(Theme.stroke).frame(width: 1)
                         page.frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.card)
                     }
@@ -28,22 +69,11 @@ struct WorkspaceView: View {
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke))
             .padding(.top, 38).padding([.trailing, .bottom], 4) // under the window's buttons, as ChatGPT's
         }
-        .frame(minWidth: 980, minHeight: 600)
-        .background(Theme.rail)
-        .ignoresSafeArea()
         .overlay(alignment: .bottom) {
             if let error = workspace.lastError {
                 Text(error).font(.callout).padding(.horizontal, 14).padding(.vertical, 8)
                     .background(Theme.redRow, in: Capsule()).padding(16)
                     .onTapGesture { workspace.lastError = nil }
-            }
-        }
-        // The sidebar lists the board's tasks, so it stays fresh while the window is open.
-        // ponytail: polls; a board feed from zerod when two seconds is too slow.
-        .task {
-            while !Task.isCancelled {
-                await workspace.refreshBoard()
-                try? await Task.sleep(for: .seconds(2))
             }
         }
     }
@@ -60,19 +90,115 @@ struct WorkspaceView: View {
 /// Where the page starts across the window: the rail, then the inner sidebar and its edge.
 let pageStart: CGFloat = 48 + 250 + 1
 
-/// The outer rail: home at the top, settings at the foot, room for more later.
+/// The outer rail: home at the top, then each integration that's switched on, in the order you put them (⌘-drag one,
+/// or right-click it); integrations and settings at the foot.
 private struct Rail: View {
     @Binding var place: Navigation.Place
+    let workspace: Workspace
+    @AppStorage("railOrder") private var order = "github,linear"
+    @State private var dragging: Integration?
+    @State private var dragged: CGFloat = 0
+    @State private var command = NSEvent.modifierFlags.contains(.command)
+    @State private var monitor: Any?
+    /// One rail item and the gap after it.
+    private static let step: CGFloat = 38
+
+    private var home: Bool {
+        switch place { case .settings, .integrations, .integration, .pads, .pad: false; default: true }
+    }
+
+    /// Every integration in your order, those never placed after.
+    private var ranked: [Integration] {
+        let placed = order.split(separator: ",").compactMap { Integration(rawValue: String($0)) }
+        return placed + Integration.allCases.filter { !placed.contains($0) }
+    }
+
+    private var shown: [Integration] { ranked.filter { $0.enabled(in: workspace.integrations) } }
 
     var body: some View {
         VStack(spacing: 6) {
-            item("house-4", selected: place != .settings, help: "Home") { if place == .settings { place = .home } }
+            item("house-4", selected: home, help: "Home") { if !home { place = .home } }
+            let pads = { if case .pad = place { true } else { place == .pads } }()
+            item("note-3", selected: pads, help: "Scratchpads") { if !pads { place = .pads } }
+            let shown = shown
+            ForEach(Array(shown.enumerated()), id: \.element) { index, integration in
+                let selected = place == .integration(integration.rawValue)
+                Button { place = .integration(integration.rawValue) } label: {
+                    integration.icon(size: 17).foregroundStyle(selected ? .primary : .secondary).frame(width: 32, height: 32)
+                }
+                .buttonStyle(Hovering(selected: selected, fill: Theme.railSelected, hover: Theme.railHover)).help(integration.title)
+                .offset(y: dragging == integration ? held(index, of: shown.count) : shift(index, in: shown))
+                .zIndex(dragging == integration ? 1 : 0)
+                .animation(.spring(duration: 0.22), value: dragging == integration ? 0 : shift(index, in: shown))
+                .highPriorityGesture(drag(integration, from: index, of: shown.count), including: command ? .all : .subviews)
+                .contextMenu {
+                    if index > 0 { Button("Move up") { move(integration, to: index - 1) } }
+                    if index < shown.count - 1 { Button("Move down") { move(integration, to: index + 1) } }
+                    Button("Edit views") { Integration.edit(integration.rawValue, place: &place) }
+                    Divider()
+                    Button("Hide from the sidebar") { Task { await workspace.setIntegration(integration.rawValue, enabled: false) } }
+                }
+            }
             Spacer()
+            item("puzzle-piece", selected: place == .integrations, help: "Integrations") { place = .integrations }
             item("gear", selected: place == .settings, help: "Settings") { place = .settings }
                 .keyboardShortcut(",", modifiers: .command)
         }
         .padding(.top, 50).padding(.bottom, 12)
         .frame(width: 48)
+        // ⌘ held or not decides whether a drag moves an item or is a click.
+        .onAppear {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in command = event.modifierFlags.contains(.command); return event }
+        }
+        .onDisappear { if let monitor { NSEvent.removeMonitor(monitor) } }
+    }
+
+    /// Held ⌘: the item follows the pointer within the integrations' slots, the others making way as it passes, and it
+    /// lands in the slot it's let go over.
+    private func drag(_ integration: Integration, from index: Int, of count: Int) -> some Gesture {
+        DragGesture(minimumDistance: 3)
+            .onChanged { value in dragging = integration; dragged = value.translation.height }
+            .onEnded { _ in
+                let target = slot(from: index, of: count)
+                // Landed where it's drawn already: no animation back and forth.
+                withTransaction(Transaction(animation: nil)) {
+                    move(integration, to: target)
+                    dragging = nil
+                    dragged = 0
+                }
+            }
+    }
+
+    /// Where the dragged item is drawn: under the pointer, but not past the first or last integration's slot, with a
+    /// little give beyond (never over Home or the items at the foot).
+    private func held(_ index: Int, of count: Int) -> CGFloat {
+        let (top, bottom) = (-CGFloat(index) * Self.step, CGFloat(count - 1 - index) * Self.step)
+        let give = { (over: CGFloat) in min(8, over * 0.2) }
+        if dragged < top { return top - give(top - dragged) }
+        if dragged > bottom { return bottom + give(dragged - bottom) }
+        return dragged
+    }
+
+    /// The slot the dragged item is over.
+    private func slot(from index: Int, of count: Int) -> Int {
+        max(0, min(count - 1, index + Int((dragged / Self.step).rounded())))
+    }
+
+    /// How far an item moves to make way: one slot towards where the dragged one came from, if it's been passed.
+    private func shift(_ index: Int, in shown: [Integration]) -> CGFloat {
+        guard let dragging, let from = shown.firstIndex(of: dragging), index != from else { return 0 }
+        let to = slot(from: from, of: shown.count)
+        if from < to, index > from, index <= to { return -Self.step }
+        if to < from, index >= to, index < from { return Self.step }
+        return 0
+    }
+
+    private func move(_ integration: Integration, to index: Int) {
+        var list = shown
+        guard let from = list.firstIndex(of: integration) else { return }
+        list.remove(at: from)
+        list.insert(integration, at: max(0, min(list.count, index)))
+        order = (list + ranked.filter { !list.contains($0) }).map(\.rawValue).joined(separator: ",")
     }
 
     private func item(_ symbol: String, selected: Bool, help: String, action: @escaping () -> Void) -> some View {
@@ -87,7 +213,13 @@ private struct Rail: View {
 
 private struct TasksSidebar: View {
     let workspace: Workspace
-    @Binding var place: Navigation.Place
+    @Bindable var navigation: Navigation
+    private var place: Navigation.Place {
+        get { navigation.place }
+        nonmutating set { navigation.place = newValue }
+    }
+    /// Leads whose workers are folded away, one per line.
+    @AppStorage("foldedLeads") private var folded = ""
 
     /// Leads that aren't on the board: finished and gone offline with nothing for him.
     private var earlier: [Conversation] {
@@ -106,21 +238,48 @@ private struct TasksSidebar: View {
                     if workspace.board.isEmpty {
                         Text("No tasks").font(.system(size: 13)).foregroundStyle(.tertiary).padding(.horizontal, 10)
                     }
+                    let folded = Set(folded.split(separator: "\n").map(String.init))
                     ForEach(workspace.board) { row in
-                        SidebarItem(title: row.task, selected: place == .task(row.session), trailing: true, action: { place = .task(row.session) }) {
-                            StateIcon(state: row.state)
+                        let workers = workspace.conversations.filter { $0.parent == row.session }
+                        let open = !folded.contains(row.session)
+                        TaskRow(title: row.task, state: row.state, selected: place == .task(row.session) && navigation.worker == nil,
+                                fold: workers.isEmpty ? nil : open, action: { place = .task(row.session) }, toggle: { toggle(row.session) })
+                            .contextMenu { archive(row.session) }
+                        if open {
+                            ForEach(Array(workers.enumerated()), id: \.element.id) { index, worker in
+                                TaskRow(title: Workspace.label(of: worker), state: TaskRow.state(of: worker), selected: navigation.worker == worker.id,
+                                        branch: index == workers.count - 1 ? .last : .middle, action: {
+                                    place = .task(row.session)
+                                    navigation.worker = worker.id
+                                })
+                            }
                         }
                     }
                     if !earlier.isEmpty {
                         SidebarHeading(text: "Earlier")
                         ForEach(earlier) { lead in
                             SidebarItem(Workspace.label(of: lead), selected: place == .task(lead.id)) { place = .task(lead.id) }
+                                .contextMenu { archive(lead.id) }
                         }
                     }
                 }
             }
             .scrollIndicators(.never)
             footer
+        }
+    }
+
+    private func toggle(_ lead: String) {
+        var set = Set(folded.split(separator: "\n").map(String.init))
+        if set.contains(lead) { set.remove(lead) } else { set.insert(lead) }
+        withAnimation(.easeOut(duration: 0.15)) { folded = set.sorted().joined(separator: "\n") }
+    }
+
+    /// Archive: the task leaves the sidebar; its files stay in zerod's archive/.
+    private func archive(_ id: String) -> some View {
+        Button("Archive") {
+            if place == .task(id) { place = .home }
+            Task { await workspace.archive(id) }
         }
     }
 
@@ -167,14 +326,14 @@ private struct TaskView: View {
                 ConversationView(workspace: workspace, conversation: conversation).id(conversation.id)
                 if navigation.pane {
                     Rectangle().fill(Theme.stroke).frame(width: 1)
-                    TaskDetails(row: row, conversation: conversation, team: team, lead: lead, shown: $navigation.worker, docked: true)
+                    TaskDetails(workspace: workspace, navigation: navigation, row: row, conversation: conversation, team: team, lead: lead, shown: $navigation.worker, docked: true)
                 }
             }
         } else {
             ZStack(alignment: .topTrailing) {
                 if let conversation { ConversationView(workspace: workspace, conversation: conversation).id(conversation.id) }
                 if navigation.pane, let conversation {
-                    TaskDetails(row: row, conversation: conversation, team: team, lead: lead, shown: $navigation.worker).padding(8)
+                    TaskDetails(workspace: workspace, navigation: navigation, row: row, conversation: conversation, team: team, lead: lead, shown: $navigation.worker).padding(8)
                 }
             }
         }
@@ -191,10 +350,12 @@ struct TitleBar: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Rectangle().fill(Theme.stroke).frame(width: 1, height: 16).padding(.trailing, 12)
-            if case .task(let lead) = navigation.place, let conversation = workspace.conversation(navigation.worker ?? lead) {
+            if navigation.ready, case .task(let lead) = navigation.place, let conversation = workspace.conversation(navigation.worker ?? lead) {
+                // The line between the sidebar and the title, there only when a title is.
+                Rectangle().fill(Theme.stroke).frame(width: 1, height: 16).padding(.trailing, 12)
                 Text(workspace.board.first { $0.session == lead }?.task ?? workspace.conversation(lead).map(Workspace.label(of:)) ?? "")
                     .font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    .onTapGesture(count: 2, perform: Self.doubleClicked)
                 drag
                 actions(conversation)
                 BarButton(symbol: "sidebar-right", help: navigation.pane ? "Hide details" : "Show details", selected: navigation.pane) { navigation.pane.toggle() }
@@ -206,9 +367,20 @@ struct TitleBar: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// The bar's empty stretch still moves the window, as a title bar does.
+    /// The bar's empty stretch still moves the window and zooms it on a double-click, as a title bar does.
     private var drag: some View {
         Color.clear.contentShape(Rectangle()).gesture(WindowDragGesture()).allowsWindowActivationEvents(true)
+            .simultaneousGesture(TapGesture(count: 2).onEnded(Self.doubleClicked))
+    }
+
+    /// What System Settings › Desktop & Dock says a title bar's double-click does: zoom, minimise, or nothing.
+    static func doubleClicked() {
+        guard let window = NSApp.keyWindow else { return }
+        switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+        case "Minimize": window.miniaturize(nil)
+        case "None": break
+        default: window.zoom(nil)
+        }
     }
 
     @ViewBuilder private func actions(_ conversation: Conversation) -> some View {
@@ -235,6 +407,13 @@ struct TitleBar: View {
                 NSPasteboard.general.setString(conversation.cwd, forType: .string)
             }
             Button("Show folder in Finder") { NSWorkspace.shared.open(URL(fileURLWithPath: conversation.cwd)) }
+            Divider()
+            if case .task(let lead) = navigation.place {
+                Button("Archive") {
+                    navigation.place = .home
+                    Task { await workspace.archive(lead) }
+                }
+            }
         } label: {
             NucleoIcon("dots", size: 15).foregroundStyle(.secondary).frame(width: 28, height: 28)
         }
@@ -259,6 +438,8 @@ private struct BarButton: View {
 
 /// The pane on a task's right: where it stands, what it needs from you, the agent on it, where it works, its workers.
 private struct TaskDetails: View {
+    let workspace: Workspace
+    let navigation: Navigation
     let row: BoardRow?
     let conversation: Conversation
     let team: [Conversation]
@@ -295,7 +476,10 @@ private struct TaskDetails: View {
                 Text((conversation.cwd as NSString).abbreviatingWithTildeInPath).truncationMode(.middle)
                 if let branch = conversation.branch { NucleoLabel(branch, icon: "code-branch", size: 12).foregroundStyle(.secondary) }
             }
-            if let ticket = conversation.ticket { section("Ticket") { Text(ticket) } }
+            if let ticket = conversation.ticket {
+                section("Ticket") { Text(ticket) }
+                TaskPads(workspace: workspace, ticket: ticket) { navigation.place = .pad($0) }
+            }
             if team.count > 1 {
                 section("Workers") {
                     ForEach(team) { member in
@@ -322,6 +506,52 @@ private struct TaskDetails: View {
     }
 }
 
+/// A task's own scratchpads (Tasks/<ticket>): its state first, the start of it shown, each one a click away. Looked at
+/// again while shown, since the agent keeps them current.
+private struct TaskPads: View {
+    let workspace: Workspace
+    let ticket: String
+    let open: (String) -> Void
+    @State private var pads: [PadSummary] = []
+    @State private var state: Pad?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            if !pads.isEmpty {
+                HStack {
+                    Text("State").font(.system(size: 13, weight: .medium))
+                    Spacer()
+                    if let state { Button("Copy link") { PadLinks.copy(state.link, title: "\(ticket) state", markdown: true) }.buttonStyle(.link).font(.system(size: 11.5)) }
+                }
+                if let state {
+                    Button { open(state.id) } label: {
+                        Text(Self.gist(state.content)).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(8)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                            .background(Theme.composer, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain).help("Open the task's state")
+                }
+                ForEach(pads.filter { $0.id != state?.id }) { pad in
+                    SidebarItem(pad.title, icon: "file-content") { open(pad.id) }.padding(.horizontal, -10)
+                }
+            }
+        }
+        .task(id: ticket) {
+            while !Task.isCancelled {
+                pads = await workspace.taskPads(ticket)
+                if let found = pads.first(where: { $0.title == "State" }) { state = await workspace.readPad(found.id) }
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
+    }
+
+    /// The pad without its title line and blank lines, so the preview starts with what's in it.
+    static func gist(_ content: String) -> String {
+        content.split(separator: "\n", omittingEmptySubsequences: true).filter { !$0.hasPrefix("# ") }.joined(separator: "\n")
+    }
+
+}
+
 // The board: every task at once, most urgent first, as a panel from arsenstorm.com: a grey shell carrying the
 // headings, a lighter body, hairlines between rows.
 
@@ -333,33 +563,15 @@ private struct BoardView: View {
         let rows = workspace.board
         // A column of one place says nothing.
         let places = Set(rows.map(\.place)).count > 1
+        let (running, offline) = (rows.filter(\.online), rows.filter { !$0.online })
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 PageTitle(text: "All tasks")
-                if !rows.isEmpty {
-                    ArticlePanel {
-                        // The headings in the shell's strip, over the columns they name.
-                        line(head: true, places: places, task: Text("Task"), place: Text("Where"), state: Text("State"), now: Text("Now"), needs: Text("Needs you"))
-                            .padding(.vertical, -3)
-                    } content: {
-                        VStack(spacing: 0) {
-                            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                                if index > 0 { Rectangle().fill(Theme.stroke).frame(height: 1) }
-                                Button { open(row.session) } label: {
-                                    line(head: false, places: places,
-                                         task: VStack(alignment: .leading, spacing: 2) {
-                                             Text(row.task).foregroundStyle(.primary)
-                                             if row.workers > 0 { Text(row.workers == 1 ? "1 worker" : "\(row.workers) workers").font(.system(size: 12)).foregroundStyle(.secondary) }
-                                         },
-                                         place: Text(row.place).foregroundStyle(.secondary),
-                                         state: StateLabel(state: row.state),
-                                         now: Text(row.now ?? ""),
-                                         needs: needs(row))
-                                }
-                                .buttonStyle(Hovering(radius: 0, hover: Theme.rowHover))
-                            }
-                        }
-                    }
+                heading("Running", "Agents at work now, most urgent first.")
+                table(running, places: places, empty: "Nothing is running. Start a task, or message one below to resume it.")
+                if !offline.isEmpty {
+                    heading("Offline", "Not running now. Each shows the state it was last in; a message resumes it.").padding(.top, 14)
+                    table(offline, places: places).opacity(0.85)
                 }
             }
             .centredColumn(1040)
@@ -372,14 +584,57 @@ private struct BoardView: View {
         }
     }
 
+    private func heading(_ title: String, _ detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(size: 15, weight: .semibold))
+            Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
+        }
+    }
+
+    private func table(_ rows: [BoardRow], places: Bool, empty: String? = nil) -> some View {
+        ArticlePanel {
+            // The headings in the shell's strip, over the columns they name.
+            line(head: true, places: places, task: Text("Task"), place: Text("Where"), state: Text("State"), now: Text("Now"), actions: Text(""))
+                .padding(.vertical, -3)
+        } content: {
+            VStack(spacing: 0) {
+                // No rows: the table stays, its body saying why.
+                if rows.isEmpty, let empty {
+                    Text(empty).font(.system(size: 13)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 22)
+                }
+                ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                    if index > 0 { Rectangle().fill(Theme.stroke).frame(height: 1) }
+                    Button { open(row.session) } label: {
+                        line(head: false, places: places,
+                             task: VStack(alignment: .leading, spacing: 2) {
+                                 // Three lines at most; the whole of it on hover.
+                                 Text(row.task).foregroundStyle(.primary).lineLimit(3).help(row.task)
+                                 if row.workers > 0 { Text(row.workers == 1 ? "1 worker" : "\(row.workers) workers").font(.system(size: 12)).foregroundStyle(.secondary) }
+                             },
+                             place: Text(row.place).foregroundStyle(.secondary),
+                             state: VStack(alignment: .leading, spacing: 3) {
+                                 StateLabel(state: row.state)
+                                 if let needs = needs(row) { Text(needs).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(3).help(needs) }
+                             },
+                             now: Text(row.now ?? "").lineLimit(3).help(row.now ?? ""),
+                             actions: Text(""))
+                    }
+                    .buttonStyle(Hovering(radius: 0, hover: Theme.rowHover))
+                    // Over the row's last column, not in its label: a menu inside a button gives its clicks to the button.
+                    .overlay(alignment: .trailing) { RowActions(workspace: workspace, row: row, open: open).padding(.trailing, 12) }
+                }
+            }
+        }
+    }
+
     /// One row of the table, the header included: two fixed columns, the rest sharing what's left.
-    private func line(head: Bool, places: Bool, task: some View, place: some View, state: some View, now: some View, needs: some View) -> some View {
+    private func line(head: Bool, places: Bool, task: some View, place: some View, state: some View, now: some View, actions: some View) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 16) {
             task.frame(maxWidth: .infinity, alignment: .leading)
             if places { place.frame(width: 140, alignment: .leading) }
-            state.frame(width: 110, alignment: .leading)
+            state.frame(width: 170, alignment: .leading)
             now.frame(maxWidth: .infinity, alignment: .leading)
-            needs.frame(maxWidth: .infinity, alignment: .leading)
+            actions.frame(width: 28)
         }
         .font(head ? .system(size: 12, weight: .medium) : .system(size: 13))
         .tracking(head ? -0.2 : 0)
@@ -389,21 +644,62 @@ private struct BoardView: View {
         .contentShape(Rectangle())
     }
 
-    /// An open ask first: it waits on him. Then what the agent handed over.
-    @ViewBuilder private func needs(_ row: BoardRow) -> some View {
-        if let first = row.asks.first {
-            Text("Yes: " + first.title + (row.asks.count > 1 ? " (+\(row.asks.count - 1) more)" : "")).foregroundStyle(.orange)
-        } else if let needs = row.needs {
-            Text(needs)
-        } else {
-            Text("No").foregroundStyle(.secondary)
+    /// What a blocked task waits on the user for: an open ask first, then what the agent handed over.
+    private func needs(_ row: BoardRow) -> String? {
+        if let first = row.asks.first { return first.title + (row.asks.count > 1 ? " (+\(row.asks.count - 1) more)" : "") }
+        return row.needs
+    }
+}
+
+/// A row's quick actions, in the ⋯ menu at its end.
+private struct RowActions: View {
+    let workspace: Workspace
+    let row: BoardRow
+    let open: (String) -> Void
+
+    /// What the agent is asked when the user wants to know where it is.
+    static let statusCheck = """
+        Status check from the user: where is this task now? Answer in two or three lines, then post the same as a Zero \
+        note: `zero note "<where it is>"`, with --blocked and --needs "<what you need from the user>" if you're waiting \
+        on them, --waiting if on something else, --done if it's finished, --merged once it's merged. Keep the task's \
+        state pad current too. Then \
+        carry on with what you were doing.
+        """
+
+    @State private var hovered = false
+
+    var body: some View {
+        Menu {
+            Button("Ask for a status update") { Task { await workspace.send(row.session, text: Self.statusCheck) } }
+            Button("Open") { open(row.session) }
+            Divider()
+            if row.online {
+                Button("End session") { Task { await workspace.stop(row.session) } }
+            } else {
+                Button("Resume") { Task { await workspace.resume(row.session) } }
+            }
+            Button("Copy task id") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(row.session, forType: .string)
+            }
+            Divider()
+            Button("Archive") { Task { await workspace.archive(row.session) } }
+        } label: {
+            NucleoIcon("dots", size: 15).foregroundStyle(hovered ? .primary : .secondary).frame(width: 30, height: 30).contentShape(Rectangle())
         }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        // The menu's own size is wider than its dots; a square, as the rail's items are.
+        .frame(width: 30, height: 30)
+        // A square under the pointer, as the rail's items have; behind the menu, which draws no background of its label's.
+        .background(hovered ? Theme.hover : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .onHover { hovered = $0 }
+        .help("Actions")
     }
 }
 
 /// A panel as arsenstorm.com draws one, in the app's own greys: the rail's grey as a shell 2 pt thick with a strip on
 /// top (here, the table's headings), around a body in the sidebar's grey.
-private struct ArticlePanel<Strip: View, Content: View>: View {
+struct ArticlePanel<Strip: View, Content: View>: View {
     @ViewBuilder let strip: () -> Strip
     @ViewBuilder let content: () -> Content
 
@@ -424,21 +720,97 @@ private struct ArticlePanel<Strip: View, Content: View>: View {
 
 /// What a task's state looks like, in colours that say it at a glance: orange it waits on you, red it's in trouble,
 /// blue it works, green it's ready for you, grey the rest.
+/// A task in the sidebar, as Solo lists an agent's: a lead with a chevron that folds its workers away, each worker
+/// under it on a dotted branch. The state sits at the right, as on every task row.
+private struct TaskRow: View {
+    enum Branch { case middle, last }
+    let title: String
+    let state: BoardRow.State
+    let selected: Bool
+    /// A lead with workers: whether they show. Nil for a lead without any.
+    var fold: Bool? = nil
+    /// A worker: its place on its lead's branch.
+    var branch: Branch? = nil
+    let action: () -> Void
+    var toggle: () -> Void = {}
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let branch { Branched(last: branch == .last).frame(width: 28) }
+                Text(title).font(.system(size: 13)).lineLimit(1)
+                Spacer(minLength: 0)
+                StateIcon(state: state).font(.system(size: 12))
+            }
+            .foregroundStyle(.primary)
+            // A lead's title lines up with the headings, as every sidebar row's does; a worker's sits on its branch.
+            .padding(.leading, branch == nil ? 10 : 0).padding(.trailing, 10).frame(height: 30)
+        }
+        .buttonStyle(Hovering(selected: selected))
+        // In the margin left of the title, outside the row's own button so its click is its own.
+        .overlay(alignment: .leading) {
+            if let fold {
+                Button(action: toggle) {
+                    NucleoIcon("chevron-down", size: 8).foregroundStyle(.tertiary).rotationEffect(.degrees(fold ? 0 : -90))
+                        .frame(width: 10, height: 30).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).offset(x: -1)
+                .help(fold ? "Hide its workers" : "Show its workers")
+            }
+        }
+    }
+
+    /// A worker's state in the sidebar's terms.
+    static func state(of worker: Conversation) -> BoardRow.State {
+        switch worker.attention {
+        case .needsYou: .needsYou
+        case .limited, .stuck, .failed: .trouble
+        case .working, .starting: .working
+        case .done: .done
+        case .idle: .idle
+        case .offline: .offline
+        }
+    }
+
+    /// The dotted line from the lead down to this worker, and across to it; it runs on past a worker that isn't last.
+    private struct Branched: View {
+        let last: Bool
+        var body: some View {
+            Canvas { context, size in
+                // Down from under the lead's chevron, then across to the worker's title.
+                let x: CGFloat = 4, mid = size.height / 2
+                var line = Path()
+                line.move(to: CGPoint(x: x, y: 0))
+                line.addLine(to: CGPoint(x: x, y: last ? mid : size.height))
+                line.move(to: CGPoint(x: x, y: mid))
+                line.addLine(to: CGPoint(x: size.width - 2, y: mid))
+                context.stroke(line, with: .color(.secondary.opacity(0.5)), style: StrokeStyle(lineWidth: 1, dash: [2, 2.5]))
+            }
+            .frame(height: 30)
+        }
+    }
+}
+
 private struct StateIcon: View {
     let state: BoardRow.State
 
     var body: some View {
-        NucleoIcon(Self.look(state).symbol, fill: "glyph", size: 14).foregroundStyle(Self.look(state).color).help(Self.look(state).name)
+        Group {
+            // At work it spins, as everywhere else in Zero something under way does.
+            if state == .working { Spinner().frame(width: 12, height: 12).frame(width: 14, height: 14) }
+            else { NucleoIcon(Self.look(state).symbol, fill: "glyph", size: 14).foregroundStyle(Self.look(state).color) }
+        }
+        .help(Self.look(state).name)
     }
 
     static func look(_ state: BoardRow.State) -> (symbol: String, color: Color, name: String) {
         switch state {
-        case .needsYou: ("circle-question", .orange, "Needs you")
+        case .needsYou: ("circle-warning", .orange, "Blocked")
         case .trouble: ("triangle-warning", .red, "In trouble")
         case .working: ("arrow-rotate-clockwise", .blue, "Working")
         case .waiting: ("hourglass", .secondary, "Waiting")
-        case .ready: ("circle-check", .green, "Ready for you")
-        case .done: ("circle-check", .secondary, "Done")
+        case .done: ("circle-check", .green, "Done")
+        case .merged: ("code-branch", .purple, "Merged")
         case .idle: ("moon", .secondary, "Idle")
         case .offline: ("power-off", .secondary, "Offline")
         }
@@ -446,7 +818,7 @@ private struct StateIcon: View {
 }
 
 /// The symbol and its name, for the board's State column.
-private struct StateLabel: View {
+struct StateLabel: View {
     let state: BoardRow.State
 
     var body: some View {

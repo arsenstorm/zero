@@ -85,14 +85,15 @@ private func launch(_ name: String) async throws -> (socket: String, home: URL) 
     #expect(settled.first?["attention"] as? String == "offline")
     await #expect(throws: ZerodError(message: "No session nope to lead it")) { _ = try await link.spawn(lead: "nope", provider: .codex, prompt: "x") }
 
-    // Offline, it is on the board only once its agent hands the user something.
-    #expect(try await link.board().isEmpty)
+    // Offline, it's on the board as not running, in the state it was last known in; then its agent hands the user something.
+    let offline = try #require(try await link.board().first)
+    #expect((offline.online, offline.state, offline.now) == (false, .idle, "The command printed `Darwin`."))
     var note = Ask(kind: .note, title: "Update", body: "Printed the kernel name", agent: AgentIdentity(name: "zerod-" + conversation.id, host: "mac"))
     note.status = "done"
     note.needs = "check it says Darwin"
     _ = try await link.create(note)
     let row = try #require(try await link.board().first)
-    #expect((row.session, row.task, row.ticket, row.state, row.now, row.needs) == (conversation.id, "Uname check", "GH-1", .ready, "Printed the kernel name", "check it says Darwin"))
+    #expect((row.session, row.task, row.ticket, row.state, row.now, row.needs) == (conversation.id, "Uname check", "GH-1", .needsYou, "Printed the kernel name", "check it says Darwin"))
 }
 
 private final class Heard: @unchecked Sendable {

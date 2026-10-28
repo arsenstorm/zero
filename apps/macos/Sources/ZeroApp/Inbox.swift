@@ -477,8 +477,6 @@ final class InboxController {
 
     func composerKey(_ agent: String) -> String { "msg:" + agent }
 
-    /// The Claude account a new agent starts as; nil is Claude Code's active account.
-    var spawnAccount: String?
 
     /// The Earlier row opened into its full card, if any.
     var expandedEarlier: String?
@@ -534,8 +532,7 @@ final class InboxController {
               let target = spawnTargets.first(where: { $0.id == spawnTarget }),
               let runtime = spawnRuntimes.first(where: { $0.id == spawnRuntime }) else { return }
         let model = spawnModels.first { $0.id == spawnModel }
-        var settings = model.flatMap { spawnSettings[$0.id] } ?? [:]
-        if let account = spawnAccount, model?.provider == "Anthropic" { settings["account"] = account }
+        let settings = model.flatMap { spawnSettings[$0.id] } ?? [:]
         if dictatingFor == Self.newAgentKey { stopDictation() }
         spawning = true
         spawnError = nil
@@ -851,7 +848,7 @@ func shortAge(_ date: Date, now: Date = Date()) -> String {
 /// What an agent's dot says: orange it needs you, red it said it is blocked, green it said it is done, blue it is
 /// working. Closed means Arsen shut it: no dot until it speaks again.
 enum AgentStatus {
-    case needsYou, blocked, done, working, closed, offline
+    case needsYou, blocked, done, merged, working, closed, offline
 
     static func of(_ asks: [Ask]) -> AgentStatus {
         if asks.contains(where: { $0.state == .waiting || $0.state == .pending }) { return .needsYou }
@@ -859,6 +856,7 @@ enum AgentStatus {
         switch last.status {
         case "blocked": return .blocked
         case "done": return .done
+        case "merged": return .merged
         case "closed": return .closed
         default: return .working
         }
@@ -869,6 +867,7 @@ enum AgentStatus {
         case .needsYou: return .orange
         case .blocked: return .red
         case .done: return .green
+        case .merged: return .purple
         case .working: return .blue
         case .closed, .offline: return .gray
         }
@@ -1245,8 +1244,7 @@ struct ComposerCard: View {
     }
     /// The account the agent runs as, when it isn't the active one: the part of the address before the @.
     private var account: String? {
-        let email = agentName.map { controller.store.identity(of: $0)?.account } ?? (model?.provider == "Anthropic" ? controller.spawnAccount : nil)
-        return email.flatMap { $0 }.map { String($0.split(separator: "@").first ?? Substring($0)) }
+        agentName.flatMap { controller.store.identity(of: $0)?.account }.map { String($0.split(separator: "@").first ?? Substring($0)) }
     }
     private var placeholder: String {
         agentName.map { "Message \(controller.store.displayName(of: $0))…" } ?? "What should a new agent work on?"
@@ -1775,10 +1773,10 @@ struct PillView: View {
         return settings.sorted(seen)
             .map { name -> (String, AgentStatus) in
                 let status = AgentStatus.of(live.filter { $0.agent.name == name })
-                // A session that is not running shows grey and still, whatever its last note said.
+                // A session that is not running is no dot of the bar's, whatever its last note said: the bar is what's active.
                 return (name, status != .closed && controller.store.offline.contains(name) ? .offline : status)
             }
-            .filter { $0.1 != .closed }
+            .filter { $0.1 != .closed && $0.1 != .offline }
     }
 
     private func scale(_ name: String) -> CGFloat { controller.agentFilter == name ? 13 / 11 : 1 }
@@ -1921,8 +1919,6 @@ struct MarkdownText: View {
         repo = cwd.flatMap(References.repo(of:))
     }
 
-    private static let linearApp = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "linear://")!) != nil
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
@@ -1962,7 +1958,7 @@ struct MarkdownText: View {
     /// Linear issues and pull requests become links, except inside `code` and links the agent already wrote.
     private func attributed(_ prose: String) -> AttributedString {
         var result = (try? AttributedString(markdown: prose, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(prose)
-        for (range, url) in References.find(in: String(result.characters), repo: repo, linear: Linear.shared.teams, linearApp: Self.linearApp) {
+        for (range, url) in References.find(in: String(result.characters), repo: repo, linear: Linear.shared.teams, linearApp: LinearLinks.inApp) {
             guard let span = Range(range, in: result) else { continue }
             let plain = result[span].runs.allSatisfy { $0.link == nil && !($0.inlinePresentationIntent?.contains(.code) ?? false) }
             if plain { result[span].link = url }
