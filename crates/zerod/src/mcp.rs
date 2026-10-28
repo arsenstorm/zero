@@ -1,0 +1,131 @@
+//! Zero's MCP server (`zerod mcp`, which `zero mcp` runs): JSON-RPC on stdio giving any agent Zero's scratchpads as
+//! tools. It holds nothing itself; each call goes to the running zerod (started if it isn't), which owns the pads.
+
+use std::future::Future;
+use std::path::Path;
+
+use serde_json::{Value, json};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+const INSTRUCTIONS: &str = "Zero's scratchpads: Markdown notes the user keeps in Zero, in folders, shared with every agent. \
+A pad's link is zero://pad/<id>; zero://pad/<id>#<section> is one heading's part (its anchor as GitHub makes them). When the \
+user gives you such a link, read it with scratchpad_read. Read before you change a pad, and pass the revision you read to \
+scratchpad_write or scratchpad_edit, so changes made since aren't lost; scratchpad_append needs none. Give the user links \
+to what you wrote, as Markdown: [Title › Section](zero://pad/<id>#section).";
+
+/// An argument: its name, what it is, whether it's needed.
+type Arg = (&'static str, &'static str, bool);
+
+/// Each tool: its name after scratchpad_, what it does, its arguments.
+const TOOLS: &[(&str, &str, &[Arg])] = &[
+    ("list", "Every scratchpad, the latest changed first, and the folders. Each pad has an id and a zero://pad/ link.",
+     &[("query", "Only pads whose title or text has this.", false),
+       ("folder", "Only this folder's pads. Tasks' own pads (Tasks/<issue>) are listed only this way.", false)]),
+    ("read", "A pad's Markdown, or one section of it, with its revision and its sections' anchors.",
+     &[("pad", "Its id or zero://pad/ link; a link with #section reads that section.", true), ("section", "A section's anchor, to read that part alone.", false)]),
+    ("create", "A new pad. Its title is a file name, so no slashes.",
+     &[("title", "Its title; left out, the content's first heading's.", false), ("folder", "Its folder, like Work/2026; left out, the top.", false), ("content", "Its Markdown.", false)]),
+    ("write", "Replaces a pad's whole text.",
+     &[("pad", "Its id or link.", true), ("content", "The new Markdown.", true), ("revision", "The revision you read; refused if it has changed since.", true)]),
+    ("append", "Adds Markdown at the end of a pad, or of one of its sections.",
+     &[("pad", "Its id or link.", true), ("content", "The Markdown to add.", true), ("section", "The section's anchor, to add at its end.", false)]),
+    ("edit", "Replaces one section (its heading to the next as high). Content without a heading goes under the section's own.",
+     &[("pad", "Its id or link.", true), ("section", "The section's anchor.", true), ("content", "The section's new Markdown.", true),
+       ("revision", "The revision you read; refused if it has changed since.", true)]),
+    ("find", "Lines with this text across every pad, with the pad, section and line.", &[("query", "The text, case aside.", true)]),
+    ("rename", "Gives a pad a new title.", &[("pad", "Its id or link.", true), ("title", "The new title.", true)]),
+    ("move", "Moves a pad to another folder; its link stays the same.", &[("pad", "Its id or link.", true), ("folder", "The folder; empty for the top.", true)]),
+    ("delete", "Moves a pad to the scratchpads' trash.", &[("pad", "Its id or link.", true)]),
+    ("folder", "Makes a folder.", &[("folder", "Its path, like Work/2026.", true)]),
+];
+
+/// The answer to one message, if it wants one. `call` runs a tool (its name without scratchpad_) with its arguments.
+pub async fn respond<F, Fut>(message: &Value, call: F) -> Option<Value>
+where
+    F: FnOnce(String, Value) -> Fut,
+    Fut: Future<Output = Result<Value, String>>,
+{
+    let id = message.get("id")?.clone();
+    let params = &message["params"];
+    let result = match message["method"].as_str().unwrap_or_default() {
+        "initialize" => json!({
+            "protocolVersion": params["protocolVersion"].as_str().unwrap_or("2025-06-18"),
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "zero", "version": env!("CARGO_PKG_VERSION")},
+            "instructions": INSTRUCTIONS,
+        }),
+        "ping" => json!({}),
+        "tools/list" => json!({"tools": TOOLS.iter().map(|(name, description, args)| json!({
+            "name": format!("scratchpad_{name}"),
+            "description": description,
+            "inputSchema": {
+                "type": "object",
+                "properties": args.iter().map(|(arg, about, _)| (arg.to_string(), json!({"type": "string", "description": about}))).collect::<serde_json::Map<_, _>>(),
+                "required": args.iter().filter(|(_, _, required)| *required).map(|(arg, _, _)| *arg).collect::<Vec<_>>(),
+            },
+        })).collect::<Vec<_>>()}),
+        "tools/call" => {
+            let name = params["name"].as_str().unwrap_or_default();
+            let tool = name.strip_prefix("scratchpad_").unwrap_or(name).to_string();
+            let read = tool == "read";
+            let (text, failed) = match call(tool, params["arguments"].clone()).await {
+                Ok(pad) if read => (shown(&pad), false),
+                Ok(result) => (serde_json::to_string_pretty(&result).unwrap_or_default(), false),
+                Err(why) => (why, true),
+            };
+            json!({"content": [{"type": "text", "text": text}], "isError": failed})
+        }
+        other => return Some(json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": format!("No method {other}")}})),
+    };
+    Some(json!({"jsonrpc": "2.0", "id": id, "result": result}))
+}
+
+/// A read pad as Markdown, under one comment line with what an agent needs to write back.
+fn shown(pad: &Value) -> String {
+    let folder = pad["folder"].as_str().filter(|f| !f.is_empty()).map(|f| format!(" · {f}")).unwrap_or_default();
+    let sections: Vec<&str> = pad["sections"].as_array().into_iter().flatten().filter_map(|s| s["slug"].as_str()).collect();
+    format!("<!-- {}{folder} · id {} · revision {} · sections: {} -->\n{}", pad["title"].as_str().unwrap_or_default(), pad["id"].as_str().unwrap_or_default(),
+            pad["revision"].as_str().unwrap_or_default(), sections.join(", "), pad["content"].as_str().unwrap_or_default())
+}
+
+/// Serves stdin and stdout until stdin closes, each call through zerod's socket.
+pub async fn serve(socket: &Path) {
+    let mut lines = BufReader::new(tokio::io::stdin()).lines();
+    let mut out = tokio::io::stdout();
+    while let Ok(Some(line)) = lines.next_line().await {
+        let Ok(message) = serde_json::from_str::<Value>(&line) else { continue };
+        if let Some(answer) = respond(&message, |tool, args| through(socket, tool, args)).await {
+            let mut text = answer.to_string();
+            text.push('\n');
+            if out.write_all(text.as_bytes()).await.is_err() || out.flush().await.is_err() { return }
+        }
+    }
+}
+
+/// One tool call to zerod; zerod is started (this same program) if nothing answers.
+async fn through(socket: &Path, tool: String, args: Value) -> Result<Value, String> {
+    let mut stream = match tokio::net::UnixStream::connect(socket).await {
+        Ok(stream) => stream,
+        Err(_) => {
+            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            std::process::Command::new(exe).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+                .spawn().map_err(|e| format!("Zero isn't running and didn't start: {e}"))?;
+            let mut connected = None;
+            for _ in 0..50 {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                if let Ok(stream) = tokio::net::UnixStream::connect(socket).await { connected = Some(stream); break }
+            }
+            connected.ok_or("Zero isn't running")?
+        }
+    };
+    let mut request = json!({"id": 1, "op": "pad", "tool": tool, "args": args}).to_string();
+    request.push('\n');
+    stream.write_all(request.as_bytes()).await.map_err(|e| e.to_string())?;
+    let mut lines = BufReader::new(stream).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        let reply: Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
+        if reply["id"] != 1 { continue }
+        return if reply["ok"] == true { Ok(reply["result"].clone()) } else { Err(reply["error"].as_str().unwrap_or("zerod refused").to_string()) };
+    }
+    Err("zerod closed the connection".into())
+}
