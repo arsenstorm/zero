@@ -81,6 +81,7 @@ final class Terminal {
             let count = read(self.master, &buffer, buffer.count)
             guard count > 0 else { self.reader?.cancel(); return }
             let output = Data(buffer[0..<count])
+            self.lastActivity = Date()
             self.screen.feed(output)
             // ponytail: written inline, so a stalled viewer stalls the host; a per-viewer queue if that ever bites
             for viewer in self.viewers.values { output.withUnsafeBytes { _ = Darwin.write(viewer.fd, $0.baseAddress!, $0.count) } }
@@ -102,6 +103,7 @@ final class Terminal {
 
     func write(_ data: Data) {
         guard master >= 0 else { return }
+        lastActivity = Date()
         data.withUnsafeBytes { raw in
             var offset = 0
             while offset < raw.count {
@@ -148,9 +150,14 @@ final class Terminal {
         if master >= 0 { Darwin.close(master); master = -1 }
     }
 
+    /// When its program last wrote or was typed to: how long a terminal has sat at its prompt.
+
+    var lastActivity = Date()
+
+
     var summary: HostLink.Terminal {
         HostLink.Terminal(id: id, label: label, cwd: cwd, argv: argv, running: running, exitCode: exitCode,
-                      status: screen.status?.state, statusMessage: screen.status?.message)
+                          status: screen.status?.state, statusMessage: screen.status?.message, idle: Int(Date().timeIntervalSince(lastActivity)))
     }
 }
 

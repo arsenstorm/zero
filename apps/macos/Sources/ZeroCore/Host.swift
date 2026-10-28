@@ -36,9 +36,11 @@ public enum HostLink {
         /// What the program last reported about itself (Program Status Protocol): idle, working, blocked, done, error.
         public var status: String?
         public var statusMessage: String?
-        public init(id: String, label: String, cwd: String, argv: [String], running: Bool, exitCode: Int32?, status: String?, statusMessage: String?) {
+        /// Seconds since its program last wrote or was typed to.
+        public var idle: Int?
+        public init(id: String, label: String, cwd: String, argv: [String], running: Bool, exitCode: Int32?, status: String?, statusMessage: String?, idle: Int? = nil) {
             self.id = id; self.label = label; self.cwd = cwd; self.argv = argv; self.running = running
-            self.exitCode = exitCode; self.status = status; self.statusMessage = statusMessage
+            self.exitCode = exitCode; self.status = status; self.statusMessage = statusMessage; self.idle = idle
         }
     }
 
