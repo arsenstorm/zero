@@ -50,7 +50,9 @@ pub async fn run(command: &str, cwd: &Path, id: &str) -> (Option<i32>, String) {
 pub fn spawn(argv: &[String], cwd: &Path, id: &str, stderr: Option<&Path>) -> std::io::Result<Transport> {
     let (program, arguments) = argv.split_first().ok_or_else(|| std::io::Error::other("no command to start"))?;
     let mut command = Command::new(program);
-    command.args(arguments).current_dir(cwd).env_clear().envs(environment(std::env::vars(), id))
+    // A group of its own, so stopping it stops what it started too (session.rs): the login shell may run the CLI as a
+    // child rather than become it, and the CLI runs MCP servers, all holding its output open.
+    command.args(arguments).current_dir(cwd).env_clear().envs(environment(std::env::vars(), id)).process_group(0)
         .stdin(Stdio::piped()).stdout(Stdio::piped());
     match stderr {
         Some(path) => { command.stderr(std::fs::OpenOptions::new().create(true).append(true).open(path)?); }

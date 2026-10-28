@@ -51,6 +51,19 @@ async fn stopping_ends_the_process_and_the_session_goes_offline() {
 }
 
 #[tokio::test]
+async fn stopping_ends_everything_the_runtime_started_too() {
+    // As the login shell runs Claude Code, and Claude Code its MCP servers: children that keep its output open, so the
+    // session would never see it end if only the first process were stopped.
+    let dir = temp_dir("process-tree");
+    let (events, _) = broadcast::channel(16);
+    let session = Session::new(Conversation::new("s1", Provider::Codex, dir.to_str().unwrap()), None, events).unwrap();
+    session.attach(process::spawn(&script("sleep 30 & sleep 30 & wait"), &dir, "s1", None).unwrap());
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    session.stop();
+    until(&session, |c| c.status == Status::Offline).await;
+}
+
+#[tokio::test]
 async fn what_the_runtime_prints_as_errors_is_kept() {
     let dir = temp_dir("process-stderr");
     let log = dir.join("stderr.log");

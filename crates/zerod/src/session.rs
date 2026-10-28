@@ -21,6 +21,11 @@ use crate::core::Core;
 use crate::model::{Change, ChoiceKind, Conversation, Event, Item, ItemKind, ItemStatus, Permissions, Provider};
 use crate::{acp, claude, codex};
 
+unsafe extern "C" {
+    safe fn kill(pid: i32, signal: i32) -> i32;
+}
+const SIGKILL: i32 = 9;
+
 /// How long a request waits for its answer. Turns run long, but the requests that wait answer at once.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -215,8 +220,13 @@ impl Session {
         let generation = {
             let mut inner = self.lock();
             match inner.child.as_mut() {
-                // Its output ends when it does, and that takes the session offline.
-                Some(child) => { let _ = child.start_kill(); return }
+                // Its output ends when it and everything it started (its process group) are gone, and that takes the
+                // session offline.
+                Some(child) => {
+                    if let Some(pid) = child.id().and_then(|pid| i32::try_from(pid).ok()) { kill(-pid, SIGKILL); }
+                    let _ = child.start_kill();
+                    return;
+                }
                 None => inner.generation,
             }
         };
