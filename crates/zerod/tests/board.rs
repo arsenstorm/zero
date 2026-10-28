@@ -50,11 +50,15 @@ fn the_agents_own_note_says_where_it_is_and_what_it_needs() {
     let asks = [note("a", "Three rounds done; rare races remain", Some("done"), Some("ship as is or one more round")), dot("Answered", Some("done"))];
     let row = &board(std::slice::from_ref(&lead), &asks)[0];
     assert_eq!(row.now.as_deref(), Some("Three rounds done; rare races remain"), "zerod's own dots aren't the agent's words");
-    assert_eq!((row.state, row.needs.as_deref()), (State::Ready, Some("ship as is or one more round")));
+    // What it hands the user blocks it on them: the board has no other way to say "needs you".
+    assert_eq!((row.state, row.needs.as_deref()), (State::NeedsYou, Some("ship as is or one more round")));
 
     let later = [asks[0].clone(), note("a", "Round 4 pushed", Some("done"), None)];
-    let row = &board(&[lead], &later)[0];
+    let row = &board(std::slice::from_ref(&lead), &later)[0];
     assert_eq!((row.state, row.needs.as_deref(), row.now.as_deref()), (State::Done, None, Some("Round 4 pushed")), "a later note without needs clears them");
+    // Done is the work finished; merged is it shipped.
+    let shipped = [note("a", "Merged #13336", Some("merged"), None)];
+    assert_eq!(board(&[lead], &shipped)[0].state, State::Merged);
 }
 
 #[test]
@@ -69,7 +73,9 @@ fn a_new_turn_clears_what_the_last_note_said() {
 fn without_a_note_it_shows_the_agents_last_answer() {
     let mut lead = session("a", "/work/app", Status::Idle);
     lead.items.push(Item { id: "1".into(), turn: None, kind: ItemKind::Agent { text: "PR #13336 is open.\n\nDetails follow.".into(), final_answer: true }, status: ItemStatus::Done });
-    assert_eq!(board(&[lead], &[])[0].now.as_deref(), Some("PR #13336 is open."));
+    assert_eq!(board(&[lead.clone()], &[])[0].now.as_deref(), Some("PR #13336 is open."));
+    lead.items[0].kind = ItemKind::Agent { text: "## Status\n\n| Issue | PR |\n|---|---|\n\nAll four are in PR created.".into(), final_answer: true };
+    assert_eq!(board(&[lead], &[])[0].now.as_deref(), Some("All four are in PR created."), "its first line of prose");
 }
 
 #[test]
@@ -94,18 +100,22 @@ fn states_come_from_the_session_and_the_note_most_urgent_first() {
     let asks = [note("waits", "Waits for ENG-9759", Some("waiting"), None), note("failing", "One test shard failing", Some("blocked"), None)];
     let rows = board(&[done, working, waits, stuck, failing], &asks);
     let states: Vec<(&str, State)> = rows.iter().map(|r| (r.session.as_str(), r.state)).collect();
-    assert_eq!(states, [("stuck", State::Trouble), ("failing", State::Trouble), ("working", State::Working), ("waits", State::Waiting), ("done", State::Idle)]);
+    // An agent that says it's blocked is blocked on the user; one stuck or failing on its own is in trouble.
+    assert_eq!(states, [("failing", State::NeedsYou), ("stuck", State::Trouble), ("working", State::Working), ("waits", State::Waiting), ("done", State::Idle)]);
 }
 
 #[test]
-fn offline_sessions_stay_only_while_they_need_the_user() {
+fn every_task_is_on_the_board_the_offline_ones_last() {
+    // Offline is only not running: a task taken in from elsewhere, or one zerod's restart stopped, is still work.
     let gone = session("gone", "/w/a", Status::Offline);
     let handed_off = session("handed", "/w/b", Status::Offline);
-    let rows = board(&[gone, handed_off], &[note("handed", "Live", Some("done"), Some("your Self QA"))]);
-    let left: Vec<&str> = rows.iter().map(|r| r.session.as_str()).collect();
-    assert_eq!(left, ["handed"]);
+    let working = session("busy", "/w/c", Status::Working);
+    let rows = board(&[gone, handed_off, working], &[note("handed", "Live", Some("done"), Some("your Self QA"))]);
+    let states: Vec<(&str, bool, State)> = rows.iter().map(|r| (r.session.as_str(), r.online, r.state)).collect();
+    // Offline, a row keeps the state it was last known in: what its note said, else idle between turns.
+    assert_eq!(states, [("handed", false, State::NeedsYou), ("busy", true, State::Working), ("gone", false, State::Idle)], "most urgent first, online or not");
     let closed = [note("handed", "Live", Some("done"), Some("your Self QA")), note("handed", "Closed by the user", Some("closed"), None)];
-    assert!(board(&[session("handed", "/w/b", Status::Offline)], &closed).is_empty(), "closing it takes what it handed over");
+    assert_eq!(board(&[session("handed", "/w/b", Status::Offline)], &closed)[0].needs, None, "closing it takes what it handed over");
     let mut offline = dot("Offline", Some("closed"));
     offline.agent = agent("handed");
     let restarted = [note("handed", "Live", Some("done"), Some("your Self QA")), offline];
@@ -123,4 +133,19 @@ fn where_is_the_shortest_part_of_the_folder_that_tells_rows_apart() {
     ], &[]);
     let places: Vec<&str> = rows.iter().map(|r| r.place.as_str()).collect();
     assert_eq!(places, ["teal-yak/app", "blue-fox/app", "blue-fox/app", "zero"]);
+}
+
+#[test]
+fn where_is_the_tasks_own_place_then_the_places_command_then_its_folder() {
+    let mut own = session("a", "/wt", Status::Idle);
+    own.place = Some("green-elk".into());
+    own.ticket = Some("ENG-1".into());
+    let mut listed = session("b", "/wt", Status::Idle);
+    listed.ticket = Some("WEB-2".into());
+    let plain = session("c", "/wt/lab/blue-fox", Status::Idle);
+    let places = zerod::board::parse_places(r#"[{"ticket": "WEB-2", "place": "pink-cod"}, {"ticket": "ENG-1", "place": "other"}, {"ticket": "WEB-2", "place": "gold-bee"}]"#).unwrap();
+    let rows = zerod::board::board_with(&[own, listed, plain], &[], &places);
+    let wheres: Vec<(&str, &str)> = rows.iter().map(|r| (r.session.as_str(), r.place.as_str())).collect();
+    assert_eq!(wheres, [("a", "green-elk"), ("b", "pink-cod, gold-bee"), ("c", "blue-fox")]);
+    assert!(zerod::board::parse_places("not json").unwrap_err().starts_with("The places command printed"));
 }

@@ -19,6 +19,9 @@ pub struct Conversation {
     pub label: Option<String>,
     #[serde(default)]
     pub ticket: Option<String>,
+    /// Where it runs, by name, when its folder doesn't say (`zero label --where`).
+    #[serde(default)]
+    pub place: Option<String>,
     /// The git branch its folder was on when it started.
     #[serde(default)]
     pub branch: Option<String>,
@@ -331,6 +334,10 @@ pub enum Change {
     Switched { provider: Provider, model: Option<String>, effort: Option<String> },
     /// The task went to its provider's terminal, or came back from it.
     Terminal { terminal: Option<Opened> },
+    /// The task was put away (zerod's archive/): clients drop it. Never kept in a transcript.
+    Archived,
+    /// Where the task runs, by name (a bench, a machine), when its folder doesn't say.
+    Place { place: Option<String> },
 }
 
 /// A change as clients receive it: which session, and its place in that session's sequence.
@@ -344,7 +351,7 @@ pub struct Event {
 impl Conversation {
     pub fn new(id: &str, provider: Provider, cwd: &str) -> Self {
         Conversation {
-            id: id.into(), provider, cwd: cwd.into(), permissions: Permissions::Auto, label: None, ticket: None, branch: None, parent: None, thread: None, title: None, model: None, effort: None,
+            id: id.into(), provider, cwd: cwd.into(), permissions: Permissions::Auto, label: None, ticket: None, place: None, branch: None, parent: None, thread: None, title: None, model: None, effort: None,
             status: Status::Starting, turn: None, error: None, items: vec![], approvals: vec![], questions: vec![], usage: None,
             failure: None, stalled: None, diff: None, terminal: None, seq: 0,
         }
@@ -425,6 +432,8 @@ impl Conversation {
             Change::Stalled { reason } => self.stalled = reason,
             Change::Diff { diff } => self.diff = diff,
             Change::Terminal { terminal } => self.terminal = terminal,
+            Change::Archived => {}
+            Change::Place { place } => self.place = place,
             Change::Switched { provider, model, effort } => {
                 self.provider = provider;
                 self.thread = None;

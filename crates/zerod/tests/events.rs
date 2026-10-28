@@ -92,10 +92,11 @@ async fn a_watched_command_runs_in_the_sessions_folder() {
 async fn a_reminder_wakes_a_session_later() {
     let w = world("events-remind");
     let (id, seen) = idle_claude(&w).await;
-    w.daemon.remind(&id, Duration::from_secs(20 * 60), "Check whether the deploy finished").unwrap();
-    tokio::time::sleep(Duration::from_secs(19 * 60)).await;
+    // Within the time an idle agent keeps its process (parking.rs has one woken from parked).
+    w.daemon.remind(&id, Duration::from_secs(2 * 60), "Check whether the deploy finished").unwrap();
+    tokio::time::sleep(Duration::from_secs(110)).await;
     assert!(told(&seen).is_empty());
-    tokio::time::sleep(Duration::from_secs(2 * 60)).await;
+    tokio::time::sleep(Duration::from_secs(20)).await;
     assert_eq!(seen.said("user", 2).await[1]["message"]["content"], "Check whether the deploy finished");
 }
 

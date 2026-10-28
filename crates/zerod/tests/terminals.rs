@@ -158,3 +158,27 @@ async fn a_resume_that_fails_lets_go_of_the_process_it_started() {
     assert!(!session.is_attached());
     until(&session, |c| c.status == Status::Offline).await;
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_terminal_left_idle_is_closed_and_its_task_comes_back_to_zero() {
+    let home = temp_dir("terminal-park");
+    let user = home.join("user");
+    // zero-host says the terminal has had nothing written or typed for 16 minutes.
+    let (socket, seen) = fake_host(&home, json!({
+        "hello": {"ok": true}, "spawn": {"ok": true, "terminal": {"id": "term-1", "running": true}},
+        "state": {"ok": true, "terminal": {"id": "term-1", "running": true, "idle": 16 * 60}}, "close": {"ok": true},
+    })).await;
+    let runtime: Runtime = Arc::new(|_, _, _| Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())));
+    let daemon = Daemon::open(&home.join("zerod"), runtime).unwrap();
+    daemon.place(&user, &socket);
+    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "hi", None, None, Permissions::Auto).unwrap();
+    let session = daemon.session(&id).unwrap();
+    until(&session, |c| c.status == Status::Offline).await;
+    let file = zerod::handoff::claude_folder(&user, home.to_str().unwrap()).join(format!("{}.jsonl", session.snapshot().thread.unwrap()));
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "").unwrap();
+    daemon.open_terminal(&id).await.unwrap();
+    for _ in 0..12 { tokio::time::sleep(std::time::Duration::from_secs(15)).await }
+    assert!(seen.lock().unwrap().iter().any(|r| r["op"] == "close" && r["id"] == "term-1"), "closed once idle for {:?}", zerod::daemon::TERMINAL_PARK_AFTER);
+    assert_eq!(session.snapshot().terminal, None);
+}

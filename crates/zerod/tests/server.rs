@@ -54,7 +54,9 @@ async fn harness(name: &str) -> Harness {
     let socket = home.join("zerod.sock");
     let (seen, commands) = (Arc::new(Mutex::new(vec![])), Arc::new(Mutex::new(vec![])));
     let daemon = Daemon::open(&home, runtime(seen.clone(), commands.clone())).unwrap();
-    tokio::spawn(zerod::server::serve(zerod::server::Zerod { daemon, inbox: zerod::inbox::Inbox::open(None, vec![]), drops: None }, socket.clone()));
+    tokio::spawn(zerod::server::serve(zerod::server::Zerod { daemon, inbox: zerod::inbox::Inbox::open(None, vec![]), drops: None,
+        integrations: zerod::integrations::Integrations::open(&home, Arc::new(zerod::integrations::Commands::default())),
+        pads: Arc::new(zerod::pads::Pads::open(&home.join("scratchpads"))), places: Default::default() }, socket.clone()));
     for _ in 0..100 {
         if UnixStream::connect(&socket).await.is_ok() { break }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -202,7 +204,9 @@ async fn sessions_survive_a_daemon_restart_and_a_message_resumes_one() {
     // Another daemon on the same home: the session is there, offline, with its history.
     let socket = h.home.join("again.sock");
     let daemon = Daemon::open(&h.home, runtime(h.seen.clone(), h.commands.clone())).unwrap();
-    tokio::spawn(zerod::server::serve(zerod::server::Zerod { daemon, inbox: zerod::inbox::Inbox::open(None, vec![]), drops: None }, socket.clone()));
+    tokio::spawn(zerod::server::serve(zerod::server::Zerod { daemon, inbox: zerod::inbox::Inbox::open(None, vec![]), drops: None,
+        integrations: zerod::integrations::Integrations::open(&h.home, Arc::new(zerod::integrations::Commands::default())),
+        pads: Arc::new(zerod::pads::Pads::open(&h.home.join("scratchpads"))), places: Default::default() }, socket.clone()));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let mut again = Client::connect(&socket).await;
     let listed = again.call(json!({"op": "list"})).await;
@@ -301,4 +305,43 @@ async fn the_inbox_is_followed_and_answered_over_the_socket() {
     }
     assert_eq!(client.call(json!({"op": "choose", "ask": id})).await["error"], "Which option?");
     assert_eq!(client.call(json!({"op": "board"})).await["result"], json!([]), "no sessions, no rows");
+    let integrations = client.call(json!({"op": "setIntegration", "integration": "github", "enabled": true})).await["result"].clone();
+    assert_eq!((integrations["settings"]["github"]["enabled"].clone(), integrations["linear"].clone()), (json!(true), Value::Null));
+    let saved = client.call(json!({"op": "saveView", "integration": "github", "view": {"name": "Ours", "query": "is:pr org:acme"}})).await["result"].clone();
+    assert_eq!(saved["settings"]["github"]["views"][2]["name"], "Ours");
+    assert_eq!(client.call(json!({"op": "viewItems", "integration": "github", "view": "nope"})).await["error"], "No view nope");
+}
+
+#[tokio::test]
+async fn scratchpads_are_reached_through_the_pad_op() {
+    let h = harness("server-pads").await;
+    let mut client = Client::connect(&h.socket).await;
+    let created = client.call(json!({"op": "pad", "tool": "create", "args": {"title": "Plan", "content": "## Steps\n\nShip."}})).await;
+    let link = format!("{}#steps", created["result"]["link"].as_str().unwrap());
+    let read = client.call(json!({"op": "pad", "tool": "read", "args": {"pad": link}})).await;
+    assert_eq!(read["result"]["content"], "## Steps\n\nShip.\n");
+    assert!(h.home.join("scratchpads/Plan.md").exists());
+    assert_eq!(client.call(json!({"op": "pad", "tool": "nope"})).await["error"], "No scratchpad tool nope");
+}
+
+#[tokio::test]
+async fn an_issue_starts_one_task_with_a_state_pad_of_its_own() {
+    let h = harness("server-start-task").await;
+    let mut client = Client::connect(&h.socket).await;
+    let saved = client.call(json!({"op": "saveView", "integration": "linear", "view": {"id": "mine", "name": "My issues", "assignee": "me",
+        "start": {"cwd": h.project, "prompt": "Supervise {key}: {title}", "provider": "codex"}}})).await;
+    assert_eq!(saved["ok"], true, "{saved}");
+    let item = json!({"id": "i1", "key": "ENG-1", "title": "Fix it", "url": "u", "place": "ENG", "state": "Plan", "updated": "t"});
+    let started = client.call(json!({"op": "startTask", "integration": "linear", "view": "mine", "item": item})).await;
+    assert_eq!(started["ok"], true, "{started}");
+    let session = started["result"]["session"].as_str().unwrap().to_string();
+    let task: Conversation = serde_json::from_value(client.call(json!({"op": "get", "session": session})).await["result"].clone()).unwrap();
+    assert_eq!((task.ticket.as_deref(), task.label.as_deref()), (Some("ENG-1"), Some("ENG-1 Fix it")));
+    let pad = client.call(json!({"op": "pad", "tool": "read", "args": {"pad": started["result"]["pad"]}})).await;
+    assert_eq!((pad["result"]["title"].as_str(), pad["result"]["folder"].as_str()), (Some("State"), Some("Tasks/ENG-1")));
+    let again = client.call(json!({"op": "startTask", "integration": "linear", "view": "mine", "item": item})).await;
+    assert_eq!((again["result"]["session"].as_str(), again["result"]["existing"].as_bool()), (Some(session.as_str()), Some(true)), "one task per issue");
+    let pr = json!({"id": "PR_5", "key": "#5", "title": "Docs", "url": "u", "place": "o/r", "state": "Open", "updated": "t"});
+    let unset = client.call(json!({"op": "startTask", "integration": "github", "view": "mine", "item": pr})).await;
+    assert_eq!(unset["error"], "My pull requests doesn't start tasks yet: give it a folder and a prompt in Integrations");
 }

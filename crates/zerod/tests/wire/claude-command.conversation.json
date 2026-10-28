@@ -5,6 +5,7 @@
   "permissions": "auto",
   "label": null,
   "ticket": null,
+  "place": null,
   "branch": null,
   "parent": null,
   "thread": "de7c0e2b-badd-439a-a46b-9e187476cb40",

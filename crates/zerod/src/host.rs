@@ -34,6 +34,12 @@ impl Host {
     }
 
     /// Ends the terminal's program and lets go of it.
+    /// How long the terminal has had nothing written or typed; none when zero-host can't say.
+    pub async fn idle(&self, id: &str) -> Option<Duration> {
+        let reply = self.call(json!({"op": "state", "id": id})).await?;
+        reply["terminal"]["idle"].as_u64().map(Duration::from_secs)
+    }
+
     pub async fn shut(&self, id: &str) {
         let _ = self.call(json!({"op": "close", "id": id})).await;
     }

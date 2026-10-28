@@ -2,6 +2,9 @@
 //! the work is, where it runs, its state, where the agent is now and what it needs from the user. Made from the sessions
 //! and the inbox, so it reads the same in every client.
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use serde::Serialize;
 
 use crate::ask::{Ask, AskKind, AskState};
@@ -11,16 +14,18 @@ use crate::model::{Attention, Conversation};
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "camelCase")]
 pub enum State {
-    /// A question, approval or run waits for the user.
+    /// Blocked on the user: a question, approval or run waits for them, or the agent said it's blocked or handed them
+    /// something (its note's `needs`).
     NeedsYou,
-    /// Failing, stuck, out of usage, or the agent said it is blocked.
+    /// Failing, stuck or out of usage, on its own.
     Trouble,
     Working,
     /// The agent waits on something other than the user (another task, a deploy).
     Waiting,
-    /// Finished its part and handed something to the user.
-    Ready,
+    /// The work is finished: its code done, not yet merged.
     Done,
+    /// Merged: shipped, by the agent's note.
+    Merged,
     Idle,
     Offline,
 }
@@ -32,8 +37,11 @@ pub struct Row {
     pub session: String,
     pub task: String,
     pub ticket: Option<String>,
-    /// The shortest end of its folder that tells it from the other rows' ("blue-fox/app").
+    /// Where it runs: the name the task was given, else the places command's for its ticket, else the shortest end of
+    /// its folder that tells it from the other rows' ("blue-fox/app").
     pub place: String,
+    /// Offline, `state` is the one it was last known in.
+    pub online: bool,
     pub state: State,
     /// Where the agent is: its latest note, else its last answer's first line.
     pub now: Option<String>,
@@ -53,40 +61,85 @@ pub struct Waiting {
 /// The notes zerod posts itself to follow a session's attention (bridge.rs), told from the agent's own.
 pub const ATTENTION: &str = "attention";
 
-pub fn board(conversations: &[Conversation], asks: &[Ask]) -> Vec<Row> {
+pub fn board(conversations: &[Conversation], asks: &[Ask]) -> Vec<Row> { board_with(conversations, asks, &HashMap::new()) }
+
+/// The board, with where tasks run by ticket from the user's places command.
+pub fn board_with(conversations: &[Conversation], asks: &[Ask], places: &HashMap<String, String>) -> Vec<Row> {
     let known = |id: &Option<String>| id.as_ref().is_some_and(|id| conversations.iter().any(|c| &c.id == id));
-    let mut rows: Vec<Row> = conversations.iter().filter(|c| !known(&c.parent)).filter_map(|lead| {
+    let mut rows: Vec<Row> = conversations.iter().filter(|c| !known(&c.parent)).map(|lead| {
         let team = team(lead, conversations);
         let own = note(lead, asks);
         let open: Vec<Waiting> = asks.iter()
             .filter(|a| a.state == AskState::Waiting && !matches!(a.kind, AskKind::Note | AskKind::Message) && team.iter().any(|c| is(a, c)))
             .map(|a| Waiting { id: a.id.clone(), title: a.title.clone() }).collect();
+        let online = team.iter().any(|c| c.attention() != Attention::Offline);
         let mut state = team.iter().map(|c| attention(c)).min().unwrap_or(State::Idle);
         if !open.is_empty() { state = State::NeedsYou }
         if let Some(note) = own && state > State::Trouble {
             state = match note.status.as_deref() {
-                Some("blocked") => State::Trouble,
+                Some("blocked") => State::NeedsYou,
                 _ if state == State::Working => state,
+                _ if note.needs.is_some() => State::NeedsYou,
                 Some("waiting") => State::Waiting,
-                _ if note.needs.is_some() => State::Ready,
                 Some("done") => State::Done,
+                Some("merged") => State::Merged,
                 _ => state,
             };
         }
-        let answer = lead.answer().and_then(|a| a.lines().map(str::trim).find(|l| !l.is_empty())).map(String::from);
-        let row = Row {
-            session: lead.id.clone(), task: crate::bridge::label(lead), ticket: lead.ticket.clone(), place: String::new(), state,
+        // Its first line of prose: a table, heading or rule says nothing on its own.
+        let prose = |l: &&str| !l.is_empty() && !l.starts_with('|') && !l.starts_with('#') && !l.starts_with("---");
+        let answer = lead.answer().and_then(|a| a.lines().map(str::trim).find(prose)).map(String::from);
+        Row {
+            session: lead.id.clone(), task: crate::bridge::label(lead), ticket: lead.ticket.clone(), place: String::new(), online, state,
             now: own.map(|n| n.body.clone()).filter(|b| !b.is_empty()).or(answer),
             needs: own.and_then(|n| n.needs.clone()), asks: open, workers: team.len() - 1,
-        };
-        // A session gone offline stays while it still needs the user.
-        let live = team.iter().any(|c| c.attention() != Attention::Offline);
-        (live || row.needs.is_some() || !row.asks.is_empty()).then_some(row)
+        }
     }).collect();
     rows.sort_by_key(|row| row.state);
     let folders: Vec<String> = rows.iter().map(|row| conversations.iter().find(|c| c.id == row.session).map(|c| c.cwd.clone()).unwrap_or_default()).collect();
-    for (row, folder) in rows.iter_mut().zip(&folders) { row.place = place(folder, &folders) }
+    for (row, folder) in rows.iter_mut().zip(&folders) {
+        let named = conversations.iter().find(|c| c.id == row.session).and_then(|c| c.place.clone());
+        row.place = named.or_else(|| row.ticket.as_ref().and_then(|t| places.get(t).cloned())).unwrap_or_else(|| place(folder, &folders));
+    }
     rows
+}
+
+/// What the places command printed, `[{"ticket": "ENG-1", "place": "green-elk"}, …]`, by ticket; a ticket in several
+/// places has them all.
+pub fn parse_places(text: &str) -> Result<HashMap<String, String>, String> {
+    #[derive(serde::Deserialize)]
+    struct Entry { ticket: String, place: String }
+    let entries: Vec<Entry> = serde_json::from_str(text).map_err(|e| format!("The places command printed something other than [{{\"ticket\", \"place\"}}]: {e}"))?;
+    let mut places: HashMap<String, String> = HashMap::new();
+    for entry in entries {
+        places.entry(entry.ticket).and_modify(|all| { all.push_str(", "); all.push_str(&entry.place) }).or_insert(entry.place);
+    }
+    Ok(places)
+}
+
+/// Where tasks run by ticket, as the places command last said.
+#[derive(Default)]
+pub struct Places(Mutex<HashMap<String, String>>);
+
+impl Places {
+    pub fn get(&self) -> HashMap<String, String> { self.0.lock().unwrap().clone() }
+
+    /// Runs the user's places command (zerod's settings.json `places`) every minute while zerod runs.
+    pub async fn follow(self: std::sync::Arc<Self>, home: std::path::PathBuf) {
+        use crate::integrations::Fetcher;
+        loop {
+            if let Some(command) = crate::server::Settings::load(&home).places.filter(|c| !c.trim().is_empty()) {
+                let argv = crate::adapter::login_shell(&["/bin/sh", "-c", &command]);
+                match crate::integrations::Commands::default().run(argv, None).await.and_then(|text| parse_places(&text)) {
+                    Ok(places) => *self.0.lock().unwrap() = places,
+                    Err(error) => eprintln!("zerod: places: {error}"),
+                }
+            } else {
+                self.0.lock().unwrap().clear();
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        }
+    }
 }
 
 /// The lead and every session it started, and theirs.
@@ -127,7 +180,8 @@ fn attention(conversation: &Conversation) -> State {
         Attention::Working | Attention::Starting => State::Working,
         Attention::Done => State::Done,
         Attention::Idle => State::Idle,
-        Attention::Offline => State::Offline,
+        // Offline is only not running: its last known state is between turns.
+        Attention::Offline => State::Idle,
     }
 }
 

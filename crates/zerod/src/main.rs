@@ -23,7 +23,9 @@ async fn main() {
     let zero = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(".zero");
     let (mut home, mut socket) = (zero.join("zerod"), zero.join("zerod.sock"));
     let (mut cli_socket, mut asks_log, mut resources): (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>) = (None, None, None);
-    let mut args = std::env::args().skip(1);
+    let mut args = std::env::args().skip(1).peekable();
+    // `zerod mcp`: the MCP server on stdio, for an agent, talking to the running zerod.
+    let mcp = args.next_if_eq("mcp").is_some();
     while let Some(arg) = args.next() {
         match (arg.as_str(), args.next()) {
             ("--home", Some(value)) => home = value.into(),
@@ -32,11 +34,12 @@ async fn main() {
             ("--asks", Some(value)) => asks_log = Some(value.into()),
             ("--resources", Some(value)) => resources = Some(value.into()),
             _ => {
-                eprintln!("usage: zerod [--home DIR] [--socket PATH] [--cli-socket PATH] [--asks FILE] [--resources DIR]");
+                eprintln!("usage: zerod [mcp] [--home DIR] [--socket PATH] [--cli-socket PATH] [--asks FILE] [--resources DIR]");
                 std::process::exit(2);
             }
         }
     }
+    if mcp { return zerod::mcp::serve(&socket).await }
     let beside = home.parent().map(PathBuf::from).unwrap_or_else(|| zero.clone());
     let cli_socket = cli_socket.unwrap_or_else(|| beside.join("zero.sock"));
     let asks_log = asks_log.unwrap_or_else(|| beside.join("asks.jsonl"));
@@ -87,7 +90,11 @@ async fn main() {
     });
     let mut terminate = signal(SignalKind::terminate()).expect("a SIGTERM handler");
     eprintln!("zerod: {} sessions, listening on {}", daemon.list().len(), socket.display());
-    let zerod = zerod::server::Zerod { daemon: daemon.clone(), inbox, drops: Some(drops) };
+    let integrations = zerod::integrations::Integrations::open(&home, Arc::new(zerod::integrations::Commands::default()));
+    let pads = Arc::new(zerod::pads::Pads::open(&beside.join("scratchpads")));
+    let places = Arc::new(zerod::board::Places::default());
+    tokio::spawn(places.clone().follow(home.clone()));
+    let zerod = zerod::server::Zerod { daemon: daemon.clone(), inbox, drops: Some(drops), integrations, pads, places };
     // Codex processes end with the daemon: their input closes when it exits.
     tokio::select! {
         served = zerod::server::serve(zerod, socket.clone()) => if let Err(error) = served { eprintln!("zerod: {error}"); std::process::exit(1) },

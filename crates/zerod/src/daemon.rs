@@ -41,6 +41,13 @@ pub struct Daemon {
     me: Weak<Daemon>,
 }
 
+/// How long an agent waits between turns, with nothing open, before its process is stopped (parked): finished work
+/// shouldn't hold memory, and resuming takes seconds. Words for it resume it.
+pub const PARK_AFTER: Duration = Duration::from_secs(3 * 60);
+/// How long a task's provider terminal sits with nothing written or typed before it closes and the task comes back to
+/// Zero: longer, since someone may be reading it.
+pub const TERMINAL_PARK_AFTER: Duration = Duration::from_secs(15 * 60);
+
 /// How a lead starts a worker; anything left out comes from the lead.
 #[derive(Default, Clone, Debug)]
 pub struct Options {
@@ -82,6 +89,13 @@ impl Daemon {
         let daemon = Arc::new_cyclic(|me| Daemon {
             home: home.into(), sessions: Mutex::new(sessions), events, runtime, attention: Mutex::new(attention), pending: Mutex::new(pending),
             resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()),
+        });
+        let parker = Arc::downgrade(&daemon);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                match parker.upgrade() { Some(daemon) => daemon.park(), None => return }
+            }
         });
         let mut heard = daemon.events.subscribe();
         let weak: Weak<Daemon> = Arc::downgrade(&daemon);
@@ -181,6 +195,46 @@ impl Daemon {
             }
         });
         Ok(id)
+    }
+
+    /// A session started elsewhere (Claude Code's, by its id) taken in as a task in `cwd`: its history read from the
+    /// session file, offline until a message resumes it on the same thread. The same session twice is the one task.
+    pub fn adopt(&self, provider: Provider, thread: &str, cwd: &str, options: Options) -> Result<String, String> {
+        if provider != Provider::Claude { return Err(format!("{} sessions can't be taken in yet", provider.title())) }
+        if !Path::new(cwd).is_dir() { return Err(format!("{cwd} isn't a folder")) }
+        if let Some(known) = self.sessions().iter().map(|s| s.snapshot()).find(|c| c.thread.as_deref() == Some(thread)) { return Ok(known.id) }
+        let id = new_id();
+        let mut conversation = Conversation::new(&id, provider, cwd);
+        conversation.thread = Some(thread.into());
+        conversation.permissions = options.permissions.unwrap_or_default();
+        conversation.branch = branch(Path::new(cwd));
+        let text = std::fs::read_to_string(self.claude_file(&conversation)).map_err(|_| format!("No Claude Code session {thread} in {cwd}"))?;
+        let records: Vec<serde_json::Value> = text.lines().filter_map(|line| serde_json::from_str(line).ok()).collect();
+        let session = Session::new(conversation, Some(self.home.join("sessions").join(&id)), self.events.clone()).map_err(|e| e.to_string())?;
+        session.change(Change::Status { status: Status::Offline, turn: None, error: None });
+        for item in crate::handoff::from_claude_session(&records) { session.change(Change::Item { item }) }
+        if options.label.is_some() || options.ticket.is_some() { session.change(Change::Named { label: options.label, ticket: options.ticket }) }
+        self.attention.lock().unwrap().insert(id.clone(), Attention::Offline);
+        self.sessions.lock().unwrap().push(session.clone());
+        session.announce();
+        Ok(id)
+    }
+
+    /// Puts a task away: stopped, out of the list, its files moved to archive/ (moved back, it returns).
+    pub async fn archive(&self, id: &str) -> Result<(), String> {
+        let session = self.session(id)?;
+        if session.snapshot().terminal.is_some() { self.close_terminal(id).await? }
+        self.take_offline(&session).await;
+        let seq = session.snapshot().seq;
+        self.sessions.lock().unwrap().retain(|s| s.snapshot().id != id);
+        self.attention.lock().unwrap().remove(id);
+        self.pending.lock().unwrap().remove(id);
+        drop(session);
+        let archive = self.home.join("archive");
+        std::fs::create_dir_all(&archive).map_err(|e| e.to_string())?;
+        std::fs::rename(self.home.join("sessions").join(id), archive.join(id)).map_err(|e| e.to_string())?;
+        let _ = self.events.send(Event { session: id.into(), seq: seq + 1, change: Change::Archived });
+        Ok(())
     }
 
     /// Where the user's home and zero-host are, for a test's own.
@@ -341,6 +395,12 @@ impl Daemon {
         Ok(())
     }
 
+    /// Where the task runs, by name; none goes back to its folder.
+    pub fn set_place(&self, id: &str, place: Option<&str>) -> Result<(), String> {
+        self.session(id)?.change(Change::Place { place: place.map(Into::into).filter(|p: &String| !p.trim().is_empty()) });
+        Ok(())
+    }
+
     /// The sessions `lead` started.
     pub fn workers(&self, lead: &str) -> Vec<Conversation> {
         self.list().into_iter().filter(|c| c.parent.as_deref() == Some(lead)).collect()
@@ -446,11 +506,36 @@ impl Daemon {
         if matches!(now, Attention::Done | Attention::Idle) { self.deliver(id) }
     }
 
-    /// Keeps `words` for `id` until it can take them.
+    /// Keeps `words` for `id` until it can take them; a parked (offline) session is resumed for them, and they go
+    /// once it's between turns.
     fn tell(&self, id: &str, words: String) {
         self.pending.lock().unwrap().entry(id.into()).or_default().push(words);
         self.keep_pending(id);
-        if self.get(id).is_some_and(|c| matches!(c.attention(), Attention::Done | Attention::Idle)) { self.deliver(id) }
+        let Ok(session) = self.session(id) else { return };
+        if !session.is_attached() && session.snapshot().terminal.is_none() {
+            let (Some(daemon), id) = (self.me.upgrade(), id.to_string()) else { return };
+            tokio::spawn(async move { if let Err(error) = daemon.resume(&id).await { eprintln!("zerod: couldn't resume {id} for its words: {error}") } });
+        } else if self.get(id).is_some_and(|c| matches!(c.attention(), Attention::Done | Attention::Idle)) {
+            self.deliver(id)
+        }
+    }
+
+    /// Stops the process of every session idle for PARK_AFTER with nothing waiting for it.
+    fn park(&self) {
+        let pending = self.pending.lock().unwrap().clone();
+        for session in self.sessions() {
+            let conversation = session.snapshot();
+            if let Some(open) = conversation.terminal {
+                let (Some(daemon), id) = (self.me.upgrade(), conversation.id.clone()) else { continue };
+                tokio::spawn(async move {
+                    if daemon.host().idle(&open.id).await.is_some_and(|idle| idle >= TERMINAL_PARK_AFTER)
+                        && let Err(error) = daemon.close_terminal(&id).await { eprintln!("zerod: couldn't close {id}'s idle terminal: {error}") }
+                });
+                continue;
+            }
+            if pending.get(&conversation.id).is_some_and(|words| !words.is_empty()) { continue }
+            if session.idle_for().is_some_and(|idle| idle >= PARK_AFTER) { session.stop() }
+        }
     }
 
     fn deliver(&self, id: &str) {

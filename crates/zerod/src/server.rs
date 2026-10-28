@@ -56,6 +56,23 @@ struct Request {
     agent: Option<String>,
     stop: Option<bool>,
     keys: Option<Vec<u8>>,
+    /// "github" or "linear", with whether it's on, and one of its views (its id, or for saveView the view itself).
+    integration: Option<String>,
+    enabled: Option<bool>,
+    view: Option<Value>,
+    /// Views' ids, in the order they go.
+    ids: Option<Vec<String>>,
+    /// viewItems and linearTeams: what was last fetched (null for nothing yet) rather than fetching.
+    cached: Option<bool>,
+    /// `pad`: a scratchpad tool (list, read, write…) and its arguments, as the MCP server's.
+    tool: Option<String>,
+    args: Option<Value>,
+    /// startTask: the view's item (an issue or a pull request) to start a task from.
+    item: Option<Value>,
+    /// adopt: the provider's own session id, to take in as a task.
+    thread: Option<String>,
+    /// place: where the session runs, by name.
+    place: Option<String>,
     #[serde(flatten)]
     settings: Settings,
 }
@@ -73,6 +90,9 @@ pub struct Settings {
     /// The folders that are drops.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub patterns: Option<Vec<String>>,
+    /// A command printing where tasks run by ticket, `[{"ticket", "place"}]`, rerun every minute (board.rs); empty for none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub places: Option<String>,
 }
 
 impl Settings {
@@ -92,6 +112,9 @@ pub struct Zerod {
     pub daemon: Arc<Daemon>,
     pub inbox: Arc<Inbox>,
     pub drops: Option<Arc<Drops>>,
+    pub integrations: Arc<crate::integrations::Integrations>,
+    pub pads: Arc<crate::pads::Pads>,
+    pub places: Arc<crate::board::Places>,
 }
 
 /// Serves until the listener fails. The socket is the owner's only: whoever can write to it runs agents.
@@ -161,7 +184,28 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
     let session = || request.session.clone().ok_or("Which session?");
     let model = request.model.as_deref();
     let effort = request.effort.as_deref();
+    let integrations = &zerod.integrations;
+    let integration = || request.integration.clone().ok_or("Which integration: github or linear?");
+    let view = || request.view.as_ref().and_then(|v| v.as_str()).map(String::from).ok_or("Which view?");
+    let state = |settings: crate::integrations::Settings| json!({"settings": settings, "linear": integrations.linear_workspace(), "github": integrations.github_known()});
     match request.op.as_str() {
+        // Integrations: their settings and views, what a view shows now, and connecting Linear.
+        "integrations" => { integrations.github_account().await; Ok(state(integrations.settings())) }
+        "setIntegration" => integrations.set_enabled(&integration()?, request.enabled.ok_or("On or off?")?).map(state),
+        "saveView" => integrations.save_view(&integration()?, request.view.clone().ok_or("Which view?")?).map(state),
+        "deleteView" => integrations.delete_view(&integration()?, &view()?).map(state),
+        "orderViews" => integrations.order_views(&integration()?, request.ids.as_deref().ok_or("Which views, in what order?")?).map(state),
+        "viewItems" if request.cached == Some(true) => match integrations.cached(&format!("{}/{}", integration()?, view()?)) {
+            Some(kept) => Ok(json!(crate::integrations::with_tasks(serde_json::from_value(kept).unwrap_or_default(), &tasks(daemon)))),
+            None => Ok(Value::Null),
+        },
+        "viewItems" => integrations.items(&integration()?, &view()?).await.map(|items| json!(crate::integrations::with_tasks(items, &tasks(daemon)))),
+        "startTask" => start_task(zerod, &integration()?, &view()?, request.item.clone().ok_or("Which item?")?),
+        "linearTeams" if request.cached == Some(true) => Ok(integrations.cached("linear/teams").unwrap_or_default()),
+        "linearTeams" => integrations.linear_teams().await,
+        "connectLinear" => integrations.connect_linear().await.map(|url| json!({"url": url})),
+        "disconnectLinear" => integrations.disconnect_linear().map(|_| state(integrations.settings())),
+        "pad" => crate::pads::call(&zerod.pads, request.tool.as_deref().ok_or("Which scratchpad tool?")?, request.args.as_ref().unwrap_or(&Value::Null)),
         "hello" => Ok(json!({"version": VERSION, "pid": std::process::id()})),
         "list" => Ok(json!(daemon.sessions().iter().map(|s| summary(&s.snapshot())).collect::<Vec<_>>())),
         "get" => daemon.get(&session()?).map(|c| json!(c)).ok_or_else(|| format!("No session {}", request.session.unwrap_or_default())),
@@ -178,6 +222,12 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "send" => daemon.send(&session()?, request.text.as_deref().ok_or("Send needs text")?, model, effort).await.map(|_| Value::Null),
         "resume" => daemon.resume(&session()?).await.map(|_| Value::Null),
         "openTerminal" => daemon.open_terminal(&session()?).await.map(|terminal| json!({"terminal": terminal})),
+        "adopt" => {
+            let options = crate::daemon::Options { label: request.label.clone(), ticket: request.ticket.clone(), permissions: request.permissions, ..Default::default() };
+            daemon.adopt(request.provider.unwrap_or(Provider::Claude), request.thread.as_deref().ok_or("Which session?")?,
+                         request.cwd.as_deref().ok_or("Which folder?")?, options).map(|id| json!({"session": id}))
+        }
+        "archive" => daemon.archive(&session()?).await.map(|_| Value::Null),
         "closeTerminal" => daemon.close_terminal(&session()?).await.map(|_| Value::Null),
         "switch" => {
             let provider = request.provider.ok_or("Switch to which provider: codex, claude or opencode?")?;
@@ -233,7 +283,10 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             Ok(json!(inbox.create(incoming, request.keep.unwrap_or(false))))
         }
         "asks" => Ok(json!(inbox.asks())),
-        "board" => Ok(json!(crate::board::board(&daemon.list(), &inbox.asks()))),
+        // Whole sessions, not the list's: a row falls back on its lead's last answer.
+        "board" => Ok(json!(crate::board::board_with(&daemon.sessions().iter().map(|s| s.snapshot()).collect::<Vec<_>>(), &inbox.asks(), &zerod.places.get()))),
+        "place" => daemon.set_place(&session()?, request.place.as_deref()).map(|_| Value::Null),
+        "settings" => Ok(json!(Settings::load(daemon.home()))),
         "choose" => { inbox.choose(&ask()?, option()?); Ok(Value::Null) }
         "answerAsk" => { inbox.answer(&ask()?, option()?, request.text.as_deref().unwrap_or("")); Ok(Value::Null) }
         "reply" => { inbox.reply(&ask()?, request.text.as_deref().ok_or("Reply with text")?); Ok(Value::Null) }
@@ -253,6 +306,7 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             settings.take_back = given.take_back.or(settings.take_back);
             settings.ttl = given.ttl.or(settings.ttl);
             settings.patterns = given.patterns.or(settings.patterns);
+            settings.places = given.places.or(settings.places);
             settings.apply(inbox, zerod.drops.as_deref());
             let _ = std::fs::write(daemon.home().join("settings.json"), serde_json::to_vec_pretty(&settings).unwrap_or_default());
             Ok(Value::Null)
@@ -262,6 +316,45 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
 }
 
 /// A session for a list: everything but its items, and how it's doing, which can't be told without them.
+/// Each session filed under a ticket: (ticket, session).
+fn tasks(daemon: &Daemon) -> Vec<(String, String)> {
+    daemon.sessions().iter().map(|s| s.snapshot()).filter_map(|c| Some((c.ticket?, c.id))).collect()
+}
+
+/// One task per item: its existing one, or a new one from the view's template with a state pad of its own in
+/// Tasks/<ticket>.
+fn start_task(zerod: &Zerod, integration: &str, view: &str, item: Value) -> Result<Value, String> {
+    let item: crate::integrations::Item = serde_json::from_value(item).map_err(|e| format!("Not an item: {e}"))?;
+    let ticket = item.ticket();
+    let folder = format!("{}/{ticket}", crate::pads::TASKS);
+    let pad = |pads: &crate::pads::Pads| pads.list_in(None, Some(&folder)).into_iter().find(|p| p.title == "State" && p.folder == folder).map(|p| p.link);
+    if let Some((_, session)) = tasks(&zerod.daemon).into_iter().find(|(t, _)| *t == ticket) {
+        return Ok(json!({"session": session, "existing": true, "pad": pad(&zerod.pads)}));
+    }
+    let (name, start) = zerod.integrations.start_of(integration, view)?;
+    let start = start.ok_or_else(|| format!("{name} doesn't start tasks yet: give it a folder and a prompt in Integrations"))?;
+    let pad = match pad(&zerod.pads) {
+        Some(link) => link,
+        None => zerod.pads.create("State", &folder, &format!("# {ticket} {}
+
+{}
+
+## State
+
+## Next
+", item.title, item.url))?.link,
+    };
+    let provider: Provider = serde_json::from_value(json!(start.provider.as_deref().unwrap_or("claude"))).map_err(|_| "The provider is codex, claude or opencode")?;
+    let permissions: Option<Permissions> = start.permissions.as_ref().map(|p| serde_json::from_value(json!(p))).transpose().map_err(|_| "Permissions are auto or unrestricted")?;
+    let options = crate::daemon::Options {
+        cwd: Some(match start.cwd.strip_prefix("~/") { Some(rest) => format!("{}/{rest}", std::env::var("HOME").unwrap_or_default()), None => start.cwd.clone() }),
+        model: start.model.clone(), effort: start.effort.clone(), permissions: Some(permissions.unwrap_or_default()),
+        label: Some(format!("{ticket} {}", item.title)), ticket: Some(ticket), force: false,
+    };
+    let session = zerod.daemon.start_with(provider, &crate::integrations::task_prompt(&start.prompt, &item, &pad), options)?;
+    Ok(json!({"session": session, "existing": false, "pad": pad}))
+}
+
 fn summary(conversation: &crate::model::Conversation) -> Value {
     let mut summary = json!(crate::model::Conversation { items: vec![], ..conversation.clone() });
     summary["attention"] = json!(conversation.attention());

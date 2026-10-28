@@ -158,6 +158,17 @@ impl Session {
         self.lock().out.is_some()
     }
 
+    /// While its process runs between turns with nothing open (no approval, question or command), how long since the
+    /// runtime last said anything.
+    pub fn idle_for(&self) -> Option<Duration> {
+        let inner = self.lock();
+        let conversation = inner.core.conversation();
+        // Idle or done, not limited: a limited one is waiting to carry on its turn once the limit resets.
+        let idle = inner.out.is_some() && matches!(conversation.attention(), crate::model::Attention::Idle | crate::model::Attention::Done)
+            && conversation.turn.is_none() && inner.running.is_empty();
+        idle.then(|| inner.heard.elapsed())
+    }
+
     /// Starts the runtime's side of the session, with `prompt` as its first turn.
     pub async fn start(&self, transport: Transport, prompt: &str, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
         match self.provider() {
