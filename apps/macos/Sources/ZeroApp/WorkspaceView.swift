@@ -51,11 +51,14 @@ struct WorkspaceView: View {
     @ViewBuilder private var page: some View {
         switch navigation.place {
         case .board: BoardView(workspace: workspace, open: { navigation.place = .task($0) })
-        case .task(let id) where workspace.conversation(id) != nil: TaskView(workspace: workspace, lead: id).id(id)
+        case .task(let id) where workspace.conversation(id) != nil: TaskView(workspace: workspace, lead: id, navigation: navigation).id(id)
         default: NewTaskView(workspace: workspace, started: { navigation.place = .task($0) })
         }
     }
 }
+
+/// Where the page starts across the window: the rail, then the inner sidebar and its edge.
+let pageStart: CGFloat = 48 + 250 + 1
 
 /// The outer rail: home at the top, settings at the foot, room for more later.
 private struct Rail: View {
@@ -137,12 +140,14 @@ private struct TasksSidebar: View {
     }
 }
 
-// A task: its lead, its workers a click away.
+// A task, laid out as Codex lays one out: its name and actions in the window's title bar (TitleBar), the conversation
+// in a column centred in the page, and a pane floating on the right with what's known about it (its workers a click
+// away).
 
 private struct TaskView: View {
     let workspace: Workspace
     let lead: String
-    @State private var shown: String?
+    @Bindable var navigation: Navigation
 
     private var team: [Conversation] {
         let all = workspace.conversations
@@ -154,38 +159,166 @@ private struct TaskView: View {
 
     var body: some View {
         let team = team
+        let conversation = workspace.conversation(navigation.worker ?? lead)
         let row = workspace.board.first { $0.session == lead }
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    if let row { StateIcon(state: row.state) }
-                    PageTitle(text: row?.task ?? team.first.map(Workspace.label(of:)) ?? "")
-                }
-                Text([row?.ticket ?? team.first?.ticket, row?.place].compactMap { $0 }.joined(separator: " · "))
-                    .font(.callout).foregroundStyle(.secondary)
-                if let row, let needs = row.asks.first?.title ?? row.needs {
-                    Label(needs, systemImage: row.asks.isEmpty ? "hand.raised" : "questionmark.circle")
-                        .font(.callout).foregroundStyle(row.asks.isEmpty ? Color.primary : .orange)
-                }
-                if team.count > 1 {
-                    HStack(spacing: 6) {
-                        ForEach(team) { member in
-                            Button { shown = member.id } label: {
-                                Text(member.id == lead ? "Lead" : Workspace.label(of: member)).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                                    .padding(.horizontal, 10).frame(height: 24)
-                            }
-                            .buttonStyle(Hovering(selected: (shown ?? lead) == member.id, radius: 12, fill: Theme.railSelected, hover: Theme.chip))
-                        }
-                    }
-                    .padding(.top, 6)
+        if let conversation, conversation.terminal != nil {
+            // A terminal runs edge to edge; the pane sits beside it as a column of its own.
+            HStack(spacing: 0) {
+                ConversationView(workspace: workspace, conversation: conversation).id(conversation.id)
+                if navigation.pane {
+                    Rectangle().fill(Theme.stroke).frame(width: 1)
+                    TaskDetails(row: row, conversation: conversation, team: team, lead: lead, shown: $navigation.worker, docked: true)
                 }
             }
-            .centredColumn(760)
-            .padding(.top, 36).padding(.bottom, 12)
-            if let conversation = workspace.conversation(shown ?? lead) {
-                ConversationView(workspace: workspace, conversation: conversation).id(conversation.id)
+        } else {
+            ZStack(alignment: .topTrailing) {
+                if let conversation { ConversationView(workspace: workspace, conversation: conversation).id(conversation.id) }
+                if navigation.pane, let conversation {
+                    TaskDetails(row: row, conversation: conversation, team: team, lead: lead, shown: $navigation.worker).padding(8)
+                }
             }
         }
+    }
+}
+
+/// The window's title bar beside the back and forward arrows, from where the page starts: on a task's page its name,
+/// and what can be done with it (stop a turn, its provider's terminal, the rest in a menu), and the pane's toggle.
+struct TitleBar: View {
+    let workspace: Workspace
+    @Bindable var navigation: Navigation
+    /// How far in from the bar's own edge the page starts.
+    let inset: CGFloat
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Rectangle().fill(Theme.stroke).frame(width: 1, height: 16).padding(.trailing, 12)
+            if case .task(let lead) = navigation.place, let conversation = workspace.conversation(navigation.worker ?? lead) {
+                Text(workspace.board.first { $0.session == lead }?.task ?? workspace.conversation(lead).map(Workspace.label(of:)) ?? "")
+                    .font(.system(size: 13, weight: .medium)).lineLimit(1)
+                drag
+                actions(conversation)
+                BarButton(symbol: "sidebar.right", help: navigation.pane ? "Hide details" : "Show details", selected: navigation.pane) { navigation.pane.toggle() }
+            } else {
+                drag
+            }
+        }
+        .padding(.leading, max(0, inset)).padding(.trailing, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// The bar's empty stretch still moves the window, as a title bar does.
+    private var drag: some View {
+        Color.clear.contentShape(Rectangle()).gesture(WindowDragGesture()).allowsWindowActivationEvents(true)
+    }
+
+    @ViewBuilder private func actions(_ conversation: Conversation) -> some View {
+        let busy = conversation.status == .working || conversation.status == .waiting
+        if busy && conversation.terminal == nil {
+            ProgressView().controlSize(.small).padding(.trailing, 2)
+            Button("Stop") { Task { await workspace.interrupt(conversation.id) } }
+                .keyboardShortcut(".", modifiers: .command).controlSize(.small)
+        }
+        BarButton(symbol: "terminal", help: conversation.terminal == nil
+                  ? "Open in \(conversation.provider.title)'s own terminal, for what only it has"
+                  : "Back to Zero, with what happened in the terminal", selected: conversation.terminal != nil) {
+            Task { conversation.terminal == nil ? await workspace.openTerminal(conversation.id) : await workspace.closeTerminal(conversation.id) }
+        }
+        .disabled(conversation.terminal == nil && (conversation.thread == nil || busy))
+        Menu {
+            if conversation.status == .offline {
+                Button("Resume") { Task { await workspace.resume(conversation.id) } }
+            } else {
+                Button("End session") { Task { await workspace.stop(conversation.id) } }
+            }
+            Button("Copy folder path") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(conversation.cwd, forType: .string)
+            }
+            Button("Show folder in Finder") { NSWorkspace.shared.open(URL(fileURLWithPath: conversation.cwd)) }
+        } label: {
+            Image(systemName: "ellipsis").frame(width: 28, height: 28)
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("More")
+    }
+}
+
+/// A small icon button in a bar: grey, a soft square under the pointer, a firmer one while it's on.
+private struct BarButton: View {
+    let symbol: String
+    let help: String
+    var selected = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 13)).foregroundStyle(selected ? .primary : .secondary).frame(width: 28, height: 28)
+        }
+        .buttonStyle(Hovering(selected: selected, radius: 7, fill: Theme.chip)).help(help)
+    }
+}
+
+/// The pane on a task's right: where it stands, what it needs from you, the agent on it, where it works, its workers.
+private struct TaskDetails: View {
+    let row: BoardRow?
+    let conversation: Conversation
+    let team: [Conversation]
+    let lead: String
+    @Binding var shown: String?
+    /// Beside a terminal: a full-height column on the sidebar's grey rather than a floating card.
+    var docked = false
+
+    var body: some View {
+        details
+            .padding(16).frame(width: 280, alignment: .leading)
+            .frame(maxHeight: docked ? .infinity : nil, alignment: .top)
+            .background(docked ? Theme.composer : Theme.card, in: RoundedRectangle(cornerRadius: docked ? 0 : 14))
+            .overlay { if !docked { RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.stroke) } }
+            .shadow(color: .black.opacity(docked ? 0 : 0.04), radius: 10, y: 2)
+    }
+
+    private var details: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if let row {
+                section("Status") {
+                    HStack(spacing: 6) { StateLabel(state: row.state) }
+                    if let needs = row.asks.first?.title ?? row.needs {
+                        Text(needs).foregroundStyle(row.asks.isEmpty ? Color.primary : .orange)
+                    }
+                }
+            }
+            section("Agent") {
+                Text([conversation.provider.title, conversation.model, conversation.effort].compactMap { $0 }.joined(separator: " · "))
+                if conversation.permissions == .unrestricted { Text("Unrestricted").foregroundStyle(.orange) }
+                if let usage { Text(usage).foregroundStyle(.secondary) }
+            }
+            section("Folder") {
+                Text((conversation.cwd as NSString).abbreviatingWithTildeInPath).truncationMode(.middle)
+                if let branch = conversation.branch { Label(branch, systemImage: "arrow.triangle.branch").foregroundStyle(.secondary) }
+            }
+            if let ticket = conversation.ticket { section("Ticket") { Text(ticket) } }
+            if team.count > 1 {
+                section("Workers") {
+                    ForEach(team) { member in
+                        SidebarItem(member.id == lead ? "Lead" : Workspace.label(of: member), selected: (shown ?? lead) == member.id) { shown = member.id }
+                            .padding(.horizontal, -10)
+                    }
+                }
+            }
+        }
+        .font(.system(size: 12)).lineLimit(2)
+    }
+
+    private func section(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 13, weight: .medium))
+            content().foregroundStyle(.secondary)
+        }
+    }
+
+    /// "5 hours 18% · 7 days 5%": what the provider last reported for the account.
+    private var usage: String? {
+        guard let windows = conversation.usage?.windows, !windows.isEmpty else { return nil }
+        return windows.map { "\($0.name) \(Int(($0.used * 100).rounded()))%" }.joined(separator: " · ")
     }
 }
 
@@ -336,7 +469,17 @@ private struct ConversationView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            if let terminal = conversation.terminal {
+                // The provider's own terminal has the task, for what only it has: the same thread, typed into there.
+                HostTerminal(id: terminal.id, claudeCode: conversation.provider == .claude).id(terminal.id)
+            } else {
+                conversationPane
+            }
+        }
+    }
+
+    private var conversationPane: some View {
+        VStack(spacing: 0) {
             if let health {
                 HStack(spacing: 10) {
                     Label(health.text, systemImage: health.icon).font(.callout).foregroundStyle(health.color)
@@ -350,7 +493,6 @@ private struct ConversationView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20).padding(.vertical, 8).background(health.color.opacity(0.08))
             }
-            Divider()
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {
@@ -443,33 +585,6 @@ private struct ConversationView: View {
         default: "Reply"
         }
     }
-
-    private var header: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text([conversation.provider.title, conversation.model, conversation.effort, conversation.permissions == .unrestricted ? "unrestricted" : nil,
-                      usage, (conversation.cwd as NSString).abbreviatingWithTildeInPath]
-                    .compactMap { $0 }.joined(separator: " · ")).font(.callout).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer()
-            switch conversation.status {
-            case .working, .waiting:
-                ProgressView().controlSize(.small)
-                Button("Stop turn") { Task { await workspace.interrupt(conversation.id) } }.keyboardShortcut(".", modifiers: .command)
-            case .offline:
-                Button("Resume") { Task { await workspace.resume(conversation.id) } }
-            default:
-                Button("End session") { Task { await workspace.stop(conversation.id) } }
-            }
-        }
-        .centredColumn(760).padding(.vertical, 10)
-    }
-
-    /// "5 hours 18% · 7 days 5%": what the provider last reported for the account.
-    private var usage: String? {
-        guard let windows = conversation.usage?.windows, !windows.isEmpty else { return nil }
-        return windows.map { "\($0.name) \(Int(($0.used * 100).rounded()))%" }.joined(separator: " · ")
-    }
 }
 
 /// The agent asking: each field's options as buttons (toggles where several may be picked), its own words where it
@@ -525,10 +640,13 @@ private struct ItemView: View {
             HStack {
                 Spacer(minLength: 80)
                 Text(text).textSelection(.enabled).padding(.horizontal, 14).padding(.vertical, 9)
-                    .background(Theme.knob, in: RoundedRectangle(cornerRadius: 16)).foregroundStyle(Theme.onKnob)
+                    .background(Theme.chip, in: RoundedRectangle(cornerRadius: 16))
             }
-        case let .agent(text, _):
-            MarkdownText(text, cwd: cwd)
+        case let .agent(text, final):
+            VStack(alignment: .leading, spacing: 6) {
+                MarkdownText(text, cwd: cwd)
+                if final { CopyButton(text: text) }
+            }
         case let .reasoning(text):
             DisclosureGroup { Text(text).font(.callout).foregroundStyle(.secondary).textSelection(.enabled) } label: {
                 Label("Thinking", systemImage: "brain").font(.callout).foregroundStyle(.secondary)
@@ -552,6 +670,24 @@ private struct ItemView: View {
             Label(text, systemImage: error ? "exclamationmark.triangle.fill" : "info.circle")
                 .font(.callout).foregroundStyle(error ? Color.red : .secondary)
         }
+    }
+}
+
+/// Copies an answer; a tick for a moment says it did.
+private struct CopyButton: View {
+    let text: String
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            copied = true
+            Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
+        } label: {
+            Image(systemName: copied ? "checkmark" : "square.on.square").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 22, height: 22)
+        }
+        .buttonStyle(Hovering(radius: 6)).help("Copy")
     }
 }
 
