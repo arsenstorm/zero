@@ -237,7 +237,7 @@ final class Panel: NSPanel {
 
     private func makeStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        let mark = NSImage(named: "menubar") ?? NSImage(systemSymbolName: "0.circle", accessibilityDescription: "Zero")
+        let mark = NSImage(named: "menubar")
         mark?.isTemplate = true
         mark?.size = NSSize(width: 18, height: 18)
         statusItem.button?.image = mark
@@ -848,18 +848,17 @@ private final class HistoryItem: NSToolbarItem {
 
     init(identifier: NSToolbarItem.Identifier, navigation: Navigation, target: AppDelegate) {
         self.navigation = navigation
-        func button(_ symbol: String, _ label: String, _ action: Selector) -> NSButton {
-            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
-                .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
-            let button = NSButton(image: image ?? NSImage(), target: target, action: action)
+        func button(_ icon: String, _ label: String, _ action: Selector) -> NSButton {
+            let button = NSButton(image: Nucleo.image(icon, size: 15) ?? NSImage(), target: target, action: action)
+            button.setAccessibilityLabel(label)
             button.isBordered = false
             button.contentTintColor = .secondaryLabelColor
             button.toolTip = label
             button.widthAnchor.constraint(equalToConstant: 24).isActive = true
             return button
         }
-        back = button("arrow.left", "Back", #selector(AppDelegate.goBack))
-        forward = button("arrow.right", "Forward", #selector(AppDelegate.goForward))
+        back = button("arrow-left", "Back", #selector(AppDelegate.goBack))
+        forward = button("arrow-right", "Forward", #selector(AppDelegate.goForward))
         super.init(itemIdentifier: identifier)
         let pair = NSStackView(views: [back, forward])
         pair.spacing = 6

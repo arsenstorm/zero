@@ -43,7 +43,7 @@ struct OnboardingView: View {
                     .font(.system(size: 14)).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 380)
                 VStack(alignment: .leading, spacing: 14) {
                     point(AnyView(BarGlyph()), "The bar", "Sits at the edge of your screen, with a dot for each agent. A dot turns orange when that agent needs you.")
-                    point(AnyView(Image(systemName: "tray").font(.system(size: 15)).foregroundStyle(.secondary)), "The inbox",
+                    point(AnyView(NucleoIcon("inbox", size: 17).foregroundStyle(.secondary)), "The inbox",
                           "Opens from the bar. Answer with 1, 2 or 3, type a reply, or start a new agent.")
                 }
                 .padding(.top, 14).frame(maxWidth: 400)
@@ -64,11 +64,11 @@ struct OnboardingView: View {
                         HotKeyRecorder(settings: settings, minWidth: nil)
                     }
                     Divider()
-                    OnboardingRow(icon: "power", title: "Launch Zero at login", detail: "So agents can always reach you.") {
+                    OnboardingRow(icon: "power-off", title: "Launch Zero at login", detail: "So agents can always reach you.") {
                         Toggle("", isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 })).labelsHidden().toggleStyle(.switch)
                     }
                     Divider()
-                    OnboardingRow(icon: "display.2", title: "Follow the active screen", detail: "The bar moves to the screen you use.") {
+                    OnboardingRow(icon: "monitor", title: "Follow the active screen", detail: "The bar moves to the screen you use.") {
                         Toggle("", isOn: $settings.followActiveScreen).labelsHidden().toggleStyle(.switch)
                     }
                 }
@@ -154,7 +154,7 @@ struct OnboardingRow<Trailing: View>: View {
         HStack(spacing: 12) {
             Group {
                 if let picture { picture.resizable().aspectRatio(contentMode: .fit).frame(width: 20, height: 20).clipShape(RoundedRectangle(cornerRadius: 5)) }
-                else { Image(systemName: icon).font(.system(size: 15)).foregroundStyle(.secondary) }
+                else { NucleoIcon(icon, size: 17).foregroundStyle(.secondary) }
             }
             .frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
@@ -212,7 +212,7 @@ private struct StatusControl: View {
     let action: () -> Void
     var body: some View {
         if done {
-            Label("Allowed", systemImage: "checkmark.circle.fill").labelStyle(.titleAndIcon)
+            NucleoLabel("Allowed", icon: "circle-check", fill: "glyph")
                 .font(.system(size: 12, weight: .medium)).foregroundStyle(.green)
         } else {
             RowButton(title: label, action: action)
@@ -253,14 +253,14 @@ private struct AgentsStep: View {
             OnboardingRow(icon: "sparkle", picture: choiceIcon("claude"), title: "Claude Code", detail: "Asks and progress come to your inbox.") {
                 switch (check.claude, check.plugin) {
                 case (false, _): RowButton(title: "Not installed", enabled: false)
-                case (true, true): Label("Plugin added", systemImage: "checkmark.circle.fill").font(.system(size: 12, weight: .medium)).foregroundStyle(.green)
+                case (true, true): NucleoLabel("Plugin added", icon: "circle-check", fill: "glyph").font(.system(size: 12, weight: .medium)).foregroundStyle(.green)
                 case (true, false): RowButton(title: "Add plugin") { check.addPlugin() }
                 default: ProgressView().controlSize(.small)
                 }
             }
             if let error = check.pluginError { Text(error).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
             Divider()
-            OnboardingRow(icon: "chevron.left.forwardslash.chevron.right", picture: choiceIcon("openai"), title: "Codex", detail: "Start Codex agents from Zero.") {
+            OnboardingRow(icon: "code", picture: choiceIcon("openai"), title: "Codex", detail: "Start Codex agents from Zero.") {
                 RowButton(title: check.codex == false ? "Not installed" : "Coming soon", enabled: false)
             }
         }
@@ -304,11 +304,11 @@ private struct PermissionsStep: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            OnboardingRow(icon: "mic", title: "Microphone", detail: "To dictate a reply instead of typing it.") {
+            OnboardingRow(icon: "microphone", title: "Microphone", detail: "To dictate a reply instead of typing it.") {
                 StatusControl(done: check.microphone == .authorized, label: "Allow") { check.allowMicrophone() }
             }
             Divider()
-            OnboardingRow(icon: "waveform", title: "Speech recognition", detail: "Turns what you say into text, on this Mac.") {
+            OnboardingRow(icon: "waveform-lines", title: "Speech recognition", detail: "Turns what you say into text, on this Mac.") {
                 StatusControl(done: check.speech == .authorized, label: "Allow") { check.allowSpeech() }
             }
         }

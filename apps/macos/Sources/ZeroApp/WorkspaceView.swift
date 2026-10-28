@@ -66,9 +66,9 @@ private struct Rail: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            item("house", selected: place != .settings, help: "Home") { if place == .settings { place = .home } }
+            item("house-4", selected: place != .settings, help: "Home") { if place == .settings { place = .home } }
             Spacer()
-            item("gearshape", selected: place == .settings, help: "Settings") { place = .settings }
+            item("gear", selected: place == .settings, help: "Settings") { place = .settings }
                 .keyboardShortcut(",", modifiers: .command)
         }
         .padding(.top, 50).padding(.bottom, 12)
@@ -77,7 +77,7 @@ private struct Rail: View {
 
     private func item(_ symbol: String, selected: Bool, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: selected ? symbol + ".fill" : symbol).font(.system(size: 15))
+            NucleoIcon(symbol, fill: selected ? "glyph" : "outline", size: 17)
                 .foregroundStyle(selected ? .primary : .secondary)
                 .frame(width: 32, height: 32)
         }
@@ -97,9 +97,9 @@ private struct TasksSidebar: View {
 
     var body: some View {
         SidebarColumn(title: "Zero") {
-            SidebarItem("New task", systemImage: "square.and.pencil", selected: place == .home) { place = .home }
+            SidebarItem("New task", icon: "compose", selected: place == .home) { place = .home }
                 .keyboardShortcut("n", modifiers: .command)
-            SidebarItem("All tasks", systemImage: "tablecells", selected: place == .board) { place = .board }
+            SidebarItem("All tasks", icon: "list-checkbox", selected: place == .board) { place = .board }
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
                     SidebarHeading(text: "Tasks")
@@ -127,7 +127,7 @@ private struct TasksSidebar: View {
     @ViewBuilder private var footer: some View {
         VStack(alignment: .leading, spacing: 4) {
             if !workspace.connected {
-                Label("Connecting to Zero's daemon…", systemImage: "bolt.horizontal")
+                NucleoLabel("Connecting to Zero's daemon…", icon: "plug-off", size: 12)
             }
             // What each provider last said about its limits.
             ForEach(workspace.usage.filter { !$0.1.windows.isEmpty }, id: \.0) { provider, usage in
@@ -197,7 +197,7 @@ struct TitleBar: View {
                     .font(.system(size: 13, weight: .medium)).lineLimit(1)
                 drag
                 actions(conversation)
-                BarButton(symbol: "sidebar.right", help: navigation.pane ? "Hide details" : "Show details", selected: navigation.pane) { navigation.pane.toggle() }
+                BarButton(symbol: "sidebar-right", help: navigation.pane ? "Hide details" : "Show details", selected: navigation.pane) { navigation.pane.toggle() }
             } else {
                 drag
             }
@@ -236,7 +236,7 @@ struct TitleBar: View {
             }
             Button("Show folder in Finder") { NSWorkspace.shared.open(URL(fileURLWithPath: conversation.cwd)) }
         } label: {
-            Image(systemName: "ellipsis").frame(width: 28, height: 28)
+            NucleoIcon("dots", size: 15).foregroundStyle(.secondary).frame(width: 28, height: 28)
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("More")
     }
@@ -251,7 +251,7 @@ private struct BarButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 13)).foregroundStyle(selected ? .primary : .secondary).frame(width: 28, height: 28)
+            NucleoIcon(symbol, size: 15).foregroundStyle(selected ? .primary : .secondary).frame(width: 28, height: 28)
         }
         .buttonStyle(Hovering(selected: selected, radius: 7, fill: Theme.chip)).help(help)
     }
@@ -293,7 +293,7 @@ private struct TaskDetails: View {
             }
             section("Folder") {
                 Text((conversation.cwd as NSString).abbreviatingWithTildeInPath).truncationMode(.middle)
-                if let branch = conversation.branch { Label(branch, systemImage: "arrow.triangle.branch").foregroundStyle(.secondary) }
+                if let branch = conversation.branch { NucleoLabel(branch, icon: "code-branch", size: 12).foregroundStyle(.secondary) }
             }
             if let ticket = conversation.ticket { section("Ticket") { Text(ticket) } }
             if team.count > 1 {
@@ -367,7 +367,7 @@ private struct BoardView: View {
         }
         .overlay {
             if rows.isEmpty {
-                ContentUnavailableView("No tasks", systemImage: "tablecells", description: Text("Start one with New task (⌘N). Each shows here as a row, its workers folded in."))
+                ContentUnavailableView { NucleoLabel("No tasks", icon: "list-checkbox", size: 20) } description: { Text("Start one with New task (⌘N). Each shows here as a row, its workers folded in.") }
             }
         }
     }
@@ -428,19 +428,19 @@ private struct StateIcon: View {
     let state: BoardRow.State
 
     var body: some View {
-        Image(systemName: Self.look(state).symbol).foregroundStyle(Self.look(state).color).help(Self.look(state).name)
+        NucleoIcon(Self.look(state).symbol, fill: "glyph", size: 14).foregroundStyle(Self.look(state).color).help(Self.look(state).name)
     }
 
     static func look(_ state: BoardRow.State) -> (symbol: String, color: Color, name: String) {
         switch state {
-        case .needsYou: ("questionmark.circle.fill", .orange, "Needs you")
-        case .trouble: ("exclamationmark.triangle.fill", .red, "In trouble")
-        case .working: ("arrow.triangle.2.circlepath.circle.fill", .blue, "Working")
-        case .waiting: ("hourglass.circle.fill", .secondary, "Waiting")
-        case .ready: ("checkmark.circle.fill", .green, "Ready for you")
-        case .done: ("checkmark.circle.fill", .secondary, "Done")
-        case .idle: ("moon.circle.fill", .secondary, "Idle")
-        case .offline: ("power.circle.fill", .secondary, "Offline")
+        case .needsYou: ("circle-question", .orange, "Needs you")
+        case .trouble: ("triangle-warning", .red, "In trouble")
+        case .working: ("arrow-rotate-clockwise", .blue, "Working")
+        case .waiting: ("hourglass", .secondary, "Waiting")
+        case .ready: ("circle-check", .green, "Ready for you")
+        case .done: ("circle-check", .secondary, "Done")
+        case .idle: ("moon", .secondary, "Idle")
+        case .offline: ("power-off", .secondary, "Offline")
         }
     }
 }
@@ -482,7 +482,7 @@ private struct ConversationView: View {
         VStack(spacing: 0) {
             if let health {
                 HStack(spacing: 10) {
-                    Label(health.text, systemImage: health.icon).font(.callout).foregroundStyle(health.color)
+                    NucleoLabel(health.text, icon: health.icon).font(.callout).foregroundStyle(health.color)
                     Spacer()
                     // Out of usage: the task carries on with another provider, the whole conversation with it.
                     if conversation.attention == .limited {
@@ -561,7 +561,7 @@ private struct ConversationView: View {
     /// What's wrong, and what to do about it: the session's attention beyond working or waiting.
     private var health: (text: String, icon: String, color: Color)? {
         switch conversation.attention {
-        case .stuck: return (conversation.stalled ?? "Stuck", "exclamationmark.arrow.circlepath", .orange)
+        case .stuck: return (conversation.stalled ?? "Stuck", "triangle-warning", .orange)
         case .limited:
             let reset = (conversation.usage?.resetsAt).map { " Resets \(Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .omitted, time: .shortened))." } ?? ""
             return ("Usage limit reached.\(reset)", "hourglass", .orange)
@@ -573,7 +573,7 @@ private struct ConversationView: View {
             case .model?: " Try another model."
             default: ""
             }
-            return (message + hint, "exclamationmark.triangle", .red)
+            return (message + hint, "triangle-warning", .red)
         default: return nil
         }
     }
@@ -649,7 +649,7 @@ private struct ItemView: View {
             }
         case let .reasoning(text):
             DisclosureGroup { Text(text).font(.callout).foregroundStyle(.secondary).textSelection(.enabled) } label: {
-                Label("Thinking", systemImage: "brain").font(.callout).foregroundStyle(.secondary)
+                NucleoLabel("Thinking", icon: "brain").font(.callout).foregroundStyle(.secondary)
             }
         case let .plan(text):
             Text(text).font(.system(.callout, design: .monospaced)).padding(12).frame(maxWidth: .infinity, alignment: .leading).card()
@@ -667,7 +667,7 @@ private struct ItemView: View {
             }
             .font(.callout).lineLimit(1)
         case let .notice(text, error):
-            Label(text, systemImage: error ? "exclamationmark.triangle.fill" : "info.circle")
+            NucleoLabel(text, icon: error ? "triangle-warning" : "circle-info")
                 .font(.callout).foregroundStyle(error ? Color.red : .secondary)
         }
     }
@@ -685,7 +685,7 @@ private struct CopyButton: View {
             copied = true
             Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
         } label: {
-            Image(systemName: copied ? "checkmark" : "square.on.square").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 22, height: 22)
+            NucleoIcon(copied ? "circle-check" : "copy", size: 13).foregroundStyle(.secondary).frame(width: 22, height: 22)
         }
         .buttonStyle(Hovering(radius: 6)).help("Copy")
     }
@@ -696,9 +696,9 @@ private struct StatusIcon: View {
     var body: some View {
         switch status {
         case .running: ProgressView().controlSize(.mini)
-        case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-        case .failed: Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
-        case .declined: Image(systemName: "hand.raised.fill").foregroundStyle(.orange)
+        case .done: NucleoIcon("circle-check", fill: "glyph", size: 14).foregroundStyle(.green)
+        case .failed: NucleoIcon("circle-xmark", fill: "glyph", size: 14).foregroundStyle(.red)
+        case .declined: NucleoIcon("ban", size: 14).foregroundStyle(.orange)
         }
     }
 }
@@ -718,7 +718,7 @@ private struct CommandCard: View {
                     Text("$ " + command).font(.system(.callout, design: .monospaced)).lineLimit(open ? nil : 1)
                     Spacer()
                     if let exitCode, exitCode != 0 { Text("exit \(exitCode)").font(.caption).foregroundStyle(.red) }
-                    if !output.isEmpty { Image(systemName: open ? "chevron.up" : "chevron.down").foregroundStyle(.secondary) }
+                    if !output.isEmpty { NucleoIcon("chevron-down", size: 13).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary) }
                 }
                 .contentShape(Rectangle())
             }
@@ -746,7 +746,7 @@ private struct FileChangeCard: View {
                     Text(verb).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     Text(relative(change.path, to: cwd)).font(.system(.callout, design: .monospaced)).lineLimit(1).truncationMode(.head)
                     Spacer()
-                    Image(systemName: open ? "chevron.up" : "chevron.down").foregroundStyle(.secondary)
+                    NucleoIcon("chevron-down", size: 13).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary)
                 }
                 .contentShape(Rectangle())
             }
@@ -819,7 +819,7 @@ private struct ApprovalCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(approval.title, systemImage: "hand.raised").font(.headline).foregroundStyle(.orange)
+            NucleoLabel(approval.title, icon: "shield", size: 16).font(.headline).foregroundStyle(.orange)
             if let reason { Text(reason).font(.callout).foregroundStyle(.secondary) }
             if let command = approval.command {
                 Text(command).font(.system(.callout, design: .monospaced)).textSelection(.enabled).padding(10)
@@ -853,7 +853,7 @@ private struct Composer<Controls: View>: View {
             HStack(spacing: 6) {
                 HStack(spacing: 6) { controls }.frame(maxWidth: .infinity, alignment: .leading)
                 Button(action: send) {
-                    Image(systemName: "arrow.up").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.onKnob)
+                    NucleoIcon("arrow-up", size: 13).foregroundStyle(Theme.onKnob)
                         .frame(width: 26, height: 26).background(Theme.knob.opacity(ready ? 1 : 0.25), in: Circle())
                 }
                 .buttonStyle(.plain).keyboardShortcut(.return, modifiers: .command).disabled(!ready)
@@ -881,7 +881,7 @@ private struct ComposerMenu<Items: View>: View {
     var body: some View {
         Menu { items } label: {
             HStack(spacing: 4) {
-                if let symbol { Image(systemName: symbol) }
+                if let symbol { NucleoIcon(symbol, size: 13) }
                 Text(label)
             }
             .font(.system(size: 12))
@@ -918,7 +918,7 @@ private struct NewTaskView: View {
             VStack(spacing: 0) {
                 projectTab
                 Composer(draft: $prompt, placeholder: "Do anything", canSend: !starting && folders.contains(project)) { start() } controls: {
-                    ComposerMenu(label: permissions == .auto ? "Auto" : "Unrestricted", symbol: permissions == .auto ? "hand.raised" : "exclamationmark.shield") {
+                    ComposerMenu(label: permissions == .auto ? "Auto" : "Unrestricted", symbol: permissions == .auto ? "wand-sparkle" : "bolt-lightning") {
                         Picker("Permissions", selection: $permissions) {
                             Text("Auto: \(chosen.title) decides what's safe, and asks you the rest").tag(Permissions.auto)
                             Text("Unrestricted: anything, without asking").tag(Permissions.unrestricted)
@@ -960,7 +960,7 @@ private struct NewTaskView: View {
     @ViewBuilder private var projectTab: some View {
         HStack {
             if folders.isEmpty {
-                Label("Add a project in Settings → Projects", systemImage: "folder").foregroundStyle(.secondary)
+                NucleoLabel("Add a project in Settings → Projects", icon: "folder", size: 13).foregroundStyle(.secondary)
             } else {
                 ComposerMenu(label: folders.contains(project) ? (project as NSString).lastPathComponent : "Choose project", symbol: "folder") {
                     Picker("Project", selection: $project) {

@@ -43,6 +43,7 @@ bundle: build
 	cp $(MACOS)/Resources/Info.plist $(APP)/Contents/Info.plist
 	cp $(MACOS)/Resources/icons/*.png $(APP)/Contents/Resources/
 	cd $(MACOS)/Resources && cp AppIcon.icns logo/menubar.png logo/menubar@2x.png logo/mark.svg logo/mark-small.svg $(CURDIR)/$(APP)/Contents/Resources/
+	cp -R $(MACOS)/Resources/nucleo $(APP)/Contents/Resources/nucleo
 	cp -R plugin $(APP)/Contents/Resources/plugin
 	cp target/drop/zero-drop $(APP)/Contents/Resources/zero-drop-darwin-arm64
 	cp target/x86_64-unknown-linux-musl/drop/zero-drop $(APP)/Contents/Resources/zero-drop-linux-x86_64

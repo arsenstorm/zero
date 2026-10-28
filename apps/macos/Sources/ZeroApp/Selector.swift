@@ -156,7 +156,7 @@ struct SelectorView: View {
                 Text(row.title).font(.system(size: 13, weight: row.selected ? .semibold : .regular)).lineLimit(1)
                 Spacer(minLength: 6)
                 // Effort: shown on the chosen row and the one under the pointer, so a pick and its level sit together.
-                Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold)).opacity(row.selected ? 1 : 0)
+                NucleoIcon("check", size: 13).opacity(row.selected ? 1 : 0)
             }
             .padding(.horizontal, 10)
             .frame(height: Self.rowHeight)

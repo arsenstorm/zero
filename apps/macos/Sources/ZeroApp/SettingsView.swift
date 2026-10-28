@@ -18,14 +18,14 @@ struct SettingsView: View {
         var id: String { rawValue }
         var icon: String {
             switch self {
-            case .general: "slider.horizontal.3"
-            case .inbox: "tray"
-            case .dictation: "mic"
-            case .agents: "circle.grid.2x1"
-            case .projects: "square.stack.3d.up"
-            case .integrations: "puzzlepiece.extension"
-            case .dropFolders: "folder"
-            case .advanced: "gearshape.2"
+            case .general: "sliders"
+            case .inbox: "inbox"
+            case .dictation: "microphone"
+            case .agents: "robot"
+            case .projects: "layers"
+            case .integrations: "puzzle-piece"
+            case .dropFolders: "folder-download"
+            case .advanced: "gears"
             }
         }
         /// General leads on its own, where Home's New task is, so switching between the two moves no row.
@@ -36,11 +36,11 @@ struct SettingsView: View {
     var body: some View {
         HStack(spacing: 0) {
             SidebarColumn(title: "Settings") {
-                SidebarItem(Page.general.rawValue, systemImage: Page.general.icon, selected: page == .general) { page = .general }
+                SidebarItem(Page.general.rawValue, icon: Page.general.icon, selected: page == .general) { page = .general }
                 ForEach(Page.groups, id: \.0) { group, pages in
                     SidebarHeading(text: group)
                     ForEach(pages) { item in
-                        SidebarItem(item.rawValue, systemImage: item.icon, selected: item == page) { page = item }
+                        SidebarItem(item.rawValue, icon: item.icon, selected: item == page) { page = item }
                     }
                 }
             }
@@ -169,9 +169,9 @@ struct Hovering: ButtonStyle {
     }
 }
 
-extension SidebarItem where Icon == Image {
-    init(_ title: String, systemImage: String, selected: Bool = false, action: @escaping () -> Void) {
-        self.init(title: title, selected: selected, action: action) { Image(systemName: systemImage) }
+extension SidebarItem where Icon == NucleoIcon {
+    init(_ title: String, icon: String, selected: Bool = false, action: @escaping () -> Void) {
+        self.init(title: title, selected: selected, action: action) { NucleoIcon(icon, size: 15) }
     }
 }
 
@@ -227,10 +227,10 @@ private struct GeneralPage: View {
             OnboardingRow(icon: "keyboard", title: "Talk hotkey", detail: "Opens the inbox and starts dictation.") {
                 HotKeyRecorder(settings: settings, minWidth: nil)
             }
-            OnboardingRow(icon: "power", title: "Launch Zero at login", detail: "So agents can always reach you.") {
+            OnboardingRow(icon: "power-off", title: "Launch Zero at login", detail: "So agents can always reach you.") {
                 Switch(isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
             }
-            OnboardingRow(icon: "display.2", title: "Follow the active screen", detail: "The bar moves to the screen you use.") {
+            OnboardingRow(icon: "monitor", title: "Follow the active screen", detail: "The bar moves to the screen you use.") {
                 Switch(isOn: $settings.followActiveScreen)
             }
         }
@@ -241,13 +241,13 @@ private struct InboxPage: View {
     @Bindable var settings: Settings
     var body: some View {
         Rows {
-            OnboardingRow(icon: "arrow.uturn.backward", title: "Take-back window", detail: "Esc takes an answer back within this time.") {
+            OnboardingRow(icon: "undo", title: "Take-back window", detail: "Esc takes an answer back within this time.") {
                 HStack(spacing: 6) {
                     Slider(value: $settings.takeBackSeconds, in: 0...5, step: 0.5).frame(width: 80)
                     Text(String(format: "%.1f s", settings.takeBackSeconds)).font(.system(size: 12)).monospacedDigit().frame(width: 38, alignment: .trailing)
                 }
             }
-            OnboardingRow(icon: "forward", title: "Move to the next ask", detail: "3 s after an answer lands.") {
+            OnboardingRow(icon: "arrow-right", title: "Move to the next ask", detail: "3 s after an answer lands.") {
                 Switch(isOn: $settings.autoAdvance)
             }
             OnboardingRow(icon: "clock", title: "Ask expiry", detail: "For asks that set none.") {
@@ -256,7 +256,7 @@ private struct InboxPage: View {
             OnboardingRow(icon: "command", title: "Suggest skills after /", detail: "Commands and skills as you type.") {
                 Switch(isOn: $settings.suggestCommands)
             }
-            OnboardingRow(icon: "at", title: "Suggest files after @", detail: "Files from the agent's project.") {
+            OnboardingRow(icon: "at-sign", title: "Suggest files after @", detail: "Files from the agent's project.") {
                 Switch(isOn: $settings.suggestFiles)
             }
         }
@@ -268,7 +268,7 @@ private struct DictationPage: View {
     @State private var microphones: [(name: String, uid: String)] = []
     var body: some View {
         Rows {
-            OnboardingRow(icon: "mic", title: "Microphone", detail: missing ? "Not connected; the system default is used." : "Used when you dictate a reply.") {
+            OnboardingRow(icon: "microphone", title: "Microphone", detail: missing ? "Not connected; the system default is used." : "Used when you dictate a reply.") {
                 Picker("", selection: Binding(get: { settings.inputDeviceUID ?? "" }, set: { settings.inputDeviceUID = $0.isEmpty ? nil : $0 })) {
                     Text("System default").tag("")
                     ForEach(microphones, id: \.uid) { mic in Text(mic.name).tag(mic.uid) }
@@ -307,7 +307,7 @@ private struct AgentsPage: View {
                                 Text(store.displayName(of: name)).font(.system(size: 13, weight: .medium)).lineLimit(1)
                             }
                             Spacer()
-                            IconButton(symbol: "pencil", help: "Rename") {
+                            IconButton(symbol: "pen", help: "Rename") {
                                 draft = store.names[name] ?? store.displayName(of: name)
                                 editing = name
                                 focused = true
@@ -372,10 +372,10 @@ private struct IntegrationsPage: View {
                         RowButton(title: "Configure") { showingClaude = true }
                     }
                 }
-                OnboardingRow(icon: "chevron.left.forwardslash.chevron.right", picture: choiceIcon("openai"), title: "Codex", detail: "Start Codex agents from Zero.") {
+                OnboardingRow(icon: "code", picture: choiceIcon("openai"), title: "Codex", detail: "Start Codex agents from Zero.") {
                     RowButton(title: "Coming soon", enabled: false)
                 }
-                OnboardingRow(icon: "square.stack", picture: choiceIcon("solo"), title: "Solo", detail: "Starts agents and carries your messages.") {
+                OnboardingRow(icon: "stack", picture: choiceIcon("solo"), title: "Solo", detail: "Starts agents and carries your messages.") {
                     Text(soloStatus).font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 OnboardingRow(icon: "terminal", picture: choiceIcon("rex"), title: "Rex", detail: rexDetail) {
@@ -448,7 +448,7 @@ private struct ClaudeAccountsSheet: View {
             Text("Agents and your terminal use the active account.").font(.system(size: 12)).foregroundStyle(.secondary)
                 .padding(.bottom, 12)
             Rows {
-                OnboardingRow(icon: "puzzlepiece.extension", picture: Image(nsImage: appTile), title: "Zero plugin",
+                OnboardingRow(icon: "puzzle-piece", picture: Image(nsImage: appTile), title: "Zero plugin",
                               detail: "Asks and progress come to your inbox.") {
                     if let plugin {
                         Switch(isOn: Binding(get: { plugin }, set: { on in
@@ -463,11 +463,11 @@ private struct ClaudeAccountsSheet: View {
                         ProgressView().controlSize(.small)
                     }
                 }
-                OnboardingRow(icon: "arrow.left.arrow.right", title: "Auto-switch", detail: "Moves to the account with the most room left.") {
+                OnboardingRow(icon: "circle-arrows-opposite-direction", title: "Auto-switch", detail: "Moves to the account with the most room left.") {
                     Switch(isOn: $accounts.autoSwitch)
                 }
                 // Always shown, dimmed while auto-switch is off, so turning it on moves nothing.
-                OnboardingRow(icon: "gauge.with.dots.needle.67percent", title: "Switch at", detail: "Checked every 5 minutes.") {
+                OnboardingRow(icon: "gauge", title: "Switch at", detail: "Checked every 5 minutes.") {
                     HStack(spacing: 8) {
                         Picker("Limit", selection: $accounts.window) {
                             Text("5 hours").tag(ClaudeAccounts.Window.fiveHour)
@@ -524,7 +524,7 @@ private struct ClaudeAccountsSheet: View {
             ForEach(accounts.accounts) { account in
                 Rectangle().fill(Theme.stroke).frame(height: 1)
                 HStack(spacing: 12) {
-                    (choiceIcon("claude") ?? Image(systemName: "person.crop.circle")).resizable().aspectRatio(contentMode: .fit)
+                    (choiceIcon("claude") ?? Image(nsImage: Nucleo.image("circle-user", size: 18) ?? NSImage())).resizable().aspectRatio(contentMode: .fit)
                         .frame(width: 18, height: 18)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(account.email).font(.system(size: 13, weight: .semibold)).lineLimit(1)
@@ -541,9 +541,9 @@ private struct ClaudeAccountsSheet: View {
                                    enabled: !active) { accounts.remove(account.email) }
                         if active {
                             // Solid, like the token key: this is the account Claude Code runs as.
-                            IconButton(symbol: "checkmark", help: "The account Claude Code uses now", filled: true) {}
+                            IconButton(symbol: "check", help: "The account Claude Code uses now", filled: true) {}
                         } else {
-                            IconButton(symbol: "arrow.left.arrow.right", help: "Switch to this account") {
+                            IconButton(symbol: "circle-arrows-opposite-direction", help: "Switch to this account") {
                                 switchError = accounts.switchTo(account.email)
                             }
                         }
@@ -564,7 +564,7 @@ private struct ClaudeAccountsSheet: View {
             ProgressView().controlSize(.small).frame(width: 26, height: 26)
         default:
             if accounts.perAgent.contains(email) {
-                IconButton(symbol: "key.fill", help: "Single agents can run as \(email). Click to remove its token.", filled: true) {
+                IconButton(symbol: "key:glyph", help: "Single agents can run as \(email). Click to remove its token.", filled: true) {
                     accounts.removePerAgent(email)
                 }
             } else {
@@ -612,7 +612,7 @@ private struct IconButton: View {
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 11, weight: .semibold))
+            NucleoIcon(symbol, size: 13)
                 .foregroundStyle(filled ? AnyShapeStyle(Theme.onKnob) : enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
                 .frame(width: 26, height: 26).background(filled ? Theme.knob : Theme.chip).clipShape(Circle())
         }
@@ -633,7 +633,7 @@ private struct TokenDialog: View {
         VStack(spacing: 0) {
             switch accounts.tokenStatus {
             case .signingIn(let email):
-                header(symbol: "key.fill", tint: Theme.knob, title: "Sign in as \(email)",
+                header(symbol: "key:glyph", tint: Theme.knob, title: "Sign in as \(email)",
                        detail: "Claude's sign-in is open in your browser. If it shows a code, paste it here.")
                 TextField("Paste the code", text: $code)
                     .textFieldStyle(.plain).font(.system(size: 13, design: .monospaced))
@@ -647,11 +647,11 @@ private struct TokenDialog: View {
                     SolidButton(title: "Add token", action: submit).opacity(hasCode ? 1 : 0.4).disabled(!hasCode)
                 }
             case .checking(let email):
-                header(symbol: "key.fill", tint: Theme.knob, title: "Checking the token", detail: "Making sure Claude accepts the token for \(email).")
+                header(symbol: "key:glyph", tint: Theme.knob, title: "Checking the token", detail: "Making sure Claude accepts the token for \(email).")
                 ProgressView().controlSize(.small).padding(.top, 18).frame(height: 36)
                 buttons { RowButton(title: "Cancel") { dismiss() } }
             case .added(let email):
-                header(symbol: "checkmark", tint: .green, title: "Token added",
+                header(symbol: "check", tint: .green, title: "Token added",
                        detail: "Single agents can now run as \(email). Pick it under Account when you start one.")
                 buttons { SolidButton(title: "Done") { dismiss() } }
             case .failed(let email, let reason):
@@ -671,7 +671,7 @@ private struct TokenDialog: View {
     /// A round icon for the state, the title, and one line on what is happening.
     private func header(symbol: String, tint: Color, title: String, detail: String) -> some View {
         VStack(spacing: 10) {
-            Image(systemName: symbol).font(.system(size: 17, weight: .semibold)).foregroundStyle(.white)
+            NucleoIcon(symbol, size: 20).foregroundStyle(.white)
                 .frame(width: 44, height: 44).background(tint).clipShape(Circle())
             Text(title).font(.system(size: 15, weight: .semibold)).multilineTextAlignment(.center)
             Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -778,7 +778,7 @@ private struct ProjectsPage: View {
                 Rows {
                     ForEach(folders, id: \.self) { folder in
                         HStack(spacing: 10) {
-                            Image(systemName: "folder").foregroundStyle(.secondary).frame(width: 18)
+                            NucleoIcon("folder", size: 15).foregroundStyle(.secondary).frame(width: 18)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text((folder as NSString).lastPathComponent).font(.system(size: 13, weight: .medium))
                                 Text(folder.replacingOccurrences(of: NSHomeDirectory(), with: "~")).font(.system(size: 11))
@@ -856,10 +856,10 @@ private struct AdvancedPage: View {
     let showOnboarding: () -> Void
     var body: some View {
         Rows {
-            OnboardingRow(icon: "doc.text", title: "Log", detail: Paths.log.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
+            OnboardingRow(icon: "file-content", title: "Log", detail: Paths.log.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
                 RowButton(title: "View log") { NSWorkspace.shared.open(Paths.log) }
             }
-            OnboardingRow(icon: "sparkles", title: "Onboarding", detail: "See the welcome again.") {
+            OnboardingRow(icon: "sparkle-2", title: "Onboarding", detail: "See the welcome again.") {
                 RowButton(title: "Open", action: showOnboarding)
             }
         }

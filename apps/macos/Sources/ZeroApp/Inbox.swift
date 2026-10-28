@@ -1043,7 +1043,7 @@ private struct EarlierDetail: View {
                         .background(Theme.code).clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 if ask.kind != .run, let answer = ask.answer {
-                    Label(answer, systemImage: ask.state == .declined ? "xmark.circle.fill" : "checkmark.circle.fill")
+                    NucleoLabel(answer, icon: ask.state == .declined ? "circle-xmark" : "circle-check", fill: "glyph", size: 13)
                         .font(.system(size: 12, weight: .medium)).foregroundStyle(ask.state == .declined ? .red : .green)
                 }
             }
@@ -1067,12 +1067,12 @@ private struct EarlierRow: View {
                 Text(shortAge(ask.answeredAt ?? ask.createdAt, now: context.date))
                     .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).frame(width: 30, alignment: .trailing)
             }
-            Image(systemName: symbol).font(.system(size: 10, weight: .medium)).foregroundStyle(.tertiary).frame(width: 14)
+            NucleoIcon(symbol, size: 12).foregroundStyle(.tertiary).frame(width: 14)
             Text(summary).font(.system(size: 12)).foregroundStyle(open ? .primary : .secondary).lineLimit(1)
             Spacer(minLength: 4)
             if let agent = controller.agentFilter, controller.store.canMessage(agent) {
                 Button { controller.quote(ask, to: agent) } label: {
-                    Image(systemName: "arrowshape.turn.up.left").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                    NucleoIcon("share-left", size: 12).foregroundStyle(.secondary)
                         .frame(width: 16, height: 16).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).help("Reply to this").opacity(hovered ? 1 : 0)
@@ -1089,13 +1089,13 @@ private struct EarlierRow: View {
 
     private var symbol: String {
         switch ask.kind {
-        case .note where ask.status == "closed": "xmark.circle"
-        case .note: "text.bubble"
-        case .message: "arrow.up.circle"
+        case .note where ask.status == "closed": "circle-xmark"
+        case .note: "chat-bubble"
+        case .message: "circle-arrow-up"
         case .run: "terminal"
         case .permission: "lock"
-        case .approve: "checkmark.seal"
-        case .question, .choice: "questionmark.bubble"
+        case .approve: "badge-check"
+        case .question, .choice: "circle-question"
         }
     }
 
@@ -1117,7 +1117,7 @@ struct QuietCard: View {
     let controller: InboxController
     var body: some View {
         VStack(spacing: 6) {
-            Image(systemName: "tray").font(.system(size: 22, weight: .regular)).foregroundStyle(.secondary)
+            NucleoIcon("inbox", size: 26).foregroundStyle(.secondary)
                 .padding(.bottom, 4)
             Text("Inbox empty").font(.system(size: 15, weight: .semibold))
         }
@@ -1152,10 +1152,10 @@ struct ReplyBox: View {
                 .frame(minHeight: 18, alignment: .leading)
             HStack(spacing: 10) {
                 Button(action: onMic) {
-                    Image(systemName: dictating ? "waveform" : "mic").foregroundStyle(dictating ? .red : .secondary)
+                    NucleoIcon(dictating ? "waveform-lines" : "microphone", size: 15).foregroundStyle(dictating ? .red : .secondary)
                 }.buttonStyle(.plain)
                 Button(action: onSend) {
-                    Image(systemName: "paperplane").foregroundStyle(.secondary)
+                    NucleoIcon("paper-plane", size: 15).foregroundStyle(.secondary)
                 }.buttonStyle(.plain)
             }
         }
@@ -1304,12 +1304,12 @@ struct ComposerCard: View {
             HStack(spacing: 6) {
                 if agentName == nil {
                     // Where: grouped by adapter, each project with its path.
-                    chip(icon: choiceIcon(project?.icon) ?? Image(systemName: "folder"), title: project?.name ?? "Project",
+                    chip(icon: choiceIcon(project?.icon) ?? Image(nsImage: Nucleo.image("folder", size: 14) ?? NSImage()), title: project?.name ?? "Project",
                          open: controller.selector?.kind == .project) { controller.selectorAgent = nil; controller.openSelector(.project, anchor: projectAnchor) }
                         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { projectAnchor = $0 }
                 }
                 // With what: the runtime's icon and the model's name (an agent's own runtime name until a model is picked for it).
-                chip(icon: choiceIcon(runtime?.icon) ?? Image(systemName: "apple.terminal"),
+                chip(icon: choiceIcon(runtime?.icon) ?? Image(nsImage: Nucleo.image("terminal", size: 14) ?? NSImage()),
                      title: model.map { $0.id.isEmpty ? (runtime?.name ?? "Default") : $0.name + (effort.map { " · " + $0 } ?? "") + (account.map { " · " + $0 } ?? "") }
                         ?? agentName.map(speaker) ?? runtime?.name ?? "Runtime",
                      open: controller.selector?.kind == .runtime) { controller.selectorAgent = agentName; controller.openSelector(.runtime, anchor: runtimeAnchor) }
@@ -1317,16 +1317,16 @@ struct ComposerCard: View {
                 Spacer(minLength: 8)
                 if starting { Spinner().frame(width: 12, height: 12).padding(.trailing, 4) }
                 Button { controller.toggleDictation() } label: {
-                    Image(systemName: controller.dictatingFor == key ? "waveform" : "mic")
+                    NucleoIcon(controller.dictatingFor == key ? "waveform-lines" : "microphone", size: 15)
                         .foregroundStyle(controller.dictatingFor == key ? .red : .secondary)
                 }.buttonStyle(.plain)
                 Button(action: submit) {
-                    Image(systemName: "arrow.up.circle.fill").font(.system(size: 18))
+                    NucleoIcon("circle-arrow-up", fill: "glyph", size: 20)
                         .foregroundStyle(controller.drafts[key, default: ""].isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
                 }.buttonStyle(.plain)
             }
             if let error {
-                Label(error, systemImage: "exclamationmark.circle").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                NucleoLabel(error, icon: "circle-warning", size: 12).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
             }
         }
     }
@@ -1341,7 +1341,7 @@ struct ComposerCard: View {
             HStack(spacing: 5) {
                 icon.resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14).clipShape(RoundedRectangle(cornerRadius: 3))
                 Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
+                NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary)
                     .rotationEffect(.degrees(open ? 180 : 0))
             }
             .padding(.horizontal, 8).padding(.vertical, 4)
@@ -1670,10 +1670,10 @@ struct CardView: View {
             if chosen {
                 ZStack {
                     if failed {
-                        Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(.red)
+                        NucleoIcon("xmark", size: 13).foregroundStyle(.red)
                             .transition(.opacity)
                     } else if settled {
-                        Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(.green)
+                        NucleoIcon("check", size: 13).foregroundStyle(.green)
                             .transition(.opacity)
                     } else {
                         Spinner(color: .orange).frame(width: 12, height: 12).transition(.opacity)
@@ -1802,7 +1802,7 @@ struct PillView: View {
         let waiting = controller.store.open.count
         let selected = controller.agentFilter
         VStack(spacing: 2) {
-            Image(systemName: "tray").font(.system(size: 13, weight: .medium))
+            NucleoIcon("inbox", size: 15)
                 .foregroundStyle(selected == nil && !controller.newAgentOpen ? .primary : .secondary)
                 .overlay(alignment: .topTrailing) {
                     if controller.pinned && selected == nil && !controller.newAgentOpen {
@@ -1817,7 +1817,7 @@ struct PillView: View {
             .onTapGesture(perform: openInbox)
             .help("Open asks")
             if controller.canSpawn {
-                Image(systemName: "plus").font(.system(size: 13, weight: .medium))
+                NucleoIcon("plus", size: 15)
                     .foregroundStyle(controller.newAgentOpen ? .primary : .secondary)
                     .overlay(alignment: .topTrailing) {
                         if controller.pinned && controller.newAgentOpen { PinBadge().offset(x: 4, y: -6) }
@@ -1994,7 +1994,7 @@ struct ScreenCard: View {
                     }.buttonStyle(.plain)
                 }
                 Button { controller.store.closeScreen(of: agent) } label: {
-                    Image(systemName: "xmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.secondary)
+                    NucleoIcon("xmark", size: 13).foregroundStyle(.secondary)
                         .frame(width: 20, height: 20).contentShape(Rectangle())
                 }.buttonStyle(.plain).offset(x: 4)
             }
@@ -2057,7 +2057,7 @@ struct MentionList: View {
             ForEach(Array(state.items.enumerated()), id: \.element.id) { index, item in
                 Button { pick(index) } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: item.kind == .file ? "doc" : "command").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 14)
+                        NucleoIcon(item.kind == .file ? "file" : "command", size: 13).foregroundStyle(.secondary).frame(width: 14)
                         Text(title(item)).font(.system(size: 13, weight: .medium)).lineLimit(1)
                         if let detail = detail(item) {
                             Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
