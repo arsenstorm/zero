@@ -115,7 +115,8 @@ struct SidebarColumn<Content: View>: View {
                     .onChanged { drag in
                         let start = dragged ?? width
                         dragged = start
-                        width = min(max(start + drag.translation.width, SidebarWidth.range.lowerBound), SidebarWidth.range.upperBound)
+                        // Whole points: a fraction puts everything in it between pixels (hairlines read thicker).
+                        width = min(max((start + drag.translation.width).rounded(), SidebarWidth.range.lowerBound), SidebarWidth.range.upperBound)
                     }
                     .onEnded { _ in dragged = nil })
         }

@@ -264,7 +264,7 @@ final class RichTextView: NSTextView {
 
     /// The text it shows (the rendering's own object), and its height at the width last asked.
     var shown: NSAttributedString?
-    private var measured: (width: CGFloat, height: CGFloat)?
+    private var measured: (width: CGFloat, height: CGFloat, used: CGFloat)?
 
     func show(_ text: NSAttributedString) {
         guard text !== shown else { return }
@@ -274,14 +274,17 @@ final class RichTextView: NSTextView {
     }
 
     /// Its height at `width`, laid out once per text and width: SwiftUI asks several times a layout.
-    func height(at width: CGFloat) -> CGFloat {
-        if let measured, measured.width == width { return measured.height }
-        guard let container = textContainer, let layout = layoutManager else { return 0 }
+    func height(at width: CGFloat) -> CGFloat { size(at: width).height }
+
+    /// Its size laid out at `width`: that tall, and as wide as its widest line (a short message's bubble hugs it).
+    func size(at width: CGFloat) -> CGSize {
+        if let measured, measured.width == width { return CGSize(width: measured.used, height: measured.height) }
+        guard let container = textContainer, let layout = layoutManager else { return .zero }
         if container.size.width != width { container.size = NSSize(width: width, height: .greatestFiniteMagnitude) }
         layout.ensureLayout(for: container)
-        let height = ceil(layout.usedRect(for: container).height)
-        measured = (width, height)
-        return height
+        let used = layout.usedRect(for: container)
+        measured = (width, ceil(used.height), min(width, ceil(used.width)))
+        return CGSize(width: min(width, ceil(used.width)), height: ceil(used.height))
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -302,6 +305,7 @@ final class RichTextView: NSTextView {
 /// Markdown in a RichTextView, for SwiftUI.
 struct RichText: NSViewRepresentable {
     let text: NSAttributedString
+    var hugs = false
 
     func makeNSView(context: Context) -> RichTextView { RichTextView() }
 
@@ -312,6 +316,7 @@ struct RichText: NSViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: RichTextView, context: Context) -> CGSize? {
         let width = proposal.width.map { min($0, 10_000) } ?? 560
         view.show(text)
-        return CGSize(width: width, height: view.height(at: width))
+        // As wide as its text, when it hugs (a message of yours); else the width it's given.
+        return hugs ? view.size(at: width) : CGSize(width: width, height: view.height(at: width))
     }
 }
