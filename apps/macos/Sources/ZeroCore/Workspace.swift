@@ -3,9 +3,26 @@ import Observation
 
 /// The app's side of zerod's sessions: a live copy of them for the workspace window, and the requests the window makes.
 /// zerod itself brings their approvals and questions into the inbox (crates/zerod/src/bridge.rs).
+/// One task's whole conversation, observed on its own: a word streamed into it redraws the views showing this task,
+/// not every view that lists tasks.
+@MainActor @Observable
+public final class LiveConversation {
+    public fileprivate(set) var conversation: Conversation
+    /// Its items not loaded, before those that are.
+    public fileprivate(set) var earlier: Int
+    init(_ conversation: Conversation, earlier: Int) { self.conversation = conversation; self.earlier = earlier }
+}
+
 @MainActor @Observable
 public final class Workspace {
-    public private(set) var mirror = ZerodMirror()
+    /// zerod's sessions as its protocol keeps them (snapshots, then changes in order). Views read the roster and each
+    /// task's live object instead, so a change redraws only what it touches.
+    @ObservationIgnored private var mirror = ZerodMirror()
+    /// Each task without its conversation (its first message of yours kept, for its name): what lists, the sidebar and
+    /// the title bar need. It changes when a task's name, state or usage does, not with every word streamed.
+    public private(set) var roster: [String: Conversation] = [:]
+    public private(set) var order: [String] = []
+    @ObservationIgnored private var lives: [String: LiveConversation] = [:]
     public private(set) var connected = false
     /// Why the last request failed, for the window to show.
     public var lastError: String?
@@ -14,6 +31,8 @@ public final class Workspace {
     public private(set) var integrations: IntegrationState?
     public private(set) var items: [String: [IntegrationItem]] = [:]
     public private(set) var itemErrors: [String: String] = [:]
+    /// Bumped whenever zerod says a scratchpad changed: what shows pads reads them again.
+    public private(set) var padsVersion = 0
     /// The scratchpads and their folders, as zerod last listed them.
     public private(set) var pads: [PadSummary] = []
     public private(set) var padFolders: [String] = []
@@ -24,8 +43,44 @@ public final class Workspace {
     /// Every task at once (crates/zerod/src/board.rs), while the window shows it.
     public private(set) var board: [BoardRow] = []
 
-    public var conversations: [Conversation] { mirror.order.compactMap { mirror.conversations[$0] } }
-    public func conversation(_ id: String) -> Conversation? { mirror.conversations[id] }
+    public var conversations: [Conversation] { order.compactMap { roster[$0] } }
+    /// A task as the roster has it: everything but its conversation.
+    public func conversation(_ id: String) -> Conversation? { roster[id] }
+
+    /// A task's whole conversation, observed on its own.
+    public func live(_ id: String) -> LiveConversation? {
+        if let kept = lives[id] { return kept }
+        guard let conversation = mirror.conversations[id] else { return nil }
+        let live = LiveConversation(conversation, earlier: mirror.earlier[id] ?? 0)
+        lives[id] = live
+        return live
+    }
+
+    /// The roster entry and the live object brought up to the mirror for one task.
+    private func sync(_ id: String) {
+        guard let full = mirror.conversations[id] else {
+            roster[id] = nil
+            order.removeAll { $0 == id }
+            lives[id] = nil
+            return
+        }
+        if !order.contains(id) { order = mirror.order.filter { mirror.conversations[$0] != nil } }
+        // Its first message of yours (its name) and its latest answer (how its last turn ended: its state).
+        var light = full
+        let first = full.items.first { if case .user = $0.kind { true } else { false } } ?? roster[id]?.items.first { if case .user = $0.kind { true } else { false } }
+        // Only once its turn has ended, so words streaming into it don't change the roster; nor does the turn's diff.
+        let isAnswer = { (item: ConversationItem) in if case .agent(_, true) = item.kind { true } else { false } }
+        let answer = full.turn == nil ? full.items.last(where: isAnswer) : roster[id]?.items.last(where: isAnswer)
+        light.items = [first, answer].compactMap { $0 }
+        light.diff = nil
+        light.seq = 0
+        if roster[id] != light { roster[id] = light }
+        if let live = lives[id] {
+            live.conversation = full
+            let earlier = mirror.earlier[id] ?? 0
+            if live.earlier != earlier { live.earlier = earlier }
+        }
+    }
 
     /// Each provider's limits as last reported, from the session that heard last (zerod's own rule).
     public var usage: [(Provider, Usage)] {
@@ -53,6 +108,14 @@ public final class Workspace {
         while true {
             if link == nil, await ZerodLink.ensureRunning(), let fresh = try? ZerodLink() {
                 fresh.onMessage = { [weak self] message in Task { @MainActor in self?.receive(message) } }
+                fresh.onFeed = { [weak self] feed in
+                    Task { @MainActor in
+                        switch feed {
+                        case let .board(rows): if self?.board != rows { self?.board = rows }
+                        case .pads: self?.padsVersion += 1
+                        }
+                    }
+                }
                 fresh.onClose = { [weak self] in Task { @MainActor in self?.link = nil; self?.connected = false } }
                 link = fresh
                 if (try? await fresh.subscribe()) != nil { connected = true }
@@ -63,6 +126,11 @@ public final class Workspace {
 
     func receive(_ message: ZerodMirror.Message) {
         if !mirror.receive(message) { onBehind() }
+        switch message {
+        case let .session(conversation): sync(conversation.id)
+        case let .change(event): sync(event.session)
+        case let .earlier(session, _): sync(session)
+        }
     }
 
     // What the window asks of zerod.
@@ -90,18 +158,22 @@ public final class Workspace {
     }
 
     /// How many of a session's items aren't loaded, before those that are.
-    public func earlier(_ session: String) -> Int { mirror.earlier[session] ?? 0 }
+    public func earlier(_ session: String) -> Int { lives[session]?.earlier ?? mirror.earlier[session] ?? 0 }
 
     /// The page of a session's items before those loaded; with `from`, every one from that message on.
     public func loadEarlier(_ session: String, from: String? = nil) async {
         guard let link, earlier(session) > 0 else { return }
-        let first = conversation(session)?.items.first?.id
+        let first = mirror.conversations[session]?.items.first?.id
         guard let page = try? await link.items(session: session, before: first, from: from) else { return }
         mirror.prepend(session, items: page, remaining: max(0, earlier(session) - page.count))
+        sync(session)
     }
 
     /// Back to its latest items, as a snapshot has them: the rest is fetched again when it's wanted.
-    public func trim(_ session: String) { mirror.trim(session, keep: 40) }
+    public func trim(_ session: String) {
+        mirror.trim(session, keep: 40)
+        sync(session)
+    }
 
     public func outline(_ session: String) async -> [OutlineMark] { (try? await link?.outline(session: session)) ?? [] }
 

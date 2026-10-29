@@ -449,6 +449,7 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
         case let .terminal(terminal): self.terminal = terminal
         case .archived: break
         case let .place(place): self.place = place
+        case let .parent(parent): self.parent = parent
         case let .switched(provider, model, effort):
             self.provider = provider; self.thread = nil; self.model = model; self.effort = effort
             // As zerod does: where each provider took over, in the conversation itself.
@@ -480,8 +481,10 @@ public enum Change: Decodable, Equatable, Sendable {
     case archived
     /// Where the task runs, by name.
     case place(String?)
+    /// The task became a worker of another, or a lead again.
+    case parent(String?)
 
-    private enum Keys: String, CodingKey { case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label, ticket, provider, terminal, place }
+    private enum Keys: String, CodingKey { case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label, ticket, provider, terminal, place, parent }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -505,6 +508,7 @@ public enum Change: Decodable, Equatable, Sendable {
         case "terminal": self = .terminal(try c.decodeIfPresent(Opened.self, forKey: .terminal))
         case "archived": self = .archived
         case "place": self = .place(try c.decodeIfPresent(String.self, forKey: .place))
+        case "parent": self = .parent(try c.decodeIfPresent(String.self, forKey: .parent))
         case "switched": self = .switched(try c.decode(Provider.self, forKey: .provider), model: try c.decodeIfPresent(String.self, forKey: .model),
                                           effort: try c.decodeIfPresent(String.self, forKey: .effort))
         case let other: throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "Unknown change \(other)")
@@ -613,6 +617,19 @@ public final class ZerodLink: @unchecked Sendable {
     private var messageHandler: (@Sendable (ZerodMirror.Message) -> Void)?
     private var inboxHandler: (@Sendable (InboxMessage) -> Void)?
     private var closeHandler: (@Sendable () -> Void)?
+    private var feedHandler: (@Sendable (Feed) -> Void)?
+
+    /// What zerod pushes besides sessions, after `subscribe`: the board whenever it changes, and that pads changed.
+    public enum Feed: Sendable {
+        case board([BoardRow])
+        case pads
+    }
+
+    /// The board and notices, on the link's reading thread.
+    public var onFeed: (@Sendable (Feed) -> Void)? {
+        get { lock.withLock { feedHandler } }
+        set { lock.withLock { feedHandler = newValue } }
+    }
 
     /// What `followInbox` brings: every ask with which agents are offline and reachable, then each change.
     public enum InboxMessage: Sendable {
@@ -706,6 +723,13 @@ public final class ZerodLink: @unchecked Sendable {
         let result = try await call("spawn", ["session": lead, "provider": provider?.rawValue, "prompt": prompt, "cwd": cwd, "model": model,
                                               "effort": effort, "permissions": permissions?.rawValue, "label": label, "ticket": ticket])
         guard let session = (result as? [String: Any])?["session"] as? String else { throw ZerodError(message: "zerod started no session") }
+        return session
+    }
+
+    /// A task (by its id, or its Claude Code session's) made a worker of `lead`, taken in first if Zero hasn't it.
+    public func adopt(lead: String, target: String) async throws -> String {
+        let result = try await call("adopt", ["session": lead, "thread": target])
+        guard let session = (result as? [String: Any])?["session"] as? String else { throw ZerodError(message: "zerod adopted nothing") }
         return session
     }
 
@@ -879,6 +903,7 @@ public final class ZerodLink: @unchecked Sendable {
     }
 
     private struct Snapshot: Decodable { let conversation: Conversation; let earlier: Int? }
+    private struct BoardFeed: Decodable { let rows: [BoardRow] }
     private struct Asks: Decodable { let asks: [Ask]; let offline: Set<String>; let reachable: Set<String> }
     private struct OneAsk: Decodable { let ask: Ask }
     private struct Output: Decodable { let ask: String; let chunk: String }
@@ -901,6 +926,11 @@ public final class ZerodLink: @unchecked Sendable {
             let data = Data(line.utf8)
             guard let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
             if let event = message["event"] as? String {
+                if event == "board" {
+                    if let rows = try? JSONDecoder().decode(BoardFeed.self, from: data).rows { onFeed?(.board(rows)) }
+                    continue
+                }
+                if event == "pads" { onFeed?(.pads); continue }
                 let decoded: ZerodMirror.Message? = switch event {
                 case "session": (try? JSONDecoder().decode(Snapshot.self, from: data)).map { snapshot in
                     onMessage?(.earlier(session: snapshot.conversation.id, count: snapshot.earlier ?? 0))
