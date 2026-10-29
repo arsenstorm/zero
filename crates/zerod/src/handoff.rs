@@ -46,6 +46,18 @@ pub fn claude_session(conversation: &Conversation, session: &str) -> String {
     chain.lines.iter().map(|line| line.to_string() + "\n").collect()
 }
 
+/// The conversation as plain text, for a provider that can't be handed one (OpenCode): what each said, and the
+/// commands run, in order.
+pub fn context(conversation: &Conversation) -> String {
+    let lines: Vec<String> = conversation.items.iter().filter_map(|item| match &item.kind {
+        ItemKind::User { text, .. } => Some(format!("User: {text}")),
+        ItemKind::Agent { text, .. } if !text.trim().is_empty() => Some(format!("You: {text}")),
+        ItemKind::Command { command, .. } => Some(format!("You ran: {command}")),
+        _ => None,
+    }).collect();
+    format!("This conversation goes on from an earlier session; here is what was said before, for context. Carry on from it.\n\n{}", lines.join("\n\n"))
+}
+
 /// What a stretch of Claude Code's session file says, as the task's items: what was typed, said and run. Its own
 /// bookkeeping (meta messages, slash-command echoes, system records) and its thinking stay out; each turn's last words
 /// are its answer.

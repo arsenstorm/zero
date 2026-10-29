@@ -35,6 +35,7 @@ impl Adapter for Acp {
                 if method != "session/prompt" { return vec![] }
                 // The agent doesn't echo the prompt: the words are recorded as sent, and the turn runs until it returns.
                 let text = message["params"]["prompt"].as_array().cloned().unwrap_or_default().iter()
+                    .filter(|block| block["_meta"]["zero"] != "context")
                     .filter_map(|block| block["text"].as_str().map(String::from)).collect::<Vec<_>>().join("\n");
                 let turn = Some(key(id));
                 vec![
@@ -271,11 +272,23 @@ fn status(call: &Value) -> ItemStatus {
 // The session's side: what Zero says to the agent, in order.
 
 pub async fn start(session: &Session, transport: Transport, prompt: &str, images: &[String], model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+    start_with_context(session, transport, None, prompt, images, model, effort).await
+}
+
+/// A new session whose first prompt carries `context` (the conversation so far) in a block of its own, marked so
+/// it isn't taken for the user's words.
+pub async fn start_with_context(session: &Session, transport: Transport, context: Option<&str>, prompt: &str, images: &[String], model: Option<&str>,
+                                effort: Option<&str>) -> Result<(), String> {
     initialize(session, transport).await?;
     let cwd = session.snapshot().cwd;
     session.request(|id| json!({"jsonrpc": "2.0", "id": id, "method": "session/new", "params": {"cwd": cwd, "mcpServers": []}})).await?;
     configure(session, model, effort).await?;
-    self::prompt(session, prompt, images)
+    let mut blocks = blocks(prompt, images);
+    if let (Some(context), Some(list)) = (context, blocks.as_array_mut()) {
+        list.insert(0, json!({"type": "text", "text": context, "_meta": {"zero": "context"}}));
+    }
+    let thread = session.snapshot().thread.ok_or("The agent opened no session")?;
+    session.request_later(|id| json!({"jsonrpc": "2.0", "id": id, "method": "session/prompt", "params": {"sessionId": thread, "prompt": blocks}}))
 }
 
 /// The agent's own session again, without its history replayed: the transcript already has it.

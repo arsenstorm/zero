@@ -69,6 +69,10 @@ struct Request {
     args: Option<Value>,
     /// startTask: the view's item (an issue or a pull request) to start a task from.
     item: Option<Value>,
+    /// Rewinding: the message of yours to go back to, and what to bring back (the conversation, the folder's code).
+    message: Option<String>,
+    conversation: Option<bool>,
+    code: Option<bool>,
     /// adopt: the provider's own session id, to take in as a task.
     thread: Option<String>,
     /// send: images with the words, by their files.
@@ -249,6 +253,10 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
                          request.cwd.as_deref().ok_or("Which folder?")?, options).map(|id| json!({"session": id}))
         }
         "archive" => daemon.archive(&session()?).await.map(|_| Value::Null),
+        "rewindPreview" => daemon.rewind_preview(&session()?, request.message.as_deref().ok_or("Back to which message?")?),
+        "rewind" => daemon.rewind(&session()?, request.message.as_deref().ok_or("Back to which message?")?, request.conversation.unwrap_or(true),
+                                  request.code.unwrap_or(false)).await,
+        "branch" => daemon.branch(&session()?, request.message.as_deref().ok_or("Branch from which message?")?),
         "closeTerminal" => daemon.close_terminal(&session()?).await.map(|_| Value::Null),
         "switch" => {
             let provider = request.provider.ok_or("Switch to which provider: codex, claude or opencode?")?;

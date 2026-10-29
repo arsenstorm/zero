@@ -293,6 +293,18 @@ impl Session {
         }
     }
 
+    /// A new thread for a conversation without one: for OpenCode, which can't be handed a conversation, the earlier one
+    /// goes with the message as context (handoff.rs), not as words of yours.
+    pub async fn restart(&self, transport: Transport, context: Option<&str>, prompt: &str, images: &[String], model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+        match (self.provider(), context) {
+            (Provider::Opencode, Some(context)) => {
+                self.keep_images(images);
+                acp::start_with_context(self, transport, Some(context), prompt, images, model, effort).await
+            }
+            _ => self.start_with_images(transport, prompt, images, model, effort).await,
+        }
+    }
+
     /// The images go on the next message of yours, now and on replay.
     fn keep_images(&self, images: &[String]) {
         if images.is_empty() { return }

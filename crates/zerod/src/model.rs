@@ -39,6 +39,9 @@ pub struct Conversation {
     /// Why the last turn or request failed, until the next turn starts.
     pub error: Option<String>,
     pub items: Vec<Item>,
+    /// The folder as it was when each message of yours went, by the message's id: a git commit (snapshots.rs).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub snapshots: std::collections::BTreeMap<String, String>,
     pub approvals: Vec<Approval>,
     /// What the agent asked Arsen, waiting for his answer.
     #[serde(default)]
@@ -348,6 +351,11 @@ pub enum Change {
     Place { place: Option<String> },
     /// The task became a worker of another (a lead adopting it), or a lead of its own again.
     Parent { parent: Option<String> },
+    /// The folder was kept (snapshots.rs) as it was when this message of yours went.
+    Snapshot { item: String, commit: String },
+    /// Back to just before this message of yours: it and everything after it go, and so does the provider's thread,
+    /// which goes on from Zero's record up to here.
+    Rewound { before: String },
 }
 
 /// A change as clients receive it: which session, and its place in that session's sequence.
@@ -362,7 +370,7 @@ impl Conversation {
     pub fn new(id: &str, provider: Provider, cwd: &str) -> Self {
         Conversation {
             id: id.into(), provider, cwd: cwd.into(), permissions: Permissions::Auto, label: None, ticket: None, place: None, branch: None, parent: None, thread: None, title: None, model: None, effort: None,
-            status: Status::Starting, turn: None, error: None, items: vec![], approvals: vec![], questions: vec![], usage: None,
+            status: Status::Starting, turn: None, error: None, items: vec![], snapshots: Default::default(), approvals: vec![], questions: vec![], usage: None,
             failure: None, stalled: None, diff: None, terminal: None, seq: 0,
         }
     }
@@ -378,7 +386,7 @@ impl Conversation {
             id: self.id.clone(), provider: self.provider, cwd: self.cwd.clone(), permissions: self.permissions, label: self.label.clone(),
             ticket: self.ticket.clone(), place: self.place.clone(), branch: self.branch.clone(), parent: self.parent.clone(), thread: self.thread.clone(),
             title: self.title.clone(), model: self.model.clone(), effort: self.effort.clone(), status: self.status, turn: self.turn.clone(),
-            error: self.error.clone(), items, approvals: self.approvals.clone(), questions: self.questions.clone(), usage: self.usage.clone(),
+            error: self.error.clone(), items, snapshots: self.snapshots.clone(), approvals: self.approvals.clone(), questions: self.questions.clone(), usage: self.usage.clone(),
             failure: self.failure.clone(), stalled: self.stalled.clone(), diff: self.diff.clone(), terminal: self.terminal.clone(), seq: self.seq,
         }
     }
@@ -456,6 +464,20 @@ impl Conversation {
             Change::Archived => {}
             Change::Place { place } => self.place = place,
             Change::Parent { parent } => self.parent = parent,
+            Change::Snapshot { item, commit } => { self.snapshots.insert(item, commit); }
+            Change::Rewound { before } => {
+                if let Some(at) = self.items.iter().position(|i| i.id == before) { self.items.truncate(at) }
+                let kept: std::collections::HashSet<&str> = self.items.iter().map(|i| i.id.as_str()).collect();
+                self.snapshots.retain(|item, _| kept.contains(item.as_str()));
+                self.thread = None;
+                self.turn = None;
+                self.approvals.clear();
+                self.questions.clear();
+                self.diff = None;
+                self.error = None;
+                self.failure = None;
+                self.stalled = None;
+            }
             Change::Switched { provider, model, effort } => {
                 self.provider = provider;
                 self.thread = None;

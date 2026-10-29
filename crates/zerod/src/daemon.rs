@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
 use crate::claude;
-use crate::model::{Attention, Change, Conversation, Event, Opened, Permissions, Provider, Status};
+use crate::model::{Attention, Change, Conversation, Event, ItemKind, Opened, Permissions, Provider, Status};
 use crate::process;
 use crate::session::{Session, Transport};
 
@@ -193,9 +193,12 @@ impl Daemon {
         session.announce();
         if options.label.is_some() || options.ticket.is_some() { session.change(Change::Named { label: options.label.clone(), ticket: options.ticket.clone() }) }
         let (prompt, model, effort, images) = (prompt.to_string(), model.map(String::from), effort.map(String::from), options.images.clone());
+        let (cwd, name) = (conversation.cwd.clone(), format!("{id}/{}", millis()));
         tokio::spawn(async move {
-            if let Err(error) = session.start_with_images(transport, &prompt, &images, model.as_deref(), effort.as_deref()).await {
-                session.report(&error);
+            let kept = tokio::task::spawn_blocking(move || crate::snapshots::take(Path::new(&cwd), &name)).await.ok().flatten();
+            match session.start_with_images(transport, &prompt, &images, model.as_deref(), effort.as_deref()).await {
+                Ok(()) => if let Some(commit) = kept { attach_snapshot(&session, commit) },
+                Err(error) => session.report(&error),
             }
         });
         Ok(id)
@@ -367,8 +370,40 @@ impl Daemon {
         if let Some(conversation) = self.get(id) && conversation.terminal.is_some() {
             return Err(format!("{} is open in its terminal; type there, or go back to Zero", conversation.provider.title()));
         }
-        if !session.is_attached() { self.resume(id).await? }
-        session.send_with_images(text, images, model, effort).await
+        // The folder as it is before the agent reads the message: what rewinding to it brings back.
+        let kept = self.keep_folder(&session).await;
+        let conversation = session.snapshot();
+        if !session.is_attached() && conversation.thread.is_none() && (conversation.items.is_empty() || conversation.provider == Provider::Opencode) {
+            self.restart(&session, text, images, model, effort).await?;
+        } else {
+            if !session.is_attached() { self.resume(id).await? }
+            session.send_with_images(text, images, model, effort).await?;
+        }
+        if let Some(commit) = kept { attach_snapshot(&session, commit) }
+        Ok(())
+    }
+
+    /// The task's folder kept as it is now (snapshots.rs), off the async threads: git reads the whole folder.
+    async fn keep_folder(&self, session: &Session) -> Option<String> {
+        let (cwd, name) = (session.summary().cwd, format!("{}/{}", session.id(), millis()));
+        tokio::task::spawn_blocking(move || crate::snapshots::take(Path::new(&cwd), &name)).await.ok().flatten()
+    }
+
+    /// A new thread for a conversation that has none: rewound to its first message, or (OpenCode, which can't be
+    /// handed a conversation) rewound anywhere, the earlier conversation then going with the message as context.
+    async fn restart(&self, session: &Session, text: &str, images: &[String], model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+        let mut conversation = session.snapshot();
+        let context = (conversation.provider == Provider::Opencode && !conversation.items.is_empty()).then(|| crate::handoff::context(&conversation));
+        if conversation.provider == Provider::Claude {
+            let thread = claude::new_session_id();
+            session.change(Change::Thread { thread: thread.clone(), model: None, effort: None });
+            conversation.thread = Some(thread);
+        }
+        let (model, effort) = (model.or(conversation.model.as_deref()).map(String::from), effort.or(conversation.effort.as_deref()).map(String::from));
+        let argv = conversation.provider.command(&conversation, false, model.as_deref(), effort.as_deref());
+        let transport = (self.runtime)(&conversation, &self.home.join("sessions").join(&conversation.id), &argv)
+            .map_err(|e| format!("{} didn't start: {e}", conversation.provider.title()))?;
+        session.restart(transport, context.as_deref(), text, images, model.as_deref(), effort.as_deref()).await
     }
 
     /// ponytail: two resumes of one session at once each start a process, and the later one wins; a per-session
@@ -399,14 +434,88 @@ impl Daemon {
         if conversation.terminal.is_some() { return Err(format!("{} is open in its terminal; go back to Zero first", conversation.provider.title())) }
         self.take_offline(&session).await;
         session.change(Change::Switched { provider, model: model.map(Into::into), effort: effort.map(Into::into) });
-        if provider == Provider::Claude {
-            let thread = claude::new_session_id();
-            let folder = crate::handoff::claude_folder(&self.user_home(), &conversation.cwd);
-            std::fs::create_dir_all(&folder).and_then(|_| std::fs::write(folder.join(format!("{thread}.jsonl")), crate::handoff::claude_session(&session.snapshot(), &thread)))
-                .map_err(|e| format!("Couldn't write the conversation for Claude Code: {e}"))?;
-            session.change(Change::Thread { thread, model: None, effort: None });
-        }
+        self.rethread(&session)
+    }
+
+    /// The provider given a thread made from Zero's record (handoff.rs): Claude Code a session file of its own; Codex,
+    /// with no thread, imports the record when it next resumes; OpenCode, with none, starts afresh with it as context.
+    fn rethread(&self, session: &Session) -> Result<(), String> {
+        let conversation = session.snapshot();
+        if conversation.provider != Provider::Claude || conversation.items.is_empty() { return Ok(()) }
+        let thread = claude::new_session_id();
+        let folder = crate::handoff::claude_folder(&self.user_home(), &conversation.cwd);
+        std::fs::create_dir_all(&folder).and_then(|_| std::fs::write(folder.join(format!("{thread}.jsonl")), crate::handoff::claude_session(&conversation, &thread)))
+            .map_err(|e| format!("Couldn't write the conversation for Claude Code: {e}"))?;
+        session.change(Change::Thread { thread, model: None, effort: None });
         Ok(())
+    }
+
+    // Going back to a message of yours.
+
+    /// The folder kept now and noted as how it was when `item` went (what sending does before each message).
+    pub fn snapshot_for(&self, id: &str, item: &str) -> Option<String> {
+        let session = self.session(id).ok()?;
+        let commit = crate::snapshots::take(Path::new(&session.summary().cwd), &format!("{id}/{}", millis()))?;
+        session.change(Change::Snapshot { item: item.into(), commit: commit.clone() });
+        Some(commit)
+    }
+
+    /// What going back to `item` would do to the folder: whether it was kept then, and what changed in it since.
+    pub fn rewind_preview(&self, id: &str, item: &str) -> Result<serde_json::Value, String> {
+        let conversation = self.session(id)?.snapshot();
+        yours(&conversation, item)?;
+        let since = conversation.snapshots.get(item).and_then(|commit| crate::snapshots::preview(Path::new(&conversation.cwd), commit));
+        Ok(match since {
+            Some(diff) => serde_json::json!({"snapshot": true, "files": diff.files, "insertions": diff.insertions, "deletions": diff.deletions}),
+            None => serde_json::json!({"snapshot": false}),
+        })
+    }
+
+    /// Back to just before `item`, a message of yours: the conversation (its provider going on from Zero's record up to
+    /// there), the folder as it was when the message went, or both. Gives the message back, to send again or change.
+    pub async fn rewind(&self, id: &str, item: &str, conversation: bool, code: bool) -> Result<serde_json::Value, String> {
+        let session = self.session(id)?;
+        let current = session.snapshot();
+        let (_, text, images) = yours(&current, item)?;
+        if current.terminal.is_some() { return Err(format!("{} is open in its terminal; go back to Zero first", current.provider.title())) }
+        if matches!(current.status, Status::Working | Status::Waiting) { return Err(format!("{} is working; stop its turn first", current.provider.title())) }
+        let mut restored = serde_json::Value::Null;
+        if code {
+            let commit = current.snapshots.get(item).cloned().ok_or("Zero didn't keep the folder for that message, so its code can't be brought back")?;
+            let (cwd, point) = (current.cwd.clone(), format!("{id}/restore-{}", millis()));
+            let diff = tokio::task::spawn_blocking(move || crate::snapshots::restore(Path::new(&cwd), &commit, &point)).await.map_err(|e| e.to_string())??;
+            restored = serde_json::json!(diff);
+        }
+        if conversation {
+            self.take_offline(&session).await;
+            session.change(Change::Rewound { before: item.into() });
+            self.rethread(&session)?;
+        }
+        Ok(serde_json::json!({"text": text, "images": images, "code": restored}))
+    }
+
+    /// A new task beside this one, its conversation as it was just before `item`; this one stays as it is. Gives the
+    /// message back, to send there.
+    pub fn branch(&self, id: &str, item: &str) -> Result<serde_json::Value, String> {
+        let original = self.session(id)?.snapshot();
+        let (at, text, images) = yours(&original, item)?;
+        let branch = new_id();
+        let mut conversation = Conversation::new(&branch, original.provider, &original.cwd);
+        conversation.permissions = original.permissions;
+        conversation.parent = original.parent.clone();
+        conversation.branch = original.branch.clone();
+        let session = Session::new(conversation, Some(self.home.join("sessions").join(&branch)), self.events.clone()).map_err(|e| e.to_string())?;
+        session.change(Change::Status { status: Status::Offline, turn: None, error: None });
+        for kept in &original.items[..at] { session.change(Change::Item { item: kept.clone() }) }
+        for kept in &original.items[..at] {
+            if let Some(commit) = original.snapshots.get(&kept.id) { session.change(Change::Snapshot { item: kept.id.clone(), commit: commit.clone() }) }
+        }
+        session.change(Change::Named { label: Some(format!("{} (branch)", crate::bridge::label(&original))), ticket: original.ticket.clone() });
+        self.rethread(&session)?;
+        self.attention.lock().unwrap().insert(branch.clone(), Attention::Offline);
+        self.sessions.lock().unwrap().push(session.clone());
+        session.announce();
+        Ok(serde_json::json!({"session": branch, "text": text, "images": images}))
     }
 
     pub async fn interrupt(&self, id: &str) -> Result<(), String> {
@@ -686,6 +795,27 @@ fn new_id() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let millis = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
     format!("{millis:012x}{:04x}", COUNTER.fetch_add(1, Ordering::Relaxed) & 0xffff)
+}
+
+/// A message of yours in the conversation: where it is, its words and its images.
+fn yours(conversation: &Conversation, item: &str) -> Result<(usize, String, Vec<String>), String> {
+    let at = conversation.items.iter().position(|i| i.id == item).ok_or("That message isn't in the conversation")?;
+    match &conversation.items[at].kind {
+        ItemKind::User { text, images } => Ok((at, text.clone(), images.clone())),
+        _ => Err("Only a message of yours can be gone back to".into()),
+    }
+}
+
+/// A snapshot taken as a message went, noted against that message: the latest of yours without one.
+fn attach_snapshot(session: &Session, commit: String) {
+    let conversation = session.snapshot();
+    let Some(item) = conversation.items.iter().rev().find(|i| matches!(i.kind, ItemKind::User { .. })) else { return };
+    if conversation.snapshots.contains_key(&item.id) { return }
+    session.change(Change::Snapshot { item: item.id.clone(), commit });
+}
+
+fn millis() -> u128 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
 }
 
 /// The folder a Claude Code session ran in, from the first of its records that says.
