@@ -1367,10 +1367,14 @@ struct CardView: View {
     @Bindable var controller: InboxController
     var focus: FocusState<String?>.Binding
 
-    init(ask: Ask, controller: InboxController, focus: FocusState<String?>.Binding) {
+    /// Flat: no card of its own (a row's detail on the inbox page, inside the table).
+    var flat = false
+
+    init(ask: Ask, controller: InboxController, focus: FocusState<String?>.Binding, flat: Bool = false) {
         self.ask = ask
         self.controller = controller
         self.focus = focus
+        self.flat = flat
         // A card already seen is shown as it is from its first frame, even in a view built afresh.
         _entered = State(initialValue: controller.seen.contains(ask.id))
     }
@@ -1596,10 +1600,10 @@ struct CardView: View {
         // A reply hugs its text like a chat bubble, up to about 65% of the column, and sits left.
         .modifier(BubbleWidth(hug: ask.kind == .note, max: 220))
         .opacity(dimmed ? 0.55 : 1) // 0.45 left light-mode text with too small an L gap to read
-        .padding(.horizontal, 14).padding(.vertical, ask.kind == .note ? 12 : 14)
-        .background(Theme.card)
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke, lineWidth: 1))
+        .padding(.horizontal, flat ? 16 : 14).padding(.vertical, ask.kind == .note ? 12 : 14)
+        .background(flat ? Color.clear : Theme.card)
+        .clipShape(RoundedRectangle(cornerRadius: flat ? 0 : 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(flat ? Color.clear : Theme.stroke, lineWidth: 1))
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .onHover { if $0, ask.state == .waiting { controller.select(ask.id) } }

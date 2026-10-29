@@ -53,6 +53,12 @@ struct WorkspaceView: View {
                 case .settings: settings()
                 case .integrations: IntegrationsPane(workspace: workspace)
                 case .pads, .pad: ScratchpadsPage(workspace: workspace, navigation: navigation)
+                case .inbox:
+                    HStack(spacing: 0) {
+                        InboxSidebar(controller: inbox)
+                        Rectangle().fill(Theme.stroke).frame(width: 1)
+                        AsksPage(controller: inbox).frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.card)
+                    }
                 case .integration(let name):
                     IntegrationPage(workspace: workspace, integration: Integration(rawValue: name) ?? .github, edit: { Integration.edit(name, place: &navigation.place) },
                                     openTask: { navigation.place = .task($0) }).id(name)
@@ -80,7 +86,7 @@ struct WorkspaceView: View {
     @ViewBuilder private var page: some View {
         switch navigation.place {
         case .board: BoardView(workspace: workspace, open: { navigation.place = .task($0) })
-        case .inbox: AsksPage(controller: inbox)
+        case .agent(let name): AgentPage(controller: inbox, name: name).id(name)
         case .task(let id) where workspace.conversation(id) != nil: TaskView(workspace: workspace, lead: id, navigation: navigation).id(id)
         default: NewTaskView(workspace: workspace, started: { navigation.place = .task($0) })
         }
@@ -236,6 +242,7 @@ private struct TasksSidebar: View {
     @AppStorage("taskSort") private var sort = Sort.state
     /// The dragged order, one lead per line; tasks not in it yet go on top.
     @AppStorage("taskOrder") private var order = ""
+    @State private var sortHovered = false
 
     enum Sort: String, CaseIterable { case state, name, manual }
 
@@ -312,8 +319,9 @@ private struct TasksSidebar: View {
             let earlier = earlier(all)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
-                    HStack(alignment: .lastTextBaseline) {
-                        SidebarHeading(text: "Tasks")
+                    // The heading where every sidebar's is, its sort button centred over the tasks' state icons below.
+                    HStack(spacing: 0) {
+                        Text("Tasks").font(.system(size: 13)).foregroundStyle(.secondary).padding(.leading, 10)
                         Spacer()
                         Menu {
                             Picker("Sort by", selection: $sort) {
@@ -323,10 +331,18 @@ private struct TasksSidebar: View {
                             }
                             .pickerStyle(.inline)
                         } label: {
-                            NucleoIcon("sliders", size: 12).foregroundStyle(.tertiary)
+                            NucleoIcon("sliders", size: 13).foregroundStyle(.secondary).frame(width: 24, height: 24)
+                                .background(sortHovered ? Theme.hover : .clear, in: RoundedRectangle(cornerRadius: 6))
+                                .contentShape(Rectangle())
                         }
-                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().padding(.trailing, 10).help("Sort tasks")
+                        // Drawn as its label, not as AppKit's pop-up button: the square shows under the pointer.
+                        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                        .onHover { sortHovered = $0 }
+                        // A row's state icon is 14 pt, 10 pt in from the edge: its centre is 17 pt in, as this 24 pt button's.
+                        .padding(.trailing, 5).help("Sort tasks")
                     }
+                    // A 16 pt heading line with 18 above and 6 below, as SidebarHeading has, now 24 pt for the button.
+                    .padding(.top, 14).padding(.bottom, 2)
                     if workspace.board.isEmpty {
                         Text("No tasks").font(.system(size: 13)).foregroundStyle(.tertiary).padding(.horizontal, 10)
                     }
@@ -371,6 +387,7 @@ private struct TasksSidebar: View {
                 // The last task clear of the fade at the foot.
                 .padding(.bottom, 36)
             }
+            .thinScrollbar(outset: 10, remember: "sidebar.tasks") // in the sidebar's padding: at its edge, clear of the rows
             .scrollIndicators(.never)
             // Soft edges, as the conversation has: more above, more below.
             .mask {
@@ -486,6 +503,17 @@ struct TitleBar: View {
     /// How far in from the bar's own edge the page starts, with the sidebar at its standard width.
     let inset: CGFloat
     @AppStorage(SidebarWidth.key) private var sidebarWidth = SidebarWidth.standard
+    @AppStorage(InboxFilter.key) private var inboxFilter = InboxFilter.waiting
+    @AppStorage(InboxFilter.titleKey) private var inboxFilterTitle = ""
+
+    /// "Inbox" for what's waiting; "Inbox – Answered", or the agent's name, for the rest.
+    private var inboxTitle: String {
+        switch inboxFilter {
+        case InboxFilter.waiting: "Inbox"
+        case InboxFilter.answered: "Inbox – Answered"
+        default: "Inbox – " + inboxFilterTitle
+        }
+    }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -501,7 +529,7 @@ struct TitleBar: View {
             } else if navigation.ready, navigation.place == .board || navigation.place == .inbox {
                 // The page's name in the bar, as a task's is.
                 Rectangle().fill(Theme.stroke).frame(width: 1, height: 16).padding(.trailing, 12)
-                Text(navigation.place == .inbox ? "Inbox" : "All tasks").font(.system(size: 13, weight: .medium)).lineLimit(1)
+                Text(navigation.place == .inbox ? inboxTitle : "All tasks").font(.system(size: 13, weight: .medium)).lineLimit(1)
                     .onTapGesture(count: 2, perform: Self.doubleClicked)
                 drag
             } else {
@@ -770,6 +798,7 @@ private struct BoardView: View {
             .centredColumn(1040)
             .padding(.vertical, 36)
         }
+        .thinScrollbar(remember: "board")
         .overlay {
             if rows.isEmpty {
                 ContentUnavailableView { NucleoLabel("No tasks", icon: "list-checkbox", size: 20) } description: { Text("Start one with New task (⌘N). Each shows here as a row, its workers folded in.") }
@@ -1086,6 +1115,18 @@ private struct ConversationView: View {
     }
 
 
+    /// Where you are in the conversation: at its end (nothing kept), or the block at the top of the screen.
+    private func rememberScroll() {
+        guard let geometry = tracker.geometry else { return }
+        if geometry.contentSize.height - (geometry.contentOffset.y + geometry.containerSize.height) < 60 {
+            ScrollMemory.keep(nil, in: conversation.id)
+            return
+        }
+        let order = TimelineBlock.of(conversation.items, working: false).map(\.id)
+        guard let top = order.first(where: { tracker.seen[$0] != nil }), let turn = tracker.seen[top] else { return }
+        ScrollMemory.keep((top, turn), in: conversation.id)
+    }
+
     /// The message as a quote at the end of what's being written.
     private func quote(_ text: String) {
         let quoted = text.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n")
@@ -1175,6 +1216,8 @@ private struct ConversationView: View {
                 .defaultScrollAnchor(.bottom, for: .initialOffset)
                 .defaultScrollAnchor(.bottom, for: .sizeChanges)
                 .scrollPosition($position)
+                // Where you were in it, kept when scrolling stops and when you leave.
+                .onScrollPhaseChange { _, phase in if phase == .idle { rememberScroll() } }
                 .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { _, now in tracker.geometry = now }
                 // Soft edges: at the top, there's more above; just above the composer, the text fades out before it,
                 // as Codex's does, with nothing behind the composer but the page.
@@ -1215,8 +1258,22 @@ private struct ConversationView: View {
                     outline = await workspace.outline(conversation.id)
                 }
                 // Left, it goes back to its latest items: memory doesn't grow with every long task opened.
-                .onDisappear { workspace.trim(conversation.id) }
-                .onAppear { if let waiting = workspace.pendingDrafts.removeValue(forKey: conversation.id) { draft = waiting } }
+                .onDisappear { rememberScroll(); workspace.trim(conversation.id) }
+                // Back where you were: the block that was at the top of the screen, its older page loaded first if
+                // it isn't any more. At the end, it opens at the end, as ever.
+                .task {
+                    guard let kept = ScrollMemory.place(in: conversation.id) else { return }
+                    if !conversation.items.contains(where: { $0.id == kept.turn }) { await workspace.loadEarlier(conversation.id, from: kept.turn) }
+                    try? await Task.sleep(for: .milliseconds(80))
+                    position.scrollTo(id: kept.block, anchor: .top)
+                }
+                // What you'd written and attached and not sent yet, kept as you go (a branch's message waiting first).
+                .onAppear {
+                    if let kept = Drafts.load("task:" + conversation.id) { draft = kept.text; images = kept.images }
+                    if let waiting = workspace.pendingDrafts.removeValue(forKey: conversation.id) { draft = waiting }
+                }
+                .onChange(of: draft) { Drafts.save("task:" + conversation.id, text: draft, images: images) }
+                .onChange(of: images) { Drafts.save("task:" + conversation.id, text: draft, images: images) }
                 .overlay {
                     if let item = rewinding {
                         RewindCard(workspace: workspace, task: conversation.id, item: item, close: { rewinding = nil }) { rewound, conversationToo in
@@ -1444,6 +1501,7 @@ private struct CommandCard: View {
             .buttonStyle(.plain)
             if open && !output.isEmpty {
                 ScrollView { Text(output).font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+                .thinScrollbar()
                     .frame(maxHeight: 280)
             }
         }
@@ -1916,6 +1974,7 @@ private struct AddMenu: View {
                         }
                     }
                 }
+                .thinScrollbar()
                 .scrollIndicators(.never)
                 .frame(height: 8 * 33)
                 .onAppear { searching = true }
@@ -2125,7 +2184,12 @@ private struct NewTaskView: View {
             .padding(.horizontal, 36).padding(.bottom, 18)
         }
         .frame(maxWidth: .infinity)
-        .onAppear { if !folders.contains(project) { project = folders.first ?? "" } }
+        .onAppear {
+            if !folders.contains(project) { project = folders.first ?? "" }
+            if let kept = Drafts.load("new") { prompt = kept.text; images = kept.images }
+        }
+        .onChange(of: prompt) { Drafts.save("new", text: prompt, images: images) }
+        .onChange(of: images) { Drafts.save("new", text: prompt, images: images) }
     }
 
     /// The folder it starts in, as a tab behind the composer's top edge.
@@ -2189,46 +2253,226 @@ struct BehindWindow: NSViewRepresentable {
     func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }
 
-/// The inbox as a page: what agents are waiting on you for, as the panel's cards (answered there or here, the same),
-/// then what was answered today.
+/// What the inbox page shows, kept between visits: what's waiting, what's been answered, or one agent's asks.
+enum InboxFilter {
+    static let key = "inboxFilter"
+    /// The agent's name as shown, for the title bar, which doesn't know the inbox's agents.
+    static let titleKey = "inboxFilterTitle"
+    static let waiting = "waiting", answered = "answered"
+    static func agent(_ name: String) -> String { "agent:" + name }
+}
+
+/// The inbox's own sidebar: what's waiting and what's been answered, then each agent that has asked you anything,
+/// with how many of its asks wait on you.
+struct InboxSidebar: View {
+    @Bindable var controller: InboxController
+    @AppStorage(InboxFilter.key) private var filter = InboxFilter.waiting
+    @AppStorage(InboxFilter.titleKey) private var filterTitle = ""
+
+    var body: some View {
+        let asks = AsksPage.asks(controller)
+        let waiting = asks.filter { !$0.state.isFinal }
+        // Agents by their latest ask, newest first.
+        let agents = asks.reversed().reduce(into: [String]()) { names, ask in if !names.contains(ask.agent.name) { names.append(ask.agent.name) } }
+        SidebarColumn(title: "Inbox") {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 1) {
+                    row(InboxFilter.waiting, "Waiting on you", count: waiting.count) { NucleoIcon("hourglass", size: 15) }
+                    row(InboxFilter.answered, "Answered", count: nil) { NucleoIcon("circle-check", size: 15) }
+                    if !agents.isEmpty {
+                        SidebarHeading(text: "Agents")
+                        ForEach(agents, id: \.self) { name in
+                            let open = waiting.filter { $0.agent.name == name }.count
+                            row(InboxFilter.agent(name), controller.store.displayName(of: name), count: open > 0 ? open : nil) {
+                                Circle().fill(open > 0 ? Color.orange : Theme.stroke).frame(width: 7, height: 7)
+                            }
+                        }
+                    }
+                }
+                .padding(.bottom, 36)
+            }
+            .thinScrollbar(outset: 10, remember: "sidebar.inbox") // in the sidebar's padding: at its edge, clear of the rows
+        }
+    }
+
+    private func row(_ id: String, _ title: String, count: Int?, @ViewBuilder icon: () -> some View) -> some View {
+        Button { filter = id; filterTitle = title } label: {
+            HStack(spacing: 9) {
+                icon().foregroundStyle(.secondary).frame(width: 18)
+                Text(title).font(.system(size: 13)).lineLimit(1)
+                Spacer(minLength: 0)
+                if let count, count > 0 { Text("\(count)").font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary) }
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 10).frame(height: 30)
+        }
+        .buttonStyle(Hovering(selected: filter == id))
+    }
+}
+
+/// The inbox as a page: the board's table of asks, with the control bar's card for the one picked opening under its
+/// row, so it's answered right there (the same card, answered here or in the panel alike).
 struct AsksPage: View {
     @Bindable var controller: InboxController
+    @AppStorage(InboxFilter.key) private var filter = InboxFilter.waiting
     @FocusState private var focus: String?
+    /// The row whose card is open; the oldest waiting one until another is picked.
+    @State private var picked: String?
 
     /// Asks for you (not notes or messages), one card for runs several agents asked for alike.
-    private static func asks(_ controller: InboxController) -> [Ask] {
+    static func asks(_ controller: InboxController) -> [Ask] {
         controller.store.asks.filter { $0.kind != .note && $0.kind != .message && $0.state != .expired && $0.sameAs == nil }
     }
 
     static func waiting(_ controller: InboxController) -> [Ask] { asks(controller).filter { !$0.state.isFinal } }
 
+    /// What the filter shows: waiting oldest first (a queue), answered newest first.
+    private var shown: [Ask] {
+        let all = Self.asks(controller)
+        let answered = Array(all.filter(\.state.isFinal).sorted { ($0.answeredAt ?? $0.createdAt) > ($1.answeredAt ?? $1.createdAt) }.prefix(50))
+        switch filter {
+        case InboxFilter.waiting: return all.filter { !$0.state.isFinal }
+        case InboxFilter.answered: return answered
+        default:
+            let name = String(filter.dropFirst("agent:".count))
+            return all.filter { $0.agent.name == name && !$0.state.isFinal } + answered.filter { $0.agent.name == name }
+        }
+    }
+
     var body: some View {
-        let waiting = Self.waiting(controller)
-        let today = Date().addingTimeInterval(-86400)
-        let answered = Array(Self.asks(controller).filter { $0.state.isFinal && ($0.answeredAt ?? .distantPast) > today }.suffix(20).reversed())
+        let asks = shown
+        // "" is every row closed, on purpose.
+        let open: String? = picked == "" ? nil : picked.flatMap { id in asks.first { $0.id == id }?.id } ?? asks.first { !$0.state.isFinal }?.id
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                heading("Waiting on you", "Questions, approvals and commands agents asked you for, oldest first.")
-                if waiting.isEmpty {
-                    Text("Nothing is waiting on you.").font(.system(size: 13)).foregroundStyle(.secondary)
-                } else {
-                    VStack(spacing: 10) { ForEach(waiting) { CardView(ask: $0, controller: controller, focus: $focus).id($0.id) } }
+                if !asks.isEmpty { table(asks, open: open) }
+            }
+            .centredColumn(1040)
+            .padding(.vertical, 36)
+        }
+        .thinScrollbar(remember: "inbox")
+        .overlay { if asks.isEmpty { empty } }
+        .onChange(of: filter) { picked = nil }
+    }
+
+    private func table(_ asks: [Ask], open: String?) -> some View {
+        ArticlePanel {
+            line(head: true, ask: Text("Ask"), agent: Text("Agent"), kind: Text("Kind"), since: Text("When")).padding(.vertical, -3)
+        } content: {
+            VStack(spacing: 0) {
+                ForEach(Array(asks.enumerated()), id: \.element.id) { index, ask in
+                    if index > 0 { Rectangle().fill(Theme.stroke).frame(height: 1) }
+                    // Open, the row and the control bar's card (flat, to answer it here) are one lifted surface.
+                    VStack(spacing: 0) {
+                        Button { picked = open == ask.id ? "" : ask.id } label: {
+                            line(head: false,
+                                 ask: Text(ask.title).foregroundStyle(.primary).lineLimit(2).help(ask.title),
+                                 agent: Text(controller.store.displayName(of: ask.agent.name)).foregroundStyle(.secondary).lineLimit(1),
+                                 kind: Text(Self.kind(ask)).foregroundStyle(.secondary),
+                                 since: since(ask))
+                        }
+                        .buttonStyle(Hovering(radius: 0, fill: .clear, hover: open == ask.id ? .clear : Theme.rowHover))
+                        if open == ask.id {
+                            CardView(ask: ask, controller: controller, focus: $focus, flat: true).padding(.top, -10)
+                        }
+                    }
+                    .background(open == ask.id ? Theme.rowHover : .clear)
                 }
-                if !answered.isEmpty {
-                    heading("Answered today", "Newest first.").padding(.top, 14)
-                    VStack(spacing: 10) { ForEach(answered) { CardView(ask: $0, controller: controller, focus: $focus).id($0.id) } }.opacity(0.85)
-                }
+            }
+        }
+    }
+
+    private func line(head: Bool, ask: some View, agent: some View, kind: some View, since: some View) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 16) {
+            ask.frame(maxWidth: .infinity, alignment: .leading)
+            agent.frame(width: 180, alignment: .leading)
+            kind.frame(width: 100, alignment: .leading)
+            since.frame(width: 110, alignment: .leading)
+        }
+        .font(head ? .system(size: 12, weight: .medium) : .system(size: 13))
+        .tracking(head ? -0.2 : 0)
+        .foregroundStyle(head ? AnyShapeStyle(.primary) : AnyShapeStyle(.primary.opacity(0.85)))
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .contentShape(Rectangle())
+    }
+
+    private static func kind(_ ask: Ask) -> String {
+        switch ask.kind {
+        case .question, .choice: "Question"
+        case .approve, .permission: "Approval"
+        case .run: "Command"
+        case .note: "Note"
+        case .message: "Message"
+        }
+    }
+
+    /// When it was asked (waiting, in orange) or answered: the time today, the date before.
+    private func since(_ ask: Ask) -> some View {
+        let date = ask.state.isFinal ? (ask.answeredAt ?? ask.createdAt) : ask.createdAt
+        return Text(MessageBlock<EmptyView>.stamp(date) + (ask.state == .declined ? " · declined" : ""))
+            .foregroundStyle(ask.state.isFinal ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange)).lineLimit(1)
+    }
+
+    /// Nothing to show: said plainly, with what would show here.
+    private var empty: some View {
+        let (title, detail): (String, String) = switch filter {
+        case InboxFilter.waiting: ("You're all caught up", "When an agent asks you something, wants an approval or needs a command run, it lands here, and the bar's inbox turns orange.")
+        case InboxFilter.answered: ("Nothing answered yet", "Asks you answer show here, newest first.")
+        default: ("Nothing from this agent", "Its questions, approvals and commands show here when it asks.")
+        }
+        return VStack(spacing: 14) {
+            NucleoIcon("inbox", fill: "glyph", size: 26).foregroundStyle(.secondary)
+                .frame(width: 64, height: 64).background(Theme.row, in: Circle())
+            VStack(spacing: 6) {
+                Text(title).font(.system(size: 17, weight: .semibold))
+                Text(detail).font(.system(size: 13)).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 360)
+            }
+        }
+        .padding(.top, 40)
+    }
+}
+
+/// An agent Zero doesn't run (Solo's, Rex's, Claude Code in a terminal), opened from the docked bar: its conversation
+/// with you, as the panel shows it, with the box to message it.
+struct AgentPage: View {
+    @Bindable var controller: InboxController
+    let name: String
+    @FocusState private var focus: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                PageTitle(text: controller.store.displayName(of: name))
+                AgentTimeline(controller: controller, focus: $focus)
             }
             .centredColumn(620)
             .padding(.vertical, 36)
         }
+        .thinScrollbar()
         .scrollIndicators(.never)
+        .defaultScrollAnchor(.bottom)
+        // The panel's conversation view follows the agent it's set to; the panel is hidden while the bar is docked.
+        .onAppear { controller.agentFilter = name }
+        .onDisappear { if controller.agentFilter == name { controller.agentFilter = nil } }
+    }
+}
+
+/// What's written and attached in a composer and not sent yet, by composer ("task:<id>", "new"): kept as you type, so
+/// quitting Zero (an update) loses none of it. Images are Zero's own copies (~/.zero/attachments), kept by path.
+enum Drafts {
+    private struct Draft: Codable { var text: String; var images: [String] }
+    private static let key = "drafts"
+
+    static func load(_ composer: String) -> (text: String, images: [URL])? {
+        guard let data = UserDefaults.standard.dictionary(forKey: key)?[composer] as? Data,
+              let draft = try? JSONDecoder().decode(Draft.self, from: data) else { return nil }
+        return (draft.text, draft.images.filter { FileManager.default.fileExists(atPath: $0) }.map { URL(fileURLWithPath: $0) })
     }
 
-    private func heading(_ title: String, _ detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.system(size: 15, weight: .semibold))
-            Text(detail).font(.system(size: 13)).foregroundStyle(.secondary)
-        }
+    /// Nothing written or attached: gone.
+    static func save(_ composer: String, text: String, images: [URL]) {
+        var all = UserDefaults.standard.dictionary(forKey: key) ?? [:]
+        all[composer] = text.isEmpty && images.isEmpty ? nil : try? JSONEncoder().encode(Draft(text: text, images: images.map(\.path)))
+        UserDefaults.standard.set(all, forKey: key)
     }
 }
