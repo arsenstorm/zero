@@ -49,3 +49,17 @@ fn a_summary_has_only_what_a_list_or_the_board_needs() {
     assert_eq!(ids(&summary.items), ["a49"], "its answer, for the board's Now; not the conversation");
     assert_eq!(summary.answer(), Some("answer 49"));
 }
+
+#[test]
+fn a_page_starts_at_a_message_of_yours_so_a_long_turn_comes_whole() {
+    let (events, _) = broadcast::channel(1024);
+    let session = Session::new(Conversation::new("s", Provider::Claude, "/w"), None, events).unwrap();
+    let item = |id: &str, kind| Item { id: id.into(), turn: None, kind, status: ItemStatus::Done, at: None };
+    session.change(Change::Item { item: item("u0", ItemKind::User { text: "first".into(), images: vec![] }) });
+    session.change(Change::Item { item: item("u1", ItemKind::User { text: "long one".into(), images: vec![] }) });
+    for n in 0..50 { session.change(Change::Item { item: item(&format!("s{n}"), ItemKind::Agent { text: format!("step {n}"), final_answer: false }) }) }
+    let (recent, earlier) = session.recent(40);
+    assert_eq!((recent.items.first().unwrap().id.as_str(), recent.items.len(), earlier), ("u1", 51, 1), "the whole turn, not its last 40 steps");
+    let page = session.items(Some("s45"), None, 10);
+    assert_eq!((page.first().unwrap().id.as_str(), page.len()), ("u1", 46), "a page back to the message its turn began with");
+}
