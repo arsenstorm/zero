@@ -24,5 +24,6 @@ pub mod process;
 pub mod rex;
 pub mod server;
 pub mod session;
+pub mod snapshots;
 pub mod solo;
 pub mod terminal;
