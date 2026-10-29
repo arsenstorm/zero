@@ -56,7 +56,7 @@ async fn harness(name: &str) -> Harness {
     let daemon = Daemon::open(&home, runtime(seen.clone(), commands.clone())).unwrap();
     tokio::spawn(zerod::server::serve(zerod::server::Zerod { daemon, inbox: zerod::inbox::Inbox::open(None, vec![]), drops: None,
         integrations: zerod::integrations::Integrations::open(&home, Arc::new(zerod::integrations::Commands::default())),
-        pads: Arc::new(zerod::pads::Pads::open(&home.join("scratchpads"))), places: Default::default() }, socket.clone()));
+        pads: Arc::new(zerod::pads::Pads::open(&home.join("scratchpads"))), places: Default::default(), notices: tokio::sync::broadcast::channel(64).0 }, socket.clone()));
     for _ in 0..100 {
         if UnixStream::connect(&socket).await.is_ok() { break }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -124,6 +124,8 @@ impl Client {
                     assert_eq!(event["seq"], json!(target.seq + 1), "no gaps, no repeats");
                     target.apply(serde_json::from_value(event["change"].clone()).unwrap());
                 }
+                // The board and pad notices come on the same subscription.
+                "board" | "pads" => {}
                 other => panic!("unknown event {other}"),
             }
         }
@@ -206,7 +208,7 @@ async fn sessions_survive_a_daemon_restart_and_a_message_resumes_one() {
     let daemon = Daemon::open(&h.home, runtime(h.seen.clone(), h.commands.clone())).unwrap();
     tokio::spawn(zerod::server::serve(zerod::server::Zerod { daemon, inbox: zerod::inbox::Inbox::open(None, vec![]), drops: None,
         integrations: zerod::integrations::Integrations::open(&h.home, Arc::new(zerod::integrations::Commands::default())),
-        pads: Arc::new(zerod::pads::Pads::open(&h.home.join("scratchpads"))), places: Default::default() }, socket.clone()));
+        pads: Arc::new(zerod::pads::Pads::open(&h.home.join("scratchpads"))), places: Default::default(), notices: tokio::sync::broadcast::channel(64).0 }, socket.clone()));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let mut again = Client::connect(&socket).await;
     let listed = again.call(json!({"op": "list"})).await;
@@ -344,4 +346,20 @@ async fn an_issue_starts_one_task_with_a_state_pad_of_its_own() {
     let pr = json!({"id": "PR_5", "key": "#5", "title": "Docs", "url": "u", "place": "o/r", "state": "Open", "updated": "t"});
     let unset = client.call(json!({"op": "startTask", "integration": "github", "view": "mine", "item": pr})).await;
     assert_eq!(unset["error"], "My pull requests doesn't start tasks yet: give it a folder and a prompt in Integrations");
+}
+
+#[tokio::test]
+async fn a_subscriber_is_sent_the_board_and_told_when_pads_change() {
+    let h = harness("server-feed").await;
+    let mut watcher = Client::connect(&h.socket).await;
+    assert_eq!(watcher.call(json!({"op": "subscribe"})).await["ok"], true);
+    let board = loop { let event = watcher.event().await; if event["event"] == "board" { break event } };
+    assert_eq!(board["rows"], json!([]), "pushed at once, no polling");
+    let mut writer = Client::connect(&h.socket).await;
+    writer.call(json!({"op": "pad", "tool": "create", "args": {"title": "Notes"}})).await;
+    loop { if watcher.event().await["event"] == "pads" { break } }
+    writer.call(json!({"op": "pad", "tool": "list"})).await;
+    // Reading isn't a change.
+    let quiet = tokio::time::timeout(std::time::Duration::from_millis(300), watcher.event()).await;
+    assert!(quiet.map(|e| e["event"] != "pads").unwrap_or(true));
 }

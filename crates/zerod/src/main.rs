@@ -94,7 +94,7 @@ async fn main() {
     let pads = Arc::new(zerod::pads::Pads::open(&beside.join("scratchpads")));
     let places = Arc::new(zerod::board::Places::default());
     tokio::spawn(places.clone().follow(home.clone()));
-    let zerod = zerod::server::Zerod { daemon: daemon.clone(), inbox, drops: Some(drops), integrations, pads, places };
+    let zerod = zerod::server::Zerod { daemon: daemon.clone(), inbox, drops: Some(drops), integrations, pads, places, notices: tokio::sync::broadcast::channel(64).0 };
     // Codex processes end with the daemon: their input closes when it exits.
     tokio::select! {
         served = zerod::server::serve(zerod, socket.clone()) => if let Err(error) = served { eprintln!("zerod: {error}"); std::process::exit(1) },

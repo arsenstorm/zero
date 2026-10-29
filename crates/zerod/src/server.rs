@@ -121,6 +121,8 @@ pub struct Zerod {
     pub integrations: Arc<crate::integrations::Integrations>,
     pub pads: Arc<crate::pads::Pads>,
     pub places: Arc<crate::board::Places>,
+    /// Changes that aren't a session's, for subscribers: "pads" when a scratchpad changes.
+    pub notices: broadcast::Sender<&'static str>,
 }
 
 /// Serves until the listener fails. The socket is the owner's only: whoever can write to it runs agents.
@@ -144,7 +146,7 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
             if write.write_all(&line).await.is_err() { break }
         }
     });
-    let (mut subscription, mut inbox) = (None, None);
+    let (mut subscription, mut inbox, mut feed) = (None, None, None);
     let mut lines = BufReader::new(read).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         // An unknown provider is refused here, as a bad request: zerod only starts what it has an adapter for. The
@@ -159,6 +161,7 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
         };
         if request.op == "subscribe" {
             if subscription.is_none() { subscription = Some(tokio::spawn(subscribe(zerod.daemon.clone(), out.clone()))) }
+            if feed.is_none() { feed = Some(tokio::spawn(self::feed(zerod.clone(), out.clone()))) }
             let _ = out.send(json!({"id": request.id, "ok": true, "result": null}));
             continue;
         }
@@ -177,7 +180,7 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
             let _ = out.send(answer);
         });
     }
-    for task in [subscription, inbox].into_iter().flatten() { task.abort() }
+    for task in [subscription, inbox, feed].into_iter().flatten() { task.abort() }
     drop(out);
     let _ = writer.await;
 }
@@ -211,9 +214,14 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "linearTeams" => integrations.linear_teams().await,
         "connectLinear" => integrations.connect_linear().await.map(|url| json!({"url": url})),
         "disconnectLinear" => integrations.disconnect_linear().map(|_| state(integrations.settings())),
-        "pad" => crate::pads::call(&zerod.pads, request.tool.as_deref().ok_or("Which scratchpad tool?")?, request.args.as_ref().unwrap_or(&Value::Null)),
+        "pad" => {
+            let tool = request.tool.as_deref().ok_or("Which scratchpad tool?")?;
+            let result = crate::pads::call(&zerod.pads, tool, request.args.as_ref().unwrap_or(&Value::Null));
+            if result.is_ok() && !matches!(tool, "list" | "read" | "find") { let _ = zerod.notices.send("pads"); }
+            result
+        }
         "hello" => Ok(json!({"version": VERSION, "pid": std::process::id()})),
-        "list" => Ok(json!(daemon.sessions().iter().map(|s| summary(&s.snapshot())).collect::<Vec<_>>())),
+        "list" => Ok(json!(daemon.sessions().iter().map(|s| summary(&s.summary())).collect::<Vec<_>>())),
         "get" => daemon.get(&session()?).map(|c| json!(c)).ok_or_else(|| format!("No session {}", request.session.unwrap_or_default())),
         "start" => {
             let provider = request.provider.ok_or("Start needs a provider: codex, claude or opencode")?;
@@ -233,6 +241,8 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         }
         "resume" => daemon.resume(&session()?).await.map(|_| Value::Null),
         "openTerminal" => daemon.open_terminal(&session()?).await.map(|terminal| json!({"terminal": terminal})),
+        // From a session: the task or Claude Code session becomes its worker.
+        "adopt" if request.session.is_some() => daemon.adopt_into(&session()?, request.thread.as_deref().ok_or("Which task or session?")?).map(|id| json!({"session": id})),
         "adopt" => {
             let options = crate::daemon::Options { label: request.label.clone(), ticket: request.ticket.clone(), permissions: request.permissions, ..Default::default() };
             daemon.adopt(request.provider.unwrap_or(Provider::Claude), request.thread.as_deref().ok_or("Which session?")?,
@@ -277,7 +287,7 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "label" => daemon.label(&session()?, request.label.as_deref(), request.ticket.as_deref()).map(|_| Value::Null),
         "workers" => {
             let lead = session()?;
-            Ok(json!(daemon.sessions().iter().map(|s| s.snapshot()).filter(|c| c.parent.as_deref() == Some(lead.as_str())).map(|c| summary(&c)).collect::<Vec<_>>()))
+            Ok(json!(daemon.sessions().iter().map(|s| s.summary()).filter(|c| c.parent.as_deref() == Some(lead.as_str())).map(|c| summary(&c)).collect::<Vec<_>>()))
         }
         "result" => Ok(json!({"answer": daemon.last_answer(&session()?)})),
         "wait" => {
@@ -333,7 +343,7 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
 /// A session for a list: everything but its items, and how it's doing, which can't be told without them.
 /// Each session filed under a ticket: (ticket, session).
 fn tasks(daemon: &Daemon) -> Vec<(String, String)> {
-    daemon.sessions().iter().map(|s| s.snapshot()).filter_map(|c| Some((c.ticket?, c.id))).collect()
+    daemon.sessions().iter().map(|s| s.summary()).filter_map(|c| Some((c.ticket?, c.id))).collect()
 }
 
 /// One task per item: its existing one, or a new one from the view's template with a state pad of its own in
@@ -374,6 +384,36 @@ fn summary(conversation: &crate::model::Conversation) -> Value {
     let mut summary = json!(crate::model::Conversation { items: vec![], ..conversation.clone() });
     summary["attention"] = json!(conversation.attention());
     summary
+}
+
+/// What isn't a session's change, pushed rather than polled for: the board whenever it changes (worked out at most
+/// four times a second while sessions change, and every half minute for what changes on its own, places and clocks),
+/// and each notice ("pads").
+async fn feed(zerod: Zerod, out: mpsc::UnboundedSender<Value>) {
+    let (mut sessions, mut asks, mut notices) = (zerod.daemon.subscribe(), zerod.inbox.subscribe(), zerod.notices.subscribe());
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+    let mut last: Option<Value> = None;
+    loop {
+        let rows = json!(crate::board::board_with(&zerod.daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(), &zerod.inbox.asks(), &zerod.places.get()));
+        if last.as_ref() != Some(&rows) {
+            if out.send(json!({"event": "board", "rows": rows})).is_err() { return }
+            last = Some(rows);
+        }
+        tokio::select! {
+            heard = sessions.recv() => if matches!(heard, Err(broadcast::error::RecvError::Closed)) { return },
+            heard = asks.recv() => if matches!(heard, Err(broadcast::error::RecvError::Closed)) { return },
+            notice = notices.recv() => match notice {
+                Ok(notice) => { if out.send(json!({"event": notice})).is_err() { return } continue }
+                Err(broadcast::error::RecvError::Closed) => return,
+                Err(broadcast::error::RecvError::Lagged(_)) => { let _ = out.send(json!({"event": "pads"})); continue }
+            },
+            _ = tick.tick() => {}
+        }
+        // A burst (a turn streaming) settles before the board is worked out again.
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        while sessions.try_recv().is_ok() {}
+        while asks.try_recv().is_ok() {}
+    }
 }
 
 /// How many of a session's latest items a snapshot carries.
