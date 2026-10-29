@@ -28,7 +28,10 @@ func usage(help: Bool = false) -> Never {
                    when it finishes, fails or gets stuck, this session is told. Outside a session: a new session here.
       zero send    <session> "text"   (a message to a session, resumed first if it is offline)
       zero wait    <session>... [--any] [--timeout MINUTES]   (until they stop working: finished, failed, stuck, or waiting on the user)
-      zero workers   (the sessions this one started)
+      zero workers   (the sessions this one started, or adopted)
+      zero adopt   <task | Claude Code session id>   (makes it a worker of this session, taken into Zero first if it isn't
+                   there: you're told when it finishes, and zero send, wait and result reach it)
+      zero tasks   (every task Zero has: id, state, lead, ticket, Claude Code session and name)
       zero result  <session>   (its last answer)
       zero label   "name" [--ticket REF] [--where PLACE] [--session ID]   (names this session, or another; --where says where it runs,
                    a bench or a machine, for the board's Where; --where "" goes back to its folder)
@@ -464,6 +467,16 @@ case "workers":
     let workers = await zerod { try await $0.workers(of: lead) }
     for (worker, attention) in workers {
         print("\(worker.id)  \(attention.rawValue.padding(toLength: 9, withPad: " ", startingAt: 0))  \(Workspace.label(of: worker))\(worker.ticket.map { "  (\($0))" } ?? "")")
+    }
+case "adopt":
+    guard let target = positional.first, let lead = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"] else {
+        fail("zero: adopt which task, into which session? (zero adopt ID, from inside a session or with --session ID)")
+    }
+    print(await zerod { try await $0.adopt(lead: lead, target: target) })
+case "tasks":
+    for task in await zerod({ try await $0.list() }) {
+        let columns = [task.id, task.status.rawValue, task.parent.map { "under \($0)" } ?? "lead", task.ticket ?? "-", task.thread ?? "-", Workspace.label(of: task)]
+        print(columns.joined(separator: "  "))
     }
 case "result":
     guard let session = positional.first else { usage() }
