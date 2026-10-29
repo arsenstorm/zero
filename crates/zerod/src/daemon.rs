@@ -537,6 +537,15 @@ impl Daemon {
         self.session(id)?.answer(question, answers).await
     }
 
+    /// Something its agent says about the task, by name (`zero attr PR <link>`); no value takes it back.
+    pub fn set_attribute(&self, id: &str, name: &str, value: Option<&str>) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() { return Err("An attribute needs a name".into()) }
+        let value = value.map(str::trim).filter(|v| !v.is_empty()).map(String::from);
+        self.session(id)?.change(Change::Attribute { name: name.into(), value });
+        Ok(())
+    }
+
     /// Names a session and says what it's for.
     pub fn label(&self, id: &str, label: Option<&str>, ticket: Option<&str>) -> Result<(), String> {
         self.session(id)?.change(Change::Named { label: label.map(Into::into), ticket: ticket.map(Into::into) });

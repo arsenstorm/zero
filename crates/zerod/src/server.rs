@@ -71,6 +71,9 @@ struct Request {
     item: Option<Value>,
     /// Rewinding: the message of yours to go back to, and what to bring back (the conversation, the folder's code).
     message: Option<String>,
+    /// `attr`: an attribute's name and value (none takes it back).
+    name: Option<String>,
+    value: Option<String>,
     conversation: Option<bool>,
     code: Option<bool>,
     /// adopt: the provider's own session id, to take in as a task.
@@ -304,6 +307,7 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         }
         "usage" => Ok(json!(daemon.usage().into_iter().map(|(provider, usage)| json!({"provider": provider, "usage": usage})).collect::<Vec<_>>())),
         "label" => daemon.label(&session()?, request.label.as_deref(), request.ticket.as_deref()).map(|_| Value::Null),
+        "attr" => daemon.set_attribute(&session()?, request.name.as_deref().ok_or("Which attribute?")?, request.value.as_deref()).map(|_| Value::Null),
         "workers" => {
             let lead = session()?;
             Ok(json!(daemon.sessions().iter().map(|s| s.summary()).filter(|c| c.parent.as_deref() == Some(lead.as_str())).map(|c| summary(&c)).collect::<Vec<_>>()))
