@@ -306,6 +306,8 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     public var ticket: String?
     /// The shortest end of its folder that tells it from the other rows'.
     public var place: String
+    /// Where that place is on disk, when the places command says (a bench's folder).
+    public var path: String?
     /// Offline, `state` is the one it was last known in.
     public var online: Bool
     public var state: State
@@ -314,8 +316,29 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     /// The open asks of the lead and its workers.
     public var asks: [Waiting]
     public var workers: Int
+    /// Each of its workers as it is itself (zerod's board works it out by the same rules as a lead's).
+    public var team: [Member]?
     public var id: String { session }
     public struct Waiting: Decodable, Equatable, Sendable { public var id: String; public var title: String }
+
+    public struct Member: Decodable, Equatable, Sendable {
+        public var session: String
+        public var state: State
+        public var place: String
+        public var path: String?
+        public var now: String?
+        public var needs: String?
+        public var asks: [Waiting]
+    }
+
+    /// One of its workers as a row of its own: its state, place and asks, for showing that worker.
+    public func member(_ id: String) -> BoardRow? {
+        guard let member = team?.first(where: { $0.session == id }) else { return nil }
+        var row = self
+        row.session = member.session; row.state = member.state; row.place = member.place; row.path = member.path
+        row.now = member.now; row.needs = member.needs; row.asks = member.asks; row.workers = 0; row.team = nil
+        return row
+    }
 }
 
 /// A task's provider terminal (crates/zerod/src/model.rs `Opened`): zero-host's id, and how much of the provider's own
@@ -383,6 +406,8 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
     public var diff: String?
     /// While the task is in its provider's own terminal: zero-host's id for it.
     public var terminal: Opened?
+    /// What its agent says about it beyond its name and ticket, by name ("PR": a link): `zero attr`.
+    public var attributes: [String: String]?
     /// How many changes have been applied; the next change zerod sends for this session is `seq + 1`.
     public var seq: UInt64
 
@@ -451,6 +476,10 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
         case let .place(place): self.place = place
         case let .parent(parent): self.parent = parent
         case .snapshot: break
+        case let .attribute(name, value):
+            var all = attributes ?? [:]
+            all[name] = value
+            attributes = all.isEmpty ? nil : all
         case let .rewound(before):
             // As zerod does (model.rs): the message and what followed go, and with them the provider's thread.
             if let at = items.firstIndex(where: { $0.id == before }) { items.removeSubrange(at...) }
@@ -490,10 +519,12 @@ public enum Change: Decodable, Equatable, Sendable {
     case parent(String?)
     /// zerod kept the folder as it was when a message went (what a rewind can bring back).
     case snapshot
+    /// Its agent said something about the task; nil takes it back.
+    case attribute(String, String?)
     /// Back to just before this message of yours: it and everything after it are gone.
     case rewound(String)
 
-    private enum Keys: String, CodingKey { case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label, ticket, provider, terminal, place, parent, before }
+    private enum Keys: String, CodingKey { case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label, ticket, provider, terminal, place, parent, before, name, value }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -519,6 +550,7 @@ public enum Change: Decodable, Equatable, Sendable {
         case "place": self = .place(try c.decodeIfPresent(String.self, forKey: .place))
         case "parent": self = .parent(try c.decodeIfPresent(String.self, forKey: .parent))
         case "snapshot": self = .snapshot
+        case "attribute": self = .attribute(try c.decode(String.self, forKey: .name), try c.decodeIfPresent(String.self, forKey: .value))
         case "rewound": self = .rewound(try c.decode(String.self, forKey: .before))
         case "switched": self = .switched(try c.decode(Provider.self, forKey: .provider), model: try c.decodeIfPresent(String.self, forKey: .model),
                                           effort: try c.decodeIfPresent(String.self, forKey: .effort))
@@ -757,6 +789,11 @@ public final class ZerodLink: @unchecked Sendable {
         let result = try await call("adopt", ["session": lead, "thread": target])
         guard let session = (result as? [String: Any])?["session"] as? String else { throw ZerodError(message: "zerod adopted nothing") }
         return session
+    }
+
+    /// Something an agent says about its task (`zero attr`); nil takes it back.
+    public func attribute(session: String, name: String, value: String?) async throws {
+        _ = try await call("attr", ["session": session, "name": name, "value": value])
     }
 
     public func label(session: String, label: String?, ticket: String?) async throws {

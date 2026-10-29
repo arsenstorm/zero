@@ -31,7 +31,9 @@ private let recordings = ["codex-command", "codex-file-change", "claude-command"
     // The model's own properties, by reflection, so the list can't drift from the code.
     let known = Set(Swift.Mirror(reflecting: Conversation(id: "", provider: .codex, cwd: "")).children.compactMap(\.label))
     #expect(Set(json.keys).subtracting(known).isEmpty, "zerod sends \(Set(json.keys).subtracting(known)) that the app doesn't read")
-    #expect(Set(json.keys) == known, "the app expects \(known.subtracting(json.keys)) that zerod no longer sends")
+    // Fields zerod leaves out until they have something in them.
+    let whenSet: Set<String> = ["attributes"]
+    #expect(known.subtracting(json.keys).isSubset(of: whenSet), "the app expects \(known.subtracting(json.keys).subtracting(whenSet)) that zerod no longer sends")
 }
 
 @Test func everyKindOfItemDecodes() throws {

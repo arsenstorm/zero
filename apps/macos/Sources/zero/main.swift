@@ -33,6 +33,8 @@ func usage(help: Bool = false) -> Never {
                    there: you're told when it finishes, and zero send, wait and result reach it)
       zero tasks   (every task Zero has: id, state, lead, ticket, Claude Code session and name)
       zero result  <session>   (its last answer)
+      zero attr    NAME [VALUE] [--session ID]   (something about this task for the user to see on it, such as
+                   zero attr PR https://github.com/org/repo/pull/12; a link opens. No value takes it back)
       zero label   "name" [--ticket REF] [--where PLACE] [--session ID]   (names this session, or another; --where says where it runs,
                    a bench or a machine, for the board's Where; --where "" goes back to its folder)
       zero notify  <session> "text"   (words for a session, given between its turns: for event sources and scripts)
@@ -489,6 +491,12 @@ case "label":
     if flag("where") == nil || !positional.isEmpty || flag("ticket") != nil {
         await zerod { try await $0.label(session: session, label: positional.isEmpty ? nil : positional.joined(separator: " "), ticket: flag("ticket")) }
     }
+case "attr":
+    guard let name = positional.first, let session = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"] else {
+        fail("zero: which attribute, of which session? (zero attr NAME [VALUE] [--session ID])")
+    }
+    let value = positional.dropFirst().joined(separator: " ")
+    await zerod { try await $0.attribute(session: session, name: name, value: value.isEmpty ? nil : value) }
 case "notify":
     guard positional.count >= 2 else { usage() }
     await zerod { try await $0.notify(session: positional[0], text: positional[1...].joined(separator: " ")) }
