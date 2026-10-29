@@ -5,16 +5,23 @@ import Observation
 /// retrace it. The app moves it too (Settings… in the menu opens the window on Settings).
 @MainActor @Observable
 public final class Navigation {
-    public enum Place: Hashable, Sendable { case home, inbox, board, task(String), settings, integrations, integration(String), pads, pad(String) }
+    public enum Place: Hashable, Sendable { case home, inbox, board, task(String), agent(String), settings, integrations, integration(String), pads, pad(String) }
 
     public var place = Place.home {
         didSet {
             if place != oldValue { worker = nil }
             if place != oldValue && !travelling { behind.append(oldValue); ahead.removeAll() }
+            UserDefaults.standard.set(place.key, forKey: "place")
         }
     }
     /// On a task's page: the worker shown instead of its lead.
-    public var worker: String?
+    public var worker: String? {
+        didSet { UserDefaults.standard.set(worker, forKey: "placeWorker") }
+    }
+
+
+    /// The control bar works with this window: what it opens opens here, not in its own panel.
+    public var barDocked = false
     /// On a scratchpad: the section a link pointed at, to scroll to once.
     public var padSection: String?
     /// Past the splash: the window shows its places, and the toolbar its arrows.
@@ -29,7 +36,13 @@ public final class Navigation {
     public var canGoForward: Bool { !ahead.isEmpty }
     @ObservationIgnored private var travelling = false
 
-    public init() {}
+    /// With `restoring`, where the window was last (and the worker shown there), so Zero opens there again after a
+    /// quit or an update.
+    public init(restoring: Bool = false) {
+        guard restoring else { return }
+        place = UserDefaults.standard.string(forKey: "place").flatMap(Place.init(key:)) ?? .home
+        worker = UserDefaults.standard.string(forKey: "placeWorker")
+    }
 
     public func goBack() {
         guard let last = behind.popLast() else { return }
@@ -47,5 +60,40 @@ public final class Navigation {
         travelling = true
         self.place = place
         travelling = false
+    }
+}
+
+public extension Navigation.Place {
+    /// The place as a word to keep: "task:<id>", "inbox", and so on.
+    var key: String {
+        switch self {
+        case .home: "home"
+        case .inbox: "inbox"
+        case .board: "board"
+        case let .task(id): "task:" + id
+        case let .agent(name): "agent:" + name
+        case .settings: "settings"
+        case .integrations: "integrations"
+        case let .integration(name): "integration:" + name
+        case .pads: "pads"
+        case let .pad(id): "pad:" + id
+        }
+    }
+
+    init?(key: String) {
+        let (kind, value) = key.firstIndex(of: ":").map { (String(key[..<$0]), String(key[key.index(after: $0)...])) } ?? (key, "")
+        switch kind {
+        case "home": self = .home
+        case "inbox": self = .inbox
+        case "board": self = .board
+        case "task": self = .task(value)
+        case "agent": self = .agent(value)
+        case "settings": self = .settings
+        case "integrations": self = .integrations
+        case "integration": self = .integration(value)
+        case "pads": self = .pads
+        case "pad": self = .pad(value)
+        default: return nil
+        }
     }
 }

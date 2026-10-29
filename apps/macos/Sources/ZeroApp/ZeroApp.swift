@@ -36,6 +36,9 @@ final class Settings {
     private let defaults = UserDefaults.standard
 
     var followActiveScreen: Bool { didSet { defaults.set(followActiveScreen, forKey: "followActiveScreen") } }
+    /// The control bar in the workspace window: when the window fills its screen, always while it's open, or never.
+    enum BarDock: String, CaseIterable { case auto, always, never }
+    var barDock: BarDock { didSet { defaults.set(barDock.rawValue, forKey: "barDock"); onChange?() } }
     /// Agent names in the order Arsen dragged them into; agents not listed follow in first-seen order.
     var agentOrder: [String] { didSet { defaults.set(agentOrder, forKey: "agentOrder") } }
     /// Minutes before an ask that arrives without its own expiry is marked expired.
@@ -64,6 +67,7 @@ final class Settings {
 
     init() {
         followActiveScreen = defaults.bool(forKey: "followActiveScreen")
+        barDock = defaults.string(forKey: "barDock").flatMap(BarDock.init) ?? .auto
         agentOrder = defaults.stringArray(forKey: "agentOrder") ?? []
         defaultTTLMinutes = defaults.object(forKey: "defaultTTLMinutes") as? Int ?? 60
         takeBackSeconds = defaults.object(forKey: "takeBackSeconds") as? Double ?? 2
@@ -121,7 +125,7 @@ final class Panel: NSPanel {
     /// zerod's sessions and their approvals; made once the store's other change handlers are in place.
     private var workspace: Workspace!
     private var workspaceWindow: NSWindow?
-    private let navigation = Navigation()
+    private let navigation = Navigation(restoring: true)
     private let settings = Settings()
     private var pinnedDisplay: CGDirectDisplayID?
     private var pillHosting: FirstMouseHostingView<AnyView>!
@@ -156,6 +160,8 @@ final class Panel: NSPanel {
         inbox.presentSelector = { [weak self] anchor in self?.showSelector(anchorInInbox: anchor) }
         inbox.dismissSelector = { [weak self] in self?.hideSelector() }
         makePanels()
+        // Back where you were: the window, if it was open when Zero last quit.
+        if UserDefaults.standard.bool(forKey: "workspaceOpen") { openWorkspace() }
         // Whatever put it there (a click, picking "Something else…", a key), a text box in the inbox holding the
         // keyboard makes Zero the active app, so dictation and paste tools that target the active app land in it.
         responderWatch = inboxPanel.observe(\.firstResponder, options: [.new]) { [weak self] panel, _ in
@@ -244,6 +250,7 @@ final class Panel: NSPanel {
         inbox.suggestFiles = settings.suggestFiles
         inbox.dictation.deviceUID = settings.inputDeviceUID
         if hotKey != nil { registerHotKey() }
+        placeBar()
     }
 
     private func makeStatusItem() {
@@ -292,10 +299,75 @@ final class Panel: NSPanel {
             window.center()
             window.acceptsMouseMovedEvents = true
             workspaceWindow = window
+            // Filling the screen (or leaving it), the bar moves into the window or back out to the screen's edge.
+            let changes: [Notification.Name] = [NSWindow.didResizeNotification, NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification,
+                                                NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification, NSWindow.didChangeScreenNotification,
+                                                NSWindow.willCloseNotification]
+            // Closed by you, it stays closed next launch; open when Zero quits (an update, a crash), it opens again.
+            NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
+                UserDefaults.standard.set(false, forKey: "workspaceOpen")
+            }
+            for name in changes {
+                NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    // After a close has happened, not while it's under way.
+                    DispatchQueue.main.async { MainActor.assumeIsolated { self?.placeBar() } }
+                }
+            }
         }
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         workspaceWindow?.makeKeyAndOrderFront(nil)
+        UserDefaults.standard.set(true, forKey: "workspaceOpen")
+        placeBar()
+    }
+
+    /// The bar works with the window when it fills its screen (zoomed or full screen), or as Settings says: it stays the
+    /// same bar, held to the screen's edge (so nothing moves as the window does), and peeks its panel on hover as ever,
+    /// but a click opens in the window.
+    /// Closed or minimised, the window gives the bar back its panel.
+    private func placeBar() {
+        guard pill != nil else { return }
+        let shown = workspaceWindow.map { $0.isVisible && !$0.isMiniaturized } ?? false
+        let fills: Bool = {
+            guard shown, let window = workspaceWindow, let screen = window.screen else { return false }
+            if window.styleMask.contains(.fullScreen) { return true }
+            let visible = screen.visibleFrame
+            return abs(window.frame.width - visible.width) < 4 && abs(window.frame.height - visible.height) < 4
+        }()
+        // Following the active screen, the bar leaves the window for another screen the pointer is on (a full-screen
+        // window's included), and comes back with it.
+        let mouse = NSEvent.mouseLocation
+        let elsewhere = settings.followActiveScreen && NSScreen.screens.first { $0.frame.contains(mouse) }.map { $0 != workspaceWindow?.screen } == true
+        let wanted = switch settings.barDock { case .auto: fills; case .always: shown; case .never: false }
+        let docked = wanted && !elsewhere
+        guard docked != navigation.barDocked else { return }
+        navigation.barDocked = docked
+        if docked { hideInbox() }
+    }
+
+    /// Docked, a click on the bar opens its place in the window, brought forward; hovering still peeks the panel, as
+    /// the bar always has, and the click puts the peek away.
+    private func inWindow(_ place: Navigation.Place) {
+        hideInbox()
+        navigation.place = place
+        NSApp.activate(ignoringOtherApps: true)
+        workspaceWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    /// An agent from the docked bar: one of zerod's sessions opens as its task (a worker under its lead); any other
+    /// (Solo's, Rex's, a terminal's) as a page with its conversation with you.
+    private func openAgent(_ name: String) {
+        guard let identity = inbox.store.identity(of: name), identity.runtime == "zerod", let session = identity.ref,
+              let task = workspace.conversation(session) else {
+            inWindow(.agent(name))
+            return
+        }
+        if let lead = task.parent, workspace.conversation(lead) != nil {
+            inWindow(.task(lead))
+            navigation.worker = session
+        } else {
+            inWindow(.task(session))
+        }
     }
 
     @objc func goBack() { navigation.goBack() }
@@ -556,6 +628,7 @@ final class Panel: NSPanel {
 
     /// A click on a pill control pins the inbox open on that view; the same click again unpins and closes it.
     private func pin(agent: String?) {
+        if navigation.barDocked { agent.map(openAgent) ?? inWindow(.inbox); return }
         if openedByIntent && inboxPanel.isVisible && inbox.agentFilter == agent && !inbox.newAgentOpen { hideInbox(); return }
         inbox.show(agent: agent)
         open(byIntent: true)
@@ -579,6 +652,7 @@ final class Panel: NSPanel {
 
     /// The bar's + button: the new-agent composer, pinned open with the keyboard; again closes it.
     private func pinNewAgent() {
+        if navigation.barDocked { inWindow(.home); return }
         if openedByIntent && inboxPanel.isVisible && inbox.newAgentOpen { hideInbox(); return }
         inbox.showNewAgent()
         open(byIntent: true)
@@ -624,6 +698,7 @@ final class Panel: NSPanel {
         if settings.followActiveScreen, let here = NSScreen.screens.first(where: { $0.frame.contains(mouse) }),
            here.displayID != pinnedDisplay {
             layout()
+            placeBar()
         }
         guard inboxPanel.isVisible else { return }
         let onScreen = inboxPanel.screen?.frame.contains(mouse) ?? false
