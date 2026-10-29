@@ -546,6 +546,11 @@ impl Inner {
         let Ok(line) = self.core().answer(&approval.id, &choice.id) else { return };
         if self.send(line).is_err() { return }
         self.answered.insert(approval.id.clone());
+        // Settled now, not when the runtime says so: until then it would read as waiting on the user, and nobody is.
+        let resolved = Change::Resolved { approval: approval.id.clone() };
+        self.record(json!({"change": resolved}));
+        let resolved = self.core().change(resolved);
+        self.broadcast(vec![resolved]);
         let conversation = self.core().conversation();
         let item = Item { at: None, id: format!("notice-{}", conversation.seq + 1), turn: conversation.turn.clone(),
                           kind: ItemKind::Notice { text: format!("Allowed without asking: {}", approval.title), error: false }, status: ItemStatus::Done };
