@@ -51,6 +51,7 @@ struct ScratchpadsPage: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 1) { rows }.padding(.bottom, 8)
                 }
+                .thinScrollbar(outset: 10, remember: "sidebar.pads") // in the sidebar's padding: at its edge, clear of the rows
                 .scrollIndicators(.never)
             }
             Rectangle().fill(Theme.stroke).frame(width: 1)
@@ -427,6 +428,8 @@ private struct MarkdownEditor: NSViewRepresentable {
         let scroll = NSTextView.scrollableTextView()
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
+        scroll.verticalScroller = ThinScroller()
+        scroll.scrollerStyle = .overlay
         let view = scroll.documentView as! NSTextView
         view.delegate = context.coordinator
         view.textStorage?.delegate = context.coordinator

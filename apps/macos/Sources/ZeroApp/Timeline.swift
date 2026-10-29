@@ -361,6 +361,9 @@ struct ThinScrollbar: View {
     let scrollTo: (CGFloat) -> Void
     @State private var hovered = false
     @State private var dragFrom: CGFloat?
+    /// Shown while scrolling and a moment after, as macOS's overlay scrollbars are; held while it's pointed at or dragged.
+    @State private var shown = false
+    @State private var hiding: Task<Void, Never>?
 
     /// rgb(161 161 170 / 70%) light, rgb(113 113 122 / 70%) dark: the site's zinc.
     static let thumb = Color(nsColor: NSColor(name: nil) { appearance in
@@ -383,10 +386,14 @@ struct ThinScrollbar: View {
                     let y = 4 + (track - length) * offset / room
                     Capsule().fill(Self.thumb)
                         .frame(width: hovered || dragFrom != nil ? 6 : 4, height: length)
+                        .opacity(shown || hovered || dragFrom != nil ? 1 : 0)
                         .frame(width: 12, height: length)
                         .contentShape(Rectangle())
                         .position(x: space.size.width - 6, y: y + length / 2)
-                        .onHover { inside in withAnimation(.easeOut(duration: 0.12)) { hovered = inside } }
+                        .onHover { inside in
+                            withAnimation(.easeOut(duration: 0.12)) { hovered = inside }
+                            if !inside { reveal() }
+                        }
                         .gesture(DragGesture(minimumDistance: 0)
                             .onChanged { drag in
                                 let start = dragFrom ?? offset
@@ -394,12 +401,107 @@ struct ThinScrollbar: View {
                                 let moved = drag.translation.height * room / max(track - length, 1)
                                 scrollTo(min(max(start + moved, 0), room))
                             }
-                            .onEnded { _ in dragFrom = nil })
+                            .onEnded { _ in dragFrom = nil; reveal() })
                 }
             }
         }
         .frame(width: 12)
+        .onChange(of: tracker.geometry?.contentOffset.y) { reveal() }
     }
+
+    /// Shown now, faded out once scrolling has stopped for a moment.
+    private func reveal() {
+        if !shown { withAnimation(.easeOut(duration: 0.12)) { shown = true } }
+        hiding?.cancel()
+        hiding = Task {
+            try? await Task.sleep(for: .milliseconds(1200))
+            guard !Task.isCancelled, !hovered, dragFrom == nil else { return }
+            withAnimation(.easeOut(duration: 0.3)) { shown = false }
+        }
+    }
+}
+
+/// The chat's scrollbar on any scroll view: the system's hidden, this one drawn over the right edge, dragged to scroll.
+struct ThinScrollbars: ViewModifier {
+    /// How far past the scroll view's right edge the bar sits: a sidebar's runs in its padding, at the sidebar's edge.
+    var outset: CGFloat = 0
+    /// Where it's scrolled, kept by this name: back there on coming back to it (back and forward, or Zero reopened).
+    var remember: String? = nil
+    @State private var tracker = ScrollTracker()
+    @State private var position = ScrollPosition()
+
+    func body(content: Content) -> some View {
+        content
+            .scrollIndicators(.never)
+            .scrollPosition($position)
+            .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { _, now in tracker.geometry = now }
+            .overlay(alignment: .trailing) { ThinScrollbar(tracker: tracker) { position.scrollTo(y: $0) }.padding(.trailing, 2).offset(x: outset) }
+            .onScrollPhaseChange { _, phase in if phase == .idle { keep() } }
+            .onDisappear(perform: keep)
+            .onAppear {
+                guard let remember, let y = ScrollMemory.offsets[remember], y > 0 else { return }
+                // Once laid out: before, there's nothing to scroll.
+                DispatchQueue.main.async { position.scrollTo(y: y) }
+            }
+    }
+
+    private func keep() {
+        guard let remember, let y = tracker.geometry?.contentOffset.y else { return }
+        ScrollMemory.offsets[remember] = max(0, y)
+    }
+}
+
+extension View {
+    /// The one scrollbar Zero has, the chat's, on this scroll view.
+    func thinScrollbar(outset: CGFloat = 0, remember: String? = nil) -> some View { modifier(ThinScrollbars(outset: outset, remember: remember)) }
+}
+
+/// Where pages and conversations were scrolled to, kept across going back and forward and across Zero reopening.
+enum ScrollMemory {
+    /// A page's offset, by name.
+    static var offsets: [String: Double] {
+        get { UserDefaults.standard.dictionary(forKey: "scrollOffsets") as? [String: Double] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: "scrollOffsets") }
+    }
+
+    /// A conversation's place: the block at the top of the screen, and the message of yours it answers (to load back
+    /// to when it isn't loaded). None: at its end.
+    static func place(in conversation: String) -> (block: String, turn: String)? {
+        guard let kept = (UserDefaults.standard.dictionary(forKey: "chatScroll") as? [String: [String]])?[conversation], kept.count == 2 else { return nil }
+        return (kept[0], kept[1])
+    }
+
+    static func keep(_ place: (block: String, turn: String)?, in conversation: String) {
+        var all = UserDefaults.standard.dictionary(forKey: "chatScroll") as? [String: [String]] ?? [:]
+        all[conversation] = place.map { [$0.block, $0.turn] }
+        UserDefaults.standard.set(all, forKey: "chatScroll")
+    }
+}
+
+/// The same scrollbar for AppKit's scroll views (a pad's text, a command's output): the thumb only, in the chat's
+/// zinc, thin until the pointer is on it.
+final class ThinScroller: NSScroller {
+    override class var isCompatibleWithOverlayScrollers: Bool { true }
+    override class func scrollerWidth(for controlSize: NSControl.ControlSize, scrollerStyle: NSScroller.Style) -> CGFloat { 12 }
+    private var hovered = false
+
+    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {}
+
+    override func drawKnob() {
+        let knob = rect(for: .knob)
+        let width: CGFloat = hovered ? 6 : 4
+        let bar = NSRect(x: knob.maxX - width - 2, y: knob.minY + 4, width: width, height: max(knob.height - 8, 24))
+        NSColor(ThinScrollbar.thumb).setFill()
+        NSBezierPath(roundedRect: bar, xRadius: width / 2, yRadius: width / 2).fill()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+    override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
 }
 
 /// Rows standing in for older messages while they're fetched: a message of yours and an answer, as bars.

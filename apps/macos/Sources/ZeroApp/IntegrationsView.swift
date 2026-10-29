@@ -94,6 +94,7 @@ struct IntegrationsPane: View {
                 .centredColumn(680)
                 .padding(.top, 44).padding(.bottom, 28)
             }
+            .thinScrollbar()
             .background(Theme.card)
         }
         .task { await workspace.loadIntegrations() }
@@ -677,6 +678,7 @@ private struct ItemsTable: View {
             .centredColumn(1040)
             .padding(.vertical, 36)
         }
+        .thinScrollbar()
         // ponytail: looks every minute while shown; events from zerod when it watches these itself.
         .task {
             while !Task.isCancelled {

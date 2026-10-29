@@ -53,6 +53,7 @@ struct SettingsView: View {
                 .centredColumn(680)
                 .padding(.top, 44).padding(.bottom, 28)
             }
+            .thinScrollbar(remember: "settings")
             .background(Theme.card)
         }
     }
@@ -264,6 +265,14 @@ private struct GeneralPage: View {
             }
             OnboardingRow(icon: "monitor", title: "Follow the active screen", detail: "The bar moves to the screen you use.") {
                 Switch(isOn: $settings.followActiveScreen)
+            }
+            OnboardingRow(icon: "sidebar-right", title: "Bar in the window", detail: "The bar sits in Zero's window instead of at the screen's edge.") {
+                Picker("", selection: $settings.barDock) {
+                    Text("When it fills the screen").tag(Settings.BarDock.auto)
+                    Text("Always").tag(Settings.BarDock.always)
+                    Text("Never").tag(Settings.BarDock.never)
+                }
+                .labelsHidden().fixedSize()
             }
         }
     }

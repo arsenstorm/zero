@@ -13,6 +13,7 @@ struct TerminalView: NSViewRepresentable {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.scrollerStyle = .overlay
+        scroll.verticalScroller = ThinScroller()
         scroll.verticalScroller?.controlSize = .mini
         scroll.verticalScrollElasticity = .none
         let text = NSTextView()
@@ -164,6 +165,7 @@ private struct HostedScroll<Content: View>: NSViewRepresentable {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.scrollerStyle = .overlay
+        scroll.verticalScroller = ThinScroller()
         scroll.verticalScroller?.controlSize = .mini
         scroll.verticalScrollElasticity = .none
         let document = Document()
