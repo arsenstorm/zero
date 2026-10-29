@@ -8,6 +8,8 @@ import ZeroCore
 struct WorkspaceView: View {
     @Bindable var workspace: Workspace
     @Bindable var navigation: Navigation
+    /// The inbox's asks and how they're answered: the panel's, shown here too.
+    let inbox: InboxController
     let settings: () -> SettingsView
 
     var body: some View {
@@ -16,7 +18,8 @@ struct WorkspaceView: View {
             if !navigation.ready { ZeroMark().frame(width: 64, height: 64).foregroundStyle(.secondary).transition(.opacity) }
         }
         .frame(minWidth: 980, minHeight: 600)
-        .background(Theme.rail)
+        // The rail and the strip above the panel: translucent grey over what's behind the window, blurred, as Codex's.
+        .background { ZStack { BehindWindow(); Theme.railTint } }
         .ignoresSafeArea()
         // The board is polled, so the sidebar stays fresh while the window is open.
         // zerod pushes the board whenever it changes; it's asked for once here only so the splash can wait for it.
@@ -44,7 +47,7 @@ struct WorkspaceView: View {
 
     private var window: some View {
         HStack(spacing: 0) {
-            Rail(place: $navigation.place, workspace: workspace)
+            Rail(place: $navigation.place, workspace: workspace, inbox: inbox)
             Group {
                 switch navigation.place {
                 case .settings: settings()
@@ -77,20 +80,23 @@ struct WorkspaceView: View {
     @ViewBuilder private var page: some View {
         switch navigation.place {
         case .board: BoardView(workspace: workspace, open: { navigation.place = .task($0) })
+        case .inbox: AsksPage(controller: inbox)
         case .task(let id) where workspace.conversation(id) != nil: TaskView(workspace: workspace, lead: id, navigation: navigation).id(id)
         default: NewTaskView(workspace: workspace, started: { navigation.place = .task($0) })
         }
     }
 }
 
-/// Where the page starts across the window: the rail, then the inner sidebar and its edge.
-let pageStart: CGFloat = 48 + 250 + 1
+/// Where the page starts across the window with the sidebar at its standard width: the rail, the sidebar, its edge.
+/// The title bar adds however far the sidebar has been dragged from that.
+let pageStart: CGFloat = 48 + CGFloat(SidebarWidth.standard) + 1
 
 /// The outer rail: home at the top, then each integration that's switched on, in the order you put them (⌘-drag one,
 /// or right-click it); integrations and settings at the foot.
 private struct Rail: View {
     @Binding var place: Navigation.Place
     let workspace: Workspace
+    let inbox: InboxController
     @AppStorage("railOrder") private var order = "github,linear"
     @State private var dragging: Integration?
     @State private var dragged: CGFloat = 0
@@ -100,7 +106,7 @@ private struct Rail: View {
     private static let step: CGFloat = 38
 
     private var home: Bool {
-        switch place { case .settings, .integrations, .integration, .pads, .pad: false; default: true }
+        switch place { case .inbox, .settings, .integrations, .integration, .pads, .pad: false; default: true }
     }
 
     /// Every integration in your order, those never placed after.
@@ -114,6 +120,16 @@ private struct Rail: View {
     var body: some View {
         VStack(spacing: 6) {
             item("house-4", selected: home, help: "Home") { if !home { place = .home } }
+            // What agents are waiting on you for, and how many.
+            item("inbox", selected: place == .inbox, help: "Inbox") { place = .inbox }
+                .overlay(alignment: .topTrailing) {
+                    let waiting = AsksPage.waiting(inbox).count
+                    if waiting > 0 {
+                        Text("\(waiting)").font(.system(size: 9.5, weight: .semibold)).monospacedDigit().foregroundStyle(.white)
+                            .padding(.horizontal, 4).frame(minWidth: 15, minHeight: 15).background(Color.orange, in: Capsule())
+                            .offset(x: 3, y: -2).allowsHitTesting(false)
+                    }
+                }
             let pads = { if case .pad = place { true } else { place == .pads } }()
             item("note-3", selected: pads, help: "Scratchpads") { if !pads { place = .pads } }
             let shown = shown
@@ -428,6 +444,16 @@ private struct TaskView: View {
         return team
     }
 
+    /// Another task, from this one (a branch): a worker of the same lead shows under it.
+    private func open(_ id: String) {
+        if let parent = workspace.conversation(id)?.parent, workspace.conversation(parent)?.parent == nil {
+            navigation.place = .task(parent)
+            navigation.worker = id
+        } else {
+            navigation.place = .task(id)
+        }
+    }
+
     var body: some View {
         let team = team
         let conversation = workspace.conversation(navigation.worker ?? lead)
@@ -435,7 +461,7 @@ private struct TaskView: View {
         if let conversation, conversation.terminal != nil {
             // A terminal runs edge to edge; the pane sits beside it as a column of its own.
             HStack(spacing: 0) {
-                if let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, live: live).id(conversation.id) }
+                if let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, live: live, open: open).id(conversation.id) }
                 if navigation.pane {
                     Rectangle().fill(Theme.stroke).frame(width: 1)
                     TaskDetails(workspace: workspace, navigation: navigation, row: row, conversation: conversation, team: team, lead: lead, shown: $navigation.worker, docked: true)
@@ -443,7 +469,7 @@ private struct TaskView: View {
             }
         } else {
             ZStack(alignment: .topTrailing) {
-                if let conversation, let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, live: live).id(conversation.id) }
+                if let conversation, let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, live: live, open: open).id(conversation.id) }
                 if navigation.pane, let conversation {
                     TaskDetails(workspace: workspace, navigation: navigation, row: row, conversation: conversation, team: team, lead: lead, shown: $navigation.worker).padding(8)
                 }
@@ -457,8 +483,9 @@ private struct TaskView: View {
 struct TitleBar: View {
     let workspace: Workspace
     @Bindable var navigation: Navigation
-    /// How far in from the bar's own edge the page starts.
+    /// How far in from the bar's own edge the page starts, with the sidebar at its standard width.
     let inset: CGFloat
+    @AppStorage(SidebarWidth.key) private var sidebarWidth = SidebarWidth.standard
 
     var body: some View {
         HStack(spacing: 6) {
@@ -471,11 +498,17 @@ struct TitleBar: View {
                 drag
                 actions(conversation)
                 BarButton(symbol: "sidebar-right", help: navigation.pane ? "Hide details" : "Show details", selected: navigation.pane) { navigation.pane.toggle() }
+            } else if navigation.ready, navigation.place == .board || navigation.place == .inbox {
+                // The page's name in the bar, as a task's is.
+                Rectangle().fill(Theme.stroke).frame(width: 1, height: 16).padding(.trailing, 12)
+                Text(navigation.place == .inbox ? "Inbox" : "All tasks").font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    .onTapGesture(count: 2, perform: Self.doubleClicked)
+                drag
             } else {
                 drag
             }
         }
-        .padding(.leading, max(0, inset)).padding(.trailing, 4)
+        .padding(.leading, max(0, inset + CGFloat(sidebarWidth - SidebarWidth.standard))).padding(.trailing, 4)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -727,7 +760,6 @@ private struct BoardView: View {
         let (running, offline) = (rows.filter(\.online), rows.filter { !$0.online })
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                PageTitle(text: "All tasks")
                 heading("Running", "Agents at work now, most urgent first.")
                 table(running, places: places, empty: "Nothing is running. Start a task, or message one below to resume it.")
                 if !offline.isEmpty {
@@ -1019,8 +1051,12 @@ private struct ConversationView: View {
     let workspace: Workspace
     /// The task's whole conversation, observed on its own: its words redraw this view, not the window.
     let live: LiveConversation
+    /// Opens another task: a branch made from this one.
+    var open: (String) -> Void = { _ in }
     private var conversation: Conversation { live.conversation }
     @State private var draft = ""
+    /// The message of yours being gone back to.
+    @State private var rewinding: ConversationItem?
     /// Images going with the next message.
     @State private var images: [URL] = []
     /// Where the conversation is scrolled to, and how much of it there is: for the scrollbar drawn over it.
@@ -1098,7 +1134,7 @@ private struct ConversationView: View {
                         }
                         ForEach(blocks) { block in
                             // Compared before it's drawn: a word streamed into the last answer redraws only that one.
-                            BlockRow(block: block, cwd: conversation.cwd, quote: quote, save: save).equatable()
+                            BlockRow(block: block, cwd: conversation.cwd, quote: quote, save: save, rewind: { rewinding = $0 }).equatable()
                                 .id(block.id)
                                 .onScrollVisibilityChange(threshold: 0.05) { shown in
                                     guard let turn = turns[block.id] else { return }
@@ -1106,6 +1142,10 @@ private struct ConversationView: View {
                                 }
                                 // The list drops what's far off screen without saying it went out of view.
                                 .onDisappear { tracker.seen[block.id] = nil }
+                        }
+                        // Its provider still getting ready (signing in, say): say so, rather than an empty page.
+                        if conversation.status == .starting {
+                            Thinking(text: "Starting \(conversation.provider.title)…").id("starting")
                         }
                         ForEach(conversation.questions) { question in
                             QuestionCard(question: question) { answers in
@@ -1176,23 +1216,34 @@ private struct ConversationView: View {
                 }
                 // Left, it goes back to its latest items: memory doesn't grow with every long task opened.
                 .onDisappear { workspace.trim(conversation.id) }
+                .onAppear { if let waiting = workspace.pendingDrafts.removeValue(forKey: conversation.id) { draft = waiting } }
+                .overlay {
+                    if let item = rewinding {
+                        RewindCard(workspace: workspace, task: conversation.id, item: item, close: { rewinding = nil }) { rewound, conversationToo in
+                            // The message back in the box, to send again or change.
+                            if conversationToo { draft = rewound.text; images = rewound.images.map { URL(fileURLWithPath: $0) } }
+                        } branched: { open($0) }
+                    }
+                }
             }
         }
     }
 
     private var composer: some View {
-        Composer(draft: $draft, placeholder: placeholder, canSend: conversation.status != .starting, images: $images) {
+        Composer(draft: $draft, placeholder: placeholder, canSend: conversation.status != .starting, folder: conversation.cwd, workspace: workspace,
+                 images: $images) {
             let (text, attached) = (draft, images.map(\.path))
             draft = ""
             images = []
             send(text, images: attached, with: provider ?? conversation.provider)
         } controls: {
             // Another provider for the next message: the task moves there, conversation and all.
-            ComposerMenu(label: (provider ?? conversation.provider).title) {
-                Picker("Agent", selection: Binding(get: { provider ?? conversation.provider }, set: { provider = $0 == conversation.provider ? nil : $0 })) {
-                    ForEach(Provider.allCases, id: \.rawValue) { Text($0.title).tag($0).disabled(!Self.takeOver.contains($0)) }
-                }
-                .pickerStyle(.inline)
+            let current = provider ?? conversation.provider
+            ComposerChip(id: "task.\(conversation.id).agent", label: current.title, symbol: "terminal", icon: current.mark, prominent: true) {
+                ComposerRows.list("Agent", Self.takeOver.map { other in
+                    (other.rawValue, other.title, other == conversation.provider ? "Carries on as it is" : "Takes the task over, with its whole conversation",
+                     other == current, { provider = other == conversation.provider ? nil : other })
+                })
             }
             .disabled(conversation.status == .working || conversation.status == .waiting)
         }
@@ -1505,27 +1556,48 @@ private struct ApprovalCard: View {
     }
 }
 
-/// The message box, as ChatGPT's: a white card with a soft edge, the field over a row of controls and the send button.
+/// The message box, as the control bar's: its field ("/" for commands, "@" for the folder's files), the images going
+/// with it, and a row of chips with the send button at its end.
 private struct Composer<Controls: View>: View {
     @Binding var draft: String
     let placeholder: String
     var canSend = true
+    /// Where "@" finds files: the task's folder.
+    var folder: String?
+    /// Where the + finds scratchpads.
+    var workspace: Workspace?
     /// Images going with the message: pasted, dropped, or picked with the +.
     @Binding var images: [URL]
     let send: () -> Void
     @ViewBuilder var controls: Controls
-    @FocusState private var focused: Bool
+    @State private var focused = false
     /// Whether the text has focus, where the paste handler (AppKit's, outside SwiftUI's updates) can read it.
     @State private var focus = FocusBox()
     @State private var dropping = false
     @State private var monitor: Any?
+    @State private var fieldHeight = ComposeField.lineHeight * 2
+    /// The "/" or "@" suggestions open over the composer, and where the caret goes after one is taken.
+    @State private var mention: InboxController.MentionState?
+    @State private var mentionTask: Task<Void, Never>?
+    @State private var mentionHeight: CGFloat = 0
+    @State private var caret: Int?
+    /// The + menu, open on its first page or on the scratchpads; where it and the + are, for a click outside it.
+    @State private var adding: AddMenu.Page?
+    @State private var addHeight: CGFloat = 0
+    @State private var addFrame = CGRect.zero
+    @State private var plusFrame = CGRect.zero
+    @State private var addMonitor: Any?
 
     final class FocusBox { var on = false }
+
+    /// The same switches as the control bar's composer (Settings → Inbox).
+    private var suggestCommands: Bool { UserDefaults.standard.object(forKey: "suggestCommands") as? Bool ?? true }
+    private var suggestFiles: Bool { UserDefaults.standard.object(forKey: "suggestFiles") as? Bool ?? false }
 
     var body: some View {
         let attached = images
         let ready = canSend && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attached.isEmpty)
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             if !attached.isEmpty {
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
@@ -1536,28 +1608,59 @@ private struct Composer<Controls: View>: View {
                 }
                 .scrollIndicators(.never)
             }
-            TextField(placeholder, text: $draft, axis: .vertical).textFieldStyle(.plain).font(.system(size: 14)).lineLimit(1...10)
-                .focused($focused)
-                .onChange(of: focused) { _, now in focus.on = now }
-                .onSubmit { if ready { send() } }
+            ComposeField(text: $draft, placeholder: placeholder, focused: focused, editable: true,
+                         caret: caret, onCaretApplied: { caret = nil },
+                         onFocus: { focused = $0; focus.on = $0 },
+                         onSubmit: { if ready { send() } },
+                         onTrigger: suggest, onKey: key, highlightFiles: suggestFiles, height: $fieldHeight)
+                .frame(height: fieldHeight)
+                .padding(.horizontal, -TokenTextView.inset.width) // the text still starts on the card's 14 pt
             HStack(spacing: 6) {
-                Button { images += Attachments.pick() } label: {
-                    NucleoIcon("plus", size: 14).foregroundStyle(.secondary).frame(width: 26, height: 26)
+                Button { adding = adding == nil ? .add : nil } label: {
+                    NucleoIcon("plus", size: 15).foregroundStyle(.primary).frame(width: 28, height: 28)
+                        .background(adding == nil ? .clear : Theme.row, in: Circle())
                 }
-                .buttonStyle(Hovering(radius: 13)).help("Attach images")
+                .buttonStyle(Hovering(radius: 14, fill: Theme.row, hover: Theme.row)).help("Add files, folders or a scratchpad")
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { plusFrame = $0 }
                 HStack(spacing: 6) { controls }.frame(maxWidth: .infinity, alignment: .leading)
                 Button(action: send) {
-                    NucleoIcon("arrow-up", size: 13).foregroundStyle(Theme.onKnob)
-                        .frame(width: 26, height: 26).background(Theme.knob.opacity(ready ? 1 : 0.25), in: Circle())
+                    NucleoIcon("arrow-up", size: 14).foregroundStyle(ready ? Theme.onKnob : .white)
+                        .frame(width: 28, height: 28).background(ready ? Theme.knob : Theme.sendIdle, in: Circle())
                 }
                 .buttonStyle(.plain).keyboardShortcut(.return, modifiers: .command).disabled(!ready)
             }
         }
-        .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 10)
-        // Solid, a shade lighter than the page, as Codex's is.
-        .background(Theme.composer, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(dropping ? Color.accentColor : Theme.stroke, lineWidth: dropping ? 2 : 1))
-        .shadow(color: .black.opacity(0.04), radius: 8, y: 2)
+        .padding(14)
+        // The whole card focuses the text, not just its line; the chips and buttons keep their own clicks.
+        .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .onTapGesture {
+            focused = false
+            DispatchQueue.main.async { focused = true }
+        }
+        // Codex's card: white on a hairline, lifted by a wide, soft shadow (and a close one that firms its edge), which
+        // also falls on the folder tab behind its top.
+        .background(Theme.field, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(dropping ? Color.accentColor : Theme.fieldEdge, lineWidth: dropping ? 2 : 1))
+        .shadow(color: .black.opacity(0.06), radius: 14, y: 5)
+        .shadow(color: .black.opacity(0.03), radius: 1.5, y: 1)
+        .overlay(alignment: .top) {
+            if let mention {
+                MentionList(state: mention, pick: accept, hover: { self.mention?.selected = $0 })
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { mentionHeight = $0 }
+                    .offset(y: -mentionHeight - 6)
+            }
+        }
+        // The + menu, as Codex's: the composer's width, just above it.
+        .overlay(alignment: .top) {
+            if let page = adding {
+                AddMenu(page: Binding(get: { page }, set: { adding = $0 }), pads: workspace?.pads ?? [],
+                        files: { adding = nil; addFiles() }, pad: { pad in adding = nil; insert("[\(pad.title)](\(pad.link))") })
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { addFrame = $0; addHeight = $0.height }
+                    .offset(y: -addHeight - 6)
+            }
+        }
+        .onChange(of: adding == nil) { _, closed in closed ? stopWatchingAdd() : watchAdd() }
+        .onChange(of: adding) { _, page in if page == .pads { Task { await workspace?.loadPads() } } }
         .onDrop(of: [.fileURL, .image], isTargeted: $dropping) { providers in
             let images = $images
             Attachments.fromDrop(providers) { images.wrappedValue += $0 }
@@ -1574,31 +1677,398 @@ private struct Composer<Controls: View>: View {
                 return nil
             }
         }
-        .onDisappear { if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil }
+        .onDisappear { if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil; stopWatchingAdd() }
+    }
+
+    // The + menu.
+
+    /// Files and folders from an open panel: images go with the message, anything else into it as its path (from the
+    /// task's folder when it's inside it), which the agent reads.
+    private func addFiles() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        var paths: [String] = []
+        for url in panel.urls {
+            if Attachments.isImage(url), let copied = Attachments.copy(url) { images.append(copied); continue }
+            var path = url.path
+            if let folder, path.hasPrefix(folder + "/") { path = String(path.dropFirst(folder.count + 1)) }
+            paths.append(path.contains(" ") ? "\"\(path)\"" : "@" + path)
+        }
+        if !paths.isEmpty { insert(paths.joined(separator: " ")) }
+    }
+
+    /// Words added at the end of what's written, and the field focused again.
+    private func insert(_ text: String) {
+        let gap = draft.isEmpty || draft.hasSuffix(" ") || draft.hasSuffix("\n") ? "" : " "
+        draft += gap + text + " "
+        focused = false
+        DispatchQueue.main.async { focused = true }
+    }
+
+    /// While the menu is open: a click outside it (and outside the +, which toggles it) or Esc closes it.
+    private func watchAdd() {
+        stopWatchingAdd()
+        let (menu, plus, close) = ({ addFrame }, { plusFrame }, { adding = nil })
+        addMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .keyDown]) { event in
+            if event.type == .keyDown {
+                guard event.keyCode == 53 else { return event }
+                close()
+                return nil
+            }
+            guard let content = event.window?.contentView else { return event }
+            // SwiftUI's global frames are in the window's content, from its top left.
+            let point = CGPoint(x: event.locationInWindow.x, y: content.bounds.height - event.locationInWindow.y)
+            if !menu().contains(point) && !plus().contains(point) { close() }
+            return event
+        }
+    }
+
+    private func stopWatchingAdd() {
+        if let addMonitor { NSEvent.removeMonitor(addMonitor) }
+        addMonitor = nil
+    }
+
+    // Suggestions, as the control bar's composer makes them (InboxController.updateMention).
+
+    private func suggest(_ trigger: MentionTrigger?) {
+        mentionTask?.cancel()
+        guard let trigger, trigger.symbol == "/" ? suggestCommands : suggestFiles else { mention = nil; return }
+        if trigger.symbol == "/" {
+            let query = trigger.query.lowercased()
+            let all = ClaudeCommands.all(projectPath: folder)
+            let name = { (m: Mention) in m.insert.dropFirst().lowercased() }
+            show(trigger, Array((all.filter { name($0).hasPrefix(query) } + all.filter { !name($0).hasPrefix(query) && name($0).contains(query) }).prefix(8)))
+        } else {
+            guard let folder else { mention = nil; return }
+            mentionTask = Task {
+                let files = await ProjectFiles.list(folder)
+                guard !Task.isCancelled else { return }
+                show(trigger, ProjectFiles.match(trigger.query, in: files).map { Mention(kind: .file, insert: "@" + $0, detail: nil) })
+            }
+        }
+    }
+
+    private func show(_ trigger: MentionTrigger, _ items: [Mention]) {
+        guard !items.isEmpty else { mention = nil; return }
+        let sameWord = mention?.trigger.range.location == trigger.range.location
+        mention = .init(key: "", trigger: trigger, items: items, selected: sameWord ? min(mention?.selected ?? 0, items.count - 1) : 0)
+    }
+
+    /// Arrows move, Tab or Return takes the highlighted suggestion, Esc closes the list.
+    private func key(_ key: ComposeKey) -> Bool {
+        guard var state = mention else { return false }
+        switch key {
+        case .up: state.selected = max(0, state.selected - 1); mention = state
+        case .down: state.selected = min(state.items.count - 1, state.selected + 1); mention = state
+        case .accept: accept(state.selected)
+        case .dismiss: mention = nil
+        }
+        return true
+    }
+
+    /// The whole word under the caret replaced by the suggestion, a space after it unless one follows already.
+    private func accept(_ index: Int) {
+        guard let state = mention, state.items.indices.contains(index) else { return }
+        let text = draft as NSString
+        let word = state.trigger.word
+        guard NSMaxRange(word) <= text.length else { mention = nil; return }
+        let spaced = NSMaxRange(word) < text.length && text.substring(with: NSRange(location: NSMaxRange(word), length: 1)).rangeOfCharacter(from: .whitespacesAndNewlines) != nil
+        let insert = state.items[index].insert + (spaced ? "" : " ")
+        draft = text.replacingCharacters(in: word, with: insert)
+        caret = word.location + (insert as NSString).length + (spaced ? 1 : 0)
+        mention = nil
     }
 }
 
 extension Composer where Controls == EmptyView {
-    init(draft: Binding<String>, placeholder: String, canSend: Bool = true, images: Binding<[URL]>, send: @escaping () -> Void) {
-        self.init(draft: draft, placeholder: placeholder, canSend: canSend, images: images, send: send) { EmptyView() }
+    init(draft: Binding<String>, placeholder: String, canSend: Bool = true, folder: String? = nil, workspace: Workspace? = nil, images: Binding<[URL]>,
+         send: @escaping () -> Void) {
+        self.init(draft: draft, placeholder: placeholder, canSend: canSend, folder: folder, workspace: workspace, images: images, send: send) { EmptyView() }
     }
 }
 
-/// A small control in the composer's row: a menu that reads as a word or two, ChatGPT's "Ask for approval".
-private struct ComposerMenu<Items: View>: View {
-    let label: String
-    var symbol: String?
-    @ViewBuilder var items: Items
+/// Going back to a message of yours, as Claude Code's rewind has it: the conversation, the folder's code, or both,
+/// as they were when the message went; or a new task branched from there. What the code would lose is said first.
+private struct RewindCard: View {
+    let workspace: Workspace
+    let task: String
+    let item: ConversationItem
+    let close: () -> Void
+    let rewound: (Rewound, Bool) -> Void
+    let branched: (String) -> Void
+    @State private var preview: RewindPreview?
+    @State private var busy = false
+    @State private var hovered: String?
+
+    private var text: String { if case let .user(text, _) = item.kind { text } else { "" } }
+    private var kept: Bool { preview?.snapshot == true }
 
     var body: some View {
-        Menu { items } label: {
-            HStack(spacing: 4) {
-                if let symbol { NucleoIcon(symbol, size: 13) }
-                Text(label)
+        ZStack {
+            // Outside the card: never mind.
+            Color.black.opacity(0.06).contentShape(Rectangle()).onTapGesture(perform: close)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Rewind").font(.system(size: 13, weight: .semibold)).padding(.horizontal, 10).padding(.top, 6)
+                Text(text).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(2).padding(.horizontal, 10)
+                Text(folder).font(.system(size: 12)).foregroundStyle(.tertiary).padding(.horizontal, 10).padding(.top, 2).padding(.bottom, 6)
+                row("both", "Restore conversation and code", "Back to before this message, files and all", enabled: kept) { go(conversation: true, code: true) }
+                row("conversation", "Restore conversation", "The files stay as they are now") { go(conversation: true, code: false) }
+                row("code", "Restore code", "The conversation carries on as it is", enabled: kept) { go(conversation: false, code: true) }
+                row("branch", "Branch from here", "A new task from before this message; this one stays") { branch() }
+                Button("Never mind", action: close).keyboardShortcut(.cancelAction).buttonStyle(.plain)
+                    .font(.system(size: 12)).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.top, 4)
             }
-            .font(.system(size: 12))
+            .padding(8)
+            .frame(width: 440, alignment: .leading)
+            .card()
+            .shadow(color: .black.opacity(0.12), radius: 20, y: 6)
+            .disabled(busy)
         }
-        .menuStyle(.borderlessButton).fixedSize().foregroundStyle(.secondary)
+        .task { preview = await workspace.rewindPreview(task, message: item.id) }
+    }
+
+    /// What restoring the code would undo, or why it can't.
+    private var folder: String {
+        guard let preview else { return "Looking at the folder…" }
+        guard preview.snapshot else { return "Zero didn't keep the folder for this message, so only the conversation can go back." }
+        let files = preview.files ?? 0
+        if files == 0 { return "The folder hasn't changed since this message." }
+        return "Since this message: \(files) file\(files == 1 ? "" : "s") changed, +\(preview.insertions ?? 0) −\(preview.deletions ?? 0)."
+    }
+
+    private func go(conversation: Bool, code: Bool) {
+        busy = true
+        Task {
+            if let back = await workspace.rewind(task, message: item.id, conversation: conversation, code: code) { rewound(back, conversation) }
+            busy = false
+            close()
+        }
+    }
+
+    private func branch() {
+        busy = true
+        Task {
+            let made = await workspace.branch(task, message: item.id)
+            busy = false
+            close()
+            if let id = made?.session { branched(id) }
+        }
+    }
+
+    private func row(_ id: String, _ title: String, _ detail: String, enabled: Bool = true, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 13))
+                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(hovered == id && enabled ? Theme.row : .clear, in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.4)
+        .onHover { inside in if inside { hovered = id } else if hovered == id { hovered = nil } }
+    }
+}
+
+/// The composer's + menu, as Codex's: what can go with a message, each with a line about it; a scratchpad opens a
+/// list of them to find one in.
+private struct AddMenu: View {
+    enum Page { case add, pads }
+    @Binding var page: Page
+    let pads: [PadSummary]
+    let files: () -> Void
+    let pad: (PadSummary) -> Void
+    @State private var query = ""
+    @State private var hovered: String?
+    @FocusState private var searching: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            switch page {
+            case .add:
+                Text("Add").font(.system(size: 12)).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.top, 4).padding(.bottom, 4)
+                row("files", icon: "file", title: "Files and folders", detail: "Images go with it, anything else as its path", action: files)
+                row("pads", icon: "note-3", title: "Scratchpad", detail: "Point the agent at one of your pads") { page = .pads }
+            case .pads:
+                HStack(spacing: 8) {
+                    Button { page = .add } label: {
+                        NucleoIcon("arrow-left", size: 13).foregroundStyle(.secondary).frame(width: 22, height: 22).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).help("Back")
+                    TextField("Find a scratchpad", text: $query).textFieldStyle(.plain).font(.system(size: 13)).focused($searching)
+                        .onSubmit { if let first = found.first { pad(first) } }
+                }
+                .padding(.horizontal, 6).padding(.vertical, 4)
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        ForEach(found) { summary in
+                            row(summary.id, icon: "note-3", title: summary.title, detail: summary.folder.isEmpty ? nil : summary.folder) { pad(summary) }
+                        }
+                        if found.isEmpty {
+                            Text(pads.isEmpty ? "Loading…" : "No scratchpad matches").font(.system(size: 13)).foregroundStyle(.tertiary)
+                                .padding(.horizontal, 10).frame(height: 32)
+                        }
+                    }
+                }
+                .scrollIndicators(.never)
+                .frame(height: 8 * 33)
+                .onAppear { searching = true }
+            }
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
+    /// Most recently changed first; matched on title and folder.
+    private var found: [PadSummary] {
+        let words = query.lowercased().split(separator: " ")
+        return pads.filter { pad in words.allSatisfy { (pad.title + " " + pad.folder).lowercased().contains($0) } }.sorted { $0.updated > $1.updated }
+    }
+
+    private func row(_ id: String, icon: String, title: String, detail: String?, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                NucleoIcon(icon, size: 15).foregroundStyle(.secondary).frame(width: 18)
+                Text(title).font(.system(size: 13)).lineLimit(1)
+                if let detail { Text(detail).font(.system(size: 13)).foregroundStyle(.tertiary).lineLimit(1) }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10).frame(height: 32)
+            .background(hovered == id ? Theme.row : .clear, in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { inside in if inside { hovered = id } else if hovered == id { hovered = nil } }
+    }
+}
+
+/// The selector open from a workspace composer's chip, the control bar's own: one at a time, over the window the
+/// chip is in, and a second click on its chip closes it.
+@MainActor @Observable
+final class WorkspaceSelector {
+    static let shared = WorkspaceSelector()
+    /// The chip whose selector is open.
+    private(set) var open: String?
+    @ObservationIgnored private var closed: (chip: String, at: Date)?
+
+    func toggle(_ chip: String, kind: SelectorKind, anchor: CGRect, rows: @escaping () -> [SelectorSection],
+                level: @escaping (String) -> String? = { _ in nil }, setLevel: @escaping (String, String) -> Void = { _, _ in }) {
+        if open == chip { close(); return }
+        // The click that closed it through the click-outside monitor arrives here next: it was that close.
+        if let closed, closed.chip == chip, Date().timeIntervalSince(closed.at) < 0.3 { return }
+        guard let window = NSApp.keyWindow, let app = NSApp.delegate as? AppDelegate else { return }
+        let state = SelectorState(kind: kind)
+        state.sections = rows()
+        state.rebuild = rows
+        state.level = level
+        state.setLevel = setLevel
+        state.close = { [weak self] in self?.close() }
+        open = chip
+        app.presentSelector(state, chip: anchor, in: window, returning: window)
+    }
+
+    func close() {
+        guard let open else { return }
+        closed = (open, Date())
+        self.open = nil
+        (NSApp.delegate as? AppDelegate)?.hideSelector()
+    }
+}
+
+/// A chip in the composer's row, the control bar's: an icon, what's chosen, and a chevron, on a small pill; it opens
+/// Zero's selector, and reads pressed while that's open.
+private struct ComposerChip: View {
+    let id: String
+    let label: String
+    var symbol: String?
+    /// A picture of its own (a provider's mark), before a Nucleo symbol.
+    var icon: Image?
+    var kind = SelectorKind.project
+    /// What's chosen in full colour (the model), as Codex shows it; the rest in grey.
+    var prominent = false
+    let rows: () -> [SelectorSection]
+    var level: (String) -> String? = { _ in nil }
+    var setLevel: (String, String) -> Void = { _, _ in }
+    @State private var anchor = CGRect.zero
+    @State private var hovered = false
+
+    var body: some View {
+        let open = WorkspaceSelector.shared.open == id
+        Button {
+            WorkspaceSelector.shared.toggle(id, kind: kind, anchor: anchor, rows: rows, level: level, setLevel: setLevel)
+        } label: {
+            HStack(spacing: 5) {
+                if let icon {
+                    icon.resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14).clipShape(RoundedRectangle(cornerRadius: 3))
+                } else if let symbol {
+                    NucleoIcon(symbol, size: 13).foregroundStyle(.secondary)
+                }
+                Text(label).font(.system(size: 13)).foregroundStyle(prominent ? .primary : .secondary).lineLimit(1)
+                NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0))
+            }
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            // Plain words, as Codex's controls are; a soft fill under the pointer, and while its selector is open.
+            .background(open || hovered ? Theme.row : .clear, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain).fixedSize()
+        .onHover { hovered = $0 }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { anchor = $0 }
+    }
+}
+
+/// The selector's rows for what a workspace composer chooses.
+@MainActor enum ComposerRows {
+    /// Each provider's models from its own catalogue, as the control bar's model selector has them; a provider
+    /// without one is a single row. `selected` says which (provider, model id) is chosen; `pick` takes one.
+    static func models(_ providers: [Provider], selected: (Provider, String) -> Bool, pick: @escaping (Provider, SpawnChoice) -> Void) -> [SelectorSection] {
+        providers.map { provider in
+            let catalogue = catalogue(provider)
+            let rows = catalogue.isEmpty
+                ? [SelectorRow(id: provider.rawValue, title: provider.title, provider: nil, providerIcon: provider.mark, detail: nil, context: nil,
+                               levels: [], defaultLevel: nil, modelID: nil, selected: selected(provider, "")) { pick(provider, SpawnChoice(id: "", name: provider.title)) }]
+                : catalogue.map { model in
+                    SelectorRow(id: provider.rawValue + "/" + model.id, title: model.name, provider: model.provider, providerIcon: choiceIcon(model.icon) ?? provider.mark,
+                                detail: model.detail, context: model.context, levels: model.levels, defaultLevel: model.defaultLevel,
+                                modelID: provider.rawValue + "/" + model.id, selected: selected(provider, model.id)) { pick(provider, model) }
+                }
+            return SelectorSection(id: provider.rawValue, title: provider.title, icon: provider.mark, rows: rows)
+        }
+    }
+
+    /// The models a provider's CLI offers the signed-in account, from its own cache.
+    static func catalogue(_ provider: Provider) -> [SpawnChoice] {
+        switch provider {
+        case .claude: SoloAdapter().spawnModels(for: SpawnChoice(id: "claude", name: "Claude"))
+        case .codex: SoloAdapter().spawnModels(for: SpawnChoice(id: "codex", name: "Codex"))
+        case .opencode: []
+        }
+    }
+
+    /// A single list: title, the line under it, whether it's chosen, and what picking it does.
+    static func list(_ title: String, icon: Image? = nil, _ rows: [(id: String, title: String, detail: String?, selected: Bool, pick: () -> Void)]) -> [SelectorSection] {
+        [SelectorSection(id: title, title: title, icon: icon, rows: rows.map { row in
+            SelectorRow(id: row.id, title: row.title, provider: nil, providerIcon: nil, detail: row.detail, context: nil, levels: [],
+                        defaultLevel: nil, modelID: nil, selected: row.selected, pick: row.pick)
+        })]
+    }
+}
+
+extension Provider {
+    /// Its mark, as the control bar's chips show it.
+    @MainActor var mark: Image? {
+        switch self {
+        case .claude: choiceIcon("claude")
+        case .codex: choiceIcon("openai")
+        case .opencode: nil
+        }
     }
 }
 
@@ -1630,42 +2100,31 @@ private struct NewTaskView: View {
             Spacer()
             VStack(spacing: 0) {
                 projectTab
-                Composer(draft: $prompt, placeholder: "Do anything", canSend: !starting && folders.contains(project), images: $images) { start() } controls: {
-                    ComposerMenu(label: permissions == .auto ? "Auto" : "Unrestricted", symbol: permissions == .auto ? "wand-sparkle" : "bolt-lightning") {
-                        Picker("Permissions", selection: $permissions) {
-                            Text("Auto: \(chosen.title) decides what's safe, and asks you the rest").tag(Permissions.auto)
-                            Text("Unrestricted: anything, without asking").tag(Permissions.unrestricted)
-                        }
-                        .pickerStyle(.inline)
+                Composer(draft: $prompt, placeholder: "Do anything", canSend: !starting && folders.contains(project), folder: folders.contains(project) ? project : nil,
+                         workspace: workspace, images: $images) { start() } controls: {
+                    ComposerChip(id: "new.permissions", label: permissions == .auto ? "Auto" : "Unrestricted",
+                                 symbol: permissions == .auto ? "wand-sparkle" : "bolt-lightning") {
+                        ComposerRows.list("Permissions", [
+                            ("auto", "Auto", "\(chosen.title) decides what's safe, and asks you the rest", permissions == .auto, { permissions = .auto }),
+                            ("unrestricted", "Unrestricted", "Anything, without asking", permissions == .unrestricted, { permissions = .unrestricted }),
+                        ])
                     }
                     Spacer(minLength: 0)
-                    ComposerMenu(label: agentLabel) {
-                        Picker("Agent", selection: $provider) {
-                            ForEach(Provider.allCases, id: \.rawValue) { Text($0.title).tag($0.rawValue) }
-                        }
-                        .pickerStyle(.inline)
-                        if !models.isEmpty {
-                            Picker("Model", selection: $model) {
-                                Text("Default").tag("")
-                                ForEach(models, id: \.id) { Text($0.name).tag($0.id) }
-                            }
-                            .pickerStyle(.inline)
-                        }
-                        if !levels.isEmpty {
-                            Picker("Effort", selection: $effort) {
-                                Text("Default").tag("")
-                                ForEach(levels, id: \.self) { Text($0.capitalized).tag($0) }
-                            }
-                            .pickerStyle(.inline)
-                        }
-                    }
+                    ComposerChip(id: "new.agent", label: agentLabel, symbol: "terminal", icon: chosen.mark, kind: .runtime, prominent: true, rows: {
+                        ComposerRows.models(Provider.allCases, selected: { provider, id in
+                            provider == chosen && (id == model || (model.isEmpty && id == (ComposerRows.catalogue(provider).first?.id ?? "")))
+                        }, pick: { picked, choice in
+                            provider = picked.rawValue
+                            model = choice.id
+                            if !choice.levels.contains(where: { $0.id == effort }) { effort = "" }
+                        })
+                    }, level: { id in id == "\(chosen.rawValue)/\(model)" && !effort.isEmpty ? effort : nil }, setLevel: { _, level in effort = level })
                 }
             }
             .frame(maxWidth: 640)
             .padding(.horizontal, 36).padding(.bottom, 18)
         }
         .frame(maxWidth: .infinity)
-        .onChange(of: provider) { model = ""; effort = "" }
         .onAppear { if !folders.contains(project) { project = folders.first ?? "" } }
     }
 
@@ -1674,46 +2133,31 @@ private struct NewTaskView: View {
         HStack {
             if folders.isEmpty {
                 NucleoLabel("Add a project in Settings → Projects", icon: "folder", size: 13).foregroundStyle(.secondary)
+                    .padding(.horizontal, 6).padding(.vertical, 3)
             } else {
-                ComposerMenu(label: folders.contains(project) ? (project as NSString).lastPathComponent : "Choose project", symbol: "folder") {
-                    Picker("Project", selection: $project) {
-                        ForEach(folders, id: \.self) { Text(($0 as NSString).lastPathComponent).tag($0) }
-                    }
-                    .pickerStyle(.inline)
+                ComposerChip(id: "new.project", label: folders.contains(project) ? (project as NSString).lastPathComponent : "Choose project", symbol: "folder") {
+                    ComposerRows.list("Projects", icon: choiceIcon("zero"), folders.map { folder in
+                        (folder, (folder as NSString).lastPathComponent, (folder as NSString).abbreviatingWithTildeInPath, folder == project, { project = folder })
+                    })
                 }
             }
             Spacer()
         }
         .font(.system(size: 12))
-        .padding(.horizontal, 12).padding(.top, 7).padding(.bottom, 16)
-        .background(Theme.composer, in: UnevenRoundedRectangle(topLeadingRadius: 12, topTrailingRadius: 12))
-        .overlay(UnevenRoundedRectangle(topLeadingRadius: 12, topTrailingRadius: 12).strokeBorder(Theme.stroke))
-        .padding(.horizontal, 10).padding(.bottom, -10)
+        // Codex's tab: flat grey, no edge, a little in from the card's sides; the card's shadow gives it depth.
+        .padding(.horizontal, 7).padding(.top, 8).padding(.bottom, 16)
+        .background(Theme.fieldTab, in: UnevenRoundedRectangle(topLeadingRadius: 20, topTrailingRadius: 20, style: .continuous))
+        .padding(.horizontal, 13).padding(.bottom, -12)
     }
 
     /// "Claude · Opus · High".
     private var agentLabel: String {
-        [chosen.title, models.first { $0.id == model }?.name ?? (model.isEmpty ? nil : model), effort.isEmpty ? nil : effort.capitalized]
+        [chosen.title, models.first { $0.id == model }?.name ?? (model.isEmpty ? nil : model), effort.isEmpty ? nil : effortLabel(effort, short: true)]
             .compactMap { $0 }.joined(separator: " · ")
     }
 
-    /// Codex's own catalogue for its account, from its cache; the aliases Claude Code takes; OpenCode's models are
-    /// per session, so typed. Nothing here asks a provider's service with Arsen's credentials.
-    private var models: [SpawnChoice] {
-        switch chosen {
-        case .codex: SoloAdapter().spawnModels(for: SpawnChoice(id: "codex", name: "Codex"))
-        case .claude: ["fable", "opus", "sonnet", "haiku"].map { SpawnChoice(id: $0, name: $0.capitalized) }
-        case .opencode: []
-        }
-    }
-
-    private var levels: [String] {
-        switch chosen {
-        case .codex: (models.first { $0.id == model } ?? models.first)?.levels.map(\.id) ?? []
-        case .claude: ["low", "medium", "high", "xhigh", "max"]
-        case .opencode: []
-        }
-    }
+    /// The chosen provider's models, from its CLI's own cache.
+    private var models: [SpawnChoice] { ComposerRows.catalogue(chosen) }
 
     private func start() {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1728,6 +2172,63 @@ private struct NewTaskView: View {
                 started(id)
             }
             starting = false
+        }
+    }
+}
+
+/// The system's blur of what's behind the window (a sidebar's material), solid when the window isn't the active one.
+struct BehindWindow: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
+
+/// The inbox as a page: what agents are waiting on you for, as the panel's cards (answered there or here, the same),
+/// then what was answered today.
+struct AsksPage: View {
+    @Bindable var controller: InboxController
+    @FocusState private var focus: String?
+
+    /// Asks for you (not notes or messages), one card for runs several agents asked for alike.
+    private static func asks(_ controller: InboxController) -> [Ask] {
+        controller.store.asks.filter { $0.kind != .note && $0.kind != .message && $0.state != .expired && $0.sameAs == nil }
+    }
+
+    static func waiting(_ controller: InboxController) -> [Ask] { asks(controller).filter { !$0.state.isFinal } }
+
+    var body: some View {
+        let waiting = Self.waiting(controller)
+        let today = Date().addingTimeInterval(-86400)
+        let answered = Array(Self.asks(controller).filter { $0.state.isFinal && ($0.answeredAt ?? .distantPast) > today }.suffix(20).reversed())
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                heading("Waiting on you", "Questions, approvals and commands agents asked you for, oldest first.")
+                if waiting.isEmpty {
+                    Text("Nothing is waiting on you.").font(.system(size: 13)).foregroundStyle(.secondary)
+                } else {
+                    VStack(spacing: 10) { ForEach(waiting) { CardView(ask: $0, controller: controller, focus: $focus).id($0.id) } }
+                }
+                if !answered.isEmpty {
+                    heading("Answered today", "Newest first.").padding(.top, 14)
+                    VStack(spacing: 10) { ForEach(answered) { CardView(ask: $0, controller: controller, focus: $focus).id($0.id) } }.opacity(0.85)
+                }
+            }
+            .centredColumn(620)
+            .padding(.vertical, 36)
+        }
+        .scrollIndicators(.never)
+    }
+
+    private func heading(_ title: String, _ detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.system(size: 15, weight: .semibold))
+            Text(detail).font(.system(size: 13)).foregroundStyle(.secondary)
         }
     }
 }
