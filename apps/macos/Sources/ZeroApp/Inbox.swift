@@ -1367,22 +1367,37 @@ struct CardView: View {
     @Bindable var controller: InboxController
     var focus: FocusState<String?>.Binding
 
-    /// Flat: no card of its own (a row's detail on the inbox page, inside the table).
+    /// Flat: no card of its own (the inbox page, a task's status). It's the one thing being looked at, so it shows in
+    /// full: its words and command unfolded, never dimmed.
     var flat = false
+    /// Who asked, under the question: left out where that's already plain (a task's own status).
+    var showsByline = true
 
-    init(ask: Ask, controller: InboxController, focus: FocusState<String?>.Binding, flat: Bool = false) {
+    init(ask: Ask, controller: InboxController, focus: FocusState<String?>.Binding, flat: Bool = false, showsByline: Bool = true) {
         self.ask = ask
         self.controller = controller
         self.focus = focus
         self.flat = flat
+        self.showsByline = showsByline
         // A card already seen is shown as it is from its first frame, even in a view built afresh.
         _entered = State(initialValue: controller.seen.contains(ask.id))
     }
 
     private var selected: Bool { controller.selected == ask.id }
+    /// A command it can't run here, for you to run yourself and say how it went: a two-step card.
+    private var manual: Bool { ask.kind != .run && ask.command != nil && ask.state == .waiting }
+
+    private func step(_ number: Int, _ title: String) -> some View {
+        HStack(spacing: 8) {
+            Text("\(number)").font(.system(size: 10, weight: .bold)).frame(width: 18, height: 18)
+                .background(Theme.keycap, in: Circle())
+            Text(title).font(.system(size: 12.5, weight: .semibold))
+        }
+    }
     private var dictating: Bool { controller.dictatingFor == ask.id }
     /// With several questions open, the waiting ones your keys won't answer step back; finished cards never dim.
-    private var dimmed: Bool { ask.state == .waiting && !selected && controller.cards.filter { $0.state == .waiting }.count > 1 }
+    /// Flat (on the inbox page, in a task's status), it's the one being looked at: never dimmed.
+    private var dimmed: Bool { !flat && ask.state == .waiting && !selected && controller.cards.filter { $0.state == .waiting }.count > 1 }
 
     @State private var commandExpanded = false
     @State private var scriptExpanded = false
@@ -1481,7 +1496,7 @@ struct CardView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(headline).font(.system(size: 15, weight: .semibold))
                             .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                        if let byline {
+                        if showsByline, let byline {
                             Text(byline).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
@@ -1502,7 +1517,7 @@ struct CardView: View {
             if let supporting, !supporting.isEmpty {
                 // Three lines; a longer one fades out on its last line instead of being cut mid-word, and a
                 // click on the text opens it in place. No button and no extra row.
-                let long = supporting.count > 180
+                let long = supporting.count > 180 && !flat
                 let folded = long && !detailExpanded
                 Group {
                     // Folded, a click opens it; selecting text would take that click. Open, it is selectable.
@@ -1532,9 +1547,11 @@ struct CardView: View {
             if ask.kind == .run && (ask.state == .running || ask.state == .answered) {
                 terminal
             } else if let command = ask.command {
+                // A command for you to run yourself (it can't be run from here: another machine's shell, sudo): a step.
+                if manual { step(1, "Run this") }
                 VStack(alignment: .leading, spacing: 6) {
                     Text(command).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
-                        .lineLimit(commandIsLong && !commandExpanded ? Self.collapsedLines : nil)
+                        .lineLimit(commandIsLong && !commandExpanded && !flat ? Self.collapsedLines : nil)
                         .fixedSize(horizontal: false, vertical: true)
                     // The script the command runs, so what Arsen approves is what he can read.
                     if let script = ask.script {
@@ -1554,7 +1571,7 @@ struct CardView: View {
                                     .lineLimit(1).truncationMode(.middle)
                             }
                             Spacer()
-                            if commandIsLong {
+                            if commandIsLong && !flat {
                                 Button(commandExpanded ? "Show less" : "Show all") { controller.holdTop = true; commandExpanded.toggle() }
                                     .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                             }
@@ -1563,7 +1580,26 @@ struct CardView: View {
                 }
                 .padding(10).frame(maxWidth: .infinity, alignment: .leading)
                 .background(Theme.code).clipShape(RoundedRectangle(cornerRadius: 10))
+                // Copied in one click, the script with it: what you run is what you read.
+                .overlay(alignment: .topTrailing) { CopyCommand(text: [command, ask.script].compactMap { $0 }.joined(separator: "\n")).padding(6) }
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { controller.measured[ask.id] = ($0, optionsHeight) }
+                if manual {
+                    HStack {
+                        step(2, "Then tell \(controller.store.displayName(of: ask.agent.name))")
+                        Spacer()
+                        // What it printed, from the clipboard into the reply, ready to send.
+                        if let typed = ask.options.firstIndex(where: Ask.expectsText) {
+                            Button {
+                                controller.drafts[ask.id] = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                                controller.choose(typed, on: ask.id)
+                            } label: {
+                                NucleoLabel("Paste output", icon: "copy", size: 12).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                                    .padding(.horizontal, 8).padding(.vertical, 4).contentShape(Rectangle())
+                            }
+                            .buttonStyle(Hovering(radius: 6)).help("Put what you copied into the reply, to send")
+                        }
+                    }
+                }
             }
             // Options carry the state: the chosen row goes orange with a spinner while it can still be taken back,
             // then green with a tick once delivered. The rest dim. A typed answer shows as a row of its own.
@@ -1933,12 +1969,15 @@ struct MarkdownText: View {
     var size: CGFloat
     /// Quieter, for a preview: headings at the text's size, code without pills, tighter spacing.
     var compact: Bool
+    /// As wide as its text, not the width it's given: a message of yours, in a bubble that hugs it.
+    var hugs: Bool
 
-    init(_ text: String, cwd: String? = nil, size: CGFloat = 13, compact: Bool = false) {
+    init(_ text: String, cwd: String? = nil, size: CGFloat = 13, compact: Bool = false, hugs: Bool = false) {
         self.text = text
         repo = cwd.flatMap(References.repo(of:))
         self.size = size
         self.compact = compact
+        self.hugs = hugs
     }
 
     /// Set once a long text has been rendered off the main thread, so the view picks it up.
@@ -1949,9 +1988,9 @@ struct MarkdownText: View {
     var body: some View {
         let _ = rendered
         if let kept = RichMarkdown.kept(text, size: size, compact: compact, repo: repo) {
-            RichText(text: kept)
+            RichText(text: kept, hugs: hugs)
         } else if text.count < Self.long {
-            RichText(text: Self.render(text, size: size, compact: compact, links: links))
+            RichText(text: Self.render(text, size: size, compact: compact, links: links), hugs: hugs)
         } else {
             // Its words while it's styled: a long answer never holds up the page.
             Text(ZeroEnding.split(text).0).font(.system(size: size)).lineSpacing(round(size * 0.42)).textSelection(.enabled)
@@ -2110,5 +2149,27 @@ struct MentionList: View {
         guard item.kind == .file else { return item.detail }
         let dir = (String(item.insert.dropFirst()) as NSString).deletingLastPathComponent
         return dir.isEmpty ? nil : dir
+    }
+}
+
+/// Copies a command in one click; a tick and "Copied" for a moment say it did.
+struct CopyCommand: View {
+    let text: String
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            copied = true
+            Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
+        } label: {
+            NucleoLabel(copied ? "Copied" : "Copy", icon: copied ? "circle-check" : "copy", size: 12)
+                .font(.system(size: 11.5, weight: .medium)).foregroundStyle(.secondary)
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(Theme.card.opacity(0.9), in: RoundedRectangle(cornerRadius: 6))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).help("Copy the command")
     }
 }
