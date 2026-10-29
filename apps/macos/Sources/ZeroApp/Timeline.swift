@@ -93,7 +93,11 @@ struct BlockRow: View, Equatable {
         case let .answer(item):
             // Zero's ending isn't shown: it's the task's state, in the sidebar, the pane and the board.
             if case let .agent(said, _) = item.kind, case let text = ZeroEnding.split(said).0, !text.isEmpty {
-                MessageBlock(text: text, date: item.date, mine: false, quote: quote, save: save) { MarkdownText(text, cwd: cwd, size: 14.5) }
+                MessageBlock(text: text, date: item.date, mine: false, quote: quote, save: save) {
+                    // Still being revealed when the turn ended: it carries on at its pace, rather than jumping to the end.
+                    if Reveal.unfinished(item.id, of: text) { StreamingText(id: item.id, text: text, cwd: cwd) }
+                    else { MarkdownText(text, cwd: cwd, size: 14.5) }
+                }
             }
         case let .work(_, items, start, end, live):
             WorkBlock(items: items, start: start, end: end, live: live, cwd: cwd)
@@ -152,12 +156,19 @@ struct WorkBlock: View {
             if live {
                 // Open, every step is above, the words being written among them; this is what's still to say.
                 if let last = items.last, case let .agent(said, _) = last.kind, case let text = ZeroEnding.split(said).0, !text.isEmpty {
-                    // What it's saying, in full, as the words stream in.
-                    if !open { MarkdownText(text, cwd: cwd, size: 14.5) }
+                    // What it's saying, as the words stream in, at Zero's own steady pace.
+                    if !open { StreamingText(id: last.id, text: text, cwd: cwd) }
                 } else {
-                    // Where it is: its latest step, quietly; between steps (or before the first), that it's thinking.
-                    if !open, let last = items.last { ItemView(item: last, cwd: cwd).opacity(0.7).allowsHitTesting(false).lineLimit(1) }
-                    if items.last?.status != .running { Thinking() }
+                    // Where it is: its latest step, quietly, on one line of fixed height whatever kind of step it is;
+                    // under it "Thinking…", always holding its place and shown only between steps (or before the
+                    // first). A step starting or ending changes words, never the height, so nothing below jumps.
+                    if !open {
+                        Group { if let last = items.last { StepLine(item: last) } }
+                            .frame(maxWidth: .infinity, minHeight: 22, maxHeight: 22, alignment: .leading)
+                            .opacity(0.7).allowsHitTesting(false)
+                    }
+                    // Through every step, until its words start to stream.
+                    Thinking()
                 }
             }
         }
@@ -519,5 +530,74 @@ struct SkeletonTurns: View {
             }
         }
         .opacity(0.7)
+    }
+}
+
+/// A step as one line, for the working bar's latest: what it is, not its card (a command's box, cut to a line, was
+/// half a box). Running, a spinner; done, a tick; failed, a cross.
+struct StepLine: View {
+    let item: ConversationItem
+
+    var body: some View {
+        HStack(spacing: 7) {
+            switch item.status {
+            case .running: Spinner().frame(width: 11, height: 11)
+            case .done: NucleoIcon("circle-check", fill: "glyph", size: 12).foregroundStyle(.secondary)
+            case .failed: NucleoIcon("circle-xmark", fill: "glyph", size: 12).foregroundStyle(.red)
+            case .declined: NucleoIcon("ban", size: 12).foregroundStyle(.orange)
+            }
+            text.lineLimit(1).truncationMode(.tail)
+        }
+        .font(.system(size: 12.5))
+        .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder private var text: some View {
+        switch item.kind {
+        case let .command(command, _, _, _, _): Text("$ " + command.replacingOccurrences(of: "\n", with: " ")).font(.system(size: 12, design: .monospaced))
+        case let .tool(name, detail): Text(ToolNames.name(name)).fontWeight(.medium) + Text(" " + ToolNames.detail(detail))
+        case let .fileChange(changes): Text("Edited " + changes.map { ($0.path as NSString).lastPathComponent }.joined(separator: ", "))
+        case let .agent(text, _), let .reasoning(text), let .plan(text): Text(text.split(separator: "\n").first.map(String.init) ?? "")
+        case let .notice(text, _): Text(text)
+        case let .user(text, _): Text(text.split(separator: "\n").first.map(String.init) ?? "")
+        }
+    }
+}
+
+/// How much of each streaming message has been shown, by its item: kept outside the views, so the answer a turn ends
+/// with carries on from where the live text was.
+@MainActor enum Reveal {
+    static var shown: [String: Int] = [:]
+
+    static func unfinished(_ id: String, of text: String) -> Bool { shown[id].map { $0 < text.count } ?? false }
+}
+
+/// Words as they stream, shown at Zero's own pace rather than in the bursts they arrive in: fast enough to catch up
+/// with what's arrived within a third of a second, never slower than 400 characters a second, so text flows on
+/// steadily, ahead of the bursts, instead of jumping.
+struct StreamingText: View {
+    let id: String
+    let text: String
+    let cwd: String
+    @State private var shown: Int = 0
+    @State private var last: Date?
+
+    var body: some View {
+        let total = text.count
+        TimelineView(.animation(minimumInterval: 1 / 60, paused: shown >= total)) { context in
+            MarkdownText(String(text.prefix(shown)), cwd: cwd, size: 14.5)
+                .onChange(of: context.date) { _, now in advance(to: now, total: total) }
+        }
+        .onAppear { shown = min(Reveal.shown[id] ?? 0, total) }
+    }
+
+    private func advance(to now: Date, total: Int) {
+        let step = min(now.timeIntervalSince(last ?? now.addingTimeInterval(-1 / 60)), 0.1)
+        last = now
+        let behind = total - shown
+        guard behind > 0 else { return }
+        let pace = max(400, Double(behind) / 0.33)
+        shown = min(total, shown + max(1, Int(pace * step)))
+        Reveal.shown[id] = shown
     }
 }
