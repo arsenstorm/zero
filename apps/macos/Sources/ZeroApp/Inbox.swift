@@ -254,6 +254,10 @@ final class InboxController {
         if selectorClosedKind == kind, Date().timeIntervalSince(selectorClosedAt) < 0.3 { return }
         let state = SelectorState(kind: kind)
         state.sections = selectorSections(for: kind) // once: the rows read catalogues from disk
+        state.close = { [weak self] in self?.closeSelector() }
+        state.level = { [weak self] id in self?.spawnSettings[id]?["reasoning"] }
+        state.setLevel = { [weak self] id, level in self?.setSpawnSetting(modelID: id, key: "reasoning", value: level) }
+        state.rebuild = { [weak self] in self?.selectorSections(for: kind) ?? [] }
         selector = state
         presentSelector?(anchor)
     }
@@ -809,10 +813,18 @@ enum Theme {
     /// The workspace window's own grey, under its panel: the outer rail.
     static let rail = dynamic(dark: NSColor(white: 0.07, alpha: 1), light: NSColor(white: 0.925, alpha: 1))
     static let row = dynamic(dark: NSColor(white: 0.16, alpha: 1), light: NSColor(white: 0.94, alpha: 1))
+    /// The rail's grey as a tint over the window's blur: the desktop shows through, softly.
+    static let railTint = dynamic(dark: NSColor(white: 0.07, alpha: 0.55), light: NSColor(white: 0.925, alpha: 0.6))
     /// The composer's well: in light mode only a breath under the card, so it reads as a field, not a slab.
     static let composer = dynamic(dark: NSColor(white: 0.16, alpha: 1), light: NSColor(white: 0.975, alpha: 1))
     /// The composer's pills: one step under its light well rather than the key caps' heavier grey.
     static let chip = dynamic(dark: NSColor(white: 0.22, alpha: 1), light: NSColor(white: 0.93, alpha: 1))
+    /// The workspace's composer, as Codex's: a white card on a hairline, its project tab a flat grey behind it, and a
+    /// grey send button until there's something to send.
+    static let field = dynamic(dark: NSColor(white: 0.17, alpha: 1), light: .white)
+    static let fieldEdge = dynamic(dark: NSColor(white: 1, alpha: 0.08), light: NSColor(white: 0, alpha: 0.07))
+    static let fieldTab = dynamic(dark: NSColor(white: 0.13, alpha: 1), light: NSColor(white: 0.955, alpha: 1))
+    static let sendIdle = dynamic(dark: NSColor(white: 0.36, alpha: 1), light: NSColor(white: 0.56, alpha: 1))
     static let keycap = dynamic(dark: NSColor(white: 0.22, alpha: 1), light: NSColor(white: 0.88, alpha: 1))
     /// A fully solid knob; `.primary` is a translucent label colour.
     static let knob = dynamic(dark: .white, light: .black)

@@ -116,6 +116,8 @@ final class Panel: NSPanel {
     /// The chip's point in the selector view, bottom-left origin: the card scales out of it and back into it.
     private var selectorAnchor = CGPoint.zero
     private var selectorMonitors: [Any] = []
+    /// The window the open selector gives the keys back to, when it isn't the inbox.
+    private var selectorReturn: NSWindow?
     /// zerod's sessions and their approvals; made once the store's other change handlers are in place.
     private var workspace: Workspace!
     private var workspaceWindow: NSWindow?
@@ -265,7 +267,7 @@ final class Panel: NSPanel {
 
     @objc func openWorkspace() {
         if workspaceWindow == nil {
-            let view = WorkspaceView(workspace: workspace, navigation: navigation) { [unowned self] in
+            let view = WorkspaceView(workspace: workspace, navigation: navigation, inbox: inbox) { [unowned self] in
                 SettingsView(settings: settings, store: store, inbox: inbox, showOnboarding: { [weak self] in self?.openOnboarding() })
             }
             let host = NSHostingController(rootView: view)
@@ -308,24 +310,33 @@ final class Panel: NSPanel {
     /// The selector is a panel of its own, so it can reach past the inbox's edges: the 240 pt list aligned with the
     /// chip and the 224 pt preview to its left, above the chip when there is room, otherwise below.
     private func showSelector(anchorInInbox anchor: CGRect) {
-        guard let selector = inbox.selector, let content = inboxPanel.contentView else { return }
+        guard let selector = inbox.selector else { return }
+        presentSelector(selector, chip: anchor, in: inboxPanel, centredOn: inboxPanel.frame)
+    }
+
+    /// The selector over any window, hung off the chip at `anchor` (its SwiftUI global frame in the window's
+    /// content); the two-pane model selector centred on `centredOn`, else on the chip. With `returning`, that window
+    /// gets the keys back when it closes (the workspace's composers).
+    func presentSelector(_ selector: SelectorState, chip anchor: CGRect, in window: NSWindow, centredOn: NSRect? = nil, returning: NSWindow? = nil) {
+        guard let content = window.contentView else { return }
         hideSelector(keepState: true)
+        selectorReturn = returning
         // SwiftUI's global frame is in the window's content, top-left origin; AppKit wants bottom-left.
         let appKit = NSRect(x: anchor.minX, y: content.bounds.height - anchor.maxY, width: anchor.width, height: anchor.height)
-        let chip = inboxPanel.convertToScreen(appKit)
+        let chip = window.convertToScreen(appKit)
         // A fixed, transparent strip below the chip (above it only when there is no room). The card inside is
         // anchored to the chip's edge, so a tab change grows or shrinks it from the far edge in the same frame,
         // with no window resizing and nothing moving underneath.
-        let screen = inboxPanel.screen?.visibleFrame ?? NSScreen.screens[0].visibleFrame
+        let screen = window.screen?.visibleFrame ?? NSScreen.screens[0].visibleFrame
         let roomBelow = chip.minY - 6 - screen.minY
         let roomAbove = screen.maxY - chip.maxY - 6
         let opensBelow = roomBelow >= 240 || roomBelow >= roomAbove
         let size = NSSize(width: SelectorView.width(selector.kind), height: min(480, opensBelow ? roomBelow : roomAbove))
         // Projects hang off their chip; the two-pane model selector is centred on the inbox, overhanging it equally.
-        let left = selector.kind == .runtime ? inboxPanel.frame.midX - size.width / 2 : chip.minX
+        let left = selector.kind == .runtime ? (centredOn ?? chip).midX - size.width / 2 : chip.minX
         let x = max(screen.minX + 8, min(left, screen.maxX - size.width - 8))
         let y = opensBelow ? chip.minY - 6 - size.height : chip.maxY + 6
-        let view = FirstMouseHostingView(rootView: AnyView(SelectorView(controller: inbox, state: selector)
+        let view = FirstMouseHostingView(rootView: AnyView(SelectorView(state: selector)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: opensBelow ? .top : .bottom)))
         view.sizingOptions = []
         // The animated layer is a plain container's, not the hosting view's: AppKit resets a hosting view's layer
@@ -350,26 +361,28 @@ final class Panel: NSPanel {
         }
         // A click anywhere but the card closes it: in another app (global), in Zero's other windows, or in the
         // strip's empty part (local).
-        if let global = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
-            self?.inbox.closeSelector()
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak selector] _ in
+            selector?.close()
         }) { selectorMonitors.append(global) }
         if let local = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self, weak selector] event in
             guard let self, let panel = selectorPanel else { return event }
             let y = event.locationInWindow.y, card = selector?.cardHeight ?? 0
             let inCard = opensBelow ? y >= panel.frame.height - card : y <= card
-            if event.window !== panel || !inCard { inbox.closeSelector() }
+            if event.window !== panel || !inCard { selector?.close() }
             return event
         }) { selectorMonitors.append(local) }
     }
 
-    private func hideSelector(keepState: Bool = false) {
+    func hideSelector(keepState: Bool = false) {
         selectorMonitors.forEach { NSEvent.removeMonitor($0) }
         selectorMonitors.removeAll()
         if let panel = selectorPanel {
             Self.animateSelector(panel, anchor: selectorAnchor, opening: false) { panel.orderOut(nil) }
         }
         selectorPanel = nil
-        if !keepState, openedByIntent || inbox.takesKeys { inboxPanel.makeKey() }
+        guard !keepState else { return }
+        if let back = selectorReturn { back.makeKey() } else if openedByIntent || inbox.takesKeys { inboxPanel.makeKey() }
+        selectorReturn = nil
     }
 
     /// Emil's popover: fade with a scale from 0.95 at the trigger, ease-out in, faster ease-in out. (No nudge
@@ -744,7 +757,7 @@ enum Preview {
         selector.sections = empty.selectorSections(for: .runtime)
         selector.tab = selector.sections.first?.id
         selector.highlighted = selector.sections.first?.rows.first?.id
-        write(SelectorView(controller: empty, state: selector).padding(12).background(Color(white: 0.5)), "selector.png")
+        write(SelectorView(state: selector).padding(12).background(Color(white: 0.5)), "selector.png")
     }
 }
 

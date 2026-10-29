@@ -38,6 +38,12 @@ final class SelectorState {
     var sections: [SelectorSection] = []
     /// The card's laid-out height: the app treats a click in the rest of its strip as a click outside.
     @ObservationIgnored var cardHeight: CGFloat = 0
+    /// What the selector asks of whoever opened it (the inbox, or a workspace composer): to close it, a model's
+    /// effort level and a new one for it, and its rows again after a level changes.
+    @ObservationIgnored var close: () -> Void = {}
+    @ObservationIgnored var level: (String) -> String? = { _ in nil }
+    @ObservationIgnored var setLevel: (String, String) -> Void = { _, _ in }
+    @ObservationIgnored var rebuild: () -> [SelectorSection] = { [] }
     init(kind: SelectorKind) { self.kind = kind }
 }
 
@@ -45,7 +51,6 @@ final class SelectorState {
 /// 28 pt each (name left, a small badge right, a tick on the current one), and a single footer line that
 /// describes the row under the pointer. ←→ switch provider, ↑↓ move, Return picks, Esc closes.
 struct SelectorView: View {
-    @Bindable var controller: InboxController
     @Bindable var state: SelectorState
     @FocusState private var focused: Bool
 
@@ -89,7 +94,7 @@ struct SelectorView: View {
         .onKeyPress(.leftArrow) { switchTab(-1); return .handled }
         .onKeyPress(.rightArrow) { switchTab(1); return .handled }
         .onKeyPress(.return) { pickHighlighted(); return .handled }
-        .onKeyPress(.escape) { controller.closeSelector(); return .handled }
+        .onKeyPress(.escape) { state.close(); return .handled }
         .onAppear {
             // Open on the provider that holds the current pick, with that pick highlighted.
             if state.tab == nil { state.tab = sections.first { $0.rows.contains { $0.selected } }?.id ?? sections.first?.id }
@@ -150,7 +155,7 @@ struct SelectorView: View {
         let current = state.highlighted == row.id
         return Button {
             row.pick()
-            controller.closeSelector()
+            state.close()
         } label: {
             HStack(spacing: 8) {
                 Text(row.title).font(.system(size: 13, weight: row.selected ? .semibold : .regular)).lineLimit(1)
@@ -173,7 +178,7 @@ struct SelectorView: View {
     /// Moving the slider also picks the model and leaves the selector open.
     @ViewBuilder private var details: some View {
         if let row = highlightedRow {
-            let picked = row.modelID.flatMap { controller.spawnSettings[$0]?["reasoning"] } ?? row.defaultLevel
+            let picked = row.modelID.flatMap(state.level) ?? row.defaultLevel
             VStack(spacing: 0) {
                 if let icon = row.providerIcon {
                     icon.resizable().aspectRatio(contentMode: .fit).frame(width: 36, height: 36).clipShape(RoundedRectangle(cornerRadius: 8))
@@ -196,9 +201,9 @@ struct SelectorView: View {
                     .frame(height: 14)
                     .padding(.top, 16)
                     EffortSlider(levels: row.levels.map(\.id), picked: picked) { level in
-                        if let id = row.modelID { controller.setSpawnSetting(modelID: id, key: "reasoning", value: level) }
+                        if let id = row.modelID { state.setLevel(id, level) }
                         row.pick() // after the level is saved: for a running agent the pick sends it along
-                        state.sections = controller.selectorSections(for: state.kind)
+                        state.sections = state.rebuild()
                     }
                     .padding(.top, 6)
                 }
@@ -239,7 +244,7 @@ struct SelectorView: View {
     private func pickHighlighted() {
         guard let row = highlightedRow else { return }
         row.pick()
-        controller.closeSelector()
+        state.close()
     }
 }
 
