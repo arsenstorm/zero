@@ -7,7 +7,7 @@ import ZeroCore
 // has a tick for each of your messages, bright for those on screen; hovering one previews it, clicking goes there.
 
 /// One thing in the timeline: a message of yours, a turn's work, an answer, or a step that shows on its own (a notice).
-enum TimelineBlock: Identifiable {
+enum TimelineBlock: Identifiable, Equatable {
     case user(ConversationItem)
     case work(id: String, items: [ConversationItem], start: Date?, end: Date?, live: Bool)
     case answer(ConversationItem)
@@ -60,6 +60,35 @@ enum TimelineBlock: Identifiable {
             if let current { owner[block.id] = current }
         }
         return owner
+    }
+}
+
+/// One block of the timeline, drawn again only when the block itself (or the folder its links use) changed: the quote
+/// and save actions don't count.
+struct BlockRow: View, Equatable {
+    let block: TimelineBlock
+    let cwd: String
+    let quote: (String) -> Void
+    let save: (String) -> Void
+
+    static func == (a: BlockRow, b: BlockRow) -> Bool { a.block == b.block && a.cwd == b.cwd }
+
+    var body: some View {
+        switch block {
+        case let .user(item):
+            if case let .user(text, _) = item.kind {
+                MessageBlock(text: text, date: item.date, mine: true, quote: quote, save: save) { ItemView(item: item, cwd: cwd) }
+            }
+        case let .answer(item):
+            // Zero's ending isn't shown: it's the task's state, in the sidebar, the pane and the board.
+            if case let .agent(said, _) = item.kind, case let text = ZeroEnding.split(said).0, !text.isEmpty {
+                MessageBlock(text: text, date: item.date, mine: false, quote: quote, save: save) { MarkdownText(text, cwd: cwd, size: 14.5) }
+            }
+        case let .work(_, items, start, end, live):
+            WorkBlock(items: items, start: start, end: end, live: live, cwd: cwd)
+        case let .step(item):
+            ItemView(item: item, cwd: cwd)
+        }
     }
 }
 
@@ -174,7 +203,7 @@ struct MessageRail: View {
         let answer: String?
     }
     let marks: [Mark]
-    let visible: Set<String>
+    let tracker: ScrollTracker
     let go: (String) -> Void
     @State private var hovered: Int?
 
@@ -183,6 +212,7 @@ struct MessageRail: View {
     private static let rest: CGFloat = 10
 
     var body: some View {
+        let visible = Set(tracker.seen.values)
         GeometryReader { space in
             // Ten points apart, closer when there are more than fit.
             let pitch = max(3, min(10, space.size.height * 0.8 / CGFloat(max(marks.count, 1))))
@@ -197,6 +227,8 @@ struct MessageRail: View {
                         .offset(x: 0, y: top + pitch * (CGFloat(index) + 0.5) - 0.75)
                 }
             }
+            // The ticks ease to their lengths; the card (below) is instant.
+            .animation(.easeOut(duration: 0.12), value: hovered)
             .frame(width: space.size.width, height: space.size.height, alignment: .topLeading)
             .contentShape(Rectangle())
             .onContinuousHover { phase in
@@ -204,9 +236,9 @@ struct MessageRail: View {
                 case let .active(point):
                     let index = Int(((point.y - top) / pitch).rounded(.down))
                     let inside = point.y >= top - pitch && point.y <= top + pitch * CGFloat(marks.count) + pitch
-                    withAnimation(.easeOut(duration: 0.12)) { hovered = inside ? min(max(index, 0), marks.count - 1) : nil }
+                    hovered = inside ? min(max(index, 0), marks.count - 1) : nil
                 case .ended:
-                    withAnimation(.easeOut(duration: 0.12)) { hovered = nil }
+                    hovered = nil
                 }
             }
             .onTapGesture { if let hovered { go(marks[hovered].id) } }
@@ -218,7 +250,6 @@ struct MessageRail: View {
                         .fixedSize()
                         .position(x: 40 + 160, y: y)
                         .allowsHitTesting(false)
-                        .transition(.opacity)
                 }
             }
         }
@@ -242,10 +273,36 @@ struct MessageRail: View {
     }
 }
 
+/// Where a conversation is scrolled to and which of its turns are on screen. Its own object, read only by what shows
+/// them (the scrollbar, the way down, the rail), so scrolling redraws them and not every message.
+@Observable final class ScrollTracker {
+    var geometry: ScrollGeometry?
+    /// The blocks on screen, by the message of yours each answers to.
+    var seen: [String: String] = [:]
+}
+
+/// Back to the latest, once it's well below what's on screen.
+struct WayDown: View {
+    let tracker: ScrollTracker
+    let go: () -> Void
+
+    var body: some View {
+        if let scroll = tracker.geometry, scroll.contentSize.height + scroll.contentInsets.bottom - (scroll.contentOffset.y + scroll.containerSize.height) > 200 {
+            Button(action: go) {
+                NucleoIcon("arrow-up", size: 14).rotationEffect(.degrees(180)).foregroundStyle(.primary)
+                    .frame(width: 32, height: 32).background(Theme.card, in: Circle())
+                    .overlay(Circle().strokeBorder(Theme.stroke))
+            }
+            .buttonStyle(.plain).help("Go to the latest")
+            .transition(.opacity)
+        }
+    }
+}
+
 /// A scrollbar as arsenstorm.com has one: a thin rounded thumb on no track, the full height of what scrolls; it
 /// widens under the pointer and drags.
 struct ThinScrollbar: View {
-    let geometry: ScrollGeometry?
+    let tracker: ScrollTracker
     let scrollTo: (CGFloat) -> Void
     @State private var hovered = false
     @State private var dragFrom: CGFloat?
@@ -259,7 +316,7 @@ struct ThinScrollbar: View {
 
     var body: some View {
         GeometryReader { space in
-            if let geometry {
+            if let geometry = tracker.geometry {
                 // What's on screen against the whole conversation; past either end (insets, a bounce) counts as the end.
                 let total = geometry.contentSize.height
                 let visible = min(geometry.visibleRect.height, total)

@@ -18,6 +18,23 @@ enum RichMarkdown {
     static let blockFill = NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.06) : NSColor(white: 0, alpha: 0.04) }
     static let quoteBar = NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.2) : NSColor(white: 0, alpha: 0.15) }
 
+    private static let rendered: NSCache<NSString, NSAttributedString> = { let cache = NSCache<NSString, NSAttributedString>(); cache.countLimit = 500; return cache }()
+
+    /// The text as rendered before, or rendered now and kept: a message that hasn't changed isn't parsed and styled
+    /// again each time its view is drawn. The same rendering is the same object, which the view checks for.
+    static func cached(_ text: String, size: CGFloat, compact: Bool, repo: String?, render: () -> NSAttributedString) -> NSAttributedString {
+        let key = "\(size)|\(compact)|\(repo ?? "")|\(text)" as NSString
+        if let kept = rendered.object(forKey: key) { return kept }
+        let made = render()
+        rendered.setObject(made, forKey: key)
+        return made
+    }
+
+    /// The text as rendered before, if it has been.
+    static func kept(_ text: String, size: CGFloat, compact: Bool, repo: String?) -> NSAttributedString? {
+        rendered.object(forKey: "\(size)|\(compact)|\(repo ?? "")|\(text)" as NSString)
+    }
+
     /// The blocks as one attributed text; `inline` reads what's inside a line (bold, code, links).
     static func render(_ blocks: [MarkdownBlock], size: CGFloat, inline: (String) -> AttributedString) -> NSAttributedString {
         let out = NSMutableAttributedString()
@@ -245,12 +262,26 @@ final class RichTextView: NSTextView {
         linkTextAttributes = [.foregroundColor: NSColor.linkColor, .cursor: NSCursor.pointingHand]
     }
 
-    /// Its height at `width`.
+    /// The text it shows (the rendering's own object), and its height at the width last asked.
+    var shown: NSAttributedString?
+    private var measured: (width: CGFloat, height: CGFloat)?
+
+    func show(_ text: NSAttributedString) {
+        guard text !== shown else { return }
+        shown = text
+        measured = nil
+        textStorage?.setAttributedString(text)
+    }
+
+    /// Its height at `width`, laid out once per text and width: SwiftUI asks several times a layout.
     func height(at width: CGFloat) -> CGFloat {
+        if let measured, measured.width == width { return measured.height }
         guard let container = textContainer, let layout = layoutManager else { return 0 }
         if container.size.width != width { container.size = NSSize(width: width, height: .greatestFiniteMagnitude) }
         layout.ensureLayout(for: container)
-        return ceil(layout.usedRect(for: container).height)
+        let height = ceil(layout.usedRect(for: container).height)
+        measured = (width, height)
+        return height
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -275,11 +306,12 @@ struct RichText: NSViewRepresentable {
     func makeNSView(context: Context) -> RichTextView { RichTextView() }
 
     func updateNSView(_ view: RichTextView, context: Context) {
-        if view.textStorage?.isEqual(to: text) != true { view.textStorage?.setAttributedString(text) }
+        view.show(text)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: RichTextView, context: Context) -> CGSize? {
         let width = proposal.width.map { min($0, 10_000) } ?? 560
+        view.show(text)
         return CGSize(width: width, height: view.height(at: width))
     }
 }
