@@ -261,6 +261,13 @@ impl Session {
         self.summary().provider
     }
 
+    /// A command of its turn still running: what pausing for a restart waits for.
+    pub fn running_command(&self) -> bool {
+        let inner = self.lock();
+        !inner.running.is_empty() || inner.core.as_ref().is_some_and(|core| core.conversation().items.iter().rev().take(50)
+            .any(|i| matches!(i.kind, ItemKind::Command { .. }) && i.status == ItemStatus::Running))
+    }
+
     /// True while a runtime process is connected.
     pub fn is_attached(&self) -> bool {
         self.lock().out.is_some()

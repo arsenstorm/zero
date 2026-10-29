@@ -62,3 +62,13 @@ pub fn spawn(argv: &[String], cwd: &Path, id: &str, stderr: Option<&Path>) -> st
     let (Some(input), Some(output)) = (child.stdin.take(), child.stdout.take()) else { return Err(std::io::Error::other("no stdio")) };
     Ok(Transport::new(output, input).with_child(child))
 }
+
+/// This process becomes the zerod now on disk (a new build), with the same arguments. Its files close as it does,
+/// which ends the agents' processes: their turns are paused first (Daemon::pause_for_restart).
+pub fn replace_self() -> ! {
+    use std::os::unix::process::CommandExt;
+    let exe = std::env::current_exe().unwrap_or_else(|_| "zerod".into());
+    let error = std::process::Command::new(&exe).args(std::env::args_os().skip(1)).exec();
+    eprintln!("zerod: couldn't restart as {}: {error}", exe.display());
+    std::process::exit(1)
+}

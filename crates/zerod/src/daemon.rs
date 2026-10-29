@@ -38,8 +38,15 @@ pub struct Daemon {
     resets: Mutex<HashMap<String, i64>>,
     /// The user's home (where Claude Code keeps its sessions) and zero-host's socket.
     user: Mutex<(PathBuf, PathBuf)>,
+    /// zerod is about to become a new build: words wait for it, rather than starting turns the restart would cut.
+    restarting: std::sync::atomic::AtomicBool,
     me: Weak<Daemon>,
 }
+
+/// What a turn paused for a restart is told once the new zerod is up.
+const CARRY_ON: &str = "Zero restarted while you were working: your turn was paused between steps. Please carry on where you left off.";
+/// How long a restart waits for a running command before pausing its turn anyway.
+const COMMAND_WAIT: Duration = Duration::from_secs(30 * 60);
 
 /// How long an agent waits between turns, with nothing open, before its process is stopped (parked): finished work
 /// shouldn't hold memory, and resuming takes seconds. Words for it resume it.
@@ -92,7 +99,7 @@ impl Daemon {
         }
         let daemon = Arc::new_cyclic(|me| Daemon {
             home: home.into(), sessions: Mutex::new(sessions), events, runtime, attention: Mutex::new(attention), pending: Mutex::new(pending),
-            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()),
+            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(),
         });
         let parker = Arc::downgrade(&daemon);
         tokio::spawn(async move {
@@ -661,6 +668,53 @@ impl Daemon {
         }
     }
 
+    /// Before zerod becomes a new build: every turn under way is paused between steps (a command running is left to
+    /// finish, up to COMMAND_WAIT), its session told to carry on once the new zerod is up. All at once, so one long
+    /// command holds up only its own turn. Gives the sessions paused.
+    pub async fn pause_for_restart(&self) -> Vec<String> {
+        self.restarting.store(true, Ordering::Relaxed);
+        let mut pausing = tokio::task::JoinSet::new();
+        for session in self.sessions() {
+            let conversation = session.summary();
+            // Only a turn with a process behind it: an offline session's last status may still say it was working.
+            if !session.is_attached() || !matches!(conversation.status, Status::Working | Status::Waiting | Status::Starting) { continue }
+            pausing.spawn(async move {
+                let deadline = tokio::time::Instant::now() + COMMAND_WAIT;
+                while (session.running_command() || session.summary().status == Status::Starting) && tokio::time::Instant::now() < deadline {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                }
+                if session.is_attached() { let _ = tokio::time::timeout(Duration::from_secs(5), session.interrupt()).await; }
+                conversation.id
+            });
+        }
+        let mut paused = vec![];
+        while let Some(done) = pausing.join_next().await { if let Ok(id) = done { paused.push(id) } }
+        for id in &paused {
+            self.pending.lock().unwrap().entry(id.clone()).or_default().push(CARRY_ON.into());
+            self.keep_pending(id);
+        }
+        // Which turns to carry on: these, and only these (words waiting for a parked task wait for you to resume it).
+        let _ = std::fs::write(self.home.join("paused.json"), serde_json::to_vec(&paused).unwrap_or_default());
+        paused
+    }
+
+    /// Once zerod is up after a restart: the turns it paused resume, and are told to carry on as soon as they're between
+    /// turns. Nothing else is resumed. Gives the sessions resumed.
+    pub fn carry_on(&self) -> Vec<String> {
+        let file = self.home.join("paused.json");
+        let paused: Vec<String> = std::fs::read(&file).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default();
+        let _ = std::fs::remove_file(&file);
+        let mut resumed = vec![];
+        for id in paused {
+            let Ok(session) = self.session(&id) else { continue };
+            if session.is_attached() || session.summary().terminal.is_some() { continue }
+            let Some(daemon) = self.me.upgrade() else { break };
+            resumed.push(id.clone());
+            tokio::spawn(async move { if let Err(error) = daemon.resume(&id).await { eprintln!("zerod: couldn't resume {id} to carry on: {error}") } });
+        }
+        resumed
+    }
+
     /// Stops the process of every session idle for PARK_AFTER with nothing waiting for it.
     fn park(&self) {
         let pending = self.pending.lock().unwrap().clone();
@@ -682,6 +736,7 @@ impl Daemon {
     }
 
     fn deliver(&self, id: &str) {
+        if self.restarting.load(Ordering::Relaxed) { return }
         let Ok(session) = self.session(id) else { return };
         if !session.is_attached() { return }
         let Some(words) = self.pending.lock().unwrap().remove(id) else { return };

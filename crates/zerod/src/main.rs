@@ -66,6 +66,8 @@ async fn main() {
             std::process::exit(1);
         }
     };
+    // After a restart: the turns it paused carry on.
+    daemon.carry_on();
     let runtimes: Vec<Arc<dyn Runtime>> = vec![
         Arc::new(zerod::daemon::Sessions::of(&daemon)), Arc::new(zerod::solo::Solo::installed()),
         Arc::new(zerod::rex::Rex::installed()), Arc::new(zerod::host::Host::installed()),

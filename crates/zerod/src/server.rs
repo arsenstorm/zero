@@ -253,6 +253,17 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
                          request.cwd.as_deref().ok_or("Which folder?")?, options).map(|id| json!({"session": id}))
         }
         "archive" => daemon.archive(&session()?).await.map(|_| Value::Null),
+        // A new build is on disk: turns under way pause between steps, then zerod becomes the new one, which carries
+        // them on. Answered at once; the restart happens when the last turn has paused.
+        "restart" => {
+            let daemon = daemon.clone();
+            tokio::spawn(async move {
+                let paused = daemon.pause_for_restart().await;
+                eprintln!("zerod: restarting as the new build; {} turn(s) paused to carry on", paused.len());
+                crate::process::replace_self();
+            });
+            Ok(json!({"restarting": true}))
+        }
         "rewindPreview" => daemon.rewind_preview(&session()?, request.message.as_deref().ok_or("Back to which message?")?),
         "rewind" => daemon.rewind(&session()?, request.message.as_deref().ok_or("Back to which message?")?, request.conversation.unwrap_or(true),
                                   request.code.unwrap_or(false)).await,
