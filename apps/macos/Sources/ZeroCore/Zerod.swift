@@ -450,6 +450,11 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
         case .archived: break
         case let .place(place): self.place = place
         case let .parent(parent): self.parent = parent
+        case .snapshot: break
+        case let .rewound(before):
+            // As zerod does (model.rs): the message and what followed go, and with them the provider's thread.
+            if let at = items.firstIndex(where: { $0.id == before }) { items.removeSubrange(at...) }
+            thread = nil; turn = nil; approvals = []; questions = []; diff = nil; error = nil; failure = nil; stalled = nil
         case let .switched(provider, model, effort):
             self.provider = provider; self.thread = nil; self.model = model; self.effort = effort
             // As zerod does: where each provider took over, in the conversation itself.
@@ -483,8 +488,12 @@ public enum Change: Decodable, Equatable, Sendable {
     case place(String?)
     /// The task became a worker of another, or a lead again.
     case parent(String?)
+    /// zerod kept the folder as it was when a message went (what a rewind can bring back).
+    case snapshot
+    /// Back to just before this message of yours: it and everything after it are gone.
+    case rewound(String)
 
-    private enum Keys: String, CodingKey { case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label, ticket, provider, terminal, place, parent }
+    private enum Keys: String, CodingKey { case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label, ticket, provider, terminal, place, parent, before }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -509,6 +518,8 @@ public enum Change: Decodable, Equatable, Sendable {
         case "archived": self = .archived
         case "place": self = .place(try c.decodeIfPresent(String.self, forKey: .place))
         case "parent": self = .parent(try c.decodeIfPresent(String.self, forKey: .parent))
+        case "snapshot": self = .snapshot
+        case "rewound": self = .rewound(try c.decode(String.self, forKey: .before))
         case "switched": self = .switched(try c.decode(Provider.self, forKey: .provider), model: try c.decodeIfPresent(String.self, forKey: .model),
                                           effort: try c.decodeIfPresent(String.self, forKey: .effort))
         case let other: throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "Unknown change \(other)")
@@ -693,6 +704,21 @@ public final class ZerodLink: @unchecked Sendable {
     public func stop(session: String) async throws { _ = try await call("stop", ["session": session]) }
     /// Puts the task away: out of the list, its files kept in zerod's archive/.
     public func archive(session: String) async throws { _ = try await call("archive", ["session": session]) }
+
+    /// What going back to a message of yours would do to the folder.
+    public func rewindPreview(session: String, message: String) async throws -> RewindPreview {
+        try decode(RewindPreview.self, from: await call("rewindPreview", ["session": session, "message": message]))
+    }
+
+    /// Back to just before a message of yours: the conversation, the folder's code, or both; the message comes back.
+    public func rewind(session: String, message: String, conversation: Bool, code: Bool) async throws -> Rewound {
+        try decode(Rewound.self, from: await call("rewind", ["session": session, "message": message, "conversation": conversation, "code": code]))
+    }
+
+    /// A new task from just before a message of yours; this one stays. Its id comes back with the message.
+    public func branch(session: String, message: String) async throws -> Rewound {
+        try decode(Rewound.self, from: await call("branch", ["session": session, "message": message]))
+    }
     public func resume(session: String) async throws { _ = try await call("resume", ["session": session]) }
     /// Moves the task to another provider between turns; the next message starts it there.
     /// Hands the task to its provider's own terminal; zero-host's id for it.
@@ -994,4 +1020,20 @@ public final class ZerodLink: @unchecked Sendable {
         connection.close()
         return true
     }
+}
+
+/// How the folder differs from when a message went: what restoring its code would undo. No snapshot outside git, or
+/// for messages sent before Zero kept them.
+public struct RewindPreview: Decodable, Equatable, Sendable {
+    public let snapshot: Bool
+    public let files: Int?
+    public let insertions: Int?
+    public let deletions: Int?
+}
+
+/// A message gone back to: its words and images, to send again or change; and, branched, the new task's id.
+public struct Rewound: Decodable, Sendable {
+    public let text: String
+    public let images: [String]
+    public let session: String?
 }

@@ -128,8 +128,27 @@ public final class Workspace {
         if !mirror.receive(message) { onBehind() }
         switch message {
         case let .session(conversation): sync(conversation.id)
-        case let .change(event): sync(event.session)
+        case let .change(event): soon(event.session)
         case let .earlier(session, _): sync(session)
+        }
+    }
+
+    /// Tasks changed since the views last caught up.
+    @ObservationIgnored private var stale: Set<String> = []
+    @ObservationIgnored private var catchingUp = false
+
+    /// The views catch up with a task at most about 30 times a second: an answer streams in at 80 words a second,
+    /// and drawing each one fell behind, so the text showed up halfway through. The mirror has every change at once.
+    private func soon(_ id: String) {
+        stale.insert(id)
+        guard !catchingUp else { return }
+        catchingUp = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(33))
+            catchingUp = false
+            let ids = stale
+            stale = []
+            ids.forEach(sync)
         }
     }
 
@@ -173,6 +192,23 @@ public final class Workspace {
     public func trim(_ session: String) {
         mirror.trim(session, keep: 40)
         sync(session)
+    }
+
+    /// Words waiting in a task's composer when it opens: the message a branch was made from.
+    public var pendingDrafts: [String: String] = [:]
+
+    public func rewindPreview(_ session: String, message: String) async -> RewindPreview? {
+        try? await link?.rewindPreview(session: session, message: message)
+    }
+
+    public func rewind(_ session: String, message: String, conversation: Bool, code: Bool) async -> Rewound? {
+        await attempt { try await $0.rewind(session: session, message: message, conversation: conversation, code: code) }
+    }
+
+    public func branch(_ session: String, message: String) async -> Rewound? {
+        let branched = await attempt { try await $0.branch(session: session, message: message) }
+        if let id = branched?.session { pendingDrafts[id] = branched?.text }
+        return branched
     }
 
     public func outline(_ session: String) async -> [OutlineMark] { (try? await link?.outline(session: session)) ?? [] }
