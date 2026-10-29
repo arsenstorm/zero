@@ -71,13 +71,23 @@ struct SettingsView: View {
     }
 }
 
-/// An inner sidebar: its title on a blueprint, then its rows, on the sidebar's grey.
+/// How wide the inner sidebars are: one width for all of them, dragged at their right edge between these.
+enum SidebarWidth {
+    static let key = "sidebarWidth"
+    static let standard: Double = 250
+    static let range: ClosedRange<Double> = 200...420
+}
+
+/// An inner sidebar: its title on a blueprint, then its rows, on the sidebar's grey. Its right edge drags it wider or
+/// narrower.
 struct SidebarColumn<Content: View>: View {
     let title: String
-    var width: CGFloat = 250
     /// A row at the foot under a divider (an integration's Edit views), level with the rail's settings.
     var footer: AnyView? = nil
     @ViewBuilder let content: () -> Content
+    @AppStorage(SidebarWidth.key) private var width = SidebarWidth.standard
+    /// The width when the drag began.
+    @State private var dragged: Double?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -96,6 +106,18 @@ struct SidebarColumn<Content: View>: View {
         .frame(width: width)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.composer)
+        // The edge to drag: a thin strip along it, inside the sidebar so the page doesn't take its clicks.
+        .overlay(alignment: .trailing) {
+            Color.clear.frame(width: 6).contentShape(Rectangle())
+                .pointerStyle(.columnResize)
+                .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { drag in
+                        let start = dragged ?? width
+                        dragged = start
+                        width = min(max(start + drag.translation.width, SidebarWidth.range.lowerBound), SidebarWidth.range.upperBound)
+                    }
+                    .onEnded { _ in dragged = nil })
+        }
     }
 }
 
