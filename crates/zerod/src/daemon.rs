@@ -46,6 +46,8 @@ pub struct Daemon {
 pub const PARK_AFTER: Duration = Duration::from_secs(3 * 60);
 /// How long a task's provider terminal sits with nothing written or typed before it closes and the task comes back to
 /// Zero: longer, since someone may be reading it.
+/// An offline task whose conversation nobody has wanted for this long leaves memory, kept as a summary.
+pub const UNLOAD_AFTER: Duration = Duration::from_secs(10 * 60);
 pub const TERMINAL_PARK_AFTER: Duration = Duration::from_secs(15 * 60);
 
 /// How a lead starts a worker; anything left out comes from the lead.
@@ -79,7 +81,7 @@ impl Daemon {
         for dir in dirs {
             match Session::load(&dir, events.clone()) {
                 Ok(session) => {
-                    let conversation = session.snapshot();
+                    let conversation = session.summary();
                     attention.insert(conversation.id.clone(), conversation.attention());
                     if let Ok(words) = std::fs::read(dir.join("pending.json")).map(|data| serde_json::from_slice::<Vec<String>>(&data).unwrap_or_default())
                         && !words.is_empty() { pending.insert(conversation.id.clone(), words); }
@@ -127,7 +129,7 @@ impl Daemon {
     }
 
     pub fn session(&self, id: &str) -> Result<Session, String> {
-        self.sessions().into_iter().find(|s| s.snapshot().id == id).ok_or_else(|| format!("No session {id}"))
+        self.sessions().into_iter().find(|s| s.id() == id).ok_or_else(|| format!("No session {id}"))
     }
 
     pub fn get(&self, id: &str) -> Option<Conversation> {
@@ -136,7 +138,7 @@ impl Daemon {
 
     /// Every session without its items: enough for a list.
     pub fn list(&self) -> Vec<Conversation> {
-        self.sessions().iter().map(|s| s.recent(0).0).collect()
+        self.sessions().iter().map(|s| s.summary().with_items(vec![])).collect()
     }
 
     /// Starts a session in `cwd` with `prompt` as its first turn; returns its id at once, while the runtime starts.
@@ -204,7 +206,7 @@ impl Daemon {
     pub fn adopt(&self, provider: Provider, thread: &str, cwd: &str, options: Options) -> Result<String, String> {
         if provider != Provider::Claude { return Err(format!("{} sessions can't be taken in yet", provider.title())) }
         if !Path::new(cwd).is_dir() { return Err(format!("{cwd} isn't a folder")) }
-        if let Some(known) = self.sessions().iter().map(|s| s.snapshot()).find(|c| c.thread.as_deref() == Some(thread)) { return Ok(known.id) }
+        if let Some(known) = self.sessions().iter().map(|s| s.summary()).find(|c| c.thread.as_deref() == Some(thread)) { return Ok(known.id) }
         let id = new_id();
         let mut conversation = Conversation::new(&id, provider, cwd);
         conversation.thread = Some(thread.into());
@@ -222,13 +224,36 @@ impl Daemon {
         Ok(id)
     }
 
+    /// `target` made a worker of `lead`: a task Zero has (by its id, or its Claude Code session's), else a Claude Code
+    /// session taken in first, found by its id in any folder. Not the lead itself, nor anything above it.
+    pub fn adopt_into(&self, lead: &str, target: &str) -> Result<String, String> {
+        let mut above = Some(self.session(lead)?.summary());
+        let known = self.sessions().iter().map(|s| s.summary()).find(|c| c.id == target || c.thread.as_deref() == Some(target)).map(|c| c.id);
+        let id = match known {
+            Some(id) => id,
+            None => {
+                let file = std::fs::read_dir(self.user_home().join(".claude/projects")).map_err(|e| e.to_string())?
+                    .filter_map(|e| e.ok().map(|e| e.path().join(format!("{target}.jsonl")))).find(|f| f.is_file())
+                    .ok_or_else(|| format!("No task or Claude Code session {target}"))?;
+                let cwd = claude_cwd(&file).ok_or_else(|| format!("Claude Code session {target} doesn't say its folder"))?;
+                self.adopt(Provider::Claude, target, &cwd, Options::default())?
+            }
+        };
+        while let Some(conversation) = above {
+            if conversation.id == id { return Err(format!("{id} leads {lead}; it can't be its worker")) }
+            above = conversation.parent.and_then(|parent| self.session(&parent).ok()).map(|s| s.summary());
+        }
+        self.session(&id)?.change(Change::Parent { parent: Some(lead.into()) });
+        Ok(id)
+    }
+
     /// Puts a task away: stopped, out of the list, its files moved to archive/ (moved back, it returns).
     pub async fn archive(&self, id: &str) -> Result<(), String> {
         let session = self.session(id)?;
-        if session.snapshot().terminal.is_some() { self.close_terminal(id).await? }
+        if session.summary().terminal.is_some() { self.close_terminal(id).await? }
         self.take_offline(&session).await;
-        let seq = session.snapshot().seq;
-        self.sessions.lock().unwrap().retain(|s| s.snapshot().id != id);
+        let seq = session.summary().seq;
+        self.sessions.lock().unwrap().retain(|s| s.id() != id);
         self.attention.lock().unwrap().remove(id);
         self.pending.lock().unwrap().remove(id);
         drop(session);
@@ -326,7 +351,7 @@ impl Daemon {
         if !session.is_attached() { return }
         session.stop();
         for _ in 0..100 {
-            if session.snapshot().status == Status::Offline { break }
+            if session.summary().status == Status::Offline { break }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
@@ -469,7 +494,7 @@ impl Daemon {
     /// Each provider's limits as its CLI last reported them, from the session that heard last.
     pub fn usage(&self) -> Vec<(Provider, crate::model::Usage)> {
         let mut latest: Vec<(Provider, crate::model::Usage)> = vec![];
-        for conversation in self.sessions().iter().map(|s| s.snapshot()) {
+        for conversation in self.sessions().iter().map(|s| s.summary()) {
             let Some(usage) = conversation.usage else { continue };
             latest.retain(|(p, _)| *p != conversation.provider);
             latest.push((conversation.provider, usage));
@@ -519,10 +544,10 @@ impl Daemon {
         self.pending.lock().unwrap().entry(id.into()).or_default().push(words);
         self.keep_pending(id);
         let Ok(session) = self.session(id) else { return };
-        if !session.is_attached() && session.snapshot().terminal.is_none() {
+        if !session.is_attached() && session.summary().terminal.is_none() {
             let (Some(daemon), id) = (self.me.upgrade(), id.to_string()) else { return };
             tokio::spawn(async move { if let Err(error) = daemon.resume(&id).await { eprintln!("zerod: couldn't resume {id} for its words: {error}") } });
-        } else if self.get(id).is_some_and(|c| matches!(c.attention(), Attention::Done | Attention::Idle)) {
+        } else if matches!(session.summary().attention(), Attention::Done | Attention::Idle) {
             self.deliver(id)
         }
     }
@@ -531,7 +556,9 @@ impl Daemon {
     fn park(&self) {
         let pending = self.pending.lock().unwrap().clone();
         for session in self.sessions() {
-            let conversation = session.snapshot();
+            if session.unwanted_for().is_some_and(|unwanted| unwanted >= UNLOAD_AFTER) { session.unload(); }
+            if !session.is_loaded() { continue }
+            let conversation = session.summary();
             if let Some(open) = conversation.terminal {
                 let (Some(daemon), id) = (self.me.upgrade(), conversation.id.clone()) else { continue };
                 tokio::spawn(async move {
@@ -565,7 +592,7 @@ impl Daemon {
 
     pub fn stop(&self, id: &str) -> Result<(), String> {
         let session = self.session(id)?;
-        if session.snapshot().status == Status::Offline { return Err(format!("{id} isn't running")) }
+        if session.summary().status == Status::Offline { return Err(format!("{id} isn't running")) }
         session.stop();
         Ok(())
     }
@@ -659,6 +686,13 @@ fn new_id() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let millis = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
     format!("{millis:012x}{:04x}", COUNTER.fetch_add(1, Ordering::Relaxed) & 0xffff)
+}
+
+/// The folder a Claude Code session ran in, from the first of its records that says.
+fn claude_cwd(file: &Path) -> Option<String> {
+    use std::io::BufRead;
+    std::io::BufReader::new(std::fs::File::open(file).ok()?).lines().map_while(Result::ok)
+        .find_map(|line| serde_json::from_str::<serde_json::Value>(&line).ok()?["cwd"].as_str().map(String::from))
 }
 
 #[cfg(test)]

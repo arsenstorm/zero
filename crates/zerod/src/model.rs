@@ -346,6 +346,8 @@ pub enum Change {
     Archived,
     /// Where the task runs, by name (a bench, a machine), when its folder doesn't say.
     Place { place: Option<String> },
+    /// The task became a worker of another (a lead adopting it), or a lead of its own again.
+    Parent { parent: Option<String> },
 }
 
 /// A change as clients receive it: which session, and its place in that session's sequence.
@@ -453,6 +455,7 @@ impl Conversation {
             Change::Terminal { terminal } => self.terminal = terminal,
             Change::Archived => {}
             Change::Place { place } => self.place = place,
+            Change::Parent { parent } => self.parent = parent,
             Change::Switched { provider, model, effort } => {
                 self.provider = provider;
                 self.thread = None;
