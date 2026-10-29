@@ -1925,16 +1925,52 @@ struct MarkdownText: View {
         self.compact = compact
     }
 
+    /// Set once a long text has been rendered off the main thread, so the view picks it up.
+    @State private var rendered = false
+    /// Texts this long render off the main thread, their plain text shown meanwhile.
+    private static let long = 4000
+
     var body: some View {
-        // Zero's own ending ("[zero: done]") is for its hook, not for reading.
-        let rendered = RichMarkdown.render(MarkdownBlock.parse(ZeroEnding.split(text).0), size: size, inline: attributed)
-        RichText(text: compact ? RichMarkdown.compact(rendered, size: size) : rendered)
+        let _ = rendered
+        if let kept = RichMarkdown.kept(text, size: size, compact: compact, repo: repo) {
+            RichText(text: kept)
+        } else if text.count < Self.long {
+            RichText(text: Self.render(text, size: size, compact: compact, links: links))
+        } else {
+            // Its words while it's styled: a long answer never holds up the page.
+            Text(ZeroEnding.split(text).0).font(.system(size: size)).lineSpacing(round(size * 0.42)).textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .task(id: text) {
+                    let (text, size, compact, links) = (text, size, compact, links)
+                    _ = await Task.detached(priority: .userInitiated) { Rendered(Self.render(text, size: size, compact: compact, links: links)) }.value
+                    rendered.toggle()
+                }
+        }
+    }
+
+    /// What finding links needs, read on the main thread so rendering can happen anywhere.
+    private var links: Links { Links(repo: repo, teams: Linear.shared.teams, app: LinearLinks.inApp) }
+
+    struct Links: Sendable {
+        let repo: String?
+        let teams: [String: String]
+        let app: Bool
+    }
+
+    private struct Rendered: @unchecked Sendable { let text: NSAttributedString; init(_ text: NSAttributedString) { self.text = text } }
+
+    /// Parsed, styled and kept. Zero's own ending ("[zero: done]") is for its hook, not for reading.
+    nonisolated static func render(_ text: String, size: CGFloat, compact: Bool, links: Links) -> NSAttributedString {
+        RichMarkdown.cached(text, size: size, compact: compact, repo: links.repo) {
+            let made = RichMarkdown.render(MarkdownBlock.parse(ZeroEnding.split(text).0), size: size, inline: { inline($0, links: links) })
+            return compact ? RichMarkdown.compact(made, size: size) : made
+        }
     }
 
     /// Linear issues and pull requests become links, except inside `code` and links the agent already wrote.
-    func attributed(_ prose: String) -> AttributedString {
+    nonisolated static func inline(_ prose: String, links: Links) -> AttributedString {
         var result = (try? AttributedString(markdown: prose, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(prose)
-        for (range, url) in References.find(in: String(result.characters), repo: repo, linear: Linear.shared.teams, linearApp: LinearLinks.inApp) {
+        for (range, url) in References.find(in: String(result.characters), repo: links.repo, linear: links.teams, linearApp: links.app) {
             guard let span = Range(range, in: result) else { continue }
             let plain = result[span].runs.allSatisfy { $0.link == nil && !($0.inlinePresentationIntent?.contains(.code) ?? false) }
             if plain { result[span].link = url }

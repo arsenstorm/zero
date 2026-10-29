@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -69,6 +70,21 @@ enum Attachments {
 
 /// An image as a square tile, cropped to fill; a click opens it. With `remove`, an × shows on hover.
 struct Thumbnail: View {
+    private static let decoded: NSCache<NSString, NSImage> = { let cache = NSCache<NSString, NSImage>(); cache.countLimit = 200; return cache }()
+
+    /// The image decoded once, small: about twice the tile's size for a Retina screen, not the whole screenshot on
+    /// every redraw.
+    static func image(_ path: String, side: CGFloat) -> NSImage? {
+        let key = "\(side)|\(path)" as NSString
+        if let kept = decoded.object(forKey: key) { return kept }
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                  kCGImageSourceThumbnailMaxPixelSize: side * 2 * 2, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary) else { return nil }
+        let small = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+        decoded.setObject(small, forKey: key)
+        return small
+    }
+
     let path: String
     var side: CGFloat = 72
     var remove: (() -> Void)?
@@ -77,7 +93,7 @@ struct Thumbnail: View {
     var body: some View {
         Button { NSWorkspace.shared.open(URL(fileURLWithPath: path)) } label: {
             Group {
-                if let image = NSImage(contentsOfFile: path) {
+                if let image = Thumbnail.image(path, side: side) {
                     Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
                 } else {
                     NucleoIcon("file", size: 18).foregroundStyle(.tertiary).frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.chip)

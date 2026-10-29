@@ -408,7 +408,7 @@ private struct PlacesField: View {
                     .onSubmit(save)
                 Button("Save", action: save).disabled(command == saved)
             }
-            Text("Shown as each task's Where, by its ticket, in place of its folder. Run in your login shell every minute.")
+            Text("Shown as each task's Where, by its ticket, in place of its folder. Run in your login shell every five minutes.")
                 .font(.system(size: 12)).foregroundStyle(.secondary)
         }
         .task {

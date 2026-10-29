@@ -166,10 +166,12 @@ final class Panel: NSPanel {
         applySettings()
         settings.onChange = { [weak self] in self?.applySettings() }
         registerHotKey()
-        // The pointer: following the active screen, the inbox's safe zone, and closing a peeked inbox.
-        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.trackPointer() }
-        }
+        // The pointer: following the active screen, the inbox's safe zone, and closing a peeked inbox. Followed as it
+        // moves, over other apps and Zero's own windows, rather than looked at ten times a second: a still pointer costs
+        // nothing.
+        let follow: (NSEvent) -> Void = { [weak self] _ in MainActor.assumeIsolated { self?.trackPointer() } }
+        NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged], handler: follow)
+        NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { event in follow(event); return event }
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.window === inboxPanel else { return event }
             return inbox.handle(event) ? nil : event
@@ -286,6 +288,7 @@ final class Panel: NSPanel {
             window.setFrameAutosaveName("Workspace")
             window.isReleasedWhenClosed = false
             window.center()
+            window.acceptsMouseMovedEvents = true
             workspaceWindow = window
         }
         NSApp.setActivationPolicy(.regular)
@@ -436,6 +439,7 @@ final class Panel: NSPanel {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing))
         inboxView.sizingOptions = []
         inboxPanel = makePanel(size: NSSize(width: 380, height: 600), content: inboxView)
+        inboxPanel.acceptsMouseMovedEvents = true
         inboxPanel.allowsTextFocus = { [weak self] in
             guard let self else { return true }
             return inbox.focusedReply != nil || inbox.dictatingFor != nil

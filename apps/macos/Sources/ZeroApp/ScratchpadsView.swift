@@ -69,12 +69,12 @@ struct ScratchpadsPage: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.card)
         }
-        // Agents add and change pads too, so the list is looked at again while it's shown.
-        // ponytail: polls; a change feed from zerod when two seconds is too slow.
-        .task {
+        // Agents add and change pads too: read again when zerod says one changed, and every half minute for files
+        // edited outside Zero.
+        .task(id: workspace.padsVersion) {
             while !Task.isCancelled {
                 await workspace.loadPads()
-                try? await Task.sleep(for: .seconds(2))
+                try? await Task.sleep(for: .seconds(30))
             }
         }
         .sheet(item: $naming) { naming in
@@ -288,8 +288,12 @@ private struct PadEditor: View {
             await load()
             scrollTo = navigation.padSection
             navigation.padSection = nil
+        }
+        // Someone else's change (an agent's, through zerod) as it happens; one made outside Zero within half a minute.
+        .task(id: workspace.padsVersion) {
+            await refresh()
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1.5))
+                try? await Task.sleep(for: .seconds(30))
                 await refresh()
             }
         }
