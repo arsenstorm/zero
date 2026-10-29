@@ -167,3 +167,39 @@ fn how_the_agent_ended_its_turn_is_the_rows_state() {
     lead.items.push(Item { id: "1".into(), turn: None, kind: ItemKind::Agent { text: "Merged.\n[zero: done]".into(), final_answer: true }, status: ItemStatus::Done, at: None });
     assert_eq!(board(&[lead], &[note("a", "Merged #1", Some("merged"), None)])[0].state, State::Merged);
 }
+
+#[test]
+fn a_place_can_say_where_it_is_on_disk_and_the_row_carries_it() {
+    let mut listed = session("b", "/wt", Status::Idle);
+    listed.ticket = Some("WEB-2".into());
+    let mut two = session("c", "/wt", Status::Idle);
+    two.ticket = Some("WEB-3".into());
+    let places = zerod::board::parse_places(r#"[{"ticket": "WEB-2", "place": "red-owl", "path": "/wt/iron/red-owl"},
+        {"ticket": "WEB-3", "place": "a", "path": "/a"}, {"ticket": "WEB-3", "place": "b", "path": "/b"}]"#).unwrap();
+    let rows = zerod::board::board_with(&[listed, two], &[], &places);
+    let paths: Vec<(&str, Option<&str>)> = rows.iter().map(|r| (r.session.as_str(), r.path.as_deref())).collect();
+    assert_eq!(paths, [("b", Some("/wt/iron/red-owl")), ("c", None)], "one place's folder; of several, none to pick");
+}
+
+#[test]
+fn a_rows_workers_each_carry_their_own_state_place_and_asks() {
+    let lead = session("lead", "/wt", Status::Idle);
+    let mut waiting = session("w1", "/wt", Status::Idle);
+    waiting.parent = Some("lead".into());
+    waiting.ticket = Some("ENG-1".into());
+    // How it ended its turn says it's waiting on something else.
+    waiting.items.push(Item { id: "a".into(), turn: None, status: ItemStatus::Done, at: None,
+                              kind: ItemKind::Agent { text: "CI is running.\n\n[zero: working]".into(), final_answer: true } });
+    let mut asking = session("w2", "/wt", Status::Waiting);
+    asking.parent = Some("lead".into());
+    let mut question = Ask::new(AskKind::Question, "Merge it?", agent("w2"), 600);
+    question.id = "q1".into();
+    let places = zerod::board::parse_places(r#"[{"ticket": "ENG-1", "place": "red-owl", "path": "/b/red-owl"}]"#).unwrap();
+    let rows = zerod::board::board_with(&[lead, waiting, asking], &[question], &places);
+    let row = &rows[0];
+    assert_eq!(row.state, State::NeedsYou, "the lead's row: the most urgent of its team");
+    let team: Vec<(&str, State, &str, Option<&str>, usize)> =
+        row.team.iter().map(|m| (m.session.as_str(), m.state, m.place.as_str(), m.path.as_deref(), m.asks.len())).collect();
+    assert_eq!(team, [("w1", State::Waiting, "red-owl", Some("/b/red-owl"), 0), ("w2", State::NeedsYou, "wt", None, 1)],
+               "each worker as it is itself, by the same rules as a lead");
+}
