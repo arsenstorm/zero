@@ -218,3 +218,21 @@ async fn real_solo_answers_through_its_helper() {
     assert!(solo.offline(std::slice::from_ref(&missing)).await.contains("nobody"));
     assert!(solo.gone(std::slice::from_ref(&missing)).await.contains("nobody"));
 }
+
+#[test]
+fn a_claude_title_is_read_from_what_was_added_since_the_last_look() {
+    let dir = temp("claude-title");
+    let sessions = ClaudeSessions { root: dir.clone() };
+    let folder = sessions.folder("/w");
+    std::fs::create_dir_all(&folder).unwrap();
+    let file = folder.join("s.jsonl");
+    std::fs::write(&file, "{\"aiTitle\":\"First\"}\n").unwrap();
+    assert_eq!(sessions.title("s", "/w").as_deref(), Some("First"));
+    let mut append = std::fs::OpenOptions::new().append(true).open(&file).unwrap();
+    std::io::Write::write_all(&mut append, b"{\"type\":\"user\"}\n").unwrap();
+    assert_eq!(sessions.title("s", "/w").as_deref(), Some("First"), "kept while nothing new names it");
+    std::io::Write::write_all(&mut append, b"{\"aiTitle\":\"Sec").unwrap();
+    assert_eq!(sessions.title("s", "/w").as_deref(), Some("First"), "half a line isn't a title");
+    std::io::Write::write_all(&mut append, b"ond\"}\n").unwrap();
+    assert_eq!(sessions.title("s", "/w").as_deref(), Some("Second"));
+}

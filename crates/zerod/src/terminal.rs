@@ -3,6 +3,8 @@
 //! commands. Plus Claude Code's own record of its sessions, for resuming and titling them. ponytail: screen reading is the
 //! ceiling of these runtimes; zerod's own sessions speak their providers' protocols instead.
 
+use std::collections::HashMap;
+use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -179,14 +181,34 @@ impl ClaudeSessions {
             .and_then(|(_, p)| p.file_stem().map(|s| s.to_string_lossy().to_string()))
     }
 
-    /// What Claude titled the session, once it has.
+    /// What Claude titled the session, once it has. Asked every few seconds of files that run to tens of megabytes, so
+    /// only what was added since the last look is read.
     pub fn title(&self, session: &str, cwd: &str) -> Option<String> {
-        let text = std::fs::read_to_string(self.folder(cwd).join(format!("{session}.jsonl"))).ok()?;
-        let start = text.rfind("\"aiTitle\":\"")? + "\"aiTitle\":\"".len();
-        let rest = &text[start..];
-        let mut end = 0;
-        let bytes = rest.as_bytes();
-        while end < bytes.len() && !(bytes[end] == b'"' && (end == 0 || bytes[end - 1] != b'\\')) { end += 1 }
-        Some(rest[..end].replace("\\\"", "\""))
+        use std::io::{Read, Seek};
+        /// Per file: how far it's been read, and the title found so far.
+        type Seen = HashMap<PathBuf, (u64, Option<String>)>;
+        static SEEN: std::sync::LazyLock<std::sync::Mutex<Seen>> = std::sync::LazyLock::new(Default::default);
+        let path = self.folder(cwd).join(format!("{session}.jsonl"));
+        let mut file = std::fs::File::open(&path).ok()?;
+        let mut seen = SEEN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // A file shorter than what was read was rewritten: read it again.
+        let (offset, known) = seen.get(&path).cloned().filter(|(offset, _)| file.metadata().is_ok_and(|m| m.len() >= *offset)).unwrap_or((0, None));
+        let mut added = vec![];
+        file.seek(io::SeekFrom::Start(offset)).ok()?;
+        file.read_to_end(&mut added).ok()?;
+        let title = last_title(&String::from_utf8_lossy(&added)).or(known);
+        // Up to the last whole line: one still being written is read again next time.
+        let read = added.iter().rposition(|b| *b == b'\n').map_or(offset, |i| offset + i as u64 + 1);
+        seen.insert(path, (read, title.clone()));
+        title
     }
+}
+
+/// The last "aiTitle" in `text`, if it's whole.
+fn last_title(text: &str) -> Option<String> {
+    let start = text.rfind("\"aiTitle\":\"")? + "\"aiTitle\":\"".len();
+    let bytes = &text.as_bytes()[start..];
+    let mut end = 0;
+    while end < bytes.len() && !(bytes[end] == b'"' && (end == 0 || bytes[end - 1] != b'\\')) { end += 1 }
+    (end < bytes.len()).then(|| text[start..start + end].replace("\\\"", "\""))
 }
