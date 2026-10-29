@@ -19,17 +19,13 @@ struct WorkspaceView: View {
         .background(Theme.rail)
         .ignoresSafeArea()
         // The board is polled, so the sidebar stays fresh while the window is open.
-        // ponytail: polls; a board feed from zerod when two seconds is too slow.
+        // zerod pushes the board whenever it changes; it's asked for once here only so the splash can wait for it.
         .task {
             let deadline = ContinuousClock.now + .seconds(3)
             while !workspace.connected, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(50)) }
             await workspace.loadIntegrations()
             await workspace.refreshBoard()
             show()
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
-                await workspace.refreshBoard()
-            }
         }
         // Never held on the mark: a slow gh or zerod shows the window as it is.
         .task {
@@ -220,11 +216,73 @@ private struct TasksSidebar: View {
     }
     /// Leads whose workers are folded away, one per line.
     @AppStorage("foldedLeads") private var folded = ""
+    /// How the tasks are ordered: by state (the board's own order), by name, or as they were dragged.
+    @AppStorage("taskSort") private var sort = Sort.state
+    /// The dragged order, one lead per line; tasks not in it yet go on top.
+    @AppStorage("taskOrder") private var order = ""
+
+    enum Sort: String, CaseIterable { case state, name, manual }
+
+    private func sorted(_ rows: [BoardRow]) -> [BoardRow] {
+        switch sort {
+        case .state: return rows
+        case .name: return rows.sorted { $0.task.localizedStandardCompare($1.task) == .orderedAscending }
+        case .manual:
+            let rank = Dictionary(order.split(separator: "\n").enumerated().map { (String($1), $0) }, uniquingKeysWith: { first, _ in first })
+            return rows.enumerated().sorted { (rank[$0.element.session] ?? -1, $0.offset) < (rank[$1.element.session] ?? -1, $1.offset) }.map(\.element)
+        }
+    }
+
+    /// The lead being dragged, as the control bar's dots are: how far the pointer has moved it.
+    @State private var drag: (lead: String, y: CGFloat)?
+    /// Each lead's group (it and its workers shown) as drawn, with the gap below it: groups differ in height.
+    @State private var heights: [String: CGFloat] = [:]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private func height(_ lead: String) -> CGFloat { (heights[lead] ?? 30) + 1 }
+
+    /// Where the dragged lead would land now: past each group whose middle it has crossed.
+    private func dropIndex(in ids: [String]) -> Int? {
+        guard let drag, let from = ids.firstIndex(of: drag.lead) else { return nil }
+        var (to, y) = (from, drag.y)
+        while y > 0, to + 1 < ids.count, y > height(ids[to + 1]) / 2 { y -= height(ids[to + 1]); to += 1 }
+        while y < 0, to > 0, -y > height(ids[to - 1]) / 2 { y += height(ids[to - 1]); to -= 1 }
+        return to
+    }
+
+    /// While dragging, the groups between where it came from and where it would land make way by its height.
+    private func shift(of lead: String, in ids: [String]) -> CGFloat {
+        guard let drag, drag.lead != lead, let from = ids.firstIndex(of: drag.lead), let to = dropIndex(in: ids),
+              let i = ids.firstIndex(of: lead) else { return 0 }
+        if from < to, i > from, i <= to { return -height(drag.lead) }
+        if to < from, i >= to, i < from { return height(drag.lead) }
+        return 0
+    }
+
+    /// A press that moves 4 pt drags the lead; let go, it takes the slot it's over and the order is manual from then
+    /// on. False if it never moved: a click.
+    private func reorder(_ lead: String, in rows: [BoardRow]) -> TaskRow.Reorder {
+        TaskRow.Reorder(changed: { y in if abs(y) >= 4 || drag != nil { drag = (lead, y) } }, ended: {
+            guard drag != nil else { return false }
+            var ids = rows.map(\.session)
+            let target = dropIndex(in: ids)
+            withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) {
+                if let from = ids.firstIndex(of: lead), let target, target != from {
+                    ids.remove(at: from)
+                    ids.insert(lead, at: target)
+                    order = ids.joined(separator: "\n")
+                    sort = .manual
+                }
+                drag = nil
+            }
+            return true
+        })
+    }
 
     /// Leads that aren't on the board: finished and gone offline with nothing for him.
-    private var earlier: [Conversation] {
-        let all = workspace.conversations
-        return all.filter { lead in (lead.parent == nil || !all.contains { $0.id == lead.parent }) && !workspace.board.contains { $0.session == lead.id } }.reversed()
+    private func earlier(_ all: [Conversation]) -> [Conversation] {
+        let ids = Set(all.map(\.id)), onBoard = Set(workspace.board.map(\.session))
+        return all.filter { lead in (lead.parent.map { !ids.contains($0) } ?? true) && !onBoard.contains(lead.id) }.reversed()
     }
 
     var body: some View {
@@ -232,28 +290,59 @@ private struct TasksSidebar: View {
             SidebarItem("New task", icon: "compose", selected: place == .home) { place = .home }
                 .keyboardShortcut("n", modifiers: .command)
             SidebarItem("All tasks", icon: "list-checkbox", selected: place == .board) { place = .board }
+            // Each lead's workers looked up once per update, not by searching every task for every row.
+            let all = workspace.conversations
+            let workersOf = Dictionary(grouping: all.filter { $0.parent != nil }, by: { $0.parent ?? "" })
+            let earlier = earlier(all)
             ScrollView {
-                VStack(alignment: .leading, spacing: 1) {
-                    SidebarHeading(text: "Tasks")
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    HStack(alignment: .lastTextBaseline) {
+                        SidebarHeading(text: "Tasks")
+                        Spacer()
+                        Menu {
+                            Picker("Sort by", selection: $sort) {
+                                Text("State").tag(Sort.state)
+                                Text("Name").tag(Sort.name)
+                                Text("Manual (drag to arrange)").tag(Sort.manual)
+                            }
+                            .pickerStyle(.inline)
+                        } label: {
+                            NucleoIcon("sliders", size: 12).foregroundStyle(.tertiary)
+                        }
+                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().padding(.trailing, 10).help("Sort tasks")
+                    }
                     if workspace.board.isEmpty {
                         Text("No tasks").font(.system(size: 13)).foregroundStyle(.tertiary).padding(.horizontal, 10)
                     }
                     let folded = Set(folded.split(separator: "\n").map(String.init))
-                    ForEach(workspace.board) { row in
-                        let workers = workspace.conversations.filter { $0.parent == row.session }
+                    let rows = sorted(workspace.board)
+                    let ids = rows.map(\.session)
+                    ForEach(rows) { row in
+                        let workers = workersOf[row.session] ?? []
                         let open = !folded.contains(row.session)
-                        TaskRow(title: row.task, state: row.state, selected: place == .task(row.session) && navigation.worker == nil,
-                                fold: workers.isEmpty ? nil : open, action: { place = .task(row.session) }, toggle: { toggle(row.session) })
-                            .contextMenu { archive(row.session) }
-                        if open {
-                            ForEach(Array(workers.enumerated()), id: \.element.id) { index, worker in
-                                TaskRow(title: Workspace.label(of: worker), state: TaskRow.state(of: worker), selected: navigation.worker == worker.id,
-                                        branch: index == workers.count - 1 ? .last : .middle, action: {
-                                    place = .task(row.session)
-                                    navigation.worker = worker.id
-                                })
+                        // A lead and its workers move as one.
+                        VStack(alignment: .leading, spacing: 1) {
+                            TaskRow(title: row.task, state: row.state, selected: place == .task(row.session) && navigation.worker == nil,
+                                    fold: workers.isEmpty ? nil : open, action: {
+                                // Its worker shown, the same task: back to the lead.
+                                place = .task(row.session)
+                                navigation.worker = nil
+                            }, toggle: { toggle(row.session) }, reorder: reorder(row.session, in: rows))
+                                .contextMenu { archive(row.session) }
+                            if open {
+                                ForEach(Array(workers.enumerated()), id: \.element.id) { index, worker in
+                                    TaskRow(title: Workspace.label(of: worker), state: TaskRow.state(of: worker), selected: navigation.worker == worker.id,
+                                            branch: index == workers.count - 1 ? .last : .middle, action: {
+                                        place = .task(row.session)
+                                        navigation.worker = worker.id
+                                    })
+                                }
                             }
                         }
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { heights[row.session] = $0 }
+                        .offset(y: drag?.lead == row.session ? drag!.y : shift(of: row.session, in: ids))
+                        .animation(drag?.lead == row.session || reduceMotion ? nil : .snappy(duration: 0.2), value: dropIndex(in: ids))
+                        .zIndex(drag?.lead == row.session ? 1 : 0)
                     }
                     if !earlier.isEmpty {
                         SidebarHeading(text: "Earlier")
@@ -263,8 +352,18 @@ private struct TasksSidebar: View {
                         }
                     }
                 }
+                // The last task clear of the fade at the foot.
+                .padding(.bottom, 36)
             }
             .scrollIndicators(.never)
+            // Soft edges, as the conversation has: more above, more below.
+            .mask {
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: 20)
+                    Color.black
+                    LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 28)
+                }
+            }
             // The list has the sidebar's whole height: what's said about the daemon and usage lies over its foot, on a
             // fade, and the last task scrolls clear of it.
             .safeAreaInset(edge: .bottom, spacing: 0) { footer }
@@ -336,7 +435,7 @@ private struct TaskView: View {
         if let conversation, conversation.terminal != nil {
             // A terminal runs edge to edge; the pane sits beside it as a column of its own.
             HStack(spacing: 0) {
-                ConversationView(workspace: workspace, conversation: conversation).id(conversation.id)
+                if let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, live: live).id(conversation.id) }
                 if navigation.pane {
                     Rectangle().fill(Theme.stroke).frame(width: 1)
                     TaskDetails(workspace: workspace, navigation: navigation, row: row, conversation: conversation, team: team, lead: lead, shown: $navigation.worker, docked: true)
@@ -344,7 +443,7 @@ private struct TaskView: View {
             }
         } else {
             ZStack(alignment: .topTrailing) {
-                if let conversation { ConversationView(workspace: workspace, conversation: conversation).id(conversation.id) }
+                if let conversation, let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, live: live).id(conversation.id) }
                 if navigation.pane, let conversation {
                     TaskDetails(workspace: workspace, navigation: navigation, row: row, conversation: conversation, team: team, lead: lead, shown: $navigation.worker).padding(8)
                 }
@@ -588,11 +687,13 @@ private struct TaskPads: View {
                 }
             }
         }
-        .task(id: ticket) {
+        // Read again when zerod says a pad changed (an agent keeping its state), and every half minute for one edited
+        // outside Zero.
+        .task(id: "\(ticket)|\(workspace.padsVersion)") {
             while !Task.isCancelled {
                 pads = await workspace.taskPads(ticket)
                 if let found = pads.first(where: { $0.title == "State" }) { state = await workspace.readPad(found.id) }
-                try? await Task.sleep(for: .seconds(5))
+                try? await Task.sleep(for: .seconds(30))
             }
         }
     }
@@ -794,6 +895,13 @@ private struct TaskRow: View {
     var branch: Branch? = nil
     let action: () -> Void
     var toggle: () -> Void = {}
+    /// A lead that can be dragged into place: told how far the pointer moved, and when it let go (false: a click).
+    var reorder: Reorder? = nil
+
+    struct Reorder {
+        let changed: (CGFloat) -> Void
+        let ended: () -> Bool
+    }
 
     var body: some View {
         Button(action: action) {
@@ -808,6 +916,12 @@ private struct TaskRow: View {
             .padding(.leading, branch == nil ? 10 : 0).padding(.trailing, 10).frame(height: 30)
         }
         .buttonStyle(Hovering(selected: selected))
+        // One gesture for click and drag, as the control bar's: on the row's button only, so the fold chevron keeps its
+        // own click. Global space: the row moves with the drag, so a local translation would cancel itself out.
+        .highPriorityGesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
+            .onChanged { reorder?.changed($0.translation.height) }
+            .onEnded { _ in if reorder?.ended() == false { action() } },
+            including: reorder == nil ? .subviews : .all)
         // In the margin left of the title, outside the row's own button so its click is its own.
         .overlay(alignment: .leading) {
             if let fold {
@@ -903,21 +1017,26 @@ struct StateLabel: View {
 
 private struct ConversationView: View {
     let workspace: Workspace
-    let conversation: Conversation
+    /// The task's whole conversation, observed on its own: its words redraw this view, not the window.
+    let live: LiveConversation
+    private var conversation: Conversation { live.conversation }
     @State private var draft = ""
     /// Images going with the next message.
     @State private var images: [URL] = []
     /// Where the conversation is scrolled to, and how much of it there is: for the scrollbar drawn over it.
     @State private var position = ScrollPosition(edge: .bottom)
-    @State private var scroll: ScrollGeometry?
+    /// Where it's scrolled and what's on screen, read only by the scrollbar, the way down and the rail: scrolling
+    /// redraws those, not the conversation.
+    @State private var tracker = ScrollTracker()
     /// Your messages in the whole conversation, for the rail.
     @State private var outline: [OutlineMark] = []
+    /// The rows standing in for older items are on screen: only then is the next page fetched.
+    @State private var olderShown = false
     /// How tall the composer is: the conversation fades out just above it.
     @State private var composerHeight: CGFloat = 0
     /// Another provider picked for the next message; nil keeps the task's own.
     @State private var provider: Provider?
     /// The blocks on screen, by the message of yours each answers to: the rail's bright ticks.
-    @State private var seen: [String: String] = [:]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -930,23 +1049,6 @@ private struct ConversationView: View {
         }
     }
 
-    @ViewBuilder private func block(_ block: TimelineBlock) -> some View {
-        switch block {
-        case let .user(item):
-            if case let .user(text, _) = item.kind {
-                MessageBlock(text: text, date: item.date, mine: true, quote: quote, save: save) { ItemView(item: item, cwd: conversation.cwd) }
-            }
-        case let .answer(item):
-            // Zero's ending isn't shown: it's the task's state, in the sidebar, the pane and the board.
-            if case let .agent(said, _) = item.kind, case let text = ZeroEnding.split(said).0, !text.isEmpty {
-                MessageBlock(text: text, date: item.date, mine: false, quote: quote, save: save) { MarkdownText(text, cwd: conversation.cwd, size: 14.5) }
-            }
-        case let .work(_, items, start, end, live):
-            WorkBlock(items: items, start: start, end: end, live: live, cwd: conversation.cwd)
-        case let .step(item):
-            ItemView(item: item, cwd: conversation.cwd)
-        }
-    }
 
     /// The message as a quote at the end of what's being written.
     private func quote(_ text: String) {
@@ -985,21 +1087,25 @@ private struct ConversationView: View {
                     LazyVStack(alignment: .leading, spacing: 18) {
                         // More above: rows standing in for it, the next page fetched as they come into view, the view
                         // kept on what was at its top.
-                        let more = workspace.earlier(conversation.id)
+                        let more = live.earlier
                         if more > 0 {
-                            SkeletonTurns().id("earlier-\(more)")
-                                // Anchored at the bottom, the view stays on what's read as the page goes in above.
-                                .onAppear { Task { await workspace.loadEarlier(conversation.id) } }
+                            // While it's on screen, page after page (a long turn can leave it there); kept alive just
+                            // off screen by the list, it fetches nothing. Anchored at the bottom, the view stays on
+                            // what's read as each page goes in above.
+                            SkeletonTurns().id("earlier")
+                                .onScrollVisibilityChange(threshold: 0.01) { olderShown = $0 }
+                                .task(id: olderShown ? more : -1) { if olderShown { await workspace.loadEarlier(conversation.id) } }
                         }
                         ForEach(blocks) { block in
-                            self.block(block)
+                            // Compared before it's drawn: a word streamed into the last answer redraws only that one.
+                            BlockRow(block: block, cwd: conversation.cwd, quote: quote, save: save).equatable()
                                 .id(block.id)
                                 .onScrollVisibilityChange(threshold: 0.05) { shown in
                                     guard let turn = turns[block.id] else { return }
-                                    if shown { seen[block.id] = turn } else { seen[block.id] = nil }
+                                    if shown { tracker.seen[block.id] = turn } else { tracker.seen[block.id] = nil }
                                 }
                                 // The list drops what's far off screen without saying it went out of view.
-                                .onDisappear { seen[block.id] = nil }
+                                .onDisappear { tracker.seen[block.id] = nil }
                         }
                         ForEach(conversation.questions) { question in
                             QuestionCard(question: question) { answers in
@@ -1029,7 +1135,7 @@ private struct ConversationView: View {
                 .defaultScrollAnchor(.bottom, for: .initialOffset)
                 .defaultScrollAnchor(.bottom, for: .sizeChanges)
                 .scrollPosition($position)
-                .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { _, now in scroll = now }
+                .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { _, now in tracker.geometry = now }
                 // Soft edges: at the top, there's more above; just above the composer, the text fades out before it,
                 // as Codex's does, with nothing behind the composer but the page.
                 .mask {
@@ -1047,24 +1153,14 @@ private struct ConversationView: View {
                 }
                 // Scrolled up: a way back down, just above the composer.
                 .overlay(alignment: .bottom) {
-                    // How far the end is below what's on screen, from where it's scrolled to.
-                    if let scroll, scroll.contentSize.height + scroll.contentInsets.bottom - (scroll.contentOffset.y + scroll.containerSize.height) > 200 {
-                        Button { withAnimation { proxy.scrollTo("end", anchor: .bottom) } } label: {
-                            NucleoIcon("arrow-up", size: 14).rotationEffect(.degrees(180)).foregroundStyle(.primary)
-                                .frame(width: 32, height: 32).background(Theme.card, in: Circle())
-                                .overlay(Circle().strokeBorder(Theme.stroke))
-                        }
-                        .buttonStyle(.plain).help("Go to the latest")
-                        .padding(.bottom, composerHeight + 6)
-                        .transition(.opacity)
-                    }
+                    WayDown(tracker: tracker) { withAnimation { proxy.scrollTo("end", anchor: .bottom) } }.padding(.bottom, composerHeight + 6)
                 }
-                .overlay(alignment: .trailing) { ThinScrollbar(geometry: scroll) { position.scrollTo(y: $0) }.padding(.trailing, 2) }
+                .overlay(alignment: .trailing) { ThinScrollbar(tracker: tracker) { position.scrollTo(y: $0) }.padding(.trailing, 2) }
                 .overlay(alignment: .leading) {
                     // Every message of yours, loaded or not, from zerod's outline of the conversation.
                     let marks = outline.map { MessageRail.Mark(id: $0.id, text: $0.text, answer: $0.answer.map { ZeroEnding.split($0).0 }) }
                     if marks.count > 1 {
-                        MessageRail(marks: marks, visible: Set(seen.values)) { id in
+                        MessageRail(marks: marks, tracker: tracker) { id in
                             Task {
                                 // Not loaded yet: everything from it down to what is, then there.
                                 if !conversation.items.contains(where: { $0.id == id }) { await workspace.loadEarlier(conversation.id, from: id) }
@@ -1075,7 +1171,7 @@ private struct ConversationView: View {
                     }
                 }
                 // Fetched again as your messages come and go, not with every word streamed.
-                .task(id: conversation.items.count(where: { if case .user = $0.kind { true } else { false } }) + workspace.earlier(conversation.id)) {
+                .task(id: conversation.items.count(where: { if case .user = $0.kind { true } else { false } }) + live.earlier) {
                     outline = await workspace.outline(conversation.id)
                 }
                 // Left, it goes back to its latest items: memory doesn't grow with every long task opened.
