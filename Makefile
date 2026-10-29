@@ -54,14 +54,21 @@ bundle: build
 	codesign --force --sign "$(SIGN)" $(APP)/Contents/MacOS/zerod
 	codesign --force --sign "$(SIGN)" $(APP)
 
+# The app quits and opens again straight away, where you were. zerod, only when it changed, restarts gracefully: turns
+# under way pause between steps (a running command finishes first), the new zerod takes over and they carry on.
 install: bundle
-	pkill -x Zero || true
-	rm -rf /Applications/Zero.app
-	cp -R $(APP) /Applications/Zero.app
-	ln -sf /Applications/Zero.app/Contents/MacOS/zero-cli $(HOME)/.local/bin/zero
+	@changed=$$(cmp -s target/release/zerod build/zerod.installed && echo no || echo yes); \
+	pkill -x Zero || true; \
+	rm -rf /Applications/Zero.app; \
+	cp -R $(APP) /Applications/Zero.app; \
+	ln -sf /Applications/Zero.app/Contents/MacOS/zero-cli $(HOME)/.local/bin/zero; \
+	cp target/release/zerod build/zerod.installed; \
+	if [ $$changed = yes ] && printf '{"op":"restart"}\n' | nc -U $(HOME)/.zero/zerod.sock 2>/dev/null | grep -q restarting; then \
+		echo "zerod: restarting as the new build once turns under way have paused"; \
+	fi; \
+	open /Applications/Zero.app
 
 run: install
-	open /Applications/Zero.app
 
 test:
 	cargo test --workspace
