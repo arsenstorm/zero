@@ -29,7 +29,12 @@ struct State {
     ingested: HashSet<String>,
     /// Ask id → the drop it came from, until its answer is written there.
     origin: HashMap<String, PathBuf>,
+    /// The drops last found, and when: patterns over a thousand folders aren't walked every second.
+    found: Option<(std::time::Instant, Vec<PathBuf>)>,
 }
+
+/// How often the patterns are walked again, and each drop's folders, client and old answers seen to.
+const LOOK_AGAIN: Duration = Duration::from_secs(30);
 
 impl Drops {
     pub fn new(inbox: Arc<Inbox>, resources: PathBuf) -> Arc<Drops> {
@@ -58,7 +63,9 @@ impl Drops {
     }
 
     pub fn set_patterns(&self, patterns: Vec<String>) {
-        self.state.lock().unwrap().patterns = patterns;
+        let mut state = self.state.lock().unwrap();
+        state.patterns = patterns;
+        state.found = None;
     }
 
     /// The drops the patterns find now; a plain last name under matching folders is made there.
@@ -68,8 +75,17 @@ impl Drops {
     }
 
     pub fn scan(&self) {
-        for drop in self.folders() {
-            self.prepare(&drop);
+        let found = self.state.lock().unwrap().found.clone().filter(|(at, _)| at.elapsed() < LOOK_AGAIN);
+        let (drops, fresh) = match found {
+            Some((_, drops)) => (drops, false),
+            None => (self.folders(), true),
+        };
+        if fresh { self.state.lock().unwrap().found = Some((std::time::Instant::now(), drops.clone())) }
+        for drop in drops {
+            if fresh {
+                self.prepare(&drop);
+                sweep(&drop.join("answers"));
+            }
             let Ok(entries) = std::fs::read_dir(drop.join("asks")) else { continue };
             let files: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
             // `zero withdraw` from a drop: "<id>.withdraw", holding the reason.
@@ -90,7 +106,6 @@ impl Drops {
                 if ask.kind == AskKind::Note { let _ = std::fs::remove_file(file); }
                 else { self.state.lock().unwrap().origin.insert(ask.id, drop.clone()); }
             }
-            sweep(&drop.join("answers"));
         }
     }
 

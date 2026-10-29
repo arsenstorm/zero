@@ -146,7 +146,8 @@ pub struct Places(Mutex<HashMap<String, String>>);
 impl Places {
     pub fn get(&self) -> HashMap<String, String> { self.0.lock().unwrap().clone() }
 
-    /// Runs the user's places command (zerod's settings.json `places`) every minute while zerod runs.
+    /// Runs the user's places command (zerod's settings.json `places`) every five minutes while zerod runs: a bench
+    /// moves rarely, and the command may be slow (bench ls asks GitHub for each bench's PR).
     pub async fn follow(self: std::sync::Arc<Self>, home: std::path::PathBuf) {
         use crate::integrations::Fetcher;
         loop {
@@ -159,7 +160,7 @@ impl Places {
             } else {
                 self.0.lock().unwrap().clear();
             }
-            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(300)).await;
         }
     }
 }
