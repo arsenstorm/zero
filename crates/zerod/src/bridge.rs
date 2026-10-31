@@ -136,12 +136,12 @@ impl Bridge {
         let dot = match conversation.attention() {
             Attention::Working => Some((None, "Working".to_string())),
             // Its answer, so the agent's timeline in the inbox reads like a conversation.
-            Attention::Done => Some((Some("done"), conversation.answer().filter(|a| !a.is_empty()).unwrap_or("Answered").to_string())),
+            Attention::Done => Some((Some("done"), conversation.answer().map(crate::board::without_ending).filter(|a| !a.is_empty()).unwrap_or("Answered").to_string())),
             Attention::Stuck => Some((Some("blocked"), conversation.stalled.clone().unwrap_or_else(|| "Stuck".into()))),
             Attention::Failed | Attention::Limited => Some((Some("blocked"), conversation.failure.as_ref().map(|f| f.message.clone())
                 .unwrap_or_else(|| if conversation.usage.as_ref().is_some_and(|u| u.limited) { "Usage limit reached".into() } else { "Failed".into() }))),
             Attention::Offline => Some((Some("closed"), "Offline".into())),
-            Attention::NeedsYou | Attention::Idle | Attention::Starting => None,
+            Attention::NeedsYou | Attention::Idle | Attention::Answered | Attention::Starting => None,
         }.map(|(status, body)| (status.map(String::from), body));
         if known.dots.get(&conversation.id) == Some(&dot) { return }
         known.dots.insert(conversation.id.clone(), dot.clone());

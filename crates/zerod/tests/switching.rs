@@ -114,3 +114,66 @@ async fn a_session_switches_only_between_turns_and_only_to_a_provider_that_can_t
     let daemon = Daemon::open(&home, runtime).unwrap();
     assert_eq!(daemon.get(&id).unwrap().provider, Provider::Codex);
 }
+
+#[tokio::test]
+async fn a_model_picked_without_a_message_goes_on_the_next_turn() {
+    let dir = temp_dir("switch-model");
+    let (events, _) = tokio::sync::broadcast::channel(64);
+    let session = zerod::session::Session::new(Conversation::new("s1", Provider::Codex, "/work/project"), Some(dir.clone()), events.clone()).unwrap();
+    let (transport, recorder) = common::play(vec![]);
+    session.attach(transport);
+    session.change(zerod::model::Change::Thread { thread: "t1".into(), model: Some("gpt-6-sol".into()), effort: None });
+    session.set_model(Some("gpt-6-luna"), Some("high")).await.unwrap();
+    assert_eq!(session.snapshot().model.as_deref(), Some("gpt-6-luna"));
+    session.send("hi", None, None).await.unwrap();
+    let turn = recorder.said("turn/start", 1).await;
+    assert_eq!(turn[0]["params"]["model"], "gpt-6-luna");
+    assert_eq!(turn[0]["params"]["effort"], "high");
+    // Kept: a restart reads it from the transcript.
+    let again = zerod::session::Session::load(&dir, events).unwrap();
+    assert_eq!(again.snapshot().model.as_deref(), Some("gpt-6-luna"));
+}
+
+#[test]
+fn a_switch_right_after_an_interruption_reads_as_one_notice() {
+    // Stopping a provider to hand the task to another is one act: "Interrupted and continued in Claude Code", not
+    // two lines.
+    let mut core = zerod::core::Core::new(Conversation::new("s", Provider::Codex, "/w"));
+    core.change(zerod::model::Change::Item { item: item("stop", ItemKind::Notice { text: "Interrupted".into(), error: false }) });
+    core.change(zerod::model::Change::Switched { provider: Provider::Claude, model: None, effort: None });
+    let notices: Vec<String> = core.conversation().items.iter().filter_map(|i| match &i.kind { ItemKind::Notice { text, .. } => Some(text.clone()), _ => None }).collect();
+    assert_eq!(notices, ["Interrupted and continued in Claude Code"]);
+    // Not interrupted first (out of usage, say): just where it went on.
+    let mut core = zerod::core::Core::new(Conversation::new("s", Provider::Codex, "/w"));
+    core.change(zerod::model::Change::Switched { provider: Provider::Claude, model: None, effort: None });
+    assert!(matches!(&core.conversation().items[0].kind, ItemKind::Notice { text, .. } if text == "Continued in Claude Code"));
+}
+
+#[tokio::test]
+async fn permissions_change_between_turns_and_the_next_turn_starts_the_agent_with_them() {
+    let home = temp_dir("switch-permissions");
+    let started = Arc::new(std::sync::Mutex::new(vec![]));
+    let seen = started.clone();
+    // A runtime that ends at once, as a parked session's would: what matters is the command each start used.
+    let runtime: Runtime = Arc::new(move |_, _, argv| { seen.lock().unwrap().push(argv.join(" ")); Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())) });
+    let daemon = Daemon::open(&home, runtime.clone()).unwrap();
+    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "hi", None, None, Permissions::Auto).unwrap();
+    common::until(&daemon.session(&id).unwrap(), |c| c.status == Status::Offline).await;
+    assert!(started.lock().unwrap()[0].contains("--permission-mode auto"), "{:?}", started.lock().unwrap());
+
+    daemon.set_permissions(&id, Permissions::Unrestricted).await.unwrap();
+    let conversation = daemon.get(&id).unwrap();
+    assert_eq!(conversation.permissions, Permissions::Unrestricted);
+    let notices: Vec<String> = daemon.session(&id).unwrap().snapshot().items.iter().filter_map(|i| match &i.kind { ItemKind::Notice { text, .. } => Some(text.clone()), _ => None }).collect();
+    assert!(notices.contains(&"Unrestricted from here: it acts without asking".to_string()), "{notices:?}");
+    daemon.resume(&id).await.ok();
+    assert!(started.lock().unwrap().last().unwrap().contains("--permission-mode bypassPermissions"), "{:?}", started.lock().unwrap());
+
+    // The same again is nothing; kept across a restart; and back.
+    daemon.set_permissions(&id, Permissions::Unrestricted).await.unwrap();
+    drop(daemon);
+    let daemon = Daemon::open(&home, runtime).unwrap();
+    assert_eq!(daemon.get(&id).unwrap().permissions, Permissions::Unrestricted, "kept in the transcript");
+    daemon.set_permissions(&id, Permissions::Auto).await.unwrap();
+    assert_eq!(daemon.get(&id).unwrap().permissions, Permissions::Auto);
+}

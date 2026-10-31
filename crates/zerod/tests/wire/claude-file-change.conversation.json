@@ -8,6 +8,7 @@
   "place": null,
   "branch": null,
   "parent": null,
+  "workspace": null,
   "thread": "57bae2a9-7b1c-48e5-9292-4004afb98a76",
   "title": null,
   "model": "claude-haiku-5-5",

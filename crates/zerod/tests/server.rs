@@ -56,7 +56,10 @@ async fn harness(name: &str) -> Harness {
     let daemon = Daemon::open(&home, runtime(seen.clone(), commands.clone())).unwrap();
     tokio::spawn(zerod::server::serve(zerod::server::Zerod { daemon, inbox: zerod::inbox::Inbox::open(None, vec![]), drops: None,
         integrations: zerod::integrations::Integrations::open(&home, Arc::new(zerod::integrations::Commands::default())),
-        pads: Arc::new(zerod::pads::Pads::open(&home.join("scratchpads"))), places: Default::default(), notices: tokio::sync::broadcast::channel(64).0 }, socket.clone()));
+        following: zerod::following::Following::open(&home, Arc::new(zerod::integrations::Commands::default()), zerod::integrations::Integrations::open(&home, Arc::new(zerod::integrations::Commands::default()))),
+        browsers: zerod::browser::Browsers::open(&home),
+        pads: Arc::new(zerod::pads::Pads::open(&home.join("scratchpads"))), loops: Arc::new(zerod::loops::Loops::open(&home.join("loops"))),
+        places: Default::default(), notices: tokio::sync::broadcast::channel(64).0 }, socket.clone()));
     for _ in 0..100 {
         if UnixStream::connect(&socket).await.is_ok() { break }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -208,7 +211,10 @@ async fn sessions_survive_a_daemon_restart_and_a_message_resumes_one() {
     let daemon = Daemon::open(&h.home, runtime(h.seen.clone(), h.commands.clone())).unwrap();
     tokio::spawn(zerod::server::serve(zerod::server::Zerod { daemon, inbox: zerod::inbox::Inbox::open(None, vec![]), drops: None,
         integrations: zerod::integrations::Integrations::open(&h.home, Arc::new(zerod::integrations::Commands::default())),
-        pads: Arc::new(zerod::pads::Pads::open(&h.home.join("scratchpads"))), places: Default::default(), notices: tokio::sync::broadcast::channel(64).0 }, socket.clone()));
+        following: zerod::following::Following::open(&h.home, Arc::new(zerod::integrations::Commands::default()), zerod::integrations::Integrations::open(&h.home, Arc::new(zerod::integrations::Commands::default()))),
+        browsers: zerod::browser::Browsers::open(&h.home),
+        pads: Arc::new(zerod::pads::Pads::open(&h.home.join("scratchpads"))), loops: Arc::new(zerod::loops::Loops::open(&h.home.join("loops"))),
+        places: Default::default(), notices: tokio::sync::broadcast::channel(64).0 }, socket.clone()));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let mut again = Client::connect(&socket).await;
     let listed = again.call(json!({"op": "list"})).await;

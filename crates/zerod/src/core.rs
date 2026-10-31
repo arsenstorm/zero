@@ -111,6 +111,12 @@ impl Core {
 
     /// Applies the changes, then classifies the session's error if it changed: the same for every provider.
     fn apply(&mut self, mut changes: Vec<Change>) -> Vec<Change> {
+        // Zero's own words to the agent (the restart's carry-on) aren't a message of yours: no item for them.
+        changes.retain(|change| !matches!(change, Change::Item { item } if matches!(&item.kind, ItemKind::User { text, .. } if text == crate::daemon::CARRY_ON)));
+        // A loop named in a message of yours: the agent got its words, the record keeps the name (loops.rs).
+        for change in &mut changes {
+            if let Change::Item { item } = change && let ItemKind::User { text, .. } = &mut item.kind && text.contains("<!-- loop: ") { *text = crate::loops::collapse(text) }
+        }
         for change in &mut changes {
             self.stamp(change);
             self.conversation.apply(change.clone());

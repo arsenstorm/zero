@@ -310,7 +310,7 @@ async fn initialize(session: &Session, transport: Transport) -> Result<(), Strin
 }
 
 /// Sets the model, then the effort (an option OpenCode adds for models that have one).
-async fn configure(session: &Session, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+pub(crate) async fn configure(session: &Session, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
     let thread = session.snapshot().thread.ok_or("The agent opened no session")?;
     for (option, value) in [("model", model), ("effort", effort)] {
         let Some(value) = value else { continue };
@@ -326,10 +326,13 @@ fn prompt(session: &Session, text: &str, images: &[String]) -> Result<(), String
     session.request_later(|id| json!({"jsonrpc": "2.0", "id": id, "method": "session/prompt", "params": {"sessionId": thread, "prompt": prompt}}))
 }
 
-/// Your words as ACP's prompt blocks, with each image as data.
+/// Your words as ACP's prompt blocks, each image as data where its token stands (images.rs).
 pub fn blocks(text: &str, images: &[String]) -> Value {
-    let mut blocks: Vec<Value> = if text.trim().is_empty() && !images.is_empty() { vec![] } else { vec![json!({"type": "text", "text": text})] };
-    blocks.extend(images.iter().filter_map(|path| crate::images::data(path)).map(|(mime, data)| json!({"type": "image", "mimeType": mime, "data": data})));
+    if images.is_empty() { return json!([{"type": "text", "text": text}]) }
+    let blocks: Vec<Value> = crate::images::parts(text, images).into_iter().filter_map(|part| match part {
+        crate::images::Part::Text(text) => Some(json!({"type": "text", "text": text})),
+        crate::images::Part::Image(path) => crate::images::data(path).map(|(mime, data)| json!({"type": "image", "mimeType": mime, "data": data})),
+    }).collect();
     Value::Array(blocks)
 }
 

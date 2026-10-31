@@ -1,0 +1,569 @@
+[
+ {
+  "name": "browser_tabs",
+  "description": "This task's tabs in Chrome: its own group, and any tab the user gave it. Call it first to know which tabs exist. With createIfEmpty, a task with none gets a tab: in the user's window unless window says otherwise.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "createIfEmpty": {
+     "type": "boolean",
+     "description": "Open a tab (in a window of the task's own) if the task has none."
+    },
+    "window": {
+     "type": "string",
+     "enum": [
+      "own",
+      "incognito"
+     ],
+     "description": "Leave out to use the user's Chrome window (the one they used last; your tabs open in the background, in your group). own: a window of your team's own, behind the user's, so you don't get in their way; incognito: a private one, with no cookies or sign-ins. Your later tabs go there too."
+    }
+   },
+   "required": []
+  }
+ },
+ {
+  "name": "browser_tab_new",
+  "description": "Opens a new empty tab in this task's group: in the user's Chrome window (the one they used last), in the background, unless window asks for a window of your own. Tabs you open are yours to close with browser_tab_close once you're done, unless the user wants them kept.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "window": {
+     "type": "string",
+     "enum": [
+      "own",
+      "incognito"
+     ],
+     "description": "Leave out to use the user's Chrome window (the one they used last; your tabs open in the background, in your group). own: a window of your team's own, behind the user's, so you don't get in their way; incognito: a private one, with no cookies or sign-ins. Your later tabs go there too."
+    }
+   },
+   "required": []
+  }
+ },
+ {
+  "name": "browser_tab_close",
+  "description": "Closes one of this task's tabs. A tab the user gave the task is handed back rather than closed.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "tabId": {
+     "type": "integer",
+     "description": "The tab to close."
+    }
+   },
+   "required": [
+    "tabId"
+   ]
+  }
+ },
+ {
+  "name": "browser_navigate",
+  "description": "Goes to a URL, or back or forward in the tab's history, and waits for the page to load. Without tabId, the task's first tab (opened if it has none).",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "url": {
+     "type": "string",
+     "description": "The URL (https:// if no scheme is given), or \"back\" or \"forward\"."
+    },
+    "tabId": {
+     "type": "number",
+     "description": "The tab to act on: one of this task's (browser_tabs lists them)."
+    },
+    "approval": {
+     "type": "string",
+     "description": "When Zero's reviewer advised against a site: the id of the user's yes to it (zero approve \"Open <site> in Chrome\")."
+    }
+   },
+   "required": [
+    "url"
+   ]
+  }
+ },
+ {
+  "name": "browser_computer",
+  "description": "A mouse and keyboard on the page, and screenshots. Look at a screenshot before clicking on something by its coordinates, and click the centre of what you mean.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "action": {
+     "type": "string",
+     "enum": [
+      "left_click",
+      "right_click",
+      "type",
+      "screenshot",
+      "wait",
+      "scroll",
+      "key",
+      "left_click_drag",
+      "double_click",
+      "triple_click",
+      "zoom",
+      "scroll_to",
+      "hover"
+     ],
+     "description": "left_click, right_click, double_click, triple_click and hover at coordinate (or ref); type a string; key presses keys (space-separated, chords like cmd+a); scroll at coordinate; left_click_drag from start_coordinate to coordinate; screenshot; zoom into region; scroll_to a ref; wait for duration seconds."
+    },
+    "coordinate": {
+     "type": "array",
+     "items": {
+      "type": "number"
+     },
+     "minItems": 2,
+     "maxItems": 2,
+     "description": "(x, y) in the screenshot's pixels. For left_click_drag, the end."
+    },
+    "start_coordinate": {
+     "type": "array",
+     "items": {
+      "type": "number"
+     },
+     "minItems": 2,
+     "maxItems": 2,
+     "description": "(x, y) where left_click_drag starts."
+    },
+    "ref": {
+     "type": "string",
+     "description": "An element's ref from browser_read or browser_find (ref_12), in place of a coordinate. Needed for scroll_to."
+    },
+    "text": {
+     "type": "string",
+     "description": "What to type, or the keys to press (\"Backspace Backspace\", \"cmd+a\"). Page zoom keys aren't allowed: use zoom."
+    },
+    "modifiers": {
+     "type": "string",
+     "description": "Keys held during a click: ctrl, shift, alt, cmd, joined by + (\"cmd+shift\")."
+    },
+    "scroll_direction": {
+     "type": "string",
+     "enum": [
+      "up",
+      "down",
+      "left",
+      "right"
+     ],
+     "description": "Which way to scroll."
+    },
+    "scroll_amount": {
+     "type": "number",
+     "minimum": 1,
+     "maximum": 10,
+     "description": "Wheel ticks; 3 if not given."
+    },
+    "region": {
+     "type": "array",
+     "items": {
+      "type": "number"
+     },
+     "minItems": 4,
+     "maxItems": 4,
+     "description": "(x0, y0, x1, y1) to zoom into, in the screenshot's pixels."
+    },
+    "duration": {
+     "type": "number",
+     "minimum": 0,
+     "maximum": 10,
+     "description": "Seconds to wait."
+    },
+    "repeat": {
+     "type": "number",
+     "minimum": 1,
+     "maximum": 100,
+     "description": "Times to press the keys; 1 if not given."
+    },
+    "scale": {
+     "type": "number",
+     "minimum": 0.1,
+     "maximum": 1,
+     "description": "For screenshot and zoom: a smaller image (0.5 is half as wide). Coordinates stay in the full-size frame."
+    },
+    "action_summary": {
+     "type": "string",
+     "description": "A few words saying what this action does on the page and to what, for example 'Opens the Filters menu'. State the effect only, accurately: no reasons, no passwords or other secrets."
+    },
+    "tabId": {
+     "type": "number",
+     "description": "The tab to act on: one of this task's (browser_tabs lists them)."
+    },
+    "save_to_disk": {
+     "type": "boolean",
+     "description": "For screenshot and zoom: also keep the image as a file and say where, to show the user (as an image in your answer) or attach to a PR or ticket."
+    },
+    "full_page": {
+     "type": "boolean",
+     "description": "For screenshot: the whole page, not just what's in view. Saved to disk; you see it shrunk to fit. Coordinates still refer to the view."
+    }
+   },
+   "required": [
+    "action",
+    "tabId"
+   ]
+  }
+ },
+ {
+  "name": "browser_read",
+  "description": "The page as a tree of its elements, each with a ref (ref_12) that browser_computer, browser_form and browser_upload take. Output stops at max_chars; use depth or ref_id to read part of the page.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "filter": {
+     "type": "string",
+     "enum": [
+      "interactive",
+      "all"
+     ],
+     "description": "interactive: buttons, links and fields only. all (the default): everything, including what's off screen."
+    },
+    "depth": {
+     "type": "number",
+     "description": "How deep to go; 15 if not given."
+    },
+    "ref_id": {
+     "type": "string",
+     "description": "Read only this element and what's inside it."
+    },
+    "max_chars": {
+     "type": "number",
+     "description": "Most characters to return; 50000 if not given."
+    },
+    "tabId": {
+     "type": "number",
+     "description": "The tab to act on: one of this task's (browser_tabs lists them)."
+    }
+   },
+   "required": [
+    "tabId"
+   ]
+  }
+ },
+ {
+  "name": "browser_find",
+  "description": "Elements matching words, by their role, label, text, placeholder, id or test id (\"search field\", \"Add to cart button\"). Up to 20, with refs. Matched on the page, not by a model: say what the element says or is.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "What to find."
+    },
+    "tabId": {
+     "type": "number",
+     "description": "The tab to act on: one of this task's (browser_tabs lists them)."
+    }
+   },
+   "required": [
+    "query",
+    "tabId"
+   ]
+  }
+ },
+ {
+  "name": "browser_text",
+  "description": "The page's text, its main article or content first, without markup.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "max_chars": {
+     "type": "number",
+     "description": "Most characters to return; 50000 if not given."
+    },
+    "tabId": {
+     "type": "number",
+     "description": "The tab to act on: one of this task's (browser_tabs lists them)."
+    }
+   },
+   "required": [
+    "tabId"
+   ]
+  }
+ },
+ {
+  "name": "browser_form",
+  "description": "Sets a form field by its ref: a select by option value or text, a checkbox by true or false, any other field by its value.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "ref": {
+     "type": "string",
+     "description": "The field's ref."
+    },
+    "value": {
+     "type": [
+      "string",
+      "boolean",
+      "number"
+     ],
+     "description": "Its new value."
+    },
+    "action_summary": {
+     "type": "string",
+     "description": "A few words saying what this form fill does on the page and to what, for example 'Opens the Filters menu'. State the effect only, accurately: no reasons, no passwords or other secrets."
+    },
+    "tabId": {
+     "type": "number",
+     "description": "The tab to act on: one of this task's (browser_tabs lists them)."
+    }
+   },
+   "required": [
+    "ref",
+    "value",
+    "tabId"
+   ]
+  }
+ },
+ {
+  "name": "browser_js",
+  "description": "Runs JavaScript in the page and gives the last expression's value (top-level await works; write the expression, not return). Values that look like secrets are left out.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "text": {
+     "type": "string",
+     "description": "The code."
+    },
+    "tabId": {
+     "type": "number",
+     "description": "The tab to act on: one of this task's (browser_tabs lists them)."
+    }
+   },
+   "required": [
+    "text",
+    "tabId"
+   ]
+  }
+ },
+ {
+  "name": "browser_console",
+  "description": "The tab's console messages and uncaught errors since its site was opened. Give a pattern: pages log a lot.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "pattern": {
+     "type": "string",
+     "description": "A regular expression the message must match."
+    },
+    "onlyErrors": {
+     "type": "boolean",
+     "description": "Errors and exceptions only."
+    },
+    "clear": {
+     "type": "boolean",
+     "description": "Forget them once read."
+    },
+    "limit": {
+     "type": "number",
+     "description": "Most to return; 100 if not given."
+    },
+    "tabId": {
+     "type": "number",
+     "description": "The tab to act on: one of this task's (browser_tabs lists them)."
+    }
+   },
+   "required": [
+    "tabId"
+   ]
+  }
+ },
+ {
+  "name": "browser_network",
+  "description": "The tab's requests since its site was opened: method, URL and status, without bodies.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "urlPattern": {
+     "type": "string",
+     "description": "Only URLs containing this."
+    },
+    "clear": {
+     "type": "boolean",
+     "description": "Forget them once read."
+    },
+    "limit": {
+     "type": "number",
+     "description": "Most to return; 100 if not given."
+    },
+    "tabId": {
+     "type": "number",
+     "description": "The tab to act on: one of this task's (browser_tabs lists them)."
+    }
+   },
+   "required": [
+    "tabId"
+   ]
+  }
+ },
+ {
+  "name": "browser_resize",
+  "description": "Resizes the tab's window, to try a page at another size.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "width": {
+     "type": "number",
+     "description": "Width in pixels."
+    },
+    "height": {
+     "type": "number",
+     "description": "Height in pixels."
+    },
+    "tabId": {
+     "type": "number",
+     "description": "The tab to act on: one of this task's (browser_tabs lists them)."
+    }
+   },
+   "required": [
+    "width",
+    "height",
+    "tabId"
+   ]
+  }
+ },
+ {
+  "name": "browser_upload",
+  "description": "Puts files into a file field by its ref, or drops them at a coordinate. Never click a file field: its picker can't be seen. Up to 10 MB in all.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "paths": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "The files, by absolute path."
+    },
+    "ref": {
+     "type": "string",
+     "description": "The file field's ref."
+    },
+    "coordinate": {
+     "type": "array",
+     "items": {
+      "type": "number"
+     },
+     "description": "Where to drop them, instead of a ref."
+    },
+    "tabId": {
+     "type": "number",
+     "description": "The tab to act on: one of this task's (browser_tabs lists them)."
+    }
+   },
+   "required": [
+    "paths",
+    "tabId"
+   ]
+  }
+ },
+ {
+  "name": "browser_record",
+  "description": "Records a video (MP4) of a tab while you work in it, clicks shown as ripples: a bug reproduced, a feature shown working. start, then act, then stop: the file is saved and its path given, to show the user or attach to a PR or ticket. At most max_seconds (300 if not given); one recording per tab.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "action": {
+     "type": "string",
+     "enum": [
+      "start",
+      "stop"
+     ],
+     "description": "start recording, or stop and save."
+    },
+    "max_seconds": {
+     "type": "number",
+     "minimum": 1,
+     "maximum": 600,
+     "description": "For start: when to stop by itself; 300 if not given."
+    },
+    "tabId": {
+     "type": "number",
+     "description": "The tab to record: one of this task's (browser_tabs lists them)."
+    }
+   },
+   "required": [
+    "action",
+    "tabId"
+   ]
+  }
+ },
+ {
+  "name": "browser_dialog",
+  "description": "Answers the alert, confirm or prompt the page has open (a tool that runs into one says so).",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "accept": {
+     "type": "boolean",
+     "description": "OK (true) or Cancel (false)."
+    },
+    "text": {
+     "type": "string",
+     "description": "For a prompt: what to answer."
+    },
+    "tabId": {
+     "type": "number",
+     "description": "The tab to act on: one of this task's (browser_tabs lists them)."
+    }
+   },
+   "required": [
+    "accept",
+    "tabId"
+   ]
+  }
+ },
+ {
+  "name": "browser_batch",
+  "description": "Several browser tool calls in one go, one after another, stopping at the first error. Coordinates in it refer to the screenshot taken before the batch. Use it whenever you can see two or more steps ahead.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "actions": {
+     "type": "array",
+     "minItems": 1,
+     "description": "Each {name, input}: a tool's name (browser_computer, browser_navigate…) and what you'd pass it alone.",
+     "items": {
+      "type": "object",
+      "properties": {
+       "name": {
+        "type": "string"
+       },
+       "input": {
+        "type": "object"
+       }
+      },
+      "required": [
+       "name",
+       "input"
+      ]
+     }
+    }
+   },
+   "required": [
+    "actions"
+   ]
+  }
+ },
+ {
+  "name": "browser_list",
+  "description": "The Chromes connected to Zero (one per profile with Zero for Chrome), and which one this task uses.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": []
+  }
+ },
+ {
+  "name": "browser_select",
+  "description": "Uses another connected Chrome for this task from now on.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "browser": {
+     "type": "string",
+     "description": "Its id, from browser_list."
+    }
+   },
+   "required": [
+    "browser"
+   ]
+  }
+ }
+]

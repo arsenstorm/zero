@@ -3,6 +3,7 @@
 //! `gh`, which keeps its own sign-in, and Linear through its API on a connection zerod makes in the browser and keeps in
 //! linear.json (the user's alone). Settings live in integrations.json, both in zerod's home.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -208,11 +209,22 @@ const LINEAR_ISSUES: &str = "query($filter:IssueFilter){issues(filter:$filter,fi
 #[derive(Serialize, Deserialize, Clone)]
 struct Account { name: String, url_key: String, access: String, refresh: Option<String>, expires: i64 }
 
+/// The Slack workspace connected: a user token of Zero's own Slack app (made from the app's manifest, read-only scopes),
+/// the team it is for, and the channels' ids by name (what Slack's app opens by). In slack.json, the user's alone.
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SlackTeam { pub id: String, pub name: String, pub domain: String }
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SlackAccount { token: String, team: SlackTeam, user_id: String, channels: BTreeMap<String, String> }
+
 pub struct Integrations {
     home: PathBuf,
     fetcher: Arc<dyn Fetcher>,
     settings: Mutex<Settings>,
     linear: Mutex<Option<Account>>,
+    slack: Mutex<Option<SlackAccount>>,
     port: Mutex<u16>,
     /// The Linear sign-in the listener waits for (its state and verifier), and whether one is listening.
     signing_in: Mutex<(Option<(String, String)>, bool)>,
@@ -227,9 +239,10 @@ impl Integrations {
     pub fn open(home: &Path, fetcher: Arc<dyn Fetcher>) -> Arc<Integrations> {
         let settings = std::fs::read(home.join("integrations.json")).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default();
         let linear = std::fs::read(home.join("linear.json")).ok().and_then(|data| serde_json::from_slice(&data).ok());
+        let slack = std::fs::read(home.join("slack.json")).ok().and_then(|data| serde_json::from_slice(&data).ok());
         let cache = std::fs::read(home.join("integrations-cache.json")).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default();
         Arc::new(Integrations {
-            home: home.into(), fetcher, settings: Mutex::new(settings), linear: Mutex::new(linear), port: Mutex::new(47615),
+            home: home.into(), fetcher, settings: Mutex::new(settings), linear: Mutex::new(linear), slack: Mutex::new(slack), port: Mutex::new(47615),
             signing_in: Mutex::new((None, false)), github: Mutex::new(None), cache: Mutex::new(cache),
         })
     }
@@ -351,7 +364,7 @@ impl Integrations {
     }
 
     /// One GraphQL request to Linear on the connection, refreshed first if it has run out.
-    async fn linear(&self, body: Value) -> Result<Value, String> {
+    pub(crate) async fn linear(&self, body: Value) -> Result<Value, String> {
         let mut account = self.linear.lock().unwrap().clone().ok_or("Linear isn't connected")?;
         if account.expires <= now() + 60 && let Some(refresh) = account.refresh.clone() {
             let form = encode_form(&[("grant_type", "refresh_token"), ("refresh_token", &refresh), ("client_id", LINEAR_CLIENT)]);
@@ -437,6 +450,59 @@ impl Integrations {
         self.keep(None)
     }
 
+    // Slack.
+
+    /// The connected Slack workspace and its channels' ids by name, for the app: `{"team", "channels"}`.
+    pub fn slack_state(&self) -> Option<Value> {
+        self.slack.lock().unwrap().as_ref().map(|a| json!({"team": a.team, "channels": a.channels}))
+    }
+
+    /// The team connected and the user the token is for.
+    pub(crate) fn slack_team(&self) -> Option<(SlackTeam, String)> { self.slack.lock().unwrap().as_ref().map(|a| (a.team.clone(), a.user_id.clone())) }
+
+    /// A channel's name by its id, when it is one the connection listed.
+    pub(crate) fn slack_channel_name(&self, id: &str) -> Option<String> {
+        self.slack.lock().unwrap().as_ref().and_then(|a| a.channels.iter().find(|(_, i)| *i == id).map(|(name, _)| name.clone()))
+    }
+
+    /// Checks `token` with Slack, reads the workspace's channels, and keeps the connection. The state, as the app shows it.
+    pub async fn connect_slack(&self, token: &str) -> Result<Value, String> {
+        let token = token.trim();
+        if !token.starts_with("xoxp-") { return Err("That isn't a user token: Slack's start with xoxp-.".into()) }
+        let identity = slack_call(&*self.fetcher, token, "auth.test", &[]).await?;
+        let (Some(id), Some(name)) = (identity["team_id"].as_str(), identity["team"].as_str()) else { return Err("Slack didn't say which workspace the token is for.".into()) };
+        let domain = identity["url"].as_str().and_then(|u| u.strip_prefix("https://")).and_then(|u| u.split('.').next()).unwrap_or("").to_string();
+        let channels = slack_channels(&*self.fetcher, token).await?;
+        let account = SlackAccount { token: token.into(), team: SlackTeam { id: id.into(), name: name.into(), domain }, user_id: identity["user_id"].as_str().unwrap_or("").into(), channels };
+        self.keep_slack(Some(account))?;
+        Ok(self.slack_state().unwrap_or(Value::Null))
+    }
+
+    pub fn disconnect_slack(&self) -> Result<(), String> { self.keep_slack(None) }
+
+    /// The channels again: new ones get ids too.
+    pub async fn refresh_slack(&self) -> Result<(), String> {
+        let Some(mut account) = self.slack.lock().unwrap().clone() else { return Ok(()) };
+        account.channels = slack_channels(&*self.fetcher, &account.token).await?;
+        self.keep_slack(Some(account))
+    }
+
+    /// One call to Slack's Web API on the connection; the answer when Slack says ok.
+    pub(crate) async fn slack(&self, method: &str, params: &[(&str, &str)]) -> Result<Value, String> {
+        let token = self.slack.lock().unwrap().as_ref().map(|a| a.token.clone()).ok_or("Slack isn't connected")?;
+        slack_call(&*self.fetcher, &token, method, params).await
+    }
+
+    fn keep_slack(&self, account: Option<SlackAccount>) -> Result<(), String> {
+        let file = self.home.join("slack.json");
+        match &account {
+            Some(account) => write_private(&file, &serde_json::to_vec(account).map_err(|e| e.to_string())?)?,
+            None => { let _ = std::fs::remove_file(&file); }
+        }
+        *self.slack.lock().unwrap() = account;
+        Ok(())
+    }
+
     /// Tokens for a form sent to Linear's token endpoint: access, refresh, when the access runs out.
     async fn exchange(&self, form: &str) -> Result<(String, Option<String>, i64), String> {
         let config = curl_config("https://api.linear.app/oauth/token", None, form, "application/x-www-form-urlencoded");
@@ -520,6 +586,29 @@ pub fn linear_items(reply: &Value) -> Vec<Item> {
             name: tag["name"].as_str()?.into(), color: tag["color"].as_str().map(Into::into), icon: tag["icon"].as_str().map(Into::into),
         })).collect(),
     })).collect()
+}
+
+async fn slack_call(fetcher: &dyn Fetcher, token: &str, method: &str, params: &[(&str, &str)]) -> Result<Value, String> {
+    let url = format!("https://slack.com/api/{method}{}{}", if params.is_empty() { "" } else { "?" }, encode_form(params));
+    let config = format!("url = \"{url}\"\nheader = \"Authorization: Bearer {token}\"\n");
+    let reply: Value = serde_json::from_str(&fetcher.run(curl(), Some(config)).await?).map_err(|e| format!("Slack answered oddly: {e}"))?;
+    if reply["ok"] != true { return Err(format!("Slack {method}: {}", reply["error"].as_str().unwrap_or("no"))) }
+    Ok(reply)
+}
+
+/// Every channel's id by name, public and private, page by page.
+async fn slack_channels(fetcher: &dyn Fetcher, token: &str) -> Result<BTreeMap<String, String>, String> {
+    let (mut all, mut cursor) = (BTreeMap::new(), String::new());
+    loop {
+        let mut params = vec![("types", "public_channel,private_channel"), ("exclude_archived", "true"), ("limit", "1000")];
+        if !cursor.is_empty() { params.push(("cursor", &cursor)) }
+        let page = slack_call(fetcher, token, "conversations.list", &params).await?;
+        for channel in page["channels"].as_array().into_iter().flatten() {
+            if let (Some(name), Some(id)) = (channel["name"].as_str(), channel["id"].as_str()) { all.entry(name.to_string()).or_insert(id.to_string()); }
+        }
+        cursor = page["response_metadata"]["next_cursor"].as_str().unwrap_or("").to_string();
+        if cursor.is_empty() { return Ok(all) }
+    }
 }
 
 /// curl's config, read from its stdin (`curl -K -`), so the token and the body stay off the command line.

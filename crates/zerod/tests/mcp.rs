@@ -22,8 +22,9 @@ async fn it_introduces_itself_and_lists_the_scratchpad_tools() {
     assert_eq!(ask(&pads, json!({"jsonrpc": "2.0", "method": "notifications/initialized"})).await, None, "notifications get no answer");
     let tools = ask(&pads, json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})).await.unwrap();
     let names: Vec<&str> = tools["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["scratchpad_list", "scratchpad_read", "scratchpad_create", "scratchpad_write", "scratchpad_append", "scratchpad_edit",
+    assert_eq!(names[..11], ["scratchpad_list", "scratchpad_read", "scratchpad_create", "scratchpad_write", "scratchpad_append", "scratchpad_edit",
                        "scratchpad_find", "scratchpad_rename", "scratchpad_move", "scratchpad_delete", "scratchpad_folder"]);
+    assert!(names[11..].iter().all(|n| n.starts_with("browser_")) && names.contains(&"browser_computer"), "then Zero for Chrome's: {names:?}");
     let unknown = ask(&pads, json!({"jsonrpc": "2.0", "id": 3, "method": "resources/list"})).await.unwrap();
     assert_eq!(unknown["error"]["code"], -32601);
 }

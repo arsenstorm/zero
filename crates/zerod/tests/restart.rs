@@ -49,6 +49,26 @@ async fn a_restart_waits_for_a_running_command_then_pauses_the_turn_to_carry_on(
 }
 
 #[tokio::test]
+async fn a_restart_doesnt_wait_on_a_session_closed_while_its_command_ran() {
+    // Closed (archived) mid-command, the session's last item still says a command runs: the pause moves on at once
+    // rather than waiting out the whole allowance with everything else already paused.
+    let home = temp_dir("restart-closed");
+    let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
+    let cwd = home.to_str().unwrap();
+    let working = daemon.start(Provider::Claude, cwd, "build it", None, None, Permissions::Auto).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let session = daemon.session(&working).unwrap();
+    session.change(Change::Status { status: Status::Working, turn: Some("t1".into()), error: None });
+    session.change(command(ItemStatus::Running));
+    drop(session);
+    let pausing = tokio::spawn({ let daemon = daemon.clone(); async move { daemon.pause_for_restart().await } });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    daemon.archive(&working).await.unwrap();
+    let paused = tokio::time::timeout(Duration::from_secs(10), pausing).await.expect("the pause moved on once the session was closed").unwrap();
+    assert!(paused.is_empty() || paused == [working.clone()]);
+}
+
+#[tokio::test]
 async fn after_a_restart_only_what_it_paused_carries_on() {
     let home = temp_dir("restart-carry");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
@@ -79,4 +99,33 @@ async fn an_offline_session_whose_status_still_says_working_isnt_paused() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     session.change(Change::Status { status: Status::Working, turn: Some("t1".into()), error: None });
     assert!(daemon.pause_for_restart().await.is_empty(), "no process, no turn to pause");
+}
+
+#[tokio::test]
+async fn a_turn_carried_on_after_a_restart_says_so_in_place_of_interrupted() {
+    // The pause interrupts the turn, which the adapter notes as "Interrupted"; the new zerod, carrying it on, makes
+    // that line say what happened. A stop the user pressed stays "Interrupted".
+    let home = temp_dir("restart-notice");
+    let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
+    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "build it", None, None, Permissions::Auto).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let session = daemon.session(&id).unwrap();
+    session.change(Change::Item { item: Item { at: None, id: "stop".into(), turn: None, kind: ItemKind::Notice { text: "Interrupted".into(), error: false }, status: ItemStatus::Done } });
+    session.change(Change::Status { status: Status::Idle, turn: None, error: None });
+    std::fs::write(home.join("zerod/paused.json"), serde_json::to_vec(std::slice::from_ref(&id)).unwrap()).unwrap();
+    drop(session);
+    drop(daemon);
+    let again = Daemon::open(&home.join("zerod"), alive()).unwrap();
+    assert_eq!(again.carry_on(), std::slice::from_ref(&id));
+    let notices: Vec<String> = again.get(&id).unwrap().items.iter().filter_map(|i| match &i.kind { ItemKind::Notice { text, .. } => Some(text.clone()), _ => None }).collect();
+    assert_eq!(notices, ["Paused for Zero's update, then carried on"]);
+    // No "Interrupted" noted (the old zerod went before the interrupt's result): the line is added on its own.
+    let other = again.start(Provider::Claude, home.to_str().unwrap(), "more", None, None, Permissions::Auto).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    again.session(&other).unwrap().change(Change::Status { status: Status::Idle, turn: None, error: None });
+    std::fs::write(home.join("zerod/paused.json"), serde_json::to_vec(std::slice::from_ref(&other)).unwrap()).unwrap();
+    drop(again);
+    let third = Daemon::open(&home.join("zerod"), alive()).unwrap();
+    assert_eq!(third.carry_on(), std::slice::from_ref(&other));
+    assert!(third.get(&other).unwrap().items.iter().any(|i| matches!(&i.kind, ItemKind::Notice { text, .. } if text == "Paused for Zero's update, then carried on")));
 }

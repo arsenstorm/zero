@@ -26,6 +26,12 @@ async fn main() {
     let mut args = std::env::args().skip(1).peekable();
     // `zerod mcp`: the MCP server on stdio, for an agent, talking to the running zerod.
     let mcp = args.next_if_eq("mcp").is_some();
+    // Started by Chrome as Zero for Chrome's native host: its origin first, then Chrome's own arguments.
+    if args.peek().is_some_and(|a| a.starts_with("chrome-extension://")) {
+        zerod::browser::host(tokio::io::stdin(), tokio::io::stdout(), socket).await;
+        // Out at once: the runtime would otherwise wait on its blocking read of Chrome's stdin, which Chrome keeps open.
+        std::process::exit(0);
+    }
     while let Some(arg) = args.next() {
         match (arg.as_str(), args.next()) {
             ("--home", Some(value)) => home = value.into(),
@@ -94,9 +100,20 @@ async fn main() {
     eprintln!("zerod: {} sessions, listening on {}", daemon.list().len(), socket.display());
     let integrations = zerod::integrations::Integrations::open(&home, Arc::new(zerod::integrations::Commands::default()));
     let pads = Arc::new(zerod::pads::Pads::open(&beside.join("scratchpads")));
+    let loops = Arc::new(zerod::loops::Loops::open(&beside.join("loops")));
+    let following = zerod::following::Following::open(&home, Arc::new(zerod::integrations::Commands::default()), integrations.clone());
+    let (poller, polled) = (following.clone(), daemon.clone());
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            poller.tick(|id| polled.get(id).is_some(), |id, words| if let Err(error) = polled.notify(id, words) { eprintln!("zerod: couldn't tell {id} what it follows changed: {error}") }).await;
+        }
+    });
+    let browsers = zerod::browser::Browsers::open(&home);
+    browsers.follow(daemon.clone());
     let places = Arc::new(zerod::board::Places::default());
     tokio::spawn(places.clone().follow(home.clone()));
-    let zerod = zerod::server::Zerod { daemon: daemon.clone(), inbox, drops: Some(drops), integrations, pads, places, notices: tokio::sync::broadcast::channel(64).0 };
+    let zerod = zerod::server::Zerod { daemon: daemon.clone(), inbox, drops: Some(drops), integrations, pads, loops, following, browsers, places, notices: tokio::sync::broadcast::channel(64).0 };
     // Codex processes end with the daemon: their input closes when it exits.
     tokio::select! {
         served = zerod::server::serve(zerod, socket.clone()) => if let Err(error) = served { eprintln!("zerod: {error}"); std::process::exit(1) },

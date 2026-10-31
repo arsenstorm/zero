@@ -46,8 +46,13 @@ fn the_outline_is_each_message_of_yours_with_the_start_of_its_answer() {
 #[test]
 fn a_summary_has_only_what_a_list_or_the_board_needs() {
     let summary = session(50).summary();
-    assert_eq!(ids(&summary.items), ["a49"], "its answer, for the board's Now; not the conversation");
+    assert_eq!(ids(&summary.items), ["u0", "a49"], "its first message, for the board's label, and its answer, for the board's Now; not the conversation");
     assert_eq!(summary.answer(), Some("answer 49"));
+    // Asked again unchanged, the same; after a change, the new one (it's cached by sequence number).
+    let session = session(50);
+    assert_eq!(session.summary(), session.summary());
+    session.change(Change::Item { item: Item { id: "a50".into(), turn: None, kind: ItemKind::Agent { text: "answer 50".into(), final_answer: true }, status: ItemStatus::Done, at: None } });
+    assert_eq!(session.summary().answer(), Some("answer 50"));
 }
 
 #[test]

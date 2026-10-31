@@ -62,6 +62,9 @@ struct Inner {
     core: Option<Core>,
     /// What's kept of a parked session: its summary and latest items, until something needs the rest.
     parked: Option<Parked>,
+    /// The loaded conversation's summary as of its sequence number: the board asks for every session's several
+    /// times a second while a turn streams.
+    summary: Option<(u64, Conversation)>,
     /// Where it's kept, to load from and park to.
     dir: Option<PathBuf>,
     /// Lines in its transcript, so a park file can tell whether it's caught up.
@@ -139,7 +142,7 @@ impl Session {
         let parked: Option<Parked> = std::fs::read(dir.join("parked.json")).ok().and_then(|data| serde_json::from_slice(&data).ok());
         if let Some(parked) = parked.filter(|p| p.lines == lines) {
             let session = Session(Arc::new(Mutex::new(Inner {
-                core: None, parked: Some(parked), dir: Some(dir.into()), lines, touched: Instant::now(), events, transcript: Some(append(dir)?),
+                core: None, parked: Some(parked), summary: None, dir: Some(dir.into()), lines, touched: Instant::now(), events, transcript: Some(append(dir)?),
                 out: None, child: None, waiting: HashMap::new(), answered: HashSet::new(), next: lines + 1, generation: 0,
                 heard: Instant::now(), running: HashMap::new(),
             })));
@@ -183,7 +186,7 @@ impl Session {
 
     fn with(core: Core, transcript: Option<File>, events: broadcast::Sender<Event>, next: u64) -> Session {
         Session(Arc::new(Mutex::new(Inner {
-            core: Some(core), parked: None, dir: None, lines: 0, touched: Instant::now(), events, transcript, out: None, child: None, waiting: HashMap::new(), answered: HashSet::new(), next, generation: 0,
+            core: Some(core), parked: None, summary: None, dir: None, lines: 0, touched: Instant::now(), events, transcript, out: None, child: None, waiting: HashMap::new(), answered: HashSet::new(), next, generation: 0,
             heard: Instant::now(), running: HashMap::new(),
         })))
     }
@@ -223,7 +226,9 @@ impl Session {
         let items = &inner.core().conversation().items;
         let mut marks: Vec<Value> = vec![];
         for (index, item) in items.iter().enumerate() {
+            // Yours only: what Zero gave the session (a worker's report) isn't a mark of yours.
             let ItemKind::User { text, .. } = &item.kind else { continue };
+            if crate::model::from(text).is_some() { continue }
             let answer = items[index + 1..].iter().take_while(|i| !matches!(i.kind, ItemKind::User { .. }))
                 .find_map(|i| match &i.kind { ItemKind::Agent { text, final_answer: true } => Some(text.chars().take(400).collect::<String>()), _ => None });
             marks.push(json!({"id": item.id, "text": text.chars().take(300).collect::<String>(), "answer": answer}));
@@ -234,11 +239,17 @@ impl Session {
     /// The conversation without its items but its latest answer and last item: what a list and the board need.
     pub fn summary(&self) -> Conversation {
         // Read without touching it: the board reading every task mustn't keep them all in memory.
-        let inner = self.lock();
-        match (&inner.core, &inner.parked) {
-            (Some(core), _) => summarize(core.conversation()),
-            (None, Some(parked)) => parked.summary.clone(),
-            (None, None) => Conversation::new("", Provider::Claude, ""),
+        let mut inner = self.lock();
+        if let Some(core) = &inner.core {
+            let conversation = core.conversation();
+            if let Some((seq, kept)) = &inner.summary && *seq == conversation.seq { return kept.clone() }
+            let made = summarize(conversation);
+            inner.summary = Some((conversation.seq, made.clone()));
+            return made;
+        }
+        match &inner.parked {
+            Some(parked) => parked.summary.clone(),
+            None => Conversation::new("", Provider::Claude, ""),
         }
     }
 
@@ -280,7 +291,7 @@ impl Session {
         // Parked, it has no process.
         let conversation = inner.core.as_ref()?.conversation();
         // Idle or done, not limited: a limited one is waiting to carry on its turn once the limit resets.
-        let idle = inner.out.is_some() && matches!(conversation.attention(), crate::model::Attention::Idle | crate::model::Attention::Done)
+        let idle = inner.out.is_some() && matches!(conversation.attention(), crate::model::Attention::Idle | crate::model::Attention::Answered | crate::model::Attention::Done)
             && conversation.turn.is_none() && inner.running.is_empty();
         idle.then(|| inner.heard.elapsed())
     }
@@ -332,6 +343,24 @@ impl Session {
     /// Arsen's words: steering or queued behind the turn in progress where the provider allows it, else a new turn.
     pub async fn send(&self, text: &str, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
         self.send_with_images(text, &[], model, effort).await
+    }
+
+    /// A model (and effort) picked without a message, for the turns from here: told to the agent now where it takes
+    /// that (Claude Code, OpenCode), and kept so the next turn carries it (Codex) and a restart starts with it.
+    pub async fn set_model(&self, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+        if model.is_none() && effort.is_none() { return Ok(()) }
+        let conversation = self.snapshot();
+        let thread = conversation.thread.clone()
+            .ok_or_else(|| format!("{} hasn't started yet: pick the model with your next message", conversation.provider.title()))?;
+        if self.is_attached() {
+            match conversation.provider {
+                Provider::Claude => if let Some(model) = model { claude::set_model(self, model).await? },
+                Provider::Opencode => acp::configure(self, model, effort).await?,
+                Provider::Codex => {}
+            }
+        }
+        self.change(Change::Thread { thread, model: model.map(Into::into), effort: effort.map(Into::into) });
+        Ok(())
     }
 
     /// Words with images (their files): kept in the transcript first, so the message keeps them on replay.
@@ -498,9 +527,19 @@ impl Session {
                 let command = match conversation.item(id).map(|i| &i.kind) { Some(ItemKind::Command { command, .. }) => command.clone(), _ => return None };
                 (elapsed >= LONG_COMMAND).then(|| format!("{command} has been running for {} minutes", elapsed.as_secs() / 60))
             }).next();
-            let commands: Vec<&str> = conversation.items.iter().rev().take_while(|i| i.turn == conversation.turn || conversation.turn.is_none())
-                .filter_map(|i| match &i.kind { ItemKind::Command { command, .. } => Some(command.as_str()), _ => None }).take(REPEATS).collect();
-            let repeated = (commands.len() == REPEATS && commands.iter().all(|c| *c == commands[0])).then(|| format!("Ran {} {REPEATS} times in a row", commands[0]));
+            // The same command again and again with nothing else between: counted in full, so the number grows as it goes
+            // on. Another step between (a different tool, a file changed) is work, not a loop.
+            let steps = conversation.items.iter().rev().take_while(|i| i.turn == conversation.turn || conversation.turn.is_none())
+                .filter(|i| !matches!(i.kind, ItemKind::Reasoning { .. } | ItemKind::Agent { .. }));
+            let mut run: Option<(&str, usize)> = None;
+            for step in steps {
+                match (&step.kind, run) {
+                    (ItemKind::Command { command, .. }, None) => run = Some((command, 1)),
+                    (ItemKind::Command { command, .. }, Some((same, n))) if command == same => run = Some((same, n + 1)),
+                    _ => break,
+                }
+            }
+            let repeated = run.filter(|(_, n)| *n >= REPEATS).map(|(command, n)| format!("Ran {command} {n} times in a row"));
             let silent = (inner.heard.elapsed() >= SILENT).then(|| format!("No word from {} for {} minutes", conversation.provider.title(), SILENT.as_secs() / 60));
             longest.or(repeated).or(silent)
         };
@@ -641,9 +680,14 @@ fn turn_start(items: &[Item], start: usize) -> usize {
 
 /// Without its items but its latest answer (the board's) and its last item (how it's doing).
 fn summarize(conversation: &Conversation) -> Conversation {
+    // The first message too: it names the task on the board when nothing else does.
+    let asked = conversation.items.iter().find(|i| matches!(i.kind, ItemKind::User { .. }));
     let answer = conversation.items.iter().rev().find(|i| matches!(i.kind, ItemKind::Agent { final_answer: true, .. }));
-    let last = conversation.items.last().filter(|last| answer.is_none_or(|a| a.id != last.id));
-    conversation.with_items(answer.into_iter().chain(last).cloned().collect())
+    let mut items: Vec<Item> = Vec::new();
+    for item in asked.into_iter().chain(answer).chain(conversation.items.last()) {
+        if !items.iter().any(|kept| kept.id == item.id) { items.push(item.clone()) }
+    }
+    conversation.with_items(items)
 }
 
 /// Newlines in a file, read a piece at a time: transcripts run to tens of megabytes.

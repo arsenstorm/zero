@@ -7,7 +7,10 @@ use std::path::Path;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-const INSTRUCTIONS: &str = "Zero's scratchpads: Markdown notes the user keeps in Zero, in folders, shared with every agent. \
+const INSTRUCTIONS: &str = "Chrome, through Zero for Chrome: the browser_ tools act in the task's own tabs, which browser_tabs lists \
+(call it first; createIfEmpty opens one). Read a page with browser_read (its elements' refs) or a screenshot (browser_computer), act with \
+browser_computer, browser_form and browser_navigate, and close the tabs you opened when you're done. \
+Zero's scratchpads: Markdown notes the user keeps in Zero, in folders, shared with every agent. \
 A pad's link is zero://pad/<id>; zero://pad/<id>#<section> is one heading's part (its anchor as GitHub makes them). When the \
 user gives you such a link, read it with scratchpad_read. Read before you change a pad, and pass the revision you read to \
 scratchpad_write or scratchpad_edit, so changes made since aren't lost; scratchpad_append needs none. Give the user links \
@@ -63,7 +66,14 @@ where
                 "properties": args.iter().map(|(arg, about, _)| (arg.to_string(), json!({"type": "string", "description": about}))).collect::<serde_json::Map<_, _>>(),
                 "required": args.iter().filter(|(_, _, required)| *required).map(|(arg, _, _)| *arg).collect::<Vec<_>>(),
             },
-        })).collect::<Vec<_>>()}),
+        })).chain(crate::browser::tools()).collect::<Vec<_>>()}),
+        // A browser tool's answer is already MCP content (text and screenshots), as the extension made it.
+        "tools/call" if params["name"].as_str().is_some_and(|n| n.starts_with("browser_")) => {
+            match call(params["name"].as_str().unwrap_or_default().to_string(), params["arguments"].clone()).await {
+                Ok(answer) => json!({"content": answer["content"], "isError": answer["isError"].as_bool().unwrap_or(false)}),
+                Err(why) => json!({"content": [{"type": "text", "text": why}], "isError": true}),
+            }
+        }
         "tools/call" => {
             let name = params["name"].as_str().unwrap_or_default();
             let tool = name.strip_prefix("scratchpad_").unwrap_or(name).to_string();
@@ -102,23 +112,28 @@ pub async fn serve(socket: &Path) {
     }
 }
 
-/// One tool call to zerod; zerod is started (this same program) if nothing answers.
+/// zerod's socket; zerod is started (this same program) if nothing answers.
+pub async fn connect(socket: &Path) -> Result<tokio::net::UnixStream, String> {
+    if let Ok(stream) = tokio::net::UnixStream::connect(socket).await { return Ok(stream) }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    std::process::Command::new(exe).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+        .spawn().map_err(|e| format!("Zero isn't running and didn't start: {e}"))?;
+    for _ in 0..50 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        if let Ok(stream) = tokio::net::UnixStream::connect(socket).await { return Ok(stream) }
+    }
+    Err("Zero isn't running".into())
+}
+
+/// One tool call to zerod: a scratchpad's (`pad`), or a browser's (`browserCall`, for the session this server runs in).
 async fn through(socket: &Path, tool: String, args: Value) -> Result<Value, String> {
-    let mut stream = match tokio::net::UnixStream::connect(socket).await {
-        Ok(stream) => stream,
-        Err(_) => {
-            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-            std::process::Command::new(exe).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
-                .spawn().map_err(|e| format!("Zero isn't running and didn't start: {e}"))?;
-            let mut connected = None;
-            for _ in 0..50 {
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                if let Ok(stream) = tokio::net::UnixStream::connect(socket).await { connected = Some(stream); break }
-            }
-            connected.ok_or("Zero isn't running")?
-        }
+    let mut stream = connect(socket).await?;
+    let request = if tool.starts_with("browser_") {
+        json!({"id": 1, "op": "browserCall", "tool": tool, "args": args, "session": std::env::var("ZERO_SESSION").ok()})
+    } else {
+        json!({"id": 1, "op": "pad", "tool": tool, "args": args})
     };
-    let mut request = json!({"id": 1, "op": "pad", "tool": tool, "args": args}).to_string();
+    let mut request = request.to_string();
     request.push('\n');
     stream.write_all(request.as_bytes()).await.map_err(|e| e.to_string())?;
     let mut lines = BufReader::new(stream).lines();

@@ -44,7 +44,7 @@ fn the_apps_attention_is_zerods() {
         c.status = Status::Idle;
         c
     };
-    let answer = Item { at: None, id: "a".into(), turn: None, kind: ItemKind::Agent { text: "Done.".into(), final_answer: true }, status: ItemStatus::Done };
+    let answer = Item { at: None, id: "a".into(), turn: None, kind: ItemKind::Agent { text: "Done.\n\n[zero: done]".into(), final_answer: true }, status: ItemStatus::Done };
     let question = Question { id: "q1".into(), item: Some("t1".into()), fields: vec![Field {
         id: "0".into(), header: Some("Cache".into()), question: "Redis or Postgres?".into(),
         options: vec![QuestionOption { label: "Redis".into(), description: Some("in the stack".into()) }, QuestionOption { label: "Postgres".into(), description: None }],

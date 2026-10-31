@@ -103,7 +103,9 @@ fn an_edit_shows_what_it_replaces() {
 }
 
 #[test]
-fn a_message_sent_mid_turn_queues_and_the_session_is_idle_once_both_are_done() {
+fn a_message_sent_mid_turn_goes_into_that_turn_and_its_result_ends_it() {
+    // Claude Code hands a message sent while it works to the running turn (beside the next tool result), so one
+    // result ends both: the session isn't left "working" waiting for a result that never comes.
     let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
     let user = |text: &str| json!({"type": "user", "message": {"role": "user", "content": text}});
     let result = json!({"type": "result", "subtype": "success", "is_error": false, "result": "ok"});
@@ -111,8 +113,69 @@ fn a_message_sent_mid_turn_queues_and_the_session_is_idle_once_both_are_done() {
     core.sent(&user("and also this"));
     assert_eq!(core.conversation().status, Status::Working);
     core.receive(&result);
-    assert_eq!(core.conversation().status, Status::Working, "the queued message is still to come");
-    core.receive(&result);
+    assert_eq!(core.conversation().status, Status::Idle);
+    assert_eq!(core.conversation().turn, None);
+    // Sent after the turn, a message starts the next one.
+    core.sent(&user("and now this"));
+    assert_eq!(core.conversation().status, Status::Working);
+    assert_eq!(core.conversation().turn.as_deref(), Some("turn-2"));
+}
+
+#[test]
+fn the_restarts_carry_on_is_a_turn_but_not_a_message_of_yours() {
+    let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+    core.sent(&json!({"type": "user", "message": {"role": "user", "content": zerod::daemon::CARRY_ON}}));
+    assert_eq!(core.conversation().status, Status::Working, "Claude is told, and answers");
+    assert!(core.conversation().items.is_empty(), "nothing to read: Zero said it, not you");
+}
+
+#[test]
+fn a_subagent_in_the_background_runs_until_it_reports_back() {
+    // The Agent tool's own result comes at once, saying the subagent started: the step keeps running until Claude
+    // Code's task notification says it ended, so the subagent reads as at work for as long as it is.
+    let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+    core.sent(&json!({"type": "user", "message": {"role": "user", "content": "go"}}));
+    core.receive(&json!({"type": "assistant", "message": {"id": "m1", "content": [{"type": "tool_use", "id": "toolu_1", "name": "Agent",
+        "input": {"description": "Rebase the branch", "prompt": "Rebase onto main…", "subagent_type": "claude", "run_in_background": true}}]}}));
+    assert!(matches!(&core.conversation().items[1].kind, ItemKind::Tool { name, detail } if name == "Agent" && detail == "Rebase the branch"));
+    core.receive(&json!({"type": "system", "subtype": "task_started", "task_type": "local_agent", "is_backgrounded": true, "tool_use_id": "toolu_1", "description": "Rebase the branch"}));
+    core.receive(&json!({"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "Agent started in background with ID a1"}]}}));
+    assert_eq!(core.conversation().items[1].status, ItemStatus::Running, "started, not done");
+    core.receive(&json!({"type": "system", "subtype": "task_notification", "tool_use_id": "toolu_1", "status": "completed", "summary": "Rebased"}));
+    assert_eq!(core.conversation().items[1].status, ItemStatus::Done);
+}
+
+#[test]
+fn a_stopped_turn_says_interrupted_not_error() {
+    // Claude Code ends an interrupted turn with an error result and no words: that's "Interrupted", as Codex's and
+    // OpenCode's are, not a failure in red.
+    let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+    core.sent(&json!({"type": "user", "message": {"role": "user", "content": "go"}}));
+    core.sent(&json!({"type": "control_request", "request_id": "r1", "request": {"subtype": "interrupt"}}));
+    core.receive(&json!({"type": "result", "subtype": "error_during_execution", "is_error": true}));
+    let notices: Vec<(String, bool)> = core.conversation().items.iter().filter_map(|i| match &i.kind { ItemKind::Notice { text, error } => Some((text.clone(), *error)), _ => None }).collect();
+    assert_eq!(notices, [("Interrupted".to_string(), false)]);
+    assert_eq!(core.conversation().status, Status::Idle);
+    assert_eq!(core.conversation().error, None);
+    // A turn that failed on its own is still an error.
+    core.sent(&json!({"type": "user", "message": {"role": "user", "content": "again"}}));
+    core.receive(&json!({"type": "result", "subtype": "error_during_execution", "is_error": true}));
+    assert!(core.conversation().items.iter().any(|i| matches!(&i.kind, ItemKind::Notice { text, error: true } if text == "error_during_execution")));
+}
+
+#[test]
+fn claude_speaking_while_idle_starts_a_turn() {
+    // A message that reached Claude Code just as its turn ended is taken up as a turn of its own: its words come with
+    // no message of yours before them, and are still a turn.
+    let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+    core.sent(&json!({"type": "user", "message": {"role": "user", "content": "first"}}));
+    core.receive(&json!({"type": "result", "subtype": "success", "is_error": false, "result": "ok"}));
+    assert_eq!(core.conversation().status, Status::Idle);
+    core.receive(&json!({"type": "assistant", "message": {"id": "m2", "content": [{"type": "text", "text": "On it."}]}}));
+    assert_eq!(core.conversation().status, Status::Working);
+    assert_eq!(core.conversation().turn.as_deref(), Some("turn-2"));
+    assert_eq!(core.conversation().items.last().unwrap().turn.as_deref(), Some("turn-2"));
+    core.receive(&json!({"type": "result", "subtype": "success", "is_error": false, "result": "ok"}));
     assert_eq!(core.conversation().status, Status::Idle);
 }
 
@@ -139,6 +202,8 @@ fn claude_runs_unmodified_in_auto_mode_with_zeros_rules_appended() {
     let at = |flag: &str| args.iter().position(|a| a == flag).map(|i| args[i + 1].as_str());
     assert_eq!(args[..8], ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
     assert_eq!(at("--permission-prompt-tool"), Some("stdio"));
+    // Claude in Chrome: in print mode its tools come only with the flag; the user's own default doesn't apply.
+    assert!(args.contains(&"--chrome".to_string()), "{args:?}");
     assert_eq!(at("--permission-mode"), Some("auto"), "Arsen's own mode: Claude's classifier decides, Zero hears what it can't");
     assert_eq!(at("--session-id"), Some("3f1c2b8a-0000-4000-8000-000000000001"));
     assert_eq!((at("--model"), at("--effort")), (Some("haiku"), Some("low")));

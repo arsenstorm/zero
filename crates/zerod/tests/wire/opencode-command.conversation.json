@@ -8,6 +8,7 @@
   "place": null,
   "branch": null,
   "parent": null,
+  "workspace": null,
   "thread": "ses_e87e7ec46ffe1ztiRcXd8Xelqy",
   "title": null,
   "model": "opencode-go/beam-free",

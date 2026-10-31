@@ -2,7 +2,7 @@
 //! and resumed with a new runtime process whenever one is wanted. A session can start others (a lead and its
 //! workers): each worker's outcome is put to its lead as a message once the lead is between turns.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
 use crate::claude;
-use crate::model::{Attention, Change, Conversation, Event, ItemKind, Opened, Permissions, Provider, Status};
+use crate::model::{Attention, Change, Conversation, Event, ItemKind, Opened, Permissions, Provider, Queued, Status};
 use crate::process;
 use crate::session::{Session, Transport};
 
@@ -32,21 +32,32 @@ pub struct Daemon {
     runtime: Runtime,
     /// Each session's attention as last seen, to tell when a worker stops working.
     attention: Mutex<HashMap<String, Attention>>,
-    /// Word for a session that it hasn't been given yet (it was busy or offline), kept in its folder as pending.json.
-    pending: Mutex<HashMap<String, Vec<String>>>,
+    /// Word for a session that it hasn't been given yet (it was busy or offline), kept in its folder as pending.json:
+    /// the user's queued messages and reports for it, in order.
+    pending: Mutex<HashMap<String, Vec<Queued>>>,
+    /// Sessions whose queue waits for the user's say (they stopped the agent): nothing goes until released.
+    held: Mutex<HashSet<String>>,
+    /// Sessions with a queued message on its way to the agent: a turn's end is heard as several events, and each
+    /// would otherwise take the next message before the first had made the session busy.
+    delivering: Mutex<HashSet<String>>,
+    /// Pinged whenever a queue changes, for the board.
+    queues: broadcast::Sender<()>,
     /// The limit resets already waited for, by session, so each is waited for once.
     resets: Mutex<HashMap<String, i64>>,
     /// The user's home (where Claude Code keeps its sessions) and zero-host's socket.
     user: Mutex<(PathBuf, PathBuf)>,
     /// zerod is about to become a new build: words wait for it, rather than starting turns the restart would cut.
     restarting: std::sync::atomic::AtomicBool,
+    pub workspaces: crate::workspaces::Workspaces,
     me: Weak<Daemon>,
 }
 
-/// What a turn paused for a restart is told once the new zerod is up.
-const CARRY_ON: &str = "Zero restarted while you were working: your turn was paused between steps. Please carry on where you left off.";
-/// How long a restart waits for a running command before pausing its turn anyway.
-const COMMAND_WAIT: Duration = Duration::from_secs(30 * 60);
+/// What a turn paused for a restart is told once the new zerod is up. Zero's own words, not yours: never shown as a
+/// message (core.rs leaves its item out).
+pub const CARRY_ON: &str = "Zero restarted while you were working: your turn was paused between steps. Please carry on where you left off.";
+/// How long a restart waits for a running command before pausing its turn anyway: long enough for a test run, not
+/// so long that everything already paused sits idle with no sign of why (a deploy isn't an agent's to run unattended).
+const COMMAND_WAIT: Duration = Duration::from_secs(2 * 60);
 
 /// How long an agent waits between turns, with nothing open, before its process is stopped (parked): finished work
 /// shouldn't hold memory, and resuming takes seconds. Words for it resume it.
@@ -61,6 +72,8 @@ pub const TERMINAL_PARK_AFTER: Duration = Duration::from_secs(15 * 60);
 #[derive(Default, Clone, Debug)]
 pub struct Options {
     pub cwd: Option<String>,
+    /// The workspace to put it in; none, and its folder decides (a worker goes with its lead).
+    pub workspace: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
     pub permissions: Option<Permissions>,
@@ -90,8 +103,12 @@ impl Daemon {
                 Ok(session) => {
                     let conversation = session.summary();
                     attention.insert(conversation.id.clone(), conversation.attention());
-                    if let Ok(words) = std::fs::read(dir.join("pending.json")).map(|data| serde_json::from_slice::<Vec<String>>(&data).unwrap_or_default())
-                        && !words.is_empty() { pending.insert(conversation.id.clone(), words); }
+                    if let Ok(data) = std::fs::read(dir.join("pending.json")) {
+                        // Before queues, pending.json held plain words: reports.
+                        let words: Vec<Queued> = serde_json::from_slice(&data).unwrap_or_else(|_| serde_json::from_slice::<Vec<String>>(&data).unwrap_or_default()
+                            .into_iter().map(|text| Queued { id: new_id(), text, images: vec![], report: true }).collect());
+                        if !words.is_empty() { pending.insert(conversation.id.clone(), words); }
+                    }
                     sessions.push(session);
                 }
                 Err(error) => eprintln!("zerod: skipped {}: {error}", dir.display()),
@@ -99,7 +116,9 @@ impl Daemon {
         }
         let daemon = Arc::new_cyclic(|me| Daemon {
             home: home.into(), sessions: Mutex::new(sessions), events, runtime, attention: Mutex::new(attention), pending: Mutex::new(pending),
+            held: Mutex::new(HashSet::new()), delivering: Mutex::new(HashSet::new()), queues: broadcast::channel(64).0,
             resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(),
+            workspaces: crate::workspaces::Workspaces::open(home),
         });
         let parker = Arc::downgrade(&daemon);
         tokio::spawn(async move {
@@ -131,6 +150,60 @@ impl Daemon {
         self.events.subscribe()
     }
 
+    /// Pinged whenever a session's queue changes.
+    pub fn subscribe_queues(&self) -> broadcast::Receiver<()> {
+        self.queues.subscribe()
+    }
+
+    /// A message of the user's for after the current turn: queued behind what's already waiting, one turn each.
+    /// Between turns already, it goes now. Queueing releases a held queue: the user is back with it.
+    pub fn queue(&self, id: &str, text: &str, images: &[String]) -> Result<Queued, String> {
+        let session = self.session(id)?;
+        if text.trim().is_empty() && images.is_empty() { return Err("A message needs words or an image".into()) }
+        let queued = Queued { id: new_id(), text: text.into(), images: images.to_vec(), report: false };
+        self.pending.lock().unwrap().entry(id.into()).or_default().push(queued.clone());
+        self.held.lock().unwrap().remove(id);
+        self.keep_pending(id);
+        if matches!(session.summary().attention(), Attention::Done | Attention::Answered | Attention::Idle) { self.deliver(id) }
+        Ok(queued)
+    }
+
+    /// Takes a queued message back.
+    pub fn unqueue(&self, id: &str, item: &str) -> Result<Queued, String> {
+        let taken = {
+            let mut pending = self.pending.lock().unwrap();
+            let list = pending.get_mut(id).ok_or("Nothing is queued")?;
+            let index = list.iter().position(|q| q.id == item).ok_or("That message isn't queued any more")?;
+            list.remove(index)
+        };
+        self.keep_pending(id);
+        Ok(taken)
+    }
+
+    /// Lets a held queue go on.
+    pub fn release(&self, id: &str) -> Result<(), String> {
+        self.session(id)?;
+        self.held.lock().unwrap().remove(id);
+        let _ = self.queues.send(());
+        self.deliver(id);
+        Ok(())
+    }
+
+    /// The user's messages waiting for `id`, in order (reports aren't theirs to see), and whether they're held.
+    pub fn queued(&self, id: &str) -> (Vec<Queued>, bool) {
+        let list = self.pending.lock().unwrap().get(id).map(|l| l.iter().filter(|q| !q.report).cloned().collect()).unwrap_or_default();
+        (list, self.held.lock().unwrap().contains(id))
+    }
+
+    /// Every session's queue, for the board.
+    pub fn queues(&self) -> HashMap<String, (Vec<Queued>, bool)> {
+        let held = self.held.lock().unwrap();
+        self.pending.lock().unwrap().iter()
+            .map(|(id, list)| (id.clone(), (list.iter().filter(|q| !q.report).cloned().collect::<Vec<_>>(), held.contains(id))))
+            .filter(|(_, (list, _))| !list.is_empty())
+            .collect()
+    }
+
     pub fn sessions(&self) -> Vec<Session> {
         self.sessions.lock().unwrap().clone()
     }
@@ -150,8 +223,19 @@ impl Daemon {
 
     /// Starts a session in `cwd` with `prompt` as its first turn; returns its id at once, while the runtime starts.
     pub fn start(&self, provider: Provider, cwd: &str, prompt: &str, model: Option<&str>, effort: Option<&str>, permissions: Permissions) -> Result<String, String> {
-        let options = Options { cwd: Some(cwd.into()), model: model.map(Into::into), effort: effort.map(Into::into), permissions: Some(permissions), ..Default::default() };
+        let options = Options { cwd: Some(cwd.into()), workspace: None, model: model.map(Into::into), effort: effort.map(Into::into), permissions: Some(permissions), ..Default::default() };
         self.create(provider, prompt, options, None)
+    }
+
+    /// A table the agent hands to Zero to draw, as an item of its conversation where it stands in the turn.
+    pub fn table(&self, id: &str, title: &str, columns: Vec<String>, rows: Vec<Vec<String>>) -> Result<(), String> {
+        if columns.is_empty() { return Err("A table needs columns".into()) }
+        let session = self.session(id)?;
+        let conversation = session.snapshot();
+        let rows = rows.into_iter().map(|mut row| { row.resize(columns.len(), String::new()); row }).collect();
+        session.change(Change::Item { item: crate::model::Item { at: None, id: format!("table-{}", conversation.seq + 1), turn: conversation.turn.clone(),
+                                                                  kind: ItemKind::Table { title: title.into(), columns, rows }, status: crate::model::ItemStatus::Done } });
+        Ok(())
     }
 
     /// A session of its own (no lead), with every option.
@@ -162,8 +246,10 @@ impl Daemon {
     /// A worker of `lead`: in the lead's folder, with the lead's permissions, unless told otherwise.
     pub fn spawn(&self, lead: &str, provider: Provider, prompt: &str, mut options: Options) -> Result<String, String> {
         let parent = self.get(lead).ok_or_else(|| format!("No session {lead} to lead it"))?;
-        options.cwd = options.cwd.or(Some(parent.cwd));
+        options.cwd = options.cwd.or(Some(parent.cwd.clone()));
         options.permissions = options.permissions.or(Some(parent.permissions));
+        // The lead decides: its worker is in its workspace wherever the worker's folder is.
+        options.workspace = options.workspace.or_else(|| Some(self.workspace_of(&parent)));
         self.create(provider, prompt, options, Some(lead.to_string()))
     }
 
@@ -183,6 +269,8 @@ impl Daemon {
         let mut conversation = Conversation::new(&id, provider, cwd);
         conversation.permissions = options.permissions.unwrap_or_default();
         conversation.parent = parent;
+        if let Some(workspace) = &options.workspace && !self.workspaces.exists(workspace) { return Err(format!("No workspace {workspace}")) }
+        conversation.workspace = options.workspace.clone();
         conversation.branch = branch(folder);
         // Claude takes its conversation's id from Zero, so the session can be resumed even if it never answered.
         if provider == Provider::Claude { conversation.thread = Some(claude::new_session_id()) }
@@ -266,6 +354,7 @@ impl Daemon {
         self.sessions.lock().unwrap().retain(|s| s.id() != id);
         self.attention.lock().unwrap().remove(id);
         self.pending.lock().unwrap().remove(id);
+        self.held.lock().unwrap().remove(id);
         drop(session);
         let archive = self.home.join("archive");
         std::fs::create_dir_all(&archive).map_err(|e| e.to_string())?;
@@ -433,7 +522,7 @@ impl Daemon {
     pub async fn switch(&self, id: &str, provider: Provider, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
         let session = self.session(id)?;
         let conversation = session.snapshot();
-        if provider == conversation.provider { return Ok(()) }
+        if provider == conversation.provider { return session.set_model(model, effort).await }
         if provider == Provider::Opencode { return Err(format!("Zero can't hand a task to {} yet", provider.title())) }
         if matches!(conversation.status, Status::Working | Status::Waiting) {
             return Err(format!("{} is working; stop its turn first", conversation.provider.title()));
@@ -442,6 +531,21 @@ impl Daemon {
         self.take_offline(&session).await;
         session.change(Change::Switched { provider, model: model.map(Into::into), effort: effort.map(Into::into) });
         self.rethread(&session)
+    }
+
+    /// Changes what the task's agent may do without asking, between turns: its process is stopped, and the next message
+    /// resumes its thread started with the new permissions.
+    pub async fn set_permissions(&self, id: &str, permissions: crate::model::Permissions) -> Result<(), String> {
+        let session = self.session(id)?;
+        let conversation = session.snapshot();
+        if conversation.permissions == permissions { return Ok(()) }
+        if matches!(conversation.status, Status::Working | Status::Waiting | Status::Starting) {
+            return Err(format!("{} is working; change its permissions once its turn ends", conversation.provider.title()));
+        }
+        if conversation.terminal.is_some() { return Err(format!("{} is open in its terminal; go back to Zero first", conversation.provider.title())) }
+        self.take_offline(&session).await;
+        session.change(Change::Permitted { permissions });
+        Ok(())
     }
 
     /// The provider given a thread made from Zero's record (handoff.rs): Claude Code a session file of its own; Codex,
@@ -525,8 +629,12 @@ impl Daemon {
         Ok(serde_json::json!({"session": branch, "text": text, "images": images}))
     }
 
+    /// Stops the turn. What's queued for the session is held: the user stopped it, so nothing of theirs goes on
+    /// until they say (queueing again, or releasing).
     pub async fn interrupt(&self, id: &str) -> Result<(), String> {
-        self.session(id)?.interrupt().await
+        let session = self.session(id)?;
+        if !self.queued(id).0.is_empty() { self.held.lock().unwrap().insert(id.into()); let _ = self.queues.send(()); }
+        session.interrupt().await
     }
 
     pub async fn decide(&self, id: &str, approval: &str, choice: &str) -> Result<(), String> {
@@ -547,6 +655,16 @@ impl Daemon {
     }
 
     /// Names a session and says what it's for.
+    /// Which workspace a conversation is in: the one it was put in, else its folder's, else Zero.
+    pub fn workspace_of(&self, conversation: &Conversation) -> String { self.workspaces.of(conversation.workspace.as_deref(), &conversation.cwd) }
+
+    /// Puts a session in a workspace (none: back to its folder's).
+    pub fn place_in_workspace(&self, id: &str, workspace: Option<&str>) -> Result<(), String> {
+        if let Some(workspace) = workspace && !self.workspaces.exists(workspace) { return Err(format!("No workspace {workspace}")) }
+        self.session(id)?.change(Change::Placed { workspace: workspace.map(Into::into) });
+        Ok(())
+    }
+
     pub fn label(&self, id: &str, label: Option<&str>, ticket: Option<&str>) -> Result<(), String> {
         self.session(id)?.change(Change::Named { label: label.map(Into::into), ticket: ticket.map(Into::into) });
         Ok(())
@@ -586,7 +704,7 @@ impl Daemon {
     /// on disk while it is offline.
     pub fn notify(&self, id: &str, text: &str) -> Result<(), String> {
         self.session(id)?;
-        self.tell(id, text.into());
+        self.tell(id, crate::model::from_line("zero", text));
         Ok(())
     }
 
@@ -653,26 +771,26 @@ impl Daemon {
         let now = conversation.attention();
         let before = self.attention.lock().unwrap().insert(id.into(), now);
         let under_way = |a: Attention| matches!(a, Attention::Starting | Attention::Working | Attention::NeedsYou | Attention::Stuck);
-        let ended = matches!(now, Attention::Done | Attention::Failed | Attention::Limited | Attention::Offline | Attention::Idle);
+        let ended = matches!(now, Attention::Done | Attention::Answered | Attention::Failed | Attention::Limited | Attention::Offline | Attention::Idle);
         let came_to_an_end = before.is_some_and(under_way) && ended;
         let got_stuck = now == Attention::Stuck && before != Some(Attention::Stuck);
         if let Some(lead) = &conversation.parent && (came_to_an_end || got_stuck) {
-            self.tell(lead, report(&conversation, now));
+            self.tell(lead, crate::model::from_line(&conversation.id, &report(&conversation, now)));
         }
         if now == Attention::Limited { self.after_reset(&conversation) }
-        if matches!(now, Attention::Done | Attention::Idle) { self.deliver(id) }
+        if matches!(now, Attention::Done | Attention::Answered | Attention::Idle) { self.deliver(id) }
     }
 
     /// Keeps `words` for `id` until it can take them; a parked (offline) session is resumed for them, and they go
     /// once it's between turns.
     fn tell(&self, id: &str, words: String) {
-        self.pending.lock().unwrap().entry(id.into()).or_default().push(words);
+        self.pending.lock().unwrap().entry(id.into()).or_default().push(Queued { id: new_id(), text: words, images: vec![], report: true });
         self.keep_pending(id);
         let Ok(session) = self.session(id) else { return };
         if !session.is_attached() && session.summary().terminal.is_none() {
             let (Some(daemon), id) = (self.me.upgrade(), id.to_string()) else { return };
             tokio::spawn(async move { if let Err(error) = daemon.resume(&id).await { eprintln!("zerod: couldn't resume {id} for its words: {error}") } });
-        } else if matches!(session.summary().attention(), Attention::Done | Attention::Idle) {
+        } else if matches!(session.summary().attention(), Attention::Done | Attention::Answered | Attention::Idle) {
             self.deliver(id)
         }
     }
@@ -689,7 +807,8 @@ impl Daemon {
             if !session.is_attached() || !matches!(conversation.status, Status::Working | Status::Waiting | Status::Starting) { continue }
             pausing.spawn(async move {
                 let deadline = tokio::time::Instant::now() + COMMAND_WAIT;
-                while (session.running_command() || session.summary().status == Status::Starting) && tokio::time::Instant::now() < deadline {
+                // A session closed or gone offline meanwhile has no command to wait for, whatever its last item says.
+                while session.is_attached() && (session.running_command() || session.summary().status == Status::Starting) && tokio::time::Instant::now() < deadline {
                     tokio::time::sleep(Duration::from_millis(250)).await;
                 }
                 if session.is_attached() { let _ = tokio::time::timeout(Duration::from_secs(5), session.interrupt()).await; }
@@ -699,7 +818,7 @@ impl Daemon {
         let mut paused = vec![];
         while let Some(done) = pausing.join_next().await { if let Ok(id) = done { paused.push(id) } }
         for id in &paused {
-            self.pending.lock().unwrap().entry(id.clone()).or_default().push(CARRY_ON.into());
+            self.pending.lock().unwrap().entry(id.clone()).or_default().push(Queued { id: new_id(), text: CARRY_ON.into(), images: vec![], report: true });
             self.keep_pending(id);
         }
         // Which turns to carry on: these, and only these (words waiting for a parked task wait for you to resume it).
@@ -717,6 +836,19 @@ impl Daemon {
         for id in paused {
             let Ok(session) = self.session(&id) else { continue };
             if session.is_attached() || session.summary().terminal.is_some() { continue }
+            // The turn was paused for the update and carried on, not stopped: said in the conversation, in place of the
+            // pause's "Interrupted" when that was noted, on a line of its own when it wasn't (the old zerod may have
+            // gone before the interrupt's result was recorded).
+            let conversation = session.snapshot();
+            let noted = "Paused for Zero's update, then carried on";
+            match conversation.items.last().cloned() {
+                Some(mut last) if matches!(&last.kind, ItemKind::Notice { text, error: false } if text == "Interrupted") => {
+                    last.kind = ItemKind::Notice { text: noted.into(), error: false };
+                    session.change(Change::Item { item: last });
+                }
+                _ => session.change(Change::Item { item: crate::model::Item { at: None, id: format!("paused-{}", conversation.seq + 1), turn: None,
+                                                                             kind: ItemKind::Notice { text: noted.into(), error: false }, status: crate::model::ItemStatus::Done } }),
+            }
             let Some(daemon) = self.me.upgrade() else { break };
             resumed.push(id.clone());
             tokio::spawn(async move { if let Err(error) = daemon.resume(&id).await { eprintln!("zerod: couldn't resume {id} to carry on: {error}") } });
@@ -744,16 +876,31 @@ impl Daemon {
         }
     }
 
+    /// The next of what waits: a message of the user's on its own (one turn each, never joined to anything), or the
+    /// reports at the head of the queue together. The rest goes when that turn ends. A held queue waits.
     fn deliver(&self, id: &str) {
         if self.restarting.load(Ordering::Relaxed) { return }
+        if self.held.lock().unwrap().contains(id) { return }
         let Ok(session) = self.session(id) else { return };
         if !session.is_attached() { return }
-        let Some(words) = self.pending.lock().unwrap().remove(id) else { return };
+        if !self.delivering.lock().unwrap().insert(id.into()) { return }
+        let (text, images) = {
+            let mut pending = self.pending.lock().unwrap();
+            let Some(list) = pending.get_mut(id).filter(|l| !l.is_empty()) else { self.delivering.lock().unwrap().remove(id); return };
+            if list[0].report {
+                let reports = list.iter().take_while(|q| q.report).count();
+                (list.drain(..reports).map(|q| q.text).collect::<Vec<_>>().join("\n\n"), vec![])
+            } else {
+                let next = list.remove(0);
+                (next.text, next.images)
+            }
+        };
         self.keep_pending(id);
-        let text = words.join("\n\n");
+        let (me, id) = (self.me.clone(), id.to_string());
         tokio::spawn(async move {
             // ponytail: word that fails to go through is dropped with a notice; keep it if sends start failing in practice.
-            if let Err(error) = session.send(&text, None, None).await { session.report(&format!("Couldn't pass on: {error}")) }
+            if let Err(error) = session.send_with_images(&text, &images, None, None).await { session.report(&format!("Couldn't pass on: {error}")) }
+            if let Some(daemon) = me.upgrade() { daemon.delivering.lock().unwrap().remove(&id); }
         });
     }
 
@@ -761,6 +908,7 @@ impl Daemon {
         let words = self.pending.lock().unwrap().get(id).cloned().unwrap_or_default();
         let file = self.home.join("sessions").join(id).join("pending.json");
         let _ = if words.is_empty() { std::fs::remove_file(file) } else { std::fs::write(file, serde_json::to_vec(&words).unwrap_or_default()) };
+        let _ = self.queues.send(());
     }
 
     pub fn stop(&self, id: &str) -> Result<(), String> {

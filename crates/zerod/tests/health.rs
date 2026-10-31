@@ -83,8 +83,10 @@ fn attention_puts_what_needs_arsen_first() {
     conversation.status = Status::Idle;
     conversation.stalled = None;
     assert_eq!(conversation.attention(), Attention::Idle);
-    conversation.items.push(zerod::model::Item { at: None, id: "a".into(), turn: None, kind: zerod::model::ItemKind::Agent { text: "Done.".into(), final_answer: true }, status: zerod::model::ItemStatus::Done });
-    assert_eq!(conversation.attention(), Attention::Done, "an answer is waiting to be read");
+    conversation.items.push(zerod::model::Item { at: None, id: "a".into(), turn: None, kind: zerod::model::ItemKind::Agent { text: "Checked.".into(), final_answer: true }, status: zerod::model::ItemStatus::Done });
+    assert_eq!(conversation.attention(), Attention::Answered, "a turn ended is not a task done; the answer is there to read");
+    conversation.items.push(zerod::model::Item { at: None, id: "b".into(), turn: None, kind: zerod::model::ItemKind::Agent { text: "Done.\n\n[zero: done]".into(), final_answer: true }, status: zerod::model::ItemStatus::Done });
+    assert_eq!(conversation.attention(), Attention::Done, "it said so: an answer is waiting to be read");
     conversation.failure = Some(zerod::model::Failure { kind: FailureKind::SignIn, message: "Not logged in".into() });
     assert_eq!(conversation.attention(), Attention::Failed);
     conversation.questions.push(zerod::model::Question { id: "q".into(), item: None, fields: vec![] });
@@ -159,12 +161,16 @@ async fn a_command_running_for_half_an_hour_is_stuck_until_it_ends() {
 async fn the_same_command_five_times_in_a_row_is_stuck() {
     let session = session(Provider::Codex);
     let mut script = vec![json!({"in": {"method": "turn/started", "params": {"turn": {"id": "u"}}}})];
-    for i in 0..5 {
-        script.push(json!({"in": {"method": "item/completed", "params": {"turnId": "u", "item": {"type": "commandExecution", "id": format!("c{i}"),
-            "command": "gh pr checks 42", "cwd": "/w", "status": "completed", "exitCode": 1, "commandActions": []}}}}));
-    }
-    let (transport, _) = play(script);
+    let command = |i: usize| json!({"method": "item/completed", "params": {"turnId": "u", "item": {"type": "commandExecution", "id": format!("c{i}"),
+        "command": "gh pr checks 42", "cwd": "/w", "status": "completed", "exitCode": 1, "commandActions": []}}});
+    for i in 0..7 { script.push(json!({"in": command(i)})) }
+    let (transport, seen) = play(script);
     session.attach(transport);
     wait_minutes(1).await;
-    assert_eq!(session.snapshot().stalled.as_deref(), Some("Ran gh pr checks 42 5 times in a row"));
+    assert_eq!(session.snapshot().stalled.as_deref(), Some("Ran gh pr checks 42 7 times in a row"), "the whole run is counted, not the five that make it one");
+    // Another kind of step between is work, not a loop: the run starts over.
+    seen.say(json!({"method": "item/completed", "params": {"turnId": "u", "item": {"type": "mcpToolCall", "id": "t1", "server": "linear", "tool": "list_issues", "arguments": {}, "status": "completed"}}}));
+    seen.say(command(7));
+    wait_minutes(1).await;
+    assert_eq!(session.snapshot().stalled, None);
 }

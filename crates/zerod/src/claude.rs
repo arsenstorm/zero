@@ -28,11 +28,18 @@ pub struct Claude {
     blocks: HashMap<(String, u64), String>,
     /// The latest thing Claude said this turn: its answer, once the turn ends.
     said: Option<String>,
+    /// Tools running on in the background (a subagent, a long command): their immediate result only says they
+    /// started, so each stays running until its task notification.
+    background: std::collections::HashSet<String>,
+    /// Zero asked Claude to stop the turn: the error result that follows is the stop, not a failure.
+    interrupting: bool,
 }
 
 pub fn command(conversation: &Conversation, resume: bool, model: Option<&str>, effort: Option<&str>) -> Vec<String> {
     let mut args = vec!["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-                        "--include-partial-messages", "--permission-prompt-tool", "stdio", "--permission-mode",
+                        // Claude in Chrome's tools: in print mode they come only with the flag (the user's own default
+                        // applies to terminal sessions alone); Claude connects to the extension if Chrome has it.
+                        "--include-partial-messages", "--chrome", "--permission-prompt-tool", "stdio", "--permission-mode",
                         match conversation.permissions { Permissions::Auto => "auto", Permissions::Unrestricted => "bypassPermissions" },
                         "--append-system-prompt", INSTRUCTIONS];
     if let Some(thread) = conversation.thread.as_deref() { args.extend([if resume { "--resume" } else { "--session-id" }, thread]) }
@@ -51,13 +58,14 @@ pub fn new_session_id() -> String {
     format!("{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..])
 }
 
-/// Your words as Claude Code's stream takes them, with each image as data after them.
+/// Your words as Claude Code's stream takes them, each image as data where its token stands (images.rs).
 pub fn user_message(text: &str, images: &[String]) -> Value {
     if images.is_empty() { return json!({"type": "user", "message": {"role": "user", "content": text}}) }
-    // An image alone has no words: an empty text block is refused.
-    let mut content: Vec<Value> = if text.trim().is_empty() { vec![] } else { vec![json!({"type": "text", "text": text})] };
-    content.extend(images.iter().filter_map(|path| crate::images::data(path))
-        .map(|(mime, data)| json!({"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}})));
+    let content: Vec<Value> = crate::images::parts(text, images).into_iter().filter_map(|part| match part {
+        crate::images::Part::Text(text) => Some(json!({"type": "text", "text": text})),
+        crate::images::Part::Image(path) => crate::images::data(path)
+            .map(|(mime, data)| json!({"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}})),
+    }).collect();
     json!({"type": "user", "message": {"role": "user", "content": content}})
 }
 
@@ -65,7 +73,11 @@ impl Adapter for Claude {
     fn sent(&mut self, conversation: &Conversation, message: &Value) -> Vec<Change> {
         match message["type"].as_str() {
             Some("user") => {
-                let text = message["message"]["content"].as_str().unwrap_or("").to_string();
+                // Words alone, or words and images as blocks: the words, with their image tokens, as one.
+                let text = match &message["message"]["content"] {
+                    Value::Array(blocks) => blocks.iter().filter_map(|b| b["text"].as_str()).collect(),
+                    content => content.as_str().unwrap_or("").to_string(),
+                };
                 let mut changes = vec![Change::Item { item: Item { at: None, id: format!("user-{}", conversation.seq + 1), turn: conversation.turn.clone(), kind: ItemKind::User { text, images: vec![] }, status: ItemStatus::Done } }];
                 if self.queued == 0 {
                     self.turns += 1;
@@ -73,6 +85,10 @@ impl Adapter for Claude {
                 }
                 self.queued += 1;
                 changes
+            }
+            Some("control_request") if message["request"]["subtype"] == "interrupt" => {
+                self.interrupting = true;
+                vec![]
             }
             Some("control_response") => {
                 let id = message["response"]["request_id"].as_str().unwrap_or("");
@@ -101,9 +117,19 @@ impl Adapter for Claude {
                     effects.changes.push(Change::Thread { thread: thread.into(), model: message["model"].as_str().map(Into::into), effort: None });
                 }
             }
+            Some("system") if message["subtype"] == "task_started" && message["is_backgrounded"] == true => {
+                if let Some(id) = message["tool_use_id"].as_str() { self.background.insert(id.into()); }
+            }
+            // A background task's end: its tool's step ends now, as the task did (not when it was started).
+            Some("system") if message["subtype"] == "task_notification" => {
+                if let Some(id) = message["tool_use_id"].as_str() && self.background.remove(id) && let Some(mut item) = conversation.item(id).cloned() {
+                    item.status = if message["status"] == "completed" { ItemStatus::Done } else { ItemStatus::Failed };
+                    effects.changes.push(Change::Item { item });
+                }
+            }
             Some("stream_event") => self.stream(conversation, message, &mut effects),
             Some("assistant") => self.assistant(conversation, message, &mut effects),
-            Some("user") => results(conversation, message, &mut effects),
+            Some("user") => results(conversation, message, &mut effects, &self.background),
             Some("control_request") => self.request(conversation, message, &mut effects),
             Some("control_cancel_request") => {
                 let id = message["request_id"].as_str().unwrap_or("");
@@ -155,10 +181,21 @@ impl Adapter for Claude {
         self.requests.clear();
         self.queued = 0;
         self.said = None;
+        self.background.clear();
     }
 }
 
 impl Claude {
+    /// The turn Claude is speaking in. Idle, its words are a turn of their own (a message that reached it as the last
+    /// turn ended), so the session reads as working until that turn's result.
+    fn speaking(&mut self, conversation: &Conversation, effects: &mut Effects) -> Option<String> {
+        if conversation.status != Status::Idle && conversation.status != Status::Offline { return conversation.turn.clone() }
+        self.turns += 1;
+        let turn = format!("turn-{}", self.turns);
+        effects.changes.push(Change::Status { status: Status::Working, turn: Some(turn.clone()), error: None });
+        Some(turn)
+    }
+
     /// Text as it streams in: a block starts an item, its deltas grow it, and the finished message replaces it.
     fn stream(&mut self, conversation: &Conversation, message: &Value, effects: &mut Effects) {
         let event = &message["event"];
@@ -166,12 +203,13 @@ impl Claude {
         let index = event["index"].as_u64().unwrap_or(0);
         match event["type"].as_str() {
             Some("content_block_start") if event["content_block"]["type"] == "text" => {
+                let turn = self.speaking(conversation, effects);
                 let count = self.streamed.entry(msg.into()).or_insert(0);
                 let id = format!("{msg}:{count}");
                 *count += 1;
                 self.blocks.insert((msg.into(), index), id.clone());
                 let kind = ItemKind::Agent { text: String::new(), final_answer: false };
-                effects.changes.push(Change::Item { item: Item { at: None, id: id.clone(), turn: conversation.turn.clone(), kind, status: ItemStatus::Running } });
+                effects.changes.push(Change::Item { item: Item { at: None, id: id.clone(), turn, kind, status: ItemStatus::Running } });
                 self.said = Some(id);
             }
             Some("content_block_delta") if event["delta"]["type"] == "text_delta" => {
@@ -186,7 +224,7 @@ impl Claude {
     /// A finished message from Claude, one content block at a time: what it said, thought, or used a tool for.
     fn assistant(&mut self, conversation: &Conversation, message: &Value, effects: &mut Effects) {
         let msg = message["message"]["id"].as_str().unwrap_or("message").to_string();
-        let turn = conversation.turn.clone();
+        let turn = self.speaking(conversation, effects);
         for block in message["message"]["content"].as_array().cloned().unwrap_or_default() {
             let (id, kind, status) = match block["type"].as_str() {
                 Some("text") => {
@@ -256,11 +294,14 @@ impl Claude {
         effects.changes.push(Change::Status { status: Status::Waiting, turn: conversation.turn.clone(), error: conversation.error.clone() });
     }
 
-    /// The end of a turn: its last words become its answer, and the session is idle unless a message waits.
+    /// The end of a turn: its last words become its answer, and the session is idle. Messages sent during the turn
+    /// went into it (Claude Code hands them to the running turn), so none is still to come.
     fn result(&mut self, conversation: &Conversation, message: &Value, effects: &mut Effects) {
-        self.queued = self.queued.saturating_sub(1);
+        self.queued = 0;
         let mut error = None;
-        if message["is_error"] == true || message["subtype"] != "success" {
+        if std::mem::take(&mut self.interrupting) && message["subtype"] == "error_during_execution" {
+            effects.notice(conversation, "Interrupted", false);
+        } else if message["is_error"] == true || message["subtype"] != "success" {
             let text = message["result"].as_str().or(message["subtype"].as_str()).unwrap_or("The turn failed").to_string();
             effects.notice(conversation, &text, true);
             error = Some(text);
@@ -270,19 +311,17 @@ impl Claude {
             item.status = ItemStatus::Done;
             effects.changes.push(Change::Item { item });
         }
-        let (status, turn) = if self.queued == 0 { (Status::Idle, None) } else {
-            self.turns += 1;
-            (Status::Working, Some(format!("turn-{}", self.turns)))
-        };
-        effects.changes.push(Change::Status { status, turn, error });
+        effects.changes.push(Change::Status { status: Status::Idle, turn: None, error });
     }
 }
 
 /// Tool results, which Claude sends back as a user message: each fills in the item of the tool it answers.
-fn results(conversation: &Conversation, message: &Value, effects: &mut Effects) {
+fn results(conversation: &Conversation, message: &Value, effects: &mut Effects, background: &std::collections::HashSet<String>) {
     let outcome = &message["tool_use_result"];
     for block in message["message"]["content"].as_array().cloned().unwrap_or_default() {
         if block["type"] != "tool_result" { continue }
+        // Started in the background: this result only says so; the step runs on until its task notification.
+        if block["tool_use_id"].as_str().is_some_and(|id| background.contains(id)) { continue }
         let Some(mut item) = block["tool_use_id"].as_str().and_then(|id| conversation.item(id)).cloned() else { continue };
         item.status = if block["is_error"] == true { ItemStatus::Failed } else { ItemStatus::Done };
         match &mut item.kind {
@@ -389,12 +428,17 @@ pub async fn resume(session: &Session, transport: Transport) -> Result<(), Strin
 /// A message: Claude takes it now or queues it behind the turn in progress. A new model switches first; effort
 /// is set at start (`--effort`) and stays.
 pub async fn send(session: &Session, text: &str, images: &[String], model: Option<&str>) -> Result<(), String> {
-    if let Some(model) = model && session.snapshot().model.as_deref() != Some(model) {
-        session.request(|id| json!({"type": "control_request", "request_id": id, "request": {"subtype": "set_model", "model": model}})).await?;
-        let thread = session.snapshot().thread.unwrap_or_default();
-        session.change(Change::Thread { thread, model: Some(model.into()), effort: None });
-    }
+    if let Some(model) = model { set_model(session, model).await? }
     session.write(user_message(text, images))
+}
+
+/// The model from here on: Claude Code switches at once.
+pub async fn set_model(session: &Session, model: &str) -> Result<(), String> {
+    if session.snapshot().model.as_deref() == Some(model) { return Ok(()) }
+    session.request(|id| json!({"type": "control_request", "request_id": id, "request": {"subtype": "set_model", "model": model}})).await?;
+    let thread = session.snapshot().thread.unwrap_or_default();
+    session.change(Change::Thread { thread, model: Some(model.into()), effort: None });
+    Ok(())
 }
 
 pub async fn interrupt(session: &Session) -> Result<(), String> {

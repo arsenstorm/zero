@@ -264,3 +264,27 @@ fn an_item_with_a_task_says_which() {
     let tagged = with_tasks(vec![item("ENG-1"), item("ENG-2")], &[("ENG-2".to_string(), "s9".to_string())]);
     assert_eq!((tagged[0].task.as_deref(), tagged[1].task.as_deref()), (None, Some("s9")));
 }
+
+#[tokio::test]
+async fn slack_is_connected_with_a_user_token_and_its_channels_read() {
+    let fetcher = canned(vec![
+        json!({"ok": true, "team_id": "T0AB", "team": "Acme", "url": "https://acme.slack.com/", "user_id": "U2"}),
+        json!({"ok": true, "channels": [{"id": "C0D", "name": "docs"}], "response_metadata": {"next_cursor": "more"}}),
+        json!({"ok": true, "channels": [{"id": "C0E", "name": "eng"}], "response_metadata": {"next_cursor": ""}}),
+    ]);
+    let home = temp_dir("integrations-slack");
+    let integrations = Integrations::open(&home, fetcher.clone());
+    assert_eq!(integrations.connect_slack("xoxb-not-a-user-token").await.unwrap_err(), "That isn't a user token: Slack's start with xoxp-.");
+    let state = integrations.connect_slack(" xoxp-123 ").await.unwrap();
+    assert_eq!(state, json!({"team": {"id": "T0AB", "name": "Acme", "domain": "acme"}, "channels": {"docs": "C0D", "eng": "C0E"}}));
+    let asked = fetcher.asked.lock().unwrap().clone();
+    assert_eq!(asked[0].0[0], "curl");
+    assert_eq!(asked[0].1.as_deref(), Some("url = \"https://slack.com/api/auth.test\"\nheader = \"Authorization: Bearer xoxp-123\"\n"), "the token on curl's stdin, never its command line");
+    assert!(asked[2].1.as_deref().unwrap().contains("cursor=more"));
+    // Kept, the user's alone; gone when disconnected.
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(std::fs::metadata(home.join("slack.json")).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(Integrations::open(&home, canned(vec![])).slack_state(), Some(state));
+    integrations.disconnect_slack().unwrap();
+    assert!(integrations.slack_state().is_none() && !home.join("slack.json").exists());
+}

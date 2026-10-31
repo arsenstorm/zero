@@ -67,3 +67,41 @@ async fn a_task_starts_with_images_as_any_message_has_them() {
     let mine = session.snapshot().items.iter().find_map(|i| match &i.kind { ItemKind::User { images, .. } => Some(images.clone()), _ => None });
     assert_eq!(mine, Some(vec![path]));
 }
+
+#[test]
+fn an_image_goes_where_its_token_stands_in_the_words() {
+    let dir = temp_dir("images-tokens");
+    let (a, b) = (dir.join("a.png"), dir.join("b.png"));
+    std::fs::write(&a, [0x89, b'P', b'N', b'G']).unwrap();
+    std::fs::write(&b, [1, 2, 3]).unwrap();
+    let images = vec![a.to_str().unwrap().to_string(), b.to_str().unwrap().to_string()];
+    let image = |path: &str| json!({"type": "localImage", "path": path});
+    let text = |t: &str| json!({"type": "text", "text": t, "text_elements": []});
+    // Each token keeps its place in the words (the agent calls the image by its number), its image right after it.
+    assert_eq!(zerod::codex::input("Look at [Image #2], then [Image #1]. Done", &images),
+               json!([text("Look at [Image #2]"), image(&images[1]), text(", then [Image #1]"), image(&images[0]), text(". Done")]));
+    // Images never named come after the words, as before; a number with no image stays words.
+    assert_eq!(zerod::codex::input("see [Image #1] and [Image #3]", &images),
+               json!([text("see [Image #1]"), image(&images[0]), text(" and [Image #3]"), image(&images[1])]));
+    // The same order for Claude and OpenCode.
+    let claude = zerod::claude::user_message("[Image #1] first", &images);
+    let kinds: Vec<&str> = claude["message"]["content"].as_array().unwrap().iter().map(|p| p["type"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["text", "image", "text", "image"]);
+    assert_eq!(claude["message"]["content"][0]["text"], "[Image #1]");
+    let acp = zerod::acp::blocks("[Image #2] first", &images);
+    assert_eq!(acp[1]["data"], "AQID", "the second image, right after its token");
+}
+
+#[tokio::test]
+async fn the_message_of_yours_keeps_its_words_beside_its_images() {
+    let dir = temp_dir("images-words");
+    let (events, _) = broadcast::channel(64);
+    let session = Session::new(Conversation::new("s1", Provider::Claude, "/work/project"), Some(dir.clone()), events).unwrap();
+    let (transport, _recorder) = play(vec![json!({"out": {"type": "user"}})]);
+    session.attach(transport);
+    let png = dir.join("shot.png");
+    std::fs::write(&png, [1, 2, 3]).unwrap();
+    session.send_with_images("what's [Image #1] here?", &[png.to_str().unwrap().to_string()], None, None).await.unwrap();
+    let words = session.snapshot().items.iter().find_map(|i| match &i.kind { ItemKind::User { text, .. } => Some(text.clone()), _ => None });
+    assert_eq!(words.as_deref(), Some("what's [Image #1] here?"));
+}

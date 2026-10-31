@@ -28,6 +28,9 @@ pub struct Conversation {
     /// The session that started it, for a worker.
     #[serde(default)]
     pub parent: Option<String>,
+    /// The workspace it was put in (workspaces.rs); none, and its folder decides.
+    #[serde(default)]
+    pub workspace: Option<String>,
     /// The provider's own id for the conversation (a Codex thread), once it exists; what resuming needs.
     pub thread: Option<String>,
     pub title: Option<String>,
@@ -143,7 +146,23 @@ pub enum ItemKind {
     /// Something to read that isn't the agent speaking: an error, an interruption, or a provider item Zero
     /// doesn't show yet (named by its provider type, so nothing silently disappears).
     Notice { text: String, error: bool },
+    /// A table the agent handed to Zero to draw (`zero table`): a title, columns, and rows of cells.
+    Table { title: String, columns: Vec<String>, rows: Vec<Vec<String>> },
 }
+
+/// Words given to a session by Zero rather than typed by the user (a worker's report to its lead, a watched command's
+/// end, a script's notice) start with this: `<!-- from: <session id or zero> -->` on a line of its own. The agent
+/// reads past it; the app shows such a message as what it is, not as the user's, and the rail leaves it out.
+pub const FROM: &str = "<!-- from: ";
+
+/// Who a message is from, when it isn't the user: the session id, or "zero".
+pub fn from(text: &str) -> Option<&str> {
+    let rest = text.strip_prefix(FROM)?;
+    let end = rest.find(" -->")?;
+    Some(&rest[..end])
+}
+
+pub fn from_line(who: &str, text: &str) -> String { format!("{FROM}{who} -->\n{text}") }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -296,6 +315,9 @@ pub enum Attention {
     Working,
     /// Its answer is there to read.
     Done,
+    /// It answered the user and waits on nothing: the answer is there to read, and that is all (the app shows it as
+    /// Replied until the user has seen it).
+    Answered,
     Idle,
     Offline,
     Starting,
@@ -324,6 +346,19 @@ pub enum ChoiceKind {
     Stop,
 }
 
+/// Words waiting for a session until it is between turns: a message of the user's, queued to go after the current
+/// turn, one turn each; or a report (a worker's, Zero's own), which go together.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Queued {
+    pub id: String,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub report: bool,
+}
+
 /// One step of a conversation's history, as sent to clients.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -331,6 +366,10 @@ pub enum Change {
     Thread { thread: String, model: Option<String>, effort: Option<String> },
     Title { title: Option<String> },
     Named { label: Option<String>, ticket: Option<String> },
+    /// Put in a workspace (none: back to its folder's).
+    Placed { workspace: Option<String> },
+    /// What the agent may do without asking, from its next start (set between turns).
+    Permitted { permissions: Permissions },
     Status { status: Status, turn: Option<String>, error: Option<String> },
     /// Adds the item, or replaces the one with its id.
     Item { item: Item },
@@ -374,7 +413,7 @@ pub struct Event {
 impl Conversation {
     pub fn new(id: &str, provider: Provider, cwd: &str) -> Self {
         Conversation {
-            id: id.into(), provider, cwd: cwd.into(), permissions: Permissions::Auto, label: None, ticket: None, place: None, branch: None, parent: None, thread: None, title: None, model: None, effort: None,
+            id: id.into(), provider, cwd: cwd.into(), permissions: Permissions::Auto, label: None, ticket: None, place: None, branch: None, parent: None, workspace: None, thread: None, title: None, model: None, effort: None,
             status: Status::Starting, turn: None, error: None, items: vec![], snapshots: Default::default(), attributes: Default::default(), approvals: vec![], questions: vec![], usage: None,
             failure: None, stalled: None, diff: None, terminal: None, seq: 0,
         }
@@ -389,7 +428,7 @@ impl Conversation {
     pub fn with_items(&self, items: Vec<Item>) -> Conversation {
         Conversation {
             id: self.id.clone(), provider: self.provider, cwd: self.cwd.clone(), permissions: self.permissions, label: self.label.clone(),
-            ticket: self.ticket.clone(), place: self.place.clone(), branch: self.branch.clone(), parent: self.parent.clone(), thread: self.thread.clone(),
+            ticket: self.ticket.clone(), place: self.place.clone(), branch: self.branch.clone(), parent: self.parent.clone(), workspace: self.workspace.clone(), thread: self.thread.clone(),
             title: self.title.clone(), model: self.model.clone(), effort: self.effort.clone(), status: self.status, turn: self.turn.clone(),
             error: self.error.clone(), items, snapshots: self.snapshots.clone(), attributes: self.attributes.clone(), approvals: self.approvals.clone(), questions: self.questions.clone(), usage: self.usage.clone(),
             failure: self.failure.clone(), stalled: self.stalled.clone(), diff: self.diff.clone(), terminal: self.terminal.clone(), seq: self.seq,
@@ -403,6 +442,13 @@ impl Conversation {
         })
     }
 
+    /// Its last word was a plain answer to the user: no ending, no question; a lead's, since a worker's answer is its
+    /// report. The app shows it as Replied until the user has seen it, parked or not.
+    pub fn replied(&self) -> bool {
+        self.parent.is_none() && matches!(self.items.last().map(|i| &i.kind),
+            Some(ItemKind::Agent { text, final_answer: true }) if crate::board::ending(text).is_none() && !text.lines().any(|l| l.trim_end().ends_with('?')))
+    }
+
     pub fn attention(&self) -> Attention {
         if !self.approvals.is_empty() || !self.questions.is_empty() { return Attention::NeedsYou }
         if self.usage.as_ref().is_some_and(|u| u.limited) || self.failure.as_ref().is_some_and(|f| f.kind == FailureKind::Limit) { return Attention::Limited }
@@ -412,8 +458,19 @@ impl Conversation {
             Status::Working | Status::Waiting => Attention::Working,
             Status::Starting => Attention::Starting,
             Status::Offline => Attention::Offline,
+            // Between turns. A worker's answer is its report to its lead: done. A lead's answer says whether the task
+            // is done or waits on the user: Zero's ending, or a question put to them in prose (any line ending in one:
+            // "Could you reopen OrbStack?" comes mid-answer as often as last). An answer with neither is a turn
+            // finished, not a task.
             Status::Idle => match self.items.last().map(|i| &i.kind) {
-                Some(ItemKind::Agent { final_answer: true, .. }) => Attention::Done,
+                Some(ItemKind::Agent { final_answer: true, .. }) if self.parent.is_some() => Attention::Done,
+                Some(ItemKind::Agent { text, final_answer: true }) => match crate::board::ending(text) {
+                    Some("done") => Attention::Done,
+                    Some("blocked" | "asked") => Attention::NeedsYou,
+                    Some(_) => Attention::Idle,
+                    None if text.lines().any(|l| l.trim_end().ends_with('?')) => Attention::NeedsYou,
+                    None => Attention::Answered,
+                },
                 _ => Attention::Idle,
             },
         }
@@ -432,6 +489,12 @@ impl Conversation {
                 self.label = label;
                 self.ticket = ticket;
             }
+            Change::Placed { workspace } => self.workspace = workspace,
+            Change::Permitted { permissions } => {
+                self.permissions = permissions;
+                let text = match permissions { Permissions::Auto => "Auto from here: it asks before what isn't safe", Permissions::Unrestricted => "Unrestricted from here: it acts without asking" };
+                self.items.push(Item { at: None, id: format!("permitted-{}", self.items.len()), turn: None, kind: ItemKind::Notice { text: text.into(), error: false }, status: ItemStatus::Done });
+            }
             Change::Status { status, turn, error } => {
                 self.status = status;
                 self.turn = turn;
@@ -447,7 +510,7 @@ impl Conversation {
                         ItemKind::User { text: body, .. } | ItemKind::Agent { text: body, .. } | ItemKind::Reasoning { text: body }
                         | ItemKind::Plan { text: body } | ItemKind::Notice { text: body, .. } => body.push_str(&text),
                         ItemKind::Command { output, .. } => output.push_str(&text),
-                        ItemKind::FileChange { .. } | ItemKind::Tool { .. } => {}
+                        ItemKind::FileChange { .. } | ItemKind::Tool { .. } | ItemKind::Table { .. } => {}
                     }
                 }
             }
@@ -492,9 +555,14 @@ impl Conversation {
                 self.thread = None;
                 self.model = model;
                 self.effort = effort;
-                // Where each provider took over, in the conversation itself (handoff.rs leaves notices out).
-                let id = format!("switched-{}", self.seq);
-                self.items.push(Item { at: None, id, turn: None, kind: ItemKind::Notice { text: format!("Continued in {}", provider.title()), error: false }, status: ItemStatus::Done });
+                // Where each provider took over, in the conversation itself (handoff.rs leaves notices out). Stopped
+                // for the handover, the two are one line.
+                if let Some(last) = self.items.last_mut() && let ItemKind::Notice { text, error: false } = &mut last.kind && text == "Interrupted" {
+                    *text = format!("Interrupted and continued in {}", provider.title());
+                } else {
+                    let id = format!("switched-{}", self.seq);
+                    self.items.push(Item { at: None, id, turn: None, kind: ItemKind::Notice { text: format!("Continued in {}", provider.title()), error: false }, status: ItemStatus::Done });
+                }
             }
         }
     }

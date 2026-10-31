@@ -64,6 +64,13 @@ struct Request {
     ids: Option<Vec<String>>,
     /// viewItems and linearTeams: what was last fetched (null for nothing yet) rather than fetching.
     cached: Option<bool>,
+    /// A loop's description and body (loops.rs); its name is `name`.
+    description: Option<String>,
+    body: Option<String>,
+    /// `table`: its title, columns and rows.
+    title: Option<String>,
+    columns: Option<Vec<String>>,
+    rows: Option<Vec<Vec<String>>>,
     /// `pad`: a scratchpad tool (list, read, write…) and its arguments, as the MCP server's.
     tool: Option<String>,
     args: Option<Value>,
@@ -82,6 +89,18 @@ struct Request {
     images: Option<Vec<String>>,
     /// place: where the session runs, by name.
     place: Option<String>,
+    /// connectSlack: the user token.
+    token: Option<String>,
+    /// browserAttach: what the extension says of itself; browserAnswer: its answer to a call; saveBrowserSettings: them.
+    browser: Option<Value>,
+    /// start, spawn, placeInWorkspace: a workspace's id; saveWorkspace: the workspace itself.
+    workspace: Option<Value>,
+    /// follow: a topic or URL, what to hear of it (mine: the pull requests followed; about: words); unfollow: topics, or all.
+    topic: Option<String>,
+    topics: Option<Vec<String>>,
+    mine: Option<bool>,
+    about: Option<Vec<String>>,
+    all: Option<bool>,
     /// items: the page of a session's items before this one, or all of them from `from`.
     before: Option<String>,
     from: Option<String>,
@@ -127,6 +146,9 @@ pub struct Zerod {
     pub drops: Option<Arc<Drops>>,
     pub integrations: Arc<crate::integrations::Integrations>,
     pub pads: Arc<crate::pads::Pads>,
+    pub loops: Arc<crate::loops::Loops>,
+    pub following: Arc<crate::following::Following>,
+    pub browsers: Arc<crate::browser::Browsers>,
     pub places: Arc<crate::board::Places>,
     /// Changes that aren't a session's, for subscribers: "pads" when a scratchpad changes.
     pub notices: broadcast::Sender<&'static str>,
@@ -154,6 +176,7 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
         }
     });
     let (mut subscription, mut inbox, mut feed) = (None, None, None);
+    let mut browser: Option<String> = None;
     let mut lines = BufReader::new(read).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         // An unknown provider is refused here, as a bad request: zerod only starts what it has an adapter for. The
@@ -172,6 +195,15 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
             let _ = out.send(json!({"id": request.id, "ok": true, "result": null}));
             continue;
         }
+        // The native host of a Chrome with Zero for Chrome: calls for it go down this connection, its answers come up it.
+        if request.op == "browserAttach" {
+            browser = Some(zerod.browsers.attach(request.browser.as_ref().unwrap_or(&Value::Null), out.clone()));
+            continue;
+        }
+        if request.op == "browserAnswer" {
+            if let Some(answer) = &request.browser { zerod.browsers.answer(answer) }
+            continue;
+        }
         if request.op == "inbox" {
             if inbox.is_none() { inbox = Some(tokio::spawn(follow_inbox(zerod.inbox.clone(), out.clone()))) }
             let _ = out.send(json!({"id": request.id, "ok": true, "result": null}));
@@ -188,6 +220,7 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
         });
     }
     for task in [subscription, inbox, feed].into_iter().flatten() { task.abort() }
+    if let Some(browser) = browser { zerod.browsers.detach(&browser) }
     drop(out);
     let _ = writer.await;
 }
@@ -203,7 +236,8 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
     let integrations = &zerod.integrations;
     let integration = || request.integration.clone().ok_or("Which integration: github or linear?");
     let view = || request.view.as_ref().and_then(|v| v.as_str()).map(String::from).ok_or("Which view?");
-    let state = |settings: crate::integrations::Settings| json!({"settings": settings, "linear": integrations.linear_workspace(), "github": integrations.github_known()});
+    let state = |settings: crate::integrations::Settings| json!({"settings": settings, "linear": integrations.linear_workspace(), "github": integrations.github_known(), "slack": integrations.slack_state()});
+    let workspace_id = || request.workspace.as_ref().and_then(|w| w.as_str()).filter(|w| !w.is_empty()).map(String::from);
     match request.op.as_str() {
         // Integrations: their settings and views, what a view shows now, and connecting Linear.
         "integrations" => { integrations.github_account().await; Ok(state(integrations.settings())) }
@@ -221,12 +255,39 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "linearTeams" => integrations.linear_teams().await,
         "connectLinear" => integrations.connect_linear().await.map(|url| json!({"url": url})),
         "disconnectLinear" => integrations.disconnect_linear().map(|_| state(integrations.settings())),
+        "connectSlack" => { integrations.connect_slack(request.token.as_deref().ok_or("Slack's user token (xoxp-…)")?).await?; Ok(state(integrations.settings())) }
+        "disconnectSlack" => integrations.disconnect_slack().map(|_| state(integrations.settings())),
+        "refreshSlack" => { integrations.refresh_slack().await?; Ok(state(integrations.settings())) }
         "pad" => {
             let tool = request.tool.as_deref().ok_or("Which scratchpad tool?")?;
             let result = crate::pads::call(&zerod.pads, tool, request.args.as_ref().unwrap_or(&Value::Null));
             if result.is_ok() && !matches!(tool, "list" | "read" | "find") { let _ = zerod.notices.send("pads"); }
             result
         }
+        // Loops: named instructions, by name.
+        "loops" => Ok(json!(zerod.loops.list())),
+        "loop" => zerod.loops.read(request.name.as_deref().ok_or("Which loop?")?).map(|l| json!(l)),
+        "saveLoop" => {
+            let saved = zerod.loops.save(request.name.as_deref().ok_or("A loop needs a name")?, request.description.as_deref().unwrap_or(""), request.body.as_deref().unwrap_or(""))?;
+            let _ = zerod.notices.send("loops");
+            Ok(json!(saved))
+        }
+        "deleteLoop" => {
+            zerod.loops.delete(request.name.as_deref().ok_or("Which loop?")?)?;
+            let _ = zerod.notices.send("loops");
+            Ok(Value::Null)
+        }
+        "follow" => {
+            let followed = zerod.following.follow(&session()?, request.topic.as_deref().ok_or("Follow what? A topic or a URL")?, request.mine.unwrap_or(false), request.about.clone().unwrap_or_default()).await?;
+            let _ = zerod.notices.send("following");
+            Ok(json!(followed))
+        }
+        "unfollow" => {
+            let removed = zerod.following.unfollow(&session()?, if request.all == Some(true) { None } else { Some(request.topics.as_deref().ok_or("Unfollow which topics? Or all")?) });
+            let _ = zerod.notices.send("following");
+            Ok(json!({"removed": removed}))
+        }
+        "following" => Ok(json!(zerod.following.list(request.session.as_deref()))),
         "hello" => Ok(json!({"version": VERSION, "pid": std::process::id()})),
         "list" => Ok(json!(daemon.sessions().iter().map(|s| summary(&s.summary())).collect::<Vec<_>>())),
         "get" => daemon.get(&session()?).map(|c| json!(c)).ok_or_else(|| format!("No session {}", request.session.unwrap_or_default())),
@@ -234,24 +295,43 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             let provider = request.provider.ok_or("Start needs a provider: codex, claude or opencode")?;
             let cwd = request.cwd.as_deref().ok_or("Start needs a folder")?;
             let options = crate::daemon::Options {
-                cwd: Some(cwd.into()), model: request.model.clone(), effort: request.effort.clone(), permissions: Some(request.permissions.unwrap_or_default()),
+                cwd: Some(cwd.into()), workspace: workspace_id(), model: request.model.clone(), effort: request.effort.clone(), permissions: Some(request.permissions.unwrap_or_default()),
                 label: request.label.clone(), ticket: request.ticket.clone(), force: request.force.unwrap_or(false),
                 images: request.images.clone().unwrap_or_default(),
             };
-            let id = daemon.start_with(provider, request.prompt.as_deref().unwrap_or(""), options)?;
+            // A loop named in the prompt (@name) is given as its words, and its use recorded once the session exists.
+            let (prompt, loops) = zerod.loops.expand(request.prompt.as_deref().unwrap_or(""));
+            let id = daemon.start_with(provider, &prompt, options)?;
+            for name in &loops { zerod.loops.record(name, &id, "lead") }
             Ok(json!({"session": id}))
         }
         "send" => {
             let images = request.images.clone().unwrap_or_default();
             let text = request.text.as_deref().filter(|t| !t.trim().is_empty() || !images.is_empty()).ok_or("Send needs text")?;
-            daemon.send_with_images(&session()?, text, &images, model, effort).await.map(|_| Value::Null)
+            let (text, loops) = zerod.loops.expand(text);
+            let id = session()?;
+            let role = if daemon.get(&id).is_some_and(|c| c.parent.is_some()) { "worker" } else { "lead" };
+            for name in &loops { zerod.loops.record(name, &id, role) }
+            daemon.send_with_images(&id, &text, &images, model, effort).await.map(|_| Value::Null)
         }
+        // For after the current turn: queued, one turn each; between turns it goes now.
+        "queue" => {
+            let images = request.images.clone().unwrap_or_default();
+            let text = request.text.as_deref().filter(|t| !t.trim().is_empty() || !images.is_empty()).ok_or("Queue needs text")?;
+            let (text, loops) = zerod.loops.expand(text);
+            let id = session()?;
+            let role = if daemon.get(&id).is_some_and(|c| c.parent.is_some()) { "worker" } else { "lead" };
+            for name in &loops { zerod.loops.record(name, &id, role) }
+            daemon.queue(&id, &text, &images).map(|queued| json!(queued))
+        }
+        "unqueue" => daemon.unqueue(&session()?, request.item.as_ref().and_then(Value::as_str).ok_or("Which queued message?")?).map(|queued| json!(queued)),
+        "release" => daemon.release(&session()?).map(|_| Value::Null),
         "resume" => daemon.resume(&session()?).await.map(|_| Value::Null),
         "openTerminal" => daemon.open_terminal(&session()?).await.map(|terminal| json!({"terminal": terminal})),
         // From a session: the task or Claude Code session becomes its worker.
         "adopt" if request.session.is_some() => daemon.adopt_into(&session()?, request.thread.as_deref().ok_or("Which task or session?")?).map(|id| json!({"session": id})),
         "adopt" => {
-            let options = crate::daemon::Options { label: request.label.clone(), ticket: request.ticket.clone(), permissions: request.permissions, ..Default::default() };
+            let options = crate::daemon::Options { workspace: None, label: request.label.clone(), ticket: request.ticket.clone(), permissions: request.permissions, ..Default::default() };
             daemon.adopt(request.provider.unwrap_or(Provider::Claude), request.thread.as_deref().ok_or("Which session?")?,
                          request.cwd.as_deref().ok_or("Which folder?")?, options).map(|id| json!({"session": id}))
         }
@@ -292,11 +372,13 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             let lead = session()?;
             let provider = match request.provider { Some(provider) => provider, None => daemon.get(&lead).ok_or_else(|| format!("No session {lead}"))?.provider };
             let options = crate::daemon::Options {
-                cwd: request.cwd.clone(), model: request.model.clone(), effort: request.effort.clone(), permissions: request.permissions,
+                cwd: request.cwd.clone(), workspace: workspace_id(), model: request.model.clone(), effort: request.effort.clone(), permissions: request.permissions,
                 label: request.label.clone(), ticket: request.ticket.clone(), force: request.force.unwrap_or(false),
                 images: request.images.clone().unwrap_or_default(),
             };
-            let id = daemon.spawn(&lead, provider, request.prompt.as_deref().unwrap_or(""), options)?;
+            let (prompt, loops) = zerod.loops.expand(request.prompt.as_deref().unwrap_or(""));
+            let id = daemon.spawn(&lead, provider, &prompt, options)?;
+            for name in &loops { zerod.loops.record(name, &id, "worker") }
             Ok(json!({"session": id}))
         }
         "notify" => daemon.notify(&session()?, request.text.as_deref().ok_or("Notify with text")?).map(|_| Value::Null),
@@ -307,7 +389,53 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         }
         "usage" => Ok(json!(daemon.usage().into_iter().map(|(provider, usage)| json!({"provider": provider, "usage": usage})).collect::<Vec<_>>())),
         "label" => daemon.label(&session()?, request.label.as_deref(), request.ticket.as_deref()).map(|_| Value::Null),
+        "workspaces" => Ok(json!(daemon.workspaces.list())),
+        "browserCall" => {
+            let session = request.session.as_deref();
+            let conversation = session.and_then(|s| daemon.get(s));
+            // A task's group is its own; its window is its team's (its lead's, through every level).
+            let mut lead = conversation.clone();
+            while let Some(parent) = lead.as_ref().and_then(|c| c.parent.clone()).and_then(|p| daemon.get(&p)) { lead = Some(parent) }
+            let task = json!({
+                "session": session, "group": session.unwrap_or("zero"), "window": lead.as_ref().map(|l| l.id.as_str()).unwrap_or("zero"),
+                "name": conversation.as_ref().map(crate::bridge::label).unwrap_or_else(|| "Zero".into()),
+                "state": conversation.as_ref().map(|c| crate::browser::light(c.attention())).unwrap_or("working"),
+                // What the group is called: Zero, and the work's reference when it has one (its own, else its lead's).
+                "ticket": conversation.as_ref().and_then(|c| c.ticket.clone()).or_else(|| lead.as_ref().and_then(|l| l.ticket.clone())),
+            });
+            let tool = request.tool.as_deref().ok_or("Which tool?")?;
+            let args = request.args.clone().unwrap_or(json!({}));
+            if let Some(conversation) = &conversation { review(zerod, conversation, tool, &args).await? }
+            zerod.browsers.call(session, task, tool, args).await
+        }
+        "browsers" => Ok(zerod.browsers.list(request.session.as_deref())),
+        "browserState" => {
+            zerod.browsers.tell_state(&session()?, request.browser.as_ref().and_then(|b| b["state"].as_str()).ok_or("Which state?")?);
+            Ok(Value::Null)
+        }
+        "browserSettings" => Ok(zerod.browsers.settings()),
+        "saveBrowserSettings" => zerod.browsers.save_settings(request.browser.as_ref().ok_or("Which settings?")?),
+        "browserSetup" => {
+            let zerod_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            let manifest = crate::browser::install(&zerod_exe)?;
+            let extension = zerod_exe.parent().and_then(|macos| macos.parent()).map(|contents| contents.join("Resources/chrome")).unwrap_or_default();
+            Ok(json!({"manifest": manifest, "extension": extension, "id": crate::browser::EXTENSION}))
+        }
+        "saveWorkspace" => {
+            let workspace = serde_json::from_value(request.workspace.clone().ok_or("Which workspace?")?).map_err(|e| format!("Not a workspace: {e}"))?;
+            let saved = daemon.workspaces.save(workspace)?;
+            let _ = zerod.notices.send("workspaces");
+            Ok(json!(saved))
+        }
+        "deleteWorkspace" => {
+            daemon.workspaces.delete(&workspace_id().ok_or("Which workspace?")?)?;
+            let _ = zerod.notices.send("workspaces");
+            Ok(Value::Null)
+        }
+        "setPermissions" => daemon.set_permissions(&session()?, request.permissions.ok_or("Which permissions: auto or unrestricted?")?).await.map(|_| Value::Null),
+        "placeInWorkspace" => daemon.place_in_workspace(&session()?, workspace_id().as_deref()).map(|_| Value::Null),
         "attr" => daemon.set_attribute(&session()?, request.name.as_deref().ok_or("Which attribute?")?, request.value.as_deref()).map(|_| Value::Null),
+        "table" => daemon.table(&session()?, request.title.as_deref().unwrap_or(""), request.columns.clone().unwrap_or_default(), request.rows.clone().unwrap_or_default()).map(|_| Value::Null),
         "workers" => {
             let lead = session()?;
             Ok(json!(daemon.sessions().iter().map(|s| s.summary()).filter(|c| c.parent.as_deref() == Some(lead.as_str())).map(|c| summary(&c)).collect::<Vec<_>>()))
@@ -330,7 +458,7 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "asks" => Ok(json!(inbox.asks())),
         // Whole sessions, not the list's: a row falls back on its lead's last answer.
         // Each session as a summary: its latest answer for Now, not its whole conversation.
-        "board" => Ok(json!(crate::board::board_with(&daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(), &inbox.asks(), &zerod.places.get()))),
+        "board" => Ok(json!(crate::board::board_in(&daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(), &inbox.asks(), &zerod.places.get(), &daemon.queues(), &|c| daemon.workspace_of(c)))),
         "items" => Ok(json!(daemon.session(&session()?)?.items(request.before.as_deref(), request.from.as_deref(), request.limit.unwrap_or(60)))),
         "outline" => Ok(daemon.session(&session()?)?.outline()),
         "place" => daemon.set_place(&session()?, request.place.as_deref()).map(|_| Value::Null),
@@ -396,11 +524,44 @@ fn start_task(zerod: &Zerod, integration: &str, view: &str, item: Value) -> Resu
     let permissions: Option<Permissions> = start.permissions.as_ref().map(|p| serde_json::from_value(json!(p))).transpose().map_err(|_| "Permissions are auto or unrestricted")?;
     let options = crate::daemon::Options {
         cwd: Some(match start.cwd.strip_prefix("~/") { Some(rest) => format!("{}/{rest}", std::env::var("HOME").unwrap_or_default()), None => start.cwd.clone() }),
-        model: start.model.clone(), effort: start.effort.clone(), permissions: Some(permissions.unwrap_or_default()),
+        workspace: None, model: start.model.clone(), effort: start.effort.clone(), permissions: Some(permissions.unwrap_or_default()),
         label: Some(format!("{ticket} {}", item.title)), ticket: Some(ticket), force: false, images: vec![],
     };
     let session = zerod.daemon.start_with(provider, &crate::integrations::task_prompt(&start.prompt, &item, &pad), options)?;
     Ok(json!({"session": session, "existing": false, "pad": pad}))
+}
+
+/// In auto mode, a site new to the task gets a second opinion before the task may open it: a one-shot run of the task's
+/// own CLI. A refusal stands unless the user approved the site through an ask (`zero approve`, whose id the agent passes
+/// as `approval`). ponytail: only browser_navigate is reviewed; a click that leaves for another site isn't.
+async fn review(zerod: &Zerod, conversation: &crate::model::Conversation, tool: &str, args: &Value) -> Result<(), String> {
+    if tool != "browser_navigate" || conversation.permissions != crate::model::Permissions::Auto { return Ok(()) }
+    let Some(site) = args["url"].as_str().and_then(crate::browser::site) else { return Ok(()) };
+    if zerod.browsers.allowed(&conversation.id, &site) { return Ok(()) }
+    if let Some(approval) = args["approval"].as_str() {
+        let approved = zerod.inbox.asks().iter().any(|ask| ask.id == approval && ask.kind == crate::ask::AskKind::Approve && ask.state == crate::ask::AskState::Answered
+            && format!("{} {}", ask.title, ask.body).to_lowercase().contains(&site));
+        if !approved { return Err(format!("Ask {approval} isn't the user's approval of {site}: it must be an approve they said yes to, naming {site}")) }
+        zerod.browsers.allow(&conversation.id, &site);
+        return Ok(());
+    }
+    // What the user asked first, and what they asked last: a long task's current work is in the latter.
+    let full = zerod.daemon.session(&conversation.id).map(|s| s.snapshot()).unwrap_or_else(|_| conversation.clone());
+    let yours: Vec<String> = full.items.iter().filter_map(|item| match &item.kind {
+        crate::model::ItemKind::User { text, .. } if crate::model::from(text).is_none() => Some(text.chars().take(600).collect::<String>()),
+        _ => None,
+    }).collect();
+    let asked = match (yours.first(), yours.last()) {
+        (Some(first), Some(last)) if first != last => format!("{first}\" and most recently: \"{last}"),
+        (Some(first), _) => first.clone(),
+        _ => String::new(),
+    };
+    let prompt = crate::browser::review_prompt(&crate::bridge::label(conversation), &asked, args["url"].as_str().unwrap_or_default());
+    let (_, printed) = crate::process::run(&crate::browser::review_command(conversation.provider, &prompt), std::path::Path::new(&conversation.cwd), &conversation.id).await;
+    match crate::browser::verdict(&printed) {
+        Ok(_) => { zerod.browsers.allow(&conversation.id, &site); Ok(()) }
+        Err(why) => Err(format!("Zero's reviewer advised against opening {site}: {}. If the task needs it, ask the user with zero approve \"Open {site} in Chrome\" and pass the ask's id as approval", why.trim_end_matches('.'))),
+    }
 }
 
 fn summary(conversation: &crate::model::Conversation) -> Value {
@@ -413,11 +574,11 @@ fn summary(conversation: &crate::model::Conversation) -> Value {
 /// four times a second while sessions change, and every half minute for what changes on its own, places and clocks),
 /// and each notice ("pads").
 async fn feed(zerod: Zerod, out: mpsc::UnboundedSender<Value>) {
-    let (mut sessions, mut asks, mut notices) = (zerod.daemon.subscribe(), zerod.inbox.subscribe(), zerod.notices.subscribe());
+    let (mut sessions, mut asks, mut notices, mut queues) = (zerod.daemon.subscribe(), zerod.inbox.subscribe(), zerod.notices.subscribe(), zerod.daemon.subscribe_queues());
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
     let mut last: Option<Value> = None;
     loop {
-        let rows = json!(crate::board::board_with(&zerod.daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(), &zerod.inbox.asks(), &zerod.places.get()));
+        let rows = json!(crate::board::board_in(&zerod.daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(), &zerod.inbox.asks(), &zerod.places.get(), &zerod.daemon.queues(), &|c| zerod.daemon.workspace_of(c)));
         if last.as_ref() != Some(&rows) {
             if out.send(json!({"event": "board", "rows": rows})).is_err() { return }
             last = Some(rows);
@@ -425,6 +586,7 @@ async fn feed(zerod: Zerod, out: mpsc::UnboundedSender<Value>) {
         tokio::select! {
             heard = sessions.recv() => if matches!(heard, Err(broadcast::error::RecvError::Closed)) { return },
             heard = asks.recv() => if matches!(heard, Err(broadcast::error::RecvError::Closed)) { return },
+            heard = queues.recv() => if matches!(heard, Err(broadcast::error::RecvError::Closed)) { return },
             notice = notices.recv() => match notice {
                 Ok(notice) => { if out.send(json!({"event": notice})).is_err() { return } continue }
                 Err(broadcast::error::RecvError::Closed) => return,
@@ -436,6 +598,7 @@ async fn feed(zerod: Zerod, out: mpsc::UnboundedSender<Value>) {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         while sessions.try_recv().is_ok() {}
         while asks.try_recv().is_ok() {}
+        while queues.try_recv().is_ok() {}
     }
 }
 

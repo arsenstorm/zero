@@ -40,7 +40,7 @@ pub fn claude_session(conversation: &Conversation, session: &str) -> String {
                 }
             }
             ItemKind::Tool { name, detail } => chain.text(&format!("Used {name}: {detail}")),
-            ItemKind::Agent { .. } | ItemKind::Reasoning { .. } | ItemKind::Notice { .. } => {}
+            ItemKind::Agent { .. } | ItemKind::Reasoning { .. } | ItemKind::Notice { .. } | ItemKind::Table { .. } => {}
         }
     }
     chain.lines.iter().map(|line| line.to_string() + "\n").collect()

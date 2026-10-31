@@ -352,10 +352,13 @@ fn unwrap_shell(command: &str) -> String {
     command.into()
 }
 
-/// Your words as Codex's turn input, with each image as its file.
+/// Your words as Codex's turn input, each image as its file where its token stands (images.rs).
 pub fn input(text: &str, images: &[String]) -> Value {
-    let mut parts: Vec<Value> = if text.trim().is_empty() && !images.is_empty() { vec![] } else { vec![json!({"type": "text", "text": text, "text_elements": []})] };
-    parts.extend(images.iter().map(|path| json!({"type": "localImage", "path": path})));
+    if images.is_empty() { return json!([{"type": "text", "text": text, "text_elements": []}]) }
+    let parts: Vec<Value> = crate::images::parts(text, images).into_iter().map(|part| match part {
+        crate::images::Part::Text(text) => json!({"type": "text", "text": text, "text_elements": []}),
+        crate::images::Part::Image(path) => json!({"type": "localImage", "path": path}),
+    }).collect();
     Value::Array(parts)
 }
 
@@ -442,7 +445,8 @@ pub async fn send(session: &Session, text: &str, images: &[String], model: Optio
     let thread = conversation.thread.ok_or("Codex hasn't started the thread yet")?;
     match conversation.turn {
         Some(turn) => session.request(|id| json!({"id": id, "method": "turn/steer", "params": {"threadId": thread, "expectedTurnId": turn, "input": input(text, images)}})).await.map(|_| ()),
-        None => self::turn(session, &thread, input(text, images), model, effort).await,
+        // The model and effort picked since the last turn (set_model) go with this one.
+        None => self::turn(session, &thread, input(text, images), model.or(conversation.model.as_deref()), effort.or(conversation.effort.as_deref())).await,
     }
 }
 

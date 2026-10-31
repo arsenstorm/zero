@@ -175,7 +175,11 @@ async fn every_session_has_a_dot_that_follows_its_attention() {
     bridge.sync(std::slice::from_ref(&session));
     assert_eq!((latest().status, latest().request.as_deref()), (None, Some(zerod::board::ATTENTION)), "working: blue, and told from the agent's own notes");
     session.status = Status::Idle;
-    session.items = vec![Item { at: None, id: "a".into(), turn: None, kind: ItemKind::Agent { text: "Done.".into(), final_answer: true }, status: ItemStatus::Done }];
+    // Finished its turn with no ending: between turns, nothing new to say. Said done: green, with its answer to read.
+    session.items = vec![Item { at: None, id: "a".into(), turn: None, kind: ItemKind::Agent { text: "Checked.".into(), final_answer: true }, status: ItemStatus::Done }];
+    bridge.sync(std::slice::from_ref(&session));
+    assert_eq!(inbox.asks().iter().filter(|a| a.agent.name == name).count(), 1, "a turn ended is not a task done");
+    session.items = vec![Item { at: None, id: "a".into(), turn: None, kind: ItemKind::Agent { text: "Done.\n\n[zero: done]".into(), final_answer: true }, status: ItemStatus::Done }];
     bridge.sync(std::slice::from_ref(&session));
     assert_eq!((latest().status.as_deref(), latest().body.as_str()), (Some("done"), "Done."), "its answer to read");
     bridge.sync(std::slice::from_ref(&session));

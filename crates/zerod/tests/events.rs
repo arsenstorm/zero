@@ -65,7 +65,7 @@ async fn anything_can_tell_a_session_something() {
     let w = world("events-notify");
     let (id, seen) = idle_claude(&w).await;
     w.daemon.notify(&id, "CI on #42 passed").unwrap();
-    assert_eq!(seen.said("user", 2).await[1]["message"]["content"], "CI on #42 passed");
+    assert_eq!(seen.said("user", 2).await[1]["message"]["content"], zerod::model::from_line("zero", "CI on #42 passed"), "marked as Zero's word, not the user's");
     assert!(w.daemon.notify("nope", "x").is_err());
 }
 
@@ -150,5 +150,5 @@ async fn an_async_ask_from_a_zerod_session_is_answered_into_that_session() {
     let ask = inbox.create(ask, false);
     inbox.choose(&ask.id, 0);
     let words = seen.said("user", 2).await[1]["message"]["content"].as_str().unwrap().to_string();
-    assert_eq!(words, format!("The user answered your ask {} (\"Ship it?\"): Yes", ask.id));
+    assert_eq!(words, zerod::model::from_line("zero", &format!("The user answered your ask {} (\"Ship it?\"): Yes", ask.id)));
 }
