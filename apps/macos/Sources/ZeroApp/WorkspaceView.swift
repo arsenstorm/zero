@@ -18,17 +18,38 @@ struct WorkspaceView: View {
             if !navigation.ready { ZeroMark().frame(width: 64, height: 64).foregroundStyle(.secondary).transition(.opacity) }
         }
         .frame(minWidth: 980, minHeight: 600)
+        // Loops named in messages read as pills: the names, for the renderer.
+        .task { await workspace.loadLoops() }
+        .onChange(of: workspace.loops.map(\.name), initial: true) { _, names in LoopNames.known = names }
         // The rail and the strip above the panel: translucent grey over what's behind the window, blurred, as Codex's.
         .background { ZStack { BehindWindow(); Theme.railTint } }
         .ignoresSafeArea()
-        // The board is polled, so the sidebar stays fresh while the window is open.
-        // zerod pushes the board whenever it changes; it's asked for once here only so the splash can wait for it.
+        // Behind the mark, everything the first screen needs: zerod and the inbox connected, the rail's integrations,
+        // the sidebar's tasks, loop names for the pills, and the page the window opens on with its words already
+        // styled, so nothing loads or reflows once the window shows.
         .task {
-            let deadline = ContinuousClock.now + .seconds(3)
-            while !workspace.connected, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(50)) }
+            let deadline = ContinuousClock.now + .seconds(4.5)
+            func until(_ done: @autoclosure () -> Bool) async {
+                while !done(), ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(30)) }
+            }
+            await until(workspace.connected)
             await workspace.loadIntegrations()
             await workspace.refreshBoard()
+            await workspace.loadLoops()
+            await until(inbox.store.connected)
+            if case .task(let lead) = navigation.place {
+                let id = navigation.worker ?? lead
+                await until(workspace.conversation(id) != nil)
+                await workspace.outline(id)
+                if let live = workspace.live(id) { await MarkdownText.warm(live.conversation) }
+            }
             show()
+            // Then every other lead, behind the window: its rail and its styled words, so the first switch to it is as
+            // quick as the next.
+            for row in workspace.board.prefix(5) {
+                await workspace.outline(row.session)
+                if let live = workspace.live(row.session) { await MarkdownText.warm(live.conversation) }
+            }
         }
         // Never held on the mark: a slow gh or zerod shows the window as it is.
         .task {
@@ -47,12 +68,13 @@ struct WorkspaceView: View {
 
     private var window: some View {
         HStack(spacing: 0) {
-            Rail(place: $navigation.place, workspace: workspace, inbox: inbox)
+            Rail(place: $navigation.place, homePlace: navigation.homePlace, workspace: workspace, inbox: inbox)
             Group {
                 switch navigation.place {
                 case .settings: settings()
                 case .integrations: IntegrationsPane(workspace: workspace)
                 case .pads, .pad: ScratchpadsPage(workspace: workspace, navigation: navigation)
+                case .loops, .loop: LoopsPage(workspace: workspace, navigation: navigation)
                 case .inbox:
                     HStack(spacing: 0) {
                         InboxSidebar(controller: inbox)
@@ -87,7 +109,7 @@ struct WorkspaceView: View {
         switch navigation.place {
         case .board: BoardView(workspace: workspace, open: { navigation.place = .task($0) })
         case .agent(let name): AgentPage(controller: inbox, name: name).id(name)
-        case .task(let id) where workspace.conversation(id) != nil: TaskView(workspace: workspace, inbox: inbox, lead: id, navigation: navigation).id(id)
+        case .task(let id) where workspace.conversation(id) != nil: TaskPages(workspace: workspace, inbox: inbox, navigation: navigation, current: id)
         default: NewTaskView(workspace: workspace, started: { navigation.place = .task($0) })
         }
     }
@@ -101,6 +123,8 @@ let pageStart: CGFloat = 48 + CGFloat(SidebarWidth.standard) + 1
 /// or right-click it); integrations and settings at the foot.
 private struct Rail: View {
     @Binding var place: Navigation.Place
+    /// Where Home was last (a task, say): what its icon goes back to.
+    var homePlace: Navigation.Place = .home
     let workspace: Workspace
     let inbox: InboxController
     @AppStorage("railOrder") private var order = "github,linear"
@@ -112,7 +136,7 @@ private struct Rail: View {
     private static let step: CGFloat = 38
 
     private var home: Bool {
-        switch place { case .inbox, .settings, .integrations, .integration, .pads, .pad: false; default: true }
+        switch place { case .inbox, .settings, .integrations, .integration, .pads, .pad, .loops, .loop: false; default: true }
     }
 
     /// Every integration in your order, those never placed after.
@@ -125,19 +149,22 @@ private struct Rail: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            item("house-4", selected: home, help: "Home") { if !home { place = .home } }
+            item("house-4", selected: home, help: "Home") { if !home { place = homePlace } }
             // What agents are waiting on you for, and how many.
             item("inbox", selected: place == .inbox, help: "Inbox") { place = .inbox }
                 .overlay(alignment: .topTrailing) {
                     let waiting = AsksPage.waiting(inbox).count
                     if waiting > 0 {
                         Text("\(waiting)").font(.system(size: 9.5, weight: .semibold)).monospacedDigit().foregroundStyle(.white)
-                            .padding(.horizontal, 4).frame(minWidth: 15, minHeight: 15).background(Color.orange, in: Capsule())
-                            .offset(x: 3, y: -2).allowsHitTesting(false)
+                            .padding(.horizontal, 4).frame(minWidth: 15, minHeight: 15).background(Color.red, in: Capsule())
+                            .padding(1.5).background(Theme.composer, in: Capsule()) // a ring in the rail's colour, as the Dock cuts its badges out
+                            .offset(x: 4.5, y: -3.5).allowsHitTesting(false)
                     }
                 }
             let pads = { if case .pad = place { true } else { place == .pads } }()
             item("note-3", selected: pads, help: "Scratchpads") { if !pads { place = .pads } }
+            let loops = { if case .loop = place { true } else { place == .loops } }()
+            item("animation-repeat", selected: loops, help: "Loops") { if !loops { place = .loops } }
             let shown = shown
             ForEach(Array(shown.enumerated()), id: \.element) { index, integration in
                 let selected = place == .integration(integration.rawValue)
@@ -308,8 +335,19 @@ private struct TasksSidebar: View {
         return all.filter { lead in (lead.parent.map { !ids.contains($0) } ?? true) && !onBoard.contains(lead.id) }.reversed()
     }
 
+    @State private var namingWorkspace = false
+
+    /// The heading's selector: the workspaces, the current one marked; New workspace… and Workspace settings… under them.
+    private func workspaceRows() -> [SelectorSection] {
+        ComposerRows.menu([
+            workspace.workspaces.map { w in (w.id, w.name, w.glyph, w.id == workspace.current, { workspace.current = w.id }) },
+            [("new", "New workspace…", "plus", false, { namingWorkspace = true }),
+             ("settings", "Workspace settings…", "sliders", false, { SettingsView.requested = .workspaces; place = .settings })],
+        ])
+    }
+
     var body: some View {
-        SidebarColumn(title: "Zero") {
+        SidebarColumn(title: workspace.currentWorkspace.name, picker: workspaceRows) {
             SidebarItem("New task", icon: "compose", selected: place == .home) { place = .home }
                 .keyboardShortcut("n", modifiers: .command)
             SidebarItem("All tasks", icon: "list-checkbox", selected: place == .board) { place = .board }
@@ -317,7 +355,7 @@ private struct TasksSidebar: View {
             let all = workspace.conversations
             let workersOf = Dictionary(grouping: all.filter { $0.parent != nil }, by: { $0.parent ?? "" })
             // Not before the first board: until then every lead looks like it isn't on it.
-            let earlier = workspace.board.isEmpty ? [] : earlier(all)
+            let earlier = workspace.board.isEmpty ? [] : earlier(all).filter { workspace.workspace(of: $0) == workspace.current }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     // The heading where every sidebar's is, its sort button centred over the tasks' state icons below.
@@ -348,7 +386,7 @@ private struct TasksSidebar: View {
                         Text("No tasks").font(.system(size: 13)).foregroundStyle(.tertiary).padding(.horizontal, 10)
                     }
                     let folded = Set(folded.split(separator: "\n").map(String.init))
-                    let rows = sorted(workspace.board)
+                    let rows = sorted(workspace.board.filter { $0.workspace == workspace.current })
                     let ids = rows.map(\.session)
                     ForEach(rows) { row in
                         let workers = workersOf[row.session] ?? []
@@ -361,7 +399,7 @@ private struct TasksSidebar: View {
                                 place = .task(row.session)
                                 navigation.worker = nil
                             }, toggle: { toggle(row.session) }, reorder: reorder(row.session, in: rows))
-                                .contextMenu { archive(row.session) }
+                                .contextMenu { menu(row.session, name: row.task, ticket: row.ticket) }
                             if open {
                                 ForEach(Array(workers.enumerated()), id: \.element.id) { index, worker in
                                     TaskRow(title: Workspace.label(of: worker), state: row.member(worker.id)?.state ?? TaskRow.state(of: worker), selected: navigation.worker == worker.id,
@@ -381,7 +419,7 @@ private struct TasksSidebar: View {
                         SidebarHeading(text: "Earlier")
                         ForEach(earlier) { lead in
                             SidebarItem(Workspace.label(of: lead), selected: place == .task(lead.id)) { place = .task(lead.id) }
-                                .contextMenu { archive(lead.id) }
+                                .contextMenu { menu(lead.id, name: Workspace.label(of: lead), ticket: lead.ticket) }
                         }
                     }
                 }
@@ -390,6 +428,23 @@ private struct TasksSidebar: View {
             }
             .thinScrollbar(outset: 10, remember: "sidebar.tasks") // in the sidebar's padding: at its edge, clear of the rows
             .scrollIndicators(.never)
+            .sheet(isPresented: $namingWorkspace) {
+                NameSheet(title: "New workspace", name: "", action: "Create") { name in
+                    Task { if let error = await workspace.saveWorkspace(ZerodLink.Workspace(name: name)) { NSSound.beep(); Log.write("workspace: \(error)") } }
+                }
+            }
+            .sheet(item: $renaming) { task in
+                NameSheet(title: "Rename", name: task.name, action: "Rename") { name in Task { await workspace.rename(task.id, to: name, ticket: task.ticket) } }
+            }
+            // ⌘1 to ⌘9: the first nine tasks as the sidebar orders them (leads only), as a browser's tabs.
+            .background {
+                let rows = sorted(workspace.board).prefix(9)
+                ForEach(Array(rows.enumerated()), id: \.element.session) { index, row in
+                    Button("") { place = .task(row.session); navigation.worker = nil }
+                        .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+                }
+                .hidden()
+            }
             // Soft edges, as the conversation has: more above, more below.
             .mask {
                 VStack(spacing: 0) {
@@ -411,7 +466,23 @@ private struct TasksSidebar: View {
     }
 
     /// Archive: the task leaves the sidebar; its files stay in zerod's archive/.
-    private func archive(_ id: String) -> some View {
+    /// A task's name is the user's to change; the sheet asks for it.
+    struct Renaming: Identifiable { let id: String; let name: String; let ticket: String? }
+    @State private var renaming: Renaming?
+
+    @ViewBuilder private func menu(_ id: String, name: String, ticket: String?) -> some View {
+        Button("Rename…") { renaming = Renaming(id: id, name: name, ticket: ticket) }
+        if workspace.workspaces.count > 1 {
+            Menu("Move to") {
+                ForEach(workspace.workspaces) { w in
+                    Button(w.name) { Task { await workspace.place(id, in: w.id) } }.disabled(w.id == workspace.current)
+                }
+                if workspace.roster[id]?.workspace != nil {
+                    Divider()
+                    Button("Its folder's workspace") { Task { await workspace.place(id, in: nil) } }
+                }
+            }
+        }
         Button("Archive") {
             if place == .task(id) { place = .home }
             Task { await workspace.archive(id) }
@@ -449,11 +520,45 @@ private struct TasksSidebar: View {
 // in a column centred in the page, and a pane floating on the right with what's known about it (its workers a click
 // away).
 
+/// The task pages, the last few kept mounted behind the one shown: a switch back to one shows it as it was, scroll,
+/// draft and all, with nothing to build. Hidden pages take no clicks, keys or focus.
+private struct TaskPages: View {
+    let workspace: Workspace
+    let inbox: InboxController
+    @Bindable var navigation: Navigation
+    let current: String
+    @State private var recent: [String] = []
+    private static let kept = 3
+
+    var body: some View {
+        let shown = recent.contains(current) ? recent : recent + [current]
+        ZStack {
+            ForEach(shown, id: \.self) { id in
+                let active = id == current
+                TaskView(workspace: workspace, inbox: inbox, lead: id, navigation: navigation, active: active)
+                    .opacity(active ? 1 : 0)
+                    .allowsHitTesting(active)
+                    .disabled(!active)
+                    .accessibilityHidden(!active)
+                    .zIndex(active ? 1 : 0)
+            }
+        }
+        .onChange(of: current, initial: true) {
+            var list = recent.filter { $0 != current && workspace.conversation($0) != nil }
+            list.append(current)
+            if list.count > Self.kept { list.removeFirst(list.count - Self.kept) }
+            recent = list
+        }
+    }
+}
+
 private struct TaskView: View {
     let workspace: Workspace
     let inbox: InboxController
     let lead: String
     @Bindable var navigation: Navigation
+    /// The page shown, as against one kept behind it.
+    var active = true
 
     private var team: [Conversation] {
         let all = workspace.conversations
@@ -475,14 +580,16 @@ private struct TaskView: View {
 
     var body: some View {
         let team = team
-        let conversation = workspace.conversation(navigation.worker ?? lead)
+        // The worker shown, when it is one of this lead's: another page's worker is not this page's business.
+        let worker = navigation.worker.flatMap { id in team.contains { $0.id == id } ? id : nil }
+        let conversation = workspace.conversation(worker ?? lead)
         // The lead's row, or the worker's own when a worker is shown: its status, place and asks are its own.
         let leadRow = workspace.board.first { $0.session == lead }
-        let row = navigation.worker.flatMap { leadRow?.member($0) } ?? leadRow
+        let row = worker.flatMap { leadRow?.member($0) } ?? leadRow
         if let conversation, conversation.terminal != nil {
             // A terminal runs edge to edge; the pane sits beside it as a column of its own.
             HStack(spacing: 0) {
-                if let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, live: live, open: open).id(conversation.id) }
+                if let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, inbox: inbox, active: active, queued: row?.queued ?? [], held: row?.held ?? false, live: live, open: open).id(conversation.id) }
                 if navigation.pane {
                     Rectangle().fill(Theme.stroke).frame(width: 1)
                     TaskDetails(workspace: workspace, inbox: inbox, navigation: navigation, row: row, conversation: conversation, docked: true)
@@ -490,7 +597,7 @@ private struct TaskView: View {
             }
         } else {
             ZStack(alignment: .topTrailing) {
-                if let conversation, let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, live: live, open: open).id(conversation.id) }
+                if let conversation, let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, inbox: inbox, active: active, queued: row?.queued ?? [], held: row?.held ?? false, live: live, open: open).id(conversation.id) }
                 if navigation.pane, let conversation {
                     TaskDetails(workspace: workspace, inbox: inbox, navigation: navigation, row: row, conversation: conversation).padding(TaskDetails.inset)
                 }
@@ -562,11 +669,6 @@ struct TitleBar: View {
 
     @ViewBuilder private func actions(_ conversation: Conversation) -> some View {
         let busy = conversation.status == .working || conversation.status == .waiting
-        if busy && conversation.terminal == nil {
-            ProgressView().controlSize(.small).padding(.trailing, 2)
-            Button("Stop") { Task { await workspace.interrupt(conversation.id) } }
-                .keyboardShortcut(".", modifiers: .command).controlSize(.small)
-        }
         BarButton(symbol: "terminal", help: conversation.terminal == nil
                   ? "Open in \(conversation.provider.title)'s own terminal, for what only it has"
                   : "Back to Zero, with what happened in the terminal", selected: conversation.terminal != nil) {
@@ -635,10 +737,16 @@ private struct TaskDetails: View {
     @State private var held = false
     @State private var cardFrame = CGRect.zero
     @State private var monitor: Any?
+    /// The Agent row's selector: where it opens from, and the row under the pointer.
+    @State private var agentAnchor = CGRect.zero
+    /// Every worker listed, not only the ones that need attention.
+    @State private var allWorkers = false
+    @State private var overAgent = false
+    private var agentChip: String { "details.\(conversation.id).agent" }
 
     var body: some View {
-        // Its properties; its workers are in the sidebar, under it.
-        properties.padding(16)
+        // Its properties, then its workers.
+        VStack(alignment: .leading, spacing: 0) { properties; workers }.padding(16)
         .frame(width: 280, alignment: .leading)
         .frame(maxHeight: docked ? .infinity : nil, alignment: .top)
         // Concentric with the panel's corner it sits in: its radius and its inset add up to the panel's (6 + 6 = 12).
@@ -698,14 +806,33 @@ private struct TaskDetails: View {
         Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 9) {
             property("Agent") {
                 VStack(alignment: .leading, spacing: 2) {
-                    // The provider's mark and the model by its name ("Opus 5.5"), not its id.
-                    HStack(spacing: 5) {
-                        if let mark = conversation.provider.mark {
-                            mark.resizable().aspectRatio(contentMode: .fit).frame(width: 13, height: 13).clipShape(RoundedRectangle(cornerRadius: 3))
+                    // The provider's mark and the model by its name ("Opus 5.5"), not its id: a click picks another
+                    // model, or another provider to take the task over.
+                    let open = WorkspaceSelector.shared.open == agentChip
+                    Button {
+                        WorkspaceSelector.shared.toggle(agentChip, kind: .runtime, anchor: agentAnchor, rows: {
+                            ComposerRows.taskModels(conversation, chosen: (conversation.provider, conversation.model)) { picked, choice in
+                                Task { await workspace.switchProvider(conversation.id, to: picked, model: choice.id.isEmpty ? nil : choice.id) }
+                            }
+                        }, level: { id in id == "\(conversation.provider.rawValue)/\(conversation.model ?? "")" ? conversation.effort : nil },
+                           setLevel: { _, level in Task { await workspace.switchProvider(conversation.id, to: conversation.provider, model: conversation.model, effort: level) } })
+                    } label: {
+                        HStack(spacing: 5) {
+                            if let mark = conversation.provider.mark {
+                                mark.resizable().aspectRatio(contentMode: .fit).frame(width: 13, height: 13).clipShape(RoundedRectangle(cornerRadius: 3))
+                            }
+                            Text([modelName ?? conversation.provider.title, conversation.effort.map { effortLabel($0, short: true) }].compactMap { $0 }.joined(separator: " · "))
+                                .lineLimit(1).truncationMode(.tail).help([conversation.provider.title, conversation.model].compactMap { $0 }.joined(separator: " · "))
+                            NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0))
                         }
-                        Text([modelName ?? conversation.provider.title, conversation.effort.map { effortLabel($0, short: true) }].compactMap { $0 }.joined(separator: " · "))
-                            .lineLimit(1).truncationMode(.tail).help([conversation.provider.title, conversation.model].compactMap { $0 }.joined(separator: " · "))
+                        .padding(.horizontal, 6).padding(.vertical, 3).padding(.leading, -6)
+                        .background(open || overAgent ? Theme.row : .clear, in: Capsule())
+                        .contentShape(Capsule())
                     }
+                    .buttonStyle(.plain).fixedSize()
+                    .onHover { overAgent = $0 }
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { agentAnchor = $0 }
+                    .disabled(conversation.status == .working || conversation.status == .waiting)
                     if conversation.permissions == .unrestricted { Text("Unrestricted").foregroundStyle(.orange) }
                     if let usage { Text(usage).font(.system(size: 11.5)).foregroundStyle(.tertiary) }
                 }
@@ -739,6 +866,71 @@ private struct TaskDetails: View {
             }
         }
         .font(.system(size: 12.5))
+    }
+
+    /// Its workers, what each is on and where it stands, most urgent first; a click shows that worker.
+    @ViewBuilder private var workers: some View {
+        let members = (row?.team ?? []).filter { $0.session != conversation.id }.sorted { Self.urgency($0.state) < Self.urgency($1.state) }
+        if !members.isEmpty {
+            // The few that matter (needing you, in trouble, at work), the rest behind their count; opened, the whole
+            // list scrolls inside the pane rather than running off the window.
+            let urgent = members.filter { Self.urgency($0.state) <= 2 }
+            let shown = allWorkers ? members : Array((urgent.isEmpty ? members : urgent).prefix(8))
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Workers").foregroundStyle(.secondary)
+                    Spacer()
+                    if members.count > shown.count || allWorkers {
+                        Button(allWorkers ? "Fewer" : "All \(members.count)") { allWorkers.toggle() }.buttonStyle(.plain).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.top, 14).padding(.bottom, 2)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) { workerRows(shown) }
+                }
+                .thinScrollbar()
+                .frame(maxHeight: allWorkers ? 360 : .infinity)
+                .fixedSize(horizontal: false, vertical: !allWorkers)
+            }
+            .font(.system(size: 12.5))
+        }
+    }
+
+    @ViewBuilder private func workerRows(_ members: [BoardRow.Member]) -> some View {
+                ForEach(members, id: \.session) { member in
+                    Button { navigation.worker = member.session } label: {
+                        HStack(alignment: .top, spacing: 7) {
+                            StateIcon(state: member.state).frame(width: 14, height: 16)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(title(of: member)).fontWeight(.medium).lineLimit(1)
+                                if let now = member.needs ?? member.now, !now.isEmpty {
+                                    Text(now).foregroundStyle(.secondary).lineLimit(2)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .opacity([.done, .merged, .idle, .offline].contains(member.state) ? 0.6 : 1)
+                }
+    }
+
+    /// Most urgent first, as the board sorts its rows.
+    private static func urgency(_ state: BoardRow.State) -> Int {
+        switch state {
+        case .needsYou: 0
+        case .trouble: 1
+        case .working: 2
+        case .waiting: 3
+        case .answered: 4
+        case .done: 4
+        case .merged: 5
+        default: 6
+        }
+    }
+
+    private func title(of member: BoardRow.Member) -> String {
+        workspace.conversations.first { $0.id == member.session }.map(Workspace.label(of:)) ?? member.place
     }
 
     /// A row of the pane's properties: its name in a narrow column, its value beside it.
@@ -1013,6 +1205,8 @@ private struct TaskRow: View {
     var fold: Bool? = nil
     /// A worker: its place on its lead's branch.
     var branch: Branch? = nil
+    /// A lead with workers: a line under its name counting them ("4 workers · 1 needs you · 2 working").
+    var summary: String? = nil
     let action: () -> Void
     var toggle: () -> Void = {}
     /// A lead that can be dragged into place: told how far the pointer moved, and when it let go (false: a click).
@@ -1027,14 +1221,19 @@ private struct TaskRow: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 if let branch { Branched(last: branch == .last).frame(width: 34) }
-                Text(title).font(.system(size: 13)).lineLimit(1)
-                Spacer(minLength: 0)
-                StateIcon(state: state).font(.system(size: 12))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(.system(size: 13)).lineLimit(1)
+                    if let summary { Text(summary).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // A lead with workers: room for its chevron (drawn in the overlay below, so its click is its own).
+                if fold != nil { Color.clear.frame(width: 16, height: 1) }
+                // The icon keeps its place however long the title: the title gives way, not the state.
+                StateIcon(state: state).font(.system(size: 12)).fixedSize().layoutPriority(1)
             }
             .foregroundStyle(.primary)
-            // A lead's title after the tree's column (its chevron, if it has workers), so every lead lines up whether or
-            // not it has any; a worker's sits on its branch.
-            .padding(.leading, branch == nil ? Branched.x * 2 : 0).padding(.trailing, 10).frame(height: 30)
+            // In from the edge as the heading is; a worker's title sits on its branch.
+            .padding(.leading, branch != nil ? 0 : 10).padding(.trailing, 10).frame(height: summary == nil ? 30 : 44)
         }
         .buttonStyle(Hovering(selected: selected))
         // One gesture for click and drag, as the control bar's: on the row's button only, so the fold chevron keeps its
@@ -1043,19 +1242,17 @@ private struct TaskRow: View {
             .onChanged { reorder?.changed($0.translation.height) }
             .onEnded { _ in if reorder?.ended() == false { action() } },
             including: reorder == nil ? .subviews : .all)
-        // In the margin left of the title, outside the row's own button so its click is its own.
-        .overlay(alignment: .leading) {
+        // Just left of the state icon, outside the row's own button so its click is its own.
+        .overlay(alignment: .trailing) {
             if let fold {
                 Button(action: toggle) {
                     NucleoIcon("chevron-down", size: 9).foregroundStyle(.secondary).rotationEffect(.degrees(fold ? 0 : -90))
-                        .frame(width: Branched.x * 2, height: 30).contentShape(Rectangle())
-                        // Open, the branch starts right under the chevron and runs on into the workers below.
-                        .overlay(alignment: .bottom) {
-                            if fold { Branched.line.frame(width: 1, height: 8) }
-                        }
+                        .frame(width: 20, height: 20).contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                // Its own hover, a rounded square, in place of the row's.
+                .buttonStyle(Hovering(radius: 5))
                 .help(fold ? "Hide its workers" : "Show its workers")
+                .padding(.trailing, 10 + 14 + 4)
             }
         }
     }
@@ -1075,6 +1272,7 @@ private struct TaskRow: View {
         case .limited, .stuck, .failed: .trouble
         case .working, .starting: .working
         case .done: .done
+        case .answered: .answered
         case .idle: .idle
         case .offline: .offline
         }
@@ -1117,10 +1315,11 @@ private struct StateIcon: View {
         switch state {
         // No entry, in red: the one state that can't move without you, so it stands out from the rest.
         case .needsYou: ("circle-minus", .red, "Blocked")
-        case .trouble: ("triangle-warning", .red, "In trouble")
+        case .trouble: ("triangle-warning", .orange, "In trouble")
         case .working: ("arrow-rotate-clockwise", .blue, "Working")
         case .waiting: ("hourglass", .secondary, "Waiting")
         case .done: ("circle-check", .green, "Done")
+        case .answered: ("message-check", .indigo, "Replied")
         case .merged: ("code-branch", .purple, "Merged")
         case .idle: ("moon", .secondary, "Idle")
         case .offline: ("power-off", .secondary, "Offline")
@@ -1138,11 +1337,15 @@ struct StateLabel: View {
         let tint: Color = look.color == .secondary ? .secondary : look.color
         HStack(spacing: 5) {
             StateIcon(state: state).scaleEffect(0.86)
-            Text(look.name).font(.system(size: 11.5, weight: .medium)).foregroundStyle(look.color == .secondary ? AnyShapeStyle(.secondary) : AnyShapeStyle(look.color))
+            Text(look.name).font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(look.color == .secondary ? AnyShapeStyle(.secondary) : look.color == .green ? AnyShapeStyle(Theme.done) : AnyShapeStyle(look.color))
         }
         .padding(.leading, 5).padding(.trailing, 8).padding(.vertical, 3)
         .background(tint.opacity(0.12), in: Capsule())
         .fixedSize()
+        // Level with the words beside it in a row aligned on baselines: the pill's middle where their baseline sits
+        // (its spinner has no baseline of its own).
+        .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4.5 }
     }
 }
 
@@ -1150,6 +1353,13 @@ struct StateLabel: View {
 
 private struct ConversationView: View {
     let workspace: Workspace
+    let inbox: InboxController
+    /// Shown, as against kept behind the page shown: only the shown page answers Esc and holds the keyboard.
+    var active = true
+    @State private var isActive = true
+    /// Your messages waiting for after the agent's turn, and whether they're held since you stopped it.
+    var queued: [Queued] = []
+    var held = false
     /// The task's whole conversation, observed on its own: its words redraw this view, not the window.
     let live: LiveConversation
     /// Opens another task: a branch made from this one.
@@ -1160,6 +1370,10 @@ private struct ConversationView: View {
     @State private var following = true
     /// The message of yours being gone back to.
     @State private var rewinding: ConversationItem?
+    /// Esc twice in quick succession: pick a message to rewind to, then how (RewindCard).
+    @State private var pickingRewind = false
+    @State private var lastEscape: Date?
+    @State private var escapeMonitor: Any?
     /// Images going with the next message.
     @State private var images: [URL] = []
     /// Where the conversation is scrolled to, and how much of it there is: for the scrollbar drawn over it.
@@ -1168,13 +1382,32 @@ private struct ConversationView: View {
     /// redraws those, not the conversation.
     @State private var tracker = ScrollTracker()
     /// Your messages in the whole conversation, for the rail.
-    @State private var outline: [OutlineMark] = []
-    /// The rows standing in for older items are on screen: only then is the next page fetched.
+    /// The rows standing in for older items are on screen: only then is the next page fetched, and one page per
+    /// approach: the next only once those rows have left the screen and come back as you scroll on.
     @State private var olderShown = false
+    @State private var olderArmed = true
     /// How tall the composer is: the conversation fades out just above it.
     @State private var composerHeight: CGFloat = 0
+    /// Just sent: the message sits at the top of the page with room under it for the answer, which fills that room
+    /// without moving anything, as Codex's does. Over once you scroll.
+    @State private var lifted = false
+    /// The lift's scroll has put the message at the top: only then can scrolling up end the lift.
+    @State private var liftPlaced = false
+    /// The message just sent and the least height of the conversation from it down: a page's worth, so the message
+    /// sits at the top with room under it that the answer fills without changing the page's size, so nothing moves.
+    /// A scroll up gives the room back: from where you stop you can come down a composer's height, no further.
+    @State private var liftId: String?
+    @State private var liftMin: CGFloat = 0
+    @State private var pageHeight: CGFloat = 0
+    /// The room just gone: growth still anchors to the top until scrolling settles, so taking it away moves nothing.
+    @State private var settling = false
+    /// An older page is coming in above: the page keeps its distance from the end through that, so what's read stays.
+    @State private var loadingAbove = false
     /// Another provider picked for the next message; nil keeps the task's own.
     @State private var provider: Provider?
+    /// A model and effort picked for the next message; nil keeps the task's own.
+    @State private var model: String?
+    @State private var effort: String?
     /// The blocks on screen, by the message of yours each answers to: the rail's bright ticks.
 
     var body: some View {
@@ -1188,6 +1421,37 @@ private struct ConversationView: View {
         }
     }
 
+
+    /// The next older page, with what's read kept where it is: the offset moves by exactly what was added above once
+    /// the new rows have measured (the scroll view's own anchoring isn't to be relied on through that).
+    private func loadOlder() async {
+        guard olderShown, olderArmed else { return }
+        olderArmed = false
+        loadingAbove = true
+        let before = tracker.geometry
+        await workspace.loadEarlier(conversation.id)
+        for _ in 0..<20 {
+            try? await Task.sleep(for: .milliseconds(50))
+            if let before, let now = tracker.geometry, now.contentSize.height > before.contentSize.height + 1 {
+                position.scrollTo(y: before.contentOffset.y + (now.contentSize.height - before.contentSize.height))
+                break
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(200))
+        loadingAbove = false
+    }
+
+    /// One block as a row: compared before it's drawn (a word streamed into the last answer redraws only that one),
+    /// and reporting whether it's on screen, for the rail.
+    private func blockRow(_ block: TimelineBlock, turns: [String: String]) -> some View {
+        BlockRow(block: block, cwd: conversation.cwd, quote: quote, save: save, rewind: { rewinding = $0 }).equatable()
+            .id(block.id)
+            .onScrollVisibilityChange(threshold: 0.05) { shown in
+                guard let turn = turns[block.id] else { return }
+                if shown { tracker.seen[block.id] = turn } else { tracker.seen[block.id] = nil }
+            }
+            .onDisappear { tracker.seen[block.id] = nil }
+    }
 
     /// Where you are in the conversation: at its end (nothing kept), or the block at the top of the screen.
     private func rememberScroll() {
@@ -1216,26 +1480,16 @@ private struct ConversationView: View {
 
     private var conversationPane: some View {
         VStack(spacing: 0) {
-            if let health {
-                HStack(spacing: 10) {
-                    NucleoLabel(health.text, icon: health.icon).font(.callout).foregroundStyle(health.color)
-                    Spacer()
-                    // Out of usage: the task carries on with another provider, the whole conversation with it.
-                    if conversation.attention == .limited {
-                        ForEach(Self.takeOver.filter { $0 != conversation.provider }, id: \.self) { other in
-                            Button("Continue with \(other.title)") { carryOn(with: other) }
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20).padding(.vertical, 8).background(health.color.opacity(0.08))
-            }
             ScrollViewReader { proxy in
                 // A step waiting on an approval shows once, in the approval.
                 let blocks = TimelineBlock.of(conversation.items.filter { item in !conversation.approvals.contains { $0.item == item.id } },
                                               working: conversation.status == .working || conversation.status == .waiting)
                 let turns = TimelineBlock.turns(blocks)
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 18) {
+                    // Laid out in full, not lazily: a lazy stack keeps the heights it guessed for rows measured off
+                    // screen, so its end could sit below its last row and the page open blank. The page loaded is a
+                    // few dozen rows; older pages come in on demand above.
+                    VStack(alignment: .leading, spacing: 18) {
                         // More above: rows standing in for it, the next page fetched as they come into view, the view
                         // kept on what was at its top.
                         let more = live.earlier
@@ -1244,26 +1498,44 @@ private struct ConversationView: View {
                             // off screen by the list, it fetches nothing. Anchored at the bottom, the view stays on
                             // what's read as each page goes in above.
                             SkeletonTurns().id("earlier")
-                                .onScrollVisibilityChange(threshold: 0.01) { olderShown = $0 }
-                                .task(id: olderShown ? more : -1) { if olderShown { await workspace.loadEarlier(conversation.id) } }
-                        }
-                        ForEach(blocks) { block in
-                            // Compared before it's drawn: a word streamed into the last answer redraws only that one.
-                            BlockRow(block: block, cwd: conversation.cwd, quote: quote, save: save, rewind: { rewinding = $0 }).equatable()
-                                .id(block.id)
-                                .onScrollVisibilityChange(threshold: 0.05) { shown in
-                                    guard let turn = turns[block.id] else { return }
-                                    if shown { tracker.seen[block.id] = turn } else { tracker.seen[block.id] = nil }
+                                .onScrollVisibilityChange(threshold: 0.01) { shown in
+                                    olderShown = shown
+                                    if !shown { olderArmed = true }
                                 }
-                                // The list drops what's far off screen without saying it went out of view.
-                                .onDisappear { tracker.seen[block.id] = nil }
+                                .task(id: olderShown ? more : -1) { await loadOlder() }
+                        }
+                        let liftAt: Int? = lifted ? blocks.firstIndex { $0.id == liftId } : nil
+                        let head: [TimelineBlock] = liftAt.map { Array(blocks[..<$0]) } ?? blocks
+                        let tail: [TimelineBlock] = liftAt.map { Array(blocks[$0...]) } ?? []
+                        ForEach(head) { block in blockRow(block, turns: turns) }
+                        if !tail.isEmpty {
+                            // Lifted: from the message just sent down, at least a page tall, so what the agent adds
+                            // under it fills room that is already there and the page's size doesn't change.
+                            VStack(alignment: .leading, spacing: 18) {
+                                ForEach(tail) { block in blockRow(block, turns: turns) }
+                            }
+                            .frame(minHeight: liftMin, alignment: .top)
                         }
                         // Its provider still getting ready (signing in, say): say so, rather than an empty page.
                         if conversation.status == .starting {
                             Thinking(text: "Starting \(conversation.provider.title)…").id("starting")
                         }
+                        // Stuck or out of usage: a callout where the trouble is, at the end of the work, like a failure's.
+                        if let health {
+                            CautionCallout(text: health.label + ": " + health.text, tone: .amber) {
+                                // Out of usage: the task carries on with another provider, the whole conversation with it.
+                                if conversation.attention == .limited {
+                                    HStack(spacing: 8) {
+                                        ForEach(Self.takeOver.filter { $0 != conversation.provider }, id: \.self) { other in
+                                            Button("Continue with \(other.title)") { carryOn(with: other) }
+                                        }
+                                    }
+                                }
+                            }
+                            .id("health")
+                        }
                         ForEach(conversation.questions) { question in
-                            QuestionCard(question: question) { answers in
+                            QuestionCard(question: question, session: conversation.id, inbox: inbox) { answers in
                                 Task { await workspace.answer(conversation.id, question: question.id, answers: answers) }
                             }
                             .id("question-" + question.id)
@@ -1278,7 +1550,8 @@ private struct ConversationView: View {
                             DisclosureGroup("Everything the last turn changed") { DiffText(diff: diff) }.padding(.top, 4)
                         }
                         // Room for the composer and the fade above it: scrolled to the end, the last message sits just
-                        // above the composer, and the scrollbar is at the bottom.
+                        // above the composer, and the scrollbar is at the bottom. Just sent, a page of room, so the
+                        // message can sit at the top.
                         Color.clear.frame(height: composerHeight + 32).id("end")
                     }
                     .padding(.top, 20)
@@ -1288,15 +1561,55 @@ private struct ConversationView: View {
                 // Opened at the end, and held there as answers measure themselves and new ones come, while you're at
                 // the end; content added above (an older page) leaves what you're reading where it is.
                 .defaultScrollAnchor(.bottom, for: .initialOffset)
-                .defaultScrollAnchor(.bottom, for: .sizeChanges)
+                // Only you scroll: what's read keeps its distance from the top as the agent adds words below, so
+                // nothing moves under your eyes. The end is kept only while you're at it (following), and while an
+                // older page comes in above.
+                .defaultScrollAnchor((following || loadingAbove) && !lifted && !settling ? .bottom : .top, for: .sizeChanges)
                 .scrollPosition($position)
+                .onScrollGeometryChange(for: CGFloat.self, of: { $0.containerSize.height }) { _, height in pageHeight = height }
+                // The message just sent goes to the top of the page once it's in the conversation.
+                .onChange(of: conversation.items.last(where: \.isYours)?.id) { _, id in
+                    // Once per send: a worker's report landing right after (a message of its own) mustn't move the page again.
+                    guard lifted, !liftPlaced, let id else { return }
+                    liftId = id
+                    liftMin = max(0, pageHeight - 52 - composerHeight - 32)
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(50))
+                        guard lifted else { return }
+                        position.scrollTo(id: id, anchor: UnitPoint(x: 0, y: 52 / max(pageHeight, 1)))
+                        liftPlaced = true
+                    }
+                }
                 // Where you were in it, kept when scrolling stops and when you leave.
                 .onScrollPhaseChange { _, phase in
-                    // Scrolled by you: it stops following the end, until you're back at it.
-                    if phase == .interacting { following = false }
+                    // Scrolled by you: it stops following the end, until you're back at it. Scrolling while the rows
+                    // for older items show asks for the next page (one page per gesture, never a chain).
+                    if phase == .interacting {
+                        following = false
+                        if olderShown, !olderArmed { olderArmed = true; Task { await loadOlder() } }
+                    }
                     if phase == .idle {
+                        settling = false
+                        // Lifted, the room gives way behind you as you scroll up: from where you stop you can come
+                        // back down a composer's height, no further. Far enough up and the room is gone, the lift
+                        // with it. The page is put back where you stopped, in case the shrink moved it.
+                        if lifted, liftPlaced, let g = tracker.geometry {
+                            let offset = g.contentOffset.y
+                            let beyond = max(0, g.contentSize.height - g.containerSize.height - offset - composerHeight)
+                            if beyond > 0 {
+                                liftMin = max(0, liftMin - beyond)
+                                if liftMin == 0 { lifted = false; liftPlaced = false; liftId = nil }
+                                DispatchQueue.main.async { position.scrollTo(y: offset) }
+                            }
+                        }
                         rememberScroll()
-                        if let g = tracker.geometry { following = g.contentSize.height - (g.contentOffset.y + g.containerSize.height) < 60 }
+                        // At the end, following: never while lifted, whose room ends exactly at the page's foot (the
+                        // lift's own scroll settles here too, and would read as you having scrolled to the end).
+                        // At the end means at it, not near it: a release of the lift leaves the end a few points off.
+                        if let g = tracker.geometry, !lifted {
+                            let end = g.contentSize.height + g.contentInsets.bottom - g.contentInsets.top - g.containerSize.height
+                            following = end - g.contentOffset.y < 2
+                        }
                     }
                 }
                 .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { _, now in
@@ -1304,8 +1617,15 @@ private struct ConversationView: View {
                     // Following the end (as it opens, and while you're at it): rows measure themselves after the first
                     // layout, and the list's height can settle far from its first guess (a long conversation came out
                     // 2,000 pt shorter, leaving the view past its end, blank). It stays at the end of what's there.
-                    let end = now.contentSize.height + now.contentInsets.bottom - now.containerSize.height
+                    // The offset at the end: the content, less the page, with the insets (the title bar's 38 above)
+                    // in; without them being at the end read as 38 short of it.
+                    let end = now.contentSize.height + now.contentInsets.bottom - now.contentInsets.top - now.containerSize.height
                     if following, end > 0, abs(now.contentOffset.y - end) > 2 { position.scrollTo(edge: .bottom) }
+                    // Past the end is never a place to be (a page left blank until scrolled): back to the end, whether
+                    // following it or restoring where you were.
+                    else if end > 0, now.contentOffset.y > end + 2 { position.scrollTo(edge: .bottom) }
+                    // Scrolled up past the room under a sent message (it's wholly below the page): the room goes, out
+                    // of sight, so scrolling back down ends at the conversation's end.
                 }
                 // Soft edges: at the top, there's more above; just above the composer, the text fades out before it,
                 // as Codex's does, with nothing behind the composer but the page.
@@ -1320,18 +1640,30 @@ private struct ConversationView: View {
                 }
                 // The composer lies over the conversation's foot; the conversation runs the full height under it.
                 .overlay(alignment: .bottom) {
-                    composer.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { composerHeight = $0 }
+                    // What waits for after this turn sits above the composer, part of its height for the fade above.
+                    VStack(spacing: 0) {
+                        if !queued.isEmpty || held {
+                            QueueStrip(queued: queued, held: held,
+                                       steer: { item in Task { if await workspace.unqueue(conversation.id, item: item.id) { send(item.text, images: item.images ?? [], with: conversation.provider) } } },
+                                       edit: { item in Task { if await workspace.unqueue(conversation.id, item: item.id) { draft = item.text; images = (item.images ?? []).map { URL(fileURLWithPath: $0) } } } },
+                                       remove: { item in Task { _ = await workspace.unqueue(conversation.id, item: item.id) } },
+                                       release: { Task { await workspace.release(conversation.id) } })
+                                .frame(maxWidth: 680)
+                        }
+                        composer
+                    }
+                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { composerHeight = $0 }
                 }
                 // Scrolled up: a way back down, just above the composer.
                 .overlay(alignment: .bottom) {
-                    WayDown(tracker: tracker) { following = true; withAnimation { proxy.scrollTo("end", anchor: .bottom) } }.padding(.bottom, composerHeight + 6)
+                    WayDown(tracker: tracker) { following = true; lifted = false; withAnimation { proxy.scrollTo("end", anchor: .bottom) } }.padding(.bottom, composerHeight + 6)
                 }
-                .overlay(alignment: .trailing) { ThinScrollbar(tracker: tracker) { following = false; position.scrollTo(y: $0) }.padding(.trailing, 2) }
+                .overlay(alignment: .trailing) { ThinScrollbar(tracker: tracker) { following = false; lifted = false; position.scrollTo(y: $0) }.padding(.trailing, 2) }
                 .overlay(alignment: .leading) {
                     // Every message of yours, loaded or not, from zerod's outline of the conversation.
-                    let marks = outline.map { MessageRail.Mark(id: $0.id, text: $0.text, answer: $0.answer.map { ZeroEnding.split($0).0 }) }
+                    let marks = (workspace.outlines[conversation.id] ?? []).map { MessageRail.Mark(id: $0.id, text: $0.text, answer: $0.answer.map { ZeroEnding.split($0).0 }) }
                     if marks.count > 1 {
-                        MessageRail(marks: marks, tracker: tracker) { id in
+                        MessageRail(marks: marks, tracker: tracker, inset: 18) { id in
                             Task {
                                 // Not loaded yet: everything from it down to what is, then there.
                                 following = false
@@ -1339,15 +1671,15 @@ private struct ConversationView: View {
                                 withAnimation { proxy.scrollTo(id, anchor: .top) }
                             }
                         }
-                        .padding(.leading, 18).padding(.vertical, 40)
+                        .padding(.vertical, 40)
                     }
                 }
                 // Fetched again as your messages come and go, not with every word streamed.
                 .task(id: conversation.items.count(where: { if case .user = $0.kind { true } else { false } }) + live.earlier) {
-                    outline = await workspace.outline(conversation.id)
+                    await workspace.outline(conversation.id)
                 }
                 // Left, it goes back to its latest items: memory doesn't grow with every long task opened.
-                .onDisappear { rememberScroll(); workspace.trim(conversation.id) }
+                .onDisappear { rememberScroll(); workspace.trim(conversation.id); lifted = false }
                 // Back where you were: the block that was at the top of the screen, its older page loaded first if
                 // it isn't any more. At the end, it opens at the end, as ever.
                 .task {
@@ -1361,11 +1693,21 @@ private struct ConversationView: View {
                 .onAppear {
                     if let kept = Drafts.load("task:" + conversation.id) { draft = kept.text; images = kept.images }
                     if let waiting = workspace.pendingDrafts.removeValue(forKey: conversation.id) { draft = waiting }
+                    let id = conversation.id
+                    Task { try? await Task.sleep(for: .milliseconds(600)); workspace.markSeen(id) }
+                    watchEscape()
                 }
+                .onDisappear { if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }; escapeMonitor = nil }
+                .onChange(of: active, initial: true) { isActive = active }
+                // An answer that lands while you're here is seen too.
+                .onChange(of: conversation.items.last?.id) { workspace.markSeen(conversation.id) }
                 .onChange(of: draft) { Drafts.save("task:" + conversation.id, text: draft, images: images) }
                 .onChange(of: images) { Drafts.save("task:" + conversation.id, text: draft, images: images) }
                 .overlay {
-                    if let item = rewinding {
+                    if pickingRewind {
+                        RewindPicker(messages: conversation.items.filter { if case .user = $0.kind { true } else { false } }.reversed(),
+                                     close: { pickingRewind = false }) { item in pickingRewind = false; rewinding = item }
+                    } else if let item = rewinding {
                         RewindCard(workspace: workspace, task: conversation.id, item: item, close: { rewinding = nil }) { rewound, conversationToo in
                             // The message back in the box, to send again or change.
                             if conversationToo { draft = rewound.text; images = rewound.images.map { URL(fileURLWithPath: $0) } }
@@ -1376,23 +1718,73 @@ private struct ConversationView: View {
         }
     }
 
+    /// Esc, then Esc again within half a second, on the page or in its composer: the rewind picker. A single Esc goes
+    /// on to whatever it was for; nothing opens over a card already open.
+    private func watchEscape() {
+        guard escapeMonitor == nil else { return }
+        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard isActive, event.keyCode == 53, !pickingRewind, rewinding == nil else { return event }
+            let now = Date()
+            if let last = lastEscape, now.timeIntervalSince(last) < 0.5 {
+                lastEscape = nil
+                guard conversation.items.contains(where: { if case .user = $0.kind { true } else { false } }) else { return event }
+                pickingRewind = true
+                return nil
+            }
+            lastEscape = now
+            return event
+        }
+    }
+
     private var composer: some View {
-        Composer(draft: $draft, placeholder: placeholder, canSend: conversation.status != .starting, folder: conversation.cwd, workspace: workspace,
-                 images: $images) {
-            let (text, attached) = (draft, images.map(\.path))
+        let busy = conversation.status == .working || conversation.status == .waiting
+        return Composer(draft: $draft, placeholder: placeholder, canSend: conversation.status != .starting, folder: conversation.cwd, workspace: workspace,
+                 images: $images, active: active, stop: busy && conversation.terminal == nil ? { Task { await workspace.interrupt(conversation.id) } } : nil,
+                 queue: busy && conversation.terminal == nil ? {
+                     // Return while it works: the message waits for after this turn, in the strip above.
+                     let (text, attached) = ImageToken.compact(draft, images: images.map(\.path))
+                     draft = ""
+                     images = []
+                     Task { await workspace.queue(conversation.id, text: text, images: attached) }
+                 } : nil) {
+            let (text, attached) = ImageToken.compact(draft, images: images.map(\.path))
             draft = ""
             images = []
             send(text, images: attached, with: provider ?? conversation.provider)
+            lifted = true
+            liftPlaced = false
+            following = false
         } controls: {
-            // Another provider for the next message: the task moves there, conversation and all.
+            // The model for the next message: one of this provider's, or another provider's, which takes the task
+            // over, conversation and all.
             let current = provider ?? conversation.provider
-            ComposerChip(id: "task.\(conversation.id).agent", label: current.title, symbol: "terminal", icon: current.mark, prominent: true) {
-                ComposerRows.list("Agent", Self.takeOver.map { other in
-                    (other.rawValue, other.title, other == conversation.provider ? "Carries on as it is" : "Takes the task over, with its whole conversation",
-                     other == current, { provider = other == conversation.provider ? nil : other })
-                })
+            let chosen = provider == nil ? (model ?? conversation.model) : model
+            let level = effort ?? (provider == nil && model == nil ? conversation.effort : nil)
+            // The model is the subject, its provider the icon: "Opus 5.5 · High". No model picked, the provider's first;
+            // a provider with no catalogue (OpenCode) by its name.
+            let catalogue = ComposerRows.catalogue(current)
+            let name = catalogue.first { $0.id == chosen }?.name ?? chosen ?? catalogue.first?.name ?? current.title
+            ComposerChip(id: "task.\(conversation.id).agent", label: [name, level.map { effortLabel($0, short: true) }].compactMap { $0 }.joined(separator: " · "),
+                         symbol: "terminal", icon: current.mark, kind: .runtime, prominent: true, rows: {
+                ComposerRows.taskModels(conversation, chosen: (current, chosen)) { picked, choice in
+                    provider = picked == conversation.provider ? nil : picked
+                    model = choice.id.isEmpty ? nil : choice.id
+                    if let effort, !choice.levels.contains(where: { $0.id == effort }) { self.effort = nil }
+                }
+            }, level: { id in id == "\(current.rawValue)/\(chosen ?? "")" ? level : nil }, setLevel: { _, picked in effort = picked })
+            .disabled(busy)
+            // Between turns only: the agent is started again with them, and carries on its thread.
+            ComposerChip(id: "task.\(conversation.id).permissions", label: conversation.permissions == .auto ? "Auto" : "Unrestricted",
+                         symbol: conversation.permissions == .auto ? "wand-sparkle" : "bolt-lightning") {
+                ComposerRows.list("Permissions", [
+                    ("auto", "Auto", "\(conversation.provider.title) decides what's safe, and asks you the rest", conversation.permissions == .auto,
+                     { Task { await workspace.setPermissions(conversation.id, .auto) } }),
+                    ("unrestricted", "Unrestricted", "Anything, without asking", conversation.permissions == .unrestricted,
+                     { Task { await workspace.setPermissions(conversation.id, .unrestricted) } }),
+                ])
             }
-            .disabled(conversation.status == .working || conversation.status == .waiting)
+            .disabled(busy)
+            .help(busy ? "Change permissions once this turn ends" : "What the agent may do without asking")
         }
         // A little narrower than the conversation.
         .centredColumn(680)
@@ -1404,11 +1796,14 @@ private struct ConversationView: View {
 
     private func send(_ text: String, images: [String] = [], with chosen: Provider) {
         Task {
+            let (model, effort) = (model, effort)
             if chosen != conversation.provider {
-                guard await workspace.switchProvider(conversation.id, to: chosen) else { return }
+                guard await workspace.switchProvider(conversation.id, to: chosen, model: model, effort: effort) else { return }
                 provider = nil
             }
-            await workspace.send(conversation.id, text: text, images: images)
+            await workspace.send(conversation.id, text: text, images: images, model: model, effort: effort)
+            self.model = nil
+            self.effort = nil
         }
     }
 
@@ -1417,21 +1812,13 @@ private struct ConversationView: View {
     }
 
     /// What's wrong, and what to do about it: the session's attention beyond working or waiting.
-    private var health: (text: String, icon: String, color: Color)? {
+    private var health: (label: String, text: String)? {
         switch conversation.attention {
-        case .stuck: return (conversation.stalled ?? "Stuck", "triangle-warning", .orange)
+        case .stuck: return ("Stuck", conversation.stalled ?? "It has stopped making progress.")
         case .limited:
             let reset = (conversation.usage?.resetsAt).map { " Resets \(Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .omitted, time: .shortened))." } ?? ""
-            return ("Usage limit reached.\(reset)", "hourglass", .orange)
-        case .failed:
-            let message = conversation.failure?.message ?? conversation.error ?? "It failed"
-            let hint = switch conversation.failure?.kind {
-            case .signIn?: " Sign in with \(conversation.provider == .claude ? "claude" : conversation.provider.rawValue) in a terminal."
-            case .network?: " Check the network, then send a message to retry."
-            case .model?: " Try another model."
-            default: ""
-            }
-            return (message + hint, "triangle-warning", .red)
+            return ("Usage limit", "The provider's usage limit is reached.\(reset)")
+        // A failure is in the conversation itself, as a callout.
         default: return nil
         }
     }
@@ -1447,7 +1834,51 @@ private struct ConversationView: View {
 
 /// The agent asking: each field's options as buttons (toggles where several may be picked), its own words where it
 /// takes them, dots for a secret. Sent once every field has an answer.
+/// A question on the page: the callout's shell and strip in amber, and inside, the inbox's own card for each of its
+/// fields, flat (one card for an ask, wherever it shows), so answering here is answering there. Until the inbox has
+/// them, the plain form.
 private struct QuestionCard: View {
+    let question: Question
+    let session: String
+    let inbox: InboxController
+    let send: ([String: [String]]) -> Void
+    @FocusState private var focus: String?
+
+    private var asks: [Ask] {
+        let order = question.fields.map { question.id + "#" + $0.id }
+        return inbox.store.asks
+            .filter { ask in ask.state != .expired && order.contains(ask.request ?? "") && (ask.agent.ref == session || ask.agent.name == "zerod-" + session) }
+            .sorted { (order.firstIndex(of: $0.request ?? "") ?? 0) < (order.firstIndex(of: $1.request ?? "") ?? 0) }
+    }
+
+    var body: some View {
+        let asks = asks
+        // The table's panel: a grey shell and strip around the card's own surface, one tone, as the other cards are.
+        ArticlePanel {
+            HStack(spacing: 6) {
+                NucleoIcon("circle-question", fill: "glyph", size: 13)
+                Text(question.fields.count == 1 ? (question.fields.first?.header ?? "Question") : "Questions").font(.system(size: 12, weight: .medium)).tracking(-0.2)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 14).padding(.vertical, 7)
+        } content: {
+            Group {
+                if asks.isEmpty {
+                    PlainQuestionCard(question: question, send: send)
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(asks) { ask in CardView(ask: ask, controller: inbox, focus: $focus, flat: true, showsByline: false) }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// The question's own form, when the inbox has no card for it yet.
+private struct PlainQuestionCard: View {
     let question: Question
     let send: ([String: [String]]) -> Void
     @State private var picked: [String: Set<String>] = [:]
@@ -1460,51 +1891,85 @@ private struct QuestionCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ForEach(question.fields) { field in
-                VStack(alignment: .leading, spacing: 8) {
-                    if let header = field.header { Text(header.uppercased()).font(.caption.weight(.semibold)).foregroundStyle(.secondary) }
-                    Text(field.question).font(.headline)
-                    HStack {
-                        ForEach(field.options, id: \.label) { option in
-                            let on = picked[field.id, default: []].contains(option.label)
-                            Button(option.label) {
-                                if field.multiple { picked[field.id, default: []].formSymmetricDifference([option.label]) }
-                                else { picked[field.id] = on ? [] : [option.label] }
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(question.fields) { field in
+                    VStack(alignment: .leading, spacing: 10) {
+                        if question.fields.count > 1, let header = field.header {
+                            Text(header).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                        }
+                        Text((try? AttributedString(markdown: field.question, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(field.question))
+                            .font(.system(size: 13, weight: .medium)).lineSpacing(4).textSelection(.enabled)
+                        if !field.options.isEmpty {
+                            WrappingStack(spacing: 6) {
+                                ForEach(field.options, id: \.label) { option in
+                                    let on = picked[field.id, default: []].contains(option.label)
+                                    Button(option.label) {
+                                        if field.multiple { picked[field.id, default: []].formSymmetricDifference([option.label]) }
+                                        else { picked[field.id] = on ? [] : [option.label] }
+                                    }
+                                    .buttonStyle(ChoiceChip(on: on)).help(option.description ?? "")
+                                }
                             }
-                            .buttonStyle(.bordered).tint(on ? .accentColor : nil).help(option.description ?? "")
+                        }
+                        if field.secret {
+                            SecureField("Secret", text: Binding(get: { typed[field.id, default: ""] }, set: { typed[field.id] = $0 })).modifier(AnswerField())
+                        } else if field.other || field.options.isEmpty {
+                            TextField(field.options.isEmpty ? "Your answer" : "Or say something else", text: Binding(get: { typed[field.id, default: ""] }, set: { typed[field.id] = $0 }))
+                                .modifier(AnswerField())
                         }
                     }
-                    if field.secret { SecureField("Secret", text: Binding(get: { typed[field.id, default: ""] }, set: { typed[field.id] = $0 })) }
-                    else if field.other || field.options.isEmpty {
-                        TextField(field.options.isEmpty ? "Your answer" : "Or say something else", text: Binding(get: { typed[field.id, default: ""] }, set: { typed[field.id] = $0 }))
-                    }
                 }
+                Button("Answer") { send(Dictionary(uniqueKeysWithValues: question.fields.map { ($0.id, answer($0)) })) }
+                    .buttonStyle(Prominent()).keyboardShortcut(.defaultAction).disabled(question.fields.contains { answer($0).isEmpty })
             }
-            Button("Answer") { send(Dictionary(uniqueKeysWithValues: question.fields.map { ($0.id, answer($0)) })) }
-                .buttonStyle(.borderedProminent).disabled(question.fields.contains { answer($0).isEmpty })
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+    }
+
+    /// An option: a pill, solid once picked.
+    private struct ChoiceChip: ButtonStyle {
+        let on: Bool
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label.font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(on ? AnyShapeStyle(Theme.onKnob) : AnyShapeStyle(.primary))
+                .padding(.horizontal, 12).frame(height: 28)
+                .background(on ? AnyShapeStyle(Theme.knob) : AnyShapeStyle(Theme.card), in: Capsule())
+                .overlay(Capsule().strokeBorder(on ? Color.clear : Theme.stroke))
+                .opacity(configuration.isPressed ? 0.8 : 1)
         }
-        .padding(16).background(Theme.orangeRow, in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    /// The free answer's field: a plain field on a pale panel, as the composer's.
+    private struct AnswerField: ViewModifier {
+        func body(content: Content) -> some View {
+            content.textFieldStyle(.plain).font(.system(size: 13))
+                .padding(.horizontal, 10).frame(height: 30)
+                .background(Theme.card, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.stroke))
+        }
     }
 }
 
 struct ItemView: View {
     let item: ConversationItem
     let cwd: String
+    /// When the step after this one began: how long a thought took.
+    var until: Date? = nil
 
     var body: some View {
         switch item.kind {
         case let .user(text, images):
             VStack(alignment: .trailing, spacing: 6) {
                 if !images.isEmpty {
-                    HStack(spacing: 6) { ForEach(images, id: \.self) { Thumbnail(path: $0, side: 120) } }
+                    // In rows, from the right: many images wrap rather than widen the message past the page.
+                    WrappingStack(spacing: 6, trailing: true) { ForEach(images, id: \.self) { Thumbnail(path: $0, side: 88, among: images) } }
                 }
                 if !text.isEmpty {
                     HStack {
                         Spacer(minLength: 80)
-                        // As an answer reads: links that open (zero://, PRs, commits, tickets) and code as code; the
-                        // bubble hugs its words.
-                        MarkdownText(text, cwd: cwd, size: 14.5, hugs: true).padding(.horizontal, 14).padding(.vertical, 9)
+                        // As an answer reads: links that open (zero://, PRs, commits, tickets) and code as code, an
+                        // image's token as its pill; the bubble hugs its words.
+                        MarkdownText(ImageToken.linked(text, images: images), cwd: cwd, size: 14.5, hugs: true, yours: true).padding(.horizontal, 14).padding(.vertical, 9)
                             .background(Theme.chip, in: RoundedRectangle(cornerRadius: 16))
                     }
                 }
@@ -1512,13 +1977,11 @@ struct ItemView: View {
             .frame(maxWidth: .infinity, alignment: .trailing)
         case let .agent(text, final):
             VStack(alignment: .leading, spacing: 6) {
-                MarkdownText(text, cwd: cwd)
+                MarkdownText(text, cwd: cwd, size: 14.5)
                 if final { CopyButton(text: text) }
             }
         case let .reasoning(text):
-            DisclosureGroup { Text(text).font(.callout).foregroundStyle(.secondary).textSelection(.enabled) } label: {
-                NucleoLabel("Thinking", icon: "brain").font(.callout).foregroundStyle(.secondary)
-            }
+            ReasoningRow(text: text, seconds: until.flatMap { until in item.date.map { until.timeIntervalSince($0) } })
         case let .plan(text):
             Text(text).font(.system(.callout, design: .monospaced)).padding(12).frame(maxWidth: .infinity, alignment: .leading).card()
         case let .command(command, _, output, exitCode, _):
@@ -1529,15 +1992,20 @@ struct ItemView: View {
             }
         case let .tool(name, detail):
             // A row like every step's: its name as people say it, its arguments as their values, not JSON.
-            HStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
                 StatusIcon(status: item.status)
                 Text(ToolNames.name(name)).fontWeight(.medium)
                 Text(ToolNames.detail(detail)).foregroundStyle(.secondary).truncationMode(.tail)
             }
             .font(.callout).lineLimit(1).help(detail)
         case let .notice(text, error):
-            NucleoLabel(text, icon: error ? "triangle-warning" : "circle-info")
-                .font(.callout).foregroundStyle(error ? Color.red : .secondary)
+            if error {
+                CautionCallout(text: text)
+            } else {
+                NucleoLabel(text, icon: "circle-info").font(.callout).foregroundStyle(.secondary)
+            }
+        case let .table(title, columns, rows):
+            TableCard(title: title, columns: columns, rows: rows, cwd: cwd)
         }
     }
 }
@@ -1563,12 +2031,168 @@ struct CopyButton: View {
 private struct StatusIcon: View {
     let status: ItemStatus
     var body: some View {
-        switch status {
-        case .running: ProgressView().controlSize(.mini)
-        case .done: NucleoIcon("circle-check", fill: "glyph", size: 14).foregroundStyle(.green)
-        case .failed: NucleoIcon("circle-xmark", fill: "glyph", size: 14).foregroundStyle(.red)
-        case .declined: NucleoIcon("ban", size: 14).foregroundStyle(.orange)
+        Group {
+            switch status {
+            case .running: Spinner().frame(width: 12, height: 12)
+            case .done: NucleoIcon("circle-check", fill: "glyph", size: 14).foregroundStyle(.green)
+            case .failed: NucleoIcon("circle-xmark", fill: "glyph", size: 14).foregroundStyle(.red)
+            case .declined: NucleoIcon("ban", size: 14).foregroundStyle(.orange)
+            }
         }
+        // One size whatever the state (a step ending moves nothing), the first line's height: it sits on that line.
+        .frame(width: 14, height: 16)
+    }
+}
+
+/// Something that went wrong, as a caution callout built as the table's panel is: a rose shell with the warning mark
+/// and a label in its strip, the words on a rounded panel inside, bled out so they line up with the page's prose. A
+/// notice that names itself ("Blocked: …") gives the label; the rest say Error.
+/// A callout's three tones, light and dark: the shell around it, the panel its words sit on, the ink.
+private enum CalloutColors {
+    private static func tinted(light: (CGFloat, CGFloat, CGFloat), dark: (CGFloat, CGFloat, CGFloat)) -> Color {
+        Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(red: dark.0, green: dark.1, blue: dark.2, alpha: 1) : NSColor(red: light.0, green: light.1, blue: light.2, alpha: 1) })
+    }
+    static let rose = (shell: tinted(light: (1.0, 0.894, 0.902), dark: (0.24, 0.03, 0.10)), panel: tinted(light: (1.0, 0.945, 0.949), dark: (0.40, 0.06, 0.18)),
+                       ink: tinted(light: (0.30, 0.02, 0.10), dark: (1.0, 0.894, 0.902)))
+    static let amber = (shell: tinted(light: (1.0, 0.925, 0.835), dark: (0.26, 0.14, 0.02)), panel: tinted(light: (1.0, 0.957, 0.902), dark: (0.40, 0.22, 0.04)),
+                        ink: tinted(light: (0.36, 0.18, 0.0), dark: (1.0, 0.925, 0.835)))
+}
+
+private struct CautionCallout<Actions: View>: View {
+    /// Rose for a failure, amber for trouble that may pass (stuck, out of usage).
+    enum Tone { case rose, amber }
+    let text: String
+    var tone = Tone.rose
+    @ViewBuilder var actions: () -> Actions
+
+    init(text: String, tone: Tone = .rose, @ViewBuilder actions: @escaping () -> Actions = { EmptyView() }) {
+        self.text = text; self.tone = tone; self.actions = actions
+    }
+
+    var body: some View {
+        let colors = tone == .rose ? CalloutColors.rose : CalloutColors.amber
+        let (label, body) = Self.split(text)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                NucleoIcon("triangle-warning", fill: "glyph", size: 13)
+                Text(label).font(.system(size: 12, weight: .medium)).tracking(-0.2)
+            }
+            .foregroundStyle(colors.ink)
+            .padding(.horizontal, 14).padding(.vertical, 7)
+            VStack(alignment: .leading, spacing: 12) {
+                Text((try? AttributedString(markdown: body, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(body))
+                    .font(.system(size: 13)).lineSpacing(4).foregroundStyle(colors.ink)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                actions()
+            }
+            .padding(14)
+            .background(colors.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .padding(2)
+        .background(colors.shell, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        // Bled out by its inner padding (the shell's 2 and the panel's 14), so its words line up with the page's.
+        .padding(.horizontal, -16)
+    }
+
+    /// "Blocked: the words" → ("Blocked", "the words"); anything else is an Error with all its words.
+    static func split(_ text: String) -> (String, String) {
+        if let colon = text.firstIndex(of: ":"), text.distance(from: text.startIndex, to: colon) <= 24,
+           !text[..<colon].contains("\n"), text[text.index(after: colon)...].first == " " {
+            return (String(text[..<colon]), String(text[text.index(after: colon)...]).trimmingCharacters(in: .whitespaces))
+        }
+        return ("Error", text)
+    }
+}
+
+/// A table the agent handed to Zero (`zero table`), drawn as All tasks is: the headings in the shell's strip, rows on
+/// the panel with a hairline between, bled out so its text lines up with the page's. A cell that is a state reads as
+/// the board's pill, a ticket, a PR or a link opens as in an answer, the rest is words with inline code.
+private struct TableCard: View {
+    let title: String
+    let columns: [String]
+    let rows: [[String]]
+    let cwd: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !title.isEmpty { Text(title).font(.system(size: 13, weight: .semibold)).padding(.bottom, 2) }
+            ArticlePanel {
+                line(columns.map { AnyView(Text($0)) }, head: true).padding(.vertical, -3)
+            } content: {
+                VStack(spacing: 0) {
+                    if rows.isEmpty { Text("Nothing in it").font(.system(size: 13)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 16) }
+                    ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                        if index > 0 { Rectangle().fill(Theme.stroke).frame(height: 1) }
+                        line(row.map { AnyView(cell($0)) }, head: false)
+                    }
+                }
+            }
+        }
+    }
+
+    /// One row, the header included: every column shares the width alike. Aligned on their tops: a Markdown cell is a
+    /// text view of its own with no baseline to give, and sat low on a baseline row.
+    private func line(_ cells: [AnyView], head: Bool) -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            ForEach(Array(cells.enumerated()), id: \.offset) { _, cell in cell.frame(maxWidth: .infinity, alignment: .leading) }
+        }
+        .font(head ? .system(size: 12, weight: .medium) : .system(size: 13))
+        .tracking(head ? -0.2 : 0)
+        .foregroundStyle(head ? AnyShapeStyle(.primary) : AnyShapeStyle(.primary.opacity(0.85)))
+        .multilineTextAlignment(.leading)
+        .padding(.horizontal, 16).padding(.vertical, 10)
+    }
+
+    @ViewBuilder private func cell(_ text: String) -> some View {
+        if let state = Self.state(text) {
+            StateLabel(state: state)
+        } else if text.isEmpty || text == "-" || text == "—" || text == "–" {
+            Text("–").foregroundStyle(.tertiary)
+        } else {
+            MarkdownText(text, cwd: cwd, size: 13, compact: true)
+        }
+    }
+
+    /// A cell that names a state, in the board's words or the agents' usual ones.
+    static func state(_ text: String) -> BoardRow.State? {
+        switch text.trimmingCharacters(in: .whitespaces).lowercased() {
+        case "needs you", "blocked", "needsyou", "waiting": .needsYou
+        case "trouble", "in trouble", "failed", "stuck": .trouble
+        case "working": .working
+        case "done": .done
+        case "replied", "answered": .answered
+        case "merged": .merged
+        case "idle": .idle
+        case "offline": .offline
+        default: nil
+        }
+    }
+}
+
+/// A thought as a step's row: "Thought for 4s" and its first line; opened, all of it under.
+private struct ReasoningRow: View {
+    let text: String
+    let seconds: TimeInterval?
+    @State private var open = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button { open.toggle() } label: {
+                HStack(alignment: .top, spacing: 8) {
+                    NucleoIcon("brain", size: 14).foregroundStyle(.secondary).frame(width: 14, height: 16)
+                    Text(seconds.map { "Thought for " + workedFor($0) } ?? "Thought").fontWeight(.medium)
+                    if !open { Text(text.split(whereSeparator: \.isNewline).first.map(String.init) ?? "").foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail) }
+                    Spacer(minLength: 0)
+                    NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if open { Text(text).foregroundStyle(.secondary).textSelection(.enabled).padding(.leading, 22) }
+        }
+        .font(.callout)
     }
 }
 
@@ -1583,7 +2207,7 @@ private struct CommandCard: View {
         // A row like every step's; its output, opened, in a box beneath it, under its words.
         VStack(alignment: .leading, spacing: 8) {
             Button { open.toggle() } label: {
-                HStack(spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
                     StatusIcon(status: status)
                     Text("$ " + command).font(.system(.callout, design: .monospaced)).lineLimit(open ? nil : 1)
                     Spacer(minLength: 0)
@@ -1613,7 +2237,7 @@ private struct FileChangeCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button { open.toggle() } label: {
-                HStack(spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
                     StatusIcon(status: status)
                     Text(verb).font(.callout.weight(.medium))
                     Text(relative(change.path, to: cwd)).font(.system(.callout, design: .monospaced)).lineLimit(1).truncationMode(.head)
@@ -1654,7 +2278,7 @@ private struct DiffText: View {
     var added = false
 
     var body: some View {
-        ScrollView(.horizontal) {
+        ScrollView([.horizontal, .vertical]) {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(diff.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { _, line in
                     Text(line.isEmpty ? " " : String(line)).font(.system(.caption, design: .monospaced))
@@ -1664,6 +2288,7 @@ private struct DiffText: View {
             }
             .textSelection(.enabled)
         }
+        .thinScrollbar()
         .frame(maxHeight: 360)
     }
 
@@ -1724,9 +2349,19 @@ private struct Composer<Controls: View>: View {
     var workspace: Workspace?
     /// Images going with the message: pasted, dropped, or picked with the +.
     @Binding var images: [URL]
+    /// On the page shown; a composer on a page kept behind it gives the keyboard up.
+    var active = true
+    /// While the agent works: the send button stops it instead.
+    var stop: (() -> Void)?
+    /// While the agent works: what Return does (the message waits for after this turn); ⌘⏎ still sends to steer.
+    var queue: (() -> Void)?
     let send: () -> Void
     @ViewBuilder var controls: Controls
     @State private var focused = false
+    /// Edits to the field from here (an image's token, a thumbnail's ×), undoable as typing is.
+    @State private var handle = ComposeHandle()
+    /// More text above or below what the field shows: a fade at that edge.
+    @State private var fades = (top: false, bottom: false)
     /// Whether the text has focus, where the paste handler (AppKit's, outside SwiftUI's updates) can read it.
     @State private var focus = FocusBox()
     @State private var dropping = false
@@ -1745,32 +2380,49 @@ private struct Composer<Controls: View>: View {
     @State private var addMonitor: Any?
 
     final class FocusBox { var on = false }
+    /// Whether this composer's page is the one shown, where the typing and paste monitor (AppKit's, outside SwiftUI's
+    /// updates) can read it: a page kept behind the shown one must leave the keyboard and the clipboard alone.
+    @State private var shown = FocusBox()
 
     /// The same switches as the control bar's composer (Settings → Inbox).
     private var suggestCommands: Bool { UserDefaults.standard.object(forKey: "suggestCommands") as? Bool ?? true }
     private var suggestFiles: Bool { UserDefaults.standard.object(forKey: "suggestFiles") as? Bool ?? false }
 
     var body: some View {
-        let attached = images
+        // The images whose pill is in the words: one whose pills were deleted is out of the strip (and back with ⌘Z).
+        let named = Set(ImageToken.find(in: draft).map(\.number))
+        let attached = images.enumerated().filter { named.contains($0.offset + 1) }
         let ready = canSend && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attached.isEmpty)
         VStack(alignment: .leading, spacing: 12) {
             if !attached.isEmpty {
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
-                        ForEach(attached, id: \.self) { url in
-                            Thumbnail(path: url.path, remove: { images.removeAll { $0 == url } })
+                        ForEach(attached, id: \.offset) { number, url in
+                            // A click puts the image's token where the caret is; its pill opens the image.
+                            Thumbnail(path: url.path, tap: { insert(ImageToken.text(number + 1)) }, remove: { handle.remove(number + 1) })
                         }
                     }
                 }
                 .scrollIndicators(.never)
             }
-            ComposeField(text: $draft, placeholder: placeholder, focused: focused, editable: true,
+            ComposeField(text: $draft, placeholder: placeholder, focused: active && focused, editable: true,
                          caret: caret, onCaretApplied: { caret = nil },
                          onFocus: { focused = $0; focus.on = $0 },
-                         onSubmit: { if ready { send() } },
-                         onTrigger: suggest, onKey: key, highlightFiles: suggestFiles, height: $fieldHeight)
+                         onSubmit: { if ready { (queue ?? send)() } },
+                         onCommandSubmit: queue == nil ? nil : { if ready { send() } },
+                         onTrigger: suggest, onKey: key, highlightFiles: suggestFiles,
+                         onImage: { number in if images.indices.contains(number - 1) { ImageViewer.shared.show(images[number - 1].path, among: images.map(\.path)) } },
+                         handle: handle, onEdges: { fades = (top: $0, bottom: $1) }, height: $fieldHeight)
                 .frame(height: fieldHeight)
                 .padding(.horizontal, -TokenTextView.inset.width) // the text still starts on the card's 14 pt
+                // Scrolled inside: the text fades at an edge with more beyond it, so that more is seen to be there.
+                .mask {
+                    VStack(spacing: 0) {
+                        LinearGradient(colors: [fades.top ? .clear : .black, .black], startPoint: .top, endPoint: .bottom).frame(height: 14)
+                        Color.black
+                        LinearGradient(colors: [.black, fades.bottom ? .clear : .black], startPoint: .top, endPoint: .bottom).frame(height: 14)
+                    }
+                }
             HStack(spacing: 6) {
                 Button { adding = adding == nil ? .add : nil } label: {
                     NucleoIcon("plus", size: 15).foregroundStyle(.primary).frame(width: 28, height: 28)
@@ -1779,11 +2431,18 @@ private struct Composer<Controls: View>: View {
                 .buttonStyle(Hovering(radius: 14, fill: Theme.row, hover: Theme.row)).help("Add files, folders or a scratchpad")
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { plusFrame = $0 }
                 HStack(spacing: 6) { controls }.frame(maxWidth: .infinity, alignment: .leading)
-                Button(action: send) {
-                    NucleoIcon("arrow-up", size: 14).foregroundStyle(ready ? Theme.onKnob : .white)
-                        .frame(width: 28, height: 28).background(ready ? Theme.knob : Theme.sendIdle, in: Circle())
+                if let stop {
+                    Button(action: stop) {
+                        NucleoIcon("media-stop", fill: "glyph", size: 12).foregroundStyle(Theme.onKnob).frame(width: 28, height: 28).background(Theme.knob, in: Circle())
+                    }
+                    .buttonStyle(.plain).keyboardShortcut(".", modifiers: .command).help("Stop")
+                } else {
+                    Button(action: send) {
+                        NucleoIcon("arrow-up", size: 14).foregroundStyle(ready ? Theme.onKnob : .white)
+                            .frame(width: 28, height: 28).background(ready ? Theme.knob : Theme.sendIdle, in: Circle())
+                    }
+                    .buttonStyle(.plain).keyboardShortcut(.return, modifiers: .command).disabled(!ready)
                 }
-                .buttonStyle(.plain).keyboardShortcut(.return, modifiers: .command).disabled(!ready)
             }
         }
         .padding(14)
@@ -1817,23 +2476,26 @@ private struct Composer<Controls: View>: View {
             }
         }
         .onChange(of: adding == nil) { _, closed in closed ? stopWatchingAdd() : watchAdd() }
+        .task(id: workspace?.loopsVersion) { await workspace?.loadLoops() }
         .onChange(of: adding) { _, page in if page == .pads { Task { await workspace?.loadPads() } } }
         .onDrop(of: [.fileURL, .image], isTargeted: $dropping) { providers in
-            let images = $images
-            Attachments.fromDrop(providers) { images.wrappedValue += $0 }
+            Attachments.fromDrop(providers) { attach($0) }
             return true
         }
         // ⌘V with an image on the clipboard attaches it; anything else pastes into the text as usual. With nothing that
         // takes typing focused (a click into the conversation, say), typing or pasting goes to the composer, focused.
         .onAppear {
             guard monitor == nil else { return }
-            let (focus, images, draft, focused, caret) = (focus, $images, $draft, $focused, $caret)
+            let (focus, draft, focused, caret) = (focus, $draft, $focused, $caret)
+            let attach = { (urls: [URL]) in attach(urls) }
+            let shown = shown
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                guard shown.on else { return event }
                 let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
                 let paste = flags == .command && event.charactersIgnoringModifiers == "v"
                 if focus.on {
                     guard paste, let urls = Attachments.fromPasteboard(), !urls.isEmpty else { return event }
-                    images.wrappedValue += urls
+                    attach(urls)
                     return nil
                 }
                 // Only in the workspace's window (not a panel), and only when nothing there takes typing already: a
@@ -1845,7 +2507,7 @@ private struct Composer<Controls: View>: View {
                     focused.wrappedValue = true
                 }
                 if paste {
-                    if let urls = Attachments.fromPasteboard(), !urls.isEmpty { images.wrappedValue += urls; focused.wrappedValue = true }
+                    if let urls = Attachments.fromPasteboard(), !urls.isEmpty { attach(urls) }
                     else if let text = NSPasteboard.general.string(forType: .string) { land(text) }
                     else { return event }
                     return nil
@@ -1857,6 +2519,7 @@ private struct Composer<Controls: View>: View {
             }
         }
         .onDisappear { if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil; stopWatchingAdd() }
+        .onChange(of: active, initial: true) { shown.on = active; if !active { focus.on = false } }
     }
 
     /// Whether what has the keyboard takes typing: an editable text view (a field's editor too), or anything that reads
@@ -1885,21 +2548,30 @@ private struct Composer<Controls: View>: View {
         panel.allowsMultipleSelection = true
         guard panel.runModal() == .OK else { return }
         var paths: [String] = []
+        var pictures: [URL] = []
         for url in panel.urls {
-            if Attachments.isImage(url), let copied = Attachments.copy(url) { images.append(copied); continue }
+            if Attachments.isImage(url), let copied = Attachments.copy(url) { pictures.append(copied); continue }
             var path = url.path
             if let folder, path.hasPrefix(folder + "/") { path = String(path.dropFirst(folder.count + 1)) }
             paths.append(path.contains(" ") ? "\"\(path)\"" : "@" + path)
         }
         if !paths.isEmpty { insert(paths.joined(separator: " ")) }
+        attach(pictures)
     }
 
-    /// Words added at the end of what's written, and the field focused again.
+    /// Images attached, each leaving its token in the words: at the caret (a paste while typing is about that spot),
+    /// else at the end.
+    private func attach(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        let first = images.count + 1
+        images += urls
+        insert((first..<first + urls.count).map(ImageToken.text).joined(separator: " "))
+    }
+
+    /// Words put in at the caret, through the field (undoable); it's focused after.
     private func insert(_ text: String) {
-        let gap = draft.isEmpty || draft.hasSuffix(" ") || draft.hasSuffix("\n") ? "" : " "
-        draft += gap + text + " "
-        focused = false
-        DispatchQueue.main.async { focused = true }
+        handle.insert(text)
+        if !focused { focused = true }
     }
 
     /// While the menu is open: a click outside it (and outside the +, which toggles it) or Esc closes it.
@@ -1929,7 +2601,20 @@ private struct Composer<Controls: View>: View {
 
     private func suggest(_ trigger: MentionTrigger?) {
         mentionTask?.cancel()
-        guard let trigger, trigger.symbol == "/" ? suggestCommands : suggestFiles else { mention = nil; return }
+        guard let trigger, trigger.symbol == "/" ? suggestCommands : true else { mention = nil; return }
+        if trigger.symbol == "@" {
+            // Loops first, always; the folder's files after them when that's on.
+            let query = trigger.query.lowercased()
+            let loops = (workspace?.loops ?? []).filter { query.isEmpty || $0.name.contains(query) || $0.description.lowercased().contains(query) }
+                .map { Mention(kind: .loop, insert: "@" + $0.name, detail: $0.description.isEmpty ? "Loop" : $0.description) }
+            guard suggestFiles, let folder else { show(trigger, loops); return }
+            mentionTask = Task {
+                let files = await ProjectFiles.list(folder)
+                guard !Task.isCancelled else { return }
+                show(trigger, loops + ProjectFiles.match(trigger.query, in: files).map { Mention(kind: .file, insert: "@" + $0, detail: nil) })
+            }
+            return
+        }
         if trigger.symbol == "/" {
             let query = trigger.query.lowercased()
             let all = ClaudeCommands.all(projectPath: folder)
@@ -1979,13 +2664,210 @@ private struct Composer<Controls: View>: View {
 
 extension Composer where Controls == EmptyView {
     init(draft: Binding<String>, placeholder: String, canSend: Bool = true, folder: String? = nil, workspace: Workspace? = nil, images: Binding<[URL]>,
-         send: @escaping () -> Void) {
-        self.init(draft: draft, placeholder: placeholder, canSend: canSend, folder: folder, workspace: workspace, images: images, send: send) { EmptyView() }
+         stop: (() -> Void)? = nil, send: @escaping () -> Void) {
+        self.init(draft: draft, placeholder: placeholder, canSend: canSend, folder: folder, workspace: workspace, images: images, stop: stop, send: send) { EmptyView() }
     }
 }
 
 /// Going back to a message of yours, as Claude Code's rewind has it: the conversation, the folder's code, or both,
 /// as they were when the message went; or a new task branched from there. What the code would lose is said first.
+/// Your messages waiting for after the agent's current turn, as a tab behind the composer: each with edit, delete and
+/// Steer (now, mid-turn); its words go back into the composer on a click. Held since you stopped the agent, the tab
+/// says so with Send.
+private struct QueueStrip: View {
+    let queued: [Queued]
+    let held: Bool
+    let steer: (Queued) -> Void
+    let edit: (Queued) -> Void
+    let remove: (Queued) -> Void
+    let release: () -> Void
+    @State private var hovered: String?
+    /// A control under the pointer: it takes the hover, and the row gives its own up. The row gives it up across the
+    /// whole cluster of controls, gaps included, so crossing from one to the next doesn't flash the row.
+    @State private var control: String?
+    @State private var overControls: String?
+
+    var body: some View {
+        // The project tab's place and shape, behind the composer's top edge; inside it the panel's parts: a strip
+        // naming it, and the queue as rows on their own surface.
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                NucleoIcon(held ? "media-stop" : "clock", fill: "glyph", size: 13)
+                Text(held ? "Held" : "Queued").font(.system(size: 12, weight: .medium)).tracking(-0.2)
+                Spacer()
+                if held { Button("Send", action: release).buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.primary).help("You stopped the agent; let the queue go on") }
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12).frame(height: 28)
+            VStack(spacing: 0) {
+                ForEach(Array(queued.enumerated()), id: \.element.id) { index, item in
+                    HStack(spacing: 2) {
+                        Button { edit(item) } label: {
+                            Text(Self.gist(item)).font(.system(size: 13)).foregroundStyle(.primary).lineLimit(1).truncationMode(.tail)
+                                .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).help("Back into the composer")
+                        // Edit and delete on squares that take the row's hover when the pointer is on them; then Steer
+                        // as a pill, on a hairline so it reads on the hovered row too, solid under the pointer. The
+                        // arrow turns the corner: out of the queue and up to the agent.
+                        HStack(spacing: 2) {
+                            square("pen", help: "Edit in the composer", id: item.id + "/edit") { edit(item) }
+                            square("trash", help: "Delete", id: item.id + "/delete") { remove(item) }
+                            let lit = control == item.id + "/steer"
+                            Button { steer(item) } label: {
+                                HStack(spacing: 5) {
+                                    Text("Steer").font(.system(size: 12, weight: .medium))
+                                    NucleoIcon("arrow-turn-up-2", size: 12)
+                                }
+                                .foregroundStyle(lit ? AnyShapeStyle(Theme.onKnob) : AnyShapeStyle(.primary))
+                                .padding(.leading, 10).padding(.trailing, 8).frame(height: 24)
+                                .background(lit ? Theme.knob : Theme.chip, in: Capsule())
+                                .overlay(Capsule().strokeBorder(lit ? Color.clear : Theme.stroke))
+                            }
+                            .buttonStyle(PressableStyle()).help("Send it now, mid-turn").padding(.leading, 4)
+                            .onHover { inside in if inside { control = item.id + "/steer" } else if control == item.id + "/steer" { control = nil } }
+                        }
+                        .padding(.vertical, 4).contentShape(Rectangle())
+                        .onHover { inside in if inside { overControls = item.id } else if overControls == item.id { overControls = nil } }
+                    }
+                    .padding(.leading, 14).padding(.trailing, 4).frame(height: 32)
+                    // The last row runs on under the composer's card by exactly what the card covers, hover and all.
+                    .padding(.bottom, index == queued.count - 1 ? 12 : 0)
+                    // The tab's own grey: a step down from the surface, never deeper than the strip above the rows.
+                    .background { if hovered == item.id && overControls != item.id { Rectangle().fill(Theme.fieldTab) } }
+                    .onHover { inside in if inside { hovered = item.id } else if hovered == item.id { hovered = nil } }
+                }
+            }
+            .frame(maxWidth: .infinity)
+            // Not the composer's white: the queue is behind the composer, a step back from it.
+            .background(Theme.composer)
+            // Concentric: the Steer pill's 12 plus its 4 inset is the surface's 16; plus the surface's 2, the tab's 18.
+            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16, style: .continuous))
+            .padding(.horizontal, 2)
+        }
+        // Codex's tab: flat grey, no edge, a little in from the card's sides; the card's shadow gives it depth. The
+        // card sits 4 down inside its own column (the composer's top padding), so 16 here puts 12 of the tab under it:
+        // the last row's 12 exactly, leaving the same 4 under its pill as over the first row's.
+        .background(Theme.fieldTab, in: UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18, style: .continuous))
+        .padding(.horizontal, 13).padding(.bottom, -16)
+    }
+
+    private func square(_ symbol: String, help: String, id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            NucleoIcon(symbol, size: 13).foregroundStyle(.secondary).frame(width: 24, height: 24)
+                .background(control == id ? Theme.fieldTab : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle()).help(help)
+        .onHover { inside in if inside { control = id } else if control == id { control = nil } }
+    }
+
+    private static func gist(_ item: Queued) -> String {
+        let line = item.text.replacingOccurrences(of: #"\s*\[Image #\d+\]"#, with: "", options: .regularExpression)
+            .split(whereSeparator: \.isNewline).first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+        let count = item.images?.count ?? 0
+        let pictures = count == 0 ? "" : (count == 1 ? "an image" : "\(count) images")
+        return line.isEmpty ? (pictures.isEmpty ? item.text : pictures.prefix(1).uppercased() + pictures.dropFirst()) : (pictures.isEmpty ? line : "\(line) · \(pictures)")
+    }
+}
+
+/// Where to rewind to: your messages, latest first, picked with the arrows and Return (or a click); Esc closes it.
+/// The pick opens RewindCard for the how.
+private struct RewindPicker: View {
+    let messages: [ConversationItem]
+    let close: () -> Void
+    let pick: (ConversationItem) -> Void
+    @State private var index = 0
+    @State private var monitor: Any?
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.06).contentShape(Rectangle()).onTapGesture(perform: close)
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Rewind to").font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                    Text("\(messages.count) message\(messages.count == 1 ? "" : "s")").font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 10)
+                Rectangle().fill(Theme.hairline).frame(height: 1)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(spacing: 1) {
+                            ForEach(Array(messages.enumerated()), id: \.element.id) { i, item in
+                                Button { pick(item) } label: {
+                                    HStack(spacing: 12) {
+                                        Text(Self.gist(item)).font(.system(size: 13)).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
+                                        if let date = item.date {
+                                            Text(date.formatted(.relative(presentation: .numeric, unitsStyle: .abbreviated)))
+                                                .font(.system(size: 11.5)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
+                                        }
+                                        NucleoIcon("chevron-right", size: 11).foregroundStyle(.tertiary).opacity(i == index ? 1 : 0)
+                                    }
+                                    .padding(.horizontal, 10).frame(height: 32)
+                                    .background(i == index ? Theme.row : .clear, in: RoundedRectangle(cornerRadius: 8))
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .onHover { inside in if inside { index = i } }
+                                .id(item.id)
+                            }
+                        }
+                        .padding(6)
+                    }
+                    .thinScrollbar(outset: 2)
+                    .scrollIndicators(.never)
+                    // As tall as its rows, up to nine: no room left under a short list.
+                    .frame(height: 12 + 33 * CGFloat(min(messages.count, 9)) - 1)
+                    .onChange(of: index) { if index < messages.count { proxy.scrollTo(messages[index].id) } }
+                }
+                Rectangle().fill(Theme.hairline).frame(height: 1)
+                HStack(spacing: 14) {
+                    key("↑↓", "Choose")
+                    key("↩", "Pick")
+                    key("esc", "Close")
+                }
+                .padding(.horizontal, 14).padding(.vertical, 9)
+            }
+            .frame(width: 460, alignment: .leading)
+            .card()
+            .compositingGroup()
+            .shadow(color: .black.opacity(0.12), radius: 20, y: 6)
+        }
+        .onAppear {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                switch event.keyCode {
+                case 125: index = min(index + 1, messages.count - 1); return nil // ↓
+                case 126: index = max(index - 1, 0); return nil // ↑
+                case 36, 76: if index < messages.count { pick(messages[index]) }; return nil // Return
+                case 53: close(); return nil
+                default: return event
+                }
+            }
+        }
+        .onDisappear { if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil }
+    }
+
+    /// A key and what it does, as the footer of a menu names them.
+    private func key(_ cap: String, _ does: String) -> some View {
+        HStack(spacing: 5) {
+            Text(cap).font(.system(size: 10.5, weight: .medium)).monospacedDigit().padding(.horizontal, 5).frame(height: 17)
+                .background(Theme.chip, in: RoundedRectangle(cornerRadius: 4))
+            Text(does).font(.system(size: 11.5)).foregroundStyle(.secondary)
+        }
+    }
+
+    /// The message's first line, its image tokens read as words ("an image", "2 images").
+    private static func gist(_ item: ConversationItem) -> String {
+        guard case let .user(text, images) = item.kind else { return "" }
+        let words = ConversationItem.from(text)?.text ?? text
+        let line = words.replacingOccurrences(of: #"\s*\[Image #\d+\]"#, with: "", options: .regularExpression)
+            .split(whereSeparator: \.isNewline).first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+        let pictures = images.isEmpty ? "" : (images.count == 1 ? "an image" : "\(images.count) images")
+        return line.isEmpty ? (pictures.isEmpty ? words : pictures.prefix(1).uppercased() + pictures.dropFirst()) : (pictures.isEmpty ? line : "\(line) · \(pictures)")
+    }
+}
+
 private struct RewindCard: View {
     let workspace: Workspace
     let task: String
@@ -2100,6 +2982,7 @@ private struct AddMenu: View {
                         .onSubmit { if let first = found.first { pad(first) } }
                 }
                 .padding(.horizontal, 6).padding(.vertical, 4)
+                .contentShape(Rectangle()).onTapGesture { searching = true }
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 1) {
                         ForEach(found) { summary in
@@ -2209,7 +3092,8 @@ private struct ComposerChip: View {
                 Text(label).font(.system(size: 13)).foregroundStyle(prominent ? .primary : .secondary).lineLimit(1)
                 NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0))
             }
-            .padding(.horizontal, 8).padding(.vertical, 4)
+            // As tall as the + and Send beside it (28), so the row's pills are one size.
+            .padding(.horizontal, 8).frame(height: 28)
             // Plain words, as Codex's controls are; a soft fill under the pointer, and while its selector is open.
             .background(open || hovered ? Theme.row : .clear, in: Capsule())
             .contentShape(Capsule())
@@ -2239,6 +3123,15 @@ private struct ComposerChip: View {
         }
     }
 
+    /// A task's choices: its own provider's models, then each provider that can take it over (ConversationView.takeOver).
+    /// `chosen` is the (provider, model id) in effect; no id means the provider's first.
+    static func taskModels(_ conversation: Conversation, chosen: (Provider, String?), pick: @escaping (Provider, SpawnChoice) -> Void) -> [SelectorSection] {
+        let providers = [conversation.provider] + ConversationView.takeOver.filter { $0 != conversation.provider }
+        return models(providers, selected: { provider, id in
+            provider == chosen.0 && (id == (chosen.1 ?? "") || (chosen.1 == nil && id == (catalogue(provider).first?.id ?? "")))
+        }, pick: pick)
+    }
+
     /// The models a provider's CLI offers the signed-in account, from its own cache.
     static func catalogue(_ provider: Provider) -> [SpawnChoice] {
         switch provider {
@@ -2249,6 +3142,16 @@ private struct ComposerChip: View {
     }
 
     /// A single list: title, the line under it, whether it's chosen, and what picking it does.
+    /// A menu's groups (SelectorKind.menu): each a section, drawn one under another with a line between.
+    static func menu(_ groups: [[(id: String, title: String, glyph: String, selected: Bool, pick: () -> Void)]]) -> [SelectorSection] {
+        groups.enumerated().map { index, rows in
+            SelectorSection(id: "group-\(index)", title: "", icon: nil, rows: rows.map { row in
+                SelectorRow(id: row.id, title: row.title, provider: nil, providerIcon: nil, detail: nil, context: nil, levels: [],
+                            defaultLevel: nil, modelID: nil, selected: row.selected, pick: row.pick, glyph: row.glyph)
+            })
+        }
+    }
+
     static func list(_ title: String, icon: Image? = nil, _ rows: [(id: String, title: String, detail: String?, selected: Bool, pick: () -> Void)]) -> [SelectorSection] {
         [SelectorSection(id: title, title: title, icon: icon, rows: rows.map { row in
             SelectorRow(id: row.id, title: row.title, provider: nil, providerIcon: nil, detail: row.detail, context: nil, levels: [],
@@ -2284,7 +3187,14 @@ private struct NewTaskView: View {
     @State private var starting = false
 
     private var chosen: Provider { Provider(rawValue: provider) ?? .codex }
-    private var folders: [String] { Projects.folders }
+    /// The workspace the task starts in: the one shown, unless picked.
+    @State private var into = ""
+    /// The workspace's own folders first, then the rest (Zero's are those no other claims).
+    private var folders: [String] {
+        let owned = workspace.workspaces.first { $0.id == (into.isEmpty ? workspace.current : into) }?.folders ?? []
+        let all = Projects.folders
+        return owned.filter(all.contains) + all.filter { !owned.contains($0) }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2305,7 +3215,6 @@ private struct NewTaskView: View {
                             ("unrestricted", "Unrestricted", "Anything, without asking", permissions == .unrestricted, { permissions = .unrestricted }),
                         ])
                     }
-                    Spacer(minLength: 0)
                     ComposerChip(id: "new.agent", label: agentLabel, symbol: "terminal", icon: chosen.mark, kind: .runtime, prominent: true, rows: {
                         ComposerRows.models(Provider.allCases, selected: { provider, id in
                             provider == chosen && (id == model || (model.isEmpty && id == (ComposerRows.catalogue(provider).first?.id ?? "")))
@@ -2315,9 +3224,10 @@ private struct NewTaskView: View {
                             if !choice.levels.contains(where: { $0.id == effort }) { effort = "" }
                         })
                     }, level: { id in id == "\(chosen.rawValue)/\(model)" && !effort.isEmpty ? effort : nil }, setLevel: { _, level in effort = level })
+                    Spacer(minLength: 0)
                 }
             }
-            .frame(maxWidth: 640)
+            .frame(maxWidth: 680) // the same column as a task's composer
             .padding(.horizontal, 36).padding(.bottom, 18)
         }
         .frame(maxWidth: .infinity)
@@ -2341,6 +3251,12 @@ private struct NewTaskView: View {
                         (folder, (folder as NSString).lastPathComponent, (folder as NSString).abbreviatingWithTildeInPath, folder == project, { project = folder })
                     })
                 }
+                // Started from one workspace into another: the lead is there, and so are the workers it starts.
+                if workspace.workspaces.count > 1 {
+                    ComposerChip(id: "new.workspace", label: workspace.workspaces.first { $0.id == into }?.name ?? workspace.currentWorkspace.name, symbol: "layers") {
+                        ComposerRows.list("Workspace", workspace.workspaces.map { w in (w.id, w.name, nil, w.id == into, { into = w.id }) })
+                    }
+                }
             }
             Spacer()
         }
@@ -2351,9 +3267,10 @@ private struct NewTaskView: View {
         .padding(.horizontal, 13).padding(.bottom, -12)
     }
 
-    /// "Claude · Opus · High".
+    /// "Opus 5.5 · High": the model, its provider as the chip's icon. None picked, the provider's first; a provider with
+    /// no catalogue (OpenCode) by its name.
     private var agentLabel: String {
-        [chosen.title, models.first { $0.id == model }?.name ?? (model.isEmpty ? nil : model), effort.isEmpty ? nil : effortLabel(effort, short: true)]
+        [models.first { $0.id == model }?.name ?? (model.isEmpty ? (models.first?.name ?? chosen.title) : model), effort.isEmpty ? nil : effortLabel(effort, short: true)]
             .compactMap { $0 }.joined(separator: " · ")
     }
 
@@ -2361,15 +3278,15 @@ private struct NewTaskView: View {
     private var models: [SpawnChoice] { ComposerRows.catalogue(chosen) }
 
     private func start() {
-        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        let attached = images.map(\.path)
+        let (text, attached) = ImageToken.compact(prompt.trimmingCharacters(in: .whitespacesAndNewlines), images: images.map(\.path))
         guard !text.isEmpty || !attached.isEmpty, !starting else { return }
         starting = true
         Task {
             if let id = await workspace.start(provider: chosen, cwd: project, prompt: text, images: attached, model: model.isEmpty ? nil : model,
-                                              effort: effort.isEmpty ? nil : effort, permissions: permissions) {
+                                              effort: effort.isEmpty ? nil : effort, permissions: permissions, workspace: into.isEmpty ? workspace.current : into) {
                 prompt = ""
                 images = []
+                into = ""
                 started(id)
             }
             starting = false
@@ -2431,8 +3348,14 @@ struct InboxSidebar: View {
     var body: some View {
         let asks = AsksPage.asks(controller)
         let waiting = asks.filter { !$0.state.isFinal }
-        // Agents by their latest ask, newest first.
+        // Agents by their latest ask, newest first. Solo's agents that are gone (its process ended) with nothing open
+        // are history, not agents: their asks stay under Answered, their names leave the list (they carried the same
+        // session titles Zero's tasks do, and read as doubles).
         let agents = asks.reversed().reduce(into: [String]()) { names, ask in if !names.contains(ask.agent.name) { names.append(ask.agent.name) } }
+            .filter { name in
+                guard name.hasPrefix("solo-"), controller.store.offline.contains(name) else { return true }
+                return waiting.contains { $0.agent.name == name }
+            }
         SidebarColumn(title: "Inbox") {
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
@@ -2525,6 +3448,8 @@ struct AsksPage: View {
                     // row did, so it isn't said twice. Its × folds it back to a row.
                     if open == ask.id {
                         CardView(ask: ask, controller: controller, focus: $focus, flat: true)
+                            // Room at the right for the ×, clear of the card's own corner (a run's Stop sits there).
+                            .padding(.trailing, 30)
                             .background(Theme.rowHover)
                             .overlay(alignment: .topTrailing) {
                                 Button { picked = "" } label: {
@@ -2675,8 +3600,10 @@ private struct StatusCard: View {
 
 /// A tool as people say it, and its arguments as their values: "Linear · list comments", "ENG-9737 · 5".
 enum ToolNames {
-    /// "mcp__linear-server__list_comments" → "Linear · list comments"; anything else as it is.
+    /// "mcp__linear-server__list_comments" → "Linear · list comments"; Claude Code's Agent tool is a subagent, said so;
+    /// anything else as it is.
     static func name(_ raw: String) -> String {
+        if raw == "Agent" || raw == "Task" { return "Subagent" }
         guard raw.hasPrefix("mcp__") else { return raw }
         let parts = raw.dropFirst("mcp__".count).components(separatedBy: "__")
         guard parts.count >= 2 else { return raw }

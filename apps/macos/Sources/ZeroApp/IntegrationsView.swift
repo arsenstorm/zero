@@ -2,9 +2,10 @@ import AppKit
 import SwiftUI
 import ZeroCore
 
-/// The two integrations, as the rail and the pages name and draw them.
+/// The integrations, as the rail and the pages name and draw them. Slack has no views: it connects so that channels
+/// and threads named in messages open in Slack.
 enum Integration: String, CaseIterable, Identifiable {
-    case github, linear
+    case github, linear, slack
     var id: String { rawValue }
     static let shownKey = "integrationsShown"
 
@@ -13,11 +14,18 @@ enum Integration: String, CaseIterable, Identifiable {
         UserDefaults.standard.set(name, forKey: shownKey)
         place = .integrations
     }
-    var title: String { self == .github ? "GitHub" : "Linear" }
+    var title: String {
+        switch self {
+        case .github: "GitHub"
+        case .linear: "Linear"
+        case .slack: "Slack"
+        }
+    }
 
     @ViewBuilder func icon(size: CGFloat) -> some View {
         switch self {
         case .github: NucleoIcon("github", fill: "glyph", size: size)
+        case .slack: NucleoIcon("slack", fill: "glyph", size: size)
         case .linear:
             if let mark = Self.linearMark {
                 Image(nsImage: mark).renderingMode(.template).resizable().aspectRatio(contentMode: .fit).frame(width: size, height: size)
@@ -50,18 +58,41 @@ enum Integration: String, CaseIterable, Identifiable {
         return image
     }()
 
-    /// The account it's connected as: gh's login, or the Linear workspace.
-    func account(in state: IntegrationState?) -> String? { self == .github ? state?.github : state?.linear }
+    /// The account it's connected as: gh's login, the Linear workspace, or the Slack workspace.
+    @MainActor func account(in state: IntegrationState?) -> String? {
+        switch self {
+        case .github: state?.github
+        case .linear: state?.linear
+        case .slack: state?.slack?.team.name
+        }
+    }
 
     func enabled(in state: IntegrationState?) -> Bool {
         guard let state else { return false }
-        return self == .github ? state.settings.github.enabled : state.settings.linear.enabled
+        return switch self {
+        case .github: state.settings.github.enabled
+        case .linear: state.settings.linear.enabled
+        case .slack: false
+        }
     }
 
     /// Its views as (id, name), in order.
+    /// What agents can follow through it (the Following section).
+    var followingDetail: String {
+        switch self {
+        case .github: "Agents follow pull requests with zero follow <url>: reviews, comments, CI, pushes and merges reach them between turns."
+        case .linear: "Agents follow issues, or one comment thread, with zero follow <url>: status changes and comments reach them between turns."
+        case .slack: "Agents follow threads and channels with zero follow <url>: replies reach them between turns."
+        }
+    }
+
     func views(in state: IntegrationState?) -> [(id: String, name: String)] {
         guard let state else { return [] }
-        return self == .github ? state.settings.github.views.map { ($0.id, $0.name) } : state.settings.linear.views.map { ($0.id, $0.name) }
+        return switch self {
+        case .github: state.settings.github.views.map { ($0.id, $0.name) }
+        case .linear: state.settings.linear.views.map { ($0.id, $0.name) }
+        case .slack: []
+        }
     }
 }
 
@@ -85,11 +116,18 @@ struct IntegrationsPane: View {
                 VStack(alignment: .leading, spacing: 0) {
                     PageTitle(text: shown.title).padding(.bottom, 24)
                     connection.padding(.bottom, 28)
-                    Text("Views").font(.system(size: 15, weight: .semibold)).padding(.bottom, 4)
-                    Text(shown == .github ? "Each view is a GitHub search: add org:YourOrg to narrow it to one organisation's repositories."
-                                          : "Each view picks whose issues, which teams and which states.")
-                        .font(.system(size: 12)).foregroundStyle(.secondary).padding(.bottom, 12)
-                    views
+                    if shown.account(in: workspace.integrations) != nil {
+                        Text("Following").font(.system(size: 15, weight: .semibold)).padding(.bottom, 4)
+                        Text(shown.followingDetail).font(.system(size: 12)).foregroundStyle(.secondary).padding(.bottom, 12)
+                        FollowRows(workspace: workspace, source: shown).padding(.bottom, 28)
+                    }
+                    if shown != .slack {
+                        Text("Views").font(.system(size: 15, weight: .semibold)).padding(.bottom, 4)
+                        Text(shown == .github ? "Each view is a GitHub search: add org:YourOrg to narrow it to one organisation's repositories."
+                                              : "Each view picks whose issues, which teams and which states.")
+                            .font(.system(size: 12)).foregroundStyle(.secondary).padding(.bottom, 12)
+                        views
+                    }
                 }
                 .centredColumn(680)
                 .padding(.top, 44).padding(.bottom, 28)
@@ -101,16 +139,27 @@ struct IntegrationsPane: View {
         .task(id: workspace.integrations?.linear) { if workspace.integrations?.linear != nil { await workspace.loadLinearTeams() } }
     }
 
+    private var connectedDetail: String {
+        switch shown {
+        case .github: "Through the GitHub CLI, signed in as it already is."
+        case .linear: "Read-only, kept on this Mac."
+        case .slack: "Read-only, kept on this Mac. #channel and message links open in Slack; agents can follow threads and channels."
+        }
+    }
+
     @ViewBuilder private var connection: some View {
         let enabled = Binding(get: { shown.enabled(in: workspace.integrations) }, set: { on in Task { await workspace.setIntegration(shown.rawValue, enabled: on) } })
         if let account = shown.account(in: workspace.integrations) {
             Rows {
                 OnboardingRow(icon: "", picture: nil, title: shown == .github ? "Connected as \(account)" : "Connected to \(account)",
-                              detail: shown == .github ? "Through the GitHub CLI, signed in as it already is." : "Read-only, kept on this Mac.") {
+                              detail: connectedDetail) {
                     if shown == .linear { Button("Disconnect") { Task { await workspace.disconnectLinear() } } }
+                    if shown == .slack { Button("Disconnect") { Task { await workspace.disconnectSlack() } } }
                 }
                 .overlay(alignment: .leading) { shown.icon(size: 17).foregroundStyle(.secondary).frame(width: 22) }
-                OnboardingRow(icon: "sidebar-right", title: "Show in the sidebar", detail: "A place of its own in the rail, with these views.") { Switch(isOn: enabled) }
+                if shown != .slack {
+                    OnboardingRow(icon: "sidebar-right", title: "Show in the sidebar", detail: "A place of its own in the rail, with these views.") { Switch(isOn: enabled) }
+                }
                 if shown == .linear, LinearLinks.installed {
                     OnboardingRow(icon: "link", title: "Open issues in the Linear app", detail: "Rather than the browser, here and in messages.") { Switch(isOn: $linearInApp) }
                 }
@@ -127,6 +176,7 @@ struct IntegrationsPane: View {
         let rows: [(id: String, name: String, summary: String, mono: Bool)] = switch integration {
         case .github: (workspace.integrations?.settings.github.views ?? []).map { ($0.id, $0.name, $0.query, true) }
         case .linear: (workspace.integrations?.settings.linear.views ?? []).map { ($0.id, $0.name, Self.summary($0, teams: workspace.linearTeams), false) }
+        case .slack: []
         }
         let ids = rows.map(\.id)
         VStack(spacing: 0) {
@@ -155,6 +205,7 @@ struct IntegrationsPane: View {
         case .linear:
             let view = workspace.integrations?.settings.linear.views.first { $0.id == id } ?? LinearView(name: "")
             LinearViewForm(view: view, workspace: workspace) { edited in Task { await workspace.saveView("linear", view: edited) } }
+        case .slack: EmptyView()
         }
     }
 
@@ -491,9 +542,10 @@ private struct Pill<Label: View>: View {
     }
 }
 
-/// Lays its children out in rows, starting a new row when the next doesn't fit.
-private struct WrappingStack: Layout {
+/// Lays its children out in rows, starting a new row when the next doesn't fit; `trailing` ends each row at the right.
+struct WrappingStack: Layout {
     var spacing: CGFloat
+    var trailing = false
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let rows = arrange(subviews, width: proposal.width ?? .infinity)
@@ -502,7 +554,8 @@ private struct WrappingStack: Layout {
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         for row in arrange(subviews, width: bounds.width) {
-            for (index, x) in row.items { subviews[index].place(at: CGPoint(x: bounds.minX + x, y: bounds.minY + row.y), proposal: .unspecified) }
+            let shift = trailing ? bounds.width - row.width : 0
+            for (index, x) in row.items { subviews[index].place(at: CGPoint(x: bounds.minX + shift + x, y: bounds.minY + row.y), proposal: .unspecified) }
         }
     }
 
@@ -581,6 +634,7 @@ struct IntegrationPage: View {
         let starts = switch integration {
         case .linear: workspace.integrations?.settings.linear.views.first { $0.id == view }?.start != nil
         case .github: workspace.integrations?.settings.github.views.first { $0.id == view }?.start != nil
+        case .slack: false
         }
         return TaskActions(
             state: { session in workspace.board.first { $0.session == session }?.state },
@@ -955,6 +1009,8 @@ struct ConnectCard: View {
     let workspace: Workspace
     @State private var waiting = false
     @State private var copied = false
+    @State private var token = ""
+    @State private var error: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -963,14 +1019,24 @@ struct ConnectCard: View {
                 .overlay(integration.icon(size: 30).foregroundStyle(.primary))
                 .padding(.bottom, 18)
             Text("Connect \(integration.title)").font(.system(size: 20, weight: .semibold)).padding(.bottom, 6)
-            BalancedText(integration == .linear ? "See your issues in Zero, in views you choose: yours, a team's, or any states you like."
-                                                : "See your pull requests and the reviews waiting on you, in views you choose, such as one organisation's repositories.",
-                         font: .systemFont(ofSize: 13), maxWidth: 380)
+            BalancedText(pitch, font: .systemFont(ofSize: 13), maxWidth: 380)
                 .foregroundStyle(.secondary).padding(.bottom, 20)
             switch integration {
             case .linear:
                 Button(waiting ? "Waiting for Linear…" : "Connect Linear") { connectLinear() }
                     .buttonStyle(Prominent()).disabled(waiting)
+            case .slack:
+                // Slack's sign-in needs a secret Zero can't carry: instead each workspace gets Zero's app from its
+                // manifest, and the person pastes the user token Slack shows once it's installed.
+                Button("Create Zero's Slack app") { NSWorkspace.shared.open(Slack.createAppURL) }.buttonStyle(Prominent())
+                Text("Slack opens with the app filled in: Create, then Install to Workspace, then copy the User OAuth Token it shows and paste it here. Connected before agents could follow Slack? Add the scopes from the manifest to your app, reinstall it, and paste the new token.")
+                    .font(.system(size: 11)).foregroundStyle(.tertiary).multilineTextAlignment(.center).frame(maxWidth: 380).padding(.top, 12).padding(.bottom, 14)
+                HStack(spacing: 8) {
+                    SecureField("xoxp-…", text: $token).textFieldStyle(.roundedBorder).font(.system(size: 12).monospaced()).frame(width: 260)
+                        .onSubmit(connectSlack)
+                    Button(waiting ? "Connecting…" : "Connect") { connectSlack() }.disabled(waiting || token.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                if let error { Text(error).font(.system(size: 12)).foregroundStyle(.red).padding(.top, 10) }
             case .github:
                 HStack(spacing: 8) {
                     Text("gh auth login").font(.system(size: 12.5).monospaced()).textSelection(.enabled)
@@ -988,6 +1054,24 @@ struct ConnectCard: View {
         }
         .padding(.horizontal, 32).padding(.vertical, 40)
         .frame(maxWidth: .infinity)
+    }
+
+    private var pitch: String {
+        switch integration {
+        case .linear: "See your issues in Zero, in views you choose: yours, a team's, or any states you like."
+        case .github: "See your pull requests and the reviews waiting on you, in views you choose, such as one organisation's repositories."
+        case .slack: "Channels and threads named in messages open in Slack itself, and agents can follow a thread or a channel to hear its replies. Zero reads channels, messages and names; it posts nothing."
+        }
+    }
+
+    private func connectSlack() {
+        waiting = true
+        error = nil
+        Task {
+            error = await workspace.connectSlack(token: token)
+            if error == nil { token = "" }
+            waiting = false
+        }
     }
 
     private func connectLinear() {

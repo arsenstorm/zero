@@ -31,6 +31,8 @@ final class InboxController {
     /// two slots below. The app matches the pointer against these: a hover handler only answered over what a
     /// control draws, an 11 pt dot.
     @ObservationIgnored var barSlots: [String: CGRect] = [:]
+    /// The agents the bar shows now, top to bottom: a slot of one gone from the bar is not under the pointer.
+    @ObservationIgnored var barOrder: [String] = []
     static let inboxSlot = "\u{0}inbox", newSlot = "\u{0}new"
     /// The control the bar last opened from the pointer, so moving within it doesn't reopen it.
     @ObservationIgnored var barHover: String?
@@ -215,14 +217,47 @@ final class InboxController {
                 try await store.switchModel(of: agent, to: last?.model == model.id ? nil : model, level: last?.level == level ? nil : level)
                 appliedModels[agent] = (model.id, level)
             } catch {
-                NSLog("zero: model switch for \(agent) failed: \(error)")
+                Log.write("model switch for \(agent) failed: \(error)")
             }
         }
     }
 
+    /// The bar's dots: one per agent with live asks, workers folded into their lead (the board's team or the sessions'
+    /// parent links), each in its team's most urgent state, in the user's order.
+    func barAgents(settings: Settings, workspace: Workspace?) -> [(String, AgentStatus)] {
+        let live = store.asks.filter { $0.state != .expired }
+        let rows = workspace?.board ?? []
+        // A worker: a session with a lead, by the sessions' own parent links (the board's rows don't always carry
+        // their team).
+        let workers = Set((workspace?.conversations ?? []).filter { $0.parent != nil }.map(\.id)
+                          + rows.flatMap { row in (row.team ?? []).map(\.session).filter { $0 != row.session } })
+        let session = { (ask: Ask) -> String? in ask.agent.ref ?? (ask.agent.name.hasPrefix("zerod-") ? String(ask.agent.name.dropFirst("zerod-".count)) : nil) }
+        var seen: [String] = []
+        for ask in live where !seen.contains(ask.agent.name) && !(session(ask).map(workers.contains) ?? false) { seen.append(ask.agent.name) }
+        return settings.sorted(seen)
+            .map { name -> (String, AgentStatus) in
+                let own = live.filter { $0.agent.name == name }
+                var status = AgentStatus.of(own)
+                if let lead = own.first.flatMap(session), let row = rows.first(where: { $0.session == lead }) {
+                    switch row.state {
+                    case .needsYou: status = .needsYou
+                    case .trouble: status = .blocked
+                    case .working: status = .working
+                    case .done: status = .done
+                    case .merged: status = .merged
+                    default: break
+                    }
+                }
+                // A session that is not running is no dot of the bar's, whatever its last note said: the bar is what's active.
+                return (name, status != .closed && store.offline.contains(name) ? .offline : status)
+            }
+            .filter { $0.1 != .closed && $0.1 != .offline }
+    }
+
     /// The runtime an existing agent runs on, by its name ("claude-120" runs on the "Claude" tool).
     func runtime(of agent: String) -> SpawnChoice? {
-        let own = adapter(of: agent).flatMap { runtimesByAdapter[$0.name] } ?? spawnRuntimes
+        // Only its own adapter's runtimes: another's (Solo's) would name a session of Zero's after their tools.
+        let own = adapter(of: agent).map { runtimesByAdapter[$0.name] ?? [] } ?? spawnRuntimes
         return own.first { $0.name.lowercased() == speaker(agent).lowercased() }
     }
 
@@ -285,6 +320,7 @@ final class InboxController {
                                 selected: choice.id == spawnTarget) { [weak self] in self?.spawnTarget = choice.id }
                 })
             }
+        case .menu: return []
         case .runtime:
             _ = modelsVersion
             // For a running agent: only its own runtime's models, the pick going to that agent.
@@ -449,7 +485,7 @@ final class InboxController {
                     if drafts[key] == text { drafts[key] = nil }
                 } catch {
                     deliveryError[agent] = "Couldn't reach \(speaker(agent)). Your message is still here."
-                    NSLog("zero: message to \(agent) failed: \(error)")
+                    Log.write("message to \(agent) failed: \(error)")
                 }
                 delivering.remove(agent)
             }
@@ -825,6 +861,8 @@ enum Theme {
     static let fieldEdge = dynamic(dark: NSColor(white: 1, alpha: 0.08), light: NSColor(white: 0, alpha: 0.07))
     static let fieldTab = dynamic(dark: NSColor(white: 0.13, alpha: 1), light: NSColor(white: 0.955, alpha: 1))
     static let sendIdle = dynamic(dark: NSColor(white: 0.36, alpha: 1), light: NSColor(white: 0.56, alpha: 1))
+    /// "Done" in a pill: the system green reads pale as small text on its own light fill; this one has weight.
+    static let done = dynamic(dark: NSColor(red: 0.40, green: 0.82, blue: 0.50, alpha: 1), light: NSColor(red: 0.09, green: 0.50, blue: 0.22, alpha: 1))
     static let keycap = dynamic(dark: NSColor(white: 0.22, alpha: 1), light: NSColor(white: 0.88, alpha: 1))
     /// A fully solid knob; `.primary` is a translucent label colour.
     static let knob = dynamic(dark: .white, light: .black)
@@ -1171,6 +1209,8 @@ struct ReplyBox: View {
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
+        // The whole box is the field: a click on its padding focuses it too.
+        .contentShape(Rectangle()).onTapGesture { focus.wrappedValue = key }
     }
 }
 
@@ -1795,6 +1835,9 @@ struct PillShape: InsettableShape {
 struct PillView: View {
     let controller: InboxController
     let settings: Settings
+    /// The board, to fold workers into their leads: one dot per lead, in its team's most urgent state, as the sidebar
+    /// lists them.
+    var workspace: Workspace? = nil
     let openInbox: () -> Void
     let selectAgent: (String) -> Void
     let moveHere: () -> Void
@@ -1808,28 +1851,19 @@ struct PillView: View {
 
     private let slot: CGFloat = 28
 
-    init(controller: InboxController, settings: Settings, openInbox: @escaping () -> Void,
+    init(controller: InboxController, settings: Settings, workspace: Workspace? = nil, openInbox: @escaping () -> Void,
          selectAgent: @escaping (String) -> Void, moveHere: @escaping () -> Void,
          peek: @escaping (String?) -> Void = { _ in }, openNewAgent: @escaping () -> Void = {}, peekNewAgent: @escaping () -> Void = {},
          previewHovered: String? = nil) {
-        self.controller = controller; self.settings = settings
+        self.controller = controller; self.settings = settings; self.workspace = workspace
         self.openInbox = openInbox; self.selectAgent = selectAgent; self.moveHere = moveHere; self.peek = peek
         self.openNewAgent = openNewAgent; self.peekNewAgent = peekNewAgent
     }
 
-    /// Every agent that has spoken and has not been closed, with its status. Expired asks don't count.
-    private var agents: [(String, AgentStatus)] {
-        let live = controller.store.asks.filter { $0.state != .expired }
-        var seen: [String] = []
-        for ask in live where !seen.contains(ask.agent.name) { seen.append(ask.agent.name) }
-        return settings.sorted(seen)
-            .map { name -> (String, AgentStatus) in
-                let status = AgentStatus.of(live.filter { $0.agent.name == name })
-                // A session that is not running is no dot of the bar's, whatever its last note said: the bar is what's active.
-                return (name, status != .closed && controller.store.offline.contains(name) ? .offline : status)
-            }
-            .filter { $0.1 != .closed && $0.1 != .offline }
-    }
+    /// Every agent that has spoken and has not been closed, with its status. Expired asks don't count. A worker's
+    /// agent (its session under a lead, by the board) is no dot of its own: its lead's dot carries the team's most
+    /// urgent state.
+    private var agents: [(String, AgentStatus)] { controller.barAgents(settings: settings, workspace: workspace) }
 
     private func scale(_ name: String) -> CGFloat { controller.agentFilter == name ? 13 / 11 : 1 }
 
@@ -1880,6 +1914,8 @@ struct PillView: View {
             }
             if !agents.isEmpty {
                 Rectangle().fill(Theme.hairline).frame(width: 18, height: 1).padding(.vertical, 4)
+                    .onChange(of: agents.map(\.0), initial: true) { controller.barOrder = $1 }
+                    .onDisappear { controller.barOrder = [] }
             }
             ForEach(agents, id: \.0) { name, status in
                 Group {
@@ -1898,6 +1934,8 @@ struct PillView: View {
                     .frame(width: 32, height: slot)
                     .contentShape(Rectangle())
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { controller.barSlots[name] = $0 }
+                    // Gone from the bar, gone from its slots: a pointer where it was peeks nothing.
+                    .onDisappear { controller.barSlots[name] = nil }
                     .zIndex(drag?.name == name ? 1 : 0)
                     .help(controller.store.displayName(of: name))
                     .contextMenu {
@@ -1965,19 +2003,25 @@ struct MarkdownText: View {
     let text: String
     /// Where "#123" points: the GitHub repository of the agent's folder.
     var repo: String?
+    /// Whose "name#123" is, when the folder holds repositories rather than being one.
+    var owner: String?
     /// The body text's size; headings, code and markers scale with it. The inbox's cards are smaller than a task's page.
     var size: CGFloat
     /// Quieter, for a preview: headings at the text's size, code without pills, tighter spacing.
     var compact: Bool
     /// As wide as its text, not the width it's given: a message of yours, in a bubble that hugs it.
     var hugs: Bool
+    /// A message of yours: "/skill" and "@loop" in it are the tokens the composer showed, drawn as the same pills.
+    var yours: Bool
 
-    init(_ text: String, cwd: String? = nil, size: CGFloat = 13, compact: Bool = false, hugs: Bool = false) {
+    init(_ text: String, cwd: String? = nil, size: CGFloat = 13, compact: Bool = false, hugs: Bool = false, yours: Bool = false) {
         self.text = text
         repo = cwd.flatMap(References.repo(of:))
+        owner = GitHubLinks.owner ?? cwd.flatMap(References.owner(of:))
         self.size = size
         self.compact = compact
         self.hugs = hugs
+        self.yours = yours
     }
 
     /// Set once a long text has been rendered off the main thread, so the view picks it up.
@@ -1987,7 +2031,7 @@ struct MarkdownText: View {
 
     var body: some View {
         let _ = rendered
-        if let kept = RichMarkdown.kept(text, size: size, compact: compact, repo: repo) {
+        if let kept = RichMarkdown.kept(text, size: size, compact: compact, repo: repo, yours: yours) {
             RichText(text: kept, hugs: hugs)
         } else if text.count < Self.long {
             RichText(text: Self.render(text, size: size, compact: compact, links: links), hugs: hugs)
@@ -2004,20 +2048,52 @@ struct MarkdownText: View {
     }
 
     /// What finding links needs, read on the main thread so rendering can happen anywhere.
-    private var links: Links { Links(repo: repo, teams: Linear.shared.teams, app: LinearLinks.inApp) }
+    private var links: Links { Self.links(repo: repo, owner: owner, yours: yours) }
+
+    static func links(repo: String?, owner: String?, yours: Bool) -> Links {
+        Links(repo: repo, owner: owner, slack: SlackLinks.team, channels: SlackLinks.channels, teams: Linear.shared.teams, app: LinearLinks.inApp, loops: LoopNames.known, skills: yours)
+    }
+
+    /// Styles a conversation's messages ahead of their first drawing (the window opening on it), off the main thread,
+    /// so the page paints at once instead of parsing as it scrolls into view.
+    static func warm(_ conversation: Conversation) async {
+        let repo = References.repo(of: conversation.cwd)
+        let owner = GitHubLinks.owner ?? References.owner(of: conversation.cwd)
+        let (theirs, yours) = (links(repo: repo, owner: owner, yours: false), links(repo: repo, owner: owner, yours: true))
+        let texts: [(String, Bool)] = conversation.items.compactMap { item in
+            switch item.kind {
+            case let .agent(text, _): (text, false)
+            case let .user(text, images): (ImageToken.linked(text, images: images), true)
+            default: nil
+            }
+        }
+        await Task.detached(priority: .userInitiated) {
+            for (text, mine) in texts { _ = render(text, size: 14.5, compact: false, links: mine ? yours : theirs) }
+        }.value
+    }
 
     struct Links: Sendable {
         let repo: String?
+        let owner: String?
+        /// The Slack workspace's team id: "#channel" and Slack's own links open in Slack.
+        let slack: String?
+        /// Channel ids by name: those open in Slack directly.
+        var channels: [String: String] = [:]
         let teams: [String: String]
         let app: Bool
+        /// The loops' names: "@name" in a message is one of them, drawn as a pill that opens it.
+        var loops: [String] = []
+        /// Words of yours: "/name" is a skill or command, a pill as the composer drew it (an agent's "/path" is a path).
+        var skills = false
     }
 
     private struct Rendered: @unchecked Sendable { let text: NSAttributedString; init(_ text: NSAttributedString) { self.text = text } }
 
     /// Parsed, styled and kept. Zero's own ending ("[zero: done]") is for its hook, not for reading.
     nonisolated static func render(_ text: String, size: CGFloat, compact: Bool, links: Links) -> NSAttributedString {
-        RichMarkdown.cached(text, size: size, compact: compact, repo: links.repo) {
-            let made = RichMarkdown.render(MarkdownBlock.parse(ZeroEnding.split(text).0), size: size, inline: { inline($0, links: links) })
+        RichMarkdown.cached(text, size: size, compact: compact, repo: links.repo, yours: links.skills) {
+            let made = RichMarkdown.render(MarkdownBlock.parse(ZeroEnding.split(text).0), size: size, inline: { inline($0, links: links) },
+                                           key: "\(links.repo ?? "")|\(links.owner ?? "")|\(links.skills)|\(compact)")
             return compact ? RichMarkdown.compact(made, size: size) : made
         }
     }
@@ -2025,10 +2101,32 @@ struct MarkdownText: View {
     /// Linear issues and pull requests become links, except inside `code` and links the agent already wrote.
     nonisolated static func inline(_ prose: String, links: Links) -> AttributedString {
         var result = (try? AttributedString(markdown: prose, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(prose)
-        for (range, url) in References.find(in: String(result.characters), repo: links.repo, linear: links.teams, linearApp: links.app) {
+        for run in result.runs where run.link != nil {
+            if let link = run.link, let app = SlackLinks.url(link, team: links.slack) { result[run.range].link = app }
+        }
+        for (range, url) in References.find(in: String(result.characters), repo: links.repo, linear: links.teams, linearApp: links.app, owner: links.owner, slack: links.slack, channels: links.channels) {
             guard let span = Range(range, in: result) else { continue }
             let plain = result[span].runs.allSatisfy { $0.link == nil && !($0.inlinePresentationIntent?.contains(.code) ?? false) }
             if plain { result[span].link = url }
+        }
+        if !links.loops.isEmpty, let regex = try? NSRegularExpression(pattern: "(?<![\\w@])@([a-z0-9-]+)(?![\\w-])") {
+            let string = String(result.characters)
+            for match in regex.matches(in: string, range: NSRange(location: 0, length: (string as NSString).length)) {
+                let name = (string as NSString).substring(with: match.range(at: 1))
+                guard links.loops.contains(name), let range = Range(match.range, in: string), let span = Range(range, in: result),
+                      result[span].runs.allSatisfy({ $0.link == nil && !($0.inlinePresentationIntent?.contains(.code) ?? false) }),
+                      let url = URL(string: "zero://loop/" + name) else { continue }
+                result[span].link = url
+            }
+        }
+        if links.skills, let regex = try? NSRegularExpression(pattern: "(?<![^\\s])/[^\\s]+") {
+            let string = String(result.characters)
+            for match in regex.matches(in: string, range: NSRange(location: 0, length: (string as NSString).length)) {
+                guard let range = Range(match.range, in: string), let span = Range(range, in: result),
+                      result[span].runs.allSatisfy({ $0.link == nil && !($0.inlinePresentationIntent?.contains(.code) ?? false) }),
+                      let url = URL(string: "zero://skill/" + (string as NSString).substring(with: match.range).dropFirst().addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)!) else { continue }
+                result[span].link = url
+            }
         }
         return result
     }
@@ -2120,7 +2218,7 @@ struct MentionList: View {
             ForEach(Array(state.items.enumerated()), id: \.element.id) { index, item in
                 Button { pick(index) } label: {
                     HStack(spacing: 8) {
-                        NucleoIcon(item.kind == .file ? "file" : "command", size: 13).foregroundStyle(.secondary).frame(width: 14)
+                        NucleoIcon(item.kind == .file ? "file" : item.kind == .loop ? "animation-repeat" : "command", size: 13).foregroundStyle(.secondary).frame(width: 14)
                         Text(title(item)).font(.system(size: 13, weight: .medium)).lineLimit(1)
                         if let detail = detail(item) {
                             Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)

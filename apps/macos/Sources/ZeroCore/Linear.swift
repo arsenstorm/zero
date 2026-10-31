@@ -204,7 +204,16 @@ private enum Callback {
 /// The workspaces and their tokens, as one item in the login Keychain. Read and written through macOS's
 /// `security` tool, as Claude Code does: the item then trusts that tool rather than this build of Zero, so a
 /// rebuilt or updated Zero reads it without asking for the Keychain password.
-private enum Keychain {
+enum Keychain {
+    static func loadString(service: String, account: String) -> String? {
+        security(["find-generic-password", "-s", service, "-a", account, "-w"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func saveString(_ value: String?, service: String, account: String) {
+        if let value { _ = security(["add-generic-password", "-U", "-s", service, "-a", account, "-w", value]) }
+        else { _ = security(["delete-generic-password", "-s", service, "-a", account]) }
+    }
+
     static func load() -> [Linear.Workspace] {
         guard let encoded = security(["find-generic-password", "-s", "Zero Linear", "-a", "workspaces", "-w"]),
               let data = Data(base64Encoded: encoded) else { return [] }

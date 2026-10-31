@@ -85,9 +85,10 @@ private func launch(_ name: String) async throws -> (socket: String, home: URL) 
     #expect(settled.first?["attention"] as? String == "offline")
     await #expect(throws: ZerodError(message: "No session nope to lead it")) { _ = try await link.spawn(lead: "nope", provider: .codex, prompt: "x") }
 
-    // Offline, it's on the board as not running, in the state it was last known in; then its agent hands the user something.
+    // Offline, it's on the board as not running, its plain answer still there to read (Replied); then its agent hands
+    // the user something.
     let offline = try #require(try await link.board().first)
-    #expect((offline.online, offline.state, offline.now) == (false, .idle, "The command printed `Darwin`."))
+    #expect((offline.online, offline.state, offline.now) == (false, .answered, "The command printed `Darwin`."))
     var note = Ask(kind: .note, title: "Update", body: "Printed the kernel name", agent: AgentIdentity(name: "zerod-" + conversation.id, host: "mac"))
     note.status = "done"
     note.needs = "check it says Darwin"

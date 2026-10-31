@@ -4,13 +4,16 @@ import Foundation
 /// what agents write, as links.
 public enum References {
     private static let pattern = try! NSRegularExpression(pattern:
-        #"\b([A-Za-z]{1,5})-(\d+)\b|(?:\b([\w.-]+/[\w.-]+|[\w.-]+))?#(\d+)\b|\b([0-9a-f]{7,40})\b"#)
+        #"\b([A-Za-z]{1,5})-(\d+)\b|(?:\b([\w.-]+/[\w.-]+|[\w.-]+))?#(\d+)\b|\b([0-9a-f]{7,40})\b|(?<![\w/&#])#([a-z][a-z0-9._-]+)\b"#)
 
     /// Each reference's range in `text` (UTF-16, as NSString counts) and where it goes. A bare "#123" or commit
     /// needs `repo` ("owner/name"); "name#123" takes `repo`'s owner. Issues are ids whose prefix is a team in
     /// `linear` (team key → workspace URL key, from the connected workspaces), so "UTF-8" stays text.
     /// `linearApp` opens them in Linear's app.
-    public static func find(in text: String, repo: String?, linear: [String: String], linearApp: Bool) -> [(range: NSRange, url: URL)] {
+    /// `owner` stands in for `repo`'s when the folder is one of repositories, not a repository ("name#123" still
+    /// links). `slack` is the workspace's team id: with it, "#channel" opens the channel in Slack.
+    public static func find(in text: String, repo: String?, linear: [String: String], linearApp: Bool, owner: String? = nil, slack: String? = nil,
+                            channels: [String: String] = [:]) -> [(range: NSRange, url: URL)] {
         let ns = text as NSString
         func group(_ match: NSTextCheckingResult, _ i: Int) -> String? {
             match.range(at: i).location == NSNotFound ? nil : ns.substring(with: match.range(at: i))
@@ -25,13 +28,15 @@ public enum References {
                 let target: String? = switch group(match, 3) {
                 case nil: repo
                 case let name? where name.contains("/"): name
-                case let name?: repo.map { $0.split(separator: "/")[0] + "/" + name }
+                case let name?: (repo.map { String($0.split(separator: "/")[0]) } ?? owner).map { $0 + "/" + name }
                 }
                 link = target.map { "https://github.com/\($0)/pull/\(number)" }
             } else if let sha = group(match, 5) {
                 // A hash has letters and digits; "1234567" and "deadbeef" are something else.
                 guard sha.contains(where: \.isNumber), sha.contains(where: \.isLetter) else { return nil }
                 link = repo.map { "https://github.com/\($0)/commit/\(sha)" }
+            } else if let channel = group(match, 6) {
+                link = slack.map { SlackLinks.channel(channel, team: $0, channels: channels) }
             } else { link = nil }
             return link.flatMap(URL.init(string:)).map { (match.range, $0) }
         }
@@ -45,6 +50,23 @@ public enum References {
         return found
     }
 
+    /// The owner of the repositories in `cwd`: its own, or (a folder of checkouts and worktrees) that of the first
+    /// repository one or two levels down. Cached like `repo(of:)`.
+    public static func owner(of cwd: String) -> String? {
+        if let own = repo(of: cwd) { return String(own.split(separator: "/")[0]) }
+        if let hit = lock.withLock({ owners[cwd] }) { return hit }
+        let found = children(of: cwd, depth: 2).lazy.compactMap { origin($0).flatMap(parse) }.first.map { String($0.split(separator: "/")[0]) }
+        lock.withLock { owners[cwd] = .some(found) }
+        return found
+    }
+
+    private static func children(of folder: String, depth: Int) -> [String] {
+        guard depth > 0, let names = try? FileManager.default.contentsOfDirectory(atPath: folder) else { return [] }
+        let folders = names.filter { !$0.hasPrefix(".") }.map { folder + "/" + $0 }.sorted()
+            .filter { (try? FileManager.default.attributesOfItem(atPath: $0)[.type] as? FileAttributeType) == .typeDirectory }
+        return folders + folders.flatMap { children(of: $0, depth: depth - 1) }
+    }
+
     static func parse(_ remote: String) -> String? {
         guard let range = remote.range(of: "github.com") else { return nil }
         var path = remote[range.upperBound...].drop { $0 == ":" || $0 == "/" }
@@ -54,6 +76,7 @@ public enum References {
 
     private static let lock = NSLock()
     nonisolated(unsafe) private static var repos: [String: String?] = [:]
+    nonisolated(unsafe) private static var owners: [String: String?] = [:]
 
     private static func origin(_ cwd: String) -> String? {
         let process = Process()
@@ -67,5 +90,43 @@ public enum References {
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { return nil }
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// Slack's links as the app's: a message or channel link (https://acme.slack.com/archives/C123/p1700000000123456)
+/// opens in Slack itself once the workspace is connected (Slack.swift), which gives its team id and channel ids.
+public enum SlackLinks {
+    @MainActor public static var team: String? { Slack.shared.team?.id }
+    @MainActor public static var channels: [String: String] { Slack.shared.channels }
+
+    /// Where "#name" goes: straight into Slack when its id is known, else Slack's own redirect by name, which goes
+    /// through the browser.
+    public static func channel(_ name: String, team: String, channels: [String: String]) -> String {
+        channels[name].map { "slack://channel?team=\(team)&id=\($0)" } ?? "https://slack.com/app_redirect?team=\(team)&channel=\(name)"
+    }
+
+    public static func url(_ link: URL, team: String?) -> URL? {
+        guard let team, link.host?.hasSuffix(".slack.com") == true else { return nil }
+        let parts = link.pathComponents.filter { $0 != "/" }
+        guard parts.count >= 2, parts[0] == "archives" else { return nil }
+        var query = "team=\(team)&id=\(parts[1])"
+        if parts.count >= 3, parts[2].hasPrefix("p"), parts[2].dropFirst().allSatisfy(\.isNumber) {
+            let digits = parts[2].dropFirst()
+            query += "&message=\(digits.dropLast(6)).\(digits.suffix(6))"
+        }
+        if let thread = URLComponents(url: link, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "thread_ts" })?.value {
+            query += "&thread_ts=\(thread)"
+        }
+        return URL(string: "slack://channel?" + query)
+    }
+}
+
+/// Whose repositories "name#123" names when the agent's folder isn't one: the user's say, else the folder's
+/// repositories' (References.owner(of:)).
+public enum GitHubLinks {
+    public static let key = "githubOwner"
+    public static var owner: String? {
+        let value = UserDefaults.standard.string(forKey: key)?.trimmingCharacters(in: .whitespaces) ?? ""
+        return value.isEmpty ? nil : value
     }
 }

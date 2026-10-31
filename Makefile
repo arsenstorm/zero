@@ -45,6 +45,7 @@ bundle: build
 	cd $(MACOS)/Resources && cp AppIcon.icns logo/menubar.png logo/menubar@2x.png logo/mark.svg logo/mark-small.svg $(CURDIR)/$(APP)/Contents/Resources/
 	cp -R $(MACOS)/Resources/nucleo $(APP)/Contents/Resources/nucleo
 	cp -R plugin $(APP)/Contents/Resources/plugin
+	rm -rf $(APP)/Contents/Resources/chrome && cp -R apps/chrome $(APP)/Contents/Resources/chrome
 	cp target/drop/zero-drop $(APP)/Contents/Resources/zero-drop-darwin-arm64
 	cp target/x86_64-unknown-linux-musl/drop/zero-drop $(APP)/Contents/Resources/zero-drop-linux-x86_64
 	cp target/aarch64-unknown-linux-musl/drop/zero-drop $(APP)/Contents/Resources/zero-drop-linux-aarch64
@@ -58,10 +59,12 @@ bundle: build
 # under way pause between steps (a running command finishes first), the new zerod takes over and they carry on.
 install: bundle
 	@changed=$$(cmp -s target/release/zerod build/zerod.installed && echo no || echo yes); \
-	pkill -x Zero || true; \
+	pid=$$(ps -axo pid=,comm= | awk '$$2 == "/Applications/Zero.app/Contents/MacOS/Zero" {print $$1}'); \
+	[ -z "$$pid" ] || kill $$pid; \
+	for i in $$(seq 1 50); do [ -n "$$pid" ] && ps -p $$pid >/dev/null 2>&1 || break; sleep 0.1; done; \
 	rm -rf /Applications/Zero.app; \
 	cp -R $(APP) /Applications/Zero.app; \
-	ln -sf /Applications/Zero.app/Contents/MacOS/zero-cli $(HOME)/.local/bin/zero; \
+	mkdir -p $(HOME)/.local/bin && ln -sf /Applications/Zero.app/Contents/MacOS/zero-cli $(HOME)/.local/bin/zero; \
 	cp target/release/zerod build/zerod.installed; \
 	if [ $$changed = yes ] && printf '{"op":"restart"}\n' | nc -U $(HOME)/.zero/zerod.sock 2>/dev/null | grep -q restarting; then \
 		echo "zerod: restarting as the new build once turns under way have paused"; \

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ZeroCore
 
 /// Nucleo icons (the ui family, on its 18 px grid) bundled in Resources/nucleo as `<label>-<fill>.svg`, drawn as
 /// templates so they take the colour around them as SF Symbols do. Exported from the local Nucleo install by label.
@@ -12,6 +13,7 @@ enum Nucleo {
         let file = Bundle.main.url(forResource: name, withExtension: "svg", subdirectory: "nucleo")
             ?? Bundle.main.url(forResource: "\(label)-outline", withExtension: "svg", subdirectory: "nucleo")
         let image = images[name] ?? file.flatMap(NSImage.init(contentsOf:))
+        if image == nil { Log.write("icon missing: \(name)") }
         image?.isTemplate = true
         images[name] = image
         let sized = image?.copy() as? NSImage
@@ -53,3 +55,4 @@ struct NucleoLabel: View {
         HStack(spacing: 6) { NucleoIcon(icon, fill: fill, size: size); Text(text) }
     }
 }
+

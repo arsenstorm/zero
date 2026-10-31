@@ -35,9 +35,11 @@ zero note --blocked "Vault certificate expired"     # red
 zero note --done "PR #4821 open, CI green"          # green
 zero note --done "PR #4821 open, CI green" --needs "mark it ready and merge"   # handed to him: blocked on him, on his board's row
 zero note --merged "PR #4821 merged"                 # purple: shipped
-zero note --waiting "Waits for ENG-9759 to merge"     # waiting on something other than him
 zero withdraw k3x9qa --reason "Answered in the chat" # take back an ask that no longer needs him
+zero close 01a1886cb3e40000                          # a worker you started, once you've read its result: off his board
 ```
+
+Workers you start with `zero spawn` stay on his board until closed. Close each one with `zero close` once you have read its result (`zero result`) and need nothing more from it; a worker you may send back to stays. Why: his sidebar lists every open session under you, and finished reviewers and runners left open bury the ones that matter.
 
 Every call blocks until he answers and prints the answer on stdout. Exit 0 answered, 2 declined (the reason, if any, on stderr), 3 expired. For `run`, stdout is the command's output and the exit code is the command's own.
 
@@ -69,7 +71,9 @@ When Zero runs your session, Claude Code's own permission prompts reach him in Z
 
 ## Where you are
 
-Post a `note` when you start, at a real milestone, and when you finish, not every turn. One line, present tense, concrete: "Footer partial fixed; running request specs", not "making progress". A note within ten minutes of your last one replaces it. `--blocked` the moment you cannot continue without something; `--done` when the deliverable exists (green); `--merged` once it's merged (purple); `--waiting` while you wait on something other than him (another task, a deploy). Add `--needs "…"` when something is his to do but nothing waits for it: a merge, a QA pass, a decision for later. Leave it off when nothing is his; a later note without it clears it. Why: your dot in his bar is coloured by your last note, and the note fills your row on Zero's board ("Now", and "Blocked" with what you need when you add `--needs` or `--blocked`); a stale note misleads him, and a stream of restatements buries the ones that matter.
+Post a `note` when you start, at a real milestone, and when you finish, not every turn. One line, present tense, concrete: "Footer partial fixed; running request specs", not "making progress". A note within ten minutes of your last one replaces it. `--blocked` the moment you cannot continue without something; `--done` when the deliverable exists (green); `--merged` once it's merged (purple); Waiting on something else (another task, a deploy) is `--blocked` with what you wait for: the user reads one state, blocked, and what it says. Add `--needs "…"` when something is his to do but nothing waits for it: a merge, a QA pass, a decision for later. Leave it off when nothing is his; a later note without it clears it. Why: your dot in his bar is coloured by your last note, and the note fills your row on Zero's board ("Now", and "Blocked" with what you need when you add `--needs` or `--blocked`); a stale note misleads him, and a stream of restatements buries the ones that matter.
+
+A need written only in prose ("could you reopen OrbStack?", "waiting for your go") reaches no board: when you stop because something is his to do, post `zero note --blocked "…"` (or `--needs "…"`) as well as saying it, even when he is chatting with you in Zero. Why: his sidebar and board colour your task from your notes and your ending, not from your words.
 
 ## When he is at the keyboard
 
@@ -78,6 +82,55 @@ If Arsen typed the prompt in your terminal (Zero tells you so at the start of th
 ## Working from a brief
 
 If a lead agent started you from a BRIEF, FIX, REVIEW or TEST file, report to that lead the way the brief says, not to Arsen: no Zero notes, no asks, no `[zero: …]` endings. The one exception is a command only Arsen can run on his Mac: ask for that with `zero run --why`. Why: the lead decides and batches what reaches him; a worker writing to him directly is noise he cannot act on.
+
+## Leading workers
+
+When a task is more than one agent's work, start workers, not subagents. A worker is a Zero session of its own: it survives Zero's restarts (a subagent dies with your turn), it shows on the user's board under you, and it reports to you.
+
+```bash
+zero spawn "ENG-9790: clamp the live timer" --brief briefs/ENG-9790.md --cwd /work/eng-9790 --model opus --effort medium   # prints its id
+zero wait 01a1… 01a2… [--any]           # until they stop: finished, failed, stuck, or waiting on the user
+zero result 01a1…                       # its last answer: its report
+zero send 01a1… "Row 10 fails on the bench; fix it and report again"
+zero workers                            # yours, with their states
+zero attr PR https://github.com/org/repo/pull/12 --session 01a1…   # for the user to see on its task
+zero close 01a1…                        # read, nothing more needed: off the board
+```
+
+- A worker is in your workspace wherever its folder is; `--workspace ID` puts it in another (`zero workspaces` lists them), as when the user runs you from their default workspace to work in a different one.
+- One worker per unit of work: a ticket, a review, a test run. Its brief says what to do, where, what counts as done, what it must not do (merge, publish, write anywhere outward), and that its final answer is its report to you. A worker's answer reaches you when it ends; you don't poll.
+- Workers report to you, not to the user. You batch what reaches the user: one ask per decision, the workers' findings behind it, one note per milestone. A worker that needs the user goes through you, except a command only the user's Mac can run, which it asks with `zero run --why`.
+- `zero wait` to wait, `zero result` to read, `zero send` to answer a worker's question or send back findings; it resumes where it was. A worker may start workers of its own the same way (a reviewer, a runner) and closes them when it has read them.
+- Close a worker once you have read its result and need nothing more from it. Keep one you may send back to. Set `zero attr` for what the user should see on the task (its PR, say) as soon as it exists.
+- Zero's restarts pause a worker's turn and carry it on; nothing is lost and nothing needs redoing. Never put work that must outlive your turn in a subagent.
+
+### Tables
+
+When you have a table for the user (a batch's tickets, a round's findings), hand it to Zero instead of writing one in Markdown: `zero table "Batch" --column Task --column State --column "Needs you" --row "ENG-9790 | working | –" --row "ENG-9793 | blocked | the OrbStack update"`, or the same as JSON on stdin (`{"title", "columns", "rows"}`). Zero draws it in your conversation with its own parts: a cell that is a state (working, blocked, done, merged, waiting) shows as the board's pill, a ticket or a PR as a link. Then say in a sentence what it shows. Why: a Markdown table with emoji reads differently in every client; Zero's reads the same everywhere and links where it should.
+
+### Loops
+
+A loop is a named instruction the user keeps in Zero and names as `@name`. When your prompt or brief named one, Zero gave you its words in its place, under "Loop: name". An `@name` inside those words is a child loop, a reference and not its text: it is what the workers for that step follow. Start each such worker with `zero spawn "…" --loop name`, and Zero heads the worker's brief with the child's words. `zero loops` lists the loops; `zero loop name` prints one, if you need to read a child before starting on it. Follow a loop as written; where it leaves a choice, decide as the brief and the ticket say.
+
+## The browser
+
+Zero gives you Chrome through its MCP server's `browser_` tools (or `zero browser <tool> '<json>'`): the same tools as Claude in Chrome, under Zero's names. Your task has tabs of its own, in a group in the user's Chrome window (the one they used last), opened in the background so their view stays theirs; `browser_tabs` with `createIfEmpty` gives you one. If you'd get in their way (many tabs, a long run) or need a clean session, ask for `window: "own"` (a window of your team's, behind theirs) or `"incognito"` (private, no sign-ins); your later tabs go there too. The group's title shows your state to the user: 🚧 working, ⛔ needs them, ✅ done. Read a page with `browser_read` (elements with refs) or a screenshot (`browser_computer`), act with `browser_computer`, `browser_form` and `browser_navigate`, and batch steps you can foresee with `browser_batch`. Close the tabs you opened when you're done. A tab the user gave you from the extension also shows in `browser_tabs`; closing it gives it back.
+
+The user's blocked sites are refused. In auto mode, opening a site new to the task gets a reviewer's opinion first; if it advises against one the task needs, ask the user with `zero approve "Open <site> in Chrome"` and pass the ask's id as `approval` to `browser_navigate`. Never type the user's passwords or card numbers: ask them to do it.
+
+## Following
+
+Follow what you take ownership of, the moment you take it: the pull request you open or are asked to babysit, the ticket you pick up (or just the comment thread you were pointed at), the Slack thread whose link you were given. Zero reads it every minute and tells you what changed between your turns (a review, a comment, a failed check, a merge, a status change, a reply), waking you if you were parked. So end your turn instead of polling or sleeping; you'll be told.
+
+```bash
+zero follow https://github.com/org/repo/pull/42          # or github/org/repo/42
+zero follow https://linear.app/team/issue/ENG-9429/...#comment-abcd1234   # one thread; without #comment, the whole issue
+zero follow slack/C0123ABCD --mine                        # a busy channel: only messages naming your pull requests
+zero following                                            # what you follow, and whether reading it works
+zero unfollow github/org/repo/42                          # or --all
+```
+
+Events arrive as a message from Zero starting `N new events on what you follow`, grouped by topic with each event's text and link. In a channel followed with `--mine` or `--about`, a sender's message that names nothing (no pull request, ticket or link) is read as continuing that sender's last message that did, for half an hour, and comes marked so: a deploy bot's "Deploy complete" after its "Deploying … (#42)" reaches you as #42's. `(you)` marks events by the user's own account: often your own action echoing back (your comment, your push), so skip those unless it is something you didn't do. Unfollow what you are done with (merged, closed, resolved): follows outlive your memory of them, which is the point, so prune them.
 
 ## Away from Arsen's Mac
 

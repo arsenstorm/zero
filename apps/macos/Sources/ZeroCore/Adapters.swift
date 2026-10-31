@@ -197,17 +197,17 @@ public struct SoloAdapter: AgentAdapter {
             try? await Task.sleep(for: .seconds(2))
             guard let status = try? await resultJSON(of: call(tool: "get_process_status", arguments: arguments)) as? [String: Any],
                   let state = status["agent_state"] as? [String: Any] else { continue }
-            if (status["status"] as? String) == "Exited" { NSLog("zero: reply watch for \(agent.name): process exited"); return nil }
+            if (status["status"] as? String) == "Exited" { Log.write("reply watch for \(agent.name): process exited"); return nil }
             guard state["idle"] as? Bool == true, (state["idle_seconds"] as? Double ?? 0) >= 1.5 else { continue }
             var output = arguments
             output["lines"] = 200
             let screen = (try? await resultText(of: call(tool: "get_process_output", arguments: output))) ?? ""
             if let reply = Self.lastReply(in: screen, after: text) {
-                NSLog("zero: reply from \(agent.name): \(reply.prefix(80))")
+                Log.write("reply from \(agent.name): \(reply.prefix(80))")
                 return reply
             }
         }
-        NSLog("zero: reply watch for \(agent.name) timed out")
+        Log.write("reply watch for \(agent.name) timed out")
         return nil
     }
 

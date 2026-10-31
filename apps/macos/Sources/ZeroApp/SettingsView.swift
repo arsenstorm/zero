@@ -10,28 +10,31 @@ struct SettingsView: View {
     @Bindable var settings: Settings
     let store: Store
     let inbox: InboxController
+    var workspace: Workspace? = nil
     var showOnboarding: () -> Void = {}
 
     enum Page: String, CaseIterable, Identifiable {
-        case general = "General", inbox = "Inbox", dictation = "Dictation", advanced = "Advanced"
-        case agents = "Agents", projects = "Projects", dropFolders = "Drop folders", integrations = "Integrations"
+        case general = "General", controlBar = "Control bar", composer = "Composer and inbox"
+        case agents = "Agents", projects = "Projects", workspaces = "Workspaces", links = "Links", events = "Events"
         var id: String { rawValue }
         var icon: String {
             switch self {
             case .general: "sliders"
-            case .inbox: "inbox"
-            case .dictation: "microphone"
+            case .controlBar: "sidebar-right"
+            case .composer: "inbox"
             case .agents: "robot"
             case .projects: "layers"
-            case .integrations: "puzzle-piece"
-            case .dropFolders: "folder-download"
-            case .advanced: "gears"
+            case .links: "link"
+            case .events: "bell"
+            case .workspaces: "layers"
             }
         }
         /// General leads on its own, where Home's New task is, so switching between the two moves no row.
-        static let groups: [(String, [Page])] = [("Personal", [.inbox, .dictation, .advanced]), ("Agents", [.agents, .projects, .dropFolders, .integrations])]
+        static let groups: [(String, [Page])] = [("Personal", [.controlBar, .composer]), ("Agents", [.agents, .projects, .workspaces, .links, .events])]
     }
     @State private var page = Page.general
+    /// A page asked for from elsewhere (the sidebar's Workspace settings…), taken when the view appears.
+    @MainActor static var requested: Page?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -56,18 +59,19 @@ struct SettingsView: View {
             .thinScrollbar(remember: "settings")
             .background(Theme.card)
         }
+        .onAppear { if let asked = Self.requested { page = asked; Self.requested = nil } }
     }
 
     @ViewBuilder private var content: some View {
         switch page {
-        case .general: GeneralPage(settings: settings)
-        case .inbox: InboxPage(settings: settings)
-        case .dictation: DictationPage(settings: settings)
-        case .agents: AgentsPage(settings: settings, store: store)
-        case .integrations: IntegrationsPage(store: store, inbox: inbox)
-        case .dropFolders: DropFoldersPage(settings: settings)
-        case .projects: ProjectsPage(inbox: inbox)
-        case .advanced: AdvancedPage(showOnboarding: showOnboarding)
+        case .general: GeneralPage(settings: settings, showOnboarding: showOnboarding)
+        case .controlBar: ControlBarPage(settings: settings, store: store, inbox: inbox, workspace: workspace)
+        case .composer: ComposerPage(settings: settings)
+        case .agents: AgentsPage(store: store, inbox: inbox, workspace: workspace)
+        case .projects: FoldersPage(settings: settings, inbox: inbox)
+        case .links: LinksPage()
+        case .events: EventsPage(workspace: workspace)
+        case .workspaces: WorkspacesPage(workspace: workspace)
         }
     }
 }
@@ -83,6 +87,8 @@ enum SidebarWidth {
 /// narrower.
 struct SidebarColumn<Content: View>: View {
     let title: String
+    /// The heading as a selector (the tasks sidebar's workspace): the rows it opens.
+    var picker: (() -> [SelectorSection])? = nil
     /// A row at the foot under a divider (an integration's Edit views), level with the rail's settings.
     var footer: AnyView? = nil
     @ViewBuilder let content: () -> Content
@@ -92,7 +98,7 @@ struct SidebarColumn<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            SidebarHeader(title: title)
+            SidebarHeader(title: title, picker: picker)
                 .padding(.horizontal, -10).padding(.bottom, -4)
             content()
             if let footer {
@@ -127,6 +133,9 @@ struct SidebarColumn<Content: View>: View {
 /// mode). Its foot fades into the sidebar.
 struct SidebarHeader: View {
     let title: String
+    var picker: (() -> [SelectorSection])? = nil
+    @State private var anchor = CGRect.zero
+    @State private var hovered = false
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -138,7 +147,26 @@ struct SidebarHeader: View {
             // rail's home icon (its centre 28 pt under the panel's top).
             HStack(spacing: 9) {
                 ZeroMark(small: true).frame(width: 20, height: 19).frame(width: 18)
-                Text(title).font(.system(size: 17, weight: .semibold))
+                if let picker {
+                    let open = WorkspaceSelector.shared.open == "workspace"
+                    Button { WorkspaceSelector.shared.toggle("workspace", kind: .menu, anchor: anchor, rows: picker) } label: {
+                        HStack(spacing: 5) {
+                            Text(title).font(.system(size: 17, weight: .semibold)).lineLimit(1)
+                            NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).opacity(hovered || open ? 1 : 0.55)
+                        }
+                        .padding(.horizontal, 6).frame(height: 26)
+                        .background(open || hovered ? Theme.onBlueprint.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 7))
+                        .contentShape(Rectangle())
+                        // The fill reaches 6 pt past the text on both sides; pulled left by that, the text stays where the title was.
+                        .padding(.leading, -6)
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { hovered = $0 }
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { anchor = $0 }
+                    .help("Switch workspace")
+                } else {
+                    Text(title).font(.system(size: 17, weight: .semibold))
+                }
             }
             .foregroundStyle(Theme.onBlueprint)
             .frame(height: 22)
@@ -235,6 +263,7 @@ struct Rows<Content: View>: View {
         _VariadicView.Tree(Divided()) { content() }
     }
     private struct Divided: _VariadicView_MultiViewRoot {
+        @Environment(\.cardBleed) private var bleed
         func body(children: _VariadicView.Children) -> some View {
             VStack(spacing: 0) {
                 ForEach(Array(children.enumerated()), id: \.offset) { index, child in
@@ -245,6 +274,8 @@ struct Rows<Content: View>: View {
             .padding(.horizontal, 18)
             .background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.stroke))
+            // In Settings the card bleeds past the column by its own inset, so its text lines up with the headings.
+            .padding(.horizontal, -bleed)
         }
     }
 }
@@ -254,93 +285,112 @@ struct Switch: View {
     var body: some View { Toggle("", isOn: $isOn).labelsHidden().toggleStyle(.switch) }
 }
 
+/// How far a card reaches past its column, so its rows' text starts where the text around it does.
+extension EnvironmentValues { @Entry var cardBleed: CGFloat = 0 }
+
+/// A heading over a card: what the rows under it are about.
+private struct SettingsSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.system(size: 13, weight: .semibold))
+            content()
+        }
+        .environment(\.cardBleed, 18)
+    }
+}
+
+/// One setting: what it is, a line or two on what it does, its control on the right. A logo when the row is a tool's.
+struct SettingRow<Control: View>: View {
+    var picture: Image? = nil
+    let title: String
+    let detail: String
+    @ViewBuilder let control: () -> Control
+    var body: some View {
+        HStack(spacing: 12) {
+            if let picture { picture.resizable().aspectRatio(contentMode: .fit).frame(width: 20, height: 20).clipShape(RoundedRectangle(cornerRadius: 5)) }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 13, weight: .medium))
+                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 16)
+            // A fixed slot, so a spinner turning into a button moves nothing beside it; a wider control widens it.
+            control().frame(minWidth: 128, alignment: .trailing)
+        }
+        .padding(.vertical, 12)
+    }
+}
+
+/// The pages' sections, one under another.
+private struct Sections<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    var body: some View { VStack(alignment: .leading, spacing: 32) { content() } }
+}
+
 private struct GeneralPage: View {
     @Bindable var settings: Settings
+    let showOnboarding: () -> Void
     var body: some View {
-        Rows {
-            OnboardingRow(icon: "keyboard", title: "Talk hotkey", detail: "Opens the inbox and starts dictation.") {
-                HotKeyRecorder(settings: settings, minWidth: nil)
-            }
-            OnboardingRow(icon: "power-off", title: "Launch Zero at login", detail: "So agents can always reach you.") {
-                Switch(isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
-            }
-            OnboardingRow(icon: "monitor", title: "Follow the active screen", detail: "The bar moves to the screen you use.") {
-                Switch(isOn: $settings.followActiveScreen)
-            }
-            OnboardingRow(icon: "sidebar-right", title: "Bar in the window", detail: "The bar sits in Zero's window instead of at the screen's edge.") {
-                Picker("", selection: $settings.barDock) {
-                    Text("When it fills the screen").tag(Settings.BarDock.auto)
-                    Text("Always").tag(Settings.BarDock.always)
-                    Text("Never").tag(Settings.BarDock.never)
+        Sections {
+            SettingsSection(title: "Zero") {
+                Rows {
+                    SettingRow(title: "Launch Zero at login", detail: "So agents can always reach you.") {
+                        Switch(isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
+                    }
+                    SettingRow(title: "Talk hotkey", detail: "Opens the inbox and starts dictation.") {
+                        HotKeyRecorder(settings: settings, minWidth: nil)
+                    }
                 }
-                .labelsHidden().fixedSize()
+            }
+            SettingsSection(title: "Advanced") {
+                Rows {
+                    SettingRow(title: "Log", detail: "What Zero did and when: " + Log.file.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
+                        RowButton(title: "View log") { NSWorkspace.shared.open(Log.file) }
+                    }
+                    SettingRow(title: "Onboarding", detail: "See the welcome again.") {
+                        RowButton(title: "Open", action: showOnboarding)
+                    }
+                }
             }
         }
     }
 }
 
-private struct InboxPage: View {
-    @Bindable var settings: Settings
-    var body: some View {
-        Rows {
-            OnboardingRow(icon: "undo", title: "Take-back window", detail: "Esc takes an answer back within this time.") {
-                HStack(spacing: 6) {
-                    Slider(value: $settings.takeBackSeconds, in: 0...5, step: 0.5).frame(width: 80)
-                    Text(String(format: "%.1f s", settings.takeBackSeconds)).font(.system(size: 12)).monospacedDigit().frame(width: 38, alignment: .trailing)
-                }
-            }
-            OnboardingRow(icon: "arrow-right", title: "Move to the next ask", detail: "3 s after an answer lands.") {
-                Switch(isOn: $settings.autoAdvance)
-            }
-            OnboardingRow(icon: "clock", title: "Ask expiry", detail: "For asks that set none.") {
-                Stepper("\(settings.defaultTTLMinutes) min", value: $settings.defaultTTLMinutes, in: 5...1440, step: 5).font(.system(size: 12))
-            }
-            OnboardingRow(icon: "command", title: "Suggest skills after /", detail: "Commands and skills as you type.") {
-                Switch(isOn: $settings.suggestCommands)
-            }
-            OnboardingRow(icon: "at-sign", title: "Suggest files after @", detail: "Files from the agent's project.") {
-                Switch(isOn: $settings.suggestFiles)
-            }
-        }
-    }
-}
-
-private struct DictationPage: View {
-    @Bindable var settings: Settings
-    @State private var microphones: [(name: String, uid: String)] = []
-    var body: some View {
-        Rows {
-            OnboardingRow(icon: "microphone", title: "Microphone", detail: missing ? "Not connected; the system default is used." : "Used when you dictate a reply.") {
-                Picker("", selection: Binding(get: { settings.inputDeviceUID ?? "" }, set: { settings.inputDeviceUID = $0.isEmpty ? nil : $0 })) {
-                    Text("System default").tag("")
-                    ForEach(microphones, id: \.uid) { mic in Text(mic.name).tag(mic.uid) }
-                }
-                .labelsHidden().pickerStyle(.menu)
-            }
-        }
-        .onAppear { microphones = Dictation.inputDevices() }
-    }
-    private var missing: Bool { settings.inputDeviceUID.map { uid in !microphones.contains { $0.uid == uid } } ?? false }
-}
-
-private struct AgentsPage: View {
+private struct ControlBarPage: View {
     @Bindable var settings: Settings
     let store: Store
+    let inbox: InboxController
+    let workspace: Workspace?
     /// The agent being renamed, and the name typed so far.
     @State private var editing: String?
     @State private var draft = ""
     @FocusState private var focused: Bool
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            PluginRow()
-            PlacesField().padding(.top, 20)
-            Text("Agents in the bar").font(.system(size: 15, weight: .semibold)).padding(.top, 28).padding(.bottom, 12)
-            list
+        Sections {
+            SettingsSection(title: "Placement") {
+                Rows {
+                    SettingRow(title: "Follow the active screen", detail: "The bar moves to the screen you use.") {
+                        Switch(isOn: $settings.followActiveScreen)
+                    }
+                    SettingRow(title: "Bar in the window", detail: "The bar sits in Zero's window instead of at the screen's edge.") {
+                        Picker("", selection: $settings.barDock) {
+                            Text("When it fills the screen").tag(Settings.BarDock.auto)
+                            Text("Always").tag(Settings.BarDock.always)
+                            Text("Never").tag(Settings.BarDock.never)
+                        }
+                        .labelsHidden().fixedSize()
+                    }
+                }
+            }
+            SettingsSection(title: "Agents in the bar") { list }
         }
     }
 
     @ViewBuilder private var list: some View {
-        let names = agentNames
+        // The bar's own list: workers folded into their leads, as the dots are.
+        let agents = inbox.barAgents(settings: settings, workspace: workspace)
+        let names = agents.map(\.0)
         if names.isEmpty {
             Text("No agents yet. They appear here when they first ask you something.").font(.system(size: 13)).foregroundStyle(.secondary)
         } else {
@@ -348,7 +398,7 @@ private struct AgentsPage: View {
                 List {
                     ForEach(names, id: \.self) { name in
                         HStack(spacing: 10) {
-                            Circle().fill(AgentStatus.of(store.asks.filter { $0.agent.name == name }).color).frame(width: 8, height: 8)
+                            Circle().fill((agents.first { $0.0 == name }?.1 ?? .closed).color).frame(width: 8, height: 8)
                             if editing == name {
                                 TextField("Name", text: $draft, prompt: Text(store.identity(of: name)?.label ?? name))
                                     .textFieldStyle(.plain).font(.system(size: 13, weight: .medium)).focused($focused)
@@ -374,21 +424,84 @@ private struct AgentsPage: View {
                         settings.agentOrder = order
                     }
                 }
-                .listStyle(.plain).scrollContentBackground(.hidden).frame(height: 320)
+                .listStyle(.plain).scrollContentBackground(.hidden).frame(height: min(320, CGFloat(names.count) * 44 + 8))
                 Text("Drag to reorder the bar. Removing an agent stops it; it comes back when it next asks you something.")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             }
         }
     }
-    private var agentNames: [String] {
-        var seen: [String] = []
-        for ask in store.asks where ask.state != .expired && !seen.contains(ask.agent.name) { seen.append(ask.agent.name) }
-        let open = seen.filter { name in AgentStatus.of(store.asks.filter { $0.agent.name == name }) != .closed }
-        return settings.sorted(open)
+}
+
+private struct ComposerPage: View {
+    @Bindable var settings: Settings
+    @State private var microphones: [(name: String, uid: String)] = []
+    var body: some View {
+        Sections {
+            SettingsSection(title: "Composer") {
+                Rows {
+                    SettingRow(title: "Suggest skills after /", detail: "Commands and skills as you type.") {
+                        Switch(isOn: $settings.suggestCommands)
+                    }
+                    SettingRow(title: "Suggest files after @", detail: "Files from the agent's project.") {
+                        Switch(isOn: $settings.suggestFiles)
+                    }
+                }
+            }
+            SettingsSection(title: "Inbox") {
+                Rows {
+                    SettingRow(title: "Take-back window", detail: "Esc takes an answer back within this time.") {
+                        HStack(spacing: 6) {
+                            Slider(value: $settings.takeBackSeconds, in: 0...5, step: 0.5).frame(width: 80)
+                            Text(String(format: "%.1f s", settings.takeBackSeconds)).font(.system(size: 12)).monospacedDigit().frame(width: 38, alignment: .trailing)
+                        }
+                    }
+                    SettingRow(title: "Move to the next ask", detail: "3 s after an answer lands.") {
+                        Switch(isOn: $settings.autoAdvance)
+                    }
+                    SettingRow(title: "Ask expiry", detail: "For asks that set none.") {
+                        Stepper("\(settings.defaultTTLMinutes) min", value: $settings.defaultTTLMinutes, in: 5...1440, step: 5).font(.system(size: 12))
+                    }
+                }
+            }
+            SettingsSection(title: "Dictation") {
+                Rows {
+                    SettingRow(title: "Microphone", detail: missing ? "Not connected; the system default is used." : "Used when you dictate a reply.") {
+                        Picker("", selection: Binding(get: { settings.inputDeviceUID ?? "" }, set: { settings.inputDeviceUID = $0.isEmpty ? nil : $0 })) {
+                            Text("System default").tag("")
+                            ForEach(microphones, id: \.uid) { mic in Text(mic.name).tag(mic.uid) }
+                        }
+                        .labelsHidden().pickerStyle(.menu)
+                    }
+                }
+            }
+        }
+        .onAppear { microphones = Dictation.inputDevices() }
+    }
+    private var missing: Bool { settings.inputDeviceUID.map { uid in !microphones.contains { $0.uid == uid } } ?? false }
+}
+
+/// How agents run and reach Zero, and where their tasks are.
+private struct AgentsPage: View {
+    let store: Store
+    let inbox: InboxController
+    let workspace: Workspace?
+    var body: some View {
+        Sections {
+            SettingsSection(title: "Runtimes") { RuntimesRows(store: store, inbox: inbox) }
+            SettingsSection(title: "Setup") { PluginRow() }
+            if let workspace { SettingsSection(title: "Browser") { BrowserRows(workspace: workspace) } }
+            SettingsSection(title: "Tasks") {
+                Rows {
+                    SettingRow(title: "Where tasks run", detail: "A command printing [{\"ticket\": \"ENG-1\", \"place\": \"my-bench\"}], run in your login shell every five minutes. Each task's Where is its place, by ticket, in place of its folder.") {
+                        PlacesCommandField()
+                    }
+                }
+            }
+        }
     }
 }
 
-private struct IntegrationsPage: View {
+private struct RuntimesRows: View {
     let store: Store
     let inbox: InboxController
     @State private var rexOn = UserDefaults.standard.bool(forKey: RexAdapter.enabledKey)
@@ -399,10 +512,10 @@ private struct IntegrationsPage: View {
 
     var body: some View {
         Rows {
-            OnboardingRow(icon: "stack", picture: choiceIcon("solo"), title: "Solo", detail: "Starts agents and carries your messages.") {
+            SettingRow(picture: choiceIcon("solo"), title: "Solo", detail: "Starts agents and carries your messages.") {
                 Text(soloStatus).font(.system(size: 12)).foregroundStyle(.secondary)
             }
-            OnboardingRow(icon: "terminal", picture: choiceIcon("rex"), title: "Rex", detail: rexDetail) {
+            SettingRow(picture: choiceIcon("rex"), title: "Rex", detail: rexDetail) {
                 if RexAdapter.executable == nil {
                     Text("Not installed").font(.system(size: 12)).foregroundStyle(.secondary)
                 } else {
@@ -424,68 +537,103 @@ private struct IntegrationsPage: View {
     }
 }
 
-/// The command that says where tasks run (a bench, a machine) by ticket, for the board's Where. zerod reruns it every
-/// minute; a task can also name its own with `zero label --where`.
-private struct PlacesField: View {
+/// The places command, saved when Return is pressed or the field is left.
+private struct PlacesCommandField: View {
     @State private var command = ""
     @State private var saved = ""
     @State private var link = try? ZerodLink()
+    @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Where tasks run").font(.system(size: 13, weight: .medium))
-            HStack {
-                TextField("", text: $command, prompt: Text("A command printing [{\"ticket\": \"ENG-1\", \"place\": \"my-bench\"}]"))
-                    .textFieldStyle(.roundedBorder).font(.system(size: 12).monospaced())
-                    .onSubmit(save)
-                Button("Save", action: save).disabled(command == saved)
-            }
-            Text("Shown as each task's Where, by its ticket, in place of its folder. Run in your login shell every five minutes.")
-                .font(.system(size: 12)).foregroundStyle(.secondary)
-        }
-        .task {
-            if let current = try? await link?.placesCommand() { command = current; saved = current }
-        }
+        TextField("", text: $command, prompt: Text("Command"))
+            .textFieldStyle(.roundedBorder).font(.system(size: 12).monospaced()).frame(width: 260)
+            .focused($focused)
+            .onSubmit(save)
+            .onChange(of: focused) { if !focused { save() } }
+            .task { if let current = try? await link?.placesCommand() { command = current; saved = current } }
     }
 
     private func save() {
         let command = command
+        guard command != saved else { return }
         Task { if (try? await link?.setPlacesCommand(command)) != nil { saved = command } }
     }
 }
 
 /// The Zero plugin, which has Claude Code send its asks and progress to the inbox.
+/// Zero for Chrome: set up (the native host's manifest, then the extension loaded in Chrome by hand, unpacked), whether a
+/// Chrome is connected, and the sites no task may use.
+private struct BrowserRows: View {
+    let workspace: Workspace
+    @State private var connected: [String]?
+    @State private var folder: String?
+    @State private var blocked = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Rows {
+                SettingRow(title: "Chrome", detail: connected.map { $0.isEmpty ? "Lets every agent use Chrome, each task in tabs of its own, as Claude in Chrome does. Not connected." : "Connected: \($0.joined(separator: ", ")). Every agent can use Chrome, each task in tabs of its own." } ?? "Lets every agent use Chrome, each task in tabs of its own.") {
+                    RowButton(title: connected?.isEmpty == false ? "Set up again" : "Set up", action: setUp)
+                }
+                SettingRow(title: "Blocked sites", detail: "No task may open these, or act on a tab showing one. A site covers its subdomains. Any other site is allowed; in auto mode a reviewer looks at each new one first.") {
+                    TextField("bank.com, mail.google.com", text: $blocked)
+                        .textFieldStyle(.roundedBorder).font(.system(size: 12)).frame(width: 220)
+                        .onSubmit { Task { await workspace.saveBlockedSites(blocked.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }) } }
+                }
+            }
+            if let folder {
+                Text("In Chrome's Extensions page (open now): turn on Developer mode, choose Load unpacked, and pick the folder Finder shows (\((folder as NSString).abbreviatingWithTildeInPath)). Zero for Chrome connects by itself.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            }
+        }
+        .task {
+            blocked = await workspace.blockedSites().joined(separator: ", ")
+            while !Task.isCancelled {
+                connected = await workspace.browsers()
+                try? await Task.sleep(for: .seconds(3))
+            }
+        }
+    }
+
+    private func setUp() {
+        Task {
+            guard let path = await workspace.browserSetup() else { return }
+            folder = path
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            if let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome"), let page = URL(string: "chrome://extensions") {
+                NSWorkspace.shared.open([page], withApplicationAt: chrome, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
+            }
+        }
+    }
+}
+
 private struct PluginRow: View {
     /// nil while it is being changed.
     @State private var plugin: Bool? = ClaudePlugin.isInstalled
-    @State private var mcp = AgentMCP.isInstalled
     @State private var error: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Rows {
-                OnboardingRow(icon: "puzzle-piece", picture: Image(nsImage: appTile), title: "Zero plugin",
-                              detail: "Configures your agents to work with Zero: asks and progress come to your inbox.") {
+                SettingRow(picture: Image(nsImage: appTile), title: "Zero plugin",
+                           detail: "Configures your agents to work with Zero: asks and progress come to your inbox, and scratchpads are theirs too (Zero's MCP server, in Codex's and OpenCode's config).") {
                     if let plugin {
                         Switch(isOn: Binding(get: { plugin }, set: { on in
                             self.plugin = nil
                             error = nil
                             Task {
-                                if on { error = await ClaudePlugin.install() } else { await ClaudePlugin.uninstall() }
+                                if on {
+                                    error = await ClaudePlugin.install() ?? AgentMCP.install()
+                                } else {
+                                    await ClaudePlugin.uninstall()
+                                    AgentMCP.uninstall()
+                                }
                                 self.plugin = ClaudePlugin.isInstalled
                             }
                         }))
                     } else {
                         ProgressView().controlSize(.small)
                     }
-                }
-                OnboardingRow(icon: "note-3", title: "Scratchpads in Codex and OpenCode",
-                              detail: "Adds Zero's MCP server to their config, as the plugin does for Claude Code.") {
-                    Switch(isOn: Binding(get: { mcp }, set: { on in
-                        error = on ? AgentMCP.install() : nil
-                        if !on { AgentMCP.uninstall() }
-                        mcp = AgentMCP.isInstalled
-                    }))
                 }
             }
             if let error { Text(error).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3).textSelection(.enabled) }
@@ -619,15 +767,37 @@ private struct DropFoldersPage: View {
     }
 }
 
-private struct AdvancedPage: View {
-    let showOnboarding: () -> Void
+/// Projects and drop folders: where agents start, and where asks arrive as files.
+private struct FoldersPage: View {
+    @Bindable var settings: Settings
+    let inbox: InboxController
     var body: some View {
-        Rows {
-            OnboardingRow(icon: "file-content", title: "Log", detail: Paths.log.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
-                RowButton(title: "View log") { NSWorkspace.shared.open(Paths.log) }
-            }
-            OnboardingRow(icon: "sparkle-2", title: "Onboarding", detail: "See the welcome again.") {
-                RowButton(title: "Open", action: showOnboarding)
+        Sections {
+            SettingsSection(title: "Projects") { ProjectsPage(inbox: inbox) }
+            SettingsSection(title: "Drop folders") { DropFoldersPage(settings: settings) }
+        }
+    }
+}
+
+/// Where references in messages open: issues in Linear's app, channels and threads in Slack.
+private struct LinksPage: View {
+    @AppStorage(LinearLinks.key) private var linearInApp = true
+    @AppStorage(GitHubLinks.key) private var githubOwner = ""
+    var body: some View {
+        Sections {
+            SettingsSection(title: "Where links open") {
+                Rows {
+                    SettingRow(title: "GitHub pull requests", detail: "#123 opens in the agent's repository. name#123 opens in this owner's; left empty, the owner of the repositories in the agent's folder.") {
+                        TextField("", text: $githubOwner, prompt: Text("Owner"))
+                            .textFieldStyle(.roundedBorder).font(.system(size: 12).monospaced()).frame(width: 140)
+                    }
+                    SettingRow(title: "Linear issues in the app", detail: LinearLinks.installed ? "Rather than the browser, here and in messages." : "Linear's app isn't installed; issues open in the browser.") {
+                        if LinearLinks.installed { Switch(isOn: $linearInApp) } else { Text("Not installed").font(.system(size: 12)).foregroundStyle(.secondary) }
+                    }
+                    SettingRow(title: "Slack", detail: "#channel and Slack's message links open in Slack once a workspace is connected, under Integrations.") {
+                        Text(Slack.shared.team.map { "Connected to \($0.name)" } ?? "Not connected").font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
+                }
             }
         }
     }

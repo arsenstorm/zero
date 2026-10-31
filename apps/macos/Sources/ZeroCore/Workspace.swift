@@ -28,7 +28,7 @@ public final class Workspace {
     public var lastError: String?
 
     /// GitHub and Linear: their settings and views, and what each view showed last ("github/<view>"), or why not.
-    public private(set) var integrations: IntegrationState?
+    public private(set) var integrations: IntegrationState? { didSet { if integrations?.slack != oldValue?.slack { Slack.shared.apply(integrations?.slack) } } }
     public private(set) var items: [String: [IntegrationItem]] = [:]
     public private(set) var itemErrors: [String: String] = [:]
     /// Bumped whenever zerod says a scratchpad changed: what shows pads reads them again.
@@ -36,12 +36,79 @@ public final class Workspace {
     /// The scratchpads and their folders, as zerod last listed them.
     public private(set) var pads: [PadSummary] = []
     public private(set) var padFolders: [String] = []
+    /// The loops (named instructions, zerod's loops.rs), as zerod last listed them; bumped when one changes.
+    public private(set) var loopsVersion = 0
+    public private(set) var loops: [ZerodLink.Loop] = []
+    /// What sessions follow (pull requests, issues, threads; zerod's following.rs), as zerod last listed them; bumped
+    /// when a follow is made, taken back, or read again.
+    public private(set) var followingVersion = 0
+    public private(set) var followed: [ZerodLink.Followed] = []
+    /// The user's workspaces (zerod's workspaces.rs), Zero first, and the one the window shows. Every workspace's
+    /// tasks run alike; this only says which are shown.
+    public private(set) var workspaces: [ZerodLink.Workspace] = [ZerodLink.Workspace(id: "zero", name: "Zero")]
+    public private(set) var workspacesVersion = 0
+    public var current: String = UserDefaults.standard.string(forKey: "currentWorkspace") ?? "zero" {
+        didSet { UserDefaults.standard.set(current, forKey: "currentWorkspace") }
+    }
+    public var currentWorkspace: ZerodLink.Workspace { workspaces.first { $0.id == current } ?? workspaces[0] }
 
     /// Views being fetched again, while what they last showed stays up.
     public private(set) var refreshing: Set<String> = []
 
-    /// Every task at once (crates/zerod/src/board.rs), while the window shows it.
+    /// Every task at once (crates/zerod/src/board.rs), while the window shows it, Replied rows settled (below).
     public private(set) var board: [BoardRow] = []
+    private var rawBoard: [BoardRow] = []
+
+    /// A task that replied stays Replied until the user has looked at it, and settles to Idle this long after: an answer
+    /// read a while ago is nothing new, one not yet read is, however long ago it came.
+    public static let settleAfter: TimeInterval = 5 * 60
+    /// The latest answer of each task the user looked at, and when; kept across launches.
+    @ObservationIgnored private var seen: [String: (answer: String, at: Date)] = Workspace.loadSeen()
+
+    /// The user is looking at this task now: its latest answer is seen.
+    public func markSeen(_ id: String) {
+        guard let answer = latestAnswer(id) else { return }
+        if let kept = seen[id], kept.answer == answer { return }
+        seen[id] = (answer, Date())
+        Self.saveSeen(seen)
+        resettle()
+    }
+
+    /// The settled rows again: a minute on, a seen answer may have settled.
+    func resettle() {
+        let rows = rawBoard.map { row in
+            var row = row
+            row.state = Self.settled(row.state, session: row.session, answer: latestAnswer(row.session), seen: seen, now: Date())
+            return row
+        }
+        if rows != board {
+            for row in rows where board.first(where: { $0.session == row.session })?.state != row.state {
+                Log.write("task \(row.session) \(row.state.rawValue): \(row.task)")
+            }
+            board = rows
+        }
+    }
+
+    nonisolated static func settled(_ state: BoardRow.State, session: String, answer: String?, seen: [String: (answer: String, at: Date)], now: Date) -> BoardRow.State {
+        guard state == .answered, let kept = seen[session], kept.answer == answer, now.timeIntervalSince(kept.at) >= settleAfter else { return state }
+        return .idle
+    }
+
+    private func latestAnswer(_ id: String) -> String? {
+        (lives[id]?.conversation ?? roster[id])?.items.last { if case .agent(_, true) = $0.kind { true } else { false } }?.id
+    }
+
+    private static let seenKey = "seenAnswers"
+    private static func loadSeen() -> [String: (answer: String, at: Date)] {
+        let stored = UserDefaults.standard.dictionary(forKey: seenKey) as? [String: [String: Any]] ?? [:]
+        return stored.compactMapValues { entry in
+            guard let answer = entry["answer"] as? String, let at = entry["at"] as? Double else { return nil }
+            return (answer, Date(timeIntervalSince1970: at))
+        }
+    }
+    private static func saveSeen(_ seen: [String: (answer: String, at: Date)]) {
+        UserDefaults.standard.set(seen.mapValues { ["answer": $0.answer, "at": $0.at.timeIntervalSince1970] as [String: Any] }, forKey: seenKey)
+    }
 
     public var conversations: [Conversation] { order.compactMap { roster[$0] } }
     /// A task as the roster has it: everything but its conversation.
@@ -99,6 +166,14 @@ public final class Workspace {
 
     public init() {
         onBehind = { [weak self] in Task { try? await self?.link?.subscribe() } }
+        // A seen answer settles with time, not with an event: look again each minute.
+        Task { @MainActor [weak self] in
+            while true {
+                try? await Task.sleep(for: .seconds(60))
+                guard let self else { return }
+                self.resettle()
+            }
+        }
     }
 
     // The connection.
@@ -111,14 +186,17 @@ public final class Workspace {
                 fresh.onFeed = { [weak self] feed in
                     Task { @MainActor in
                         switch feed {
-                        case let .board(rows): if self?.board != rows { self?.board = rows }
+                        case let .board(rows): if let self, self.rawBoard != rows { self.rawBoard = rows; self.resettle() }
                         case .pads: self?.padsVersion += 1
+                        case .loops: self?.loopsVersion += 1
+                        case .following: self?.followingVersion += 1
+                        case .workspaces: self?.workspacesVersion += 1; Task { await self?.loadWorkspaces() }
                         }
                     }
                 }
-                fresh.onClose = { [weak self] in Task { @MainActor in self?.link = nil; self?.connected = false } }
+                fresh.onClose = { [weak self] in Task { @MainActor in self?.link = nil; self?.connected = false; Log.write("zerod connection closed") } }
                 link = fresh
-                if (try? await fresh.subscribe()) != nil { connected = true }
+                if (try? await fresh.subscribe()) != nil { connected = true; await loadWorkspaces(); await loadIntegrations() }
             }
             try? await Task.sleep(for: .seconds(2))
         }
@@ -211,7 +289,91 @@ public final class Workspace {
         return branched
     }
 
-    public func outline(_ session: String) async -> [OutlineMark] { (try? await link?.outline(session: session)) ?? [] }
+    /// Each task's outline (your messages and their answers, for the page's rail) as last fetched: a page opens with
+    /// its rail in place and the fresh outline replaces it only if it differs.
+    public private(set) var outlines: [String: [OutlineMark]] = [:]
+
+    @discardableResult
+    public func outline(_ session: String) async -> [OutlineMark] {
+        guard let marks = try? await link?.outline(session: session) else { return outlines[session] ?? [] }
+        if outlines[session] != marks { outlines[session] = marks }
+        return marks
+    }
+
+    public func loadLoops() async {
+        guard let list = try? await link?.loops() else { return }
+        if list != loops { loops = list }
+    }
+
+    public func readLoop(_ name: String) async -> ZerodLink.Loop? { try? await link?.loop(name) }
+
+    /// Saved, or why not (a name that isn't one, a child that leads back to it).
+    public func saveLoop(_ name: String, description: String, body: String) async -> String? {
+        guard let link else { return "Zero's daemon isn't running" }
+        do { _ = try await link.saveLoop(name, description: description, body: body); await loadLoops(); return nil } catch { return error.localizedDescription }
+    }
+
+    public func loadWorkspaces() async {
+        guard let list = try? await link?.workspaces(), !list.isEmpty else { return }
+        if list != workspaces { workspaces = list }
+        if !list.contains(where: { $0.id == current }) { current = "zero" }
+    }
+
+    /// Saves a workspace (an empty id makes one); the error to show, or nil.
+    @discardableResult public func saveWorkspace(_ workspace: ZerodLink.Workspace) async -> String? {
+        do {
+            guard let link else { return "Zero's daemon isn't running" }
+            let saved = try await link.saveWorkspace(workspace)
+            await loadWorkspaces()
+            if workspace.id.isEmpty { current = saved.id }
+            return nil
+        } catch { return error.localizedDescription }
+    }
+
+    public func deleteWorkspace(_ id: String) async {
+        _ = await attempt { try await $0.deleteWorkspace(id) }
+        await loadWorkspaces()
+    }
+
+    /// Puts a task in a workspace (nil: its folder's).
+    public func place(_ session: String, in workspace: String?) async {
+        _ = await attempt { try await $0.placeInWorkspace(session: session, workspace: workspace) }
+    }
+
+    /// Which workspace a conversation is in, as zerod works it out: put somewhere, that; else the longest of a
+    /// workspace's folders that contains its folder; else Zero.
+    public func workspace(of conversation: Conversation) -> String {
+        if let placed = conversation.workspace, workspaces.contains(where: { $0.id == placed }) { return placed }
+        let cwd = conversation.cwd.hasSuffix("/") ? String(conversation.cwd.dropLast()) : conversation.cwd
+        let owning = workspaces.flatMap { w in w.folders.map { ($0, w.id) } }
+            .filter { folder, _ in cwd == folder || cwd.hasPrefix(folder + "/") }
+            .max { $0.0.count < $1.0.count }
+        return owning?.1 ?? "zero"
+    }
+
+    // Zero for Chrome.
+
+    /// Puts the native host's manifest where Chrome reads it; the extension's folder, to load in Chrome.
+    public func browserSetup() async -> String? { await attempt { try await $0.browserSetup().extension } }
+    /// The Chromes connected to Zero, by name.
+    public func browsers() async -> [String] { ((try? await link?.browsers()) ?? []).map(\.name) }
+    public func blockedSites() async -> [String] { (try? await link?.browserSettings()) ?? [] }
+    public func saveBlockedSites(_ sites: [String]) async { _ = await attempt { try await $0.saveBrowserSettings(blocked: sites) } }
+
+    public func loadFollowing() async {
+        guard let list = try? await link?.following() else { return }
+        if list != followed { followed = list }
+    }
+
+    public func unfollow(session: String, topic: String) async {
+        _ = await attempt { try await $0.unfollow(session: session, topics: [topic]) }
+        await loadFollowing()
+    }
+
+    public func deleteLoop(_ name: String) async {
+        _ = await attempt { try await $0.deleteLoop(name) }
+        await loadLoops()
+    }
 
     public func loadPads() async {
         guard let list = try? await link?.pad("list", [:], as: PadList.self) else { return }
@@ -243,6 +405,12 @@ public final class Workspace {
     }
 
     @discardableResult
+    /// Names a task: the sidebar's label for it, keeping what it is for.
+    public func rename(_ id: String, to label: String, ticket: String?) async {
+        _ = await attempt { try await $0.label(session: id, label: label, ticket: ticket) }
+        await refreshBoard()
+    }
+
     public func renamePad(_ id: String, to title: String) async -> Pad? {
         let pad = await attempt { try await $0.pad("rename", ["pad": id, "title": title], as: Pad.self) }
         await loadPads()
@@ -265,7 +433,32 @@ public final class Workspace {
     }
 
     public func loadIntegrations() async {
-        if let state = try? await link?.integrations(), state != integrations { integrations = state }
+        guard let state = try? await link?.integrations() else { return }
+        if state != integrations { integrations = state }
+        // A Slack token the app kept itself (before zerod held the connection) goes to zerod once.
+        if state.slack == nil, !handedSlackOver, let token = Slack.shared.legacyToken() {
+            handedSlackOver = true
+            if await connectSlack(token: token) == nil { Slack.shared.forgetLegacyToken() }
+        }
+    }
+    @ObservationIgnored private var handedSlackOver = false
+
+    /// Connects Slack with a user token of Zero's app; the error to show, or nil.
+    public func connectSlack(token: String) async -> String? {
+        do {
+            guard let link else { return "Zero's daemon isn't running" }
+            integrations = try await link.connectSlack(token: token)
+            return nil
+        } catch { return error.localizedDescription }
+    }
+
+    public func disconnectSlack() async {
+        if let state = await attempt({ try await $0.disconnectSlack() }) { integrations = state }
+    }
+
+    /// Slack's channels again, hourly while Zero runs.
+    public func keepSlackFresh() {
+        Task { while true { try? await Task.sleep(for: .seconds(3600)); if integrations?.slack != nil, let state = try? await link?.refreshSlack() { integrations = state } } }
     }
 
     public func setIntegration(_ integration: String, enabled: Bool) async {
@@ -318,17 +511,21 @@ public final class Workspace {
 
     public func refreshBoard() async {
         guard let rows = try? await link?.board() else { return }
-        if rows != board { board = rows }
+        if rows != rawBoard { rawBoard = rows; resettle() }
     }
 
-    public func start(provider: Provider, cwd: String, prompt: String, images: [String] = [], model: String?, effort: String?, permissions: Permissions = .auto) async -> String? {
-        await attempt { try await $0.start(provider: provider, cwd: cwd, prompt: prompt, images: images, model: model, effort: effort, permissions: permissions) }
+    public func start(provider: Provider, cwd: String, prompt: String, images: [String] = [], model: String?, effort: String?, permissions: Permissions = .auto,
+                      workspace: String? = nil) async -> String? {
+        await attempt { try await $0.start(provider: provider, cwd: cwd, prompt: prompt, images: images, model: model, effort: effort, permissions: permissions, workspace: workspace) }
     }
 
     public func send(_ session: String, text: String, images: [String] = [], model: String? = nil, effort: String? = nil) async {
         _ = await attempt { try await $0.send(session: session, text: text, images: images, model: model, effort: effort) }
     }
 
+    public func queue(_ session: String, text: String, images: [String] = []) async { _ = await attempt { try await $0.queue(session: session, text: text, images: images) } }
+    public func unqueue(_ session: String, item: String) async -> Bool { await attempt { try await $0.unqueue(session: session, item: item) } != nil }
+    public func release(_ session: String) async { _ = await attempt { try await $0.release(session: session) } }
     public func interrupt(_ session: String) async { _ = await attempt { try await $0.interrupt(session: session) } }
     public func stop(_ session: String) async { _ = await attempt { try await $0.stop(session: session) } }
     public func resume(_ session: String) async { _ = await attempt { try await $0.resume(session: session) } }
@@ -337,6 +534,10 @@ public final class Workspace {
     public func closeTerminal(_ session: String) async { _ = await attempt { try await $0.closeTerminal(session: session) } }
 
     /// Moves the task to another provider; true once it's there.
+    public func setPermissions(_ session: String, _ permissions: Permissions) async {
+        _ = await attempt { try await $0.setPermissions(session: session, permissions) }
+    }
+
     public func switchProvider(_ session: String, to provider: Provider, model: String? = nil, effort: String? = nil) async -> Bool {
         await attempt { try await $0.switchProvider(session: session, to: provider, model: model, effort: effort) } != nil
     }
@@ -352,13 +553,14 @@ public final class Workspace {
     }
 
     private func attempt<T>(_ request: (ZerodLink) async throws -> T) async -> T? {
-        guard let link else { lastError = "Zero's daemon isn't running"; return nil }
+        guard let link else { lastError = "Zero's daemon isn't running"; Log.write("request with zerod not running"); return nil }
         do {
             let result = try await request(link)
             lastError = nil
             return result
         } catch {
             lastError = error.localizedDescription
+            Log.write("zerod refused: " + (lastError ?? ""))
             return nil
         }
     }

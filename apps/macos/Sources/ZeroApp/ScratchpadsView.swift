@@ -93,12 +93,13 @@ struct ScratchpadsPage: View {
 
     /// Search, with New and New folder beside it; once something is typed the field takes the row and the two slide
     /// off to the right.
+    @FocusState private var searchFocused: Bool
     private var searchBar: some View {
         let searching = !search.isEmpty
         return HStack(spacing: 4) {
             HStack(spacing: 7) {
                 NucleoIcon("magnifier", size: 13).foregroundStyle(.secondary)
-                TextField("Search", text: $search).textFieldStyle(.plain).font(.system(size: 13))
+                TextField("Search", text: $search).textFieldStyle(.plain).font(.system(size: 13)).focused($searchFocused)
                 if searching {
                     Button { search = "" } label: { NucleoIcon("xmark", size: 11).foregroundStyle(.secondary) }
                         .buttonStyle(.plain).help("Clear")
@@ -106,6 +107,8 @@ struct ScratchpadsPage: View {
             }
             .padding(.horizontal, 9).frame(height: 30)
             .background(Theme.chip.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+            // The whole bar is the field: a click on its padding focuses it too.
+            .contentShape(Rectangle()).onTapGesture { searchFocused = true }
             if !searching {
                 Group {
                     Button { create(in: "") } label: { NucleoIcon("compose", size: 15).frame(width: 30, height: 30) }
@@ -227,7 +230,7 @@ struct ScratchpadsPage: View {
 }
 
 /// A name asked for in a sheet: a new folder's, or a pad's new title.
-private struct NameSheet: View {
+struct NameSheet: View {
     let title: String
     @State var name: String
     let action: String
@@ -285,6 +288,8 @@ private struct PadEditor: View {
                 ContentUnavailableView("No such scratchpad", systemImage: "", description: Text("It may have been moved to the trash."))
             }
         }
+        // The conversation's column: the page reads as a task's does, not as a sheet across the window.
+        .centredColumn(760)
         .task {
             await load()
             scrollTo = navigation.padSection
@@ -336,7 +341,7 @@ private struct PadEditor: View {
                 .joined(separator: " · "))
                 .font(.system(size: 12)).foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 48).padding(.top, 28).padding(.bottom, 12)
+        .padding(.top, 28).padding(.bottom, 12)
     }
 
     private func banner(_ message: String) -> some View {
@@ -349,7 +354,7 @@ private struct PadEditor: View {
         }
         .padding(.horizontal, 14).padding(.vertical, 8)
         .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-        .padding(.horizontal, 44).padding(.bottom, 8)
+        .padding(.bottom, 8)
         .help(message)
     }
 
@@ -415,7 +420,7 @@ private struct PadEditor: View {
 
 /// Markdown as you type it, styled as it reads: headings large, emphasis and code shown, links clickable (a
 /// zero://pad link opens that pad). Right-click copies the link of the section under the pointer.
-private struct MarkdownEditor: NSViewRepresentable {
+struct MarkdownEditor: NSViewRepresentable {
     @Binding var text: String
     @Binding var scrollTo: String?
     let sectionLink: (String) -> (link: String, title: String)?
@@ -431,6 +436,9 @@ private struct MarkdownEditor: NSViewRepresentable {
         scroll.verticalScroller = ThinScroller()
         scroll.scrollerStyle = .overlay
         let view = scroll.documentView as! NSTextView
+        // TextKit 1, as the composer's field: TextKit 2 lands a click a line below where it was, with the paragraphs'
+        // line height stretched (reading the layout manager once makes the view fall back).
+        _ = view.layoutManager
         view.delegate = context.coordinator
         view.textStorage?.delegate = context.coordinator
         view.drawsBackground = false
@@ -445,12 +453,15 @@ private struct MarkdownEditor: NSViewRepresentable {
         view.isAutomaticSpellingCorrectionEnabled = false
         view.isAutomaticLinkDetectionEnabled = false
         view.linkTextAttributes = [.foregroundColor: NSColor.controlAccentColor, .cursor: NSCursor.pointingHand]
-        view.textContainerInset = NSSize(width: 44, height: 8)
+        view.textContainerInset = NSSize(width: 0, height: 8)
+        // The column is the view itself, kept to the page's column and centred in the clip, rather than a full-width
+        // view with a huge inset: with an inset of hundreds of points the text view's hit-testing lands a click
+        // at the end of its line (it takes the inset off twice), while its drawing is right.
+        view.autoresizingMask = []
+        view.isHorizontallyResizable = false
+        view.textContainer?.widthTracksTextView = true
         view.string = text
         context.coordinator.view = view
-        // A column at most about 720 wide, centred as the window widens.
-        scroll.contentView.postsFrameChangedNotifications = true
-        NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.resized), name: NSView.frameDidChangeNotification, object: scroll.contentView)
         return scroll
     }
 
@@ -493,7 +504,9 @@ private struct MarkdownEditor: NSViewRepresentable {
 
         @objc func resized(_ note: Notification) {
             guard let view, let clip = note.object as? NSView else { return }
-            view.textContainerInset = NSSize(width: max(44, (clip.bounds.width - 720) / 2), height: 8)
+            let width = min(clip.bounds.width, 760)
+            view.setFrameSize(NSSize(width: width, height: view.frame.height))
+            view.setFrameOrigin(NSPoint(x: ((clip.bounds.width - width) / 2).rounded(), y: 0))
         }
 
         func textView(_ view: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
@@ -535,7 +548,9 @@ enum MarkdownStyle {
     static let mono = NSFont.monospacedSystemFont(ofSize: 12.5, weight: .regular)
     static let paragraph: NSParagraphStyle = {
         let style = NSMutableParagraphStyle()
-        style.lineHeightMultiple = 1.3
+        // Room between lines as spacing, not a line-height multiple: with the multiple, a click landed a line or so
+        // below where it was made (the view's hit-testing and its drawing disagreed on where lines sit).
+        style.lineSpacing = 5
         style.paragraphSpacing = 2
         return style
     }()

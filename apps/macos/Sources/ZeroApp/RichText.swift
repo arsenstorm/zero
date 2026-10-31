@@ -11,6 +11,10 @@ extension NSAttributedString.Key {
     static let zeroCodeBlock = NSAttributedString.Key("zeroCodeBlock")
     static let zeroQuote = NSAttributedString.Key("zeroQuote")
     static let zeroRule = NSAttributedString.Key("zeroRule")
+    /// A token of the composer's in the words (@loop, /skill): its yellow pill, in the token's own colour.
+    static let zeroToken = NSAttributedString.Key("zeroToken")
+    /// What a token opens when clicked (a loop); not a link, which the view would colour as one.
+    static let zeroOpens = NSAttributedString.Key("zeroOpens")
 }
 
 enum RichMarkdown {
@@ -22,8 +26,8 @@ enum RichMarkdown {
 
     /// The text as rendered before, or rendered now and kept: a message that hasn't changed isn't parsed and styled
     /// again each time its view is drawn. The same rendering is the same object, which the view checks for.
-    static func cached(_ text: String, size: CGFloat, compact: Bool, repo: String?, render: () -> NSAttributedString) -> NSAttributedString {
-        let key = "\(size)|\(compact)|\(repo ?? "")|\(text)" as NSString
+    static func cached(_ text: String, size: CGFloat, compact: Bool, repo: String?, yours: Bool = false, render: () -> NSAttributedString) -> NSAttributedString {
+        let key = "\(size)|\(compact)|\(yours)|\(repo ?? "")|\(text)" as NSString
         if let kept = rendered.object(forKey: key) { return kept }
         let made = render()
         rendered.setObject(made, forKey: key)
@@ -31,14 +35,29 @@ enum RichMarkdown {
     }
 
     /// The text as rendered before, if it has been.
-    static func kept(_ text: String, size: CGFloat, compact: Bool, repo: String?) -> NSAttributedString? {
-        rendered.object(forKey: "\(size)|\(compact)|\(repo ?? "")|\(text)" as NSString)
+    static func kept(_ text: String, size: CGFloat, compact: Bool, repo: String?, yours: Bool = false) -> NSAttributedString? {
+        rendered.object(forKey: "\(size)|\(compact)|\(yours)|\(repo ?? "")|\(text)" as NSString)
     }
 
-    /// The blocks as one attributed text; `inline` reads what's inside a line (bold, code, links).
-    static func render(_ blocks: [MarkdownBlock], size: CGFloat, inline: (String) -> AttributedString) -> NSAttributedString {
+    private static let renderedBlocks: NSCache<NSString, NSAttributedString> = { let cache = NSCache<NSString, NSAttributedString>(); cache.countLimit = 4000; return cache }()
+
+    /// The blocks as one attributed text; `inline` reads what's inside a line (bold, code, links). With a `key` (what
+    /// the inline links depend on), each top-level block is kept once rendered: an answer still streaming grows by
+    /// its last block, and only that one is parsed and styled again.
+    static func render(_ blocks: [MarkdownBlock], size: CGFloat, inline: (String) -> AttributedString, key: String? = nil) -> NSAttributedString {
         let out = NSMutableAttributedString()
-        append(blocks, depth: 0, into: out, size: size, inline: inline)
+        if let key {
+            for block in blocks {
+                let name = "\(key)|\(size)|\(String(describing: block))" as NSString
+                if let kept = renderedBlocks.object(forKey: name) { out.append(kept); continue }
+                let piece = NSMutableAttributedString()
+                append([block], depth: 0, into: piece, size: size, inline: inline)
+                renderedBlocks.setObject(piece, forKey: name)
+                out.append(piece)
+            }
+        } else {
+            append(blocks, depth: 0, into: out, size: size, inline: inline)
+        }
         // No space after the last paragraph: the view ends where the text does.
         if out.length > 0, out.string.hasSuffix("\n") { out.deleteCharacters(in: NSRange(location: out.length - 1, length: 1)) }
         return out
@@ -148,7 +167,25 @@ enum RichMarkdown {
                 attributes[.font] = NSFont.monospacedSystemFont(ofSize: font.pointSize * 0.88, weight: .regular)
                 attributes[.zeroCode] = true
             }
+            if let link = run.link, link.scheme == "zero", link.host == "loop" || link.host == "skill" {
+                attributes[.font] = NSFont.systemFont(ofSize: font.pointSize, weight: .medium)
+                attributes[.foregroundColor] = TokenTextView.tokenText
+                attributes[.zeroToken] = true
+                if link.host == "loop" { attributes[.zeroOpens] = link; attributes[.cursor] = NSCursor.pointingHand }
+                let added = NSMutableAttributedString(string: piece, attributes: attributes)
+                if out.length > 0 { out.addAttribute(.kern, value: 6, range: NSRange(location: out.length - 1, length: 1)) }
+                if added.length > 0 { added.addAttribute(.kern, value: 6, range: NSRange(location: added.length - 1, length: 1)) }
+                out.append(added)
+                continue
+            }
             if let link = run.link { attributes[.link] = link }
+            // An image's token (ImageToken.linked): its pill, which opens the image.
+            if let link = run.link, link.isFileURL, let number = ImageToken.number(inLabel: piece) {
+                let token = NSMutableAttributedString(attributedString: ImageToken.attachment(number, font: font))
+                token.addAttribute(.link, value: link, range: NSRange(location: 0, length: 1))
+                out.append(token)
+                continue
+            }
             let added = NSMutableAttributedString(string: piece, attributes: attributes)
             // Room for the pill on either side of code: a little space after what comes before it, and after its last letter.
             if intent.contains(.code), added.length > 0 {
@@ -206,7 +243,8 @@ final class RichLayoutManager: NSLayoutManager {
             RichMarkdown.blockFill.setFill()
             NSBezierPath(roundedRect: panel, xRadius: 8, yRadius: 8).fill()
         }
-        storage.enumerateAttribute(.zeroCode, in: characters) { value, range, _ in
+        for (key, fill) in [(NSAttributedString.Key.zeroCode, RichMarkdown.codeFill), (.zeroToken, TokenTextView.tokenFill)] {
+        storage.enumerateAttribute(key, in: characters) { value, range, _ in
             guard value != nil, let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont else { return }
             let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             var glyph = glyphs.location
@@ -221,10 +259,11 @@ final class RichLayoutManager: NSLayoutManager {
                 let top = baseline - font.ascender - 2, bottom = baseline - font.descender + 2
                 // Its last letter's kerning (6) is in the bounds: 4 of it inside the pill, 2 clear of what follows.
                 let pill = NSRect(x: origin.x + bounds.minX - 4, y: origin.y + top, width: bounds.width + 2, height: bottom - top)
-                RichMarkdown.codeFill.setFill()
+                fill.setFill()
                 NSBezierPath(roundedRect: pill, xRadius: 5, yRadius: 5).fill()
                 glyph = NSMaxRange(segment)
             }
+        }
         }
         storage.enumerateAttribute(.zeroQuote, in: characters) { value, range, _ in
             guard value != nil else { return }
@@ -283,8 +322,10 @@ final class RichTextView: NSTextView {
         if container.size.width != width { container.size = NSSize(width: width, height: .greatestFiniteMagnitude) }
         layout.ensureLayout(for: container)
         let used = layout.usedRect(for: container)
-        measured = (width, ceil(used.height), min(width, ceil(used.width)))
-        return CGSize(width: min(width, ceil(used.width)), height: ceil(used.height))
+        // A code block last: its panel reaches 8 pt under the text (RichLayoutManager), so the view does too.
+        let below: CGFloat = (textStorage.map { $0.length > 0 && $0.attribute(.zeroCodeBlock, at: $0.length - 1, effectiveRange: nil) != nil } ?? false) ? 8 : 0
+        measured = (width, ceil(used.height) + below, min(width, ceil(used.width)))
+        return CGSize(width: min(width, ceil(used.width)), height: ceil(used.height) + below)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -300,6 +341,50 @@ final class RichTextView: NSTextView {
 
     /// Scrolling goes to the conversation around it, not to a text view with nothing to scroll.
     override func scrollWheel(with event: NSEvent) { nextResponder?.scrollWheel(with: event) }
+
+    /// A click on an image's pill opens the image; on a loop's pill, the loop.
+    override func mouseDown(with event: NSEvent) {
+        if let hit = ImageToken.hit(event, in: self), let link = textStorage?.attribute(.link, at: hit.index, effectiveRange: nil) as? URL {
+            ImageViewer.shared.show(link.path, among: imagePaths)
+            return
+        }
+        if let index = characterIndex(under: event), let url = textStorage?.attribute(.zeroOpens, at: index, effectiveRange: nil) as? URL {
+            NSApp.sendAction(#selector(AppDelegate.openZeroURL(_:)), to: nil, from: url)
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    /// The scroll wheel's button opens what's under it too: a link, a loop's pill, an image's.
+    override func otherMouseDown(with event: NSEvent) {
+        guard event.buttonNumber == 2, let index = characterIndex(under: event) else { return super.otherMouseDown(with: event) }
+        if let url = textStorage?.attribute(.zeroOpens, at: index, effectiveRange: nil) as? URL { NSApp.sendAction(#selector(AppDelegate.openZeroURL(_:)), to: nil, from: url); return }
+        guard let link = textStorage?.attribute(.link, at: index, effectiveRange: nil) else { return super.otherMouseDown(with: event) }
+        let url = link as? URL ?? (link as? String).flatMap(URL.init(string:))
+        guard let url else { return }
+        if url.isFileURL, textStorage?.attribute(.attachment, at: index, effectiveRange: nil) != nil { ImageViewer.shared.show(url.path, among: imagePaths) } else { NSWorkspace.shared.open(url) }
+    }
+
+    /// Every image the message's pills open, in order: what the viewer moves between.
+    private var imagePaths: [String] {
+        guard let storage = textStorage else { return [] }
+        var paths: [String] = []
+        storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard (value as? NSTextAttachment)?.attachmentCell is ImageToken.Cell, let link = storage.attribute(.link, at: range.location, effectiveRange: nil) as? URL, link.isFileURL else { return }
+            if !paths.contains(link.path) { paths.append(link.path) }
+        }
+        return paths
+    }
+
+    /// The character under the pointer, when it is on one's glyph.
+    private func characterIndex(under event: NSEvent) -> Int? {
+        guard let manager = layoutManager, let container = textContainer else { return nil }
+        let point = convert(event.locationInWindow, from: nil)
+        let inText = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        let glyph = manager.glyphIndex(for: inText, in: container)
+        guard glyph < manager.numberOfGlyphs, manager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).contains(inText) else { return nil }
+        return manager.characterIndexForGlyph(at: glyph)
+    }
 }
 
 /// Markdown in a RichTextView, for SwiftUI.
@@ -307,7 +392,28 @@ struct RichText: NSViewRepresentable {
     let text: NSAttributedString
     var hugs = false
 
-    func makeNSView(context: Context) -> RichTextView { RichTextView() }
+    /// Views that left the page, kept for the next page: one that showed this very text comes back with its layout
+    /// already measured, so a task switched back to draws without laying its words out again. A text view is the
+    /// dear part of a message row to make; the words are cached already (RichMarkdown).
+    @MainActor enum Pool {
+        private static var free: [RichTextView] = []
+        private static let limit = 400
+
+        static func take(_ text: NSAttributedString) -> RichTextView {
+            if let index = free.lastIndex(where: { $0.shown === text }) { return free.remove(at: index) }
+            return free.popLast() ?? RichTextView()
+        }
+
+        static func give(_ view: RichTextView) {
+            view.removeFromSuperview()
+            free.append(view)
+            if free.count > limit { free.removeFirst(free.count - limit) }
+        }
+    }
+
+    func makeNSView(context: Context) -> RichTextView { Pool.take(text) }
+
+    static func dismantleNSView(_ view: RichTextView, coordinator: ()) { Pool.give(view) }
 
     func updateNSView(_ view: RichTextView, context: Context) {
         view.show(text)

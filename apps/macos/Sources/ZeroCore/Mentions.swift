@@ -2,7 +2,7 @@ import Foundation
 
 /// What "/" and "@" offer in a composer: Claude Code's commands and skills, and the project's files.
 public struct Mention: Identifiable, Hashable, Sendable {
-    public enum Kind: Sendable { case command, file }
+    public enum Kind: Sendable { case command, file, loop }
     public let kind: Kind
     /// The text that goes into the message ("/commit", "@Sources/Zero/main.swift").
     public let insert: String

@@ -5,18 +5,25 @@ import Observation
 /// retrace it. The app moves it too (Settings… in the menu opens the window on Settings).
 @MainActor @Observable
 public final class Navigation {
-    public enum Place: Hashable, Sendable { case home, inbox, board, task(String), agent(String), settings, integrations, integration(String), pads, pad(String) }
+    public enum Place: Hashable, Sendable { case home, inbox, board, task(String), agent(String), settings, integrations, integration(String), pads, pad(String), loops, loop(String) }
 
     public var place = Place.home {
         didSet {
-            if place != oldValue { worker = nil }
-            if place != oldValue && !travelling { behind.append(oldValue); ahead.removeAll() }
+            if place != oldValue && !travelling { behind.append((oldValue, worker)); ahead.removeAll() }
+            if place != oldValue && !travelling { changingPlace = true; worker = nil; changingPlace = false }
             UserDefaults.standard.set(place.key, forKey: "place")
+            switch place { case .home, .board, .task, .agent: homePlace = place; default: break }
         }
     }
-    /// On a task's page: the worker shown instead of its lead.
+    /// Where Home was last: the task that was open, so the rail's Home goes back to it rather than to New task.
+    public private(set) var homePlace = Place.home
+    /// On a task's page: the worker shown instead of its lead. Showing one is a step in the history too: back from a
+    /// worker is its lead, not the page before the lead.
     public var worker: String? {
-        didSet { UserDefaults.standard.set(worker, forKey: "placeWorker") }
+        didSet {
+            UserDefaults.standard.set(worker, forKey: "placeWorker")
+            if worker != oldValue && !travelling && !changingPlace { behind.append((place, oldValue)); ahead.removeAll() }
+        }
     }
 
 
@@ -30,8 +37,10 @@ public final class Navigation {
     public var pane = UserDefaults.standard.object(forKey: "taskPane") as? Bool ?? true {
         didSet { UserDefaults.standard.set(pane, forKey: "taskPane") }
     }
-    @ObservationIgnored private var behind: [Place] = []
-    @ObservationIgnored private var ahead: [Place] = []
+    @ObservationIgnored private var behind: [(Place, String?)] = []
+    @ObservationIgnored private var ahead: [(Place, String?)] = []
+    /// A place change is clearing the worker: not a step of its own.
+    @ObservationIgnored private var changingPlace = false
     public var canGoBack: Bool { !behind.isEmpty }
     public var canGoForward: Bool { !ahead.isEmpty }
     @ObservationIgnored private var travelling = false
@@ -46,19 +55,20 @@ public final class Navigation {
 
     public func goBack() {
         guard let last = behind.popLast() else { return }
-        ahead.append(place)
+        ahead.append((place, worker))
         travel(to: last)
     }
 
     public func goForward() {
         guard let next = ahead.popLast() else { return }
-        behind.append(place)
+        behind.append((place, worker))
         travel(to: next)
     }
 
-    private func travel(to place: Place) {
+    private func travel(to step: (Place, String?)) {
         travelling = true
-        self.place = place
+        self.place = step.0
+        worker = step.1
         travelling = false
     }
 }
@@ -77,6 +87,8 @@ public extension Navigation.Place {
         case let .integration(name): "integration:" + name
         case .pads: "pads"
         case let .pad(id): "pad:" + id
+        case .loops: "loops"
+        case let .loop(name): "loop:" + name
         }
     }
 
@@ -93,6 +105,8 @@ public extension Navigation.Place {
         case "integration": self = .integration(value)
         case "pads": self = .pads
         case "pad": self = .pad(value)
+        case "loops": self = .loops
+        case "loop": self = .loop(value)
         default: return nil
         }
     }

@@ -38,14 +38,16 @@ enum TimelineBlock: Identifiable, Equatable {
                 blocks.append(.user(item))
                 start = item.date
             case .agent(_, finalAnswer: true):
-                // A turn without steps still says how long it took.
-                if work.isEmpty, case .user? = blocks.last {
-                    blocks.append(.work(id: "work-before-" + item.id, items: [], start: start, end: item.date, live: false))
-                }
                 flush(end: item.date, live: false)
                 blocks.append(.answer(item))
-            case .notice:
-                // Something went wrong (or right) that you should see without opening anything.
+            case .notice(_, error: true):
+                // A failure mid-turn reads like the agent's interim words: in the work, where it happened.
+                work.append(item)
+            case .notice, .table:
+                // Something to see without opening anything: a notice, or a table the agent handed to Zero. Where it
+                // happened: the work so far closes before it, and what follows is a block of its own.
+                flush(end: item.date, live: false)
+                start = nil
                 blocks.append(.step(item))
             default:
                 work.append(item)
@@ -88,7 +90,12 @@ struct BlockRow: View, Equatable {
         switch block {
         case let .user(item):
             if case let .user(text, _) = item.kind {
-                MessageBlock(text: text, date: item.date, mine: true, quote: quote, save: save, rewind: { rewind(item) }) { ItemView(item: item, cwd: cwd) }
+                if let given = ConversationItem.from(text) {
+                    // Not yours: a worker's report, or Zero's word. Read as such, on the left, folded past a few lines.
+                    GivenMessage(from: given.from, text: given.text, cwd: cwd)
+                } else {
+                    MessageBlock(text: text, date: item.date, mine: true, quote: quote, save: save, rewind: { rewind(item) }) { ItemView(item: item, cwd: cwd) }
+                }
             }
         case let .answer(item):
             // Zero's ending isn't shown: it's the task's state, in the sidebar, the pane and the board.
@@ -115,40 +122,53 @@ func workedFor(_ seconds: TimeInterval) -> String {
     return "\(s / 3600)h \(s % 3600 / 60)m"
 }
 
-/// A turn's work: "Worked for 2m 37s ›" (or "Working for 12s" while it goes, its latest step under it), opening onto
-/// every step.
+/// A turn's work: open while it goes ("Working for 12s", every step under it), folded once the answer comes ("Worked
+/// for 2m 37s ›"), unless you say otherwise. A turn that only thought says "Thinking", then "Thought for 8s", as Codex
+/// does; one that did nothing at all says nothing.
 struct WorkBlock: View {
     let items: [ConversationItem]
     let start: Date?
     let end: Date?
     let live: Bool
     let cwd: String
-    @State private var open = false
+    /// Your choice against the default (open while live, folded after); forgotten when the turn ends.
+    @State private var toggled = false
+    private var open: Bool { live != toggled }
+    /// Steps of substance: reading, running, editing. Thought alone isn't work.
+    private var worked: Bool { items.contains { if case .reasoning = $0.kind { false } else { true } } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Button { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } } label: {
-                HStack(spacing: 6) {
-                    if live {
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
-                            Text(start.map { "Working for " + workedFor(context.date.timeIntervalSince($0)) } ?? "Working")
+            if live || !items.isEmpty {
+                Button { withAnimation(.easeOut(duration: 0.15)) { toggled.toggle() } } label: {
+                    HStack(spacing: 6) {
+                        if live, !worked {
+                            Thinking(text: "Thinking")
+                        } else if live {
+                            TimelineView(.periodic(from: .now, by: 1)) { context in
+                                Text(start.map { "Working for " + workedFor(context.date.timeIntervalSince($0)) } ?? "Working")
+                            }
+                        } else {
+                            let verb = worked ? "Worked" : "Thought"
+                            Text(start.flatMap { start in end.map { verb + " for " + workedFor($0.timeIntervalSince(start)) } } ?? verb)
                         }
-                    } else {
-                        Text(start.flatMap { start in end.map { "Worked for " + workedFor($0.timeIntervalSince(start)) } } ?? "Worked")
+                        if !items.isEmpty { NucleoIcon("chevron-down", size: 9).rotationEffect(.degrees(open ? 0 : -90)) }
                     }
-                    if !items.isEmpty { NucleoIcon("chevron-down", size: 9).rotationEffect(.degrees(open ? 0 : -90)) }
+                    .font(.system(size: 13)).foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
                 }
-                .font(.system(size: 13)).foregroundStyle(.secondary)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .disabled(items.isEmpty)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .overlay(alignment: .bottom) { if worked { Rectangle().fill(Theme.stroke).frame(height: 1).offset(y: 6) } }
+                .help(open ? "Hide the steps" : "Show every step")
             }
-            .buttonStyle(.plain)
-            .disabled(items.isEmpty)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(alignment: .bottom) { Rectangle().fill(Theme.stroke).frame(height: 1).offset(y: 6) }
-            .help(open ? "Hide the steps" : "Show every step")
-            if open {
+            if open, !items.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
-                    ForEach(items) { ItemView(item: $0, cwd: cwd) }
+                    // Each step knows when the next began (a thought's length); the last, when the turn ended.
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                        ItemView(item: item, cwd: cwd, until: index + 1 < items.count ? items[index + 1].date : (live ? nil : end))
+                    }
                 }
                 .padding(.top, 4)
                 .transition(.opacity)
@@ -167,12 +187,13 @@ struct WorkBlock: View {
                             .frame(maxWidth: .infinity, minHeight: 22, maxHeight: 22, alignment: .leading)
                             .opacity(0.7).allowsHitTesting(false)
                     }
-                    // Through every step, until its words start to stream.
-                    Thinking()
+                    // Through every step, until its words start to stream (before any step, the heading breathes).
+                    if worked { Thinking() }
                 }
             }
         }
         .padding(.top, 4)
+        .onChange(of: live) { toggled = false }
     }
 }
 
@@ -189,6 +210,45 @@ struct Thinking: View {
                 guard !reduceMotion else { return }
                 withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { dim = true }
             }
+    }
+}
+
+/// Words Zero gave the session, not yours: a worker's report to its lead ("Worker ENG-9790 finished: …"), or a watched
+/// command's end. One quiet line, as a step is drawn: the icon and the report's first line; a click opens the whole
+/// of it under, and closes it again. The report's closing note on how to reply (zerod's, for the agent) stays folded.
+struct GivenMessage: View {
+    let from: String
+    let text: String
+    let cwd: String
+    @State private var open = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button { open.toggle() } label: {
+                HStack(alignment: .top, spacing: 8) {
+                    NucleoIcon(from == "zero" ? "circle-info" : "robot", size: 14).foregroundStyle(.secondary).frame(width: 14, height: 16)
+                    Text(first).foregroundStyle(.secondary).lineLimit(open ? nil : 1).truncationMode(.tail)
+                    Spacer(minLength: 0)
+                    NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if open { MarkdownText(report, cwd: cwd, size: 13.5, compact: true).padding(.leading, 22) }
+        }
+        .font(.callout)
+    }
+
+    /// Its first line, as words: the heading of the folded row.
+    private var first: String {
+        let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
+        return line.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
+    }
+
+    /// The report without its closing note to the agent on how to reply.
+    private var report: String {
+        guard let note = text.range(of: "\n\n(It is session ") else { return text }
+        return String(text[..<note.lowerBound])
     }
 }
 
@@ -257,8 +317,14 @@ struct MessageRail: View {
     }
     let marks: [Mark]
     let tracker: ScrollTracker
+    /// Room at the left, between the page's edge and the ticks, that answers the pointer as the ticks do: the pointer
+    /// can drift to the edge without leaving the rail.
+    var inset: CGFloat = 0
     let go: (String) -> Void
     @State private var hovered: Int?
+    /// The message under the pointer, by its index in `marks`: a tick standing for several is scrubbed through by
+    /// moving within its zone.
+    @State private var scrubbed: Int?
     /// The pointer is on the card: it stays, so its links can be clicked.
     @State private var onCard = false
 
@@ -269,17 +335,22 @@ struct MessageRail: View {
     var body: some View {
         let visible = Set(tracker.seen.values)
         GeometryReader { space in
-            // Ten points apart, closer when there are more than fit.
-            let pitch = max(3, min(10, space.size.height * 0.8 / CGFloat(max(marks.count, 1))))
-            let top = (space.size.height - pitch * CGFloat(marks.count)) / 2
+            // Ten points apart, down to seven when there are many; past that, each tick stands for a run of messages
+            // rather than the ticks packing into a block. Moving within a tick's zone scrubs through its run.
+            let room = space.size.height * 0.8
+            let stride = max(1, Int((CGFloat(marks.count) * 7 / max(room, 1)).rounded(.up)))
+            let groups: [Range<Int>] = Swift.stride(from: 0, to: marks.count, by: stride).map { $0..<min($0 + stride, marks.count) }
+            let shown = groups.map { marks[$0.lowerBound] }
+            let pitch = max(7, min(10, room / CGFloat(max(shown.count, 1))))
+            let top = (space.size.height - pitch * CGFloat(shown.count)) / 2
             ZStack(alignment: .topLeading) {
-                ForEach(Array(marks.enumerated()), id: \.element.id) { index, mark in
+                ForEach(Array(shown.enumerated()), id: \.element.id) { index, mark in
                     let distance = hovered.map { abs($0 - index) }
                     let length = distance.flatMap { $0 < Self.lengths.count ? Self.lengths[$0] : nil } ?? Self.rest
                     let bright = hovered.map { $0 == index } ?? visible.contains(mark.id)
                     Capsule().fill(Color.primary.opacity(bright ? 0.85 : 0.25))
                         .frame(width: length, height: 1.5)
-                        .offset(x: 0, y: top + pitch * (CGFloat(index) + 0.5) - 0.75)
+                        .offset(x: inset, y: top + pitch * (CGFloat(index) + 0.5) - 0.75)
                 }
             }
             // The ticks ease to their lengths; the card (below) is instant.
@@ -290,22 +361,28 @@ struct MessageRail: View {
                 switch phase {
                 case let .active(point):
                     let index = Int(((point.y - top) / pitch).rounded(.down))
-                    let inside = point.y >= top - pitch && point.y <= top + pitch * CGFloat(marks.count) + pitch
-                    hovered = inside ? min(max(index, 0), marks.count - 1) : nil
+                    let inside = point.y >= top - pitch && point.y <= top + pitch * CGFloat(shown.count) + pitch
+                    hovered = inside ? min(max(index, 0), shown.count - 1) : nil
+                    if let hovered {
+                        // Where in the tick's zone: which of its run.
+                        let group = groups[hovered]
+                        let within = min(max((point.y - (top + pitch * CGFloat(hovered))) / pitch, 0), 0.999)
+                        scrubbed = group.lowerBound + Int(within * CGFloat(group.count))
+                    } else { scrubbed = nil }
                 case .ended:
                     // A moment to cross to the card; it stays while the pointer's on it.
                     Task {
                         try? await Task.sleep(for: .milliseconds(200))
-                        if !onCard { hovered = nil }
+                        if !onCard { hovered = nil; scrubbed = nil }
                     }
                 }
             }
-            .onTapGesture { if let hovered { go(marks[hovered].id) } }
+            .onTapGesture { if let scrubbed, scrubbed < marks.count { go(marks[scrubbed].id) } }
             .overlay {
-                if let hovered {
+                if let hovered, hovered < shown.count, let scrubbed, scrubbed < marks.count {
                     // Centred on its tick, kept inside the view near its ends.
                     let y = min(max(top + pitch * (CGFloat(hovered) + 0.5), 60), space.size.height - 60)
-                    let mark = marks[hovered]
+                    let mark = marks[scrubbed]
                     preview(mark)
                         .fixedSize()
                         // Links in it open; anywhere else on it goes to the message, as its tick does.
@@ -313,13 +390,14 @@ struct MessageRail: View {
                         .onTapGesture { go(mark.id) }
                         .onHover { inside in
                             onCard = inside
-                            if !inside { self.hovered = nil }
+                            if !inside { self.hovered = nil; self.scrubbed = nil }
                         }
-                        .position(x: 40 + 160, y: y)
+                        .position(x: inset + 40 + 160, y: y)
                 }
             }
         }
-        .frame(width: 30)
+        // Past the ticks, the rail reaches to where the card begins: the pointer crosses to it without leaving.
+        .frame(width: inset + 40)
     }
 
     private func preview(_ mark: Mark) -> some View {
@@ -559,7 +637,8 @@ struct StepLine: View {
         case let .fileChange(changes): Text("Edited " + changes.map { ($0.path as NSString).lastPathComponent }.joined(separator: ", "))
         case let .agent(text, _), let .reasoning(text), let .plan(text): Text(text.split(separator: "\n").first.map(String.init) ?? "")
         case let .notice(text, _): Text(text)
-        case let .user(text, _): Text(text.split(separator: "\n").first.map(String.init) ?? "")
+        case let .table(title, _, rows): Text(title.isEmpty ? "A table of \(rows.count)" : title)
+        case let .user(text, _): Text((ConversationItem.from(text)?.text ?? text).split(separator: "\n").first.map(String.init) ?? "")
         }
     }
 }

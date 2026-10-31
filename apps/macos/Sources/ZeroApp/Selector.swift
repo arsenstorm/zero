@@ -2,8 +2,9 @@ import AppKit
 import SwiftUI
 import ZeroCore
 
-/// Which chip opened the selector.
-enum SelectorKind { case project, runtime }
+/// Which chip opened the selector: a project list, the runtime palette, or a plain menu (the sidebar's workspaces):
+/// its sections one under another with a line between, no header and no footer.
+enum SelectorKind { case project, runtime, menu }
 
 /// One row of the selector: a specific model or project, a line about it, and what picking it does.
 struct SelectorRow: Identifiable {
@@ -18,6 +19,8 @@ struct SelectorRow: Identifiable {
     let modelID: String?
     let selected: Bool
     let pick: () -> Void
+    /// A menu row's mark before its title: a Nucleo icon's name or an emoji; "" for Zero's own mark.
+    var glyph: String? = nil
 }
 
 /// A provider (Anthropic, OpenAI, Solo): one tab of the selector.
@@ -55,7 +58,7 @@ struct SelectorView: View {
     @FocusState private var focused: Bool
 
     /// Models get two panes, the list and its details, centred on the inbox; projects a single list on the chip.
-    static func width(_ kind: SelectorKind) -> CGFloat { kind == .runtime ? 2 * paneWidth : 272 }
+    static func width(_ kind: SelectorKind) -> CGFloat { switch kind { case .runtime: 2 * paneWidth; case .project: 272; case .menu: 236 } }
     private static let paneWidth: CGFloat = 240
     /// The model list is always eight rows tall, so neither a tab change nor a hover moves anything.
     private static let modelListHeight: CGFloat = 8 * rowHeight + 8 + 7
@@ -63,14 +66,24 @@ struct SelectorView: View {
 
     private var sections: [SelectorSection] { state.sections }
     private var section: SelectorSection? { sections.first { $0.id == state.tab } ?? sections.first }
-    private var rows: [SelectorRow] { section?.rows ?? [] }
+    private var rows: [SelectorRow] { state.kind == .menu ? sections.flatMap(\.rows) : section?.rows ?? [] }
     private var highlightedRow: SelectorRow? { rows.first { $0.id == state.highlighted } }
 
     var body: some View {
         VStack(spacing: 0) {
-            if sections.count > 1 { tabs } else if let section { singleHeader(section) }
-            Divider().padding(.horizontal, 10)
-            if state.kind == .runtime {
+            if state.kind == .menu {
+                VStack(spacing: 0) {
+                    ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
+                        if index > 0 { Divider().padding(.horizontal, 10).padding(.vertical, 3) }
+                        VStack(spacing: 1) { ForEach(section.rows) { rowView($0) } }
+                    }
+                }
+                .padding(.horizontal, 6).padding(.vertical, 6)
+            } else if sections.count > 1 { tabs } else if let section { singleHeader(section) }
+            if state.kind != .menu { Divider().padding(.horizontal, 10) }
+            if state.kind == .menu {
+                EmptyView()
+            } else if state.kind == .runtime {
                 HStack(spacing: 0) {
                     list.frame(width: Self.paneWidth, height: Self.modelListHeight)
                     Divider().padding(.vertical, 10)
@@ -158,6 +171,7 @@ struct SelectorView: View {
             state.close()
         } label: {
             HStack(spacing: 8) {
+                if let glyph = row.glyph { WorkspaceGlyph(glyph: glyph, size: 14).foregroundStyle(.secondary).frame(width: 18) }
                 Text(row.title).font(.system(size: 13, weight: row.selected ? .semibold : .regular)).lineLimit(1)
                 Spacer(minLength: 6)
                 // Effort: shown on the chosen row and the one under the pointer, so a pick and its level sit together.

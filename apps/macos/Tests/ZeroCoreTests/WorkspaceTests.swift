@@ -28,3 +28,13 @@ private func session(_ id: String, _ provider: Provider = .claude) -> Conversati
     w.receive(.session(session("01a1aaaa00000002", .codex)))
     #expect(w.conversations.map(\.id) == ["01a1aaaa00000001", "01a1aaaa00000002"])
 }
+
+@Test func aRepliedTaskSettlesToIdleAWhileAfterItsAnswerWasSeen() {
+    let now = Date()
+    let seen = ["t": (answer: "a2", at: now.addingTimeInterval(-Workspace.settleAfter))]
+    #expect(Workspace.settled(.answered, session: "t", answer: "a2", seen: [:], now: now) == .answered, "not looked at: still Replied, however long ago")
+    #expect(Workspace.settled(.answered, session: "t", answer: "a2", seen: ["t": (answer: "a2", at: now.addingTimeInterval(-60))], now: now) == .answered, "just read")
+    #expect(Workspace.settled(.answered, session: "t", answer: "a2", seen: seen, now: now) == .idle, "read a while ago")
+    #expect(Workspace.settled(.answered, session: "t", answer: "a3", seen: seen, now: now) == .answered, "a newer answer than the one read")
+    #expect(Workspace.settled(.working, session: "t", answer: "a2", seen: seen, now: now) == .working, "only Replied settles")
+}

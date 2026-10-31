@@ -133,11 +133,22 @@ final class Panel: NSPanel {
     private var openedByIntent = false
     private var pointerWasInside = false
 
-    /// A zero://pad link, clicked anywhere: the pad, at its section.
+    /// A zero://pad link, clicked anywhere: the pad, at its section. A zero://loop link: the loop.
     func application(_ application: NSApplication, open urls: [URL]) {
+        if let loop = urls.first(where: { $0.scheme == "zero" && $0.host == "loop" }) { openZeroURL(loop); return }
         guard let (id, section) = urls.lazy.compactMap(PadLinks.parse).first else { return }
         navigation.place = .pad(id)
         navigation.padSection = section
+        openWorkspace()
+    }
+
+    @objc func openZeroURL(_ url: URL) {
+        let name = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        switch url.host {
+        case "loop": navigation.place = name.isEmpty ? .loops : .loop(name)
+        case "task" where !name.isEmpty: navigation.place = .task(name)
+        default: return
+        }
         openWorkspace()
     }
 
@@ -155,6 +166,7 @@ final class Panel: NSPanel {
         Task { [store] in await store.connect() }
         workspace = Workspace()
         Task { [workspace] in await workspace?.connect() }
+        workspace?.keepSlackFresh()
         inbox.hide = { [weak self] in self?.hideInbox() }
         inbox.onTyping = { [weak self] typing in if typing { self?.activateForTyping() } }
         inbox.presentSelector = { [weak self] anchor in self?.showSelector(anchorInInbox: anchor) }
@@ -270,12 +282,15 @@ final class Panel: NSPanel {
         statusItem.menu = menu
     }
 
-    @objc private func openLog() { NSWorkspace.shared.open(Paths.log) }
+    @objc private func openLog() { NSWorkspace.shared.open(Log.file) }
+
+    /// The workspace window's frame as last placed, in screen points.
+    private static let frameKey = "workspaceFrame"
 
     @objc func openWorkspace() {
         if workspaceWindow == nil {
             let view = WorkspaceView(workspace: workspace, navigation: navigation, inbox: inbox) { [unowned self] in
-                SettingsView(settings: settings, store: store, inbox: inbox, showOnboarding: { [weak self] in self?.openOnboarding() })
+                SettingsView(settings: settings, store: store, inbox: inbox, workspace: workspace, showOnboarding: { [weak self] in self?.openOnboarding() })
             }
             let host = NSHostingController(rootView: view)
             host.sizingOptions = []
@@ -294,9 +309,21 @@ final class Panel: NSPanel {
             window.toolbarStyle = .unifiedCompact
             window.titlebarSeparatorStyle = .none
             window.setContentSize(NSSize(width: 1100, height: 720))
-            window.setFrameAutosaveName("Workspace")
             window.isReleasedWhenClosed = false
-            window.center()
+            // Where it was last time, on whichever screen, at whatever size; centred only the first time ever. Zero's
+            // own record, not AppKit's autosave: that one matches the saved screen's shape to the screens at launch,
+            // and on a mismatch (a second display's menu bar or Dock still settling) moves the window to the main
+            // screen and saves that in its place.
+            let saved = UserDefaults.standard.string(forKey: Self.frameKey).map(NSRectFromString)
+            if let saved, !saved.isEmpty, NSScreen.screens.contains(where: { $0.frame.intersects(saved) }) { window.setFrame(saved, display: false) }
+            else { window.center() }
+            Log.write("window: saved \(saved.map(NSStringFromRect) ?? "none"), opened at \(NSStringFromRect(window.frame)), screens \(NSScreen.screens.map { NSStringFromRect($0.frame) })")
+            for name in [NSWindow.didMoveNotification, NSWindow.didEndLiveResizeNotification, NSWindow.didResizeNotification] {
+                NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak window] _ in
+                    guard let window, !window.styleMask.contains(.fullScreen), !window.isMiniaturized else { return }
+                    UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: Self.frameKey)
+                }
+            }
             window.acceptsMouseMovedEvents = true
             workspaceWindow = window
             // Filling the screen (or leaving it), the bar moves into the window or back out to the screen's edge.
@@ -508,7 +535,7 @@ final class Panel: NSPanel {
 
     private func makePanels() {
         pillHosting = FirstMouseHostingView(rootView: AnyView(PillView(
-            controller: inbox, settings: settings,
+            controller: inbox, settings: settings, workspace: workspace,
             openInbox: { [weak self] in self?.pin(agent: nil) },
             selectAgent: { [weak self] name in self?.pin(agent: name) },
             moveHere: { [weak self] in self?.pinnedDisplay = nil; self?.layout() },
@@ -640,7 +667,10 @@ final class Panel: NSPanel {
         guard pill.isVisible, pill.frame.contains(mouse), NSEvent.pressedMouseButtons == 0 else { inbox.barHover = nil; return }
         let local = pill.convertPoint(fromScreen: mouse)
         let point = CGPoint(x: local.x, y: pill.frame.height - local.y) // SwiftUI's global space runs top down
-        let under = inbox.barSlots.first { $0.value.insetBy(dx: -8, dy: -1).contains(point) }?.key
+        // Among the controls shown now, the one whose slot is nearest: slots meet, so a point on their seam is in two.
+        let shown = Set([InboxController.inboxSlot, InboxController.newSlot] + inbox.barOrder)
+        let under = inbox.barSlots.filter { shown.contains($0.key) && $0.value.insetBy(dx: -8, dy: -1).contains(point) }
+            .min { abs($0.value.midY - point.y) < abs($1.value.midY - point.y) }?.key
         guard let under, under != inbox.barHover else { if under == nil { inbox.barHover = nil }; return }
         inbox.barHover = under
         switch under {

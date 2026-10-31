@@ -22,10 +22,12 @@ func usage(help: Bool = false) -> Never {
       zero attach  [agent]   (shows one of Zero's own agents' terminal here to watch or type in; ⌃] lets go. No agent: lists them)
       zero say     <agent> "text"   (sends Arsen's words to the agent through Zero, as the inbox's message box does)
     sessions Zero runs (from inside one, the session you are in is the lead):
-      zero spawn   "task" [--brief FILE] [--provider codex|claude|opencode] [--model M] [--effort E] [--cwd DIR]
-                   [--label NAME] [--ticket REF] [--permissions auto|unrestricted]
+      zero spawn   "task" [--brief FILE] [--loop NAME] [--provider codex|claude|opencode] [--model M] [--effort E] [--cwd DIR]
+                   [--label NAME] [--ticket REF] [--permissions auto|unrestricted] [--workspace ID]
                    starts a worker of this session (its folder and permissions unless given others) and prints its id;
                    when it finishes, fails or gets stuck, this session is told. Outside a session: a new session here.
+                   --workspace puts it in another workspace (zero workspaces lists them); otherwise it is in yours.
+      zero workspaces   (the user's workspaces: id, name, and the folders that belong to each)
       zero send    <session> "text"   (a message to a session, resumed first if it is offline)
       zero wait    <session>... [--any] [--timeout MINUTES]   (until they stop working: finished, failed, stuck, or waiting on the user)
       zero workers   (the sessions this one started, or adopted)
@@ -33,10 +35,26 @@ func usage(help: Bool = false) -> Never {
                    there: you're told when it finishes, and zero send, wait and result reach it)
       zero tasks   (every task Zero has: id, state, lead, ticket, Claude Code session and name)
       zero result  <session>   (its last answer)
+      zero loops   (the loops Zero keeps: named instructions, used as @name in a message or a brief, or with spawn --loop)
+      zero loop    <name>   (a loop's words; an @name inside it is a child loop: start workers on it with spawn --loop)
+      zero close   <session>...   (a worker you've read: it leaves the board; its record is kept in zerod's archive)
+      zero table   "Title" --column NAME... --row "cell | cell | …"...   [--session ID]
+                   (a table for the user, drawn by Zero in your conversation: a cell that is a state (working, blocked,
+                   done, merged, waiting) shows as its pill, tickets and PRs as links; or JSON on stdin: {"title","columns","rows"})
       zero attr    NAME [VALUE] [--session ID]   (something about this task for the user to see on it, such as
                    zero attr PR https://github.com/org/repo/pull/12; a link opens. No value takes it back)
       zero label   "name" [--ticket REF] [--where PLACE] [--session ID]   (names this session, or another; --where says where it runs,
                    a bench or a machine, for the board's Where; --where "" goes back to its folder)
+      zero follow  <url | topic>... [--mine] [--about "word,other words"] [--session ID]
+                   (hear of changes between your turns, however long you've been idle: a pull request (its reviews,
+                   comments, CI, pushes, merge), a Linear issue or one comment thread in it, a Slack thread or channel.
+                   Topics: github/<owner>/<repo>/<pr>, linear/<ISSUE>[/<thread>], slack/<channel>[/<thread-ts>]; a URL does.
+                   A busy channel: --mine hears only messages naming the pull requests you follow; --about, these words)
+      zero unfollow <topic>... | --all [--session ID]
+      zero following [--session ID]   (what you follow, and how reading it goes)
+      zero browser <tool> ['{"json": "input"}'] [--session ID]   (Chrome, through Zero for Chrome: the browser_ tools of
+                   Zero's MCP server, for agents without it: zero browser tabs '{"createIfEmpty": true}', zero browser
+                   navigate '{"url": "example.com"}'. Screenshots are saved to a file and its path printed)
       zero notify  <session> "text"   (words for a session, given between its turns: for event sources and scripts)
       zero watch   [--session ID] -- command...   (runs it in the background; this session is told how it ended, so end
                    your turn instead of polling: zero watch -- gh pr checks 42 --watch)
@@ -75,7 +93,7 @@ while i < args.count {
     if arg == "--" { positional.append(contentsOf: args[(i + 1)...]); break }
     if arg.hasPrefix("--") {
         let key = String(arg.dropFirst(2))
-        if ["async", "blocked", "done", "waiting", "any"].contains(key) {
+        if ["async", "blocked", "done", "waiting", "any", "mine", "all"].contains(key) {
             flags[key, default: []].append("1")
         } else {
             i += 1
@@ -436,6 +454,8 @@ case "say":
     guard let reply = socket.receive(Response.self), reply.op == "created" else { fail("zero: \(socket.receive(Response.self)?.message ?? "no reply from Zero.app")") }
 case "spawn":
     var prompt = positional.joined(separator: " ")
+    // The loop heads the worker's brief: zerod gives its words in place of the name.
+    if let loop = flag("loop") { prompt = "@\(loop)" + (prompt.isEmpty ? "" : " " + prompt) }
     if let brief = flag("brief") {
         let path = URL(fileURLWithPath: (brief as NSString).expandingTildeInPath, relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)).standardized.path
         guard FileManager.default.fileExists(atPath: path) else { fail("zero: no brief at \(path)") }
@@ -453,10 +473,10 @@ case "spawn":
     let session = await zerod { link -> String in
         if let lead = ProcessInfo.processInfo.environment["ZERO_SESSION"] {
             return try await link.spawn(lead: lead, provider: provider, prompt: prompt, cwd: flag("cwd"), model: flag("model"), effort: flag("effort"),
-                                        permissions: permissions, label: flag("label"), ticket: flag("ticket"))
+                                        permissions: permissions, label: flag("label"), ticket: flag("ticket"), workspace: flag("workspace"))
         }
         let id = try await link.start(provider: provider ?? .claude, cwd: flag("cwd") ?? FileManager.default.currentDirectoryPath, prompt: prompt,
-                                      model: flag("model"), effort: flag("effort"), permissions: permissions ?? .auto)
+                                      model: flag("model"), effort: flag("effort"), permissions: permissions ?? .auto, workspace: flag("workspace"))
         if flag("label") != nil || flag("ticket") != nil { try await link.label(session: id, label: flag("label"), ticket: flag("ticket")) }
         return id
     }
@@ -464,6 +484,9 @@ case "spawn":
 case "send":
     guard positional.count >= 2 else { usage() }
     await zerod { try await $0.send(session: positional[0], text: positional[1...].joined(separator: " ")) }
+case "close":
+    guard !positional.isEmpty else { usage() }
+    for session in positional { await zerod { try await $0.archive(session: session) } }
 case "workers":
     guard let lead = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"] else { fail("zero: workers of which session? (--session ID)") }
     let workers = await zerod { try await $0.workers(of: lead) }
@@ -480,6 +503,17 @@ case "tasks":
         let columns = [task.id, task.status.rawValue, task.parent.map { "under \($0)" } ?? "lead", task.ticket ?? "-", task.thread ?? "-", Workspace.label(of: task)]
         print(columns.joined(separator: "  "))
     }
+case "workspaces":
+    for w in await zerod({ try await $0.workspaces() }) {
+        print("\(w.id)  \(w.name)" + (w.folders.isEmpty ? "" : "  " + w.folders.map { ($0 as NSString).abbreviatingWithTildeInPath }.joined(separator: " ")))
+    }
+case "loops":
+    for loop in await zerod({ try await $0.loops() }) {
+        print("\(loop.name)  \(loop.description)" + (loop.children.isEmpty ? "" : "  → " + loop.children.map { "@" + $0 }.joined(separator: " ")))
+    }
+case "loop":
+    guard let name = positional.first else { usage() }
+    print(await zerod { try await $0.loop(name) }.body)
 case "result":
     guard let session = positional.first else { usage() }
     guard let answer = await zerod({ try await $0.result(of: session) }) else { fail("zero: \(session) has no answer yet", 3) }
@@ -491,12 +525,70 @@ case "label":
     if flag("where") == nil || !positional.isEmpty || flag("ticket") != nil {
         await zerod { try await $0.label(session: session, label: positional.isEmpty ? nil : positional.joined(separator: " "), ticket: flag("ticket")) }
     }
+case "table":
+    guard let session = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"] else { fail("zero: a table of which session? (--session ID)") }
+    var title = positional.joined(separator: " ")
+    var columns = flags["column"] ?? []
+    var rows: [[String]] = (flags["row"] ?? []).map { $0.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) } }
+    if columns.isEmpty, let data = try? FileHandle.standardInput.readToEnd(), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+        title = json["title"] as? String ?? title
+        columns = json["columns"] as? [String] ?? []
+        rows = (json["rows"] as? [[Any]] ?? []).map { $0.map { "\($0)" } }
+    }
+    guard !columns.isEmpty else { fail("zero: a table needs columns (--column NAME, or JSON on stdin)") }
+    await zerod { try await $0.table(session: session, title: title, columns: columns, rows: rows) }
 case "attr":
     guard let name = positional.first, let session = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"] else {
         fail("zero: which attribute, of which session? (zero attr NAME [VALUE] [--session ID])")
     }
     let value = positional.dropFirst().joined(separator: " ")
     await zerod { try await $0.attribute(session: session, name: name, value: value.isEmpty ? nil : value) }
+case "follow":
+    guard !positional.isEmpty, let session = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"] else { usage() }
+    let about = (flags["about"] ?? []).flatMap { $0.split(separator: ",") }.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    guard let link = try? ZerodLink() else { fail("zero: Zero's daemon isn't running (open Zero)") }
+    defer { link.close() }
+    var failed = false
+    for topic in positional {
+        do {
+            let followed = try await link.follow(session: session, topic: topic, mine: flag("mine") != nil, about: about)
+            print("✓ \(followed.new ? "following" : "already following") \(followed.topic)")
+            for line in [followed.summary, followed.detail] where !line.isEmpty { print("    \(line)") }
+        } catch {
+            FileHandle.standardError.write(Data("✗ \(topic): \(error.localizedDescription)\n".utf8))
+            failed = true
+        }
+    }
+    print("\nYou'll be told what changes between your turns; end your turn rather than poll.")
+    exit(failed ? 1 : 0)
+case "unfollow":
+    guard let session = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"], !positional.isEmpty || flag("all") != nil else { usage() }
+    let removed = await zerod { try await $0.unfollow(session: session, topics: flag("all") != nil ? nil : positional) }
+    print("zero: \(removed) follow\(removed == 1 ? "" : "s") taken back")
+case "following":
+    let session = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"]
+    let followed = await zerod { try await $0.following(session: session) }
+    if followed.isEmpty { print(session == nil ? "zero: nothing is followed" : "zero: this session follows nothing; zero follow <url> to hear of a pull request, issue or thread") }
+    for f in followed {
+        let filter = (f.mine ? ["--mine"] : []) + (f.about.isEmpty ? [] : ["--about " + f.about.joined(separator: ",")])
+        print("\(f.topic)" + (filter.isEmpty ? "" : "  " + filter.joined(separator: " ")) + (session == nil ? "  (\(f.session))" : ""))
+        if !f.summary.isEmpty { print("    \(f.summary)") }
+        if let error = f.error { print("    ✗ polling fails: \(error)") }
+    }
+case "browser":
+    guard let name = positional.first else { usage() }
+    let tool = name.hasPrefix("browser_") ? name : "browser_" + name
+    let input = positional.dropFirst().joined(separator: " ")
+    guard let args = (input.isEmpty ? [:] : (try? JSONSerialization.jsonObject(with: Data(input.utf8))) as? [String: Any]) else { fail("zero: the input is a JSON object, such as '{\"url\": \"example.com\"}'") }
+    let session = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"]
+    for part in await zerod({ try await $0.browserCall(session: session, tool: tool, args: args) }) {
+        if let text = part["text"] as? String { print(text) }
+        if let data = (part["data"] as? String).flatMap({ Data(base64Encoded: $0) }) {
+            let file = FileManager.default.temporaryDirectory.appendingPathComponent("zero-screenshot-\(Int(Date().timeIntervalSince1970 * 1000)).jpg")
+            try? data.write(to: file)
+            print("[image: \(file.path)]")
+        }
+    }
 case "notify":
     guard positional.count >= 2 else { usage() }
     await zerod { try await $0.notify(session: positional[0], text: positional[1...].joined(separator: " ")) }

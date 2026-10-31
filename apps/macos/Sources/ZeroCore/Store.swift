@@ -80,9 +80,9 @@ public final class Store {
 
     /// A request with nothing to wait for; a failure is only logged.
     private func request(_ body: @escaping (ZerodLink) async throws -> Void) {
-        guard let link else { return NSLog("zero: zerod isn't connected") }
+        guard let link else { return Log.write("zerod isn't connected") }
         Task {
-            do { try await body(link) } catch { NSLog("zero: zerod refused: \(error.localizedDescription)") }
+            do { try await body(link) } catch { Log.write("zerod refused: \(error.localizedDescription)") }
         }
     }
 
