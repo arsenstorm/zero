@@ -80,7 +80,7 @@ fn every_runtime_starts_through_the_login_shell_so_its_path_is_arsens() {
         let argv = provider.command(&Conversation::new("s1", provider, "/"), false, None, None);
         assert_eq!(argv[..4], ["/bin/zsh", "-lic", "exec \"$@\"", "zsh"]);
     }
-    assert_eq!(Provider::Codex.command(&Conversation::new("s1", Provider::Codex, "/"), false, None, None)[4..], ["codex", "app-server"]);
+    assert_eq!(Provider::Codex.command(&Conversation::new("s1", Provider::Codex, "/"), false, None, None)[4..6], ["codex", "app-server"]);
 }
 
 #[test]

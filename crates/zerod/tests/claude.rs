@@ -202,8 +202,8 @@ fn claude_runs_unmodified_in_auto_mode_with_zeros_rules_appended() {
     let at = |flag: &str| args.iter().position(|a| a == flag).map(|i| args[i + 1].as_str());
     assert_eq!(args[..8], ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
     assert_eq!(at("--permission-prompt-tool"), Some("stdio"));
-    // Claude in Chrome: in print mode its tools come only with the flag; the user's own default doesn't apply.
-    assert!(args.contains(&"--chrome".to_string()), "{args:?}");
+    // Claude in Chrome off, whatever the user's own default: agents in Zero use Zero for Chrome.
+    assert!(args.contains(&"--no-chrome".to_string()) && !args.contains(&"--chrome".to_string()), "{args:?}");
     assert_eq!(at("--permission-mode"), Some("auto"), "Arsen's own mode: Claude's classifier decides, Zero hears what it can't");
     assert_eq!(at("--session-id"), Some("3f1c2b8a-0000-4000-8000-000000000001"));
     assert_eq!((at("--model"), at("--effort")), (Some("haiku"), Some("low")));

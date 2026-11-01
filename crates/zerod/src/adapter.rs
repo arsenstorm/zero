@@ -85,7 +85,11 @@ answers your questions and approvals in it, so ask in the conversation as you no
 mustn't run yourself (it needs the user's own machine, their credentials or production access), ask them to run it with \
 `zero run 'command' --why 'what you need the output for'` and wait for its output; never print a command for them to paste. \
 Don't take actions other people will see, such as merging, marking a pull request ready, requesting reviews or posting \
-messages, unless the user asked you to.";
+messages, unless the user asked you to. For anything in a web browser, use Zero's browser_ tools (the user's Chrome, through \
+Zero for Chrome): your own browser tools are off in Zero.";
+
+/// Codex's own browser, its bundled chrome and browser plugins, off for this run only: the user's config is left as is.
+const CODEX_NO_BROWSER: &[&str] = &["-c", "plugins.chrome@openai-bundled.enabled=false", "-c", "plugins.browser@openai-bundled.enabled=false"];
 
 /// `args` run through Arsen's login shell, so his PATH (nvm, ~/.local/bin, Homebrew) finds the provider's CLI.
 pub fn login_shell(args: &[&str]) -> Vec<String> {
@@ -101,10 +105,12 @@ impl Provider {
         }
     }
 
-    /// The command line that starts the provider's runtime for `conversation`; `resume` for one that ran before.
+    /// The command line that starts the provider's runtime for `conversation`; `resume` for one that ran before. The
+    /// providers' own browsers are off (Claude Code's `--no-chrome`, Codex's chrome and browser plugins): agents in Zero
+    /// use Zero for Chrome, and two drivers in one Chrome would fight over its tabs.
     pub fn command(self, conversation: &Conversation, resume: bool, model: Option<&str>, effort: Option<&str>) -> Vec<String> {
         match self {
-            Provider::Codex => login_shell(&["codex", "app-server"]),
+            Provider::Codex => login_shell(&[&["codex", "app-server"][..], CODEX_NO_BROWSER].concat()),
             Provider::Claude => claude::command(conversation, resume, model, effort),
             Provider::Opencode => login_shell(&["opencode", "acp"]),
         }
@@ -115,10 +121,10 @@ impl Provider {
         let thread = conversation.thread.as_deref().ok_or_else(|| format!("{} hasn't started this task's thread yet", self.title()))?;
         let unrestricted = conversation.permissions == crate::model::Permissions::Unrestricted;
         let mut args: Vec<&str> = match self {
-            Provider::Claude => vec!["claude", "--resume", thread, "--permission-mode", if unrestricted { "bypassPermissions" } else { "auto" }],
+            Provider::Claude => vec!["claude", "--resume", thread, "--permission-mode", if unrestricted { "bypassPermissions" } else { "auto" }, "--no-chrome"],
             // Its own app-server, as Zero runs Codex headless: the shared one may run with other settings, and Codex asks
             // before using it.
-            Provider::Codex => vec!["codex", "resume", thread, "--no-daemon", if unrestricted { "--dangerously-bypass-approvals-and-sandbox" } else { "--sandbox=workspace-write" }],
+            Provider::Codex => [&["codex", "resume", thread, "--no-daemon", if unrestricted { "--dangerously-bypass-approvals-and-sandbox" } else { "--sandbox=workspace-write" }][..], CODEX_NO_BROWSER].concat(),
             Provider::Opencode => vec!["opencode", "--session", thread],
         };
         if self != Provider::Opencode && let Some(model) = conversation.model.as_deref() { args.extend(["--model", model]) }

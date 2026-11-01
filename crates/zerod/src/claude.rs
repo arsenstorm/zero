@@ -39,7 +39,7 @@ pub fn command(conversation: &Conversation, resume: bool, model: Option<&str>, e
     let mut args = vec!["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                         // Claude in Chrome's tools: in print mode they come only with the flag (the user's own default
                         // applies to terminal sessions alone); Claude connects to the extension if Chrome has it.
-                        "--include-partial-messages", "--chrome", "--permission-prompt-tool", "stdio", "--permission-mode",
+                        "--include-partial-messages", "--no-chrome", "--permission-prompt-tool", "stdio", "--permission-mode",
                         match conversation.permissions { Permissions::Auto => "auto", Permissions::Unrestricted => "bypassPermissions" },
                         "--append-system-prompt", INSTRUCTIONS];
     if let Some(thread) = conversation.thread.as_deref() { args.extend([if resume { "--resume" } else { "--session-id" }, thread]) }
