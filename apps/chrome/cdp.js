@@ -44,6 +44,19 @@ export async function attach(tabId) {
   await chrome.debugger.sendCommand(target, "Network.enable", { maxPostDataSize: 0 }).catch(() => {});
   // A tab in a window behind others still renders and takes input.
   await chrome.debugger.sendCommand(target, "Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => {});
+  // A size the agent set (browser_resize) outlives the debugger letting go between tools.
+  const size = sizes.get(tabId);
+  if (size) await chrome.debugger.sendCommand(target, "Emulation.setDeviceMetricsOverride", { ...size, deviceScaleFactor: 0, mobile: false }).catch(() => {});
+}
+
+const sizes = new Map(); // tabId → { width, height }: the page's size as an agent set it
+
+/** The page laid out at width × height points in its tab, as DevTools' device mode does; none for the tab's own. */
+export async function setSize(tabId, size) {
+  if (size) sizes.set(tabId, size); else sizes.delete(tabId);
+  await attach(tabId);
+  if (size) await chrome.debugger.sendCommand({ tabId }, "Emulation.setDeviceMetricsOverride", { ...size, deviceScaleFactor: 0, mobile: false });
+  else await chrome.debugger.sendCommand({ tabId }, "Emulation.clearDeviceMetricsOverride");
 }
 
 export function detach(tabId) {
@@ -74,7 +87,7 @@ export async function send(tabId, method, params = {}) {
 export function dialog(tabId) { return dialogs.get(tabId) }
 
 chrome.debugger.onDetach.addListener(({ tabId }) => { clearTimeout(attached.get(tabId)); attached.delete(tabId); dialogs.delete(tabId) });
-chrome.tabs.onRemoved.addListener((tabId) => { attached.delete(tabId); logs.delete(tabId); dialogs.delete(tabId) });
+chrome.tabs.onRemoved.addListener((tabId) => { attached.delete(tabId); logs.delete(tabId); dialogs.delete(tabId); sizes.delete(tabId) });
 
 chrome.debugger.onEvent.addListener(({ tabId }, method, params) => {
   if (!tabId) return;
@@ -84,8 +97,8 @@ chrome.debugger.onEvent.addListener(({ tabId }, method, params) => {
   } else if (method === "Page.javascriptDialogOpening") { dialogs.set(tabId, { type: params.type, message: params.message }); alerted(tabId, true) }
   else if (method === "Page.javascriptDialogClosed") { dialogs.delete(tabId); alerted(tabId, false) }
   else if (method === "Page.frameNavigated" && !params.frame.parentId) {
-    // Logs are a site's: another site starts them afresh.
-    const host = new URL(params.frame.url).host;
+    // Logs are a site's (its subdomains alike: app.example.com and example.com): another site starts them afresh.
+    const host = site(params.frame.url);
     const kept = log(tabId);
     if (kept.host !== host) { kept.host = host; kept.console = []; kept.network = new Map() }
   } else if (method === "Runtime.consoleAPICalled") {
@@ -106,6 +119,15 @@ chrome.debugger.onEvent.addListener(({ tabId }, method, params) => {
     if (request) request.status = params.canceled ? "canceled" : `failed: ${params.errorText}`;
   }
 });
+
+/** A URL's site: its host's last two labels (three where the second-last is short, as in example.co.uk). */
+function site(url) {
+  let host;
+  try { host = new URL(url).hostname } catch { return "" }
+  const labels = host.split(".");
+  const keep = labels.length > 2 && labels[labels.length - 2].length <= 3 && labels[labels.length - 1].length === 2 ? 3 : 2;
+  return labels.slice(-keep).join(".");
+}
 
 function push(list, entry) {
   list.push(entry);

@@ -366,7 +366,7 @@
  },
  {
   "name": "browser_network",
-  "description": "The tab's requests since its site was opened: method, URL and status, without bodies.",
+  "description": "The tab's requests: method, status and URL, without bodies. Recorded from when a tool first used the tab (browser_navigate does, before the page loads), and the page's own record of what it fetched before that, marked (before).",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -394,17 +394,21 @@
  },
  {
   "name": "browser_resize",
-  "description": "Resizes the tab's window, to try a page at another size.",
+  "description": "Lays the page out at another size in its tab, to try a design at a phone's or a laptop's width (as DevTools' device mode does). The window is left as it is, full screen or not. reset gives the page its tab's own size again.",
   "inputSchema": {
    "type": "object",
    "properties": {
     "width": {
      "type": "number",
-     "description": "Width in pixels."
+     "description": "Width in points."
     },
     "height": {
      "type": "number",
-     "description": "Height in pixels."
+     "description": "Height in points."
+    },
+    "reset": {
+     "type": "boolean",
+     "description": "Back to the tab's own size."
     },
     "tabId": {
      "type": "number",
@@ -412,8 +416,6 @@
     }
    },
    "required": [
-    "width",
-    "height",
     "tabId"
    ]
   }

@@ -1,7 +1,7 @@
 // The browser_ tools, as Claude in Chrome has them: what each does in a task's tab. Pages are read and changed through
 // page.js (refs, the tree, forms); the mouse, keys, screenshots and scripts through Chrome's debugger (cdp.js).
 
-import { send, dialog, consoleOf, networkOf, hold } from "./cdp.js";
+import { send, attach, dialog, consoleOf, networkOf, hold, setSize } from "./cdp.js";
 import { tabsOf, own, newTab, firstTab, share, sessionOf, blocked } from "./tabs.js";
 
 const MAX_PX = 1568;
@@ -287,6 +287,8 @@ const TOOLS = {
     } else {
       const target = /^[a-z][a-z0-9+.-]*:/i.test(url) ? url : "https://" + url;
       if (blocked(target, task.blocked)) throw new Error(`${new URL(target).hostname} is on the user's blocked sites`);
+      // The debugger first, so the page's own load is in its network and console logs.
+      await attach(tab.id).catch(() => {});
       await chrome.tabs.update(tab.id, { url: target });
     }
     busy(tab.id, 2500);
@@ -417,17 +419,29 @@ const TOOLS = {
     const tab = await usable(task, tabId);
     await send(tab.id, "Network.enable", { maxPostDataSize: 0 }).catch(() => {});
     const all = networkOf(tab.id);
-    const picked = [...all.values()].filter((r) => !urlPattern || r.url.includes(urlPattern)).slice(-limit);
+    const seen = [...all.values()];
+    // The page's own record too (its resource timing), for what it fetched before Zero was watching: no method, but
+    // the status where Chrome has it.
+    const known = new Set(seen.map((r) => r.url));
+    const timed = await send(tab.id, "Runtime.evaluate", { returnByValue: true, expression:
+      `performance.getEntriesByType("navigation").concat(performance.getEntriesByType("resource")).map((e) => ({ url: e.name, type: e.initiatorType || e.entryType, status: e.responseStatus || null }))` })
+      .then((r) => r.result?.value || []).catch(() => []);
+    const earlier = timed.filter((r) => !known.has(r.url)).map((r) => ({ method: "(before)", url: r.url, status: r.status, type: r.type }));
+    const picked = [...earlier, ...seen].filter((r) => !urlPattern || r.url.includes(urlPattern)).slice(-limit);
     if (clear) all.clear();
-    return text(picked.length ? picked.map((r) => `${r.method} ${r.status ?? "pending"} ${r.url}`).join("\n") : "No requests (they're kept from when a tool first used this tab on this site).");
+    return text(picked.length ? picked.map((r) => `${r.method} ${r.status ?? "pending"} ${r.url}`).join("\n")
+      : urlPattern ? `No requests to URLs containing “${urlPattern}”.` : "No requests.");
   },
 
-  async browser_resize({ tabId, width, height }, task) {
+  async browser_resize({ tabId, width, height, reset }, task) {
     const tab = await usable(task, tabId);
-    const w = Math.min(7680, Math.max(200, Number(width))), h = Math.min(4320, Math.max(200, Number(height)));
-    await chrome.windows.update(tab.windowId, { width: Math.round(w), height: Math.round(h) });
     frames.delete(tab.id);
-    return text(`Resized the window to ${Math.round(w)}×${Math.round(h)}.`);
+    // The page's size in its tab, as DevTools' device mode sets it: the window (often the user's, maybe full screen)
+    // stays as it is.
+    if (reset) { await setSize(tab.id, null); return text("The page has its tab's own size again.") }
+    const w = Math.round(Math.min(7680, Math.max(200, Number(width)))), h = Math.round(Math.min(4320, Math.max(200, Number(height))));
+    await setSize(tab.id, { width: w, height: h });
+    return text(`The page is now laid out at ${w}×${h}, in its tab; the window is left as it is. browser_resize with reset undoes it.`);
   },
 
   async browser_upload({ tabId, ref, coordinate, files }, task) {
