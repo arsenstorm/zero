@@ -197,6 +197,19 @@ function modifierBits(modifiers = "") {
   return bits;
 }
 
+/** Whether Chrome refuses the debugger this tab: another extension's frame is in it. */
+async function shut(tabId) {
+  try { await attach(tabId); return false } catch (error) { return /different extension/i.test(String(error?.message)) }
+}
+
+/** The tab as it shows on screen, without the debugger: only when it's the one in front in its window. */
+async function glimpse(tab) {
+  if (!tab.active) throw new Error("Chrome keeps the debugger off this tab (another extension has a frame in it), and it isn't in front for a plain screenshot: read it with browser_read or browser_text");
+  const url = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 85 });
+  return { content: [{ type: "text", text: `Tab ${tab.id} as it shows (Chrome keeps the debugger off it while another extension has a frame in it: click by ref).` },
+    { type: "image", data: url.split(",")[1], mimeType: "image/jpeg" }] };
+}
+
 async function click(tabId, { x, y }, { button = "left", count = 1, modifiers = 0 } = {}) {
   const buttons = { left: 1, right: 2, middle: 4 }[button];
   await glide(tabId, { x, y });
@@ -307,11 +320,19 @@ const TOOLS = {
     const id = tab.id;
     const modifiers = modifierBits(args.modifiers);
     switch (args.action) {
-      case "screenshot": return screenshot(id, { scale: args.scale ?? 1, fullPage: !!args.full_page, keep: !!args.save_to_disk });
+      case "screenshot":
+        if (await shut(id)) return glimpse(tab);
+        return screenshot(id, { scale: args.scale ?? 1, fullPage: !!args.full_page, keep: !!args.save_to_disk });
       case "zoom":
         if (!Array.isArray(args.region) || args.region.length !== 4) throw new Error("Zoom into what? region [x0, y0, x1, y1]");
         return screenshot(id, { region: args.region, scale: args.scale ?? 1, keep: !!args.save_to_disk });
       case "left_click": case "right_click": case "double_click": case "triple_click": {
+        // Another extension's frame in the page (a password manager's menu) and Chrome keeps the debugger out of the
+        // whole tab: an element named by its ref is still clicked, from inside the page.
+        if (args.ref && args.action === "left_click" && await shut(id)) {
+          await page(id, "press", args.ref);
+          return text("Clicked it (from inside the page: Chrome keeps the debugger off this tab while another extension has a frame in it).");
+        }
         const at = await point(id, args);
         const button = args.action === "right_click" ? "right" : "left";
         const count = { double_click: 2, triple_click: 3 }[args.action] || 1;

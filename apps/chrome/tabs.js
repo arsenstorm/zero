@@ -5,8 +5,8 @@
 // Kept in local storage, so a reload of the extension remembers them; a group is trusted only if it still has its
 // task's title (Chrome reuses ids after it restarts).
 async function kept() {
-  const { groups = {}, windows = {}, titles = {} } = await chrome.storage.local.get(["groups", "windows", "titles"]);
-  const { shared = {} } = await chrome.storage.session.get("shared");
+  // The tabs the user gave too: an update of the extension reloads it, and they're still given after.
+  const { groups = {}, windows = {}, titles = {}, shared = {} } = await chrome.storage.local.get(["groups", "windows", "titles", "shared"]);
   return { groups, windows, titles, shared };
 }
 
@@ -18,10 +18,11 @@ const title = (task) => {
   return named.length > 26 ? named.slice(0, 25) + "…" : named;
 };
 
-// The task's state, first in its group's title: working, blocked (it needs the user), done.
-const LIGHTS = { working: "🚧", blocked: "⛔", done: "✅" };
+// The task's state, first in its group's title, Chrome's own four: working, needs (the user: a question, an approval,
+// an alert in one of its tabs), blocked (on something else, or in trouble), done.
+const LIGHTS = { working: "🚧", needs: "🙋", blocked: "⛔", done: "✅" };
 // Earlier lights too, so groups named with them are still known as their task's.
-const bare = (shown = "") => shown.replace(/^(🚧|⛔|✅|🟡|🔴|🟢)\s*/u, "");
+const bare = (shown = "") => shown.replace(/^(🚧|🙋|⛔|✅|🟡|🔴|🟢)\s*/u, "");
 const lit = (name, light) => (LIGHTS[light] ? `${LIGHTS[light]} ` : "") + name;
 
 /** The task's groups that still exist as its (one per window it has tabs in), the newest first. */
@@ -47,7 +48,7 @@ export async function setLight(key, light) {
   const state = await kept();
   for (const group of await groupsOf({ group: key }, state)) {
     const tabs = await chrome.tabs.query({ groupId: group.id });
-    const shown = tabs.some((t) => alerting.has(t.id)) ? "blocked" : lights.get(key);
+    const shown = tabs.some((t) => alerting.has(t.id)) ? "needs" : lights.get(key);
     const wanted = lit(state.titles[key], shown);
     if (group.title !== wanted || group.color !== "grey") await chrome.tabGroups.update(group.id, { title: wanted, color: "grey" }).catch(() => {});
   }
@@ -144,7 +145,7 @@ export async function firstTab(task) {
 export async function share(tabId, session) {
   const { shared } = await kept();
   if (session) shared[tabId] = session; else delete shared[tabId];
-  await chrome.storage.session.set({ shared });
+  await chrome.storage.local.set({ shared });
 }
 
 export async function sharedWith(tabId) { return (await kept()).shared[tabId] || null }

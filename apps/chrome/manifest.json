@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Zero",
   "description": "Lets the agents Zero runs use Chrome: each task in tabs of its own.",
-  "version": "0.5.3",
+  "version": "0.6.2",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA+3zBVu9m4X8HsWAfZfG9CAEi1C1CSML8+f+30oJKQDjcjB6suwZxrJo48MhddkGD/gFcIdDocUIF9xONFWNDR/JZx6cHrt0fZLEwZQdgLfKV4S0uJyrW6rqdPats3RelHDong6tQANwyub0GWCeMHZ9Wjbe3Jr9Q+ZSwhintQ1xkVdN4omdvZCKB4OmsM8iWlCOz/l7EkkGthVUX1Lkwg0ylpL2zsL5gSjIIhxbD0maGjGbvAttVsxVo4BXfBFWWt7WVFxiQywnUadA19jCpJDPj7nLhlbL7mMUn4FBHzsbrUjBeeN+ZQgSDTe1r6PP8yOpsrp4BKj3NZpepGN3peQIDAQAB",
   "minimum_chrome_version": "116",
   "permissions": [

@@ -142,6 +142,20 @@
     return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
   }
 
+  /** A click from inside the page, for when Chrome won't let the debugger near the tab (below, tools.js). */
+  function press(ref) {
+    const e = element(ref);
+    e.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    const box = e.getBoundingClientRect();
+    const at = { bubbles: true, cancelable: true, view: window, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2, button: 0 };
+    e.dispatchEvent(new PointerEvent("pointerdown", { ...at, buttons: 1 }));
+    e.dispatchEvent(new MouseEvent("mousedown", { ...at, buttons: 1 }));
+    e.focus?.();
+    e.dispatchEvent(new PointerEvent("pointerup", at));
+    e.dispatchEvent(new MouseEvent("mouseup", at));
+    e.click();
+  }
+
   const LANDMARKS = new Set(["banner", "main", "form", "group", "region", "navigation", "list", "listitem", "contentinfo", "complementary", "article", "search", "table", "row", "dialog"]);
   const SYNONYMS = {
     button: ["button"], link: ["link"], search: ["searchbox", "textbox", "combobox"], field: ["textbox", "searchbox", "combobox"], input: ["textbox", "searchbox", "combobox"],
@@ -242,5 +256,5 @@
     return `Dropped ${names} on the page.`;
   }
 
-  globalThis.__zero = { tree, center, find, text, form, upload };
+  globalThis.__zero = { tree, center, press, find, text, form, upload };
 })();
