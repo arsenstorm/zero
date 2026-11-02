@@ -22,7 +22,7 @@ struct LoopsPage: View {
                 HStack(spacing: 4) {
                     Spacer(minLength: 0)
                     Button { naming = true } label: { NucleoIcon("compose", size: 15).frame(width: 30, height: 30) }
-                        .buttonStyle(Hovering()).foregroundStyle(.secondary).help("New loop")
+                        .buttonStyle(Hovering()).foregroundStyle(.secondary).tip("New loop")
                 }
                 .padding(.bottom, 6)
                 ScrollView {
@@ -118,7 +118,7 @@ private struct LoopEditor: View {
                 Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString("@" + loop.name, forType: .string) } label: {
                     NucleoLabel("Copy name", icon: "copy", size: 14).font(.system(size: 12.5, weight: .medium))
                 }
-                .buttonStyle(.plain).help("Copy @\(loop.name) to name it in a message")
+                .buttonStyle(.plain).tip("Copy @\(loop.name) to name it in a message")
             }
             TextField("What this loop is for, in a line", text: $description).textFieldStyle(.plain).font(.system(size: 14)).foregroundStyle(.secondary)
         }

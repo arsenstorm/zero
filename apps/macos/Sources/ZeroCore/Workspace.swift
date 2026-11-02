@@ -48,8 +48,13 @@ public final class Workspace {
     public private(set) var workspaces: [ZerodLink.Workspace] = [ZerodLink.Workspace(id: "zero", name: "Zero")]
     public private(set) var workspacesVersion = 0
     public var current: String = UserDefaults.standard.string(forKey: "currentWorkspace") ?? "zero" {
-        didSet { UserDefaults.standard.set(current, forKey: "currentWorkspace") }
+        didSet {
+            UserDefaults.standard.set(current, forKey: "currentWorkspace")
+            if current != oldValue { onCurrent?(current) }
+        }
     }
+    /// Told when the workspace shown changes (the phones follow it).
+    @ObservationIgnored public var onCurrent: ((String) -> Void)?
     public var currentWorkspace: ZerodLink.Workspace { workspaces.first { $0.id == current } ?? workspaces[0] }
 
     /// Views being fetched again, while what they last showed stays up.
@@ -59,55 +64,48 @@ public final class Workspace {
     public private(set) var board: [BoardRow] = []
     private var rawBoard: [BoardRow] = []
 
-    /// A task that replied stays Replied until the user has looked at it, and settles to Idle this long after: an answer
-    /// read a while ago is nothing new, one not yet read is, however long ago it came.
-    public static let settleAfter: TimeInterval = 5 * 60
-    /// The latest answer of each task the user looked at, and when; kept across launches.
-    @ObservationIgnored private var seen: [String: (answer: String, at: Date)] = Workspace.loadSeen()
+    /// Told each board as it changes, for the app's notifications.
+    @ObservationIgnored public var onBoard: (([BoardRow]) -> Void)?
 
-    /// The user is looking at this task now: its latest answer is seen.
+    /// The latest answer of each task the user looked at, as last told to zerod (which settles Replied to Idle a while
+    /// after, on every client).
+    @ObservationIgnored private var told: [String: String] = [:]
+
+    /// The user is looking at this task now: its latest answer is seen, as zerod is told.
     public func markSeen(_ id: String) {
-        guard let answer = latestAnswer(id) else { return }
-        if let kept = seen[id], kept.answer == answer { return }
-        seen[id] = (answer, Date())
-        Self.saveSeen(seen)
-        resettle()
+        guard let answer = latestAnswer(id), told[id] != answer, let link else { return }
+        told[id] = answer
+        Task { try? await link.seen(session: id, answer: answer) }
     }
 
-    /// The settled rows again: a minute on, a seen answer may have settled.
     func resettle() {
-        let rows = rawBoard.map { row in
-            var row = row
-            row.state = Self.settled(row.state, session: row.session, answer: latestAnswer(row.session), seen: seen, now: Date())
-            return row
-        }
+        let rows = rawBoard
         if rows != board {
             for row in rows where board.first(where: { $0.session == row.session })?.state != row.state {
                 Log.write("task \(row.session) \(row.state.rawValue): \(row.task)")
             }
             board = rows
+            onBoard?(rows)
         }
-    }
-
-    nonisolated static func settled(_ state: BoardRow.State, session: String, answer: String?, seen: [String: (answer: String, at: Date)], now: Date) -> BoardRow.State {
-        guard state == .answered, let kept = seen[session], kept.answer == answer, now.timeIntervalSince(kept.at) >= settleAfter else { return state }
-        return .idle
     }
 
     private func latestAnswer(_ id: String) -> String? {
         (lives[id]?.conversation ?? roster[id])?.items.last { if case .agent(_, true) = $0.kind { true } else { false } }?.id
     }
 
-    private static let seenKey = "seenAnswers"
-    private static func loadSeen() -> [String: (answer: String, at: Date)] {
-        let stored = UserDefaults.standard.dictionary(forKey: seenKey) as? [String: [String: Any]] ?? [:]
-        return stored.compactMapValues { entry in
-            guard let answer = entry["answer"] as? String, let at = entry["at"] as? Double else { return nil }
-            return (answer, Date(timeIntervalSince1970: at))
-        }
-    }
-    private static func saveSeen(_ seen: [String: (answer: String, at: Date)]) {
-        UserDefaults.standard.set(seen.mapValues { ["answer": $0.answer, "at": $0.at.timeIntervalSince1970] as [String: Any] }, forKey: seenKey)
+    /// What this Mac recorded as seen before zerod kept it, given to zerod once.
+    private func handOverSeen(_ link: ZerodLink) async {
+        let key = "seenAnswers"
+        guard let stored = UserDefaults.standard.dictionary(forKey: key) as? [String: [String: Any]] else { return }
+        do {
+            for (session, entry) in stored {
+                guard let answer = entry["answer"] as? String, let at = entry["at"] as? Double else { continue }
+                do { try await link.seen(session: session, answer: answer, at: Int(at)) }
+                catch let error as ZerodError where error.message.hasPrefix("No session") { continue } // archived since
+            }
+            // Kept until zerod has it all: a zerod from before "seen" refuses it, and the next connection tries again.
+            UserDefaults.standard.removeObject(forKey: key)
+        } catch {}
     }
 
     public var conversations: [Conversation] { order.compactMap { roster[$0] } }
@@ -166,14 +164,6 @@ public final class Workspace {
 
     public init() {
         onBehind = { [weak self] in Task { try? await self?.link?.subscribe() } }
-        // A seen answer settles with time, not with an event: look again each minute.
-        Task { @MainActor [weak self] in
-            while true {
-                try? await Task.sleep(for: .seconds(60))
-                guard let self else { return }
-                self.resettle()
-            }
-        }
     }
 
     // The connection.
@@ -186,9 +176,17 @@ public final class Workspace {
                 fresh.onFeed = { [weak self] feed in
                     Task { @MainActor in
                         switch feed {
-                        case let .board(rows): if let self, self.rawBoard != rows { self.rawBoard = rows; self.resettle() }
+                        case let .board(rows):
+                            guard let self, self.rawBoard != rows else { break }
+                            self.rawBoard = rows
+                            // What zerod now shows needs no echo.
+                            for row in rows where self.queuing[row.session]?.isEmpty == false {
+                                self.queuing[row.session]?.removeAll { echo in (row.queued ?? []).contains { $0.text == echo.text } }
+                            }
+                            self.resettle()
                         case .pads: self?.padsVersion += 1
                         case .loops: self?.loopsVersion += 1
+                        case .later: Task { await self?.loadLater() }
                         case .following: self?.followingVersion += 1
                         case .workspaces: self?.workspacesVersion += 1; Task { await self?.loadWorkspaces() }
                         }
@@ -196,6 +194,7 @@ public final class Workspace {
                 }
                 fresh.onClose = { [weak self] in Task { @MainActor in self?.link = nil; self?.connected = false; Log.write("zerod connection closed") } }
                 link = fresh
+                Task { await self.handOverSeen(fresh) }
                 if (try? await fresh.subscribe()) != nil { connected = true; await loadWorkspaces(); await loadIntegrations() }
             }
             try? await Task.sleep(for: .seconds(2))
@@ -245,12 +244,19 @@ public final class Workspace {
         (try? await link?.pad("list", ["folder": "Tasks/\(ticket)"], as: PadList.self))?.pads ?? []
     }
 
-    /// Puts a task away with its workers; the board drops them at once, the mirror as zerod says each is gone.
+    /// Puts a task away with its workers (zerod takes them with it, so they come back with it); the board drops them
+    /// at once, the mirror as zerod says each is gone.
     public func archive(_ id: String) async {
-        var team = [id]
-        var i = 0
-        while i < team.count { let lead = team[i]; team += conversations.filter { $0.parent == lead }.map(\.id); i += 1 }
-        for member in team.reversed() { _ = await attempt { try await $0.archive(session: member) } }
+        _ = await attempt { try await $0.archive(session: id) }
+        await refreshBoard()
+    }
+
+    /// The tasks archived, newest first, each with how many workers went with it.
+    public func archived() async -> [ZerodLink.Archived] { await attempt { try await $0.archived() } ?? [] }
+
+    /// A task back from the archive, with the workers that went with it.
+    public func unarchive(_ id: String) async {
+        _ = await attempt { try await $0.unarchive(session: id) }
         await refreshBoard()
     }
 
@@ -298,6 +304,68 @@ public final class Workspace {
         guard let marks = try? await link?.outline(session: session) else { return outlines[session] ?? [] }
         if outlines[session] != marks { outlines[session] = marks }
         return marks
+    }
+
+    /// What's saved for later, without artifacts, as zerod last listed it.
+    public private(set) var later: [ZerodLink.LaterItem] = []
+
+    public func loadLater() async {
+        guard let list = try? await link?.laterItems() else { return }
+        if list != later { later = list }
+    }
+
+    public func laterItem(_ id: String, version: Int? = nil) async -> ZerodLink.LaterItem? { try? await link?.laterItem(id, version: version) }
+
+    public func editLater(_ id: String, _ fields: [String: Any]) async {
+        _ = await attempt { try await $0.editLater(id, fields) }
+        await loadLater()
+    }
+
+    /// One the user writes: their note, and anything behind it. Its id.
+    public func saveLater(note: String, artifact: String) async -> String? {
+        let saved = await attempt { try await $0.later("save", ["note": note, "artifact": artifact]) } as? [String: Any]
+        await loadLater()
+        return saved?["id"] as? String
+    }
+
+    public func deleteLater(_ id: String) async {
+        _ = await attempt { try await $0.later("delete", ["item": id]) }
+        await loadLater()
+    }
+
+    /// Asks a task's agent to save for later what it has (or what one answer says): it writes the note and the
+    /// artifact, as Zero writes nothing itself. Between turns, like a queued message.
+    public func askToSaveForLater(_ session: String, answer: String? = nil) async {
+        _ = await attempt { try await $0.notify(session: session, text: LaterAsk.text(answer: answer), from: "zero") }
+    }
+
+    /// MCP servers set up in Zero, as zerod last listed them.
+    public private(set) var mcpServers: [ZerodLink.McpServer] = []
+
+    public func loadMcpServers() async {
+        if let list = try? await link?.mcpServers(), list != mcpServers { mcpServers = list }
+    }
+
+    /// Saved with its Keychain values put in the Keychain (`secrets`, by name), never in zerod's file; an error to show.
+    public func saveMcpServer(_ server: ZerodLink.McpServer, secrets: [String: String]) async -> String? {
+        guard let link else { return "Zero's daemon isn't running" }
+        do {
+            let saved = try await link.saveMcpServer(server)
+            for (name, value) in secrets where !value.isEmpty {
+                Keychain.saveString(value, service: ZerodLink.McpServer.keychain, account: saved.id + "." + name)
+            }
+            await loadMcpServers()
+            return nil
+        } catch { return error.localizedDescription }
+    }
+
+    /// Gone, with the values it kept in the Keychain.
+    public func deleteMcpServer(_ server: ZerodLink.McpServer) async {
+        _ = await attempt { try await $0.deleteMcpServer(server.id) }
+        for value in server.env + server.headers where value.from == .keychain {
+            Keychain.saveString(nil, service: ZerodLink.McpServer.keychain, account: server.id + "." + value.name)
+        }
+        await loadMcpServers()
     }
 
     public func loadLoops() async {
@@ -381,14 +449,30 @@ public final class Workspace {
         if list.folders != padFolders { padFolders = list.folders }
     }
 
-    public func readPad(_ id: String) async -> Pad? { try? await link?.pad("read", ["pad": id], as: Pad.self) }
+    public func readPad(_ id: String) async -> Pad? {
+        let read = try? await link?.pad("read", ["pad": id], as: Pad.self)
+        if let read { padCache[id] = read }
+        return read
+    }
+
+    /// Each pad as last read or written here: a pad opened again shows at once, then catches up with zerod.
+    @ObservationIgnored private var padCache: [String: Pad] = [:]
+    public func cachedPad(_ id: String) -> Pad? { padCache[id] }
+
+    /// Read ahead of opening (the pointer is on its row): the click finds it here.
+    public func prefetchPad(_ id: String) {
+        guard padCache[id] == nil else { return }
+        Task { _ = await readPad(id) }
+    }
 
     /// The text written, if nobody has changed the pad since `revision`; the error says so if they have.
     public func writePad(_ id: String, content: String, revision: String?) async throws -> Pad {
         guard let link else { throw ZerodError(message: "Zero's daemon isn't running") }
         var args: [String: Any] = ["pad": id, "content": content]
         if let revision { args["revision"] = revision }
-        return try await link.pad("write", args, as: Pad.self)
+        let written = try await link.pad("write", args, as: Pad.self)
+        padCache[id] = written
+        return written
     }
 
     public func createPad(in folder: String) async -> Pad? {
@@ -523,12 +607,38 @@ public final class Workspace {
         _ = await attempt { try await $0.send(session: session, text: text, images: images, model: model, effort: effort) }
     }
 
-    public func queue(_ session: String, text: String, images: [String] = []) async { _ = await attempt { try await $0.queue(session: session, text: text, images: images) } }
+    /// Messages queued here that zerod's board doesn't show yet, by session: shown at once, so queueing never waits on
+    /// the board's next round.
+    public private(set) var queuing: [String: [Queued]] = [:]
+
+    /// A task's queue as the strip shows it: zerod's, then what was queued here since.
+    public func queued(_ session: String, board: [Queued]) -> [Queued] {
+        let echoes = (queuing[session] ?? []).filter { echo in !board.contains { $0.text == echo.text } }
+        return board + echoes
+    }
+
+    public func queue(_ session: String, text: String, images: [String] = []) async {
+        let echo = Queued(id: "queuing-\(UUID().uuidString)", text: text, images: images.isEmpty ? nil : images)
+        queuing[session, default: []].append(echo)
+        _ = await attempt { try await $0.queue(session: session, text: text, images: images) }
+        // Once the board has had a moment to show it, the echo goes either way: shown by zerod, or refused.
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            self?.queuing[session]?.removeAll { $0.id == echo.id }
+        }
+    }
     public func unqueue(_ session: String, item: String) async -> Bool { await attempt { try await $0.unqueue(session: session, item: item) } != nil }
     public func release(_ session: String) async { _ = await attempt { try await $0.release(session: session) } }
     public func interrupt(_ session: String) async { _ = await attempt { try await $0.interrupt(session: session) } }
     public func stop(_ session: String) async { _ = await attempt { try await $0.stop(session: session) } }
     public func resume(_ session: String) async { _ = await attempt { try await $0.resume(session: session) } }
+    /// On hold with their workers, and off it: a working one wraps up first (zerod gives it five minutes).
+    public func pause(_ sessions: [String]) async { _ = await attempt { try await $0.pause(sessions: sessions) } }
+    public func unpause(_ sessions: [String]) async { _ = await attempt { try await $0.unpause(sessions: sessions) } }
+    /// A task (a lead, or a worker on its lead's row) the user put on hold.
+    public func isPaused(_ session: String) -> Bool {
+        board.contains { $0.session == session ? $0.ownState == .paused : $0.team?.contains { $0.session == session && $0.state == .paused } == true }
+    }
 
     public func openTerminal(_ session: String) async { _ = await attempt { try await $0.openTerminal(session: session) } }
     public func closeTerminal(_ session: String) async { _ = await attempt { try await $0.closeTerminal(session: session) } }

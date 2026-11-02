@@ -318,7 +318,9 @@ public struct IntegrationTag: Codable, Equatable, Sendable, Hashable {
 
 /// One row of the board (crates/zerod/src/board.rs): a lead session with its workers folded in.
 public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
-    public enum State: String, Decodable, Sendable { case needsYou, trouble, working, waiting, answered, done, merged, idle, offline }
+    /// As zerod's board has them (board.rs), most urgent first. Handed is "Over to you": done, with a step only the user
+    /// can take. Blocked is on something that isn't the user.
+    public enum State: String, Decodable, Sendable { case needsYou, trouble, working, handed, answered, blocked, done, merged, paused, idle, offline }
     public var session: String
     public var task: String
     /// The workspace it is in; "zero" when none was made.
@@ -330,7 +332,12 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     public var path: String?
     /// Offline, `state` is the one it was last known in.
     public var online: Bool
+    /// The team's: the lead's own, raised by a worker's that needs attention. What the row sorts by.
     public var state: State
+    /// The lead's own, its workers left out (zerod's board.rs); nil from an older zerod.
+    public var own: State?
+    /// What the lead itself is doing: its icon in the sidebar, its status in the details pane.
+    public var ownState: State { own ?? state }
     public var now: String?
     public var needs: String?
     /// The open asks of the lead and its workers.
@@ -362,6 +369,7 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
         var row = self
         row.session = member.session; row.state = member.state; row.place = member.place; row.path = member.path
         row.now = member.now; row.needs = member.needs; row.asks = member.asks; row.workers = 0; row.team = nil
+        row.own = nil // the lead's, not the worker's
         row.queued = member.queued; row.held = member.held
         return row
     }
@@ -372,6 +380,7 @@ public struct Queued: Decodable, Equatable, Sendable, Identifiable {
     public var id: String
     public var text: String
     public var images: [String]?
+    public init(id: String, text: String, images: [String]?) { self.id = id; self.text = text; self.images = images }
 }
 
 /// A task's provider terminal (crates/zerod/src/model.rs `Opened`): zero-host's id, and how much of the provider's own
@@ -404,7 +413,7 @@ public struct Failure: Decodable, Equatable, Sendable {
 }
 
 /// What a session needs from Arsen, most urgent first: the bar's dot (zerod's `Conversation::attention`).
-public enum Attention: String, Decodable, Sendable { case needsYou, limited, stuck, failed, working, done, answered, idle, offline, starting }
+public enum Attention: String, Decodable, Sendable { case needsYou, limited, stuck, failed, blocked, working, done, answered, idle, offline, starting }
 
 public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
     public var id: String
@@ -470,7 +479,8 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
             if parent != nil { return .done }
             switch ZeroEnding.split(text).1 {
             case .done?: return .done
-            case .blocked?, .asked?: return .needsYou
+            case .asked?: return .needsYou
+            case .blocked?: return .blocked
             case .working?: return .idle
             case nil: return text.split(whereSeparator: \.isNewline).contains { $0.trimmingCharacters(in: .whitespaces).hasSuffix("?") } ? .needsYou : .answered
             }
@@ -710,7 +720,7 @@ public final class ZerodLink: @unchecked Sendable {
     public static let socket = ProcessInfo.processInfo.environment["ZERO_DAEMON"] ?? Paths.dir.appendingPathComponent("zerod.sock").path
     public static let home = Paths.dir.appendingPathComponent("zerod").path
 
-    private let connection: UnixSocket
+    private let connection: any LineConnection
     private let lock = NSLock()
     private let writing = NSLock()
     private var next = 0
@@ -726,6 +736,7 @@ public final class ZerodLink: @unchecked Sendable {
         case board([BoardRow])
         case pads
         case loops
+        case later
         case following
         case workspaces
     }
@@ -768,6 +779,12 @@ public final class ZerodLink: @unchecked Sendable {
         Thread.detachNewThread { [self] in read() }
     }
 
+    /// Over another connection: the phone's, through the tunnel.
+    public init(connection: any LineConnection) {
+        self.connection = connection
+        Thread.detachNewThread { [self] in read() }
+    }
+
     public func close() { connection.shutdown() }
 
     // The daemon's requests (crates/zerod/src/server.rs).
@@ -804,8 +821,27 @@ public final class ZerodLink: @unchecked Sendable {
 
     public func interrupt(session: String) async throws { _ = try await call("interrupt", ["session": session]) }
     public func stop(session: String) async throws { _ = try await call("stop", ["session": session]) }
+    /// Puts tasks and their workers on hold (every task, none named), and takes them off it; gives the sessions it did.
+    public func pause(sessions: [String]) async throws -> [String] { try await call("pause", ["sessions": sessions]) as? [String] ?? [] }
+    public func unpause(sessions: [String]) async throws -> [String] { try await call("unpause", ["sessions": sessions]) as? [String] ?? [] }
     /// Puts the task away: out of the list, its files kept in zerod's archive/.
     public func archive(session: String) async throws { _ = try await call("archive", ["session": session]) }
+
+    /// A task put away itself (not with its lead), as the archive lists it.
+    public struct Archived: Decodable, Equatable, Sendable, Identifiable {
+        public let id: String
+        public let task: String
+        public let at: Int
+        public let workspace: String?
+        /// The workers that went with it, and come back with it.
+        public let workers: Int
+        public var date: Date { Date(timeIntervalSince1970: TimeInterval(at) / 1000) }
+    }
+
+    public func archived() async throws -> [Archived] { try decode([Archived].self, from: await call("archived")) }
+
+    /// Brings a task back, and the workers archived with it: the ids back.
+    public func unarchive(session: String) async throws -> [String] { try await call("unarchive", ["session": session]) as? [String] ?? [] }
 
     /// What going back to a message of yours would do to the folder.
     public func rewindPreview(session: String, message: String) async throws -> RewindPreview {
@@ -918,6 +954,45 @@ public final class ZerodLink: @unchecked Sendable {
 
     public func loops() async throws -> [Loop] { try loops(from: try await call("loops")) }
 
+    /// Something saved for later (zerod's later.rs): a note in plain words and, when viewed, the artifact behind it.
+    public struct LaterItem: Decodable, Equatable, Sendable, Identifiable {
+        public let id: String
+        public let note: String
+        public let artifact: String?
+        public let from: String?
+        public let task: String?
+        public let workspace: String?
+        public let links: [String]
+        public let files: [String]
+        public let created: Int
+        public let updated: Int
+        public let done: Bool
+        public let version: Int
+        public let versions: [Version]
+        public let link: String
+        public struct Version: Decodable, Equatable, Sendable { public let version: Int; public let note: String; public let at: Int; public let by: String? }
+        public var createdAt: Date { Date(timeIntervalSince1970: TimeInterval(created)) }
+    }
+
+    /// One of Later's tools (list, view, save, edit, delete); from a task, `session` says which.
+    public func later(_ tool: String, _ args: [String: Any] = [:], session: String? = nil) async throws -> Any {
+        try await call("later", ["tool": tool, "args": args, "session": session])
+    }
+
+    public func laterItems(_ query: String = "") async throws -> [LaterItem] {
+        try JSONDecoder().decode([LaterItem].self, from: JSONSerialization.data(withJSONObject: try await later("list", ["query": query])))
+    }
+
+    public func laterItem(_ id: String, version: Int? = nil) async throws -> LaterItem {
+        var args: [String: Any] = ["item": id]
+        if let version { args["version"] = version }
+        return try JSONDecoder().decode(LaterItem.self, from: JSONSerialization.data(withJSONObject: try await later("view", args)))
+    }
+
+    public func editLater(_ id: String, _ fields: [String: Any]) async throws {
+        _ = try await later("edit", fields.merging(["item": id]) { $1 })
+    }
+
     public func loop(_ name: String) async throws -> Loop {
         try loops(from: [try await call("loop", ["name": name])]).first!
     }
@@ -941,7 +1016,13 @@ public final class ZerodLink: @unchecked Sendable {
     // Word from outside.
 
     /// Words for a session, given when it is between turns.
-    public func notify(session: String, text: String) async throws { _ = try await call("notify", ["session": session, "text": text]) }
+    /// Words for a session between its turns, marked as Zero's, or as `from`'s (another task's).
+    /// The user saw a task's reply (its answer's item; now, unless `at` says when): zerod settles Replied for everyone.
+    public func seen(session: String, answer: String? = nil, at: Int? = nil) async throws {
+        _ = try await call("seen", ["session": session, "answer": answer, "at": at])
+    }
+
+    public func notify(session: String, text: String, from: String? = nil) async throws { _ = try await call("notify", ["session": session, "text": text, "from": from]) }
 
     /// What a task's agent may do without asking, changed between turns: its next message starts it with them.
     public func setPermissions(session: String, _ permissions: Permissions) async throws { _ = try await call("setPermissions", ["session": session, "permissions": permissions.rawValue]) }
@@ -981,6 +1062,46 @@ public final class ZerodLink: @unchecked Sendable {
     }
 
     public func workspaces() async throws -> [Workspace] { try decode([Workspace].self, from: await call("workspaces")) }
+
+    /// An MCP server set up in Zero (zerod's mcp_servers.rs): every task's CLI in its workspaces is given it as it starts.
+    public struct McpServer: Codable, Equatable, Sendable, Identifiable {
+        public var id: String
+        public var name: String
+        public var command: String?
+        public var args: [String]
+        public var url: String?
+        public var env: [Value]
+        public var headers: [Value]
+        /// The workspaces it's for; none, every workspace.
+        public var workspaces: [String]
+        public var enabled: Bool
+
+        public struct Value: Codable, Equatable, Sendable {
+            public var name: String
+            /// Kept in Zero's file only when that's where it comes from.
+            public var value: String?
+            public var from: Source
+            public init(name: String = "", value: String? = nil, from: Source = .keychain) { self.name = name; self.value = value; self.from = from }
+        }
+
+        public enum Source: String, Codable, Sendable, CaseIterable { case keychain, command, file }
+
+        public init(id: String = "", name: String = "", command: String? = nil, args: [String] = [], url: String? = nil, env: [Value] = [], headers: [Value] = [],
+                    workspaces: [String] = [], enabled: Bool = true) {
+            self.id = id; self.name = name; self.command = command; self.args = args; self.url = url; self.env = env; self.headers = headers
+            self.workspaces = workspaces; self.enabled = enabled
+        }
+
+        /// The Keychain's service for its values; each value's account is "<id>.<name>" (as zerod reads them).
+        public static let keychain = "Zero MCP"
+    }
+
+    public func mcpServers() async throws -> [McpServer] { try decode([McpServer].self, from: await call("mcpServers")) }
+    public func saveMcpServer(_ server: McpServer) async throws -> McpServer {
+        let data = try JSONEncoder().encode(server)
+        return try decode(McpServer.self, from: await call("saveMcpServer", ["server": try JSONSerialization.jsonObject(with: data)]))
+    }
+    public func deleteMcpServer(_ id: String) async throws { _ = try await call("deleteMcpServer", ["server": id]) }
 
     public func saveWorkspace(_ workspace: Workspace) async throws -> Workspace {
         let fields = try JSONSerialization.jsonObject(with: JSONEncoder().encode(workspace))
@@ -1095,6 +1216,17 @@ public final class ZerodLink: @unchecked Sendable {
     /// From now on `onMessage` gets every session's snapshot, then each change.
     public func subscribe() async throws { _ = try await call("subscribe") }
 
+    /// Changes as they come, but no snapshots up front (a phone, on a slow link): a session's comes once it changes,
+    /// or with `recent` when it's opened.
+    public func subscribeLazily() async throws { _ = try await call("subscribe", ["lazy": true]) }
+
+    /// A session's latest items, and how many came before them.
+    public func recent(session: String) async throws -> (Conversation, Int) {
+        let result = try await call("recent", ["session": session]) as? [String: Any] ?? [:]
+        let conversation = try decode(Conversation.self, from: result["conversation"] ?? [:])
+        return (conversation, result["earlier"] as? Int ?? 0)
+    }
+
     // The inbox.
 
     /// From now on `onInbox` gets every ask, then each change.
@@ -1186,6 +1318,7 @@ public final class ZerodLink: @unchecked Sendable {
                 }
                 if event == "pads" { onFeed?(.pads); continue }
                 if event == "loops" { onFeed?(.loops); continue }
+                if event == "later" { onFeed?(.later); continue }
                 if event == "following" { onFeed?(.following); continue }
                 if event == "workspaces" { onFeed?(.workspaces); continue }
                 let decoded: ZerodMirror.Message? = switch event {
@@ -1228,6 +1361,7 @@ public final class ZerodLink: @unchecked Sendable {
     /// zerod leaves the app's session at start (setsid), so it keeps running when the app quits.
     public static func launch(binary: String, home: String, socket: String) async -> Bool {
         if answers(socket) { return true }
+        #if os(macOS)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = ["--home", home, "--socket", socket]
@@ -1243,6 +1377,7 @@ public final class ZerodLink: @unchecked Sendable {
             try? await Task.sleep(for: .milliseconds(100))
             if answers(socket) { return true }
         }
+        #endif
         return false
     }
 

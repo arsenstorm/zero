@@ -231,7 +231,7 @@ final class InboxController {
         // their team).
         let workers = Set((workspace?.conversations ?? []).filter { $0.parent != nil }.map(\.id)
                           + rows.flatMap { row in (row.team ?? []).map(\.session).filter { $0 != row.session } })
-        let session = { (ask: Ask) -> String? in ask.agent.ref ?? (ask.agent.name.hasPrefix("zerod-") ? String(ask.agent.name.dropFirst("zerod-".count)) : nil) }
+        let session = { (ask: Ask) -> String? in ask.session }
         var seen: [String] = []
         for ask in live where !seen.contains(ask.agent.name) && !(session(ask).map(workers.contains) ?? false) { seen.append(ask.agent.name) }
         return settings.sorted(seen)
@@ -241,10 +241,14 @@ final class InboxController {
                 if let lead = own.first.flatMap(session), let row = rows.first(where: { $0.session == lead }) {
                     switch row.state {
                     case .needsYou: status = .needsYou
-                    case .trouble: status = .blocked
+                    case .trouble: status = .trouble
+                    case .blocked: status = .blocked
+                    case .handed: status = .handed
                     case .working: status = .working
                     case .done: status = .done
                     case .merged: status = .merged
+                    // On hold: off the bar, as a task that isn't running is.
+                    case .paused: status = .offline
                     default: break
                     }
                 }
@@ -895,10 +899,11 @@ func shortAge(_ date: Date, now: Date = Date()) -> String {
     return "\(seconds / 86400)d"
 }
 
-/// What an agent's dot says: orange it needs you, red it said it is blocked, green it said it is done, blue it is
-/// working. Closed means Arsen shut it: no dot until it speaks again.
+/// What an agent's dot says, in the board's colours: blue it needs you, orange it's in trouble, teal it's over to you,
+/// red it's blocked, green it said it is done, blue it is working. Closed means the user shut it: no dot until it
+/// speaks again.
 enum AgentStatus {
-    case needsYou, blocked, done, merged, working, closed, offline
+    case needsYou, trouble, handed, blocked, done, merged, working, closed, offline
 
     static func of(_ asks: [Ask]) -> AgentStatus {
         if asks.contains(where: { $0.state == .waiting || $0.state == .pending }) { return .needsYou }
@@ -914,7 +919,9 @@ enum AgentStatus {
 
     var color: Color {
         switch self {
-        case .needsYou: return .orange
+        case .needsYou: return .blue
+        case .trouble: return .orange
+        case .handed: return .teal
         case .blocked: return .red
         case .done: return .green
         case .merged: return .purple
@@ -1124,7 +1131,7 @@ private struct EarlierRow: View {
                     NucleoIcon("share-left", size: 12).foregroundStyle(.secondary)
                         .frame(width: 16, height: 16).contentShape(Rectangle())
                 }
-                .buttonStyle(.plain).help("Reply to this").opacity(hovered ? 1 : 0)
+                .buttonStyle(.plain).tip("Reply to this").opacity(hovered ? 1 : 0)
             }
         }
         .frame(height: 16)
@@ -1582,7 +1589,7 @@ struct CardView: View {
                         withAnimation(.easeOut(duration: 0.2)) { detailExpanded.toggle() }
                     }
                     .pointerStyle(long ? .link : nil)
-                    .help(long ? (detailExpanded ? "Click to fold" : "Click to read it all") : "")
+                    .tip(long ? (detailExpanded ? "Click to fold" : "Click to read it all") : "")
             }
             if ask.kind == .run && (ask.state == .running || ask.state == .answered) {
                 terminal
@@ -1636,7 +1643,7 @@ struct CardView: View {
                                 NucleoLabel("Paste output", icon: "copy", size: 12).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                                     .padding(.horizontal, 8).padding(.vertical, 4).contentShape(Rectangle())
                             }
-                            .buttonStyle(Hovering(radius: 6)).help("Put what you copied into the reply, to send")
+                            .buttonStyle(Hovering(radius: 6)).tip("Put what you copied into the reply, to send")
                         }
                     }
                 }
@@ -1774,7 +1781,7 @@ struct CardView: View {
         .padding(.horizontal, 10).padding(.vertical, 8)
         .background(surface)
         .clipShape(RoundedRectangle(cornerRadius: 10))
-        .help(chosen && failed ? "Couldn't reach the agent. Click to try again." : "")
+        .tip(chosen && failed ? "Couldn't reach the agent. Click to try again." : "")
         .opacity(decided && !chosen ? 0.4 : 1)
         // Colour only: surface, key cap and icon ease between states; the row itself never moves.
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: ask.state)
@@ -1899,7 +1906,7 @@ struct PillView: View {
             .contentShape(Rectangle())
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { controller.barSlots[InboxController.inboxSlot] = $0 }
             .onTapGesture(perform: openInbox)
-            .help("Open asks")
+            .tip("Open asks")
             if controller.canSpawn {
                 NucleoIcon("plus", size: 15)
                     .foregroundStyle(controller.newAgentOpen ? .primary : .secondary)
@@ -1910,7 +1917,7 @@ struct PillView: View {
                     .contentShape(Rectangle())
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { controller.barSlots[InboxController.newSlot] = $0 }
                     .onTapGesture(perform: openNewAgent)
-                    .help("Start a new agent")
+                    .tip("Start a new agent")
             }
             if !agents.isEmpty {
                 Rectangle().fill(Theme.hairline).frame(width: 18, height: 1).padding(.vertical, 4)
@@ -1937,7 +1944,7 @@ struct PillView: View {
                     // Gone from the bar, gone from its slots: a pointer where it was peeks nothing.
                     .onDisappear { controller.barSlots[name] = nil }
                     .zIndex(drag?.name == name ? 1 : 0)
-                    .help(controller.store.displayName(of: name))
+                    .tip(controller.store.displayName(of: name))
                     .contextMenu {
                         if let identity = controller.store.identity(of: name), identity.runtime == "rex" {
                             Button("Open in Rex") { Task { await RexAdapter.reveal(identity) } }
@@ -2013,8 +2020,12 @@ struct MarkdownText: View {
     var hugs: Bool
     /// A message of yours: "/skill" and "@loop" in it are the tokens the composer showed, drawn as the same pills.
     var yours: Bool
+    /// A click not on a link (RichText's).
+    var onClick: (() -> Void)?
+    /// Still being revealed (StreamingText): each frame's text is styled without being kept, as it's gone by the next.
+    var streaming = false
 
-    init(_ text: String, cwd: String? = nil, size: CGFloat = 13, compact: Bool = false, hugs: Bool = false, yours: Bool = false) {
+    init(_ text: String, cwd: String? = nil, size: CGFloat = 13, compact: Bool = false, hugs: Bool = false, yours: Bool = false, onClick: (() -> Void)? = nil) {
         self.text = text
         repo = cwd.flatMap(References.repo(of:))
         owner = GitHubLinks.owner ?? cwd.flatMap(References.owner(of:))
@@ -2022,6 +2033,7 @@ struct MarkdownText: View {
         self.compact = compact
         self.hugs = hugs
         self.yours = yours
+        self.onClick = onClick
     }
 
     /// Set once a long text has been rendered off the main thread, so the view picks it up.
@@ -2031,19 +2043,51 @@ struct MarkdownText: View {
 
     var body: some View {
         let _ = rendered
-        if let kept = RichMarkdown.kept(text, size: size, compact: compact, repo: repo, yours: yours) {
-            RichText(text: kept, hugs: hugs)
-        } else if text.count < Self.long {
-            RichText(text: Self.render(text, size: size, compact: compact, links: links), hugs: hugs)
+        if let rich = styled {
+            RichText(text: rich, hugs: hugs, onClick: onClick).onChange(of: text, initial: true) { styleLong() }
         } else {
             // Its words while it's styled: a long answer never holds up the page.
             Text(ZeroEnding.split(text).0).font(.system(size: size)).lineSpacing(round(size * 0.42)).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .task(id: text) {
-                    let (text, size, compact, links) = (text, size, compact, links)
-                    _ = await Task.detached(priority: .userInitiated) { Rendered(Self.render(text, size: size, compact: compact, links: links)) }.value
-                    rendered.toggle()
-                }
+                .onChange(of: text, initial: true) { styleLong() }
+        }
+    }
+
+    /// The text styled: kept from before, styled now when short, or, for a long one still arriving, the part styled
+    /// so far, which stays while the rest is styled rather than falling back to plain words with each new piece.
+    private var styled: NSAttributedString? {
+        if streaming { return Self.renderGrowing(text, size: size, links: links) }
+        if let kept = RichMarkdown.kept(text, size: size, compact: compact, repo: repo, yours: yours) { return kept }
+        if text.count < Self.long { return Self.render(text, size: size, compact: compact, links: links) }
+        if let last, text.hasPrefix(last.text) { return last.rich }
+        return nil
+    }
+
+    func streaming(_ on: Bool) -> MarkdownText { var copy = self; copy.streaming = on; return copy }
+
+    /// The last long text styled here.
+    @State private var last: (text: String, rich: NSAttributedString)?
+    @State private var styler = Styler()
+
+    /// One styling at a time for a long text: as it streams in, each pass styles the latest text, and passes again if
+    /// more came meanwhile, rather than starting one per piece (each the whole answer) and dropping each unfinished.
+    final class Styler { var latest = ""; var busy = false }
+
+    private func styleLong() {
+        styler.latest = text
+        guard !streaming, text.count >= Self.long, !styler.busy else { return }
+        if let kept = RichMarkdown.kept(text, size: size, compact: compact, repo: repo, yours: yours) { last = (text, kept); return }
+        styler.busy = true
+        let (size, compact, links, styler) = (size, compact, links, styler)
+        Task { @MainActor in
+            while true {
+                let target = styler.latest
+                let made = await Task.detached(priority: .userInitiated) { Rendered(Self.render(target, size: size, compact: compact, links: links)) }.value
+                last = (target, made.text)
+                rendered.toggle()
+                if styler.latest == target { break }
+            }
+            styler.busy = false
         }
     }
 
@@ -2088,6 +2132,12 @@ struct MarkdownText: View {
     }
 
     private struct Rendered: @unchecked Sendable { let text: NSAttributedString; init(_ text: NSAttributedString) { self.text = text } }
+
+    /// A text still arriving, styled but not kept: its finished blocks come from the block cache, its last styled anew.
+    nonisolated static func renderGrowing(_ text: String, size: CGFloat, links: Links) -> NSAttributedString {
+        RichMarkdown.render(MarkdownBlock.parse(ZeroEnding.split(text).0), size: size, inline: { inline($0, links: links) },
+                            key: "\(links.repo ?? "")|\(links.owner ?? "")|\(links.skills)|false", growing: true)
+    }
 
     /// Parsed, styled and kept. Zero's own ending ("[zero: done]") is for its hook, not for reading.
     nonisolated static func render(_ text: String, size: CGFloat, compact: Bool, links: Links) -> NSAttributedString {
@@ -2268,6 +2318,6 @@ struct CopyCommand: View {
                 .background(Theme.card.opacity(0.9), in: RoundedRectangle(cornerRadius: 6))
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain).help("Copy the command")
+        .buttonStyle(.plain).tip("Copy the command")
     }
 }

@@ -57,6 +57,8 @@ public final class Slack {
 
     /// The token the app itself kept before zerod held the connection (Zero before 2026-10-31): handed to zerod once,
     /// then forgotten here.
+    #if os(macOS)
     public func legacyToken() -> String? { Keychain.loadString(service: Self.legacyService, account: "token") }
     public func forgetLegacyToken() { Keychain.saveString(nil, service: Self.legacyService, account: "token") }
+    #endif
 }

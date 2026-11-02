@@ -94,7 +94,7 @@ private func launch(_ name: String) async throws -> (socket: String, home: URL) 
     note.needs = "check it says Darwin"
     _ = try await link.create(note)
     let row = try #require(try await link.board().first)
-    #expect((row.session, row.task, row.ticket, row.state, row.now, row.needs) == (conversation.id, "Uname check", "GH-1", .needsYou, "Printed the kernel name", "check it says Darwin"))
+    #expect((row.session, row.task, row.ticket, row.state, row.now, row.needs) == (conversation.id, "Uname check", "GH-1", .handed, "Printed the kernel name", "check it says Darwin"), "done, with a step for the user: over to them")
 }
 
 private final class Heard: @unchecked Sendable {

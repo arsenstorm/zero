@@ -15,6 +15,10 @@ enum ZeroMain {
             for choice in ClaudeModels.cached() { print(choice.id, "—", choice.name, "—", choice.detail ?? "") }
             return
         }
+        if let i = CommandLine.arguments.firstIndex(of: "--render-text"), i + 1 < CommandLine.arguments.count {
+            MainActor.assumeIsolated { Preview.renderText(to: CommandLine.arguments[i + 1]) }
+            return
+        }
         if let i = CommandLine.arguments.firstIndex(of: "--render-pill"), i + 1 < CommandLine.arguments.count {
             MainActor.assumeIsolated { Preview.renderPill(to: CommandLine.arguments[i + 1]) }
             return
@@ -58,6 +62,24 @@ final class Settings {
     var dropPatterns: [String] { didSet { defaults.set(dropPatterns, forKey: "dropPatterns"); onChange?() } }
     /// Microphone for dictation, as a CoreAudio device UID; nil follows the system default.
     var inputDeviceUID: String? { didSet { defaults.set(inputDeviceUID, forKey: "inputDeviceUID"); onChange?() } }
+    /// Tasks' notifications (Notifications.swift): what needs you, what's in trouble, what finished; and their sounds.
+    var notifyNeedsYou: Bool { didSet { defaults.set(notifyNeedsYou, forKey: "notifyNeedsYou") } }
+    var notifyTrouble: Bool { didSet { defaults.set(notifyTrouble, forKey: "notifyTrouble") } }
+    var notifyFinished: Bool { didSet { defaults.set(notifyFinished, forKey: "notifyFinished") } }
+    var notificationSounds: Bool { didSet { defaults.set(notificationSounds, forKey: "notificationSounds") } }
+    /// The sound each state a task can come to plays, by the state's name: a system sound's name, "" for none. Those
+    /// not picked play the default for their kind.
+    var stateSounds: [String: String] { didSet { defaults.set(stateSounds, forKey: "stateSounds") } }
+    func sound(for state: BoardRow.State) -> String { stateSounds[state.rawValue] ?? Self.defaultSound(state) }
+    static func defaultSound(_ state: BoardRow.State) -> String {
+        switch state {
+        case .needsYou: "Blow"
+        case .trouble: "Bottle"
+        default: "Hero"
+        }
+    }
+    /// The system's alert sounds, every one copied into Zero.app (the Makefile), where a notification's has to be.
+    static let sounds = ["Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero", "Morse", "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink"]
     @ObservationIgnored var onChange: (() -> Void)?
 
     var launchAtLogin: Bool {
@@ -78,6 +100,11 @@ final class Settings {
         autoAdvance = defaults.object(forKey: "autoAdvance") as? Bool ?? true
         suggestCommands = defaults.object(forKey: "suggestCommands") as? Bool ?? true
         suggestFiles = defaults.object(forKey: "suggestFiles") as? Bool ?? false
+        notifyNeedsYou = defaults.object(forKey: "notifyNeedsYou") as? Bool ?? true
+        notifyTrouble = defaults.object(forKey: "notifyTrouble") as? Bool ?? true
+        notifyFinished = defaults.object(forKey: "notifyFinished") as? Bool ?? true
+        notificationSounds = defaults.object(forKey: "notificationSounds") as? Bool ?? true
+        stateSounds = defaults.dictionary(forKey: "stateSounds") as? [String: String] ?? [:]
         dropPatterns = defaults.stringArray(forKey: "dropPatterns") ?? []
     }
 
@@ -125,6 +152,9 @@ final class Panel: NSPanel {
     /// zerod's sessions and their approvals; made once the store's other change handlers are in place.
     private var workspace: Workspace!
     private var workspaceWindow: NSWindow?
+    private var notifier: Notifier?
+    /// Waiting to reopen the window until you come to Zero (another app was full screen when it started).
+    private var restoreWatch: NSObjectProtocol?
     private let navigation = Navigation(restoring: true)
     private let settings = Settings()
     private var pinnedDisplay: CGDirectDisplayID?
@@ -135,7 +165,7 @@ final class Panel: NSPanel {
 
     /// A zero://pad link, clicked anywhere: the pad, at its section. A zero://loop link: the loop.
     func application(_ application: NSApplication, open urls: [URL]) {
-        if let loop = urls.first(where: { $0.scheme == "zero" && $0.host == "loop" }) { openZeroURL(loop); return }
+        if let other = urls.first(where: { $0.scheme == "zero" && ["loop", "later"].contains($0.host) }) { openZeroURL(other); return }
         guard let (id, section) = urls.lazy.compactMap(PadLinks.parse).first else { return }
         navigation.place = .pad(id)
         navigation.padSection = section
@@ -146,6 +176,7 @@ final class Panel: NSPanel {
         let name = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         switch url.host {
         case "loop": navigation.place = name.isEmpty ? .loops : .loop(name)
+        case "later": navigation.place = name.isEmpty ? .later : .laterItem(name)
         case "task" where !name.isEmpty: navigation.place = .task(name)
         default: return
         }
@@ -163,8 +194,26 @@ final class Panel: NSPanel {
         NSApp.mainMenu = Self.editMenu()
         Task { await Linear.shared.refresh() }
         store.onCreate = { [weak self] ask in self?.arrived(ask) }
+        // The phones show the workspace the Mac does, and switch it from there.
+        Phones.shared.onSetWorkspace = { [weak self] id in self?.workspace?.current = id }
+        store.onChange = { [weak self] ask in if ask.state.isFinal { self?.notifier?.askEnded(ask.id) } }
+        store.onRemove = { [weak self] id in self?.notifier?.askEnded(id) }
         Task { [store] in await store.connect() }
         workspace = Workspace()
+        workspace?.onCurrent = { _ in Phones.shared.workspaceChanged() }
+        let notifier = Notifier(navigation: navigation, settings: settings, windowShown: { [weak self] in
+            guard let window = self?.workspaceWindow else { return false }
+            return window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible)
+        }, open: { [weak self] id in
+            guard let self else { return }
+            navigation.place = .task(id)
+            navigation.worker = nil
+            openWorkspace()
+            NSApp.activate()
+        })
+        self.notifier = notifier
+        workspace.onBoard = { [weak notifier] rows in notifier?.board(rows) }
+        Phones.shared.start()
         Task { [workspace] in await workspace?.connect() }
         workspace?.keepSlackFresh()
         inbox.hide = { [weak self] in self?.hideInbox() }
@@ -172,8 +221,23 @@ final class Panel: NSPanel {
         inbox.presentSelector = { [weak self] anchor in self?.showSelector(anchorInInbox: anchor) }
         inbox.dismissSelector = { [weak self] in self?.hideSelector() }
         makePanels()
-        // Back where you were: the window, if it was open when Zero last quit.
-        if UserDefaults.standard.bool(forKey: "workspaceOpen") { openWorkspace() }
+        // Back where you were: the window, if it was open when Zero last quit. Not over someone's full-screen app (a film,
+        // while Zero updates): a window made then opens in that app's Space, on top of it. It waits for you to come
+        // to Zero instead.
+        if UserDefaults.standard.bool(forKey: "workspaceOpen") {
+            if Self.anotherAppFillsTheScreen() {
+                // Once: the first time you come to Zero, it opens where you were; after that, as you leave it.
+                restoreWatch = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        if let watch = self.restoreWatch { NotificationCenter.default.removeObserver(watch); self.restoreWatch = nil }
+                        if self.workspaceWindow == nil { self.openWorkspace() }
+                    }
+                }
+            } else {
+                openWorkspace()
+            }
+        }
         // Whatever put it there (a click, picking "Something else…", a key), a text box in the inbox holding the
         // keyboard makes Zero the active app, so dictation and paste tools that target the active app land in it.
         responderWatch = inboxPanel.observe(\.firstResponder, options: [.new]) { [weak self] panel, _ in
@@ -286,6 +350,18 @@ final class Panel: NSPanel {
 
     /// The workspace window's frame as last placed, in screen points.
     private static let frameKey = "workspaceFrame"
+
+    /// Another app's window covers a whole screen, menu bar and all: it's in full screen there.
+    static func anotherAppFillsTheScreen() -> Bool {
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        let me = ProcessInfo.processInfo.processIdentifier
+        let screens = NSScreen.screens.map(\.frame.size)
+        return windows.contains { window in
+            guard (window[kCGWindowOwnerPID as String] as? Int32) != me, (window[kCGWindowLayer as String] as? Int) == 0,
+                  let bounds = window[kCGWindowBounds as String] as? [String: CGFloat] else { return false }
+            return screens.contains { $0.width == bounds["Width"] && $0.height == bounds["Height"] }
+        }
+    }
 
     @objc func openWorkspace() {
         if workspaceWindow == nil {
@@ -581,6 +657,7 @@ final class Panel: NSPanel {
     /// Instant on purpose: the inbox is the most-used surface, and motion there would only slow it down.
     private func open(byIntent: Bool) {
         layout()
+        notifier?.lookedAtAsks()
         inbox.ensureSelection()
         openedByIntent = byIntent
         inbox.pinned = byIntent
@@ -754,7 +831,9 @@ final class Panel: NSPanel {
     private func arrived(_ ask: Ask) {
         guard ask.kind != .note, ask.kind != .message else { return }
         layout()
-        NSSound(named: "Glass")?.play()
+        // A task's ask sounds with its task's notification (Notifications.swift), once the board has it.
+        if let id = ask.session, workspace?.conversations.contains(where: { $0.id == id }) == true { return }
+        notifier?.ask(ask, agent: store.displayName(of: ask.agent.name))
     }
 
     private var hotKeyHandlerInstalled = false
@@ -782,6 +861,32 @@ extension NSScreen {
 /// `Zero --render-pill DIR` writes pill-{resting,hovered,selected}.png and card.png at 4x for pixel checks.
 @MainActor
 enum Preview {
+    /// `Zero --render-text DIR`: Markdown as the conversation draws it, through AppKit (ImageRenderer can't draw the
+    /// text view), at 2x: text.png on its own, step.png as an agent's words between steps, block.png in an open work block.
+    static func renderText(to dir: String) {
+        NSApplication.shared.appearance = NSAppearance(named: .darkAqua)
+        let words = "`SkeletonTurns` is static, and `Bar` only shows while an integration view loads, so both are fine."
+        let item = ConversationItem(id: "a1", turn: "t", kind: .agent(text: words, finalAnswer: false), status: .done)
+        let command = ConversationItem(id: "c1", turn: "t", kind: .command(command: "cd /Users/arsen", cwd: "/", output: "", exitCode: 0, durationMs: 1), status: .done)
+        func write(_ view: some View, _ name: String) {
+            let host = NSHostingView(rootView: view.frame(width: 640).padding(24).background(Theme.card))
+            host.frame = NSRect(origin: .zero, size: host.fittingSize)
+            let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.contentView = host
+            host.layoutSubtreeIfNeeded()
+            host.display()
+            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+            host.cacheDisplay(in: host.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: dir).appendingPathComponent(name))
+        }
+        write(MarkdownText(words, size: 14.5), "text.png")
+        write(VStack(alignment: .leading, spacing: 12) { ItemView(item: command, cwd: "/"); ItemView(item: item, cwd: "/") }, "step.png")
+        write(WorkBlock(items: [command, item], start: Date().addingTimeInterval(-60), end: Date(), live: true, cwd: "/"), "block.png")
+        let mine = ConversationItem(id: "u1", turn: "t", kind: .user(text: "`git status` first, then the rest"), status: .done)
+        write(ItemView(item: mine, cwd: "/"), "mine.png")
+        write(MarkdownText("Before.\n\n```swift\nlet a = 1\n```\n\n> A quote, quoted.\n\n---\n\n`code` after a rule.", size: 14.5), "blocks.png")
+    }
+
     static func renderPill(to dir: String) {
         let codex = AgentIdentity(name: "codex-12", host: "mac")
         let lead = AgentIdentity(name: "app-lead", host: "mac")

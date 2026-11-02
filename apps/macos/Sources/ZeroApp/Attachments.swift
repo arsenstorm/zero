@@ -115,11 +115,11 @@ struct Thumbnail: View {
                 Button(action: remove) {
                     NucleoIcon("xmark", size: 9).foregroundStyle(Theme.onKnob).frame(width: 18, height: 18).background(Theme.knob, in: Circle())
                 }
-                .buttonStyle(.plain).padding(5).help("Remove")
+                .buttonStyle(.plain).padding(5).tip("Remove")
             }
         }
         .onHover { hovered = $0 }
-        .help((path as NSString).lastPathComponent)
+        .tip((path as NSString).lastPathComponent)
     }
 }
 

@@ -251,7 +251,7 @@ private struct ViewRow<Form: View>: View {
             Spacer(minLength: 8)
             HStack(spacing: 2) {
                 Button { editing = true } label: { NucleoIcon("pen", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28) }
-                    .buttonStyle(Hovering(radius: 7)).help("Edit")
+                    .buttonStyle(Hovering(radius: 7)).tip("Edit")
                     .popover(isPresented: $editing, arrowEdge: .trailing) { form().environment(\.dismissForm, { editing = false }) }
                 Menu {
                     if let moveUp { Button("Move up", action: moveUp) }
@@ -447,7 +447,7 @@ private struct LinearViewForm: View {
                         Button { pick(all ? picked.filter { !members.contains($0) } : picked + members) } label: {
                             Text(title).font(.system(size: 12)).foregroundStyle(.secondary).frame(width: 76, height: 26, alignment: .leading).contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain).help(all ? "Leave out every \(title.lowercased()) state" : "Pick every \(title.lowercased()) state")
+                        .buttonStyle(.plain).tip(all ? "Leave out every \(title.lowercased()) state" : "Pick every \(title.lowercased()) state")
                         WrappingStack(spacing: 6) {
                             ForEach(offered.filter { Self.group($0.type) == kind }, id: \.name) { state in
                                 let on = picked.contains(state.name)
@@ -666,14 +666,14 @@ private struct TaskControl: View {
                 .overlay(Capsule().strokeBorder(Theme.stroke))
                 .contentShape(Capsule())
             }
-            .buttonStyle(.plain).help("Open this \(row.key.hasPrefix("#") ? "pull request" : "issue")'s task")
+            .buttonStyle(.plain).tip("Open this \(row.key.hasPrefix("#") ? "pull request" : "issue")'s task")
         } else if let start = actions.start {
             Button { start(row) } label: {
                 NucleoLabel("Start", icon: "paper-plane", size: 12).font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.onKnob).padding(.horizontal, 10).frame(height: 24)
                     .background(Theme.knob, in: Capsule())
             }
-            .buttonStyle(.plain).opacity(hovered ? 1 : 0).help("Start a task for \(row.key)")
+            .buttonStyle(.plain).opacity(hovered ? 1 : 0).tip("Start a task for \(row.key)")
         }
     }
 }
@@ -694,12 +694,12 @@ private struct ItemsTable: View {
                     PageTitle(text: name)
                     Spacer()
                     if workspace.refreshing.contains(key) {
-                        ProgressView().controlSize(.small).frame(width: 28, height: 28).help("Fetching again")
+                        ProgressView().controlSize(.small).frame(width: 28, height: 28).tip("Fetching again")
                     } else {
                         Button { Task { await workspace.refreshView(integration.rawValue, view: view) } } label: {
                             NucleoIcon("arrow-rotate-clockwise", fill: "glyph", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28)
                         }
-                        .buttonStyle(Hovering(radius: 7)).help("Refresh")
+                        .buttonStyle(Hovering(radius: 7)).tip("Refresh")
                     }
                 }
                 if let error = workspace.itemErrors[key] {
@@ -877,7 +877,7 @@ private struct IssueRow: View {
             Button("Open in Linear") { if let url = LinearLinks.url(row.url) { NSWorkspace.shared.open(url) } }
             Button("Copy link") { PadLinks.copy(row.url, title: "\(row.key) \(row.title)") }
         }
-        .help(row.title)
+        .tip(row.title)
     }
 
     /// "Oct 12" this year, "Mar 2025" before it.
@@ -1041,7 +1041,7 @@ struct ConnectCard: View {
                 HStack(spacing: 8) {
                     Text("gh auth login").font(.system(size: 12.5).monospaced()).textSelection(.enabled)
                     Button { copy() } label: { NucleoIcon(copied ? "check" : "copy", size: 13).foregroundStyle(.secondary).frame(width: 24, height: 24) }
-                        .buttonStyle(Hovering(radius: 6)).help("Copy")
+                        .buttonStyle(Hovering(radius: 6)).tip("Copy")
                 }
                 .padding(.leading, 12).padding(.trailing, 4).frame(height: 34)
                 .background(Theme.composer, in: RoundedRectangle(cornerRadius: 9))

@@ -102,7 +102,7 @@ struct ScratchpadsPage: View {
                 TextField("Search", text: $search).textFieldStyle(.plain).font(.system(size: 13)).focused($searchFocused)
                 if searching {
                     Button { search = "" } label: { NucleoIcon("xmark", size: 11).foregroundStyle(.secondary) }
-                        .buttonStyle(.plain).help("Clear")
+                        .buttonStyle(.plain).tip("Clear")
                 }
             }
             .padding(.horizontal, 9).frame(height: 30)
@@ -112,9 +112,9 @@ struct ScratchpadsPage: View {
             if !searching {
                 Group {
                     Button { create(in: "") } label: { NucleoIcon("compose", size: 15).frame(width: 30, height: 30) }
-                        .buttonStyle(Hovering()).help("New scratchpad")
+                        .buttonStyle(Hovering()).tip("New scratchpad")
                     Button { naming = .folder(in: "") } label: { NucleoIcon("folder-plus", size: 15).frame(width: 30, height: 30) }
-                        .buttonStyle(Hovering()).help("New folder")
+                        .buttonStyle(Hovering()).tip("New folder")
                 }
                 .foregroundStyle(.secondary)
                 .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -183,6 +183,7 @@ struct ScratchpadsPage: View {
             .padding(.leading, 10 + CGFloat(depth) * 14 + (depth > 0 || !workspace.padFolders.isEmpty ? 17 : 0)).padding(.trailing, 10).frame(height: 30)
         }
         .buttonStyle(Hovering(selected: shown == pad.id))
+        .onHover { if $0 { workspace.prefetchPad(pad.id) } }
         .draggable(pad.link)
         .contextMenu {
             Button("Copy link") { PadLinks.copy(pad.link, title: pad.title) }
@@ -275,14 +276,29 @@ private struct PadEditor: View {
     @State private var scrollTo: String?
     @State private var missing = false
 
+    init(workspace: Workspace, navigation: Navigation, id: String) {
+        self.workspace = workspace
+        self.navigation = navigation
+        self.id = id
+        // Read before: shown in the first frame, not after a round trip to zerod.
+        if let kept = workspace.cachedPad(id) {
+            _pad = State(initialValue: kept)
+            _text = State(initialValue: kept.content)
+            _saved = State(initialValue: kept.content)
+            _title = State(initialValue: kept.title)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let pad {
                 header(pad)
                 if let conflict { banner(conflict) }
-                MarkdownEditor(text: $text, scrollTo: $scrollTo, sectionLink: { slug in
-                    pad.sections.first { $0.slug == slug }.map { section in (PadLinks.section(pad.id, section.slug), "\(pad.title) › \(section.title)") }
-                }, padLink: (pad.link, pad.title), sections: pad.sections)
+                PadDocument(text: $text, scrollToLine: Binding(get: { scrollTo.flatMap { slug in pad.sections.first { $0.slug == slug }?.line } },
+                                                                set: { if $0 == nil { scrollTo = nil } }),
+                            sectionLink: { line in
+                    pad.sections.last { $0.line <= line }.map { section in (PadLinks.section(pad.id, section.slug), "\(pad.title) › \(section.title)") }
+                }, padLink: (pad.link, pad.title))
                 .onChange(of: text) { _, now in if now != saved { scheduleSave() } }
             } else if missing {
                 ContentUnavailableView("No such scratchpad", systemImage: "", description: Text("It may have been moved to the trash."))
@@ -291,7 +307,7 @@ private struct PadEditor: View {
         // The conversation's column: the page reads as a task's does, not as a sheet across the window.
         .centredColumn(760)
         .task {
-            await load()
+            if pad == nil { await load() } else { await refresh() }
             scrollTo = navigation.padSection
             navigation.padSection = nil
         }
@@ -335,7 +351,7 @@ private struct PadEditor: View {
                     PadLinks.copy(pad.link, title: pad.title)
                 }
                 .menuStyle(.borderlessButton).fixedSize()
-                .help("Copy this pad's link; the arrow has a Markdown link and each section's")
+                .tip("Copy this pad's link; the arrow has a Markdown link and each section's")
             }
             Text([pad.folder.isEmpty ? "Scratchpads" : pad.folder, "Edited " + Date(timeIntervalSince1970: TimeInterval(pad.updated)).formatted(.relative(presentation: .named))]
                 .joined(separator: " · "))
@@ -355,7 +371,7 @@ private struct PadEditor: View {
         .padding(.horizontal, 14).padding(.vertical, 8)
         .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
         .padding(.bottom, 8)
-        .help(message)
+        .tip(message)
     }
 
     private func load() async {
@@ -436,6 +452,7 @@ struct MarkdownEditor: NSViewRepresentable {
         scroll.verticalScroller = ThinScroller()
         scroll.scrollerStyle = .overlay
         let view = scroll.documentView as! NSTextView
+        view.textContainer?.replaceLayoutManager(RichLayoutManager())
         // TextKit 1, as the composer's field: TextKit 2 lands a click a line below where it was, with the paragraphs'
         // line height stretched (reading the layout manager once makes the view fall back).
         _ = view.layoutManager
@@ -542,6 +559,14 @@ struct MarkdownEditor: NSViewRepresentable {
     }
 }
 
+extension NSAttributedString.Key {
+    /// A Markdown mark (a heading's #, bold's **, code's backticks, a link's address): a scratchpad hides it away from
+    /// the line being written.
+    static let zeroMark = NSAttributedString.Key("zeroMark")
+    /// A mark hidden now: its glyphs aren't drawn and take no room (PadTextField's layout manager).
+    static let zeroHidden = NSAttributedString.Key("zeroHidden")
+}
+
 /// How Markdown is shown: the text stays as typed, its marks dimmed, its meaning styled.
 enum MarkdownStyle {
     static let body = NSFont.systemFont(ofSize: 14)
@@ -555,6 +580,22 @@ enum MarkdownStyle {
         return style
     }()
     static let base: [NSAttributedString.Key: Any] = [.font: body, .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraph]
+    /// A code block's lines, inset from the panel drawn behind them (RichLayoutManager reads the indent).
+    static let codeParagraph: NSParagraphStyle = {
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = 3
+        style.firstLineHeadIndent = 12
+        style.headIndent = 12
+        style.tailIndent = -12
+        return style
+    }()
+    /// A quote's lines, beside the bar drawn at their left.
+    static let quoteParagraph: NSParagraphStyle = {
+        let style = paragraph.mutableCopy() as! NSMutableParagraphStyle
+        style.firstLineHeadIndent = 14
+        style.headIndent = 14
+        return style
+    }()
 
     private static func regex(_ pattern: String, _ options: NSRegularExpression.Options = [.anchorsMatchLines]) -> NSRegularExpression {
         try! NSRegularExpression(pattern: pattern, options: options)
@@ -563,6 +604,7 @@ enum MarkdownStyle {
     private static let heading = regex("^(#{1,6})[ \\t]+.*$")
     private static let bold = regex("(\\*\\*|__)(?=\\S)(.+?)(?<=\\S)\\1")
     private static let italic = regex("(?<![*_\\w])([*_])(?=\\S)([^*_\\n]+?)(?<=\\S)\\1(?![*_\\w])")
+    private static let strike = regex("~~(?=\\S)(.+?)(?<=\\S)~~")
     private static let code = regex("`[^`\\n]+`")
     private static let link = regex("\\[([^\\]\\n]+)\\]\\(([^)\\s]+)\\)")
     private static let bare = regex("(?<![(<\\[])\\b(zero|https?)://[^\\s)>\\]]+")
@@ -578,7 +620,13 @@ enum MarkdownStyle {
         var fenced: [NSRange] = []
         for match in fence.matches(in: text, range: whole) {
             fenced.append(match.range)
-            storage.addAttributes([.font: mono, .foregroundColor: NSColor.secondaryLabelColor, .backgroundColor: NSColor.quaternaryLabelColor.withAlphaComponent(0.08)], range: match.range)
+            // A panel behind it (RichLayoutManager), its text inset from the panel's edges; the fences dimmed.
+            storage.addAttributes([.font: mono, .foregroundColor: NSColor.labelColor, .zeroCodeBlock: true, .paragraphStyle: codeParagraph], range: match.range)
+            let nsText = text as NSString
+            let open = nsText.lineRange(for: NSRange(location: match.range.location, length: 0))
+            storage.addAttribute(.foregroundColor, value: dim, range: open)
+            let close = nsText.lineRange(for: NSRange(location: max(match.range.location, NSMaxRange(match.range) - 1), length: 0))
+            if close.location != open.location { storage.addAttribute(.foregroundColor, value: dim, range: close) }
         }
         let outside = { (range: NSRange) in !fenced.contains { NSIntersectionRange($0, range).length > 0 } }
         for match in heading.matches(in: text, range: whole) where outside(match.range) {
@@ -586,34 +634,51 @@ enum MarkdownStyle {
             let size: CGFloat = [24, 20, 17, 15, 14, 14][level - 1]
             storage.addAttributes([.font: NSFont.systemFont(ofSize: size, weight: level <= 2 ? .bold : .semibold)], range: match.range)
             storage.addAttribute(.foregroundColor, value: dim, range: match.range(at: 1))
+            storage.addAttribute(.zeroMark, value: true, range: NSRange(location: match.range.location, length: min(match.range(at: 1).length + 1, match.range.length)))
         }
         for match in bold.matches(in: text, range: whole) where outside(match.range) {
             let font = (storage.attribute(.font, at: match.range.location, effectiveRange: nil) as? NSFont) ?? body
             storage.addAttribute(.font, value: NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask), range: match.range)
             for mark in [NSRange(location: match.range.location, length: 2), NSRange(location: NSMaxRange(match.range) - 2, length: 2)] {
-                storage.addAttribute(.foregroundColor, value: dim, range: mark)
+                storage.addAttributes([.foregroundColor: dim, .zeroMark: true], range: mark)
             }
         }
         for match in italic.matches(in: text, range: whole) where outside(match.range) {
             let font = (storage.attribute(.font, at: match.range.location, effectiveRange: nil) as? NSFont) ?? body
             storage.addAttribute(.font, value: NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask), range: match.range)
+            for mark in [NSRange(location: match.range.location, length: 1), NSRange(location: NSMaxRange(match.range) - 1, length: 1)] {
+                storage.addAttributes([.foregroundColor: dim, .zeroMark: true], range: mark)
+            }
+        }
+        for match in strike.matches(in: text, range: whole) where outside(match.range) {
+            storage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: match.range(at: 1))
+            for mark in [NSRange(location: match.range.location, length: 2), NSRange(location: NSMaxRange(match.range) - 2, length: 2)] {
+                storage.addAttributes([.foregroundColor: dim, .zeroMark: true], range: mark)
+            }
         }
         for match in code.matches(in: text, range: whole) where outside(match.range) {
-            storage.addAttributes([.font: mono, .backgroundColor: NSColor.quaternaryLabelColor.withAlphaComponent(0.12)], range: match.range)
+            // A pill around the code, its backticks dimmed outside it.
+            storage.addAttribute(.font, value: mono, range: match.range)
+            storage.addAttribute(.zeroCode, value: true, range: NSRange(location: match.range.location + 1, length: match.range.length - 2))
+            storage.addAttributes([.foregroundColor: dim, .zeroMark: true], range: NSRange(location: match.range.location, length: 1))
+            storage.addAttributes([.foregroundColor: dim, .zeroMark: true], range: NSRange(location: NSMaxRange(match.range) - 1, length: 1))
         }
         for match in marker.matches(in: text, range: whole) where outside(match.range) {
             storage.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: match.range)
         }
         for match in quote.matches(in: text, range: whole) where outside(match.range) {
-            storage.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: match.range)
+            storage.addAttributes([.foregroundColor: NSColor.secondaryLabelColor, .zeroQuote: true, .paragraphStyle: quoteParagraph], range: match.range)
+            let marker = (text as NSString).substring(with: match.range).prefix { $0 == ">" || $0 == " " }.count
+            storage.addAttributes([.foregroundColor: dim, .zeroMark: true], range: NSRange(location: match.range.location, length: marker))
         }
         for match in rule.matches(in: text, range: whole) where outside(match.range) {
-            storage.addAttribute(.foregroundColor, value: dim, range: match.range)
+            storage.addAttributes([.foregroundColor: NSColor.clear, .zeroRule: true], range: match.range)
         }
         for match in link.matches(in: text, range: whole) where outside(match.range) {
             let target = (text as NSString).substring(with: match.range(at: 2))
             if let url = URL(string: target) { storage.addAttribute(.link, value: url, range: match.range(at: 1)) }
-            storage.addAttribute(.foregroundColor, value: dim, range: NSRange(location: match.range(at: 1).location + match.range(at: 1).length, length: match.range(at: 2).length + 3))
+            storage.addAttributes([.foregroundColor: dim, .zeroMark: true], range: NSRange(location: match.range(at: 1).location + match.range(at: 1).length, length: match.range(at: 2).length + 3))
+            storage.addAttributes([.foregroundColor: dim, .zeroMark: true], range: NSRange(location: match.range.location, length: 1))
         }
         for match in bare.matches(in: text, range: whole) where outside(match.range) {
             if let url = URL(string: (text as NSString).substring(with: match.range)) { storage.addAttribute(.link, value: url, range: match.range) }

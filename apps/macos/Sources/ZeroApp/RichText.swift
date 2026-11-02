@@ -44,10 +44,18 @@ enum RichMarkdown {
     /// The blocks as one attributed text; `inline` reads what's inside a line (bold, code, links). With a `key` (what
     /// the inline links depend on), each top-level block is kept once rendered: an answer still streaming grows by
     /// its last block, and only that one is parsed and styled again.
-    static func render(_ blocks: [MarkdownBlock], size: CGFloat, inline: (String) -> AttributedString, key: String? = nil) -> NSAttributedString {
+    /// `growing`: the text is still arriving, and its last block isn't kept (it's different next frame; kept, every
+    /// frame's would push out blocks the page needs).
+    static func render(_ blocks: [MarkdownBlock], size: CGFloat, inline: (String) -> AttributedString, key: String? = nil, growing: Bool = false) -> NSAttributedString {
         let out = NSMutableAttributedString()
         if let key {
-            for block in blocks {
+            for (index, block) in blocks.enumerated() {
+                if growing && index == blocks.count - 1 {
+                    let piece = NSMutableAttributedString()
+                    append([block], depth: 0, into: piece, size: size, inline: inline)
+                    out.append(piece)
+                    continue
+                }
                 let name = "\(key)|\(size)|\(String(describing: block))" as NSString
                 if let kept = renderedBlocks.object(forKey: name) { out.append(kept); continue }
                 let piece = NSMutableAttributedString()
@@ -238,8 +246,8 @@ final class RichLayoutManager: NSLayoutManager {
             guard value != nil else { return }
             let rect = boundingRect(forGlyphRange: glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: container)
             let style = storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
-            let left = (style?.headIndent ?? 12) - 12
-            let panel = NSRect(x: origin.x + left, y: origin.y + rect.minY - 8, width: container.size.width - left, height: rect.height + 16)
+            let left = (style?.headIndent ?? 12) - 12 + container.lineFragmentPadding
+            let panel = NSRect(x: origin.x + left, y: origin.y + rect.minY - 8, width: container.size.width - left - container.lineFragmentPadding, height: rect.height + 16)
             RichMarkdown.blockFill.setFill()
             NSBezierPath(roundedRect: panel, xRadius: 8, yRadius: 8).fill()
         }
@@ -270,13 +278,13 @@ final class RichLayoutManager: NSLayoutManager {
             let rect = boundingRect(forGlyphRange: glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: container)
             let style = storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
             RichMarkdown.quoteBar.setFill()
-            NSBezierPath(roundedRect: NSRect(x: origin.x + (style?.headIndent ?? 14) - 14, y: origin.y + rect.minY, width: 3, height: rect.height), xRadius: 1.5, yRadius: 1.5).fill()
+            NSBezierPath(roundedRect: NSRect(x: origin.x + container.lineFragmentPadding + (style?.headIndent ?? 14) - 14, y: origin.y + rect.minY, width: 3, height: rect.height), xRadius: 1.5, yRadius: 1.5).fill()
         }
         storage.enumerateAttribute(.zeroRule, in: characters) { value, range, _ in
             guard value != nil else { return }
             let rect = boundingRect(forGlyphRange: glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: container)
             NSColor.separatorColor.setFill()
-            NSRect(x: origin.x, y: origin.y + rect.midY, width: container.size.width, height: 1).fill()
+            NSRect(x: origin.x + container.lineFragmentPadding, y: origin.y + rect.midY, width: container.size.width - 2 * container.lineFragmentPadding, height: 1).fill()
         }
     }
 }
@@ -288,18 +296,28 @@ final class RichTextView: NSTextView {
         let layout = RichLayoutManager()
         storage.addLayoutManager(layout)
         let container = NSTextContainer(size: NSSize(width: 600, height: CGFloat.greatestFiniteMagnitude))
-        container.lineFragmentPadding = 0
+        // The room either side for what's drawn past the text (below) is the lines' own padding, inside the text's
+        // area: AppKit draws backgrounds only within it, and an inset outside cut off a pill that starts a line.
+        container.lineFragmentPadding = Self.bleed
         container.widthTracksTextView = false
         layout.addTextContainer(container)
         self.init(frame: .zero, textContainer: container)
         isEditable = false
         isSelectable = true
         drawsBackground = false
+        // Room either side for what's drawn past the text: an inline code's pill reaches 4 pt before its first letter,
+        // and a pill that starts a line would otherwise lose its left edge to the view's. RichText takes the room back.
         textContainerInset = .zero
         isVerticallyResizable = false
         isHorizontallyResizable = false
         linkTextAttributes = [.foregroundColor: NSColor.linkColor, .cursor: NSCursor.pointingHand]
     }
+
+    /// How far the view reaches past its text on each side.
+    static let bleed: CGFloat = 6
+
+    /// Set: a click anywhere but on a link is this.
+    var onClick: (() -> Void)?
 
     /// The text it shows (the rendering's own object), and its height at the width last asked.
     var shown: NSAttributedString?
@@ -352,6 +370,10 @@ final class RichTextView: NSTextView {
             NSApp.sendAction(#selector(AppDelegate.openZeroURL(_:)), to: nil, from: url)
             return
         }
+        if let onClick, characterIndex(under: event).flatMap({ textStorage?.attribute(.link, at: $0, effectiveRange: nil) }) == nil {
+            onClick()
+            return
+        }
         super.mouseDown(with: event)
     }
 
@@ -387,10 +409,20 @@ final class RichTextView: NSTextView {
     }
 }
 
-/// Markdown in a RichTextView, for SwiftUI.
-struct RichText: NSViewRepresentable {
+/// Markdown in a RichTextView, for SwiftUI: its text where the words around it are, the view's bleed past them on
+/// each side.
+struct RichText: View {
     let text: NSAttributedString
     var hugs = false
+    /// A click that isn't on a link (a scratchpad's block, to edit it): the click is this, not a selection.
+    var onClick: (() -> Void)? = nil
+    var body: some View { RichTextBox(text: text, hugs: hugs, onClick: onClick).padding(.horizontal, -RichTextView.bleed) }
+}
+
+private struct RichTextBox: NSViewRepresentable {
+    let text: NSAttributedString
+    var hugs = false
+    var onClick: (() -> Void)?
 
     /// Views that left the page, kept for the next page: one that showed this very text comes back with its layout
     /// already measured, so a task switched back to draws without laying its words out again. A text view is the
@@ -417,12 +449,16 @@ struct RichText: NSViewRepresentable {
 
     func updateNSView(_ view: RichTextView, context: Context) {
         view.show(text)
+        view.onClick = onClick
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: RichTextView, context: Context) -> CGSize? {
-        let width = proposal.width.map { min($0, 10_000) } ?? 560
+        // The width given includes the bleed either side; the text is laid out in what's between.
+        let bleed = RichTextView.bleed * 2
+        let width = proposal.width.map { min($0, 10_000) } ?? 560 + bleed
         view.show(text)
+        let text = view.size(at: max(1, width))
         // As wide as its text, when it hugs (a message of yours); else the width it's given.
-        return hugs ? view.size(at: width) : CGSize(width: width, height: view.height(at: width))
+        return CGSize(width: hugs ? min(width, text.width) : width, height: text.height)
     }
 }

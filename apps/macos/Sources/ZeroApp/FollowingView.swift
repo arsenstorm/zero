@@ -94,9 +94,9 @@ private struct FollowRow: View {
                 Text(task).font(.system(size: 12, weight: .medium)).lineLimit(1).foregroundStyle(.secondary)
                     .padding(.horizontal, 8).frame(height: 24).background(Theme.chip, in: Capsule())
             }
-            .buttonStyle(.plain).help("Open the task that follows it")
+            .buttonStyle(.plain).tip("Open the task that follows it")
             Button(action: unfollow) { NucleoIcon("xmark", size: 13).foregroundStyle(.secondary).frame(width: 28, height: 28) }
-                .buttonStyle(Hovering(radius: 7)).help("Unfollow").opacity(hovered ? 1 : 0)
+                .buttonStyle(Hovering(radius: 7)).tip("Unfollow").opacity(hovered ? 1 : 0)
         }
         .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 11)
         .contentShape(Rectangle())

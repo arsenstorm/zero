@@ -20,6 +20,7 @@ struct WorkspaceView: View {
         .frame(minWidth: 980, minHeight: 600)
         // Loops named in messages read as pills: the names, for the renderer.
         .task { await workspace.loadLoops() }
+        .task { await workspace.loadLater() }
         .onChange(of: workspace.loops.map(\.name), initial: true) { _, names in LoopNames.known = names }
         // The rail and the strip above the panel: translucent grey over what's behind the window, blurred, as Codex's.
         .background { ZStack { BehindWindow(); Theme.railTint } }
@@ -75,6 +76,7 @@ struct WorkspaceView: View {
                 case .integrations: IntegrationsPane(workspace: workspace)
                 case .pads, .pad: ScratchpadsPage(workspace: workspace, navigation: navigation)
                 case .loops, .loop: LoopsPage(workspace: workspace, navigation: navigation)
+                case .later, .laterItem: LaterPage(workspace: workspace, navigation: navigation)
                 case .inbox:
                     HStack(spacing: 0) {
                         InboxSidebar(controller: inbox)
@@ -90,6 +92,10 @@ struct WorkspaceView: View {
                         Rectangle().fill(Theme.stroke).frame(width: 1)
                         page.frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.card)
                     }
+                    .coordinateSpace(.named("tasks"))
+                    // A task's details, beside the sidebar where the pointer rests on its row: over the page, since the
+                    // sidebar clips what it scrolls.
+                    .overlay(alignment: .topLeading) { TaskPeekCard(workspace: workspace, open: { navigation.place = .task($0); navigation.worker = $1 }) }
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -136,7 +142,7 @@ private struct Rail: View {
     private static let step: CGFloat = 38
 
     private var home: Bool {
-        switch place { case .inbox, .settings, .integrations, .integration, .pads, .pad, .loops, .loop: false; default: true }
+        switch place { case .inbox, .settings, .integrations, .integration, .pads, .pad, .loops, .loop, .later, .laterItem: false; default: true }
     }
 
     /// Every integration in your order, those never placed after.
@@ -161,6 +167,8 @@ private struct Rail: View {
                             .offset(x: 4.5, y: -3.5).allowsHitTesting(false)
                     }
                 }
+            let later = { if case .laterItem = place { true } else { place == .later } }()
+            item("bookmark", selected: later, help: "Later") { if !later { place = .later } }
             let pads = { if case .pad = place { true } else { place == .pads } }()
             item("note-3", selected: pads, help: "Scratchpads") { if !pads { place = .pads } }
             let loops = { if case .loop = place { true } else { place == .loops } }()
@@ -171,7 +179,7 @@ private struct Rail: View {
                 Button { place = .integration(integration.rawValue) } label: {
                     integration.icon(size: 17).foregroundStyle(selected ? .primary : .secondary).frame(width: 32, height: 32)
                 }
-                .buttonStyle(Hovering(selected: selected, fill: Theme.railSelected, hover: Theme.railHover)).help(integration.title)
+                .buttonStyle(Hovering(selected: selected, fill: Theme.railSelected, hover: Theme.railHover)).tip(integration.title)
                 .offset(y: dragging == integration ? held(index, of: shown.count) : shift(index, in: shown))
                 .zIndex(dragging == integration ? 1 : 0)
                 .animation(.spring(duration: 0.22), value: dragging == integration ? 0 : shift(index, in: shown))
@@ -186,7 +194,7 @@ private struct Rail: View {
             }
             Spacer()
             item("puzzle-piece", selected: place == .integrations, help: "Integrations") { place = .integrations }
-            item("gear", selected: place == .settings, help: "Settings") { place = .settings }
+            item("gear", selected: place == .settings, help: "Settings", shortcut: "⌘,") { place = .settings }
                 .keyboardShortcut(",", modifiers: .command)
         }
         .padding(.top, 50).padding(.bottom, 12)
@@ -246,13 +254,13 @@ private struct Rail: View {
         order = (list + ranked.filter { !list.contains($0) }).map(\.rawValue).joined(separator: ",")
     }
 
-    private func item(_ symbol: String, selected: Bool, help: String, action: @escaping () -> Void) -> some View {
+    private func item(_ symbol: String, selected: Bool, help: String, shortcut: String? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             NucleoIcon(symbol, fill: selected ? "glyph" : "outline", size: 17)
                 .foregroundStyle(selected ? .primary : .secondary)
                 .frame(width: 32, height: 32)
         }
-        .buttonStyle(Hovering(selected: selected, fill: Theme.railSelected, hover: Theme.railHover)).help(help)
+        .buttonStyle(Hovering(selected: selected, fill: Theme.railSelected, hover: Theme.railHover)).tip(help, shortcut: shortcut)
     }
 }
 
@@ -265,23 +273,16 @@ private struct TasksSidebar: View {
     }
     /// Leads whose workers are folded away, one per line.
     @AppStorage("foldedLeads") private var folded = ""
+    /// Where each lead's row starts down the window's task area: where its hover card goes.
+    @State private var tops: [String: CGFloat] = [:]
     /// How the tasks are ordered: by state (the board's own order), by name, or as they were dragged.
-    @AppStorage("taskSort") private var sort = Sort.state
+    @AppStorage("taskSort") private var sort = BoardRow.Sort.state
     /// The dragged order, one lead per line; tasks not in it yet go on top.
     @AppStorage("taskOrder") private var order = ""
     @State private var sortHovered = false
+    @State private var showingArchive = false
 
-    enum Sort: String, CaseIterable { case state, name, manual }
-
-    private func sorted(_ rows: [BoardRow]) -> [BoardRow] {
-        switch sort {
-        case .state: return rows
-        case .name: return rows.sorted { $0.task.localizedStandardCompare($1.task) == .orderedAscending }
-        case .manual:
-            let rank = Dictionary(order.split(separator: "\n").enumerated().map { (String($1), $0) }, uniquingKeysWith: { first, _ in first })
-            return rows.enumerated().sorted { (rank[$0.element.session] ?? -1, $0.offset) < (rank[$1.element.session] ?? -1, $1.offset) }.map(\.element)
-        }
-    }
+    private func sorted(_ rows: [BoardRow]) -> [BoardRow] { BoardRow.sorted(rows, by: sort, order: order) }
 
     /// The lead being dragged, as the control bar's dots are: how far the pointer has moved it.
     @State private var drag: (lead: String, y: CGFloat)?
@@ -364,11 +365,21 @@ private struct TasksSidebar: View {
                         Spacer()
                         Menu {
                             Picker("Sort by", selection: $sort) {
-                                Text("State").tag(Sort.state)
-                                Text("Name").tag(Sort.name)
-                                Text("Manual (drag to arrange)").tag(Sort.manual)
+                                Text("State").tag(BoardRow.Sort.state)
+                                Text("Name").tag(BoardRow.Sort.name)
+                                Text("Manual (drag to arrange)").tag(BoardRow.Sort.manual)
                             }
                             .pickerStyle(.inline)
+                            Divider()
+                            // This workspace's tasks: for the night, or while you're away.
+                            let here = workspace.board.filter { $0.workspace == workspace.current }
+                            Button("Pause all tasks") { Task { await workspace.pause(here.filter { $0.ownState != .paused }.map(\.session)) } }
+                                .disabled(!here.contains { $0.ownState != .paused })
+                            if here.contains(where: { $0.ownState == .paused }) {
+                                Button("Resume paused tasks") { Task { await workspace.unpause(here.filter { $0.ownState == .paused }.map(\.session)) } }
+                            }
+                            Divider()
+                            Button("Archived tasks…") { showingArchive = true }
                         } label: {
                             NucleoIcon("sliders", size: 13).foregroundStyle(.secondary).frame(width: 24, height: 24)
                                 .background(sortHovered ? Theme.hover : .clear, in: RoundedRectangle(cornerRadius: 6))
@@ -378,7 +389,8 @@ private struct TasksSidebar: View {
                         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
                         .onHover { sortHovered = $0 }
                         // A row's state icon is 14 pt, 10 pt in from the edge: its centre is 17 pt in, as this 24 pt button's.
-                        .padding(.trailing, 5).help("Sort tasks")
+                        .padding(.trailing, 5).tip("Sort, pause or unarchive tasks")
+                        .sheet(isPresented: $showingArchive) { ArchiveSheet(workspace: workspace) }
                     }
                     // A 16 pt heading line with 18 above and 6 below, as SidebarHeading has, now 24 pt for the button.
                     .padding(.top, 14).padding(.bottom, 2)
@@ -393,13 +405,15 @@ private struct TasksSidebar: View {
                         let open = !folded.contains(row.session)
                         // A lead and its workers move as one, with no gap between them: the branch runs unbroken.
                         VStack(alignment: .leading, spacing: 0) {
-                            TaskRow(title: row.task, state: row.state, selected: place == .task(row.session) && navigation.worker == nil,
+                            TaskRow(title: row.task, state: row.ownState, selected: place == .task(row.session) && navigation.worker == nil,
                                     fold: workers.isEmpty ? nil : open, action: {
                                 // Its worker shown, the same task: back to the lead.
                                 place = .task(row.session)
                                 navigation.worker = nil
                             }, toggle: { toggle(row.session) }, reorder: reorder(row.session, in: rows))
                                 .contextMenu { menu(row.session, name: row.task, ticket: row.ticket) }
+                                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named("tasks")).minY } action: { tops[row.session] = $0 }
+                                .onHover { inside in TaskPeek.shared.hover(row.session, top: tops[row.session] ?? 0, inside: inside && drag == nil) }
                             if open {
                                 ForEach(Array(workers.enumerated()), id: \.element.id) { index, worker in
                                     TaskRow(title: Workspace.label(of: worker), state: row.member(worker.id)?.state ?? TaskRow.state(of: worker), selected: navigation.worker == worker.id,
@@ -407,6 +421,8 @@ private struct TasksSidebar: View {
                                         place = .task(row.session)
                                         navigation.worker = worker.id
                                     })
+                                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named("tasks")).minY } action: { tops[worker.id] = $0 }
+                                    .onHover { inside in TaskPeek.shared.hover(worker.id, top: tops[worker.id] ?? 0, inside: inside && drag == nil) }
                                 }
                             }
                         }
@@ -436,9 +452,9 @@ private struct TasksSidebar: View {
             .sheet(item: $renaming) { task in
                 NameSheet(title: "Rename", name: task.name, action: "Rename") { name in Task { await workspace.rename(task.id, to: name, ticket: task.ticket) } }
             }
-            // ⌘1 to ⌘9: the first nine tasks as the sidebar orders them (leads only), as a browser's tabs.
+            // ⌘1 to ⌘9: the first nine tasks as the sidebar shows them (this workspace's, leads only), as a browser's tabs.
             .background {
-                let rows = sorted(workspace.board).prefix(9)
+                let rows = sorted(workspace.board.filter { $0.workspace == workspace.current }).prefix(9)
                 ForEach(Array(rows.enumerated()), id: \.element.session) { index, row in
                     Button("") { place = .task(row.session); navigation.worker = nil }
                         .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
@@ -483,6 +499,8 @@ private struct TasksSidebar: View {
                 }
             }
         }
+        pausing(id, in: workspace)
+        Button("Save for later") { Task { await workspace.askToSaveForLater(id) } }
         Button("Archive") {
             if place == .task(id) { place = .home }
             Task { await workspace.archive(id) }
@@ -589,7 +607,7 @@ private struct TaskView: View {
         if let conversation, conversation.terminal != nil {
             // A terminal runs edge to edge; the pane sits beside it as a column of its own.
             HStack(spacing: 0) {
-                if let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, inbox: inbox, active: active, queued: row?.queued ?? [], held: row?.held ?? false, live: live, open: open).id(conversation.id) }
+                if let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, inbox: inbox, active: active, queued: workspace.queued(conversation.id, board: row?.queued ?? []), held: row?.held ?? false, live: live, open: open).id(conversation.id) }
                 if navigation.pane {
                     Rectangle().fill(Theme.stroke).frame(width: 1)
                     TaskDetails(workspace: workspace, inbox: inbox, navigation: navigation, row: row, conversation: conversation, docked: true)
@@ -597,7 +615,7 @@ private struct TaskView: View {
             }
         } else {
             ZStack(alignment: .topTrailing) {
-                if let conversation, let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, inbox: inbox, active: active, queued: row?.queued ?? [], held: row?.held ?? false, live: live, open: open).id(conversation.id) }
+                if let conversation, let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, inbox: inbox, active: active, queued: workspace.queued(conversation.id, board: row?.queued ?? []), held: row?.held ?? false, live: live, open: open).id(conversation.id) }
                 if navigation.pane, let conversation {
                     TaskDetails(workspace: workspace, inbox: inbox, navigation: navigation, row: row, conversation: conversation).padding(TaskDetails.inset)
                 }
@@ -676,10 +694,16 @@ struct TitleBar: View {
         }
         .disabled(conversation.terminal == nil && (conversation.thread == nil || busy))
         Menu {
-            if conversation.status == .offline {
-                Button("Resume") { Task { await workspace.resume(conversation.id) } }
+            // Paused, its Resume is the pause's.
+            if workspace.isPaused(conversation.id) {
+                pausing(conversation.id, in: workspace)
             } else {
-                Button("End session") { Task { await workspace.stop(conversation.id) } }
+                if conversation.status == .offline {
+                    Button("Resume") { Task { await workspace.resume(conversation.id) } }
+                } else {
+                    Button("End session") { Task { await workspace.stop(conversation.id) } }
+                }
+                pausing(conversation.id, in: workspace)
             }
             Button("Copy folder path") {
                 NSPasteboard.general.clearContents()
@@ -696,7 +720,7 @@ struct TitleBar: View {
         } label: {
             NucleoIcon("dots", size: 15).foregroundStyle(.secondary).frame(width: 28, height: 28)
         }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("More")
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().tip("More")
     }
 }
 
@@ -711,7 +735,7 @@ private struct BarButton: View {
         Button(action: action) {
             NucleoIcon(symbol, size: 15).foregroundStyle(selected ? .primary : .secondary).frame(width: 28, height: 28)
         }
-        .buttonStyle(Hovering(selected: selected, radius: 7, fill: Theme.chip)).help(help)
+        .buttonStyle(Hovering(selected: selected, radius: 7, fill: Theme.chip)).tip(help)
     }
 }
 
@@ -809,6 +833,7 @@ private struct TaskDetails: View {
                     // The provider's mark and the model by its name ("Opus 5.5"), not its id: a click picks another
                     // model, or another provider to take the task over.
                     let open = WorkspaceSelector.shared.open == agentChip
+                    HStack(spacing: 6) {
                     Button {
                         WorkspaceSelector.shared.toggle(agentChip, kind: .runtime, anchor: agentAnchor, rows: {
                             ComposerRows.taskModels(conversation, chosen: (conversation.provider, conversation.model)) { picked, choice in
@@ -822,7 +847,7 @@ private struct TaskDetails: View {
                                 mark.resizable().aspectRatio(contentMode: .fit).frame(width: 13, height: 13).clipShape(RoundedRectangle(cornerRadius: 3))
                             }
                             Text([modelName ?? conversation.provider.title, conversation.effort.map { effortLabel($0, short: true) }].compactMap { $0 }.joined(separator: " · "))
-                                .lineLimit(1).truncationMode(.tail).help([conversation.provider.title, conversation.model].compactMap { $0 }.joined(separator: " · "))
+                                .lineLimit(1).truncationMode(.tail).tip([conversation.provider.title, conversation.model].compactMap { $0 }.joined(separator: " · "))
                             NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0))
                         }
                         .padding(.horizontal, 6).padding(.vertical, 3).padding(.leading, -6)
@@ -833,7 +858,14 @@ private struct TaskDetails: View {
                     .onHover { overAgent = $0 }
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { agentAnchor = $0 }
                     .disabled(conversation.status == .working || conversation.status == .waiting)
-                    if conversation.permissions == .unrestricted { Text("Unrestricted").foregroundStyle(.orange) }
+                    // Unrestricted: a bolt beside the agent, as the composer's permissions chip shows it.
+                    if conversation.permissions == .unrestricted {
+                        // A square to hover, so the tip shows: a bare icon gives macOS nothing to track.
+                        NucleoIcon("bolt-lightning", fill: "glyph", size: 13).foregroundStyle(.orange)
+                            .frame(width: 18, height: 18).contentShape(Rectangle())
+                            .tip("Unrestricted: it acts without asking")
+                    }
+                    }
                     if let usage { Text(usage).font(.system(size: 11.5)).foregroundStyle(.tertiary) }
                 }
             }
@@ -843,11 +875,11 @@ private struct TaskDetails: View {
                 Button { NSWorkspace.shared.open(URL(fileURLWithPath: folder)) } label: {
                     Self.linked(row?.place ?? (conversation.cwd as NSString).lastPathComponent).truncationMode(.middle)
                 }
-                .buttonStyle(.plain).help((folder as NSString).abbreviatingWithTildeInPath + " — open in Finder")
+                .buttonStyle(.plain).tip((folder as NSString).abbreviatingWithTildeInPath + " — open in Finder")
             }
             if let row {
                 property("Status") {
-                    StateLabel(state: row.state)
+                    StateLabel(state: row.ownState)
                         .onHover { inside in
                             overPill = inside
                             if inside { peek = true } else { closeSoon() }
@@ -856,7 +888,7 @@ private struct TaskDetails: View {
                 }
             }
             if let branch = conversation.branch {
-                property("Branch") { Text(branch).lineLimit(1).truncationMode(.middle).help(branch) }
+                property("Branch") { Text(branch).lineLimit(1).truncationMode(.middle).tip(branch) }
             }
             if let ticket = conversation.ticket {
                 property("Ticket") { link(ticket, to: ticketURL(ticket)) }
@@ -921,11 +953,12 @@ private struct TaskDetails: View {
         case .needsYou: 0
         case .trouble: 1
         case .working: 2
-        case .waiting: 3
+        case .handed: 3
         case .answered: 4
-        case .done: 4
-        case .merged: 5
-        default: 6
+        case .blocked: 5
+        case .done: 6
+        case .merged: 7
+        default: 8
         }
     }
 
@@ -966,7 +999,7 @@ private struct TaskDetails: View {
     @ViewBuilder private func link(_ text: String, to url: URL?) -> some View {
         if let url {
             Button { NSWorkspace.shared.open(url) } label: { Self.linked(text) }
-                .buttonStyle(.plain).help("Open " + url.absoluteString)
+                .buttonStyle(.plain).tip("Open " + url.absoluteString)
         } else {
             Text(text).lineLimit(2)
         }
@@ -1081,16 +1114,16 @@ private struct BoardView: View {
                         line(head: false, places: places,
                              task: VStack(alignment: .leading, spacing: 2) {
                                  // Three lines at most; the whole of it on hover.
-                                 Text(row.task).foregroundStyle(.primary).lineLimit(3).help(row.task)
+                                 Text(row.task).foregroundStyle(.primary).lineLimit(3).tip(row.task)
                                  if row.workers > 0 { Text(row.workers == 1 ? "1 worker" : "\(row.workers) workers").font(.system(size: 12)).foregroundStyle(.secondary) }
                              },
                              place: Text(row.place).foregroundStyle(.secondary),
                              state: VStack(alignment: .leading, spacing: 3) {
                                  StateLabel(state: row.state)
-                                 if let needs = needs(row) { Text(needs).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(3).help(needs) }
+                                 if let needs = needs(row) { Text(needs).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(3).tip(needs) }
                              },
                              now: Text((try? AttributedString(markdown: row.now ?? "", options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(row.now ?? ""))
-                                 .lineLimit(3).help(row.now ?? ""),
+                                 .lineLimit(3).tip(row.now ?? ""),
                              actions: Text(""))
                     }
                     .buttonStyle(Hovering(radius: 0, hover: Theme.rowHover))
@@ -1147,11 +1180,14 @@ private struct RowActions: View {
             Button("Ask for a status update") { Task { await workspace.send(row.session, text: Self.statusCheck) } }
             Button("Open") { open(row.session) }
             Divider()
-            if row.online {
-                Button("End session") { Task { await workspace.stop(row.session) } }
-            } else {
-                Button("Resume") { Task { await workspace.resume(row.session) } }
+            if !workspace.isPaused(row.session) {
+                if row.online {
+                    Button("End session") { Task { await workspace.stop(row.session) } }
+                } else {
+                    Button("Resume") { Task { await workspace.resume(row.session) } }
+                }
             }
+            pausing(row.session, in: workspace)
             Button("Copy task id") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(row.session, forType: .string)
@@ -1167,7 +1203,7 @@ private struct RowActions: View {
         // A square under the pointer, as the rail's items have; behind the menu, which draws no background of its label's.
         .background(hovered ? Theme.hover : .clear, in: RoundedRectangle(cornerRadius: 8))
         .onHover { hovered = $0 }
-        .help("Actions")
+        .tip("Actions")
     }
 }
 
@@ -1192,6 +1228,59 @@ struct ArticlePanel<Strip: View, Content: View>: View {
     }
 }
 
+/// A task's Pause, or its Resume when it's paused: it and its workers, on hold and off it.
+@MainActor @ViewBuilder func pausing(_ id: String, in workspace: Workspace) -> some View {
+    if workspace.isPaused(id) {
+        Button("Resume") { Task { await workspace.unpause([id]) } }
+    } else {
+        Button("Pause") { Task { await workspace.pause([id]) } }
+    }
+}
+
+/// One line of text, cut short with an ellipsis when it doesn't fit. While `moving`, a line that doesn't fit glides
+/// left to its end after a moment and stops there; it slides back when `moving` ends.
+struct Marquee: View {
+    let text: String
+    let moving: Bool
+    @State private var full: CGFloat = 0
+    @State private var shown: CGFloat = 0
+    @State private var offset: CGFloat = 0
+    @State private var scrolling = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Text(text).lineLimit(1)
+            .opacity(scrolling ? 0 : 1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { shown = $0 }
+            .background(alignment: .leading) {
+                Text(text).lineLimit(1).fixedSize().hidden()
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { full = $0 }
+            }
+            .overlay(alignment: .leading) {
+                if scrolling { Text(text).lineLimit(1).fixedSize().offset(x: offset) }
+            }
+            .clipped()
+            // Moving from the start (a card's title) glides once it's measured.
+            .onChange(of: moving) { glide() }
+            .onChange(of: full) { glide() }
+            .onChange(of: shown) { glide() }
+    }
+
+    private func glide() {
+        let distance = full - shown
+        if moving, distance > 0, !reduceMotion {
+            guard offset != -distance else { return }
+            scrolling = true
+            // An ease-out that holds a steady pace (about 42 points a second) through its first half and slows only to
+            // come to rest at the end: 30 points a second on average, so a long name takes longer at the same pace.
+            withAnimation(.timingCurve(0.4, 0.5, 0.6, 1, duration: max(0.6, distance / 30)).delay(0.8)) { offset = -distance }
+        } else if scrolling {
+            withAnimation(.easeOut(duration: 0.2)) { offset = 0 } completion: { if offset == 0 { scrolling = false } }
+        }
+    }
+}
+
 /// What a task's state looks like, in colours that say it at a glance: orange it waits on you, red it's in trouble,
 /// blue it works, green it's ready for you, grey the rest.
 /// A task in the sidebar, as Solo lists an agent's: a lead with a chevron that folds its workers away, each worker
@@ -1201,12 +1290,11 @@ private struct TaskRow: View {
     let title: String
     let state: BoardRow.State
     let selected: Bool
+    @State private var hovering = false
     /// A lead with workers: whether they show. Nil for a lead without any.
     var fold: Bool? = nil
     /// A worker: its place on its lead's branch.
     var branch: Branch? = nil
-    /// A lead with workers: a line under its name counting them ("4 workers · 1 needs you · 2 working").
-    var summary: String? = nil
     let action: () -> Void
     var toggle: () -> Void = {}
     /// A lead that can be dragged into place: told how far the pointer moved, and when it let go (false: a click).
@@ -1221,11 +1309,7 @@ private struct TaskRow: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 if let branch { Branched(last: branch == .last).frame(width: 34) }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.system(size: 13)).lineLimit(1)
-                    if let summary { Text(summary).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1) }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                Marquee(text: title, moving: hovering).font(.system(size: 13))
                 // A lead with workers: room for its chevron (drawn in the overlay below, so its click is its own).
                 if fold != nil { Color.clear.frame(width: 16, height: 1) }
                 // The icon keeps its place however long the title: the title gives way, not the state.
@@ -1233,9 +1317,10 @@ private struct TaskRow: View {
             }
             .foregroundStyle(.primary)
             // In from the edge as the heading is; a worker's title sits on its branch.
-            .padding(.leading, branch != nil ? 0 : 10).padding(.trailing, 10).frame(height: summary == nil ? 30 : 44)
+            .padding(.leading, branch != nil ? 0 : 10).padding(.trailing, 10).frame(height: 30)
         }
         .buttonStyle(Hovering(selected: selected))
+        .onHover { hovering = $0 }
         // One gesture for click and drag, as the control bar's: on the row's button only, so the fold chevron keeps its
         // own click. Global space: the row moves with the drag, so a local translation would cancel itself out.
         .highPriorityGesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
@@ -1251,7 +1336,7 @@ private struct TaskRow: View {
                 }
                 // Its own hover, a rounded square, in place of the row's.
                 .buttonStyle(Hovering(radius: 5))
-                .help(fold ? "Hide its workers" : "Show its workers")
+                .tip(fold ? "Hide its workers" : "Show its workers")
                 .padding(.trailing, 10 + 14 + 4)
             }
         }
@@ -1263,12 +1348,14 @@ private struct TaskRow: View {
            case let .agent(text, _) = answer.kind, let ending = ZeroEnding.split(text).1 {
             switch ending {
             case .done: return .done
-            case .working: return .waiting
-            case .blocked, .asked: return .needsYou
+            case .working: return .idle
+            case .blocked: return .blocked
+            case .asked: return .needsYou
             }
         }
         return switch worker.attention {
         case .needsYou: .needsYou
+        case .blocked: .blocked
         case .limited, .stuck, .failed: .trouble
         case .working, .starting: .working
         case .done: .done
@@ -1308,21 +1395,137 @@ private struct StateIcon: View {
             if state == .working { Spinner().frame(width: 12, height: 12).frame(width: 14, height: 14) }
             else { NucleoIcon(Self.look(state).symbol, fill: "glyph", size: 14).foregroundStyle(Self.look(state).color) }
         }
-        .help(Self.look(state).name)
+        // A view of its own for each state: a spinner's AppKit view kept from Working could otherwise stand where the
+        // next state's icon should be, and the row would show nothing.
+        .id(state)
     }
 
     static func look(_ state: BoardRow.State) -> (symbol: String, color: Color, name: String) {
         switch state {
-        // No entry, in red: the one state that can't move without you, so it stands out from the rest.
-        case .needsYou: ("circle-minus", .red, "Blocked")
+        case .needsYou: ("hand-3", .blue, "Needs you")
         case .trouble: ("triangle-warning", .orange, "In trouble")
         case .working: ("arrow-rotate-clockwise", .blue, "Working")
-        case .waiting: ("hourglass", .secondary, "Waiting")
+        // Done, with a step for the user: a calm to-do, not a decision.
+        case .handed: ("hand-holding-box", .teal, "Over to you")
+        // No entry, in red: stopped.
+        case .blocked: ("circle-minus", .red, "Blocked")
         case .done: ("circle-check", .green, "Done")
         case .answered: ("message-check", .indigo, "Replied")
         case .merged: ("code-branch", .purple, "Merged")
+        case .paused: ("circle-pause", .secondary, "Paused")
         case .idle: ("moon", .secondary, "Idle")
         case .offline: ("power-off", .secondary, "Offline")
+        }
+    }
+}
+
+/// Which task's row the pointer rests on in the sidebar, and where: its card shows after a moment's rest, follows the
+/// pointer from row to row once it shows, and stays while the pointer is on it.
+@MainActor @Observable final class TaskPeek {
+    static let shared = TaskPeek()
+    var session: String?
+    var top: CGFloat = 0
+    @ObservationIgnored private var pending: Task<Void, Never>?
+    @ObservationIgnored var overCard = false
+
+    func hover(_ session: String, top: CGFloat, inside: Bool) {
+        pending?.cancel()
+        if inside {
+            // Open already: on to this row at once. Else after a rest, so passing over the list shows nothing.
+            if self.session != nil { self.session = session; self.top = top; return }
+            pending = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(450))
+                guard !Task.isCancelled else { return }
+                self?.session = session; self?.top = top
+            }
+        } else {
+            // A moment to cross to the card.
+            pending = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(200))
+                guard !Task.isCancelled, let self, !self.overCard else { return }
+                self.session = nil
+            }
+        }
+    }
+
+    func close() { pending?.cancel(); overCard = false; session = nil }
+}
+
+/// A task's details where the pointer rests on its row: its name, its own state, what it's doing, what it needs from
+/// you (a step, its asks). Drawn as the rail's preview is; a click opens the task.
+struct TaskPeekCard: View {
+    let workspace: Workspace
+    /// The lead's task, and the worker in it when the card is a worker's.
+    let open: (String, String?) -> Void
+    @AppStorage(SidebarWidth.key) private var width = SidebarWidth.standard
+
+    var body: some View {
+        let peek = TaskPeek.shared
+        if let id = peek.session, let (lead, row) = found(id) {
+            card(row, title: lead.session == id ? row.task : workspace.conversations.first { $0.id == id }.map(Workspace.label(of:)) ?? row.task)
+                .contentShape(RoundedRectangle(cornerRadius: 12))
+                .onTapGesture { open(lead.session, lead.session == id ? nil : id); peek.close() }
+                .onHover { inside in
+                    peek.overCard = inside
+                    if !inside { peek.close() }
+                }
+                .offset(x: width + 8, y: max(8, peek.top - 4))
+        }
+    }
+
+    /// The lead's row, and the row to show: the lead's, or one of its workers' from its team.
+    private func found(_ id: String) -> (BoardRow, BoardRow)? {
+        for lead in workspace.board {
+            if lead.session == id { return (lead, lead) }
+            if let member = lead.member(id) { return (lead, member) }
+        }
+        return nil
+    }
+
+    /// What a lead's workers call for, when it's more than the lead itself shows: "1 worker needs you". Only what wants
+    /// the user, so a row's height doesn't change each time a worker starts or stops.
+    static func calling(_ row: BoardRow) -> String? {
+        guard row.state != row.ownState, [.needsYou, .trouble].contains(row.state) else { return nil }
+        let count = (row.team ?? []).filter { $0.state == row.state }.count
+        guard count > 0 else { return nil }
+        let what = row.state == .needsYou ? (count == 1 ? "needs you" : "need you") : "in trouble"
+        return "\(count) worker\(count == 1 ? "" : "s") \(what)"
+    }
+
+    private func card(_ row: BoardRow, title: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    // One line, as in the sidebar: a long name glides to its end while the card shows.
+                    Marquee(text: title, moving: true).font(.system(size: 13.5, weight: .semibold)).id(title)
+                    if let ticket = row.ticket { Text(ticket).font(.system(size: 11.5)).foregroundStyle(.secondary) }
+                    if let calling = Self.calling(row) { Text(calling).font(.system(size: 11.5)).foregroundStyle(.secondary) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                StateLabel(state: row.ownState)
+            }
+            if let now = row.now, !now.isEmpty {
+                Text(now).font(.system(size: 12.5)).foregroundStyle(.secondary).lineLimit(3).fixedSize(horizontal: false, vertical: true)
+            }
+            if let needs = row.needs {
+                line("hand-holding-box:glyph", "For you: " + needs)
+            }
+            ForEach(row.asks.prefix(3), id: \.id) { ask in line("circle-question", ask.title) }
+            if row.asks.count > 3 { Text("and \(row.asks.count - 3) more asks").font(.system(size: 11.5)).foregroundStyle(.tertiary) }
+            if let queued = row.queued, !queued.isEmpty { line("clock", "\(queued.count) queued" + (row.held == true ? ", held" : "")) }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .frame(width: 300, alignment: .leading)
+        .background(Theme.composer, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke))
+        .compositingGroup()
+        .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+    }
+
+    private func line(_ icon: String, _ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            NucleoIcon(icon, size: 12).foregroundStyle(.secondary).alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
+            Text(text).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
         }
     }
 }
@@ -1365,9 +1568,17 @@ private struct ConversationView: View {
     /// Opens another task: a branch made from this one.
     var open: (String) -> Void = { _ in }
     private var conversation: Conversation { live.conversation }
-    @State private var draft = ""
+    /// What's being written, in an object of its own: typing redraws the composer, not this view and its timeline,
+    /// which only ever write it (a quote, a rewind, a sent message).
+    @State private var box = DraftBox()
+    private var draft: String {
+        get { box.text }
+        nonmutating set { box.text = newValue }
+    }
     /// Held at the end of the conversation as it opens and while you're at its end; let go when you scroll away.
     @State private var following = true
+    /// Your hand on the page (dragging, or its momentum): nothing else moves it meanwhile.
+    @State private var userScrolling = false
     /// The message of yours being gone back to.
     @State private var rewinding: ConversationItem?
     /// Esc twice in quick succession: pick a message to rewind to, then how (RewindCard).
@@ -1443,8 +1654,29 @@ private struct ConversationView: View {
 
     /// One block as a row: compared before it's drawn (a word streamed into the last answer redraws only that one),
     /// and reporting whether it's on screen, for the rail.
+    /// The provider's questions and approvals, and what the agent asked through Zero.
+    @ViewBuilder private func waiting(_ conversation: Conversation) -> some View {
+        ForEach(conversation.questions) { question in
+            QuestionCard(question: question, session: conversation.id, inbox: inbox) { answers in
+                Task { await workspace.answer(conversation.id, question: question.id, answers: answers) }
+            }
+            .id("question-" + question.id)
+        }
+        // What the agent asked through Zero (zero ask, approve, run): the inbox's own card, here too.
+        ForEach(inbox.store.asks.filter { AgentAskCard.open($0, in: conversation) }) { ask in
+            AgentAskCard(ask: ask, inbox: inbox).id("ask-" + ask.id)
+        }
+        ForEach(conversation.approvals) { approval in
+            ApprovalCard(approval: approval, cwd: conversation.cwd) { choice in
+                Task { await workspace.decide(conversation.id, approval: approval.id, choice: choice.id) }
+            }
+            .id("approval-" + approval.id)
+        }
+    }
+
     private func blockRow(_ block: TimelineBlock, turns: [String: String]) -> some View {
-        BlockRow(block: block, cwd: conversation.cwd, quote: quote, save: save, rewind: { rewinding = $0 }).equatable()
+        BlockRow(block: block, cwd: conversation.cwd, quote: quote, save: save, rewind: { rewinding = $0 },
+                 later: { [workspace, id = conversation.id] text in Task { await workspace.askToSaveForLater(id, answer: text) } }).equatable()
             .id(block.id)
             .onScrollVisibilityChange(threshold: 0.05) { shown in
                 guard let turn = turns[block.id] else { return }
@@ -1478,6 +1710,12 @@ private struct ConversationView: View {
         Task { await workspace.createPad(title: title.isEmpty ? "Saved" : title, folder: "Saved", content: text) }
     }
 
+    /// The blocks before the lifted message, and from it on (none when nothing's lifted).
+    private func split(_ blocks: [TimelineBlock]) -> (head: [TimelineBlock], tail: [TimelineBlock]) {
+        guard lifted, let at = blocks.firstIndex(where: { $0.id == liftId }) else { return (blocks, []) }
+        return (Array(blocks[..<at]), Array(blocks[at...]))
+    }
+
     private var conversationPane: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
@@ -1504,17 +1742,20 @@ private struct ConversationView: View {
                                 }
                                 .task(id: olderShown ? more : -1) { await loadOlder() }
                         }
-                        let liftAt: Int? = lifted ? blocks.firstIndex { $0.id == liftId } : nil
-                        let head: [TimelineBlock] = liftAt.map { Array(blocks[..<$0]) } ?? blocks
-                        let tail: [TimelineBlock] = liftAt.map { Array(blocks[$0...]) } ?? []
+                        let (head, tail) = split(blocks)
                         ForEach(head) { block in blockRow(block, turns: turns) }
                         if !tail.isEmpty {
                             // Lifted: from the message just sent down, at least a page tall, so what the agent adds
                             // under it fills room that is already there and the page's size doesn't change.
                             VStack(alignment: .leading, spacing: 18) {
                                 ForEach(tail) { block in blockRow(block, turns: turns) }
+                                // What waits on you, right under the step that asked: in the room kept for the turn,
+                                // not after it.
+                                waiting(conversation)
                             }
                             .frame(minHeight: liftMin, alignment: .top)
+                        } else {
+                            waiting(conversation)
                         }
                         // Its provider still getting ready (signing in, say): say so, rather than an empty page.
                         if conversation.status == .starting {
@@ -1534,20 +1775,13 @@ private struct ConversationView: View {
                             }
                             .id("health")
                         }
-                        ForEach(conversation.questions) { question in
-                            QuestionCard(question: question, session: conversation.id, inbox: inbox) { answers in
-                                Task { await workspace.answer(conversation.id, question: question.id, answers: answers) }
-                            }
-                            .id("question-" + question.id)
-                        }
-                        ForEach(conversation.approvals) { approval in
-                            ApprovalCard(approval: approval, cwd: conversation.cwd) { choice in
-                                Task { await workspace.decide(conversation.id, approval: approval.id, choice: choice.id) }
-                            }
-                            .id("approval-" + approval.id)
-                        }
                         if let diff = conversation.diff, conversation.status == .idle, !diff.isEmpty {
-                            DisclosureGroup("Everything the last turn changed") { DiffText(diff: diff) }.padding(.top, 4)
+                            DisclosureGroup("Everything the last turn changed") {
+                                DiffText(diff: diff)
+                                    .background(Theme.code, in: RoundedRectangle(cornerRadius: 10))
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
+                            }.padding(.top, 4)
                         }
                         // Room for the composer and the fade above it: scrolled to the end, the last message sits just
                         // above the composer, and the scrollbar is at the bottom. Just sent, a page of room, so the
@@ -1556,6 +1790,8 @@ private struct ConversationView: View {
                     }
                     .padding(.top, 20)
                     .centredColumn(760)
+                    .environment(\.askInbox, inbox)
+                    .environment(\.askSession, conversation.id)
                 }
                 .scrollIndicators(.never)
                 // Opened at the end, and held there as answers measure themselves and new ones come, while you're at
@@ -1584,6 +1820,7 @@ private struct ConversationView: View {
                 .onScrollPhaseChange { _, phase in
                     // Scrolled by you: it stops following the end, until you're back at it. Scrolling while the rows
                     // for older items show asks for the next page (one page per gesture, never a chain).
+                    userScrolling = phase == .interacting || phase == .decelerating
                     if phase == .interacting {
                         following = false
                         if olderShown, !olderArmed { olderArmed = true; Task { await loadOlder() } }
@@ -1612,8 +1849,16 @@ private struct ConversationView: View {
                         }
                     }
                 }
-                .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { _, now in
+                .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { before, now in
                     tracker.geometry = now
+                    // Lifted, and the reply has outgrown the room while you sat at its foot: the lift has done its
+                    // work, and the page follows the end from here, as it would have without it.
+                    let foot = { (g: ScrollGeometry) in g.contentSize.height + g.contentInsets.bottom - g.contentInsets.top - g.containerSize.height }
+                    if lifted, liftPlaced, !userScrolling, foot(before) - before.contentOffset.y < 2, foot(now) - now.contentOffset.y > 2 {
+                        lifted = false; liftPlaced = false; liftId = nil; following = true
+                        position.scrollTo(edge: .bottom)
+                        return
+                    }
                     // Following the end (as it opens, and while you're at it): rows measure themselves after the first
                     // layout, and the list's height can settle far from its first guess (a long conversation came out
                     // 2,000 pt shorter, leaving the view past its end, blank). It stays at the end of what's there.
@@ -1692,6 +1937,9 @@ private struct ConversationView: View {
                 // What you'd written and attached and not sent yet, kept as you go (a branch's message waiting first).
                 .onAppear {
                     if let kept = Drafts.load("task:" + conversation.id) { draft = kept.text; images = kept.images }
+                    // Kept as it's typed, here rather than in an onChange this view would have to read it for.
+                    let (key, imagesNow) = ("task:" + conversation.id, { images })
+                    box.saved = { text in Drafts.save(key, text: text, images: imagesNow()) }
                     if let waiting = workspace.pendingDrafts.removeValue(forKey: conversation.id) { draft = waiting }
                     let id = conversation.id
                     Task { try? await Task.sleep(for: .milliseconds(600)); workspace.markSeen(id) }
@@ -1701,8 +1949,7 @@ private struct ConversationView: View {
                 .onChange(of: active, initial: true) { isActive = active }
                 // An answer that lands while you're here is seen too.
                 .onChange(of: conversation.items.last?.id) { workspace.markSeen(conversation.id) }
-                .onChange(of: draft) { Drafts.save("task:" + conversation.id, text: draft, images: images) }
-                .onChange(of: images) { Drafts.save("task:" + conversation.id, text: draft, images: images) }
+                .onChange(of: images) { Drafts.save("task:" + conversation.id, text: box.text, images: images) }
                 .overlay {
                     if pickingRewind {
                         RewindPicker(messages: conversation.items.filter { if case .user = $0.kind { true } else { false } }.reversed(),
@@ -1738,7 +1985,7 @@ private struct ConversationView: View {
 
     private var composer: some View {
         let busy = conversation.status == .working || conversation.status == .waiting
-        return Composer(draft: $draft, placeholder: placeholder, canSend: conversation.status != .starting, folder: conversation.cwd, workspace: workspace,
+        return Composer(draft: Binding(get: { box.text }, set: { box.text = $0 }), placeholder: placeholder, canSend: conversation.status != .starting, folder: conversation.cwd, workspace: workspace,
                  images: $images, active: active, stop: busy && conversation.terminal == nil ? { Task { await workspace.interrupt(conversation.id) } } : nil,
                  queue: busy && conversation.terminal == nil ? {
                      // Return while it works: the message waits for after this turn, in the strip above.
@@ -1775,7 +2022,7 @@ private struct ConversationView: View {
             .disabled(busy)
             // Between turns only: the agent is started again with them, and carries on its thread.
             ComposerChip(id: "task.\(conversation.id).permissions", label: conversation.permissions == .auto ? "Auto" : "Unrestricted",
-                         symbol: conversation.permissions == .auto ? "wand-sparkle" : "bolt-lightning") {
+                         symbol: conversation.permissions == .auto ? "wand-sparkle" : "bolt-lightning:glyph", tint: conversation.permissions == .auto ? nil : .orange) {
                 ComposerRows.list("Permissions", [
                     ("auto", "Auto", "\(conversation.provider.title) decides what's safe, and asks you the rest", conversation.permissions == .auto,
                      { Task { await workspace.setPermissions(conversation.id, .auto) } }),
@@ -1784,7 +2031,7 @@ private struct ConversationView: View {
                 ])
             }
             .disabled(busy)
-            .help(busy ? "Change permissions once this turn ends" : "What the agent may do without asking")
+            .tip(busy ? "Change permissions once this turn ends" : "What the agent may do without asking")
         }
         // A little narrower than the conversation.
         .centredColumn(680)
@@ -1877,6 +2124,40 @@ private struct QuestionCard: View {
     }
 }
 
+/// An ask the agent put to the user through Zero, in its task's chat as in the inbox: the same card, answered either
+/// place. Shown while it waits, and while a run runs.
+struct AgentAskCard: View {
+    let ask: Ask
+    let inbox: InboxController
+    @FocusState private var focus: String?
+
+    /// The agent's own asks (not the provider's questions and approvals, which have cards of their own above).
+    static func agents(_ ask: Ask, in session: String) -> Bool { ask.isAgents(in: session) }
+
+    /// Still waiting at the conversation's end: after its turn, when the step that asked is folded away with the rest
+    /// (an ask sent with --async); during a turn its card is that step, in place.
+    static func open(_ ask: Ask, in conversation: Conversation) -> Bool {
+        agents(ask, in: conversation.id) && !ask.state.isFinal && ![.working, .waiting].contains(conversation.status)
+    }
+
+    static func made(by item: ConversationItem, in asks: [Ask], session: String) -> Ask? { item.ask(in: asks, session: session) }
+
+    var body: some View {
+        ArticlePanel {
+            HStack(spacing: 6) {
+                NucleoIcon(ask.kind == .run ? "terminal" : "circle-question", fill: ask.kind == .run ? "outline" : "glyph", size: 13)
+                Text(ask.kind == .run ? "Run on your Mac" : ask.kind == .approve ? "Approval" : "Question").font(.system(size: 12, weight: .medium)).tracking(-0.2)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 14).padding(.vertical, 7)
+        } content: {
+            CardView(ask: ask, controller: inbox, focus: $focus, flat: true, showsByline: false)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 2)
+        }
+    }
+}
+
 /// The question's own form, when the inbox has no card for it yet.
 private struct PlainQuestionCard: View {
     let question: Question
@@ -1907,7 +2188,7 @@ private struct PlainQuestionCard: View {
                                         if field.multiple { picked[field.id, default: []].formSymmetricDifference([option.label]) }
                                         else { picked[field.id] = on ? [] : [option.label] }
                                     }
-                                    .buttonStyle(ChoiceChip(on: on)).help(option.description ?? "")
+                                    .buttonStyle(ChoiceChip(on: on)).tip(option.description ?? "")
                                 }
                             }
                         }
@@ -1997,7 +2278,7 @@ struct ItemView: View {
                 Text(ToolNames.name(name)).fontWeight(.medium)
                 Text(ToolNames.detail(detail)).foregroundStyle(.secondary).truncationMode(.tail)
             }
-            .font(.callout).lineLimit(1).help(detail)
+            .font(.callout).lineLimit(1).tip(detail)
         case let .notice(text, error):
             if error {
                 CautionCallout(text: text)
@@ -2024,7 +2305,7 @@ struct CopyButton: View {
         } label: {
             NucleoIcon(copied ? "circle-check" : "copy", size: 13).foregroundStyle(.secondary).frame(width: 22, height: 22)
         }
-        .buttonStyle(Hovering(radius: 6)).help("Copy")
+        .buttonStyle(Hovering(radius: 6)).tip("Copy")
     }
 }
 
@@ -2125,7 +2406,7 @@ private struct TableCard: View {
                     if rows.isEmpty { Text("Nothing in it").font(.system(size: 13)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 16) }
                     ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
                         if index > 0 { Rectangle().fill(Theme.stroke).frame(height: 1) }
-                        line(row.map { AnyView(cell($0)) }, head: false)
+                        line(row.enumerated().map { column, text in AnyView(cell(text, in: column < columns.count ? columns[column] : "")) }, head: false)
                     }
                 }
             }
@@ -2145,8 +2426,11 @@ private struct TableCard: View {
         .padding(.horizontal, 16).padding(.vertical, 10)
     }
 
-    @ViewBuilder private func cell(_ text: String) -> some View {
-        if let state = Self.state(text) {
+    @ViewBuilder private func cell(_ text: String, in column: String) -> some View {
+        if column.localizedCaseInsensitiveContains("risk"), let (level, rest) = BoardRow.risk(text) {
+            // The gaps behind the grade, on hover: the column reads at a glance.
+            RiskLabel(level: level).tip(rest)
+        } else if let state = BoardRow.State.named(text) {
             StateLabel(state: state)
         } else if text.isEmpty || text == "-" || text == "—" || text == "–" {
             Text("–").foregroundStyle(.tertiary)
@@ -2155,19 +2439,20 @@ private struct TableCard: View {
         }
     }
 
-    /// A cell that names a state, in the board's words or the agents' usual ones.
-    static func state(_ text: String) -> BoardRow.State? {
-        switch text.trimmingCharacters(in: .whitespaces).lowercased() {
-        case "needs you", "blocked", "needsyou", "waiting": .needsYou
-        case "trouble", "in trouble", "failed", "stuck": .trouble
-        case "working": .working
-        case "done": .done
-        case "replied", "answered": .answered
-        case "merged": .merged
-        case "idle": .idle
-        case "offline": .offline
-        default: nil
+}
+
+/// A risk level as a pill: green low, amber medium, red high, on a wash of its colour, as a state's pill is.
+private struct RiskLabel: View {
+    let level: String
+    var body: some View {
+        let color: Color = level == "low" ? .green : level == "medium" ? .orange : .red
+        HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(level.capitalized).font(.system(size: 11.5, weight: .medium)).foregroundStyle(level == "low" ? AnyShapeStyle(Theme.done) : AnyShapeStyle(color))
         }
+        .padding(.leading, 7).padding(.trailing, 8).padding(.vertical, 3)
+        .background(color.opacity(0.12), in: Capsule())
+        .fixedSize()
     }
 }
 
@@ -2182,7 +2467,7 @@ private struct ReasoningRow: View {
             Button { open.toggle() } label: {
                 HStack(alignment: .top, spacing: 8) {
                     NucleoIcon("brain", size: 14).foregroundStyle(.secondary).frame(width: 14, height: 16)
-                    Text(seconds.map { "Thought for " + workedFor($0) } ?? "Thought").fontWeight(.medium)
+                    Text(Took.text("Thought", seconds)).fontWeight(.medium)
                     if !open { Text(text.split(whereSeparator: \.isNewline).first.map(String.init) ?? "").foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail) }
                     Spacer(minLength: 0)
                     NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary)
@@ -2218,11 +2503,32 @@ private struct CommandCard: View {
             }
             .buttonStyle(.plain)
             if open && !output.isEmpty {
-                ScrollView { Text(output).font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+                // As a terminal's pane, drawn as the diffs are: the command whole at its head with what it printed
+                // (how much, and a copy), then the output itself, quieter, under a hairline.
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        (Text("$ ").foregroundStyle(.tertiary) + Text(command).foregroundStyle(.primary))
+                            .font(.system(size: 11.5, design: .monospaced)).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        let count = output.split(separator: "\n", omittingEmptySubsequences: false).count
+                        Text(count == 1 ? "1 line" : "\(count) lines").font(.system(size: 11).monospacedDigit()).foregroundStyle(.tertiary)
+                        CopyButton(text: output).tip("Copy the output")
+                    }
+                    .padding(.leading, 12).padding(.trailing, 6).padding(.vertical, 6)
+                    .background(Color.primary.opacity(0.03))
+                    Rectangle().fill(Theme.stroke).frame(height: 1)
+                    ScrollView([.vertical, .horizontal]) {
+                        Text(output).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary).lineSpacing(2)
+                            .textSelection(.enabled).fixedSize().frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 12).padding(.vertical, 10)
+                    }
                     .thinScrollbar()
-                    .frame(maxHeight: 280)
-                    .padding(10).background(Theme.code, in: RoundedRectangle(cornerRadius: 10))
-                    .padding(.leading, 22)
+                    .frame(maxHeight: 300)
+                }
+                .background(Theme.code, in: RoundedRectangle(cornerRadius: 10))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
+                .padding(.leading, 22)
             }
         }
     }
@@ -2235,21 +2541,33 @@ private struct FileChangeCard: View {
     @State private var open = true
 
     var body: some View {
+        let lines = DiffLine.parse(change.diff, added: change.kind == "add")
+        let path = relative(change.path, to: cwd)
+        let (folder, name) = ((path as NSString).deletingLastPathComponent, (path as NSString).lastPathComponent)
         VStack(alignment: .leading, spacing: 8) {
             Button { open.toggle() } label: {
                 HStack(alignment: .top, spacing: 8) {
                     StatusIcon(status: status)
                     Text(verb).font(.callout.weight(.medium))
-                    Text(relative(change.path, to: cwd)).font(.system(.callout, design: .monospaced)).lineLimit(1).truncationMode(.head)
-                    Spacer(minLength: 0)
-                    NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary)
+                    // The file first, its folder after it and quieter: the name is what's read.
+                    (Text(name).font(.system(.callout, design: .monospaced).weight(.medium))
+                        + Text(folder.isEmpty ? "" : "  " + folder).font(.system(.callout, design: .monospaced)).foregroundStyle(.tertiary))
+                        .lineLimit(1).truncationMode(.tail)
+                    Spacer(minLength: 6)
+                    let added = lines.count { $0.kind == .added }, removed = lines.count { $0.kind == .removed }
+                    if added > 0 { Text("+\(added)").foregroundStyle(DiffLine.green) }
+                    if removed > 0 { Text("−\(removed)").foregroundStyle(DiffLine.red) }
+                    if !lines.isEmpty { NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary) }
                 }
+                .font(.system(.callout).monospacedDigit())
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            if open && !change.diff.isEmpty {
-                DiffText(diff: change.diff, added: change.kind == "add")
-                    .padding(10).background(Theme.code, in: RoundedRectangle(cornerRadius: 10))
+            if open && !lines.isEmpty {
+                DiffText(lines: lines)
+                    .background(Theme.code, in: RoundedRectangle(cornerRadius: 10))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
                     .padding(.leading, 22)
             }
         }
@@ -2273,36 +2591,6 @@ private func relative(_ path: String, to folder: String) -> String {
 }
 
 /// A diff's lines, additions green and removals red. A new file's contents arrive without markers: all added.
-private struct DiffText: View {
-    let diff: String
-    var added = false
-
-    var body: some View {
-        ScrollView([.horizontal, .vertical]) {
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(diff.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { _, line in
-                    Text(line.isEmpty ? " " : String(line)).font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(color(line)).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(background(line))
-                }
-            }
-            .textSelection(.enabled)
-        }
-        .thinScrollbar()
-        .frame(maxHeight: 360)
-    }
-
-    private func color(_ line: Substring) -> Color {
-        if line.hasPrefix("@@") { return .secondary }
-        return .primary
-    }
-
-    private func background(_ line: Substring) -> Color {
-        if added || (line.hasPrefix("+") && !line.hasPrefix("+++")) { return Theme.greenRow }
-        if line.hasPrefix("-") && !line.hasPrefix("---") { return Theme.redRow }
-        return .clear
-    }
-}
 
 /// The provider asking before it acts: what it wants, why, and its own choices, the first one the default.
 private struct ApprovalCard: View {
@@ -2335,6 +2623,12 @@ private struct ApprovalCard: View {
         }
         .padding(16).background(Theme.orangeRow, in: RoundedRectangle(cornerRadius: 16))
     }
+}
+
+/// A conversation's message being written (ConversationView's draft): observed by the composer alone.
+@Observable final class DraftBox {
+    var text = "" { didSet { if text != oldValue { saved(text) } } }
+    @ObservationIgnored var saved: (String) -> Void = { _ in }
 }
 
 /// The message box, as the control bar's: its field ("/" for commands, "@" for the folder's files), the images going
@@ -2428,20 +2722,20 @@ private struct Composer<Controls: View>: View {
                     NucleoIcon("plus", size: 15).foregroundStyle(.primary).frame(width: 28, height: 28)
                         .background(adding == nil ? .clear : Theme.row, in: Circle())
                 }
-                .buttonStyle(Hovering(radius: 14, fill: Theme.row, hover: Theme.row)).help("Add files, folders or a scratchpad")
+                .buttonStyle(Hovering(radius: 14, fill: Theme.row, hover: Theme.row)).tip("Add files, folders or a scratchpad")
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { plusFrame = $0 }
                 HStack(spacing: 6) { controls }.frame(maxWidth: .infinity, alignment: .leading)
                 if let stop {
                     Button(action: stop) {
                         NucleoIcon("media-stop", fill: "glyph", size: 12).foregroundStyle(Theme.onKnob).frame(width: 28, height: 28).background(Theme.knob, in: Circle())
                     }
-                    .buttonStyle(.plain).keyboardShortcut(".", modifiers: .command).help("Stop")
+                    .buttonStyle(.plain).keyboardShortcut(".", modifiers: .command).tip("Stop", shortcut: "⌘.")
                 } else {
                     Button(action: send) {
                         NucleoIcon("arrow-up", size: 14).foregroundStyle(ready ? Theme.onKnob : .white)
                             .frame(width: 28, height: 28).background(ready ? Theme.knob : Theme.sendIdle, in: Circle())
                     }
-                    .buttonStyle(.plain).keyboardShortcut(.return, modifiers: .command).disabled(!ready)
+                    .buttonStyle(.plain).keyboardShortcut(.return, modifiers: .command).disabled(!ready).tip("Send", shortcut: "⌘↩")
                 }
             }
         }
@@ -2695,7 +2989,7 @@ private struct QueueStrip: View {
                 NucleoIcon(held ? "media-stop" : "clock", fill: "glyph", size: 13)
                 Text(held ? "Held" : "Queued").font(.system(size: 12, weight: .medium)).tracking(-0.2)
                 Spacer()
-                if held { Button("Send", action: release).buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.primary).help("You stopped the agent; let the queue go on") }
+                if held { Button("Send", action: release).buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.primary).tip("You stopped the agent; let the queue go on") }
             }
             .foregroundStyle(.secondary)
             .padding(.horizontal, 12).frame(height: 28)
@@ -2706,7 +3000,7 @@ private struct QueueStrip: View {
                             Text(Self.gist(item)).font(.system(size: 13)).foregroundStyle(.primary).lineLimit(1).truncationMode(.tail)
                                 .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain).help("Back into the composer")
+                        .buttonStyle(.plain).tip("Back into the composer")
                         // Edit and delete on squares that take the row's hover when the pointer is on them; then Steer
                         // as a pill, on a hairline so it reads on the hovered row too, solid under the pointer. The
                         // arrow turns the corner: out of the queue and up to the agent.
@@ -2724,7 +3018,7 @@ private struct QueueStrip: View {
                                 .background(lit ? Theme.knob : Theme.chip, in: Capsule())
                                 .overlay(Capsule().strokeBorder(lit ? Color.clear : Theme.stroke))
                             }
-                            .buttonStyle(PressableStyle()).help("Send it now, mid-turn").padding(.leading, 4)
+                            .buttonStyle(PressableStyle()).tip("Send it now, mid-turn").padding(.leading, 4)
                             .onHover { inside in if inside { control = item.id + "/steer" } else if control == item.id + "/steer" { control = nil } }
                         }
                         .padding(.vertical, 4).contentShape(Rectangle())
@@ -2758,7 +3052,7 @@ private struct QueueStrip: View {
                 .background(control == id ? Theme.fieldTab : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .contentShape(Rectangle())
         }
-        .buttonStyle(PressableStyle()).help(help)
+        .buttonStyle(PressableStyle()).tip(help)
         .onHover { inside in if inside { control = id } else if control == id { control = nil } }
     }
 
@@ -2977,7 +3271,7 @@ private struct AddMenu: View {
                     Button { page = .add } label: {
                         NucleoIcon("arrow-left", size: 13).foregroundStyle(.secondary).frame(width: 22, height: 22).contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain).help("Back")
+                    .buttonStyle(.plain).tip("Back")
                     TextField("Find a scratchpad", text: $query).textFieldStyle(.plain).font(.system(size: 13)).focused($searching)
                         .onSubmit { if let first = found.first { pad(first) } }
                 }
@@ -3072,6 +3366,8 @@ private struct ComposerChip: View {
     var kind = SelectorKind.project
     /// What's chosen in full colour (the model), as Codex shows it; the rest in grey.
     var prominent = false
+    /// A colour for its icon and words, for a choice that should stand out (Unrestricted, orange as in the details).
+    var tint: Color? = nil
     let rows: () -> [SelectorSection]
     var level: (String) -> String? = { _ in nil }
     var setLevel: (String, String) -> Void = { _, _ in }
@@ -3087,9 +3383,10 @@ private struct ComposerChip: View {
                 if let icon {
                     icon.resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14).clipShape(RoundedRectangle(cornerRadius: 3))
                 } else if let symbol {
-                    NucleoIcon(symbol, size: 13).foregroundStyle(.secondary)
+                    NucleoIcon(symbol, size: 13).foregroundStyle(tint.map(AnyShapeStyle.init) ?? AnyShapeStyle(.secondary))
                 }
-                Text(label).font(.system(size: 13)).foregroundStyle(prominent ? .primary : .secondary).lineLimit(1)
+                Text(label).font(.system(size: 13)).lineLimit(1)
+                    .foregroundStyle(tint.map(AnyShapeStyle.init) ?? (prominent ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)))
                 NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0))
             }
             // As tall as the + and Send beside it (28), so the row's pills are one size.
@@ -3209,7 +3506,7 @@ private struct NewTaskView: View {
                 Composer(draft: $prompt, placeholder: "Do anything", canSend: !starting && folders.contains(project), folder: folders.contains(project) ? project : nil,
                          workspace: workspace, images: $images) { start() } controls: {
                     ComposerChip(id: "new.permissions", label: permissions == .auto ? "Auto" : "Unrestricted",
-                                 symbol: permissions == .auto ? "wand-sparkle" : "bolt-lightning") {
+                                 symbol: permissions == .auto ? "wand-sparkle" : "bolt-lightning:glyph", tint: permissions == .auto ? nil : .orange) {
                         ComposerRows.list("Permissions", [
                             ("auto", "Auto", "\(chosen.title) decides what's safe, and asks you the rest", permissions == .auto, { permissions = .auto }),
                             ("unrestricted", "Unrestricted", "Anything, without asking", permissions == .unrestricted, { permissions = .unrestricted }),
@@ -3234,6 +3531,8 @@ private struct NewTaskView: View {
         .onAppear {
             if !folders.contains(project) { project = folders.first ?? "" }
             if let kept = Drafts.load("new") { prompt = kept.text; images = kept.images }
+            // Started from something saved for later: its words, over whatever was being written.
+            if let waiting = workspace.pendingDrafts.removeValue(forKey: "new") { prompt = waiting }
         }
         .onChange(of: prompt) { Drafts.save("new", text: prompt, images: images) }
         .onChange(of: images) { Drafts.save("new", text: prompt, images: images) }
@@ -3282,7 +3581,10 @@ private struct NewTaskView: View {
         guard !text.isEmpty || !attached.isEmpty, !starting else { return }
         starting = true
         Task {
-            if let id = await workspace.start(provider: chosen, cwd: project, prompt: text, images: attached, model: model.isEmpty ? nil : model,
+            // The model the chip shows: none picked, it shows the provider's first, so that's the one asked for. Left
+            // to itself the provider would start on its own default, and the task would change model as it began.
+            let shown = model.isEmpty ? (models.first?.id ?? "") : model
+            if let id = await workspace.start(provider: chosen, cwd: project, prompt: text, images: attached, model: shown.isEmpty ? nil : shown,
                                               effort: effort.isEmpty ? nil : effort, permissions: permissions, workspace: into.isEmpty ? workspace.current : into) {
                 prompt = ""
                 images = []
@@ -3455,12 +3757,12 @@ struct AsksPage: View {
                                 Button { picked = "" } label: {
                                     NucleoIcon("xmark", size: 11).foregroundStyle(.secondary).frame(width: 24, height: 24)
                                 }
-                                .buttonStyle(Hovering(radius: 6)).help("Fold it back").padding(10)
+                                .buttonStyle(Hovering(radius: 6)).tip("Fold it back").padding(10)
                             }
                     } else {
                         Button { picked = ask.id } label: {
                             line(head: false,
-                                 ask: Text(ask.title).foregroundStyle(.primary).lineLimit(2).help(ask.title),
+                                 ask: Text(ask.title).foregroundStyle(.primary).lineLimit(2).tip(ask.title),
                                  agent: Text(controller.store.displayName(of: ask.agent.name)).foregroundStyle(.secondary).lineLimit(1),
                                  kind: Text(Self.kind(ask)).foregroundStyle(.secondary),
                                  since: since(ask))
@@ -3598,31 +3900,3 @@ private struct StatusCard: View {
     }
 }
 
-/// A tool as people say it, and its arguments as their values: "Linear · list comments", "ENG-9737 · 5".
-enum ToolNames {
-    /// "mcp__linear-server__list_comments" → "Linear · list comments"; Claude Code's Agent tool is a subagent, said so;
-    /// anything else as it is.
-    static func name(_ raw: String) -> String {
-        if raw == "Agent" || raw == "Task" { return "Subagent" }
-        guard raw.hasPrefix("mcp__") else { return raw }
-        let parts = raw.dropFirst("mcp__".count).components(separatedBy: "__")
-        guard parts.count >= 2 else { return raw }
-        // "linear-server", "plugin_zero_zero": the service's own name, its last word.
-        let server = parts[0].replacingOccurrences(of: "-server", with: "").split(whereSeparator: { $0 == "_" || $0 == "-" }).last.map(String.init) ?? parts[0]
-        return server.capitalized + " · " + parts[1...].joined(separator: " ").replacingOccurrences(of: "_", with: " ")
-    }
-
-    /// A JSON object's values, shortest first (what it's about before what it says); anything else as it is.
-    static func detail(_ raw: String) -> String {
-        guard let data = raw.data(using: .utf8), let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return raw }
-        let values: [String] = object.values.compactMap { value in
-            switch value {
-            case let text as String: text
-            case let number as NSNumber: number.stringValue
-            case let list as [Any]: list.map { "\($0)" }.joined(separator: ", ")
-            default: nil
-            }
-        }
-        return values.sorted { $0.count < $1.count }.joined(separator: " · ")
-    }
-}

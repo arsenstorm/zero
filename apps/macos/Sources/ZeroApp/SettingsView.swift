@@ -14,8 +14,8 @@ struct SettingsView: View {
     var showOnboarding: () -> Void = {}
 
     enum Page: String, CaseIterable, Identifiable {
-        case general = "General", controlBar = "Control bar", composer = "Composer and inbox"
-        case agents = "Agents", projects = "Projects", workspaces = "Workspaces", links = "Links", events = "Events"
+        case general = "General", controlBar = "Control bar", composer = "Composer and inbox", devices = "Devices"
+        case agents = "Agents", projects = "Projects", workspaces = "Workspaces", mcp = "MCP servers", links = "Links", events = "Events"
         var id: String { rawValue }
         var icon: String {
             switch self {
@@ -27,10 +27,12 @@ struct SettingsView: View {
             case .links: "link"
             case .events: "bell"
             case .workspaces: "layers"
+            case .devices: "mobile"
+            case .mcp: "plug"
             }
         }
         /// General leads on its own, where Home's New task is, so switching between the two moves no row.
-        static let groups: [(String, [Page])] = [("Personal", [.controlBar, .composer]), ("Agents", [.agents, .projects, .workspaces, .links, .events])]
+        static let groups: [(String, [Page])] = [("Personal", [.controlBar, .composer, .devices]), ("Agents", [.agents, .projects, .workspaces, .mcp, .links, .events])]
     }
     @State private var page = Page.general
     /// A page asked for from elsewhere (the sidebar's Workspace settings…), taken when the view appears.
@@ -67,11 +69,13 @@ struct SettingsView: View {
         case .general: GeneralPage(settings: settings, showOnboarding: showOnboarding)
         case .controlBar: ControlBarPage(settings: settings, store: store, inbox: inbox, workspace: workspace)
         case .composer: ComposerPage(settings: settings)
+        case .devices: DevicesPage()
         case .agents: AgentsPage(store: store, inbox: inbox, workspace: workspace)
         case .projects: FoldersPage(settings: settings, inbox: inbox)
         case .links: LinksPage()
         case .events: EventsPage(workspace: workspace)
         case .workspaces: WorkspacesPage(workspace: workspace)
+        case .mcp: McpServersPage(workspace: workspace)
         }
     }
 }
@@ -163,7 +167,7 @@ struct SidebarHeader: View {
                     .buttonStyle(.plain)
                     .onHover { hovered = $0 }
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { anchor = $0 }
-                    .help("Switch workspace")
+                    .tip("Switch workspace")
                 } else {
                     Text(title).font(.system(size: 17, weight: .semibold))
                 }
@@ -331,6 +335,17 @@ private struct Sections<Content: View>: View {
 private struct GeneralPage: View {
     @Bindable var settings: Settings
     let showOnboarding: () -> Void
+    /// The states a task's notification comes with, each with its own sound.
+    struct Sounded { let state: BoardRow.State; let name: String; let detail: String }
+    static let sounded = [
+        Sounded(state: .needsYou, name: "Needs you", detail: "It asks you something, or one of its workers does."),
+        Sounded(state: .trouble, name: "In trouble", detail: "It failed, got stuck or ran out of usage."),
+        Sounded(state: .handed, name: "Over to you", detail: "Done, with a step for you."),
+        Sounded(state: .done, name: "Done", detail: "Its work is finished."),
+        Sounded(state: .answered, name: "Replied", detail: "It answered you."),
+        Sounded(state: .blocked, name: "Blocked", detail: "It's stopped on something that isn't you."),
+        Sounded(state: .merged, name: "Merged", detail: "Its work is merged."),
+    ]
     var body: some View {
         Sections {
             SettingsSection(title: "Zero") {
@@ -340,6 +355,31 @@ private struct GeneralPage: View {
                     }
                     SettingRow(title: "Talk hotkey", detail: "Opens the inbox and starts dictation.") {
                         HotKeyRecorder(settings: settings, minWidth: nil)
+                    }
+                }
+            }
+            SettingsSection(title: "Notifications") {
+                Rows {
+                    SettingRow(title: "Needs you", detail: "A task asks you something, or one of its workers does.") {
+                        Switch(isOn: $settings.notifyNeedsYou)
+                    }
+                    SettingRow(title: "In trouble", detail: "A task fails, gets stuck or runs out of usage.") {
+                        Switch(isOn: $settings.notifyTrouble)
+                    }
+                    SettingRow(title: "Finished", detail: "A task is done, replied, blocked or over to you.") {
+                        Switch(isOn: $settings.notifyFinished)
+                    }
+                    SettingRow(title: "Sounds", detail: "With each notification. While you're in Zero, a sound instead of the notification.") {
+                        Switch(isOn: $settings.notificationSounds)
+                    }
+                }
+            }
+            if settings.notificationSounds {
+                SettingsSection(title: "Sounds") {
+                    Rows {
+                        ForEach(Self.sounded, id: \.state) { sounded in
+                            SettingRow(title: sounded.name, detail: sounded.detail) { SoundPicker(settings: settings, state: sounded.state) }
+                        }
                     }
                 }
             }
@@ -354,6 +394,25 @@ private struct GeneralPage: View {
                 }
             }
         }
+    }
+}
+
+/// A state's sound: the system's sounds and None, played as it's picked so you hear what you chose.
+private struct SoundPicker: View {
+    @Bindable var settings: Settings
+    let state: BoardRow.State
+    var body: some View {
+        Picker("", selection: Binding(get: { settings.sound(for: state) }, set: { sound in
+            settings.stateSounds[state.rawValue] = sound
+            if !sound.isEmpty { NSSound(named: sound)?.play() }
+        })) {
+            ForEach(Settings.sounds, id: \.self) { sound in
+                Text(sound == Settings.defaultSound(state) ? "\(sound) (default)" : sound).tag(sound)
+            }
+            Divider()
+            Text("None").tag("")
+        }
+        .labelsHidden().fixedSize()
     }
 }
 
@@ -675,7 +734,7 @@ private struct IconButton: View {
                 .foregroundStyle(filled ? AnyShapeStyle(Theme.onKnob) : enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
                 .frame(width: 26, height: 26).background(filled ? Theme.knob : Theme.chip).clipShape(Circle())
         }
-        .buttonStyle(PressableStyle()).disabled(!enabled).help(help).accessibilityLabel(help)
+        .buttonStyle(PressableStyle()).disabled(!enabled).tip(help).accessibilityLabel(help)
     }
 }
 

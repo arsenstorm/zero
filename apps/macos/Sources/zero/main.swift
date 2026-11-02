@@ -28,7 +28,8 @@ func usage(help: Bool = false) -> Never {
                    when it finishes, fails or gets stuck, this session is told. Outside a session: a new session here.
                    --workspace puts it in another workspace (zero workspaces lists them); otherwise it is in yours.
       zero workspaces   (the user's workspaces: id, name, and the folders that belong to each)
-      zero send    <session> "text"   (a message to a session, resumed first if it is offline)
+      zero send    <session> "text"   (a message to a session, resumed first if it is offline; from inside a task, marked
+                   as that task's and given between the other's turns, as a worker's report is)
       zero wait    <session>... [--any] [--timeout MINUTES]   (until they stop working: finished, failed, stuck, or waiting on the user)
       zero workers   (the sessions this one started, or adopted)
       zero adopt   <task | Claude Code session id>   (makes it a worker of this session, taken into Zero first if it isn't
@@ -37,10 +38,19 @@ func usage(help: Bool = false) -> Never {
       zero result  <session>   (its last answer)
       zero loops   (the loops Zero keeps: named instructions, used as @name in a message or a brief, or with spawn --loop)
       zero loop    <name>   (a loop's words; an @name inside it is a child loop: start workers on it with spawn --loop)
+      zero later   save "note" [--file artifact.md | --file -] [--link URL]... [--attach FILE]...
+                   (saves something for later, in Zero's Later: the note is what's to be done, in a sentence or two of
+                   plain, simple words; the artifact is everything you worked out behind it, in full, nothing summed up)
+      zero later   list [words] | view <id> [--version N] | edit <id> [--note "…"] [--file …] [--link …] [--attach …]
+                   | done <id> | open <id> | delete <id>   (an item's link is zero://later/<id>; view prints it all)
+      zero pause   [session...]   (puts tasks on hold with their workers, every task when none is named: each working one
+                   is asked to wrap up and end its turn, given five minutes, then stopped; words for them wait)
+      zero unpause [session...]   (takes them off hold: those with words waiting resume for them)
       zero close   <session>...   (a worker you've read: it leaves the board; its record is kept in zerod's archive)
       zero table   "Title" --column NAME... --row "cell | cell | …"...   [--session ID]
                    (a table for the user, drawn by Zero in your conversation: a cell that is a state (working, blocked,
-                   done, merged, waiting) shows as its pill, tickets and PRs as links; or JSON on stdin: {"title","columns","rows"})
+                   done, merged, waiting) shows as its pill, and in a column named for a risk, a cell opening with low, medium
+                   or high shows that as a pill, the rest on hover; tickets and PRs as links; or JSON on stdin: {"title","columns","rows"})
       zero attr    NAME [VALUE] [--session ID]   (something about this task for the user to see on it, such as
                    zero attr PR https://github.com/org/repo/pull/12; a link opens. No value takes it back)
       zero label   "name" [--ticket REF] [--where PLACE] [--session ID]   (names this session, or another; --where says where it runs,
@@ -93,7 +103,7 @@ while i < args.count {
     if arg == "--" { positional.append(contentsOf: args[(i + 1)...]); break }
     if arg.hasPrefix("--") {
         let key = String(arg.dropFirst(2))
-        if ["async", "blocked", "done", "waiting", "any", "mine", "all"].contains(key) {
+        if ["async", "blocked", "done", "merged", "waiting", "any", "mine", "all"].contains(key) {
             flags[key, default: []].append("1")
         } else {
             i += 1
@@ -483,7 +493,14 @@ case "spawn":
     print(session)
 case "send":
     guard positional.count >= 2 else { usage() }
-    await zerod { try await $0.send(session: positional[0], text: positional[1...].joined(separator: " ")) }
+    let text = positional[1...].joined(separator: " ")
+    // From inside a task: another task's words, marked as its and given between turns (as a worker's report is),
+    // never passed off as the user's or steering a turn.
+    if let me = ProcessInfo.processInfo.environment["ZERO_SESSION"], me != positional[0] {
+        await zerod { try await $0.notify(session: positional[0], text: text, from: me) }
+    } else {
+        await zerod { try await $0.send(session: positional[0], text: text) }
+    }
 case "close":
     guard !positional.isEmpty else { usage() }
     for session in positional { await zerod { try await $0.archive(session: session) } }
@@ -565,6 +582,67 @@ case "unfollow":
     guard let session = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"], !positional.isEmpty || flag("all") != nil else { usage() }
     let removed = await zerod { try await $0.unfollow(session: session, topics: flag("all") != nil ? nil : positional) }
     print("zero: \(removed) follow\(removed == 1 ? "" : "s") taken back")
+case "later":
+    let sub = positional.first ?? "list"
+    let rest = Array(positional.dropFirst())
+    let session = ProcessInfo.processInfo.environment["ZERO_SESSION"]
+    /// --file's text, "-" being stdin.
+    func artifact() -> String? {
+        guard let file = flag("file") else { return nil }
+        if file == "-" { return String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self) }
+        guard let text = try? String(contentsOfFile: file, encoding: .utf8) else { fail("zero: can't read \(file)") }
+        return text
+    }
+    /// Paths as zerod (elsewhere) can find them.
+    func paths(_ key: String) -> [String] { (flags[key] ?? []).map { URL(fileURLWithPath: $0).standardizedFileURL.path } }
+    func later(_ tool: String, _ args: [String: Any]) async -> Any {
+        await zerod { try await $0.call("later", ["tool": tool, "args": args, "session": session]) }
+    }
+    func show(_ item: [String: Any]) {
+        let id = item["id"] as? String ?? "?"
+        let done = item["done"] as? Bool == true ? "  (done)" : ""
+        print("\(item["link"] as? String ?? id)  v\(item["version"] as? Int ?? 1)\(done)")
+        print(item["note"] as? String ?? "")
+        if let task = item["task"] as? String { print("From: \(task)" + ((item["from"] as? String).map { " (\($0))" } ?? "")) }
+        for link in item["links"] as? [String] ?? [] { print("Link: \(link)") }
+        for file in item["files"] as? [String] ?? [] { print("File: \(file)") }
+        if let artifact = item["artifact"] as? String, !artifact.isEmpty { print("\n" + artifact) }
+    }
+    switch sub {
+    case "save":
+        let note = rest.joined(separator: " ")
+        guard !note.isEmpty else { usage() }
+        let item = await later("save", ["note": note, "artifact": artifact() ?? "", "links": flags["link"] ?? [], "files": paths("attach")]) as? [String: Any] ?? [:]
+        print("zero: saved for later as \(item["link"] as? String ?? "?")")
+    case "edit", "done", "open":
+        guard let id = rest.first else { usage() }
+        var args: [String: Any] = ["item": id, "links": flags["link"] ?? [], "files": paths("attach")]
+        if let note = flag("note") { args["note"] = note }
+        if let text = artifact() { args["artifact"] = text }
+        if sub != "edit" { args["done"] = sub == "done" }
+        let item = await later("edit", args) as? [String: Any] ?? [:]
+        print("zero: \(item["link"] as? String ?? id) is at version \(item["version"] as? Int ?? 1)" + (item["done"] as? Bool == true ? ", done" : ""))
+    case "view":
+        guard let id = rest.first else { usage() }
+        var args: [String: Any] = ["item": id]
+        if let version = flag("version").flatMap(Int.init) { args["version"] = version }
+        show(await later("view", args) as? [String: Any] ?? [:])
+    case "delete":
+        guard let id = rest.first else { usage() }
+        _ = await later("delete", ["item": id])
+        print("zero: deleted \(id)")
+    case "list":
+        let items = await later("list", ["query": rest.joined(separator: " ")]) as? [[String: Any]] ?? []
+        if items.isEmpty { print("zero: nothing saved for later") }
+        for item in items {
+            let done = item["done"] as? Bool == true ? "done  " : ""
+            print("\(item["id"] as? String ?? "?")  \(done)\(item["note"] as? String ?? "")" + ((item["task"] as? String).map { "  (\($0))" } ?? ""))
+        }
+    default: usage()
+    }
+case "pause", "unpause":
+    let done = await zerod { command == "pause" ? try await $0.pause(sessions: positional) : try await $0.unpause(sessions: positional) }
+    print(done.isEmpty ? "zero: nothing to \(command)" : "zero: \(command)d \(done.joined(separator: " "))")
 case "following":
     let session = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"]
     let followed = await zerod { try await $0.following(session: session) }

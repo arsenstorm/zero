@@ -64,7 +64,7 @@ private let recordings = ["codex-command", "codex-file-change", "claude-command"
 @Test func theAppsAttentionIsZerods() throws {
     struct Case: Decodable { let name: String; let attention: Attention; let conversation: Conversation }
     let cases = try JSONDecoder().decode([Case].self, from: Data(contentsOf: wire.appendingPathComponent("attention.json")))
-    #expect(cases.count == 9)
+    #expect(cases.count == 10)
     for c in cases { #expect(c.conversation.attention == c.attention, "\(c.name)") }
     let question = try #require(cases.first { $0.name == "question" }?.conversation.questions.first)
     #expect(question.fields.first?.options.map(\.label) == ["Redis", "Postgres"])

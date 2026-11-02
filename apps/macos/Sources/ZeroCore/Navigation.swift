@@ -5,7 +5,7 @@ import Observation
 /// retrace it. The app moves it too (Settings… in the menu opens the window on Settings).
 @MainActor @Observable
 public final class Navigation {
-    public enum Place: Hashable, Sendable { case home, inbox, board, task(String), agent(String), settings, integrations, integration(String), pads, pad(String), loops, loop(String) }
+    public enum Place: Hashable, Sendable { case home, inbox, board, task(String), agent(String), settings, integrations, integration(String), pads, pad(String), loops, loop(String), later, laterItem(String) }
 
     public var place = Place.home {
         didSet {
@@ -89,6 +89,8 @@ public extension Navigation.Place {
         case let .pad(id): "pad:" + id
         case .loops: "loops"
         case let .loop(name): "loop:" + name
+        case .later: "later"
+        case let .laterItem(id): "later:" + id
         }
     }
 
@@ -107,6 +109,7 @@ public extension Navigation.Place {
         case "pad": self = .pad(value)
         case "loops": self = .loops
         case "loop": self = .loop(value)
+        case "later": self = value.isEmpty ? .later : .laterItem(value)
         default: return nil
         }
     }

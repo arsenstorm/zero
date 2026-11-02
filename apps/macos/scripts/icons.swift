@@ -1,19 +1,13 @@
-// Renders Zero's icons from Resources/logo/logo.svg: the app icon (AppIcon.icns), the menu bar template
-// (menubar.png, menubar@2x.png) and the mark the app draws itself (mark.svg). Run from apps/macos: swift scripts/icons.swift
+// Renders Zero's icons from Resources/logo/logo.svg, the filled cube: the app icon (AppIcon.icns), Slack's icon
+// (slack.png), the logo on plain white (plain.png), the menu bar template (menubar.png, menubar@2x.png) and the marks the app draws itself (mark.svg,
+// mark-small.svg). Run from apps/macos: swift scripts/icons.swift
 import AppKit
 
 let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
 let svg = try! String(contentsOf: root.appendingPathComponent("Resources/logo/logo.svg"), encoding: .utf8)
 
-/// The logo with its strokes recoloured and thickened: the drawing is a hairline at 1342 units wide, so each
-/// size gets the stroke that reads at that size.
-/// `gap` pushes the rear edges further out from the faces (the drawing's 1.07): at small sizes the two lines would
-/// otherwise run into each other.
-func logo(color: String, width: Double, gap: Double = 1.07) -> String {
-    svg.replacingOccurrences(of: "stroke=\"#444444\"", with: "stroke=\"\(color)\"")
-        .replacingOccurrences(of: "stroke-width=\"2.7\"", with: "stroke-width=\"\(width)\"")
-        .replacingOccurrences(of: "scale(1.07)", with: "scale(\(gap))")
-}
+/// The logo in a colour: one filled shape, its weight its own, the same at every size.
+func logo(color: String) -> String { svg.replacingOccurrences(of: "fill=\"#000000\"", with: "fill=\"\(color)\"") }
 
 func image(_ source: String) -> NSImage { NSImage(data: Data(source.utf8))! }
 
@@ -49,10 +43,10 @@ func drawLogo(_ img: NSImage, in box: CGRect) {
     img.draw(in: CGRect(x: box.midX - size.width / 2, y: box.midY - size.height / 2, width: size.width, height: size.height))
 }
 
-/// The cube itself (the drawing has margins of its own: its strokes span 243–1100 × 112–1066) fitted into `box`, so
-/// the icon's glyph is sized by what is seen, as the Dock's other icons are.
+/// The cube itself (the drawing has margins of its own: the shape spans 193–1150 × 61–1115) fitted into `box`, so the
+/// icon's glyph is sized by what is seen, as the Dock's other icons are.
 func drawCube(_ img: NSImage, in box: CGRect) {
-    let content = CGRect(x: 243, y: 112, width: 857, height: 954)
+    let content = CGRect(x: 193, y: 61, width: 957, height: 1054)
     let scale = min(box.width / content.width, box.height / content.height)
     let size = CGSize(width: 1342 * scale, height: 1284 * scale)
     // The drawing's centre sits where the cube's centre should: the box's.
@@ -64,16 +58,10 @@ func drawCube(_ img: NSImage, in box: CGRect) {
 let iconset = root.appendingPathComponent(".build/AppIcon.iconset")
 try? FileManager.default.removeItem(at: iconset)
 try! FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)
-let iconLogo = image(logo(color: "#1d1d1f", width: 20))
-/// The stroke that reads at each size: the drawing's units are 0.65 px per unit at 1024, so a width of 20 is a
-/// hairline below 128 px; small sizes get a stroke of about two pixels, the big ones keep the fine line.
-func strokeWidth(forPixels px: Int) -> Double {
-    switch px { case ...16: 90; case ...32: 48; case ...64: 34; case ...128: 26; case ...256: 24; default: 20 }
-}
+let iconLogo = image(logo(color: "#1d1d1f"))
 for (points, scales) in [(16, [1, 2]), (32, [1, 2]), (128, [1, 2]), (256, [1, 2]), (512, [1, 2])] {
     for s in scales {
         let px = points * s
-        let iconLogo = image(logo(color: "#1d1d1f", width: strokeWidth(forPixels: px), gap: px <= 128 ? 1.12 : 1.07))
         let data = png(px) { canvas in
             let k = canvas.width / 1024
             let plate = CGRect(x: 100 * k, y: 100 * k, width: 824 * k, height: 824 * k)
@@ -104,17 +92,23 @@ try! iconutil.run(); iconutil.waitUntilExit()
 try! png(1024) { canvas in
     let shape = NSBezierPath(rect: canvas)
     NSGradient(starting: .white, ending: NSColor(white: 0.93, alpha: 1))!.draw(in: shape, angle: -90)
-    drawCube(iconLogo, in: canvas.insetBy(dx: 150, dy: 150))
+    drawCube(iconLogo, in: canvas.insetBy(dx: canvas.width * 0.2, dy: canvas.width * 0.2)) // drawn at 4×: the margin a fifth of it
 }.write(to: root.appendingPathComponent("Resources/logo/slack.png"))
 
-// Menu bar: a template (black on clear, macOS tints it), 18 pt, a stroke that holds up at that size.
-let bar = image(logo(color: "#000000", width: 64))
+// The logo on a plain background: solid white, nothing else, full bleed, 1024 px.
+try! png(1024) { canvas in
+    NSColor.white.setFill(); canvas.fill()
+    drawCube(iconLogo, in: canvas.insetBy(dx: canvas.width * 0.2, dy: canvas.width * 0.2)) // drawn at 4×: the margin a fifth of it
+}.write(to: root.appendingPathComponent("Resources/logo/plain.png"))
+
+// Menu bar: a template (black on clear, macOS tints it), 18 pt.
+let bar = image(logo(color: "#000000"))
 for (name, px) in [("menubar.png", 18), ("menubar@2x.png", 36)] {
     try! png(px) { drawLogo(bar, in: $0.insetBy(dx: CGFloat(px) / 18, dy: CGFloat(px) / 18)) }.write(to: root.appendingPathComponent("Resources/logo/\(name)"))
 }
 
-// The marks the app draws (onboarding): black strokes for template images, one weighted for ~100 pt and one
-// for ~34 pt, since a single stroke is either a hairline small or heavy large.
-try! logo(color: "#000000", width: 16).write(to: root.appendingPathComponent("Resources/logo/mark.svg"), atomically: true, encoding: .utf8)
-try! logo(color: "#000000", width: 40).write(to: root.appendingPathComponent("Resources/logo/mark-small.svg"), atomically: true, encoding: .utf8)
+// The marks the app draws (onboarding), black for template images: the logo, at any size alike.
+for name in ["mark.svg", "mark-small.svg"] {
+    try! logo(color: "#000000").write(to: root.appendingPathComponent("Resources/logo/\(name)"), atomically: true, encoding: .utf8)
+}
 print("icons written")

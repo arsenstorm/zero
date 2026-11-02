@@ -6,74 +6,6 @@ import ZeroCore
 // only its answer in full. Hovering a message shows when it was sent, a copy button and a menu. A rail on the left
 // has a tick for each of your messages, bright for those on screen; hovering one previews it, clicking goes there.
 
-/// One thing in the timeline: a message of yours, a turn's work, an answer, or a step that shows on its own (a notice).
-enum TimelineBlock: Identifiable, Equatable {
-    case user(ConversationItem)
-    case work(id: String, items: [ConversationItem], start: Date?, end: Date?, live: Bool)
-    case answer(ConversationItem)
-    case step(ConversationItem)
-
-    var id: String {
-        switch self {
-        case let .user(item), let .answer(item), let .step(item): item.id
-        case let .work(id, _, _, _, _): id
-        }
-    }
-
-    /// The items as blocks: everything between your message and the agent's answer is the turn's work. The work still
-    /// going at the end is live while the agent is at it.
-    static func of(_ items: [ConversationItem], working: Bool) -> [TimelineBlock] {
-        var blocks: [TimelineBlock] = []
-        var work: [ConversationItem] = []
-        var start: Date?
-        func flush(end: Date?, live: Bool) {
-            guard let first = work.first else { return }
-            blocks.append(.work(id: "work-" + first.id, items: work, start: start ?? first.date, end: end ?? work.last?.date, live: live))
-            work = []
-        }
-        for item in items {
-            switch item.kind {
-            case .user:
-                flush(end: nil, live: false)
-                blocks.append(.user(item))
-                start = item.date
-            case .agent(_, finalAnswer: true):
-                flush(end: item.date, live: false)
-                blocks.append(.answer(item))
-            case .notice(_, error: true):
-                // A failure mid-turn reads like the agent's interim words: in the work, where it happened.
-                work.append(item)
-            case .notice, .table:
-                // Something to see without opening anything: a notice, or a table the agent handed to Zero. Where it
-                // happened: the work so far closes before it, and what follows is a block of its own.
-                flush(end: item.date, live: false)
-                start = nil
-                blocks.append(.step(item))
-            default:
-                work.append(item)
-            }
-        }
-        // Working with nothing to show yet (it's thinking before its first step): the live block anyway, so it never looks
-        // stuck.
-        if working && work.isEmpty, !blocks.isEmpty {
-            blocks.append(.work(id: "work-live", items: [], start: start, end: nil, live: true))
-        }
-        flush(end: nil, live: working)
-        return blocks
-    }
-
-    /// The message of yours each block answers to, for the rail.
-    static func turns(_ blocks: [TimelineBlock]) -> [String: String] {
-        var owner: [String: String] = [:]
-        var current: String?
-        for block in blocks {
-            if case let .user(item) = block { current = item.id }
-            if let current { owner[block.id] = current }
-        }
-        return owner
-    }
-}
-
 /// One block of the timeline, drawn again only when the block itself (or the folder its links use) changed: the quote
 /// and save actions don't count.
 struct BlockRow: View, Equatable {
@@ -83,6 +15,8 @@ struct BlockRow: View, Equatable {
     let save: (String) -> Void
     /// Going back to a message of yours (WorkspaceView's RewindCard).
     var rewind: (ConversationItem) -> Void = { _ in }
+    /// Asking the agent to save an answer for later.
+    var later: (String) -> Void = { _ in }
 
     static func == (a: BlockRow, b: BlockRow) -> Bool { a.block == b.block && a.cwd == b.cwd }
 
@@ -100,7 +34,7 @@ struct BlockRow: View, Equatable {
         case let .answer(item):
             // Zero's ending isn't shown: it's the task's state, in the sidebar, the pane and the board.
             if case let .agent(said, _) = item.kind, case let text = ZeroEnding.split(said).0, !text.isEmpty {
-                MessageBlock(text: text, date: item.date, mine: false, quote: quote, save: save) {
+                MessageBlock(text: text, date: item.date, mine: false, quote: quote, save: save, later: later) {
                     // Still being revealed when the turn ended: it carries on at its pace, rather than jumping to the end.
                     if Reveal.unfinished(item.id, of: text) { StreamingText(id: item.id, text: text, cwd: cwd) }
                     else { MarkdownText(text, cwd: cwd, size: 14.5) }
@@ -115,12 +49,7 @@ struct BlockRow: View, Equatable {
 }
 
 /// "2m 37s", "45s", "1h 3m".
-func workedFor(_ seconds: TimeInterval) -> String {
-    let s = max(0, Int(seconds))
-    if s < 60 { return "\(s)s" }
-    if s < 3600 { return "\(s / 60)m \(s % 60)s" }
-    return "\(s / 3600)h \(s % 3600 / 60)m"
-}
+func workedFor(_ seconds: TimeInterval) -> String { Took.length(seconds) }
 
 /// A turn's work: open while it goes ("Working for 12s", every step under it), folded once the answer comes ("Worked
 /// for 2m 37s ›"), unless you say otherwise. A turn that only thought says "Thinking", then "Thought for 8s", as Codex
@@ -150,24 +79,25 @@ struct WorkBlock: View {
                             }
                         } else {
                             let verb = worked ? "Worked" : "Thought"
-                            Text(start.flatMap { start in end.map { verb + " for " + workedFor($0.timeIntervalSince(start)) } } ?? verb)
+                            Text(Took.text(verb, start.flatMap { start in end.map { $0.timeIntervalSince(start) } }))
                         }
                         if !items.isEmpty { NucleoIcon("chevron-down", size: 9).rotationEffect(.degrees(open ? 0 : -90)) }
                     }
-                    .font(.system(size: 13)).foregroundStyle(.secondary)
+                    // Figures of one width: the count ticks without the chevron after it shifting.
+                    .font(.system(size: 13).monospacedDigit()).foregroundStyle(.secondary)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .disabled(items.isEmpty)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .overlay(alignment: .bottom) { if worked { Rectangle().fill(Theme.stroke).frame(height: 1).offset(y: 6) } }
-                .help(open ? "Hide the steps" : "Show every step")
+                .tip(open ? "Hide the steps" : "Show every step")
             }
             if open, !items.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     // Each step knows when the next began (a thought's length); the last, when the turn ended.
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        ItemView(item: item, cwd: cwd, until: index + 1 < items.count ? items[index + 1].date : (live ? nil : end))
+                        StepOrAsk(item: item, cwd: cwd, until: index + 1 < items.count ? items[index + 1].date : (live ? nil : end))
                     }
                 }
                 .padding(.top, 4)
@@ -197,19 +127,79 @@ struct WorkBlock: View {
     }
 }
 
+/// A step, or, when it was the agent asking you through Zero (zero run, ask, approve), that ask's card in its place:
+/// what the step is, answered there as in the inbox. Reads the inbox itself, so the card keeps up with the answer.
+struct StepOrAsk: View {
+    let item: ConversationItem
+    let cwd: String
+    let until: Date?
+    @Environment(\.askInbox) private var inbox
+    @Environment(\.askSession) private var session
+
+    var body: some View {
+        if let inbox, let session, let ask = AgentAskCard.made(by: item, in: inbox.store.asks, session: session) {
+            AgentAskCard(ask: ask, inbox: inbox)
+        } else {
+            ItemView(item: item, cwd: cwd, until: until)
+        }
+    }
+}
+
+extension EnvironmentValues {
+    /// The inbox, and the session whose chat this is: what a step that asked shows its card from.
+    @Entry var askInbox: InboxController? = nil
+    @Entry var askSession: String? = nil
+}
+
 /// "Thinking…", breathing, while the agent works with nothing new to show: never mistaken for stuck.
 struct Thinking: View {
     var text = "Thinking…"
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var dim = false
 
+    // The pulse runs in Core Animation, as the spinner does: a SwiftUI animation that never ends has the window's
+    // whole layout worked out again every frame, the conversation with it, for as long as the agent thinks.
     var body: some View {
         Text(text).font(.system(size: 13)).foregroundStyle(.secondary)
-            .opacity(dim ? 0.35 : 1)
-            .onAppear {
-                guard !reduceMotion else { return }
-                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { dim = true }
-            }
+            .overlay { if !reduceMotion { PulseLayer() } }
+            .compositingGroup()
+    }
+}
+
+/// Fades what's under it in and out, forever, on the render server: nothing of SwiftUI's runs per frame.
+private struct PulseLayer: NSViewRepresentable {
+    func makeNSView(context: Context) -> PulseView { PulseView() }
+    func updateNSView(_ view: PulseView, context: Context) {}
+}
+
+final class PulseView: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil, let layer, layer.animation(forKey: "pulse") == nil else { return }
+        // A veil in the card's colour, coming and going over the words: the words seem to dim and brighten.
+        layer.backgroundColor = Theme.cardColor.cgColor
+        let pulse = CABasicAnimation(keyPath: "opacity")
+        pulse.fromValue = 0
+        pulse.toValue = 0.65
+        pulse.duration = 0.9
+        pulse.autoreverses = true
+        pulse.repeatCount = .infinity
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        pulse.isRemovedOnCompletion = false
+        layer.opacity = 0
+        layer.add(pulse, forKey: "pulse")
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance { layer?.backgroundColor = Theme.cardColor.cgColor }
     }
 }
 
@@ -262,6 +252,8 @@ struct MessageBlock<Content: View>: View {
     let save: (String) -> Void
     /// Yours: back to just before it.
     var rewind: (() -> Void)? = nil
+    /// The agent's: it's asked to save this for later.
+    var later: ((String) -> Void)? = nil
     @ViewBuilder let content: () -> Content
     @State private var hovered = false
 
@@ -274,6 +266,7 @@ struct MessageBlock<Content: View>: View {
                     Button("Copy") { copy() }
                     Button("Quote in reply") { quote(text) }
                     Button("Save to a scratchpad") { save(text) }
+                    if let later { Button("Save for later") { later(text) } }
                     if let rewind {
                         Divider()
                         Button("Rewind…", action: rewind)
@@ -437,7 +430,7 @@ struct WayDown: View {
                     .frame(width: 32, height: 32).background(Theme.card, in: Circle())
                     .overlay(Circle().strokeBorder(Theme.stroke))
             }
-            .buttonStyle(.plain).help("Go to the latest")
+            .buttonStyle(.plain).tip("Go to the latest")
             .transition(.opacity)
         }
     }
@@ -664,7 +657,7 @@ struct StreamingText: View {
     var body: some View {
         let total = text.count
         TimelineView(.animation(minimumInterval: 1 / 60, paused: shown >= total)) { context in
-            MarkdownText(String(text.prefix(shown)), cwd: cwd, size: 14.5)
+            MarkdownText(String(text.prefix(shown)), cwd: cwd, size: 14.5).streaming(true)
                 .onChange(of: context.date) { _, now in advance(to: now, total: total) }
         }
         .onAppear { shown = min(Reveal.shown[id] ?? 0, total) }

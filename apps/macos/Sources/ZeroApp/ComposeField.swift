@@ -111,6 +111,14 @@ struct ComposeField: NSViewRepresentable {
         NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main) { [weak scroll] _ in
             if let scroll { coordinator.edges(scroll) }
         }
+        // Grown or shrunk (a paste): the edges again once the new size is laid out, not from the old one.
+        scroll.contentView.postsFrameChangedNotifications = true
+        view.postsFrameChangedNotifications = true
+        for watched in [scroll.contentView as NSView, view] {
+            NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: watched, queue: .main) { [weak scroll] _ in
+                if let scroll { coordinator.edges(scroll) }
+            }
+        }
         return scroll
     }
 
@@ -159,7 +167,9 @@ struct ComposeField: NSViewRepresentable {
             guard let view = notification.object as? TokenTextView else { return }
             parent.text = decode(view)
             restyle(view)
-            measure(view)
+            // At once, not on the next turn: the field grows in the same frame as its text, rather than the text
+            // scrolling a line inside the old height first and back again when the height follows.
+            measure(view, now: true)
             report(view)
             if let scroll = view.enclosingScrollView { DispatchQueue.main.async { self.edges(scroll) } }
         }
@@ -252,8 +262,13 @@ struct ComposeField: NSViewRepresentable {
         /// token typed or set as text becomes its pill.
         func restyle(_ view: NSTextView) {
             guard let storage = view.textStorage, let view = view as? TokenTextView else { return }
+            // Each token written out ("[Image #1]") becomes its one-character pill: the caret keeps its place among the
+            // words, rather than wherever the shorter text leaves it (the end, when there's text after it).
+            let tokens = ImageToken.find(in: storage.string)
+            let caret = view.selectedRange()
+            let shift = tokens.filter { NSMaxRange($0.range) <= caret.location }.reduce(0) { $0 + $1.range.length - 1 }
             storage.beginEditing()
-            for token in ImageToken.find(in: storage.string).reversed() {
+            for token in tokens.reversed() {
                 storage.replaceCharacters(in: token.range, with: ImageToken.attachment(token.number, font: ComposeField.font))
             }
             let all = NSRange(location: 0, length: storage.length)
@@ -263,17 +278,20 @@ struct ComposeField: NSViewRepresentable {
                 storage.addAttributes([.font: TokenTextView.tokenFont, .foregroundColor: TokenTextView.tokenText], range: range)
             }
             storage.endEditing()
+            if !tokens.isEmpty { view.setSelectedRange(NSRange(location: max(0, min(caret.location - shift, storage.length)), length: 0)) }
             view.needsDisplay = true
         }
 
-        /// Two lines at least, eight at most; past that the text scrolls inside.
-        func measure(_ view: NSTextView) {
+        /// Two lines at least, eight at most; past that the text scrolls inside. From inside a SwiftUI update (`now`
+        /// false) the height is set after it.
+        func measure(_ view: NSTextView, now: Bool = false) {
             guard let manager = view.layoutManager, let container = view.textContainer else { return }
             manager.ensureLayout(for: container)
             let used = manager.usedRect(for: container).height
             let lines = ComposeField.lineHeight
             let height = (min(max(used, lines * 2), lines * 8) + TokenTextView.inset.height * 2).rounded(.up)
-            if abs(parent.height - height) > 0.5 { DispatchQueue.main.async { self.parent.height = height } }
+            guard abs(parent.height - height) > 0.5 else { return }
+            if now { parent.height = height } else { DispatchQueue.main.async { self.parent.height = height } }
         }
     }
 }

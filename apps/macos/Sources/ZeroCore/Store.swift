@@ -16,6 +16,7 @@ public final class Store {
     @ObservationIgnored public var onCreate: ((Ask) -> Void)?
     @ObservationIgnored public var onChange: ((Ask) -> Void)?
     @ObservationIgnored public var onOutput: ((Ask, String) -> Void)?
+    @ObservationIgnored public var onRemove: ((String) -> Void)?
 
     /// Agents whose terminal screen is open in Zero (after a slash command), with the latest rendering.
     public private(set) var screens: [String: String] = [:]
@@ -66,6 +67,7 @@ public final class Store {
             onOutput?(asks[i], chunk)
         case let .removed(id):
             asks.removeAll { $0.id == id }
+            onRemove?(id)
         case let .agents(offline, reachable):
             if offline != self.offline { self.offline = offline }
             if reachable != self.reachable { self.reachable = reachable }

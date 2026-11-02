@@ -1,7 +1,17 @@
 import Foundation
 
 /// Blocking Unix-domain socket with newline-delimited JSON. Used by the app (listen) and the CLI (connect).
-public final class UnixSocket {
+/// Lines of JSON to and from zerod, read blocking on a thread of their own: a Unix socket on the Mac, the tunnel on
+/// the phone.
+public protocol LineConnection: AnyObject {
+    func write(line: String) throws
+    /// The next line; nil once the connection has ended.
+    func readLine() -> String?
+    func shutdown()
+    func close()
+}
+
+public final class UnixSocket: LineConnection {
     public let fd: Int32
     private var buffer = Data()
     private var closed = false

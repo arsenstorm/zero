@@ -1,0 +1,195 @@
+import Foundation
+
+// A conversation read as both apps show it: your messages, then each turn's work folded under one line with only its
+// answer in full.
+
+/// One thing in the timeline: a message of yours, a turn's work, an answer, or a step that shows on its own (a notice).
+public enum TimelineBlock: Identifiable, Equatable, Sendable {
+    case user(ConversationItem)
+    case work(id: String, items: [ConversationItem], start: Date?, end: Date?, live: Bool)
+    case answer(ConversationItem)
+    case step(ConversationItem)
+
+    public var id: String {
+        switch self {
+        case let .user(item), let .answer(item), let .step(item): item.id
+        case let .work(id, _, _, _, _): id
+        }
+    }
+
+    /// The items as blocks: everything between your message and the agent's answer is the turn's work. The work still
+    /// going at the end is live while the agent is at it.
+    public static func of(_ items: [ConversationItem], working: Bool) -> [TimelineBlock] {
+        var blocks: [TimelineBlock] = []
+        var work: [ConversationItem] = []
+        var start: Date?
+        func flush(end: Date?, live: Bool) {
+            guard let first = work.first else { return }
+            blocks.append(.work(id: "work-" + first.id, items: work, start: start ?? first.date, end: end ?? work.last?.date, live: live))
+            work = []
+        }
+        for item in items {
+            switch item.kind {
+            case .user:
+                flush(end: nil, live: false)
+                blocks.append(.user(item))
+                start = item.date
+            case .agent(_, finalAnswer: true):
+                flush(end: item.date, live: false)
+                blocks.append(.answer(item))
+            case .notice(_, error: true):
+                // A failure mid-turn reads like the agent's interim words: in the work, where it happened.
+                work.append(item)
+            case .notice, .table:
+                // Something to see without opening anything: a notice, or a table the agent handed to Zero. Where it
+                // happened: the work so far closes before it, and what follows is a block of its own.
+                flush(end: item.date, live: false)
+                start = nil
+                blocks.append(.step(item))
+            default:
+                work.append(item)
+            }
+        }
+        // Working with nothing to show yet (it's thinking before its first step): the live block anyway, so it never looks
+        // stuck.
+        if working && work.isEmpty, !blocks.isEmpty {
+            blocks.append(.work(id: "work-live", items: [], start: start, end: nil, live: true))
+        }
+        flush(end: nil, live: working)
+        return blocks
+    }
+
+    /// The message of yours each block answers to, for the rail.
+    public static func turns(_ blocks: [TimelineBlock]) -> [String: String] {
+        var owner: [String: String] = [:]
+        var current: String?
+        for block in blocks {
+            if case let .user(item) = block { current = item.id }
+            if let current { owner[block.id] = current }
+        }
+        return owner
+    }
+}
+
+extension ConversationItem {
+    /// The ask this step made, when it was the agent asking the user through Zero (`zero run`, `zero ask`,
+    /// `zero approve`): by its id in what the step printed, else by its words in the command, the first asked from when
+    /// the step began. Its card stands in the step's place.
+    // Built once: every command step of a page asks, every time the page is drawn.
+    nonisolated(unsafe) private static let zeroAsks = #/\bzero (run|ask|approve)\b/#
+    nonisolated(unsafe) private static let askID = #/ask ([a-z0-9]{6})/#
+
+    public func ask(in asks: [Ask], session: String) -> Ask? {
+        guard case let .command(command, _, output, _, _) = kind,
+              command.firstMatch(of: Self.zeroAsks) != nil else { return nil }
+        let own = asks.filter { $0.isAgents(in: session) }
+        if let id = output.firstMatch(of: Self.askID).map({ String($0.output.1) }),
+           let ask = own.first(where: { $0.id == id }) { return ask }
+        let since = date?.addingTimeInterval(-5) ?? .distantPast
+        return own.filter { $0.createdAt >= since && command.contains(($0.kind == .run ? $0.command : nil) ?? $0.title) }
+            .min { $0.createdAt < $1.createdAt }
+    }
+}
+
+extension Ask {
+    /// The zerod session that asked, when one did.
+    public var session: String? { agent.ref ?? (agent.name.hasPrefix("zerod-") ? String(agent.name.dropFirst("zerod-".count)) : nil) }
+
+    /// The agent's own ask in this session (`zero ask`, `approve`, `run`), not the provider's questions and approvals.
+    public func isAgents(in session: String) -> Bool {
+        self.session == session && request == nil && ![.note, .message].contains(kind)
+    }
+}
+
+extension BoardRow {
+    /// A risk column's cell that opens with its level ("medium. No dry run for the backfill", "Merge risk: high"): the
+    /// level, and whatever follows it.
+    public static func risk(_ text: String) -> (String, String)? {
+        var rest = text.trimmingCharacters(in: .whitespaces)
+        if let colon = rest.range(of: ":"), rest[..<colon.lowerBound].localizedCaseInsensitiveContains("risk") { rest = String(rest[colon.upperBound...]).trimmingCharacters(in: .whitespaces) }
+        guard let level = ["low", "medium", "high"].first(where: { rest.lowercased().hasPrefix($0) }) else { return nil }
+        let after = rest.dropFirst(level.count)
+        guard after.isEmpty || !(after.first?.isLetter ?? false) else { return nil }
+        return (level, after.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:—– ")))
+    }
+}
+
+extension BoardRow.State {
+    /// A cell that names a state, in the board's words or the agents' usual ones.
+    public static func named(_ text: String) -> Self? {
+        switch text.trimmingCharacters(in: .whitespaces).lowercased() {
+        case "needs you", "needsyou": .needsYou
+        case "blocked", "waiting": .blocked
+        case "over to you", "handed": .handed
+        case "trouble", "in trouble", "failed", "stuck": .trouble
+        case "working": .working
+        case "done": .done
+        case "replied", "answered": .answered
+        case "merged": .merged
+        case "idle": .idle
+        case "offline": .offline
+        default: nil
+        }
+    }
+}
+
+extension BoardRow {
+    /// How the sidebar orders tasks: by state (the board's own order), by name, or as they were dragged.
+    public enum Sort: String, CaseIterable, Sendable { case state, name, manual }
+
+    /// The rows as the sidebar shows them; `order` is the dragged one, a session per line, tasks not in it on top.
+    public static func sorted(_ rows: [BoardRow], by sort: Sort, order: String) -> [BoardRow] {
+        switch sort {
+        case .state: return rows
+        case .name: return rows.sorted { $0.task.localizedStandardCompare($1.task) == .orderedAscending }
+        case .manual:
+            let rank = Dictionary(order.split(separator: "\n").enumerated().map { (String($1), $0) }, uniquingKeysWith: { first, _ in first })
+            return rows.enumerated().sorted { (rank[$0.element.session] ?? -1, $0.offset) < (rank[$1.element.session] ?? -1, $1.offset) }.map(\.element)
+        }
+    }
+}
+
+/// How long something took, as a conversation says it: "Thought for 8s", "Worked for 2m 37s"; under a second, "for a
+/// moment" (a "0s" reads as something broken).
+public enum Took {
+    public static func length(_ seconds: TimeInterval) -> String {
+        let s = max(0, Int(seconds))
+        if s < 60 { return "\(s)s" }
+        if s < 3600 { return "\(s / 60)m \(s % 60)s" }
+        return "\(s / 3600)h \(s % 3600 / 60)m"
+    }
+
+    public static func text(_ verb: String, _ seconds: TimeInterval?) -> String {
+        guard let seconds else { return verb }
+        return seconds < 1 ? verb + " for a moment" : verb + " for " + length(seconds)
+    }
+}
+
+/// A tool as people say it, and its arguments as their values: "Linear · list comments", "ENG-9737 · 5".
+public enum ToolNames {
+    /// "mcp__linear-server__list_comments" → "Linear · list comments"; Claude Code's Agent tool is a subagent, said so;
+    /// anything else as it is.
+    public static func name(_ raw: String) -> String {
+        if raw == "Agent" || raw == "Task" { return "Subagent" }
+        guard raw.hasPrefix("mcp__") else { return raw }
+        let parts = raw.dropFirst("mcp__".count).components(separatedBy: "__")
+        guard parts.count >= 2 else { return raw }
+        // "linear-server", "plugin_zero_zero": the service's own name, its last word.
+        let server = parts[0].replacingOccurrences(of: "-server", with: "").split(whereSeparator: { $0 == "_" || $0 == "-" }).last.map(String.init) ?? parts[0]
+        return server.capitalized + " · " + parts[1...].joined(separator: " ").replacingOccurrences(of: "_", with: " ")
+    }
+
+    /// A JSON object's values, shortest first (what it's about before what it says); anything else as it is.
+    public static func detail(_ raw: String) -> String {
+        guard let data = raw.data(using: .utf8), let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return raw }
+        let values: [String] = object.values.compactMap { value in
+            switch value {
+            case let text as String: text
+            case let number as NSNumber: number.stringValue
+            case let list as [Any]: list.map { "\($0)" }.joined(separator: ", ")
+            default: nil
+            }
+        }
+        return values.sorted { $0.count < $1.count }.joined(separator: " · ")
+    }
+}

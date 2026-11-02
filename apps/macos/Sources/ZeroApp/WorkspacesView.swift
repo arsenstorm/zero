@@ -62,9 +62,9 @@ private struct WorkspaceRow: View {
             }
             Spacer(minLength: 8)
             HStack(spacing: 2) {
-                Button(action: edit) { NucleoIcon("pen", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28) }.buttonStyle(Hovering(radius: 7)).help("Edit")
+                Button(action: edit) { NucleoIcon("pen", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28) }.buttonStyle(Hovering(radius: 7)).tip("Edit")
                 if let delete {
-                    Button(action: delete) { NucleoIcon("trash", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28) }.buttonStyle(Hovering(radius: 7)).help("Delete: its tasks are Zero's again")
+                    Button(action: delete) { NucleoIcon("trash", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28) }.buttonStyle(Hovering(radius: 7)).tip("Delete: its tasks are Zero's again")
                 }
             }
             .opacity(hovered ? 1 : 0)
