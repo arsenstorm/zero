@@ -71,13 +71,14 @@ pub fn verdict(printed: &str) -> Result<String, String> {
     Err("the reviewer gave no verdict".into())
 }
 
-/// A task's state as its tab group shows it, a light: working (yellow), blocked (red: it needs the user, or is in
-/// trouble), done (green: finished, answered, idle or parked).
-pub fn light(attention: crate::model::Attention) -> &'static str {
-    use crate::model::Attention::*;
-    match attention {
-        Starting | Working => "working",
-        NeedsYou | Stuck | Failed | Limited => "blocked",
+/// A task's state as its tab group shows it, Chrome's own four: working, needs (the user: a question, an approval),
+/// blocked (on something else, or in trouble), done (everything finished, answered, handed over or parked).
+pub fn light(state: crate::board::State) -> &'static str {
+    use crate::board::State::*;
+    match state {
+        NeedsYou => "needs",
+        Trouble | Blocked => "blocked",
+        Working => "working",
         _ => "done",
     }
 }
@@ -181,19 +182,31 @@ impl Browsers {
         for browser in &st.browsers { let _ = browser.send.send(json!({"event": "browserState", "session": session, "state": state})); }
     }
 
-    /// Follows every session's state, telling Chrome when one's light changes.
-    pub fn follow(self: &Arc<Self>, daemon: Arc<crate::daemon::Daemon>) {
-        let (me, mut heard) = (Arc::downgrade(self), daemon.subscribe());
-        for conversation in daemon.list() { self.tell_state(&conversation.id, light(conversation.attention())) }
+    /// Follows every task's state on the board (its asks and notes included, so a `zero ask` waiting shows as needing
+    /// the user), telling Chrome when one's light changes: a lead's row, and each of its workers.
+    pub fn follow(self: &Arc<Self>, daemon: Arc<crate::daemon::Daemon>, inbox: Arc<crate::inbox::Inbox>) {
+        let (me, mut heard, mut asked) = (Arc::downgrade(self), daemon.subscribe(), inbox.subscribe());
+        let lights = move |browsers: &Browsers| {
+            let rows = crate::board::board_full(&daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(), &inbox.asks(), &HashMap::new(), &HashMap::new());
+            for row in rows {
+                // Each group shows its own task: a lead's, its workers left out (they have groups of their own).
+                browsers.tell_state(&row.session, light(row.own));
+                for member in row.team { browsers.tell_state(&member.session, light(member.state)) }
+            }
+        };
+        lights(self);
         tokio::spawn(async move {
             loop {
-                let session = match heard.recv().await {
-                    Ok(event) => event.session,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(_) => return,
-                };
+                tokio::select! {
+                    heard = heard.recv() => if matches!(heard, Err(tokio::sync::broadcast::error::RecvError::Closed)) { return },
+                    asked = asked.recv() => if matches!(asked, Err(tokio::sync::broadcast::error::RecvError::Closed)) { return },
+                }
+                // A turn streaming is many changes: one look at the board for a burst of them.
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                while heard.try_recv().is_ok() {}
+                while asked.try_recv().is_ok() {}
                 let Some(browsers) = me.upgrade() else { return };
-                if let Some(conversation) = daemon.get(&session) { browsers.tell_state(&session, light(conversation.attention())) }
+                lights(&browsers);
             }
         });
     }

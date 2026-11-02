@@ -31,6 +31,10 @@ pub struct Conversation {
     /// The workspace it was put in (workspaces.rs); none, and its folder decides.
     #[serde(default)]
     pub workspace: Option<String>,
+    /// The MCP servers its CLI is given when it starts (its workspace's, from Zero's list): in memory only, never sent
+    /// to clients or kept (their values may be secrets).
+    #[serde(skip)]
+    pub mcp: Vec<crate::mcp_servers::Resolved>,
     /// The provider's own id for the conversation (a Codex thread), once it exists; what resuming needs.
     pub thread: Option<String>,
     pub title: Option<String>,
@@ -312,6 +316,8 @@ pub enum Attention {
     Stuck,
     /// The last turn or request failed.
     Failed,
+    /// It ended its turn blocked on something that isn't the user (CI, another team, an outage): they'd have been asked.
+    Blocked,
     Working,
     /// Its answer is there to read.
     Done,
@@ -415,7 +421,7 @@ impl Conversation {
         Conversation {
             id: id.into(), provider, cwd: cwd.into(), permissions: Permissions::Auto, label: None, ticket: None, place: None, branch: None, parent: None, workspace: None, thread: None, title: None, model: None, effort: None,
             status: Status::Starting, turn: None, error: None, items: vec![], snapshots: Default::default(), attributes: Default::default(), approvals: vec![], questions: vec![], usage: None,
-            failure: None, stalled: None, diff: None, terminal: None, seq: 0,
+            failure: None, stalled: None, diff: None, terminal: None, seq: 0, mcp: vec![],
         }
     }
 
@@ -432,6 +438,7 @@ impl Conversation {
             title: self.title.clone(), model: self.model.clone(), effort: self.effort.clone(), status: self.status, turn: self.turn.clone(),
             error: self.error.clone(), items, snapshots: self.snapshots.clone(), attributes: self.attributes.clone(), approvals: self.approvals.clone(), questions: self.questions.clone(), usage: self.usage.clone(),
             failure: self.failure.clone(), stalled: self.stalled.clone(), diff: self.diff.clone(), terminal: self.terminal.clone(), seq: self.seq,
+            mcp: self.mcp.clone(),
         }
     }
 
@@ -466,7 +473,8 @@ impl Conversation {
                 Some(ItemKind::Agent { final_answer: true, .. }) if self.parent.is_some() => Attention::Done,
                 Some(ItemKind::Agent { text, final_answer: true }) => match crate::board::ending(text) {
                     Some("done") => Attention::Done,
-                    Some("blocked" | "asked") => Attention::NeedsYou,
+                    Some("asked") => Attention::NeedsYou,
+                    Some("blocked") => Attention::Blocked,
                     Some(_) => Attention::Idle,
                     None if text.lines().any(|l| l.trim_end().ends_with('?')) => Attention::NeedsYou,
                     None => Attention::Answered,

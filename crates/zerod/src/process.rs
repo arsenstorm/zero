@@ -15,6 +15,14 @@ use crate::session::Transport;
 const LEFT_OUT: [&str; 11] = ["SOLO_PROCESS_ID", "SOLO_PROJECT_ID", "REX_BLOCK", "REX_SESSION", "ZERO_HOST_TERMINAL", "HF_SESSION_ID",
                               "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CODEX_THREAD_ID", "CODEX_SANDBOX"];
 
+/// Variables for one session's processes alone (its MCP servers' values, for Claude to expand): set by zerod before
+/// it starts the session's CLI, by session.
+pub static SESSION_ENV: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Variables>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Names and values, as an environment has them.
+pub type Variables = Vec<(String, String)>;
+
 /// The environment a session's processes get: `login`, less what's left out, with Zero's own variables for the session.
 pub fn environment(login: impl Iterator<Item = (String, String)>, id: &str) -> Vec<(String, String)> {
     let ours = |key: &str| key == "PATH" || key == "TERM" || key.starts_with("ZERO_");
@@ -28,6 +36,7 @@ pub fn environment(login: impl Iterator<Item = (String, String)>, id: &str) -> V
         // Zero's Claude Code plugin brings permission prompts to the inbox through hooks; zerod answers them itself.
         ("ZERO_MANAGED", "0".to_string()),
     ].map(|(k, v)| (k.to_string(), v)));
+    env.extend(SESSION_ENV.lock().unwrap().get(id).cloned().unwrap_or_default());
     env
 }
 

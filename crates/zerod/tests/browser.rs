@@ -52,7 +52,7 @@ async fn zerod(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     tokio::spawn(zerod::server::serve(zerod::server::Zerod {
         daemon, inbox: zerod::inbox::Inbox::open(None, vec![]), drops: None, integrations: integrations.clone(),
         following: zerod::following::Following::open(&home, Arc::new(zerod::integrations::Commands::default()), integrations),
-        pads: Arc::new(zerod::pads::Pads::open(&home.join("scratchpads"))), loops: Arc::new(zerod::loops::Loops::open(&home.join("loops"))),
+        pads: Arc::new(zerod::pads::Pads::open(&home.join("scratchpads"))), later: Arc::new(zerod::later::Later::open(&home.join("later"))), loops: Arc::new(zerod::loops::Loops::open(&home.join("loops"))),
         browsers: zerod::browser::Browsers::open(&home), places: Default::default(), notices: tokio::sync::broadcast::channel(64).0,
     }, socket.clone()));
     for _ in 0..50 { if socket.exists() { break } tokio::time::sleep(Duration::from_millis(10)).await }
@@ -177,11 +177,12 @@ fn screenshots_and_recordings_to_keep_are_saved_as_files_and_their_paths_given()
 
 #[test]
 fn a_tasks_state_is_a_light_for_its_tab_group() {
+    use zerod::board::State::*;
     use zerod::browser::light;
-    use zerod::model::Attention::*;
-    for (attention, expected) in [(Starting, "working"), (Working, "working"), (NeedsYou, "blocked"), (Stuck, "blocked"), (Failed, "blocked"), (Limited, "blocked"),
-                                  (Done, "done"), (Answered, "done"), (Idle, "done"), (Offline, "done")] {
-        assert_eq!(light(attention), expected, "{attention:?}");
+    // Chrome's own four: working, needs you (a question, an approval, an alert), blocked, done; nothing more.
+    for (state, expected) in [(NeedsYou, "needs"), (Trouble, "blocked"), (Blocked, "blocked"), (Working, "working"), (Handed, "done"), (Answered, "done"),
+                              (Done, "done"), (Merged, "done"), (Idle, "done"), (Offline, "done")] {
+        assert_eq!(light(state), expected, "{state:?}");
     }
 }
 

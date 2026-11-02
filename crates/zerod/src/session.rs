@@ -58,6 +58,8 @@ impl Transport {
 pub struct Session(Arc<Mutex<Inner>>);
 
 struct Inner {
+    /// The MCP servers its CLI is started with (Conversation::mcp), set by zerod before each start.
+    mcp: Vec<crate::mcp_servers::Resolved>,
     /// The conversation, replayed; None while parked.
     core: Option<Core>,
     /// What's kept of a parked session: its summary and latest items, until something needs the rest.
@@ -142,7 +144,7 @@ impl Session {
         let parked: Option<Parked> = std::fs::read(dir.join("parked.json")).ok().and_then(|data| serde_json::from_slice(&data).ok());
         if let Some(parked) = parked.filter(|p| p.lines == lines) {
             let session = Session(Arc::new(Mutex::new(Inner {
-                core: None, parked: Some(parked), summary: None, dir: Some(dir.into()), lines, touched: Instant::now(), events, transcript: Some(append(dir)?),
+                mcp: vec![], core: None, parked: Some(parked), summary: None, dir: Some(dir.into()), lines, touched: Instant::now(), events, transcript: Some(append(dir)?),
                 out: None, child: None, waiting: HashMap::new(), answered: HashSet::new(), next: lines + 1, generation: 0,
                 heard: Instant::now(), running: HashMap::new(),
             })));
@@ -186,14 +188,20 @@ impl Session {
 
     fn with(core: Core, transcript: Option<File>, events: broadcast::Sender<Event>, next: u64) -> Session {
         Session(Arc::new(Mutex::new(Inner {
-            core: Some(core), parked: None, summary: None, dir: None, lines: 0, touched: Instant::now(), events, transcript, out: None, child: None, waiting: HashMap::new(), answered: HashSet::new(), next, generation: 0,
+            mcp: vec![], core: Some(core), parked: None, summary: None, dir: None, lines: 0, touched: Instant::now(), events, transcript, out: None, child: None, waiting: HashMap::new(), answered: HashSet::new(), next, generation: 0,
             heard: Instant::now(), running: HashMap::new(),
         })))
     }
 
     pub fn snapshot(&self) -> Conversation {
-        self.lock().core().conversation().clone()
+        let mut inner = self.lock();
+        let mut conversation = inner.core().conversation().clone();
+        conversation.mcp = inner.mcp.clone();
+        conversation
     }
+
+    /// The MCP servers its CLI is to be started with, from now on.
+    pub fn set_mcp(&self, servers: Vec<crate::mcp_servers::Resolved>) { self.lock().mcp = servers }
 
     /// The conversation with its latest `count` items (more, back to the start of their turn), and how many came before.
     pub fn recent(&self, count: usize) -> (Conversation, usize) {

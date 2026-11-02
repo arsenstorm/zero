@@ -280,8 +280,9 @@ pub async fn start(session: &Session, transport: Transport, prompt: &str, images
 pub async fn start_with_context(session: &Session, transport: Transport, context: Option<&str>, prompt: &str, images: &[String], model: Option<&str>,
                                 effort: Option<&str>) -> Result<(), String> {
     initialize(session, transport).await?;
-    let cwd = session.snapshot().cwd;
-    session.request(|id| json!({"jsonrpc": "2.0", "id": id, "method": "session/new", "params": {"cwd": cwd, "mcpServers": []}})).await?;
+    let snapshot = session.snapshot();
+    let (cwd, servers) = (snapshot.cwd.clone(), mcp_servers(&snapshot.mcp));
+    session.request(|id| json!({"jsonrpc": "2.0", "id": id, "method": "session/new", "params": {"cwd": cwd, "mcpServers": servers}})).await?;
     configure(session, model, effort).await?;
     let mut blocks = blocks(prompt, images);
     if let (Some(context), Some(list)) = (context, blocks.as_array_mut()) {
@@ -296,7 +297,7 @@ pub async fn resume(session: &Session, transport: Transport) -> Result<(), Strin
     let conversation = session.snapshot();
     let thread = conversation.thread.ok_or("This session never got as far as a session of the agent's, so there is nothing to resume")?;
     initialize(session, transport).await?;
-    let params = json!({"sessionId": thread, "cwd": conversation.cwd, "mcpServers": []});
+    let params = json!({"sessionId": thread, "cwd": conversation.cwd, "mcpServers": mcp_servers(&conversation.mcp)});
     session.request(|id| json!({"jsonrpc": "2.0", "id": id, "method": "session/resume", "params": params})).await.map(|_| ())
 }
 
@@ -351,4 +352,14 @@ pub async fn interrupt(session: &Session) -> Result<(), String> {
     let conversation = session.snapshot();
     let (Some(thread), Some(_)) = (conversation.thread, conversation.turn) else { return Err("Nothing is running to interrupt".into()) };
     session.write(json!({"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": thread}}))
+}
+
+/// Zero's MCP servers as ACP's `mcpServers` has them: stdio ones with their environment, HTTP ones with headers.
+pub fn mcp_servers(servers: &[crate::mcp_servers::Resolved]) -> Value {
+    let pairs = |values: &[(String, String)]| -> Vec<Value> { values.iter().map(|(name, value)| json!({"name": name, "value": value})).collect() };
+    Value::Array(servers.iter().filter_map(|server| match (&server.command, &server.url) {
+        (Some(command), _) => Some(json!({"name": server.id, "command": command, "args": server.args, "env": pairs(&server.env)})),
+        (None, Some(url)) => Some(json!({"type": "http", "name": server.id, "url": url, "headers": pairs(&server.headers)})),
+        (None, None) => None,
+    }).collect())
 }

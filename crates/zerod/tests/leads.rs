@@ -232,6 +232,19 @@ async fn queued_messages_go_one_turn_each_and_never_with_a_report() {
 }
 
 #[tokio::test]
+async fn a_queued_message_goes_when_the_turn_ends_asking_the_user_something() {
+    // The turn ends on a question to the user: the task waits on them, and their queued message is their word.
+    let w = world("queue-asked");
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let seen = lead_runtime(&w).await;
+    seen.said("user", 1).await;
+    w.daemon.queue(&lead, "yes, it showed", &[]).unwrap();
+    seen.say(json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "Did the card show in place of its step?"}]}}));
+    seen.say(turn_ends());
+    assert_eq!(seen.said("user", 2).await[1]["message"]["content"], "yes, it showed");
+}
+
+#[tokio::test]
 async fn stopping_the_agent_holds_its_queue_until_released() {
     let w = world("queue-hold");
     let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
@@ -269,4 +282,21 @@ async fn a_worker_is_in_its_leads_workspace_wherever_it_runs() {
     w.daemon.place_in_workspace(&lead, Some("work")).unwrap();
     let again = Daemon::open(&w.home, runtime(w.claude.clone())).unwrap();
     assert_eq!(again.workspace_of(&again.get(&lead).unwrap()), "work", "kept in the transcript");
+}
+
+#[test]
+fn a_workers_report_says_how_it_ended_its_turn() {
+    let worker = |answer: &str| {
+        let mut c = Conversation::new("w1", Provider::Claude, "/w");
+        c.label = Some("Listing".into());
+        c.items.push(zerod::model::Item { at: None, id: "a".into(), turn: None, status: zerod::model::ItemStatus::Done,
+            kind: zerod::model::ItemKind::Agent { text: answer.into(), final_answer: true } });
+        c
+    };
+    let asked = zerod::daemon::report(&worker("Asked which colour.\n[zero: asked n25cmk]"), Attention::Done);
+    assert!(asked.starts_with("Worker Listing is waiting on the user's answer (ask n25cmk): Asked which colour."), "{asked}");
+    let blocked = zerod::daemon::report(&worker("CI is down.\n[zero: blocked]"), Attention::Done);
+    assert!(blocked.starts_with("Worker Listing is blocked: CI is down."), "{blocked}");
+    let done = zerod::daemon::report(&worker("All 4 files listed.\n\n[zero: done]"), Attention::Done);
+    assert!(done.starts_with("Worker Listing finished: All 4 files listed.\n"), "the ending line left out: {done}");
 }

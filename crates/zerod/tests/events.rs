@@ -67,6 +67,10 @@ async fn anything_can_tell_a_session_something() {
     w.daemon.notify(&id, "CI on #42 passed").unwrap();
     assert_eq!(seen.said("user", 2).await[1]["message"]["content"], zerod::model::from_line("zero", "CI on #42 passed"), "marked as Zero's word, not the user's");
     assert!(w.daemon.notify("nope", "x").is_err());
+    // Another task's words (`zero send` from inside one): marked as that task's, never the user's.
+    w.daemon.notify_from(&id, "01a1worker", "Fix pushed; CI running").unwrap();
+    seen.say(serde_json::json!({"type": "result", "subtype": "success", "is_error": false, "result": "ok"}));
+    assert_eq!(seen.said("user", 3).await[2]["message"]["content"], zerod::model::from_line("01a1worker", "Fix pushed; CI running"));
 }
 
 #[tokio::test]

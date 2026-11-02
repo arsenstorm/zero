@@ -60,12 +60,14 @@ fn the_apps_attention_is_zerods() {
         UsageWindow { name: "5 hours".into(), used: 1.0, resets_at: Some(1793030000) }, UsageWindow { name: "7 days".into(), used: 0.4, resets_at: None }] });
     cases.push(("limited", limited));
     let mut asking = working.clone(); asking.status = Status::Waiting; asking.questions.push(question); cases.push(("question", asking));
+    let mut blocked = base(); blocked.items.push(Item { kind: ItemKind::Agent { text: "CI is down.\n\n[zero: blocked]".into(), final_answer: true }, ..answer.clone() });
+    cases.push(("blocked", blocked));
     let mut offline = base(); offline.status = Status::Offline; cases.push(("offline", offline));
     let table: Vec<serde_json::Value> = cases.into_iter()
         .map(|(name, c)| serde_json::json!({"name": name, "attention": c.attention(), "conversation": c})).collect();
     let attention: Vec<Attention> = table.iter().map(|case| serde_json::from_value(case["attention"].clone()).unwrap()).collect();
     assert_eq!(attention, [Attention::Starting, Attention::Idle, Attention::Done, Attention::Working, Attention::Stuck, Attention::Failed,
-                           Attention::Limited, Attention::NeedsYou, Attention::Offline]);
+                           Attention::Limited, Attention::NeedsYou, Attention::Blocked, Attention::Offline]);
     let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wire/attention.json");
     let text = serde_json::to_string_pretty(&table).unwrap() + "\n";
     if std::env::var("ZERO_WIRE_UPDATE").as_deref() == Ok("1") { std::fs::write(&file, &text).unwrap() }

@@ -39,6 +39,9 @@ struct Request {
     choice: Option<String>,
     question: Option<String>,
     answers: Option<crate::adapter::Answers>,
+    /// "seen": the answer's item the user saw, and when (seconds since 1970).
+    answer: Option<String>,
+    at: Option<i64>,
     label: Option<String>,
     ticket: Option<String>,
     sessions: Option<Vec<String>>,
@@ -74,6 +77,8 @@ struct Request {
     /// `pad`: a scratchpad tool (list, read, write…) and its arguments, as the MCP server's.
     tool: Option<String>,
     args: Option<Value>,
+    /// An MCP server to save, or the id of one to delete.
+    server: Option<Value>,
     /// startTask: the view's item (an issue or a pull request) to start a task from.
     item: Option<Value>,
     /// Rewinding: the message of yours to go back to, and what to bring back (the conversation, the folder's code).
@@ -93,6 +98,8 @@ struct Request {
     token: Option<String>,
     /// browserAttach: what the extension says of itself; browserAnswer: its answer to a call; saveBrowserSettings: them.
     browser: Option<Value>,
+    /// subscribe: no snapshots up front (a phone, on a slow link): each session's comes once it changes, or `recent`.
+    lazy: Option<bool>,
     /// start, spawn, placeInWorkspace: a workspace's id; saveWorkspace: the workspace itself.
     workspace: Option<Value>,
     /// follow: a topic or URL, what to hear of it (mine: the pull requests followed; about: words); unfollow: topics, or all.
@@ -146,12 +153,25 @@ pub struct Zerod {
     pub drops: Option<Arc<Drops>>,
     pub integrations: Arc<crate::integrations::Integrations>,
     pub pads: Arc<crate::pads::Pads>,
+    pub later: Arc<crate::later::Later>,
     pub loops: Arc<crate::loops::Loops>,
     pub following: Arc<crate::following::Following>,
     pub browsers: Arc<crate::browser::Browsers>,
     pub places: Arc<crate::board::Places>,
     /// Changes that aren't a session's, for subscribers: "pads" when a scratchpad changes.
     pub notices: broadcast::Sender<&'static str>,
+}
+
+impl Zerod {
+    /// The board as every client sees it: each session as a summary (its latest answer for Now, not its whole
+    /// conversation), paused tasks shown so.
+    fn board(&self) -> Vec<crate::board::Row> {
+        let daemon = &self.daemon;
+        let mut rows = crate::board::board_in(&daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(), &self.inbox.asks(), &self.places.get(), &daemon.queues(), &|c| daemon.workspace_of(c));
+        crate::board::mark_read(&mut rows, &|id| daemon.has_read(id));
+        crate::board::mark_paused(&mut rows, &|id| daemon.is_paused(id));
+        rows
+    }
 }
 
 /// Serves until the listener fails. The socket is the owner's only: whoever can write to it runs agents.
@@ -190,7 +210,7 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
             }
         };
         if request.op == "subscribe" {
-            if subscription.is_none() { subscription = Some(tokio::spawn(subscribe(zerod.daemon.clone(), out.clone()))) }
+            if subscription.is_none() { subscription = Some(tokio::spawn(subscribe(zerod.daemon.clone(), out.clone(), request.lazy.unwrap_or(false)))) }
             if feed.is_none() { feed = Some(tokio::spawn(self::feed(zerod.clone(), out.clone()))) }
             let _ = out.send(json!({"id": request.id, "ok": true, "result": null}));
             continue;
@@ -262,6 +282,24 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             let tool = request.tool.as_deref().ok_or("Which scratchpad tool?")?;
             let result = crate::pads::call(&zerod.pads, tool, request.args.as_ref().unwrap_or(&Value::Null));
             if result.is_ok() && !matches!(tool, "list" | "read" | "find") { let _ = zerod.notices.send("pads"); }
+            result
+        }
+        // Later: things to come back to. Saved from a task, it knows which, and the task's name and workspace then.
+        "later" => {
+            let tool = request.tool.as_deref().ok_or("Which later tool?")?;
+            let mut args = request.args.clone().unwrap_or(json!({}));
+            if let (Some(id), Some(fields)) = (request.session.as_deref(), args.as_object_mut())
+                && let Some(task) = daemon.get(id) {
+                if tool == "save" {
+                    fields.insert("from".into(), json!(id));
+                    fields.insert("task".into(), json!(crate::bridge::label(&task)));
+                    fields.insert("workspace".into(), json!(daemon.workspace_of(&task)));
+                } else if tool == "edit" {
+                    fields.insert("by".into(), json!(id));
+                }
+            }
+            let result = crate::later::call(&zerod.later, tool, &args);
+            if result.is_ok() && !matches!(tool, "list" | "view") { let _ = zerod.notices.send("later"); }
             result
         }
         // Loops: named instructions, by name.
@@ -336,6 +374,8 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
                          request.cwd.as_deref().ok_or("Which folder?")?, options).map(|id| json!({"session": id}))
         }
         "archive" => daemon.archive(&session()?).await.map(|_| Value::Null),
+        "unarchive" => daemon.unarchive(&session()?).map(|back| json!(back)),
+        "archived" => Ok(json!(daemon.archived(request.limit.unwrap_or(100)))),
         // A new build is on disk: turns under way pause between steps, then zerod becomes the new one, which carries
         // them on. Answered at once; the restart happens when the last turn has paused.
         "restart" => {
@@ -358,6 +398,10 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         }
         "interrupt" => daemon.interrupt(&session()?).await.map(|_| Value::Null),
         "stop" => daemon.stop(&session()?).map(|_| Value::Null),
+        // The tasks named (every task, none named) and their workers: on hold, and off it. A working one is given five
+        // minutes to wrap up.
+        "pause" => Ok(json!(daemon.pause(&request.sessions.clone().unwrap_or_default(), std::time::Duration::from_secs(5 * 60)).await)),
+        "unpause" => Ok(json!(daemon.unpause(&request.sessions.clone().unwrap_or_default()).await)),
         "decide" => {
             let approval = request.approval.as_deref().ok_or("Which approval?")?;
             let choice = request.choice.as_deref().ok_or("Which choice?")?;
@@ -381,13 +425,16 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             for name in &loops { zerod.loops.record(name, &id, "worker") }
             Ok(json!({"session": id}))
         }
-        "notify" => daemon.notify(&session()?, request.text.as_deref().ok_or("Notify with text")?).map(|_| Value::Null),
+        // From another task when `from` says which: marked as its words.
+        "notify" => daemon.notify_from(&session()?, request.from.as_deref().unwrap_or("zero"), request.text.as_deref().ok_or("Notify with text")?).map(|_| Value::Null),
         "watch" => daemon.watch(&session()?, request.command.as_deref().ok_or("Watch which command?")?).map(|_| Value::Null),
         "remind" => {
             let after = std::time::Duration::from_secs(request.minutes.ok_or("Remind in how many minutes?")? * 60);
             daemon.remind(&session()?, after, request.text.as_deref().ok_or("Remind with text")?).map(|_| Value::Null)
         }
         "usage" => Ok(json!(daemon.usage().into_iter().map(|(provider, usage)| json!({"provider": provider, "usage": usage})).collect::<Vec<_>>())),
+        // The user saw a task's reply, on whichever client: Replied settles to Idle five minutes on, everywhere.
+        "seen" => daemon.mark_seen(&session()?, request.answer.as_deref(), request.at).map(|_| Value::Null),
         "label" => daemon.label(&session()?, request.label.as_deref(), request.ticket.as_deref()).map(|_| Value::Null),
         "workspaces" => Ok(json!(daemon.workspaces.list())),
         "browserCall" => {
@@ -399,7 +446,7 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             let task = json!({
                 "session": session, "group": session.unwrap_or("zero"), "window": lead.as_ref().map(|l| l.id.as_str()).unwrap_or("zero"),
                 "name": conversation.as_ref().map(crate::bridge::label).unwrap_or_else(|| "Zero".into()),
-                "state": conversation.as_ref().map(|c| crate::browser::light(c.attention())).unwrap_or("working"),
+                "state": "working",
                 // What the group is called: Zero, and the work's reference when it has one (its own, else its lead's).
                 "ticket": conversation.as_ref().and_then(|c| c.ticket.clone()).or_else(|| lead.as_ref().and_then(|l| l.ticket.clone())),
             });
@@ -420,6 +467,19 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             let manifest = crate::browser::install(&zerod_exe)?;
             let extension = zerod_exe.parent().and_then(|macos| macos.parent()).map(|contents| contents.join("Resources/chrome")).unwrap_or_default();
             Ok(json!({"manifest": manifest, "extension": extension, "id": crate::browser::EXTENSION}))
+        }
+        // MCP servers set up in Zero: each task's CLI gets its workspace's as it starts.
+        "mcpServers" => Ok(json!(daemon.mcp_servers.list())),
+        "saveMcpServer" => {
+            let server = serde_json::from_value(request.server.clone().ok_or("Which server?")?).map_err(|e| format!("Not a server: {e}"))?;
+            let saved = daemon.mcp_servers.save(server)?;
+            let _ = zerod.notices.send("mcp");
+            Ok(json!(saved))
+        }
+        "deleteMcpServer" => {
+            daemon.mcp_servers.delete(request.server.as_ref().and_then(|s| s.as_str()).ok_or("Which server?")?)?;
+            let _ = zerod.notices.send("mcp");
+            Ok(Value::Null)
         }
         "saveWorkspace" => {
             let workspace = serde_json::from_value(request.workspace.clone().ok_or("Which workspace?")?).map_err(|e| format!("Not a workspace: {e}"))?;
@@ -458,7 +518,12 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "asks" => Ok(json!(inbox.asks())),
         // Whole sessions, not the list's: a row falls back on its lead's last answer.
         // Each session as a summary: its latest answer for Now, not its whole conversation.
-        "board" => Ok(json!(crate::board::board_in(&daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(), &inbox.asks(), &zerod.places.get(), &daemon.queues(), &|c| daemon.workspace_of(c)))),
+        "board" => Ok(json!(zerod.board())),
+        // A session's latest items and how many came before: what a lazy subscriber shows when it opens one.
+        "recent" => {
+            let (conversation, earlier) = daemon.session(&session()?)?.recent(RECENT);
+            Ok(json!({"conversation": conversation, "earlier": earlier}))
+        }
         "items" => Ok(json!(daemon.session(&session()?)?.items(request.before.as_deref(), request.from.as_deref(), request.limit.unwrap_or(60)))),
         "outline" => Ok(daemon.session(&session()?)?.outline()),
         "place" => daemon.set_place(&session()?, request.place.as_deref()).map(|_| Value::Null),
@@ -578,7 +643,7 @@ async fn feed(zerod: Zerod, out: mpsc::UnboundedSender<Value>) {
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
     let mut last: Option<Value> = None;
     loop {
-        let rows = json!(crate::board::board_in(&zerod.daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(), &zerod.inbox.asks(), &zerod.places.get(), &zerod.daemon.queues(), &|c| zerod.daemon.workspace_of(c)));
+        let rows = json!(zerod.board());
         if last.as_ref() != Some(&rows) {
             if out.send(json!({"event": "board", "rows": rows})).is_err() { return }
             last = Some(rows);
@@ -586,7 +651,8 @@ async fn feed(zerod: Zerod, out: mpsc::UnboundedSender<Value>) {
         tokio::select! {
             heard = sessions.recv() => if matches!(heard, Err(broadcast::error::RecvError::Closed)) { return },
             heard = asks.recv() => if matches!(heard, Err(broadcast::error::RecvError::Closed)) { return },
-            heard = queues.recv() => if matches!(heard, Err(broadcast::error::RecvError::Closed)) { return },
+            // A queue changed by the user's hand (queued, taken out, sent): shown at once, not after the settle.
+            heard = queues.recv() => match heard { Err(broadcast::error::RecvError::Closed) => return, _ => continue },
             notice = notices.recv() => match notice {
                 Ok(notice) => { if out.send(json!({"event": notice})).is_err() { return } continue }
                 Err(broadcast::error::RecvError::Closed) => return,
@@ -607,7 +673,7 @@ pub const RECENT: usize = 40;
 
 /// Every session's snapshot, then each change after it; a session seen for the first time, or one whose changes
 /// skipped ahead (the subscriber fell behind), gets a fresh snapshot instead.
-async fn subscribe(daemon: Arc<Daemon>, out: mpsc::UnboundedSender<Value>) {
+async fn subscribe(daemon: Arc<Daemon>, out: mpsc::UnboundedSender<Value>, lazy: bool) {
     // Listening starts before the snapshots, so no change falls between the two; ones already in a snapshot are skipped.
     let mut events = daemon.subscribe();
     let mut known: HashMap<String, u64> = HashMap::new();
@@ -618,7 +684,7 @@ async fn subscribe(daemon: Arc<Daemon>, out: mpsc::UnboundedSender<Value>) {
         out.send(json!({"event": "session", "conversation": conversation, "earlier": earlier})).is_ok()
     };
     for session in daemon.sessions() {
-        if !snapshot(&mut known, &session) { return }
+        if !lazy && !snapshot(&mut known, &session) { return }
     }
     loop {
         let sent = match events.recv().await {
@@ -633,7 +699,11 @@ async fn subscribe(daemon: Arc<Daemon>, out: mpsc::UnboundedSender<Value>) {
                     Err(_) => true,
                 },
             },
-            Err(broadcast::error::RecvError::Lagged(_)) => daemon.sessions().iter().all(|s| snapshot(&mut known, s)),
+            // Behind: fresh snapshots of what it has (a lazy subscriber has only some).
+            Err(broadcast::error::RecvError::Lagged(_)) => {
+                let behind: Vec<_> = daemon.sessions().into_iter().filter(|s| !lazy || known.contains_key(&s.id())).collect();
+                behind.iter().all(|s| snapshot(&mut known, s))
+            }
             Err(broadcast::error::RecvError::Closed) => return,
         };
         if !sent { return }

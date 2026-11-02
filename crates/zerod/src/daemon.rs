@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -24,6 +24,12 @@ pub type Runtime = Arc<dyn Fn(&Conversation, &Path, &[String]) -> io::Result<Tra
 pub fn real_runtime() -> Runtime {
     Arc::new(|conversation, dir, argv| process::spawn(argv, Path::new(&conversation.cwd), &conversation.id, Some(&dir.join("stderr.log"))))
 }
+
+const PAUSED: &str = "paused-by-user.json";
+/// Each task's reply the user has seen (its answer's item, and when), on any client: seen.json.
+const SEEN: &str = "seen.json";
+/// In an archived task's folder: when it went, and with whom (the lead it went with; none, it went on its own).
+const ARCHIVED: &str = "archived.json";
 
 pub struct Daemon {
     home: PathBuf,
@@ -48,13 +54,24 @@ pub struct Daemon {
     user: Mutex<(PathBuf, PathBuf)>,
     /// zerod is about to become a new build: words wait for it, rather than starting turns the restart would cut.
     restarting: std::sync::atomic::AtomicBool,
+    /// Sessions the user put on hold: parked, and kept parked whatever arrives for them, until resumed. Kept in
+    /// paused-by-user.json (the restart's paused.json is its own, and short-lived).
+    paused: Mutex<HashSet<String>>,
+    seen: Mutex<HashMap<String, (String, i64)>>,
     pub workspaces: crate::workspaces::Workspaces,
+    /// The MCP servers set up in Zero, each task's CLI given its workspace's as it starts.
+    pub mcp_servers: crate::mcp_servers::McpServers,
     me: Weak<Daemon>,
 }
 
 /// What a turn paused for a restart is told once the new zerod is up. Zero's own words, not yours: never shown as a
 /// message (core.rs leaves its item out).
 pub const CARRY_ON: &str = "Zero restarted while you were working: your turn was paused between steps. Please carry on where you left off.";
+/// What a working session is told when the user pauses it, steering its turn to an end it can be picked up from.
+pub const WRAP_UP: &str = "The user is pausing you (for the night, or while they're away): finish the step you're on, leave the work so it can \
+be picked up again, say where you are and what comes next, and end your turn. Don't start anything new.";
+/// What a session paused mid-work is told when it's resumed.
+pub const RESUMED: &str = "The user paused you and has now resumed you: carry on from where you left off.";
 /// How long a restart waits for a running command before pausing its turn anyway: long enough for a test run, not
 /// so long that everything already paused sits idle with no sign of why (a deploy isn't an agent's to run unattended).
 const COMMAND_WAIT: Duration = Duration::from_secs(2 * 60);
@@ -83,6 +100,14 @@ pub struct Options {
     pub force: bool,
     /// Images with the first message, by their files.
     pub images: Vec<String>,
+}
+
+/// Its turn over and nothing of the provider's waiting on the user (an approval, a question): what's queued can go,
+/// however the turn ended, a question to the user in prose included (the user's queued words answer it). Out of usage,
+/// it waits for the reset, which tells it to go on.
+fn between_turns(conversation: &Conversation) -> bool {
+    conversation.status == Status::Idle && conversation.approvals.is_empty() && conversation.questions.is_empty()
+        && conversation.attention() != Attention::Limited
 }
 
 fn busy(attention: Attention) -> bool {
@@ -119,6 +144,9 @@ impl Daemon {
             held: Mutex::new(HashSet::new()), delivering: Mutex::new(HashSet::new()), queues: broadcast::channel(64).0,
             resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(),
             workspaces: crate::workspaces::Workspaces::open(home),
+            mcp_servers: crate::mcp_servers::McpServers::open(home),
+            paused: Mutex::new(std::fs::read(home.join(PAUSED)).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default()),
+            seen: Mutex::new(std::fs::read(home.join(SEEN)).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default()),
         });
         let parker = Arc::downgrade(&daemon);
         tokio::spawn(async move {
@@ -164,7 +192,7 @@ impl Daemon {
         self.pending.lock().unwrap().entry(id.into()).or_default().push(queued.clone());
         self.held.lock().unwrap().remove(id);
         self.keep_pending(id);
-        if matches!(session.summary().attention(), Attention::Done | Attention::Answered | Attention::Idle) { self.deliver(id) }
+        if between_turns(&session.summary()) { self.deliver(id) }
         Ok(queued)
     }
 
@@ -248,6 +276,11 @@ impl Daemon {
         let parent = self.get(lead).ok_or_else(|| format!("No session {lead} to lead it"))?;
         options.cwd = options.cwd.or(Some(parent.cwd.clone()));
         options.permissions = options.permissions.or(Some(parent.permissions));
+        // On its lead's model unless told otherwise: left to itself, the provider would start it on its own default.
+        if provider == parent.provider {
+            options.model = options.model.or(parent.model.clone());
+            options.effort = options.effort.or(parent.effort.clone());
+        }
         // The lead decides: its worker is in its workspace wherever the worker's folder is.
         options.workspace = options.workspace.or_else(|| Some(self.workspace_of(&parent)));
         self.create(provider, prompt, options, Some(lead.to_string()))
@@ -274,7 +307,16 @@ impl Daemon {
         conversation.branch = branch(folder);
         // Claude takes its conversation's id from Zero, so the session can be resumed even if it never answered.
         if provider == Provider::Claude { conversation.thread = Some(claude::new_session_id()) }
+        conversation.mcp = self.mcp_for(&conversation);
         let session = Session::new(conversation.clone(), Some(dir.clone()), self.events.clone()).map_err(|e| e.to_string())?;
+        session.set_mcp(conversation.mcp.clone());
+        // The workspace it starts in, kept in its history as a move into it is: restarted, it's still there (only
+        // memory had it, and a restart put it back in its folder's, or Zero).
+        if conversation.workspace.is_some() { session.change(Change::Placed { workspace: conversation.workspace.clone() }) }
+        // The model it starts on, kept with it (Claude's thread is known already): resumed later, it starts on it again.
+        if let (Some(thread), true) = (&conversation.thread, model.is_some() || effort.is_some()) {
+            session.change(Change::Thread { thread: thread.clone(), model: model.map(Into::into), effort: effort.map(Into::into) });
+        }
         let argv = provider.command(&conversation, false, model, effort);
         let transport = match (self.runtime)(&conversation, &dir, &argv) {
             Ok(transport) => transport,
@@ -345,8 +387,32 @@ impl Daemon {
         Ok(id)
     }
 
-    /// Puts a task away: stopped, out of the list, its files moved to archive/ (moved back, it returns).
+    /// Puts a task away with the workers it still has: stopped, out of the list, their files moved to archive/. Each
+    /// worker is marked as gone with it, so unarchiving the task brings back those and no others (one put away on its
+    /// own before stays put away).
     pub async fn archive(&self, id: &str) -> Result<(), String> {
+        let root = self.session(id)?.summary();
+        let mut team = vec![];
+        let mut i = 0;
+        let mut leads = vec![id.to_string()];
+        while i < leads.len() {
+            let lead = leads[i].clone();
+            for member in self.list().into_iter().filter(|c| c.parent.as_deref() == Some(lead.as_str())) {
+                leads.push(member.id.clone());
+                team.push(member.id);
+            }
+            i += 1;
+        }
+        for member in team.iter().rev() { self.archive_one(member, Some(id)).await? }
+        let workspace = self.workspace_of(&root);
+        self.archive_one(id, None).await?;
+        let _ = std::fs::write(self.home.join("archive").join(id).join(ARCHIVED), serde_json::to_vec(&serde_json::json!({
+            "with": null, "at": archived_at(), "task": crate::bridge::label(&root), "workspace": workspace, "workers": team.len(),
+        })).unwrap_or_default());
+        Ok(())
+    }
+
+    async fn archive_one(&self, id: &str, with: Option<&str>) -> Result<(), String> {
         let session = self.session(id)?;
         if session.summary().terminal.is_some() { self.close_terminal(id).await? }
         self.take_offline(&session).await;
@@ -359,8 +425,51 @@ impl Daemon {
         let archive = self.home.join("archive");
         std::fs::create_dir_all(&archive).map_err(|e| e.to_string())?;
         std::fs::rename(self.home.join("sessions").join(id), archive.join(id)).map_err(|e| e.to_string())?;
+        if let Some(with) = with {
+            let _ = std::fs::write(archive.join(id).join(ARCHIVED), serde_json::to_vec(&serde_json::json!({"with": with, "at": archived_at()})).unwrap_or_default());
+        }
         let _ = self.events.send(Event { session: id.into(), seq: seq + 1, change: Change::Archived });
         Ok(())
+    }
+
+    /// Brings a task back from the archive, and the workers that went with it: offline, as they were, under it.
+    pub fn unarchive(&self, id: &str) -> Result<Vec<String>, String> {
+        let archive = self.home.join("archive");
+        if !archive.join(id).join("meta.json").exists() { return Err(format!("Nothing archived as {id}")) }
+        if self.session(id).is_ok() { return Err(format!("{id} isn't archived")) }
+        let with: Vec<String> = std::fs::read_dir(&archive).into_iter().flatten().flatten()
+            .filter(|entry| archived_with(&entry.path()).as_deref() == Some(id))
+            .map(|entry| entry.file_name().to_string_lossy().to_string()).collect();
+        let mut back = vec![];
+        for member in std::iter::once(id.to_string()).chain(with) {
+            let (from, to) = (archive.join(&member), self.home.join("sessions").join(&member));
+            std::fs::rename(&from, &to).map_err(|e| e.to_string())?;
+            let _ = std::fs::remove_file(to.join(ARCHIVED));
+            let session = Session::load(&to, self.events.clone()).map_err(|e| e.to_string())?;
+            self.sessions.lock().unwrap().push(session);
+            back.push(member);
+        }
+        // The board and the apps hear of it: the task's back, its workers under it.
+        if let Ok(session) = self.session(id) { session.announce() }
+        Ok(back)
+    }
+
+    /// What's archived that was put away itself (not with its lead), newest first: its name, when, its workspace and
+    /// how many workers went with it.
+    pub fn archived(&self, limit: usize) -> Vec<serde_json::Value> {
+        let archive = self.home.join("archive");
+        let mut entries: Vec<(std::path::PathBuf, i64)> = std::fs::read_dir(&archive).into_iter().flatten().flatten()
+            .map(|e| e.path()).filter(|p| p.join("meta.json").exists() && archived_with(p).is_none())
+            .map(|p| { let at = marker(&p).and_then(|m| m["at"].as_i64()).unwrap_or_else(|| modified_ms(&p)); (p, at) }).collect();
+        entries.sort_by_key(|(_, at)| std::cmp::Reverse(*at));
+        let counts = archived_counts(&archive);
+        entries.into_iter().take(limit).map(|(path, at)| {
+            let id = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let kept = marker(&path);
+            let task = kept.as_ref().and_then(|m| m["task"].as_str().map(String::from)).or_else(|| parked_label(&path)).unwrap_or_else(|| id.clone());
+            serde_json::json!({"id": id, "task": task, "at": at, "workspace": kept.as_ref().and_then(|m| m["workspace"].as_str().map(String::from)),
+                               "workers": counts.get(&id).copied().unwrap_or(0)})
+        }).collect()
     }
 
     /// Where the user's home and zero-host are, for a test's own.
@@ -466,6 +575,8 @@ impl Daemon {
         if let Some(conversation) = self.get(id) && conversation.terminal.is_some() {
             return Err(format!("{} is open in its terminal; type there, or go back to Zero", conversation.provider.title()));
         }
+        // Writing to a paused task resumes it.
+        if self.is_paused(id) { self.unpause(&[id.to_string()]).await; }
         // The folder as it is before the agent reads the message: what rewinding to it brings back.
         let kept = self.keep_folder(&session).await;
         let conversation = session.snapshot();
@@ -496,6 +607,8 @@ impl Daemon {
             conversation.thread = Some(thread);
         }
         let (model, effort) = (model.or(conversation.model.as_deref()).map(String::from), effort.or(conversation.effort.as_deref()).map(String::from));
+        conversation.mcp = self.mcp_for(&conversation);
+        session.set_mcp(conversation.mcp.clone());
         let argv = conversation.provider.command(&conversation, false, model.as_deref(), effort.as_deref());
         let transport = (self.runtime)(&conversation, &self.home.join("sessions").join(&conversation.id), &argv)
             .map_err(|e| format!("{} didn't start: {e}", conversation.provider.title()))?;
@@ -507,7 +620,10 @@ impl Daemon {
     pub async fn resume(&self, id: &str) -> Result<(), String> {
         let session = self.session(id)?;
         if session.is_attached() { return Ok(()) }
-        let conversation = session.snapshot();
+        let mut conversation = session.snapshot();
+        // Its workspace's servers as they are now: one moved since, or a server added, applies from this start.
+        conversation.mcp = self.mcp_for(&conversation);
+        session.set_mcp(conversation.mcp.clone());
         let argv = conversation.provider.command(&conversation, true, conversation.model.as_deref(), conversation.effort.as_deref());
         let transport = (self.runtime)(&conversation, &self.home.join("sessions").join(id), &argv)
             .map_err(|e| format!("{} didn't start: {e}", conversation.provider.title()))?;
@@ -655,6 +771,17 @@ impl Daemon {
     }
 
     /// Names a session and says what it's for.
+    /// The MCP servers a session's CLI starts with: its workspace's, their values read (the Keychain's now). Claude's
+    /// values go in its process's environment alone, for its `--mcp-config` to refer to.
+    fn mcp_for(&self, conversation: &Conversation) -> Vec<crate::mcp_servers::Resolved> {
+        let workspace = self.workspace_of(conversation);
+        let servers: Vec<_> = self.mcp_servers.for_workspace(&workspace).iter().map(|s| s.resolve(&crate::mcp_servers::keychain)).collect();
+        let env = if conversation.provider == Provider::Claude { claude::mcp_config(&servers).map(|(_, env)| env).unwrap_or_default() } else { vec![] };
+        let mut all = crate::process::SESSION_ENV.lock().unwrap();
+        if env.is_empty() { all.remove(&conversation.id); } else { all.insert(conversation.id.clone(), env); }
+        servers
+    }
+
     /// Which workspace a conversation is in: the one it was put in, else its folder's, else Zero.
     pub fn workspace_of(&self, conversation: &Conversation) -> String { self.workspaces.of(conversation.workspace.as_deref(), &conversation.cwd) }
 
@@ -702,9 +829,12 @@ impl Daemon {
 
     /// Words for a session from anywhere (an event source, a script, the user): given when it is between turns, kept
     /// on disk while it is offline.
-    pub fn notify(&self, id: &str, text: &str) -> Result<(), String> {
+    pub fn notify(&self, id: &str, text: &str) -> Result<(), String> { self.notify_from(id, "zero", text) }
+
+    /// Words from another task (`zero send` inside one), marked as its, as a worker's report is.
+    pub fn notify_from(&self, id: &str, from: &str, text: &str) -> Result<(), String> {
         self.session(id)?;
-        self.tell(id, crate::model::from_line("zero", text));
+        self.tell(id, crate::model::from_line(from, text));
         Ok(())
     }
 
@@ -771,14 +901,17 @@ impl Daemon {
         let now = conversation.attention();
         let before = self.attention.lock().unwrap().insert(id.into(), now);
         let under_way = |a: Attention| matches!(a, Attention::Starting | Attention::Working | Attention::NeedsYou | Attention::Stuck);
-        let ended = matches!(now, Attention::Done | Attention::Answered | Attention::Failed | Attention::Limited | Attention::Offline | Attention::Idle);
+        let ended = matches!(now, Attention::Done | Attention::Answered | Attention::Blocked | Attention::Failed | Attention::Limited | Attention::Offline | Attention::Idle);
         let came_to_an_end = before.is_some_and(under_way) && ended;
         let got_stuck = now == Attention::Stuck && before != Some(Attention::Stuck);
-        if let Some(lead) = &conversation.parent && (came_to_an_end || got_stuck) {
+        // While zerod restarts, a turn ending is the pause for it: the new zerod carries it on, so its lead hears nothing.
+        let restarting = self.restarting.load(Ordering::Relaxed);
+        // Nor while it's paused by the user: its turn ending is the pause.
+        if let Some(lead) = &conversation.parent && (came_to_an_end || got_stuck) && !restarting && !self.is_paused(id) {
             self.tell(lead, crate::model::from_line(&conversation.id, &report(&conversation, now)));
         }
         if now == Attention::Limited { self.after_reset(&conversation) }
-        if matches!(now, Attention::Done | Attention::Answered | Attention::Idle) { self.deliver(id) }
+        if between_turns(&conversation) { self.deliver(id) }
     }
 
     /// Keeps `words` for `id` until it can take them; a parked (offline) session is resumed for them, and they go
@@ -786,11 +919,12 @@ impl Daemon {
     fn tell(&self, id: &str, words: String) {
         self.pending.lock().unwrap().entry(id.into()).or_default().push(Queued { id: new_id(), text: words, images: vec![], report: true });
         self.keep_pending(id);
+        if self.is_paused(id) { return }
         let Ok(session) = self.session(id) else { return };
         if !session.is_attached() && session.summary().terminal.is_none() {
             let (Some(daemon), id) = (self.me.upgrade(), id.to_string()) else { return };
             tokio::spawn(async move { if let Err(error) = daemon.resume(&id).await { eprintln!("zerod: couldn't resume {id} for its words: {error}") } });
-        } else if matches!(session.summary().attention(), Attention::Done | Attention::Answered | Attention::Idle) {
+        } else if between_turns(&session.summary()) {
             self.deliver(id)
         }
     }
@@ -835,7 +969,7 @@ impl Daemon {
         let mut resumed = vec![];
         for id in paused {
             let Ok(session) = self.session(&id) else { continue };
-            if session.is_attached() || session.summary().terminal.is_some() { continue }
+            if session.is_attached() || session.summary().terminal.is_some() || self.is_paused(&id) { continue }
             // The turn was paused for the update and carried on, not stopped: said in the conversation, in place of the
             // pause's "Interrupted" when that was noted, on a line of its own when it wasn't (the old zerod may have
             // gone before the interrupt's result was recorded).
@@ -854,6 +988,109 @@ impl Daemon {
             tokio::spawn(async move { if let Err(error) = daemon.resume(&id).await { eprintln!("zerod: couldn't resume {id} to carry on: {error}") } });
         }
         resumed
+    }
+
+    pub fn is_paused(&self, id: &str) -> bool { self.paused.lock().unwrap().contains(id) }
+
+    /// Puts `ids` and their workers (every lead's, `ids` empty) on hold: each working one is asked to wrap up, given
+    /// `wait` to end its turn, then stopped (a running command left to finish first, as for a restart); then parked.
+    /// Words for them wait until they're resumed. Gives the sessions paused.
+    pub async fn pause(&self, ids: &[String], wait: Duration) -> Vec<String> {
+        let targets = if ids.is_empty() { self.list().into_iter().filter(|c| c.parent.is_none()).map(|c| c.id).collect() } else { ids.to_vec() };
+        let targets = self.with_workers(targets);
+        // Marked first: the turns ending now are the pause, not word for a lead or a reason to deliver.
+        self.paused.lock().unwrap().extend(targets.iter().cloned());
+        self.keep_paused();
+        let mut pausing = tokio::task::JoinSet::new();
+        for id in &targets {
+            let Ok(session) = self.session(id) else { continue };
+            let Some(daemon) = self.me.upgrade() else { break };
+            let id = id.clone();
+            pausing.spawn(async move {
+                if session.is_attached() && busy(session.summary().attention()) {
+                    // Told to carry on when resumed, since its turn is cut short.
+                    daemon.pending.lock().unwrap().entry(id.clone()).or_default()
+                        .push(Queued { id: new_id(), text: crate::model::from_line("zero", RESUMED), images: vec![], report: true });
+                    daemon.keep_pending(&id);
+                    // Steered where the provider allows it; where it doesn't (OpenCode), the wait runs out and it's stopped.
+                    let _ = session.send_with_images(&crate::model::from_line("zero", WRAP_UP), &[], None, None).await;
+                    let deadline = tokio::time::Instant::now() + wait;
+                    while session.is_attached() && busy(session.summary().attention()) && tokio::time::Instant::now() < deadline {
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                    }
+                    let deadline = tokio::time::Instant::now() + COMMAND_WAIT;
+                    while session.is_attached() && session.running_command() && tokio::time::Instant::now() < deadline {
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                    }
+                    if session.is_attached() && busy(session.summary().attention()) {
+                        let _ = tokio::time::timeout(Duration::from_secs(5), session.interrupt()).await;
+                    }
+                }
+                daemon.take_offline(&session).await;
+            });
+        }
+        while pausing.join_next().await.is_some() {}
+        let _ = self.queues.send(()); // the board shows it paused, though nothing of the session's changed
+        targets
+    }
+
+    /// Takes `ids` (every paused session, `ids` empty) off hold. Those with words waiting are resumed for them; the
+    /// rest stay parked until they're written to, as any finished task. Gives the sessions taken off hold.
+    pub async fn unpause(&self, ids: &[String]) -> Vec<String> {
+        let ids = if ids.is_empty() { self.paused.lock().unwrap().iter().cloned().collect() } else { self.with_workers(ids.to_vec()) };
+        let resumed: Vec<String> = {
+            let mut paused = self.paused.lock().unwrap();
+            ids.into_iter().filter(|id| paused.remove(id)).collect()
+        };
+        self.keep_paused();
+        let waiting = self.pending.lock().unwrap().clone();
+        for id in &resumed {
+            if !waiting.get(id).is_some_and(|words| !words.is_empty()) { continue }
+            if let Err(error) = self.resume(id).await { eprintln!("zerod: couldn't resume {id} after its pause: {error}") }
+        }
+        let _ = self.queues.send(());
+        resumed
+    }
+
+    /// `ids` and their workers, theirs too, through every level.
+    fn with_workers(&self, mut ids: Vec<String>) -> Vec<String> {
+        let all = self.list();
+        let mut i = 0;
+        while i < ids.len() {
+            let id = ids[i].clone();
+            let more: Vec<String> = all.iter().filter(|c| c.parent.as_deref() == Some(&id) && !ids.contains(&c.id)).map(|c| c.id.clone()).collect();
+            ids.extend(more);
+            i += 1;
+        }
+        ids.retain(|id| self.session(id).is_ok());
+        ids
+    }
+
+    /// The user saw a task's reply: its latest answer unless one is named, now unless a time is given (a client
+    /// passing on what it recorded before zerod kept this).
+    pub fn mark_seen(&self, id: &str, answer: Option<&str>, at: Option<i64>) -> Result<(), String> {
+        self.session(id)?;
+        let Some(answer) = answer.map(String::from).or_else(|| self.latest_answer(id)) else { return Ok(()) };
+        let mut seen = self.seen.lock().unwrap();
+        if seen.get(id).is_some_and(|(kept, _)| *kept == answer) && at.is_none() { return Ok(()) }
+        seen.insert(id.to_string(), (answer, at.unwrap_or_else(now)));
+        let _ = std::fs::write(self.home.join(SEEN), serde_json::to_vec(&*seen).unwrap_or_default());
+        Ok(())
+    }
+
+    /// Whether the user has read the task's reply (board::read).
+    pub fn has_read(&self, id: &str) -> bool {
+        let seen = self.seen.lock().unwrap().get(id).cloned();
+        seen.is_some() && crate::board::read(seen.as_ref().map(|(a, at)| (a.as_str(), *at)), self.latest_answer(id).as_deref(), now())
+    }
+
+    fn latest_answer(&self, id: &str) -> Option<String> {
+        self.get(id)?.items.iter().rev().find(|i| matches!(i.kind, ItemKind::Agent { final_answer: true, .. })).map(|i| i.id.clone())
+    }
+
+    fn keep_paused(&self) {
+        let paused: Vec<String> = self.paused.lock().unwrap().iter().cloned().collect();
+        let _ = std::fs::write(self.home.join(PAUSED), serde_json::to_vec(&paused).unwrap_or_default());
     }
 
     /// Stops the process of every session idle for PARK_AFTER with nothing waiting for it.
@@ -879,7 +1116,7 @@ impl Daemon {
     /// The next of what waits: a message of the user's on its own (one turn each, never joined to anything), or the
     /// reports at the head of the queue together. The rest goes when that turn ends. A held queue waits.
     fn deliver(&self, id: &str) {
-        if self.restarting.load(Ordering::Relaxed) { return }
+        if self.restarting.load(Ordering::Relaxed) || self.is_paused(id) { return }
         if self.held.lock().unwrap().contains(id) { return }
         let Ok(session) = self.session(id) else { return };
         if !session.is_attached() { return }
@@ -977,18 +1214,28 @@ impl crate::inbox::Runtime for Sessions {
 }
 
 /// What a lead is told when a worker stops working, and how to answer it.
-fn report(worker: &Conversation, attention: Attention) -> String {
+pub fn report(worker: &Conversation, attention: Attention) -> String {
     let mut name = worker.label.clone().unwrap_or_else(|| worker.id.clone());
     if let Some(ticket) = &worker.ticket { name = format!("{name} ({ticket})") }
     let what = match attention {
         Attention::Done => {
-            let answer = worker.answer().unwrap_or("");
+            let full = worker.answer().unwrap_or("");
+            let answer = crate::board::without_ending(full);
             let answer = if answer.chars().count() > 4000 { answer.chars().take(4000).collect::<String>() + "…" } else { answer.to_string() };
-            format!("finished: {answer}")
+            // How it ended its turn says what its answer is: a worker waiting on the user, or blocked, isn't finished.
+            match crate::board::ending(full) {
+                Some("asked") => {
+                    let id = full.trim_end().lines().last().and_then(|l| l.trim().trim_end_matches(']').split_whitespace().nth(2)).unwrap_or("");
+                    format!("is waiting on the user's answer (ask {id}): {answer}")
+                }
+                Some("blocked") => format!("is blocked: {answer}"),
+                _ => format!("finished: {answer}"),
+            }
         }
         Attention::Failed => format!("failed: {}", worker.failure.as_ref().map(|f| f.message.as_str()).unwrap_or("no reason given")),
         Attention::Stuck => format!("looks stuck: {}", worker.stalled.as_deref().unwrap_or("no progress")),
         Attention::Limited => "hit a usage limit".into(),
+        Attention::Blocked => format!("is blocked: {}", worker.answer().map(crate::board::without_ending).unwrap_or("no reason given")),
         Attention::Offline => "stopped: its process ended".into(),
         _ => "stopped without an answer".into(),
     };
@@ -1035,6 +1282,48 @@ fn claude_cwd(file: &Path) -> Option<String> {
     use std::io::BufRead;
     std::io::BufReader::new(std::fs::File::open(file).ok()?).lines().map_while(Result::ok)
         .find_map(|line| serde_json::from_str::<serde_json::Value>(&line).ok()?["cwd"].as_str().map(String::from))
+}
+
+/// When something's archived, in milliseconds, never the same twice: two put away in one millisecond still list in
+/// the order they went.
+fn archived_at() -> i64 {
+    static LAST: AtomicI64 = AtomicI64::new(0);
+    let now = millis() as i64;
+    let mut last = LAST.load(Ordering::Relaxed);
+    loop {
+        let next = now.max(last + 1);
+        match LAST.compare_exchange(last, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return next,
+            Err(seen) => last = seen,
+        }
+    }
+}
+
+fn marker(dir: &Path) -> Option<serde_json::Value> {
+    std::fs::read(dir.join(ARCHIVED)).ok().and_then(|data| serde_json::from_slice(&data).ok())
+}
+
+/// The lead an archived task went with, if it went with one.
+fn archived_with(dir: &Path) -> Option<String> { marker(dir).and_then(|m| m["with"].as_str().map(String::from)) }
+
+/// How many archived tasks went with each lead.
+fn archived_counts(archive: &Path) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    for entry in std::fs::read_dir(archive).into_iter().flatten().flatten() {
+        if let Some(with) = archived_with(&entry.path()) { *counts.entry(with).or_insert(0) += 1 }
+    }
+    counts
+}
+
+fn modified_ms(path: &Path) -> i64 {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+/// An archived task's name from its parked summary (archived before archive markers were kept).
+fn parked_label(dir: &Path) -> Option<String> {
+    let parked: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join("parked.json")).ok()?).ok()?;
+    let summary: Conversation = serde_json::from_value(parked["summary"].clone()).ok()?;
+    Some(crate::bridge::label(&summary))
 }
 
 #[cfg(test)]

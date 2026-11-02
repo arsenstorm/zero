@@ -50,8 +50,8 @@ fn the_agents_own_note_says_where_it_is_and_what_it_needs() {
     let asks = [note("a", "Three rounds done; rare races remain", Some("done"), Some("ship as is or one more round")), dot("Answered", Some("done"))];
     let row = &board(std::slice::from_ref(&lead), &asks)[0];
     assert_eq!(row.now.as_deref(), Some("Three rounds done; rare races remain"), "zerod's own dots aren't the agent's words");
-    // What it hands the user blocks it on them: the board has no other way to say "needs you".
-    assert_eq!((row.state, row.needs.as_deref()), (State::NeedsYou, Some("ship as is or one more round")));
+    // Done, with a step only the user can take: over to them. Not blocked, not a decision: a to-do.
+    assert_eq!((row.state, row.needs.as_deref()), (State::Handed, Some("ship as is or one more round")));
 
     let later = [asks[0].clone(), note("a", "Round 4 pushed", Some("done"), None)];
     let row = &board(std::slice::from_ref(&lead), &later)[0];
@@ -100,9 +100,10 @@ fn states_come_from_the_session_and_the_note_most_urgent_first() {
     let asks = [note("waits", "Waits for ENG-9759", Some("waiting"), None), note("failing", "One test shard failing", Some("blocked"), None)];
     let rows = board(&[done, working, waits, stuck, failing], &asks);
     let states: Vec<(&str, State)> = rows.iter().map(|r| (r.session.as_str(), r.state)).collect();
-    // An agent that says it's blocked is blocked on the user; one stuck or failing on its own is in trouble.
-    assert_eq!(states, [("waits", State::NeedsYou), ("failing", State::NeedsYou), ("stuck", State::Trouble), ("working", State::Working), ("done", State::Idle)],
-               "waiting on something is blocked on it: with what needs the user, first");
+    // An agent that says it's blocked (or waits on something) is blocked on something the user can't fix: below what's
+    // under way. One stuck or failing on its own is in trouble.
+    assert_eq!(states, [("stuck", State::Trouble), ("working", State::Working), ("waits", State::Blocked), ("failing", State::Blocked), ("done", State::Idle)],
+               "blocked elsewhere asks nothing of the user: it sorts below the work"); 
 }
 
 #[test]
@@ -114,7 +115,7 @@ fn every_task_is_on_the_board_the_offline_ones_last() {
     let rows = board(&[gone, handed_off, working], &[note("handed", "Live", Some("done"), Some("your Self QA"))]);
     let states: Vec<(&str, bool, State)> = rows.iter().map(|r| (r.session.as_str(), r.online, r.state)).collect();
     // Offline, a row keeps the state it was last known in: what its note said, else idle between turns.
-    assert_eq!(states, [("handed", false, State::NeedsYou), ("busy", true, State::Working), ("gone", false, State::Idle)], "most urgent first, online or not");
+    assert_eq!(states, [("busy", true, State::Working), ("handed", false, State::Handed), ("gone", false, State::Idle)], "most urgent first, online or not");
     let closed = [note("handed", "Live", Some("done"), Some("your Self QA")), note("handed", "Closed by the user", Some("closed"), None)];
     assert_eq!(board(&[session("handed", "/w/b", Status::Offline)], &closed)[0].needs, None, "closing it takes what it handed over");
     let mut offline = dot("Offline", Some("closed"));
@@ -159,7 +160,7 @@ fn how_the_agent_ended_its_turn_is_the_rows_state() {
         board(&[lead], &[])[0].state
     };
     assert_eq!(ended("PR #13336 is open.\n\n[zero: done]"), State::Done);
-    assert_eq!(ended("Can't reach staging.\n[zero: blocked]"), State::NeedsYou);
+    assert_eq!(ended("Can't reach staging.\n[zero: blocked]"), State::Blocked, "blocked on something, not on the user: they'd be asked");
     assert_eq!(ended("Which one?\n[zero: asked 3f2a]"), State::NeedsYou);
     assert_eq!(ended("Waiting on CI.\n[zero: working]"), State::Idle, "pausing between steps is idle, not a state of its own");
     assert_eq!(ended("Just an answer."), State::Answered, "a turn ended is not a task done; it is a reply to read");
@@ -200,6 +201,7 @@ fn a_rows_workers_each_carry_their_own_state_place_and_asks() {
     let rows = zerod::board::board_with(&[lead, waiting, asking], &[question], &places);
     let row = &rows[0];
     assert_eq!(row.state, State::NeedsYou, "the lead's row: the most urgent of its team");
+    assert_eq!(row.own, State::Idle, "and the lead as it is itself: it waits on nothing, its worker does");
     let team: Vec<(&str, State, &str, Option<&str>, usize)> =
         row.team.iter().map(|m| (m.session.as_str(), m.state, m.place.as_str(), m.path.as_deref(), m.asks.len())).collect();
     assert_eq!(team, [("w1", State::Idle, "red-owl", Some("/b/red-owl"), 0), ("w2", State::NeedsYou, "wt", None, 1)],
@@ -217,7 +219,7 @@ fn an_answer_is_done_only_when_it_says_so_and_a_question_needs_you() {
     // Finished its turn is not finished the task: a plain answer leaves it idle.
     assert_eq!(idle("The plans are written.").attention(), Attention::Answered, "answered, nothing more: Replied until read");
     assert_eq!(idle("PR open, CI green.\n\n[zero: done]").attention(), Attention::Done);
-    assert_eq!(idle("Can't reach the bench.\n\n[zero: blocked]").attention(), Attention::NeedsYou);
+    assert_eq!(idle("Can't reach the bench.\n\n[zero: blocked]").attention(), Attention::Blocked);
     assert_eq!(idle("Checking the bench next.\n\n[zero: working]").attention(), Attention::Idle);
     // Asked you something in prose, with no ending: it waits on you.
     assert_eq!(idle("Two options:\n1. Relaunch.\n2. One session each.\n\nWhich one do you want?").attention(), Attention::NeedsYou);
@@ -273,4 +275,33 @@ fn a_lead_that_replied_stays_replied_while_parked() {
     let mut quiet = session("q", "/w/c", Status::Offline);
     quiet.items.push(Item { at: None, id: "u1".into(), turn: None, kind: ItemKind::User { text: "go on".into(), images: vec![] }, status: ItemStatus::Done });
     assert_eq!(board(&[quiet], &[])[0].state, State::Idle, "offline with no answer to read");
+}
+
+#[test]
+fn a_working_lead_is_working_itself_while_its_worker_waits_on_the_user() {
+    let lead = session("lead", "/w", Status::Working);
+    let mut worker = session("w1", "/w", Status::Waiting);
+    worker.parent = Some("lead".into());
+    let mut question = Ask::new(AskKind::Question, "Which colour?", agent("w1"), 600);
+    question.id = "q1".into();
+    let row = &board(&[lead, worker], &[question])[0];
+    assert_eq!((row.state, row.own), (State::NeedsYou, State::Working), "the row sorts as the team needs; the lead's own is its own");
+    assert_eq!(row.asks.len(), 1, "the team's asks still show on the row");
+}
+
+#[test]
+fn a_reply_read_a_while_ago_settles_to_idle_for_every_client() {
+    use zerod::board::{mark_read, read};
+    // Read, and its answer is still the latest: settled once a while has passed, so it doesn't change under the eyes.
+    assert!(read(Some(("answer-1", 1_000)), Some("answer-1"), 1_300));
+    assert!(!read(Some(("answer-1", 1_000)), Some("answer-1"), 1_060), "just read: still Replied for a while");
+    assert!(!read(Some(("answer-1", 1_000)), Some("answer-2"), 5_000), "a newer answer is unread");
+    assert!(!read(None, Some("answer-1"), 5_000));
+    let mut lead = session("a", "/work/app", Status::Idle);
+    lead.items.push(Item { id: "1".into(), turn: None, kind: ItemKind::Agent { text: "Just an answer.".into(), final_answer: true }, status: ItemStatus::Done, at: None });
+    let mut rows = board(&[lead, session("b", "/work/api", Status::Idle)], &[]);
+    assert_eq!(rows.iter().find(|r| r.session == "a").unwrap().state, State::Answered);
+    mark_read(&mut rows, &|id| id == "a");
+    let a = rows.iter().find(|r| r.session == "a").unwrap();
+    assert_eq!((a.state, a.own), (State::Idle, State::Idle));
 }

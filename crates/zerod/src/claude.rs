@@ -45,8 +45,36 @@ pub fn command(conversation: &Conversation, resume: bool, model: Option<&str>, e
     if let Some(thread) = conversation.thread.as_deref() { args.extend([if resume { "--resume" } else { "--session-id" }, thread]) }
     if let Some(model) = model { args.extend(["--model", model]) }
     if let Some(effort) = effort { args.extend(["--effort", effort]) }
+    let config = mcp_config(&conversation.mcp).map(|(config, _)| config);
+    if let Some(config) = &config { args.extend(["--mcp-config", config]) }
     login_shell(&args)
 }
+
+/// Zero's MCP servers as `--mcp-config` takes them, on top of the user's own; each value a `${…}` that Claude expands
+/// from its environment, where zerod puts the value (the pairs given back), so no secret is on the command line.
+pub fn mcp_config(servers: &[crate::mcp_servers::Resolved]) -> Option<(String, Vec<(String, String)>)> {
+    if servers.is_empty() { return None }
+    let mut env = vec![];
+    let mut config = serde_json::Map::new();
+    for server in servers {
+        let mut refer = |values: &[(String, String)]| -> serde_json::Map<String, Value> {
+            values.iter().map(|(name, value)| {
+                let var = format!("ZERO_MCP_{}_{}", variable(&server.id), variable(name));
+                env.push((var.clone(), value.clone()));
+                (name.clone(), json!(format!("${{{var}}}")))
+            }).collect()
+        };
+        let entry = match (&server.command, &server.url) {
+            (Some(command), _) => json!({"command": command, "args": server.args, "env": refer(&server.env)}),
+            (None, Some(url)) => json!({"type": "http", "url": url, "headers": refer(&server.headers)}),
+            (None, None) => continue,
+        };
+        config.insert(server.id.clone(), entry);
+    }
+    Some((json!({"mcpServers": config}).to_string(), env))
+}
+
+fn variable(name: &str) -> String { name.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' }).collect() }
 
 /// A fresh conversation id for a new Claude session, a UUID as `--session-id` wants.
 pub fn new_session_id() -> String {

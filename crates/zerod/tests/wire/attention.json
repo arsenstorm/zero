@@ -310,6 +310,49 @@
     "name": "question"
   },
   {
+    "attention": "blocked",
+    "conversation": {
+      "approvals": [],
+      "branch": null,
+      "cwd": "/work/project",
+      "diff": null,
+      "effort": null,
+      "error": null,
+      "failure": null,
+      "id": "s1",
+      "items": [
+        {
+          "id": "a",
+          "kind": {
+            "finalAnswer": true,
+            "text": "CI is down.\n\n[zero: blocked]",
+            "type": "agent"
+          },
+          "status": "done",
+          "turn": null
+        }
+      ],
+      "label": null,
+      "model": null,
+      "parent": null,
+      "permissions": "auto",
+      "place": null,
+      "provider": "claude",
+      "questions": [],
+      "seq": 0,
+      "stalled": null,
+      "status": "idle",
+      "terminal": null,
+      "thread": null,
+      "ticket": null,
+      "title": null,
+      "turn": null,
+      "usage": null,
+      "workspace": null
+    },
+    "name": "blocked"
+  },
+  {
     "attention": "offline",
     "conversation": {
       "approvals": [],

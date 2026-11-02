@@ -129,3 +129,25 @@ async fn a_turn_carried_on_after_a_restart_says_so_in_place_of_interrupted() {
     assert_eq!(third.carry_on(), std::slice::from_ref(&other));
     assert!(third.get(&other).unwrap().items.iter().any(|i| matches!(&i.kind, ItemKind::Notice { text, .. } if text == "Paused for Zero's update, then carried on")));
 }
+
+#[tokio::test]
+async fn a_worker_paused_for_a_restart_isnt_reported_to_its_lead_as_stopped() {
+    let home = temp_dir("restart-report");
+    let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
+    let cwd = home.to_str().unwrap();
+    let lead = daemon.start(Provider::Claude, cwd, "lead it", None, None, Permissions::Auto).unwrap();
+    let worker = daemon.spawn(&lead, Provider::Claude, "work", zerod::daemon::Options::default()).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await; // their processes connect
+    daemon.session(&lead).unwrap().change(Change::Status { status: Status::Working, turn: Some("l1".into()), error: None });
+    let session = daemon.session(&worker).unwrap();
+    session.change(Change::Status { status: Status::Working, turn: Some("t1".into()), error: None });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let pausing = tokio::spawn({ let daemon = daemon.clone(); async move { daemon.pause_for_restart().await } });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    // The pause ends the worker's turn: interrupted, its process gone.
+    session.change(Change::Status { status: Status::Offline, turn: None, error: None });
+    let _ = tokio::time::timeout(Duration::from_secs(10), pausing).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let waiting = std::fs::read_to_string(home.join("zerod/sessions").join(&lead).join("pending.json")).unwrap_or_default();
+    assert!(!waiting.contains("Worker"), "a turn paused to carry on isn't a worker stopping: {waiting}");
+}

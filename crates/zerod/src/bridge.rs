@@ -141,6 +141,7 @@ impl Bridge {
             Attention::Failed | Attention::Limited => Some((Some("blocked"), conversation.failure.as_ref().map(|f| f.message.clone())
                 .unwrap_or_else(|| if conversation.usage.as_ref().is_some_and(|u| u.limited) { "Usage limit reached".into() } else { "Failed".into() }))),
             Attention::Offline => Some((Some("closed"), "Offline".into())),
+            Attention::Blocked => Some((Some("blocked"), conversation.answer().map(crate::board::without_ending).filter(|a| !a.is_empty()).unwrap_or("Blocked").to_string())),
             Attention::NeedsYou | Attention::Idle | Attention::Answered | Attention::Starting => None,
         }.map(|(status, body)| (status.map(String::from), body));
         if known.dots.get(&conversation.id) == Some(&dot) { return }

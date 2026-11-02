@@ -100,6 +100,7 @@ async fn main() {
     eprintln!("zerod: {} sessions, listening on {}", daemon.list().len(), socket.display());
     let integrations = zerod::integrations::Integrations::open(&home, Arc::new(zerod::integrations::Commands::default()));
     let pads = Arc::new(zerod::pads::Pads::open(&beside.join("scratchpads")));
+    let later = Arc::new(zerod::later::Later::open(&beside.join("later")));
     let loops = Arc::new(zerod::loops::Loops::open(&beside.join("loops")));
     let following = zerod::following::Following::open(&home, Arc::new(zerod::integrations::Commands::default()), integrations.clone());
     let (poller, polled) = (following.clone(), daemon.clone());
@@ -110,10 +111,10 @@ async fn main() {
         }
     });
     let browsers = zerod::browser::Browsers::open(&home);
-    browsers.follow(daemon.clone());
+    browsers.follow(daemon.clone(), inbox.clone());
     let places = Arc::new(zerod::board::Places::default());
     tokio::spawn(places.clone().follow(home.clone()));
-    let zerod = zerod::server::Zerod { daemon: daemon.clone(), inbox, drops: Some(drops), integrations, pads, loops, following, browsers, places, notices: tokio::sync::broadcast::channel(64).0 };
+    let zerod = zerod::server::Zerod { daemon: daemon.clone(), inbox, drops: Some(drops), integrations, pads, later, loops, following, browsers, places, notices: tokio::sync::broadcast::channel(64).0 };
     // Codex processes end with the daemon: their input closes when it exits.
     tokio::select! {
         served = zerod::server::serve(zerod, socket.clone()) => if let Err(error) = served { eprintln!("zerod: {error}"); std::process::exit(1) },

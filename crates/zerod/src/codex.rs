@@ -368,8 +368,9 @@ pub async fn start(session: &Session, transport: Transport, prompt: &str, images
     handshake(session, transport).await?;
     let conversation = session.snapshot();
     let (approvals, sandbox) = policy(conversation.permissions);
-    session.request(|id| json!({"id": id, "method": "thread/start", "params": {"cwd": conversation.cwd, "model": model, "approvalPolicy": approvals,
-        "sandbox": sandbox, "developerInstructions": INSTRUCTIONS}})).await?;
+    let mut params = json!({"cwd": conversation.cwd, "model": model, "approvalPolicy": approvals, "sandbox": sandbox, "developerInstructions": INSTRUCTIONS});
+    if !conversation.mcp.is_empty() { params["config"] = mcp_config(&conversation.mcp) }
+    session.request(|id| json!({"id": id, "method": "thread/start", "params": params})).await?;
     let thread = session.snapshot().thread.ok_or("Codex started no thread")?;
     turn(session, &thread, input(prompt, images), model, effort).await
 }
@@ -391,7 +392,22 @@ pub async fn resume(session: &Session, transport: Transport) -> Result<(), Strin
     let mut params = json!({"threadId": thread, "cwd": conversation.cwd, "approvalPolicy": approvals, "sandbox": sandbox,
                             "developerInstructions": INSTRUCTIONS, "excludeTurns": true});
     if let Some(model) = &conversation.model { params["model"] = json!(model) }
+    if !conversation.mcp.is_empty() { params["config"] = mcp_config(&conversation.mcp) }
     session.request(|id| json!({"id": id, "method": "thread/resume", "params": params})).await.map(|_| ())
+}
+
+/// Zero's MCP servers as config overrides for a thread (`mcp_servers.<id>`), over stdin: on top of the user's own.
+pub fn mcp_config(servers: &[crate::mcp_servers::Resolved]) -> Value {
+    let pairs = |values: &[(String, String)]| -> serde_json::Map<String, Value> { values.iter().map(|(k, v)| (k.clone(), json!(v))).collect() };
+    let config: serde_json::Map<String, Value> = servers.iter().filter_map(|server| {
+        let entry = match (&server.command, &server.url) {
+            (Some(command), _) => json!({"command": command, "args": server.args, "env": pairs(&server.env)}),
+            (None, Some(url)) => json!({"url": url, "http_headers": pairs(&server.headers)}),
+            (None, None) => return None,
+        };
+        Some((format!("mcp_servers.{}", server.id), entry))
+    }).collect();
+    Value::Object(config)
 }
 
 /// Codex imports Claude Code sessions it finds where Claude keeps them (not through a link), so the record goes there as a

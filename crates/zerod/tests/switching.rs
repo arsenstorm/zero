@@ -177,3 +177,25 @@ async fn permissions_change_between_turns_and_the_next_turn_starts_the_agent_wit
     daemon.set_permissions(&id, Permissions::Auto).await.unwrap();
     assert_eq!(daemon.get(&id).unwrap().permissions, Permissions::Auto);
 }
+
+#[tokio::test]
+async fn a_task_keeps_the_model_it_started_on_and_its_workers_take_it() {
+    // Started on a model: resumed later (parked, then a message), it runs on that model, not the provider's default.
+    let home = temp_dir("switch-kept-model");
+    let started = Arc::new(std::sync::Mutex::new(vec![]));
+    let seen = started.clone();
+    let runtime: Runtime = Arc::new(move |_, _, argv| { seen.lock().unwrap().push(argv.join(" ")); Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())) });
+    let daemon = Daemon::open(&home, runtime.clone()).unwrap();
+    let lead = daemon.start(Provider::Claude, home.to_str().unwrap(), "lead it", Some("claude-opus-5-5"), Some("high"), Permissions::Auto).unwrap();
+    common::until(&daemon.session(&lead).unwrap(), |c| c.status == Status::Offline).await;
+    drop(daemon);
+    let daemon = Daemon::open(&home, runtime).unwrap();
+    assert_eq!(daemon.get(&lead).unwrap().model.as_deref(), Some("claude-opus-5-5"), "kept with the task");
+    daemon.resume(&lead).await.ok();
+    assert!(started.lock().unwrap().last().unwrap().contains("--model claude-opus-5-5"), "{:?}", started.lock().unwrap());
+
+    // A worker given no model of its own: its lead's.
+    let worker = daemon.spawn(&lead, Provider::Claude, "work", zerod::daemon::Options::default()).unwrap();
+    assert!(started.lock().unwrap().last().unwrap().contains("--model claude-opus-5-5"), "{:?}", started.lock().unwrap());
+    assert_eq!(daemon.get(&worker).unwrap().model.as_deref(), Some("claude-opus-5-5"));
+}

@@ -14,20 +14,24 @@ use crate::model::{Attention, Conversation, Queued};
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "camelCase")]
 pub enum State {
-    /// Blocked on the user: a question, approval or run waits for them, or the agent said it's blocked or handed them
-    /// something (its note's `needs`).
+    /// Stopped because of the user: a question, approval or run waits for their answer, or a turn ended asking them.
     NeedsYou,
     /// Failing, stuck or out of usage, on its own.
     Trouble,
     Working,
-    /// The agent waits on something other than the user (another task, a deploy).
-    Waiting,
+    /// Over to the user: done, with a step only they can take (its note's `needs`: merge, deploy, check). A to-do, not a
+    /// decision.
+    Handed,
     /// It answered the user and waits on nothing: Replied, until the user has read it.
     Answered,
+    /// Blocked on something that isn't the user (CI, another team, an outage): nothing they can do, so it sorts low.
+    Blocked,
     /// The work is finished: its code done, not yet merged.
     Done,
     /// Merged: shipped, by the agent's note.
     Merged,
+    /// Put on hold by the user (daemon.rs `pause`), until they resume it.
+    Paused,
     Idle,
     Offline,
 }
@@ -50,7 +54,11 @@ pub struct Row {
     pub path: Option<String>,
     /// Offline, `state` is the one it was last known in.
     pub online: bool,
+    /// The team's: the lead's own, raised by a worker's that needs attention. What the row sorts by.
     pub state: State,
+    /// The lead's own, its workers left out: what its icon shows, so a lead at work isn't shown waiting on the user
+    /// because a worker is.
+    pub own: State,
     /// Where the agent is: its latest note, else its last answer's first line.
     pub now: Option<String>,
     /// What the agent handed to the user, by its latest note.
@@ -137,6 +145,7 @@ pub fn board_in(conversations: &[Conversation], asks: &[Ask], places: &HashMap<S
     let mut rows: Vec<Row> = leads.iter().map(|lead| {
         let team = team(lead, conversations);
         let its = standing(lead, conversations, asks);
+        let own = standing(lead, std::slice::from_ref(*lead), asks).state;
         let (place, path) = whereabouts(lead);
         let members = team[1..].iter().map(|member| {
             let own = standing(member, conversations, asks);
@@ -147,11 +156,37 @@ pub fn board_in(conversations: &[Conversation], asks: &[Ask], places: &HashMap<S
         let (queued, held) = queue(&lead.id);
         Row {
             session: lead.id.clone(), task: crate::bridge::label(lead), workspace: workspace_of(lead), ticket: lead.ticket.clone(), place, path, online: its.online,
-            state: its.state, now: its.now, needs: its.needs, asks: its.asks, workers: team.len() - 1, team: members, queued, held,
+            state: its.state, own, now: its.now, needs: its.needs, asks: its.asks, workers: team.len() - 1, team: members, queued, held,
         }
     }).collect();
     rows.sort_by_key(|row| row.state);
     rows
+}
+
+/// How long a read reply stays Replied: it doesn't change under the eyes of whoever is reading it.
+pub const SETTLE_AFTER: i64 = 5 * 60;
+
+/// A reply is read when the user saw it (`seen`: that answer's item, and when) and it's still the latest, a while ago.
+pub fn read(seen: Option<(&str, i64)>, latest: Option<&str>, now: i64) -> bool {
+    seen.is_some_and(|(answer, at)| Some(answer) == latest && now - at >= SETTLE_AFTER)
+}
+
+/// The rows whose reply the user has read, Idle rather than Replied: on every client alike.
+pub fn mark_read(rows: &mut [Row], read: &dyn Fn(&str) -> bool) {
+    for row in rows.iter_mut().filter(|r| (r.state == State::Answered || r.own == State::Answered) && read(&r.session)) {
+        if row.state == State::Answered { row.state = State::Idle }
+        if row.own == State::Answered { row.own = State::Idle }
+    }
+    rows.sort_by_key(|row| row.state);
+}
+
+/// The rows of tasks the user paused, and their paused workers, shown as Paused whatever they were doing.
+pub fn mark_paused(rows: &mut [Row], paused: &dyn Fn(&str) -> bool) {
+    for row in rows.iter_mut() {
+        for member in row.team.iter_mut().filter(|m| paused(&m.session)) { member.state = State::Paused }
+        if paused(&row.session) { row.state = State::Paused; row.own = State::Paused }
+    }
+    rows.sort_by_key(|row| row.state);
 }
 
 /// A session's state with its workers counted in (the most urgent of them, an open ask making it the user's), then
@@ -169,11 +204,10 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
     if !open.is_empty() { state = State::NeedsYou }
     if let Some(note) = own && state > State::Trouble {
         state = match note.status.as_deref() {
-            Some("blocked") => State::NeedsYou,
+            // Blocked, or waiting on something: on what isn't the user (what needs them is an ask).
+            Some("blocked" | "waiting") => State::Blocked,
             _ if state == State::Working => state,
-            _ if note.needs.is_some() => State::NeedsYou,
-            // Waiting on something is blocked on it, as the user reads it: one state, not two.
-            Some("waiting") => State::NeedsYou,
+            _ if note.needs.is_some() => State::Handed,
             Some("done") => State::Done,
             Some("merged") => State::Merged,
             _ => state,
@@ -184,7 +218,8 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
         state = match ending {
             "done" => State::Done,
             "working" => State::Idle,
-            _ => State::NeedsYou, // blocked, or asked: either way it waits on the user
+            "blocked" => State::Blocked,
+            _ => State::NeedsYou, // asked: it waits on the user's answer
         };
     }
     // Its first line of prose: a table, heading or rule says nothing on its own; a list's item without its marker.
@@ -308,6 +343,7 @@ fn attention(conversation: &Conversation) -> State {
     match conversation.attention() {
         Attention::NeedsYou => State::NeedsYou,
         Attention::Limited | Attention::Stuck | Attention::Failed => State::Trouble,
+        Attention::Blocked => State::Blocked,
         Attention::Working | Attention::Starting => State::Working,
         Attention::Done => State::Done,
         Attention::Answered => State::Answered,
