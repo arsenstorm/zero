@@ -1,0 +1,12 @@
+# Zero's relay: passes a phone's encrypted frames to its Mac and back (apps/relay/README.md).
+name = "zero-relay"
+main = "relay.js"
+compatibility_date = "2026-10-01"
+
+[[durable_objects.bindings]]
+name = "MACS"
+class_name = "Mac"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Mac"]
