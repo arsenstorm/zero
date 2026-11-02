@@ -95,6 +95,9 @@ import UserNotifications
     /// Words put in a task's composer from elsewhere (Siri's draft): taken by the composer when it shows.
     var drafts: [String: String] = [:]
 
+    /// The MCP servers tasks are given, as the Mac lists them for a phone: name, how it runs, where; no values.
+    func mcpServers() async -> [[String: Any]] { (try? await link?.call("mcpServers")) as? [[String: Any]] ?? [] }
+
     /// The Mac's project folders, as New task offers them.
     func projects() async -> [String] { (try? await link?.call("projects")) as? [String] ?? [] }
 
@@ -152,6 +155,7 @@ import UserNotifications
                     self.rows = rows
                     ZeroIndex.update(rows)
                     await self.arrange()
+                    await self.name(rows)
                 case .later: await self.loadLater()
                 // The Mac's workspace changed, or the workspaces did: the list follows it.
                 case .workspaces:
@@ -213,6 +217,14 @@ import UserNotifications
         sidebar = (BoardRow.Sort(rawValue: got["sort"] ?? "") ?? .state, got["order"] ?? "", got["workspace"] ?? "zero")
     }
 
+    /// Each worker's name, as the Mac's sidebar has it: asked of zerod when the board shows a worker not named yet.
+    private(set) var names: [String: String] = [:]
+    private func name(_ rows: [BoardRow]) async {
+        guard rows.flatMap({ $0.team ?? [] }).contains(where: { names[$0.session] == nil }),
+              let all = try? await link?.list() else { return }
+        names = Dictionary(all.map { ($0.id, TaskName.of($0)) }, uniquingKeysWith: { a, _ in a })
+    }
+
     /// The user's workspaces, as zerod has them; the one shown is the Mac's (`sidebar.workspace`) unless chosen here.
     private(set) var workspaces: [ZerodLink.Workspace] = []
 
@@ -231,7 +243,7 @@ import UserNotifications
     var currentWorkspace: ZerodLink.Workspace? { workspaces.first { $0.id == sidebar.workspace } }
 
     /// The asks waiting on the user, oldest first.
-    var waiting: [Ask] { asks.filter { $0.state == .waiting && $0.kind != .note && $0.kind != .message }.sorted { $0.createdAt < $1.createdAt } }
+    var waiting: [Ask] { asks.filter { $0.state == .waiting && $0.kind != .note && $0.kind != .message && $0.sameAs == nil }.sorted { $0.createdAt < $1.createdAt } }
 
     func conversation(_ id: String) -> Conversation? { lives[id]?.conversation }
 
@@ -285,6 +297,7 @@ import UserNotifications
     func choose(_ ask: Ask, option: Int) async { try? await link?.choose(ask.id, option: option) }
     func answer(_ ask: Ask, option: Int, text: String) async { try? await link?.answer(ask.id, option: option, text: text) }
     func reply(_ ask: Ask, text: String) async { try? await link?.reply(ask.id, text: text) }
+    func deliver(_ ask: Ask) async { try? await link?.deliver(ask.id) }
     func decide(session: String, approval: String, choice: String) async { try? await link?.decide(session: session, approval: approval, choice: choice) }
     func answer(session: String, question: String, answers: [String: [String]]) async {
         try? await link?.answer(session: session, question: question, answers: answers)
@@ -293,12 +306,33 @@ import UserNotifications
     /// Images sent to a task: each kept on the Mac (its "upload"), then the message naming them.
     func send(_ text: String, images: [Data], to session: String, model: String? = nil, effort: String? = nil) async throws {
         guard let link else { throw ZerodError(message: "Not connected to your Mac") }
+        try await link.send(session: session, text: text, images: upload(images, through: link), model: model, effort: effort)
+    }
+
+    /// For after the task's current turn: queued behind what's waiting, as the Mac's Return while it works.
+    func queue(_ text: String, images: [Data], to session: String) async throws {
+        guard let link else { throw ZerodError(message: "Not connected to your Mac") }
+        try await link.queue(session: session, text: text, images: upload(images, through: link))
+    }
+
+    private func upload(_ images: [Data], through link: ZerodLink) async throws -> [String] {
         var paths: [String] = []
         for (index, image) in images.enumerated() {
             if let path = try await link.call("upload", ["name": "photo-\(index + 1).jpg", "data": image.base64EncodedString()]) as? String { paths.append(path) }
         }
-        try await link.send(session: session, text: text, images: paths, model: model, effort: effort)
+        return paths
     }
+
+    func unqueue(_ session: String, item: String) async -> Bool { (try? await link?.unqueue(session: session, item: item)) != nil }
+    /// A queued message sent now, mid-turn, its images as they were kept on the Mac.
+    func steer(_ session: String, item: Queued) async {
+        guard await unqueue(session, item: item.id) else { return }
+        try? await link?.send(session: session, text: item.text, images: item.images ?? [])
+    }
+    func release(_ session: String) async { try? await link?.release(session: session) }
+    func interrupt(_ session: String) async { try? await link?.interrupt(session: session) }
+    /// A task's row on the board: a lead's own, or a worker's from its lead's team.
+    func row(_ session: String) -> BoardRow? { rows.first { $0.session == session } ?? rows.lazy.compactMap { $0.member(session) }.first }
 
     /// A model a task can be switched to, and the reasoning levels it takes.
     struct ModelChoice: Identifiable {

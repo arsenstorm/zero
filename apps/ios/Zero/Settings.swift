@@ -11,6 +11,7 @@ struct SettingsView: View {
     @Environment(\.scenePhase) private var phase
     @State private var notifications: UNAuthorizationStatus?
     @State private var unpairing = false
+    @State private var servers: [[String: Any]]?
 
     var body: some View {
         NavigationStack {
@@ -26,6 +27,13 @@ struct SettingsView: View {
                     Button("Open iOS Settings") { openURL(URL(string: UIApplication.openSettingsURLString)!) }
                 } header: { Text("Permissions") } footer: {
                     Text("Notifications tell you when a task needs you. The microphone and speech let you dictate a message.")
+                }
+                if let servers, !servers.isEmpty {
+                    Section {
+                        ForEach(servers.indices, id: \.self) { i in server(servers[i]) }
+                    } header: { Text("MCP servers") } footer: {
+                        Text("Given to tasks as their agent starts. Set them up on your Mac, in Settings › MCP servers.")
+                    }
                 }
                 Section("About") {
                     LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "–")
@@ -46,7 +54,21 @@ struct SettingsView: View {
                 Text("It stops reaching your Mac until you pair it again.")
             }
             // Back from iOS Settings: what was allowed there, read again.
+            .task { servers = await model.mcpServers() }
             .task(id: phase) { notifications = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus }
+        }
+    }
+
+    private func server(_ server: [String: Any]) -> some View {
+        let workspaces = server["workspaces"] as? [String] ?? []
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(server["name"] as? String ?? "").font(.body.weight(.medium))
+                Spacer()
+                if server["enabled"] as? Bool == false { Text("Off").font(.footnote).foregroundStyle(.secondary) }
+            }
+            Text(server["runs"] as? String ?? "").font(.footnote.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            Text(workspaces.isEmpty ? "Every workspace" : workspaces.joined(separator: ", ")).font(.footnote).foregroundStyle(.secondary)
         }
     }
 

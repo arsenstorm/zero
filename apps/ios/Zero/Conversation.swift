@@ -243,7 +243,8 @@ struct StepView: View {
             case let .agent(text, _):
                 MarkdownView(text: ZeroEnding.split(text).0).foregroundStyle(.secondary)
             case let .notice(text, error):
-                Text(text).font(.footnote).foregroundStyle(error ? .red : .secondary)
+                // A server's sign-in link calls back to the Mac, where its CLI listens: here, the words alone.
+                Text(String(NoticeText.attributed(text).characters)).font(.footnote).foregroundStyle(error ? .red : .secondary)
             case let .table(title, columns, rows):
                 TableView(title: title, columns: columns, rows: rows)
             case let .reasoning(text):
@@ -402,16 +403,44 @@ struct AskCard: View {
     @State private var typing: Int?
     @State private var words = ""
 
+    /// A command it can't run itself, for the user to run and say how it went.
+    private var manual: Bool { ask.kind != .run && ask.command != nil && ask.state == .waiting }
+
+    private var kindName: String {
+        switch ask.kind {
+        case .run: "Run on your Mac"
+        case .approve: "Approval"
+        case .permission: "Permission"
+        default: manual ? "Run this yourself" : "Question"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(ask.kind == .run ? "Run on your Mac" : ask.kind == .approve ? "Approval" : "Question",
-                  image: ask.kind == .run ? "terminal-outline" : "circle-question-glyph")
-                .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Label(kindName, image: ask.kind == .run || manual ? "terminal-outline" : "circle-question-glyph")
+                Text("· " + (ask.agent.label ?? ask.agent.name)).lineLimit(1)
+            }
+            .font(.caption.weight(.medium)).foregroundStyle(.secondary)
             Text(ask.kind == .run && ask.state == .waiting ? "Allow this command?" : ask.title).font(.subheadline.weight(.semibold))
             if !ask.body.isEmpty { MarkdownView(text: ask.body).font(.footnote).foregroundStyle(.secondary) }
+            if let detail = ask.detail, !detail.isEmpty { Text(detail).font(.caption).foregroundStyle(.secondary) }
             if let command = ask.command {
-                ScrollView(.horizontal) { Text((ask.kind == .run ? "$ " : "") + command + (ask.output.isEmpty ? "" : "\n" + ask.output)).font(.footnote.monospaced()).padding(10) }
+                // What runs is what's read: the command, the script it runs, and what it printed.
+                let shown = [(ask.kind == .run ? "$ " : "") + command, ask.script, ask.output.isEmpty ? nil : ask.output].compactMap { $0 }.joined(separator: "\n")
+                ScrollView(.horizontal) { Text(shown).font(.footnote.monospaced()).textSelection(.enabled).padding(10) }
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(alignment: .topTrailing) {
+                        Button { UIPasteboard.general.string = [command, ask.script].compactMap { $0 }.joined(separator: "\n") } label: {
+                            Image("copy-outline").resizable().frame(width: 14, height: 14).foregroundStyle(.secondary).frame(width: 32, height: 32)
+                        }
+                        .accessibilityLabel("Copy the command")
+                    }
+                if manual, let typed = ask.options.firstIndex(where: Ask.expectsText) {
+                    // What it printed, from the clipboard into the reply, ready to send.
+                    Button("Paste its output") { words = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""; typing = typed }
+                        .font(.footnote.weight(.medium))
+                }
             }
             if ask.state == .waiting {
                 if ask.options.isEmpty {
@@ -430,6 +459,10 @@ struct AskCard: View {
                 }
             } else if let answer = ask.answer, ask.kind != .run {
                 Text(answer).font(.footnote).foregroundStyle(.secondary)
+                // Typed into the agent's session for it, and that didn't take: again.
+                if ask.delivery == .failed {
+                    Button("Not delivered · Try again") { Task { await model.deliver(ask) } }.font(.footnote.weight(.medium))
+                }
             } else if ask.state == .running {
                 Text("Running…").font(.footnote).foregroundStyle(.secondary)
             }

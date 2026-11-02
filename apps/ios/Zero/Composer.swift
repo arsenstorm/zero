@@ -39,17 +39,81 @@ struct Composer: View {
         }
     }
 
-    private var sendButton: some View {
-        Button(action: send) {
-            Image("arrow-up-outline").resizable().frame(width: 18, height: 18)
-                .foregroundStyle(Color(uiColor: .systemBackground))
-                .frame(width: 40, height: 40)
-                .background(Color.primary.opacity(empty ? 0.25 : 1), in: Circle())
+    /// Working (or waiting on you): what's written waits for after this turn, and with nothing written, Stop.
+    private var busy: Bool { conversation?.status == .working || conversation?.status == .waiting }
+
+    @ViewBuilder private var sendButton: some View {
+        if busy && empty {
+            Button { Task { await model.interrupt(session) } } label: {
+                Image("media-stop-glyph").resizable().frame(width: 14, height: 14)
+                    .foregroundStyle(Color(uiColor: .systemBackground))
+                    .frame(width: 40, height: 40).background(Color.primary, in: Circle())
+            }
+            .accessibilityLabel("Stop")
+        } else {
+            Button(action: send) {
+                Image("arrow-up-outline").resizable().frame(width: 18, height: 18)
+                    .foregroundStyle(Color(uiColor: .systemBackground))
+                    .frame(width: 40, height: 40)
+                    .background(Color.primary.opacity(empty ? 0.25 : 1), in: Circle())
+            }
+            .disabled(empty || sending)
+            .accessibilityLabel(busy ? "Queue for after this turn" : "Send")
         }
-        .disabled(empty || sending)
+    }
+
+    /// What waits for after this turn, above the box: each back into it on a tap, Steer to send it now; held since
+    /// the agent was stopped, Send lets it go on.
+    @ViewBuilder private var queueStrip: some View {
+        let row = model.row(session)
+        let queued = row?.queued ?? [], held = row?.held == true
+        if !queued.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 6) {
+                    Image(held ? "media-stop-glyph" : "clock-glyph").resizable().frame(width: 12, height: 12)
+                    Text(held ? "Held" : "Queued").font(.footnote.weight(.medium))
+                    Spacer()
+                    if held { Button("Send") { Task { await model.release(session) } }.font(.footnote.weight(.semibold)).foregroundStyle(.primary) }
+                }
+                .foregroundStyle(.secondary).padding(.horizontal, 16).frame(height: 32)
+                ForEach(queued) { item in
+                    HStack(spacing: 8) {
+                        Button { Task { if await model.unqueue(session, item: item.id) { draft = draft.isEmpty ? item.text : draft + "\n" + item.text; focused = true } } } label: {
+                            Text(item.text).font(.subheadline).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        Button { Task { _ = await model.unqueue(session, item: item.id) } } label: {
+                            Image("trash-outline").resizable().frame(width: 16, height: 16).foregroundStyle(.secondary).frame(width: 32, height: 32)
+                        }
+                        .accessibilityLabel("Delete")
+                        Button {
+                            Task { await model.steer(session, item: item) }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text("Steer").font(.footnote.weight(.medium))
+                                Image("arrow-turn-up-2-outline").resizable().frame(width: 12, height: 12)
+                            }
+                            .padding(.horizontal, 10).frame(height: 28).background(.quaternary, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.leading, 16).padding(.trailing, 6).frame(height: 40)
+                }
+            }
+            .padding(.bottom, 4)
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
+            .padding(.horizontal, 12).padding(.bottom, 6)
+        }
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+            queueStrip
+            box
+        }
+    }
+
+    private var box: some View {
         VStack(alignment: .leading, spacing: 0) {
             if !images.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -147,7 +211,11 @@ struct Composer: View {
         sending = true
         Task {
             defer { sending = false }
-            do { try await model.send(text, images: photos, to: session, model: choice?.model, effort: choice?.effort) }
+            do {
+                // While it works, Return's place: after this turn (a model chosen here waits for a message sent now).
+                if busy && choice == nil { try await model.queue(text, images: photos, to: session) }
+                else { try await model.send(text, images: photos, to: session, model: choice?.model, effort: choice?.effort) }
+            }
             catch { draft = text } // Back in the box, to send again.
         }
     }

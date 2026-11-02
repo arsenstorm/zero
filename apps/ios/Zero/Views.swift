@@ -263,9 +263,11 @@ struct Splash: View {
     }
 }
 
-/// The asks waiting on you, then every task, most urgent first, as the Mac's board sorts them.
+/// The asks waiting on you, then every task, most urgent first, as the Mac's board sorts them; as its sidebar has
+/// them, each lead's workers folded under it, a chevron opening them.
 struct TasksView: View {
     let model: PhoneModel
+    @State private var open: Set<String> = []
 
     var body: some View {
         List {
@@ -276,24 +278,54 @@ struct TasksView: View {
             }
             Section("Tasks") {
                 ForEach(model.tasks) { row in
-                    NavigationLink(value: row.session) { TaskRow(row: row) }
+                    let members = (row.team ?? []).filter { $0.session != row.session }.sorted { $0.state.urgency < $1.state.urgency }
+                    let unfolded = open.contains(row.session)
+                    TaskRow(name: row.task, state: row.ownState, folded: members.isEmpty ? nil : !unfolded,
+                            fold: { withAnimation(.snappy(duration: 0.2)) { if unfolded { open.remove(row.session) } else { open.insert(row.session) } } },
+                            show: { model.path.append(row.session) })
+                    if unfolded {
+                        ForEach(members, id: \.session) { member in
+                            TaskRow(name: model.names[member.session] ?? member.place, state: member.state, worker: true, show: { model.path.append(member.session) })
+                                .opacity([.done, .merged, .idle, .offline].contains(member.state) ? 0.6 : 1)
+                        }
+                    }
                 }
             }
         }
+        .environment(\.defaultMinListRowHeight, 36)
         .refreshable { model.connect() }
         .task { model.askForPush() }
     }
 }
 
+/// A task as the Mac's sidebar lists it: its name, then (a lead with workers) the chevron that folds them, then its
+/// state. A worker's is a step in and smaller.
 struct TaskRow: View {
-    let row: BoardRow
+    let name: String
+    let state: BoardRow.State
+    var worker = false
+    var folded: Bool?
+    var fold: () -> Void = {}
+    let show: () -> Void
+
     var body: some View {
         HStack(spacing: 10) {
-            StateGlyph(state: row.ownState)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(row.task).lineLimit(1)
+            Button(action: show) {
+                Text(name).font(worker ? .subheadline : .body).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }
+            .buttonStyle(.borderless).foregroundStyle(.primary)
+            if let folded {
+                Button(action: fold) {
+                    Image("chevron-down-outline").resizable().frame(width: 12, height: 12).foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(folded ? -90 : 0)).frame(width: 28, height: 28).contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(folded ? "Show its workers" : "Hide its workers")
+            }
+            StateGlyph(state: state).accessibilityLabel(StateGlyph.look(state).name)
         }
+        .padding(.leading, worker ? 18 : 0)
+        .padding(.vertical, worker ? -2 : 0)
     }
 }
 
@@ -304,6 +336,7 @@ struct TaskView: View {
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var atBottom = true
     @Environment(\.scenePhase) private var phase
+    @State private var details = false
 
     var body: some View {
         let conversation = model.conversation(session)
@@ -336,10 +369,14 @@ struct TaskView: View {
         .appEntityIdentifier(EntityIdentifier(for: ZeroTask.self, identifier: session))
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Menu { Button("Save for later") { Task { await model.askToSaveForLater(session) } } } label: { Image("dots-glyph") }
+                Menu {
+                    Button("Details") { details = true }
+                    Button("Save for later") { Task { await model.askToSaveForLater(session) } }
+                } label: { Image("dots-glyph") }
             }
         }
-        .navigationTitle(model.rows.first { $0.session == session }?.task ?? "Task")
+        .sheet(isPresented: $details) { TaskDetails(model: model, session: session).presentationDetents([.medium, .large]) }
+        .navigationTitle(model.rows.first { $0.session == session }?.task ?? model.names[session] ?? "Task")
         // Seen: its notification goes (on the Mac too, the board moving on).
         .onAppear {
             UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [session])
@@ -395,6 +432,56 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             Self.model?.tab = .tasks
             // An ask's (not a task's): it waits in the list's Waiting on you.
             Self.model?.path = id.hasPrefix(TaskAlerts.askPrefix) ? [] : [id]
+        }
+    }
+}
+
+/// A task's details, as the Mac's pane has them: where it stands, where it runs, its ticket, agent and model, and the
+/// attributes its agent set (links open).
+struct TaskDetails: View {
+    let model: PhoneModel
+    let session: String
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        let row = model.row(session), conversation = model.conversation(session)
+        NavigationStack {
+            Form {
+                Section {
+                    if let row {
+                        LabeledContent("State") { HStack(spacing: 6) { StateGlyph(state: row.ownState); Text(row.ownState.title) } }
+                        if let now = row.needs ?? row.now, !now.isEmpty { Text(now).font(.subheadline).foregroundStyle(.secondary) }
+                        if row.workers > 0 { LabeledContent("Workers", value: "\(row.workers)") }
+                    }
+                }
+                Section {
+                    LabeledContent("Where", value: row?.path ?? conversation.map { ($0.cwd as NSString).abbreviatingWithTildeInPath } ?? row?.place ?? "–")
+                    if let branch = conversation?.branch { LabeledContent("Branch", value: branch) }
+                    if let ticket = row?.ticket ?? conversation?.ticket { LabeledContent("Ticket", value: ticket) }
+                }
+                if let conversation {
+                    Section {
+                        LabeledContent("Agent", value: conversation.provider.title)
+                        if let id = conversation.model { LabeledContent("Model", value: id + (conversation.effort.map { " · " + $0.capitalized } ?? "")) }
+                        LabeledContent("Permissions", value: conversation.permissions == .unrestricted ? "Unrestricted" : "Auto")
+                    }
+                    if let attributes = conversation.attributes, !attributes.isEmpty {
+                        Section("Attributes") {
+                            ForEach(attributes.keys.sorted(), id: \.self) { key in
+                                let value = attributes[key] ?? ""
+                                if let url = URL(string: value), url.scheme?.hasPrefix("http") == true {
+                                    Button { openURL(url) } label: { LabeledContent(key) { Text(url.host() ?? value).fontWeight(.medium).lineLimit(1) } }
+                                        .foregroundStyle(.primary)
+                                } else {
+                                    LabeledContent(key, value: value)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle(row?.task ?? model.names[session] ?? "Details")
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }
