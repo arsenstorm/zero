@@ -264,6 +264,20 @@ async fn stopping_the_agent_holds_its_queue_until_released() {
 }
 
 #[tokio::test]
+async fn an_unarchived_task_brings_its_queue_back_held() {
+    let w = world("queue-unarchive");
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let seen = lead_runtime(&w).await;
+    seen.said("user", 1).await;
+    w.daemon.queue(&lead, "after this", &[]).unwrap();
+    w.daemon.archive(&lead).await.unwrap();
+    w.daemon.unarchive(&lead).unwrap();
+    let (list, held) = w.daemon.queued(&lead);
+    assert_eq!(list.iter().map(|q| q.text.as_str()).collect::<Vec<_>>(), ["after this"], "the words it was waiting with");
+    assert!(held, "held: nothing goes until the user says so");
+}
+
+#[tokio::test]
 async fn a_worker_is_in_its_leads_workspace_wherever_it_runs() {
     let w = world("leads-workspaces");
     w.daemon.workspaces.save(zerod::workspaces::Workspace { id: "work".into(), name: "Acme".into(), glyph: "".into(), folders: vec![] }).unwrap();

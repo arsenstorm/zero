@@ -375,7 +375,7 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         }
         "archive" => daemon.archive(&session()?).await.map(|_| Value::Null),
         "unarchive" => daemon.unarchive(&session()?).map(|back| json!(back)),
-        "archived" => Ok(json!(daemon.archived(request.limit.unwrap_or(100)))),
+        "archived" => Ok(json!(daemon.archived(request.limit.unwrap_or(1000)))),
         // A new build is on disk: turns under way pause between steps, then zerod becomes the new one, which carries
         // them on. Answered at once; the restart happens when the last turn has paused.
         "restart" => {

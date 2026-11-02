@@ -128,12 +128,8 @@ impl Daemon {
                 Ok(session) => {
                     let conversation = session.summary();
                     attention.insert(conversation.id.clone(), conversation.attention());
-                    if let Ok(data) = std::fs::read(dir.join("pending.json")) {
-                        // Before queues, pending.json held plain words: reports.
-                        let words: Vec<Queued> = serde_json::from_slice(&data).unwrap_or_else(|_| serde_json::from_slice::<Vec<String>>(&data).unwrap_or_default()
-                            .into_iter().map(|text| Queued { id: new_id(), text, images: vec![], report: true }).collect());
-                        if !words.is_empty() { pending.insert(conversation.id.clone(), words); }
-                    }
+                    let words = kept_pending(&dir);
+                    if !words.is_empty() { pending.insert(conversation.id.clone(), words); }
                     sessions.push(session);
                 }
                 Err(error) => eprintln!("zerod: skipped {}: {error}", dir.display()),
@@ -447,8 +443,15 @@ impl Daemon {
             let _ = std::fs::remove_file(to.join(ARCHIVED));
             let session = Session::load(&to, self.events.clone()).map_err(|e| e.to_string())?;
             self.sessions.lock().unwrap().push(session);
+            // What it was waiting to say comes back held: put away a while, it goes on only when the user says so.
+            let words = kept_pending(&to);
+            if !words.is_empty() {
+                self.pending.lock().unwrap().insert(member.clone(), words);
+                self.held.lock().unwrap().insert(member.clone());
+            }
             back.push(member);
         }
+        let _ = self.queues.send(());
         // The board and the apps hear of it: the task's back, its workers under it.
         if let Ok(session) = self.session(id) { session.announce() }
         Ok(back)
@@ -468,7 +471,8 @@ impl Daemon {
             let kept = marker(&path);
             let task = kept.as_ref().and_then(|m| m["task"].as_str().map(String::from)).or_else(|| parked_label(&path)).unwrap_or_else(|| id.clone());
             serde_json::json!({"id": id, "task": task, "at": at, "workspace": kept.as_ref().and_then(|m| m["workspace"].as_str().map(String::from)),
-                               "workers": counts.get(&id).copied().unwrap_or(0)})
+                               "workers": counts.get(&id).copied().unwrap_or(0),
+                               "parent": std::fs::read(path.join("meta.json")).ok().and_then(|d| serde_json::from_slice::<serde_json::Value>(&d).ok()).and_then(|m| m["parent"].as_str().map(String::from))})
         }).collect()
     }
 
@@ -1297,6 +1301,13 @@ fn archived_at() -> i64 {
             Err(seen) => last = seen,
         }
     }
+}
+
+/// A session's queue as kept in its folder. Before queues, pending.json held plain words: reports.
+fn kept_pending(dir: &Path) -> Vec<Queued> {
+    let Ok(data) = std::fs::read(dir.join("pending.json")) else { return vec![] };
+    serde_json::from_slice(&data).unwrap_or_else(|_| serde_json::from_slice::<Vec<String>>(&data).unwrap_or_default()
+        .into_iter().map(|text| Queued { id: new_id(), text, images: vec![], report: true }).collect())
 }
 
 fn marker(dir: &Path) -> Option<serde_json::Value> {

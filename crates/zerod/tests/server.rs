@@ -473,6 +473,8 @@ async fn a_lead_unarchived_brings_back_the_workers_archived_with_it_and_no_other
     let archived = client.call(json!({"op": "archived"})).await;
     let roots: Vec<(String, u64)> = archived["result"].as_array().unwrap().iter().map(|a| (a["id"].as_str().unwrap().into(), a["workers"].as_u64().unwrap())).collect();
     assert_eq!(roots, [(lead.clone(), 1), (one.clone(), 0)], "newest first: the lead with the one worker it took, child one on its own");
+    assert_eq!(archived["result"][1]["parent"], lead.as_str(), "child one says whose it is, to be shown under its lead");
+    assert_eq!(archived["result"][0]["parent"], Value::Null);
 
     let back = client.call(json!({"op": "unarchive", "session": lead})).await;
     assert_eq!(back["ok"], true, "{back}");
