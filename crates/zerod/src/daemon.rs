@@ -30,6 +30,8 @@ const PAUSED: &str = "paused-by-user.json";
 const SEEN: &str = "seen.json";
 /// In an archived task's folder: when it went, and with whom (the lead it went with; none, it went on its own).
 const ARCHIVED: &str = "archived.json";
+/// In a session's folder: its queue waits for the user.
+const HELD: &str = "held";
 
 pub struct Daemon {
     home: PathBuf,
@@ -122,7 +124,7 @@ impl Daemon {
         let (events, _) = broadcast::channel(4096);
         let mut dirs: Vec<PathBuf> = std::fs::read_dir(&root)?.filter_map(|entry| entry.ok().map(|e| e.path())).filter(|p| p.is_dir()).collect();
         dirs.sort(); // ids sort by when they were made
-        let (mut sessions, mut attention, mut pending) = (vec![], HashMap::new(), HashMap::new());
+        let (mut sessions, mut attention, mut pending, mut held) = (vec![], HashMap::new(), HashMap::new(), HashSet::new());
         for dir in dirs {
             match Session::load(&dir, events.clone()) {
                 Ok(session) => {
@@ -130,6 +132,7 @@ impl Daemon {
                     attention.insert(conversation.id.clone(), conversation.attention());
                     let words = kept_pending(&dir);
                     if !words.is_empty() { pending.insert(conversation.id.clone(), words); }
+                    if dir.join(HELD).exists() { held.insert(conversation.id.clone()); }
                     sessions.push(session);
                 }
                 Err(error) => eprintln!("zerod: skipped {}: {error}", dir.display()),
@@ -137,7 +140,7 @@ impl Daemon {
         }
         let daemon = Arc::new_cyclic(|me| Daemon {
             home: home.into(), sessions: Mutex::new(sessions), events, runtime, attention: Mutex::new(attention), pending: Mutex::new(pending),
-            held: Mutex::new(HashSet::new()), delivering: Mutex::new(HashSet::new()), queues: broadcast::channel(64).0,
+            held: Mutex::new(held), delivering: Mutex::new(HashSet::new()), queues: broadcast::channel(64).0,
             resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(),
             workspaces: crate::workspaces::Workspaces::open(home),
             mcp_servers: crate::mcp_servers::McpServers::open(home),
@@ -186,7 +189,7 @@ impl Daemon {
         if text.trim().is_empty() && images.is_empty() { return Err("A message needs words or an image".into()) }
         let queued = Queued { id: new_id(), text: text.into(), images: images.to_vec(), report: false };
         self.pending.lock().unwrap().entry(id.into()).or_default().push(queued.clone());
-        self.held.lock().unwrap().remove(id);
+        self.hold(id, false);
         self.keep_pending(id);
         if between_turns(&session.summary()) { self.deliver(id) }
         Ok(queued)
@@ -207,7 +210,7 @@ impl Daemon {
     /// Lets a held queue go on.
     pub fn release(&self, id: &str) -> Result<(), String> {
         self.session(id)?;
-        self.held.lock().unwrap().remove(id);
+        self.hold(id, false);
         let _ = self.queues.send(());
         self.deliver(id);
         Ok(())
@@ -441,13 +444,14 @@ impl Daemon {
             let (from, to) = (archive.join(&member), self.home.join("sessions").join(&member));
             std::fs::rename(&from, &to).map_err(|e| e.to_string())?;
             let _ = std::fs::remove_file(to.join(ARCHIVED));
+            let _ = std::fs::remove_file(to.join(HELD)); // held again below if it still has words waiting
             let session = Session::load(&to, self.events.clone()).map_err(|e| e.to_string())?;
             self.sessions.lock().unwrap().push(session);
             // What it was waiting to say comes back held: put away a while, it goes on only when the user says so.
             let words = kept_pending(&to);
             if !words.is_empty() {
                 self.pending.lock().unwrap().insert(member.clone(), words);
-                self.held.lock().unwrap().insert(member.clone());
+                self.hold(&member, true);
             }
             back.push(member);
         }
@@ -753,7 +757,7 @@ impl Daemon {
     /// until they say (queueing again, or releasing).
     pub async fn interrupt(&self, id: &str) -> Result<(), String> {
         let session = self.session(id)?;
-        if !self.queued(id).0.is_empty() { self.held.lock().unwrap().insert(id.into()); let _ = self.queues.send(()); }
+        if !self.queued(id).0.is_empty() { self.hold(id, true); let _ = self.queues.send(()); }
         session.interrupt().await
     }
 
@@ -1143,6 +1147,13 @@ impl Daemon {
             if let Err(error) = session.send_with_images(&text, &images, None, None).await { session.report(&format!("Couldn't pass on: {error}")) }
             if let Some(daemon) = me.upgrade() { daemon.delivering.lock().unwrap().remove(&id); }
         });
+    }
+
+    /// Holds a session's queue for the user, or lets it go; kept in its folder, so zerod started again still holds it.
+    fn hold(&self, id: &str, on: bool) {
+        let marker = self.home.join("sessions").join(id).join(HELD);
+        if on { self.held.lock().unwrap().insert(id.into()); let _ = std::fs::write(marker, b""); }
+        else if self.held.lock().unwrap().remove(id) { let _ = std::fs::remove_file(marker); }
     }
 
     fn keep_pending(&self, id: &str) {

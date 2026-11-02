@@ -278,6 +278,24 @@ async fn an_unarchived_task_brings_its_queue_back_held() {
 }
 
 #[tokio::test]
+async fn a_held_queue_stays_held_across_a_restart() {
+    let w = world("queue-held-restart");
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let seen = lead_runtime(&w).await;
+    seen.said("user", 1).await;
+    w.daemon.queue(&lead, "after this", &[]).unwrap();
+    let daemon = w.daemon.clone();
+    let id = lead.clone();
+    tokio::spawn(async move { let _ = daemon.interrupt(&id).await; });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(w.daemon.queued(&lead).1);
+    let again = Daemon::open(&w.home, runtime(w.claude.clone())).unwrap();
+    assert_eq!(again.queued(&lead), (w.daemon.queued(&lead).0, true), "zerod again: still the user's to send");
+    again.release(&lead).unwrap();
+    assert!(!Daemon::open(&w.home, runtime(w.claude.clone())).unwrap().queued(&lead).1, "released: not held once zerod starts again");
+}
+
+#[tokio::test]
 async fn a_worker_is_in_its_leads_workspace_wherever_it_runs() {
     let w = world("leads-workspaces");
     w.daemon.workspaces.save(zerod::workspaces::Workspace { id: "work".into(), name: "Acme".into(), glyph: "".into(), folders: vec![] }).unwrap();
