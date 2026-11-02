@@ -457,6 +457,13 @@ struct AskCard: View {
                     }
                     if let typing { answerField { text in await model.answer(ask, option: typing, text: text) } }
                 }
+            } else if ask.state == .pending {
+                // Answered, and about to go: a moment to take it back.
+                HStack {
+                    Text(ask.answer ?? (ask.choice.flatMap { ask.options.indices.contains($0) ? ask.options[$0] : nil } ?? "Answered")).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+                    Spacer()
+                    Button("Take back") { Task { await model.takeBack(ask) } }.font(.footnote.weight(.semibold))
+                }
             } else if let answer = ask.answer, ask.kind != .run {
                 Text(answer).font(.footnote).foregroundStyle(.secondary)
                 // Typed into the agent's session for it, and that didn't take: again.

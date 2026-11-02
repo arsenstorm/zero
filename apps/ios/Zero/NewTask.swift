@@ -13,6 +13,7 @@ struct NewTaskSheet: View {
     @State private var chosen: (model: String, effort: String?)?
     @State private var selecting = false
     @State private var starting = false
+    @State private var permissions = Permissions.auto
     @State private var problem: String?
     @FocusState private var writing: Bool
 
@@ -48,6 +49,10 @@ struct NewTaskSheet: View {
                             }
                         }
                         .foregroundStyle(.primary)
+                    }
+                    Picker("Permissions", selection: $permissions) {
+                        Text("Auto").tag(Permissions.auto)
+                        Text("Unrestricted").tag(Permissions.unrestricted)
                     }
                 }
                 if let problem { Text(problem).font(.footnote).foregroundStyle(.red) }
@@ -89,7 +94,7 @@ struct NewTaskSheet: View {
         starting = true
         defer { starting = false }
         do {
-            let session = try await model.start(prompt, in: folder, with: agent, model: chosen?.model, effort: chosen?.effort)
+            let session = try await model.start(prompt, in: folder, with: agent, model: chosen?.model, effort: chosen?.effort, permissions: permissions)
             dismiss()
             model.tab = .tasks
             model.path = [session]

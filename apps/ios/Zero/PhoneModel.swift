@@ -102,13 +102,26 @@ import UserNotifications
     func projects() async -> [String] { (try? await link?.call("projects")) as? [String] ?? [] }
 
     /// A task started on the Mac, in the workspace shown here: its session.
-    func start(_ prompt: String, in folder: String, with provider: Provider, model: String?, effort: String?) async throws -> String {
+    func start(_ prompt: String, in folder: String, with provider: Provider, model: String?, effort: String?, permissions: Permissions = .auto) async throws -> String {
         guard let link else { throw ZerodError(message: "Not connected to your Mac") }
-        return try await link.start(provider: provider, cwd: folder, prompt: prompt, model: model, effort: effort, workspace: sidebar.workspace)
+        return try await link.start(provider: provider, cwd: folder, prompt: prompt, model: model, effort: effort, permissions: permissions, workspace: sidebar.workspace)
     }
+
+    /// What the agent may do without asking; between turns, as the agent starts again with it.
+    func setPermissions(_ session: String, _ permissions: Permissions) async { try? await link?.setPermissions(session: session, permissions) }
 
     func pause(_ sessions: [String] = []) async -> [String] { (try? await link?.pause(sessions: sessions)) ?? [] }
     func unpause(_ sessions: [String] = []) async -> [String] { (try? await link?.unpause(sessions: sessions)) ?? [] }
+    /// A task's name (its ticket kept as it was).
+    func rename(_ session: String, to name: String) async {
+        try? await link?.label(session: session, label: name, ticket: row(session)?.ticket)
+        names[session] = name
+    }
+    /// Put away with its workers, as the Mac's Archive.
+    func archive(_ session: String) async {
+        if path.contains(session) { path = [] }
+        try? await link?.archive(session: session)
+    }
 
     /// Back in front: the connection checked, as iOS can let it die while the app was away without saying so (zerod
     /// restarting meanwhile, the network changing), which left the app showing what it had then; made again if it's
@@ -243,7 +256,7 @@ import UserNotifications
     var currentWorkspace: ZerodLink.Workspace? { workspaces.first { $0.id == sidebar.workspace } }
 
     /// The asks waiting on the user, oldest first.
-    var waiting: [Ask] { asks.filter { $0.state == .waiting && $0.kind != .note && $0.kind != .message && $0.sameAs == nil }.sorted { $0.createdAt < $1.createdAt } }
+    var waiting: [Ask] { asks.filter { ($0.state == .waiting || $0.state == .pending) && $0.kind != .note && $0.kind != .message && $0.sameAs == nil }.sorted { $0.createdAt < $1.createdAt } }
 
     func conversation(_ id: String) -> Conversation? { lives[id]?.conversation }
 
@@ -298,6 +311,8 @@ import UserNotifications
     func answer(_ ask: Ask, option: Int, text: String) async { try? await link?.answer(ask.id, option: option, text: text) }
     func reply(_ ask: Ask, text: String) async { try? await link?.reply(ask.id, text: text) }
     func deliver(_ ask: Ask) async { try? await link?.deliver(ask.id) }
+    /// An answer taken back in the moment before it goes (the Mac's take-back window): the ask waits again.
+    func takeBack(_ ask: Ask) async { _ = try? await link?.takeBack(ask.id) }
     func decide(session: String, approval: String, choice: String) async { try? await link?.decide(session: session, approval: approval, choice: choice) }
     func answer(session: String, question: String, answers: [String: [String]]) async {
         try? await link?.answer(session: session, question: question, answers: answers)

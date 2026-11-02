@@ -149,6 +149,7 @@ struct Composer: View {
                     photos
                     Spacer()
                     modelMenu
+                    permissionsMenu
                     microphone
                     sendButton
                 }
@@ -182,6 +183,22 @@ struct Composer: View {
             draft = draft.isEmpty ? words : draft + "\n" + words
             model.drafts[session] = nil
         }
+    }
+
+    // What the agent may do without asking, as the Mac's chip: changed between turns (the agent starts again with it).
+    private var permissionsMenu: some View {
+        let unrestricted = conversation?.permissions == .unrestricted
+        return Menu {
+            Picker("Permissions", selection: Binding(get: { conversation?.permissions ?? .auto }, set: { new in Task { await model.setPermissions(session, new) } })) {
+                Label("Auto: \(conversation?.provider.title ?? "it") asks you what isn't safe", image: "wand-sparkle-outline").tag(Permissions.auto)
+                Label("Unrestricted: anything, without asking", image: "bolt-lightning-glyph").tag(Permissions.unrestricted)
+            }
+        } label: {
+            Image(unrestricted ? "bolt-lightning-glyph" : "wand-sparkle-outline").resizable().frame(width: 18, height: 18)
+                .foregroundStyle(unrestricted ? Color.orange : Color.primary).frame(width: 40, height: 40)
+        }
+        .disabled(busy || conversation == nil)
+        .accessibilityLabel(unrestricted ? "Permissions: unrestricted" : "Permissions: auto")
     }
 
     // The model and its effort, as "Opus 5.5 High": opens the Mac's selector, as a sheet.

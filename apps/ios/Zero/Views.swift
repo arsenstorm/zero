@@ -268,6 +268,9 @@ struct Splash: View {
 struct TasksView: View {
     let model: PhoneModel
     @State private var open: Set<String> = []
+    @State private var renaming: (session: String, name: String)?
+    @State private var newName = ""
+    @State private var archiving: (session: String, name: String, workers: Int)?
 
     var body: some View {
         List {
@@ -283,18 +286,75 @@ struct TasksView: View {
                     TaskRow(name: row.task, state: row.ownState, folded: members.isEmpty ? nil : !unfolded,
                             fold: { withAnimation(.snappy(duration: 0.2)) { if unfolded { open.remove(row.session) } else { open.insert(row.session) } } },
                             show: { model.path.append(row.session) })
+                    .contextMenu { actions(row.session, name: row.task, state: row.ownState, workers: members.count) } preview: { TaskPeek(row: row, name: row.task) }
                     if unfolded {
                         ForEach(members, id: \.session) { member in
-                            TaskRow(name: model.names[member.session] ?? member.place, state: member.state, worker: true, show: { model.path.append(member.session) })
+                            let name = model.names[member.session] ?? member.place
+                            TaskRow(name: name, state: member.state, worker: true, show: { model.path.append(member.session) })
                                 .opacity([.done, .merged, .idle, .offline].contains(member.state) ? 0.6 : 1)
+                                .contextMenu { actions(member.session, name: name, state: member.state, workers: 0) } preview: {
+                                    if let worker = row.member(member.session) { TaskPeek(row: worker, name: name) }
+                                }
                         }
                     }
                 }
             }
         }
         .environment(\.defaultMinListRowHeight, 36)
+        .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Name", text: $newName)
+            Button("Cancel", role: .cancel) {}
+            Button("Rename") { if let renaming, !newName.trimmingCharacters(in: .whitespaces).isEmpty { Task { await model.rename(renaming.session, to: newName) } } }
+        }
+        // As the Mac asks: archiving puts the task away with every worker under it.
+        .confirmationDialog(archiving.map { "Archive \($0.name)?" } ?? "", isPresented: Binding(get: { archiving != nil }, set: { if !$0 { archiving = nil } }),
+                            titleVisibility: .visible) {
+            Button("Archive", role: .destructive) { if let archiving { Task { await model.archive(archiving.session) } } }
+        } message: {
+            if let archiving {
+                Text((archiving.workers == 0 ? "It" : "It and its \(archiving.workers == 1 ? "worker" : "\(archiving.workers) workers")")
+                     + " will be put away. Bring " + (archiving.workers == 0 ? "it" : "them") + " back from Archived tasks on your Mac.")
+            }
+        }
         .refreshable { model.connect() }
         .task { model.askForPush() }
+    }
+}
+
+extension TasksView {
+    /// A task's long press, as the Mac's row menu: pause or resume, rename, archive.
+    @ViewBuilder func actions(_ session: String, name: String, state: BoardRow.State, workers: Int) -> some View {
+        if state == .paused {
+            Button { Task { _ = await model.unpause([session]) } } label: { Label("Resume", image: "arrow-rotate-clockwise-glyph") }
+        } else {
+            Button { Task { _ = await model.pause([session]) } } label: { Label("Pause", image: "circle-pause-glyph") }
+        }
+        Button { newName = name; renaming = (session, name) } label: { Label("Rename", image: "pen-outline") }
+        Button { Task { await model.askToSaveForLater(session) } } label: { Label("Save for later", image: "bookmark-glyph") }
+        Button(role: .destructive) { archiving = (session, name, workers) } label: { Label("Archive", image: "trash-outline") }
+    }
+}
+
+/// A task's long-press preview, as the Mac's hover card: its state, what it's doing, what it needs, its asks.
+struct TaskPeek: View {
+    let row: BoardRow
+    let name: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                StateGlyph(state: row.ownState)
+                Text(row.ownState.title).font(.footnote.weight(.medium)).foregroundStyle(.secondary)
+            }
+            Text(name).font(.headline).lineLimit(2)
+            if let now = row.now, !now.isEmpty { Text(now).font(.subheadline).foregroundStyle(.secondary).lineLimit(4) }
+            if let needs = row.needs { Label("For you: " + needs, image: "hand-holding-box-glyph").font(.subheadline) }
+            ForEach(row.asks.prefix(3), id: \.id) { ask in Label(ask.title, image: "circle-question-glyph").font(.subheadline).lineLimit(2) }
+            if let queued = row.queued, !queued.isEmpty {
+                Label("\(queued.count) queued" + (row.held == true ? ", held" : ""), image: "clock-glyph").font(.subheadline).foregroundStyle(.secondary)
+            }
+        }
+        .padding(16)
+        .frame(width: 320, alignment: .leading)
     }
 }
 
