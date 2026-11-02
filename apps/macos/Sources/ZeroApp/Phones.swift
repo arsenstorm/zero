@@ -82,15 +82,8 @@ import ZeroCore
 
     /// A task's notification on every phone that takes them: its words sealed for each, so Apple carries only a
     /// generic line. One per task (its collapse id), replaced by the next.
-    /// A workspace chosen on a phone, for the Mac to show.
-    var onSetWorkspace: ((String) -> Void)?
     /// The MCP servers, for a phone to list: each one's name, how it runs and where, never its values.
     var mcpServers: (() async -> [[String: Any]])?
-
-    /// The Mac's workspace changed: the phones follow (they ask for the sidebar again on "workspaces").
-    func workspaceChanged() {
-        for bridge in bridges.values { bridge.event("workspaces") }
-    }
 
     func push(_ alert: TaskAlert, sound: String) {
         for device in devices {
@@ -258,11 +251,6 @@ import ZeroCore
                       kCGImageSourceThumbnailMaxPixelSize: min(request["side"] as? Int ?? 600, 2400), kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary),
                   let jpeg = NSBitmapImageRep(cgImage: image).representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else { return nil }
             result = jpeg.base64EncodedString()
-        case "setWorkspace":
-            // Chosen on the phone: the Mac shows it too, as the phone follows the Mac's.
-            guard let id = request["workspace"] as? String else { return nil }
-            Phones.shared.onSetWorkspace?(id)
-            result = NSNull()
         case "looked":
             // A task opened on the phone: its notification goes from the Mac (and the other phones) too.
             guard let session = request["session"] as? String else { return nil }
@@ -270,10 +258,10 @@ import ZeroCore
             Phones.shared.clear([session])
             result = NSNull()
         case "sidebar":
-            // How the Mac's sidebar orders and filters tasks, for the phone to show them the same way.
+            // How the Mac's sidebar orders tasks, for the phone to order them the same way. Which workspace each shows
+            // is its own: one task watched on the phone, another worked on at the Mac.
             let defaults = UserDefaults.standard
-            result = ["sort": defaults.string(forKey: "taskSort") ?? BoardRow.Sort.state.rawValue, "order": defaults.string(forKey: "taskOrder") ?? "",
-                      "workspace": defaults.string(forKey: "currentWorkspace") ?? "zero"]
+            result = ["sort": defaults.string(forKey: "taskSort") ?? BoardRow.Sort.state.rawValue, "order": defaults.string(forKey: "taskOrder") ?? ""]
         case "models":
             // A provider's models as the Mac's selector offers them, from its CLI's own cache.
             guard let provider = (request["provider"] as? String).flatMap(Provider.init(rawValue:)) else { return nil }

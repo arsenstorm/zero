@@ -194,8 +194,6 @@ final class Panel: NSPanel {
         NSApp.mainMenu = Self.editMenu()
         Task { await Linear.shared.refresh() }
         store.onCreate = { [weak self] ask in self?.arrived(ask) }
-        // The phones show the workspace the Mac does, and switch it from there.
-        Phones.shared.onSetWorkspace = { [weak self] id in self?.workspace?.current = id }
         Phones.shared.mcpServers = { [weak self] in
             guard let workspace = self?.workspace else { return [] }
             await workspace.loadMcpServers()
@@ -209,7 +207,6 @@ final class Panel: NSPanel {
         store.onRemove = { [weak self] id in self?.notifier?.askEnded(id) }
         Task { [store] in await store.connect() }
         workspace = Workspace()
-        workspace?.onCurrent = { _ in Phones.shared.workspaceChanged() }
         let notifier = Notifier(navigation: navigation, settings: settings, windowShown: { [weak self] in
             guard let window = self?.workspaceWindow else { return false }
             return window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible)

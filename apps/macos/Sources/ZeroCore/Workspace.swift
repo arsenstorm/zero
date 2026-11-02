@@ -52,11 +52,8 @@ public final class Workspace {
     public var current: String = UserDefaults.standard.string(forKey: "currentWorkspace") ?? "zero" {
         didSet {
             UserDefaults.standard.set(current, forKey: "currentWorkspace")
-            if current != oldValue { onCurrent?(current) }
         }
     }
-    /// Told when the workspace shown changes (the phones follow it).
-    @ObservationIgnored public var onCurrent: ((String) -> Void)?
     public var currentWorkspace: ZerodLink.Workspace { workspaces.first { $0.id == current } ?? workspaces[0] }
 
     /// Views being fetched again, while what they last showed stays up.
