@@ -26,6 +26,8 @@ public final class Workspace {
     public private(set) var connected = false
     /// Why the last request failed, for the window to show.
     public var lastError: String?
+    /// The task the user asked to archive, waiting on their confirmation.
+    public var archiving: String?
 
     /// GitHub and Linear: their settings and views, and what each view showed last ("github/<view>"), or why not.
     public private(set) var integrations: IntegrationState? { didSet { if integrations?.slack != oldValue?.slack { Slack.shared.apply(integrations?.slack) } } }
@@ -246,6 +248,17 @@ public final class Workspace {
 
     /// Puts a task away with its workers (zerod takes them with it, so they come back with it); the board drops them
     /// at once, the mirror as zerod says each is gone.
+    /// Everyone under a lead, however deep: what goes with it when it's archived.
+    public func team(of id: String) -> [Conversation] {
+        var team: [Conversation] = [], leads = [id]
+        while let lead = leads.popLast() {
+            let under = conversations.filter { $0.parent == lead }
+            team += under
+            leads += under.map(\.id)
+        }
+        return team
+    }
+
     public func archive(_ id: String) async {
         _ = await attempt { try await $0.archive(session: id) }
         await refreshBoard()
@@ -677,12 +690,5 @@ public final class Workspace {
 
     /// The name the user or its lead gave it, else the session's title, else what it was asked first, else the
     /// provider and its folder.
-    public static func label(of conversation: Conversation) -> String {
-        if let label = conversation.label, !label.isEmpty { return label }
-        if let title = conversation.title, !title.isEmpty { return title }
-        for item in conversation.items {
-            if case let .user(text, _) = item.kind, let gist = Store.gist(of: text) { return gist }
-        }
-        return "\(conversation.provider.title) in \((conversation.cwd as NSString).lastPathComponent)"
-    }
+    public static func label(of conversation: Conversation) -> String { TaskName.of(conversation) }
 }

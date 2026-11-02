@@ -320,7 +320,39 @@ public struct IntegrationTag: Codable, Equatable, Sendable, Hashable {
 public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     /// As zerod's board has them (board.rs), most urgent first. Handed is "Over to you": done, with a step only the user
     /// can take. Blocked is on something that isn't the user.
-    public enum State: String, Decodable, Sendable { case needsYou, trouble, working, handed, answered, blocked, done, merged, paused, idle, offline }
+    public enum State: String, Decodable, Sendable {
+        case needsYou, trouble, working, handed, answered, blocked, done, merged, paused, idle, offline
+        /// Most urgent first, as the board sorts its rows.
+        public var urgency: Int {
+            switch self {
+            case .needsYou: 0
+            case .trouble: 1
+            case .working: 2
+            case .handed: 3
+            case .answered: 4
+            case .blocked: 5
+            case .done: 6
+            case .merged: 7
+            default: 8
+            }
+        }
+        /// As the sidebar's state pill says it.
+        public var title: String {
+            switch self {
+            case .needsYou: "Needs you"
+            case .trouble: "In trouble"
+            case .working: "Working"
+            case .handed: "Over to you"
+            case .answered: "Replied"
+            case .blocked: "Blocked"
+            case .done: "Done"
+            case .merged: "Merged"
+            case .paused: "Paused"
+            case .idle: "Idle"
+            case .offline: "Offline"
+            }
+        }
+    }
     public var session: String
     public var task: String
     /// The workspace it is in; "zero" when none was made.
@@ -835,6 +867,8 @@ public final class ZerodLink: @unchecked Sendable {
         public let workspace: String?
         /// The workers that went with it, and come back with it.
         public let workers: Int
+        /// The lead of a worker archived on its own.
+        public var parent: String?
         public var date: Date { Date(timeIntervalSince1970: TimeInterval(at) / 1000) }
     }
 

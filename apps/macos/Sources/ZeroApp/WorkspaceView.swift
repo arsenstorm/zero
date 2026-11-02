@@ -102,6 +102,13 @@ struct WorkspaceView: View {
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke))
             .padding(.top, 38).padding([.trailing, .bottom], 4) // under the window's buttons, as ChatGPT's
         }
+        .overlay {
+            if let id = workspace.archiving {
+                ArchiveConfirm(workspace: workspace, id: id) {
+                    if navigation.place == .task(id) { navigation.place = .home }
+                }
+            }
+        }
         .overlay(alignment: .bottom) {
             if let error = workspace.lastError {
                 Text(error).font(.callout).padding(.horizontal, 14).padding(.vertical, 8)
@@ -117,6 +124,45 @@ struct WorkspaceView: View {
         case .agent(let name): AgentPage(controller: inbox, name: name).id(name)
         case .task(let id) where workspace.conversation(id) != nil: TaskPages(workspace: workspace, inbox: inbox, navigation: navigation, current: id)
         default: NewTaskView(workspace: workspace, started: { navigation.place = .task($0) })
+        }
+    }
+}
+
+/// Archiving puts a task away with every worker under it: asked first, over the window, Return to archive and Escape
+/// not to.
+private struct ArchiveConfirm: View {
+    let workspace: Workspace
+    let id: String
+    let leaving: () -> Void
+
+    var body: some View {
+        let name = workspace.conversation(id).map { Workspace.label(of: $0) } ?? id
+        let workers = workspace.team(of: id).count
+        ZStack {
+            Color.black.opacity(0.12).contentShape(Rectangle()).onTapGesture { workspace.archiving = nil }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Archive \(name)?").font(.system(size: 14, weight: .semibold)).lineLimit(2)
+                Text((workers == 0 ? "It" : "It and its \(workers == 1 ? "worker" : "\(workers) workers")") + " will be put away. Bring "
+                     + (workers == 0 ? "it" : "them") + " back from Archived tasks.")
+                    .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Spacer()
+                    Button("Cancel") { workspace.archiving = nil }.keyboardShortcut(.cancelAction)
+                    Button("Archive") {
+                        workspace.archiving = nil
+                        leaving()
+                        Task { await workspace.archive(id) }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                }
+                .padding(.top, 6)
+            }
+            .padding(16)
+            .frame(width: 340, alignment: .leading)
+            .background(Theme.composer, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke))
+            .compositingGroup()
+            .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
         }
     }
 }
@@ -501,10 +547,7 @@ private struct TasksSidebar: View {
         }
         pausing(id, in: workspace)
         Button("Save for later") { Task { await workspace.askToSaveForLater(id) } }
-        Button("Archive") {
-            if place == .task(id) { place = .home }
-            Task { await workspace.archive(id) }
-        }
+        Button("Archive…") { workspace.archiving = id }
     }
 
     @ViewBuilder private var footer: some View {
@@ -712,10 +755,7 @@ struct TitleBar: View {
             Button("Show folder in Finder") { NSWorkspace.shared.open(URL(fileURLWithPath: conversation.cwd)) }
             Divider()
             if case .task(let lead) = navigation.place {
-                Button("Archive") {
-                    navigation.place = .home
-                    Task { await workspace.archive(lead) }
-                }
+                Button("Archive…") { workspace.archiving = lead }
             }
         } label: {
             NucleoIcon("dots", size: 15).foregroundStyle(.secondary).frame(width: 28, height: 28)
@@ -902,11 +942,11 @@ private struct TaskDetails: View {
 
     /// Its workers, what each is on and where it stands, most urgent first; a click shows that worker.
     @ViewBuilder private var workers: some View {
-        let members = (row?.team ?? []).filter { $0.session != conversation.id }.sorted { Self.urgency($0.state) < Self.urgency($1.state) }
+        let members = (row?.team ?? []).filter { $0.session != conversation.id }.sorted { $0.state.urgency < $1.state.urgency }
         if !members.isEmpty {
             // The few that matter (needing you, in trouble, at work), the rest behind their count; opened, the whole
             // list scrolls inside the pane rather than running off the window.
-            let urgent = members.filter { Self.urgency($0.state) <= 2 }
+            let urgent = members.filter { $0.state.urgency <= 2 }
             let shown = allWorkers ? members : Array((urgent.isEmpty ? members : urgent).prefix(8))
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
@@ -945,21 +985,6 @@ private struct TaskDetails: View {
                     .buttonStyle(.plain)
                     .opacity([.done, .merged, .idle, .offline].contains(member.state) ? 0.6 : 1)
                 }
-    }
-
-    /// Most urgent first, as the board sorts its rows.
-    private static func urgency(_ state: BoardRow.State) -> Int {
-        switch state {
-        case .needsYou: 0
-        case .trouble: 1
-        case .working: 2
-        case .handed: 3
-        case .answered: 4
-        case .blocked: 5
-        case .done: 6
-        case .merged: 7
-        default: 8
-        }
     }
 
     private func title(of member: BoardRow.Member) -> String {
@@ -1193,7 +1218,7 @@ private struct RowActions: View {
                 NSPasteboard.general.setString(row.session, forType: .string)
             }
             Divider()
-            Button("Archive") { Task { await workspace.archive(row.session) } }
+            Button("Archive…") { workspace.archiving = row.session }
         } label: {
             NucleoIcon("dots", size: 15).foregroundStyle(hovered ? .primary : .secondary).frame(width: 30, height: 30).contentShape(Rectangle())
         }
@@ -2283,7 +2308,8 @@ struct ItemView: View {
             if error {
                 CautionCallout(text: text)
             } else {
-                NucleoLabel(text, icon: "circle-info").font(.callout).foregroundStyle(.secondary)
+                HStack(spacing: 6) { NucleoIcon("circle-info", size: 14); Text(NoticeText.attributed(text)) }
+                    .font(.callout).foregroundStyle(.secondary).tint(.primary)
             }
         case let .table(title, columns, rows):
             TableCard(title: title, columns: columns, rows: rows, cwd: cwd)

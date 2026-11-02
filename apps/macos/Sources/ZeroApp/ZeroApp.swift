@@ -196,6 +196,15 @@ final class Panel: NSPanel {
         store.onCreate = { [weak self] ask in self?.arrived(ask) }
         // The phones show the workspace the Mac does, and switch it from there.
         Phones.shared.onSetWorkspace = { [weak self] id in self?.workspace?.current = id }
+        Phones.shared.mcpServers = { [weak self] in
+            guard let workspace = self?.workspace else { return [] }
+            await workspace.loadMcpServers()
+            let names = Dictionary(workspace.workspaces.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
+            return workspace.mcpServers.map { server in
+                ["name": server.name, "runs": server.url ?? ([server.command ?? ""] + server.args).joined(separator: " "),
+                 "workspaces": server.workspaces.map { names[$0] ?? $0 }, "enabled": server.enabled] as [String: Any]
+            }
+        }
         store.onChange = { [weak self] ask in if ask.state.isFinal { self?.notifier?.askEnded(ask.id) } }
         store.onRemove = { [weak self] id in self?.notifier?.askEnded(id) }
         Task { [store] in await store.connect() }

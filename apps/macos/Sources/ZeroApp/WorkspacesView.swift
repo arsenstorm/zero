@@ -31,8 +31,8 @@ struct WorkspacesPage: View {
                 .background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
                 .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.stroke))
                 .task(id: workspace.workspacesVersion) { await workspace.loadWorkspaces() }
-                .sheet(item: $editing) { w in WorkspaceForm(workspace: w) { edited in Task { await workspace.saveWorkspace(edited) } } }
-                .sheet(isPresented: $adding) { WorkspaceForm(workspace: ZerodLink.Workspace(name: "")) { made in Task { await workspace.saveWorkspace(made) } } }
+                .sheet(item: $editing) { w in WorkspaceForm(workspace: w, model: workspace) { edited in Task { await workspace.saveWorkspace(edited) } } }
+                .sheet(isPresented: $adding) { WorkspaceForm(workspace: ZerodLink.Workspace(name: ""), model: workspace) { made in Task { await workspace.saveWorkspace(made) } } }
             }
         }
     }
@@ -87,12 +87,15 @@ struct WorkspaceGlyph: View {
     }
 }
 
-/// Name, glyph and folders; Save, or Cancel.
+/// Name, glyph, folders and the MCP servers its tasks get; Save, or Cancel.
 private struct WorkspaceForm: View {
     @State var workspace: ZerodLink.Workspace
+    let model: Workspace
     let save: (ZerodLink.Workspace) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var folder = ""
+    /// The servers put in this workspace, as edited here: saved with the workspace.
+    @State private var servers: Set<String>?
 
     private var canSave: Bool { !workspace.name.trimmingCharacters(in: .whitespaces).isEmpty }
 
@@ -126,13 +129,47 @@ private struct WorkspaceForm: View {
                     }
                 }
             }
+            if !workspace.id.isEmpty, !model.mcpServers.isEmpty {
+                field("MCP servers") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Given to this workspace's tasks as their agent starts. Set them up in Settings › MCP servers.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                        ForEach(model.mcpServers) { server in
+                            if server.workspaces.isEmpty {
+                                Toggle(isOn: .constant(true)) { Text(server.name + " (every workspace)").font(.system(size: 12.5)) }
+                                    .toggleStyle(.checkbox).disabled(true)
+                            } else {
+                                Toggle(isOn: Binding(get: { servers?.contains(server.id) ?? false }, set: { on in
+                                    if on { servers?.insert(server.id) } else { servers?.remove(server.id) }
+                                })) { Text(server.name).font(.system(size: 12.5)) }
+                                .toggleStyle(.checkbox)
+                            }
+                        }
+                    }
+                }
+            }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save") { save(workspace); dismiss() }.keyboardShortcut(.defaultAction).disabled(!canSave)
+                Button("Save") { save(workspace); saveServers(); dismiss() }.keyboardShortcut(.defaultAction).disabled(!canSave)
             }
         }
         .padding(20).frame(width: 440)
+        .task {
+            await model.loadMcpServers()
+            servers = Set(model.mcpServers.filter { $0.workspaces.contains(workspace.id) }.map(\.id))
+        }
+    }
+
+    /// Each server put in or taken out of this workspace here, saved as such (its values as kept).
+    private func saveServers() {
+        guard let servers else { return }
+        let id = workspace.id
+        for var server in model.mcpServers where !server.workspaces.isEmpty && server.workspaces.contains(id) != servers.contains(server.id) {
+            if servers.contains(server.id) { server.workspaces.append(id) } else { server.workspaces.removeAll { $0 == id } }
+            // Taken out of its last workspace, a server would be everyone's: off instead.
+            if server.workspaces.isEmpty { server.workspaces = [id]; server.enabled = false }
+            Task { _ = await model.saveMcpServer(server, secrets: [:]) }
+        }
     }
 
     private func addFolder() {

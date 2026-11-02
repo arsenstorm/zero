@@ -145,13 +145,7 @@ public final class Store {
     }
 
     /// The first line of a prompt, cut to five words, as an agent's label; nil when it is too short to name anything.
-    nonisolated public static func gist(of prompt: String) -> String? {
-        let line = prompt.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
-        let words = line.split(separator: " ").map { $0.trimmingCharacters(in: .punctuationCharacters.subtracting(["'"])) }.filter { !$0.isEmpty }
-        guard words.count >= 3 else { return nil }
-        let kept = words.prefix(5).joined(separator: " ")
-        return kept.prefix(1).uppercased() + kept.dropFirst() + (words.count > 5 ? "…" : "")
-    }
+    nonisolated public static func gist(of prompt: String) -> String? { TaskName.gist(of: prompt) }
 
     public func switchModel(of agent: String, to model: SpawnChoice?, level: String?) async throws {
         try await linked().switchModel(of: agent, model: model?.id, effort: level)

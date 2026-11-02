@@ -210,7 +210,7 @@ public enum Tunnel {
     }
 
     /// What needs the Mac in front of you: setting up Chrome, a provider's own terminal, pairing another phone.
-    public static let macOnly: Set<String> = ["browserAttach", "browserAnswer", "browserSetup", "openTerminal", "closeTerminal"]
+    public static let macOnly: Set<String> = ["browserAttach", "browserAnswer", "browserSetup", "openTerminal", "closeTerminal", "saveMcpServer", "deleteMcpServer"]
 
     /// A phone's request line: passed on to zerod, or (a Mac-only op) answered here with an error.
     public static func screen(_ line: Data) -> (pass: Data?, reply: Data?) {

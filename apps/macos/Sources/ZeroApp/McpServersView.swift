@@ -89,6 +89,8 @@ private struct McpServerForm: View {
             .pickerStyle(.segmented).labelsHidden()
             if remote {
                 TextField("https://…/mcp", text: Binding(get: { server.url ?? "" }, set: { server.url = $0 })).textFieldStyle(.roundedBorder)
+                Text("One that signs in with OAuth needs no headers: the first task to use it shows a link to its sign-in page, and each agent keeps its own sign-in.")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             } else {
                 TextField("Command (npx, uvx, a path)", text: Binding(get: { server.command ?? "" }, set: { server.command = $0 })).textFieldStyle(.roundedBorder)
                 TextField("Arguments, separated by spaces", text: $arguments).textFieldStyle(.roundedBorder)

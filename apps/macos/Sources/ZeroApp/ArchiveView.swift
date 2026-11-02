@@ -2,13 +2,15 @@ import SwiftUI
 import ZeroCore
 
 /// The tasks archived, newest first: each with when it went, its workspace and the workers that went with it, and a
-/// way back. Unarchived, a task comes back with those workers (not with one archived on its own before it).
+/// way back. Unarchived, a task comes back with those workers (not with one archived on its own before it). A worker
+/// archived on its own is folded under its lead when that's archived too, or with the others whose lead is still here.
 struct ArchiveSheet: View {
     let workspace: Workspace
     @Environment(\.dismiss) private var dismiss
     @State private var archived: [ZerodLink.Archived]?
     @State private var search = ""
     @State private var restoring: String?
+    @State private var unfolded: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -25,7 +27,18 @@ struct ArchiveSheet: View {
                         if shown.isEmpty {
                             Text(archived.isEmpty ? "Nothing archived." : "No archived task matches.").font(.system(size: 13)).foregroundStyle(.tertiary).padding(.top, 20)
                         }
-                        ForEach(shown) { task in row(task) }
+                        if !search.isEmpty {
+                            ForEach(shown) { task in row(task) }
+                        } else {
+                            let leads = Set(shown.filter { $0.parent == nil }.map(\.id))
+                            let under = Dictionary(grouping: shown.filter { $0.parent.map(leads.contains) ?? false }) { $0.parent! }
+                            ForEach(shown.filter { $0.parent == nil }) { task in
+                                row(task)
+                                if let workers = under[task.id] { folded(task.id, "\(workers.count) closed \(workers.count == 1 ? "worker" : "workers")", workers) }
+                            }
+                            let orphans = shown.filter { $0.parent != nil && !leads.contains($0.parent!) }
+                            if !orphans.isEmpty { folded("others", "\(orphans.count) closed workers of tasks still here", orphans, indent: 0) }
+                        }
                     } else {
                         Spinner().frame(width: 16, height: 16).padding(.top, 20)
                     }
@@ -36,6 +49,21 @@ struct ArchiveSheet: View {
         .padding(20)
         .frame(width: 520, height: 460)
         .task { archived = await workspace.archived() }
+    }
+
+    /// Closed workers, folded away until asked for.
+    @ViewBuilder private func folded(_ key: String, _ title: String, _ workers: [ZerodLink.Archived], indent: CGFloat = 20) -> some View {
+        let open = unfolded.contains(key)
+        Button { if open { unfolded.remove(key) } else { unfolded.insert(key) } } label: {
+            HStack(spacing: 6) {
+                NucleoIcon("chevron-down", size: 10).rotationEffect(.degrees(open ? 0 : -90)).frame(width: 10)
+                Text(title).font(.system(size: 12))
+                Spacer()
+            }
+            .foregroundStyle(.secondary).padding(.horizontal, 10).frame(height: 28).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).padding(.leading, indent)
+        if open { ForEach(workers) { worker in row(worker).padding(.leading, indent) } }
     }
 
     private func row(_ task: ZerodLink.Archived) -> some View {

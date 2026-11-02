@@ -94,6 +94,8 @@ private func invite(_ host: Tunnel.Host, at now: Date) -> Tunnel.Invite { host.i
     let answer = try JSONSerialization.jsonObject(with: try #require(reply)) as? [String: Any]
     #expect(answer?["id"] as? Int == 7 && answer?["ok"] as? Bool == false)
     #expect(Tunnel.screen(Data(#"{"id":8,"op":"board"}"#.utf8)).pass != nil)
+    // An MCP server's values are the Mac's: a phone can't set or remove one.
+    #expect(Tunnel.screen(Data(#"{"id":9,"op":"saveMcpServer","server":{}}"#.utf8)).pass == nil)
 }
 
 @Test func anInviteTravelsAsALink() throws {

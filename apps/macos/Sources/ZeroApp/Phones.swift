@@ -84,6 +84,8 @@ import ZeroCore
     /// generic line. One per task (its collapse id), replaced by the next.
     /// A workspace chosen on a phone, for the Mac to show.
     var onSetWorkspace: ((String) -> Void)?
+    /// The MCP servers, for a phone to list: each one's name, how it runs and where, never its values.
+    var mcpServers: (() async -> [[String: Any]])?
 
     /// The Mac's workspace changed: the phones follow (they ask for the sidebar again on "workspaces").
     func workspaceChanged() {
@@ -286,6 +288,16 @@ import ZeroCore
         return try? JSONSerialization.data(withJSONObject: ["id": request["id"] ?? NSNull(), "ok": true, "result": result])
     }
 
+    /// The phone's requests answered once the Mac has looked: the MCP servers (zerod's own list has their values).
+    private func answeredLater(_ line: Data) -> Bool {
+        guard let request = try? JSONSerialization.jsonObject(with: line) as? [String: Any], request["op"] as? String == "mcpServers" else { return false }
+        Task {
+            let servers = await Phones.shared.mcpServers?() ?? []
+            if let reply = try? JSONSerialization.data(withJSONObject: ["id": request["id"] ?? NSNull(), "ok": true, "result": servers]) { toPhone(reply) }
+        }
+        return true
+    }
+
     func receive(_ frame: Data) {
         do {
             switch try link.receive(frame) {
@@ -299,6 +311,7 @@ import ZeroCore
             case .lines(let lines):
                 for line in lines {
                     if let reply = answered(line) { toPhone(reply); continue }
+                    if answeredLater(line) { continue }
                     let (pass, reply) = Tunnel.screen(line)
                     if let reply { toPhone(reply) }
                     if let pass, let text = String(data: pass, encoding: .utf8) { try? zerod?.write(line: text) }

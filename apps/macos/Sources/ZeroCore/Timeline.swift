@@ -166,6 +166,36 @@ public enum Took {
 }
 
 /// A tool as people say it, and its arguments as their values: "Linear · list comments", "ENG-9737 · 5".
+/// What a task is called: the name it was given, its title, the gist of your first message, or its agent and folder.
+public enum TaskName {
+    public static func of(_ conversation: Conversation) -> String {
+        if let label = conversation.label, !label.isEmpty { return label }
+        if let title = conversation.title, !title.isEmpty { return title }
+        for item in conversation.items {
+            if case let .user(text, _) = item.kind, let gist = gist(of: text) { return gist }
+        }
+        return "\(conversation.provider.title) in \((conversation.cwd as NSString).lastPathComponent)"
+    }
+
+    /// A prompt's first line as a name: its first five words, when it has at least three.
+    public static func gist(of prompt: String) -> String? {
+        let line = prompt.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        let words = line.split(separator: " ").map { $0.trimmingCharacters(in: .punctuationCharacters.subtracting(["'"])) }.filter { !$0.isEmpty }
+        guard words.count >= 3 else { return nil }
+        let kept = words.prefix(5).joined(separator: " ")
+        return kept.prefix(1).uppercased() + kept.dropFirst() + (words.count > 5 ? "…" : "")
+    }
+}
+
+/// A notice's words, its links (a server's sign-in) ready to open; anything else as it was written, not read as
+/// Markdown (a command's `*` stays a `*`).
+public enum NoticeText {
+    public static func attributed(_ text: String) -> AttributedString {
+        guard text.contains("](http"), let linked = try? AttributedString(markdown: text) else { return AttributedString(text) }
+        return linked
+    }
+}
+
 public enum ToolNames {
     /// "mcp__linear-server__list_comments" → "Linear · list comments"; Claude Code's Agent tool is a subagent, said so;
     /// anything else as it is.
