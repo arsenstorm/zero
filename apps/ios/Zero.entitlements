@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Apple's push: what needs you reaches the phone, through APNs (the Mac sends it). -->
+	<key>aps-environment</key>
+	<string>development</string>
+	<!-- The pairing, read by the app and its extensions alike. -->
+	<key>keychain-access-groups</key>
+	<array><string>$(AppIdentifierPrefix)com.arsen.zero.shared</string></array>
+</dict>
+</plist>
