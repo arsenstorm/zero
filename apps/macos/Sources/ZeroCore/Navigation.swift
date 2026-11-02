@@ -37,6 +37,25 @@ public final class Navigation {
     public var pane = UserDefaults.standard.object(forKey: "taskPane") as? Bool ?? true {
         didSet { UserDefaults.standard.set(pane, forKey: "taskPane") }
     }
+    /// The task open last in each workspace (and the worker shown on it), so going back to the workspace opens it.
+    @ObservationIgnored private var lastTasks = UserDefaults.standard.dictionary(forKey: "lastTasks") as? [String: [String]] ?? [:]
+
+    public func remember(_ task: String, worker: String?, in workspace: String) {
+        let kept = [task] + (worker.map { [$0] } ?? [])
+        guard lastTasks[workspace] != kept else { return }
+        lastTasks[workspace] = kept
+        UserDefaults.standard.set(lastTasks, forKey: "lastTasks")
+    }
+
+    /// The workspace shown changed: the task open last there, while it's still there (`keeps`: not archived, not
+    /// moved to another workspace); else a new task. Away from the tasks (Settings, a scratchpad), the window stays.
+    public func arrive(in workspace: String, keeps: (String) -> Bool) {
+        switch place { case .home, .board, .task: break; default: return }
+        guard let last = lastTasks[workspace], let task = last.first, keeps(task) else { place = .home; return }
+        place = .task(task)
+        worker = last.count > 1 && keeps(last[1]) ? last[1] : nil
+    }
+
     @ObservationIgnored private var behind: [(Place, String?)] = []
     @ObservationIgnored private var ahead: [(Place, String?)] = []
     /// A place change is clearing the worker: not a step of its own.

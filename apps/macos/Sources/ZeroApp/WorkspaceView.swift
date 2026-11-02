@@ -22,6 +22,14 @@ struct WorkspaceView: View {
         .task { await workspace.loadLoops() }
         .task { await workspace.loadLater() }
         .onChange(of: workspace.loops.map(\.name), initial: true) { _, names in LoopNames.known = names }
+        // Each workspace opens on the task last open in it: kept as tasks are opened, and gone back to on a switch.
+        .onChange(of: [navigation.place.key, navigation.worker ?? ""]) {
+            guard case .task(let id) = navigation.place, let lead = workspace.conversation(id) else { return }
+            navigation.remember(id, worker: navigation.worker, in: workspace.workspace(of: root(lead)))
+        }
+        .onChange(of: workspace.current) { _, now in
+            navigation.arrive(in: now) { id in workspace.conversation(id).map { workspace.workspace(of: root($0)) == now } ?? false }
+        }
         // The rail and the strip above the panel: translucent grey over what's behind the window, blurred, as Codex's.
         .background { ZStack { BehindWindow(); Theme.railTint } }
         .ignoresSafeArea()
@@ -57,6 +65,13 @@ struct WorkspaceView: View {
             try? await Task.sleep(for: .seconds(5))
             show()
         }
+    }
+
+    /// A task's lead, however deep: what decides a worker's workspace, as zerod has it.
+    private func root(_ conversation: Conversation) -> Conversation {
+        var top = conversation
+        while let parent = top.parent, let up = workspace.conversation(parent) { top = up }
+        return top
     }
 
     /// Until zerod has given the rail its integrations and the sidebar its tasks, the window shows Zero's mark alone,
@@ -1091,7 +1106,8 @@ private struct BoardView: View {
     let open: (String) -> Void
 
     var body: some View {
-        let rows = workspace.board
+        // The workspace shown, as the sidebar: another workspace's tasks are there.
+        let rows = workspace.board.filter { $0.workspace == workspace.current }
         // A column of one place says nothing.
         let places = Set(rows.map(\.place)).count > 1
         let (running, offline) = (rows.filter(\.online), rows.filter { !$0.online })
@@ -2308,7 +2324,11 @@ struct ItemView: View {
             if error {
                 CautionCallout(text: text)
             } else {
-                HStack(spacing: 6) { NucleoIcon("circle-info", size: 14); Text(NoticeText.attributed(text)) }
+                // The icon on the first line, centred on its letters, however many lines the notice runs to.
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    NucleoIcon("circle-info", size: 14).alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4.5 }
+                    Text(NoticeText.attributed(text))
+                }
                     .font(.callout).foregroundStyle(.secondary).tint(.primary)
             }
         case let .table(title, columns, rows):
@@ -3531,13 +3551,6 @@ private struct NewTaskView: View {
                 projectTab
                 Composer(draft: $prompt, placeholder: "Do anything", canSend: !starting && folders.contains(project), folder: folders.contains(project) ? project : nil,
                          workspace: workspace, images: $images) { start() } controls: {
-                    ComposerChip(id: "new.permissions", label: permissions == .auto ? "Auto" : "Unrestricted",
-                                 symbol: permissions == .auto ? "wand-sparkle" : "bolt-lightning:glyph", tint: permissions == .auto ? nil : .orange) {
-                        ComposerRows.list("Permissions", [
-                            ("auto", "Auto", "\(chosen.title) decides what's safe, and asks you the rest", permissions == .auto, { permissions = .auto }),
-                            ("unrestricted", "Unrestricted", "Anything, without asking", permissions == .unrestricted, { permissions = .unrestricted }),
-                        ])
-                    }
                     ComposerChip(id: "new.agent", label: agentLabel, symbol: "terminal", icon: chosen.mark, kind: .runtime, prominent: true, rows: {
                         ComposerRows.models(Provider.allCases, selected: { provider, id in
                             provider == chosen && (id == model || (model.isEmpty && id == (ComposerRows.catalogue(provider).first?.id ?? "")))
@@ -3547,11 +3560,18 @@ private struct NewTaskView: View {
                             if !choice.levels.contains(where: { $0.id == effort }) { effort = "" }
                         })
                     }, level: { id in id == "\(chosen.rawValue)/\(model)" && !effort.isEmpty ? effort : nil }, setLevel: { _, level in effort = level })
-                    Spacer(minLength: 0)
+                    ComposerChip(id: "new.permissions", label: permissions == .auto ? "Auto" : "Unrestricted",
+                                 symbol: permissions == .auto ? "wand-sparkle" : "bolt-lightning:glyph", tint: permissions == .auto ? nil : .orange) {
+                        ComposerRows.list("Permissions", [
+                            ("auto", "Auto", "\(chosen.title) decides what's safe, and asks you the rest", permissions == .auto, { permissions = .auto }),
+                            ("unrestricted", "Unrestricted", "Anything, without asking", permissions == .unrestricted, { permissions = .unrestricted }),
+                        ])
+                    }
                 }
             }
-            .frame(maxWidth: 680) // the same column as a task's composer
-            .padding(.horizontal, 36).padding(.bottom, 18)
+            // A task's composer's column and place: the same width, as far from the window's foot.
+            .centredColumn(680)
+            .padding(.bottom, 16)
         }
         .frame(maxWidth: .infinity)
         .onAppear {
