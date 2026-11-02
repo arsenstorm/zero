@@ -13,8 +13,12 @@ import UserNotifications
     private(set) var status = Status.unpaired
     private(set) var rows: [BoardRow] = []
     private(set) var asks: [Ask] = []
-    /// How the Mac's sidebar arranges tasks: its sort, its dragged order and the workspace it shows.
-    private(set) var sidebar = (sort: BoardRow.Sort.state, order: "", workspace: "zero")
+    /// How the Mac's sidebar arranges tasks: its sort and its dragged order.
+    private(set) var sidebar = (sort: BoardRow.Sort.state, order: "")
+    /// The workspace shown here: the phone's own, not the Mac's, so each can be on its own work.
+    private(set) var workspace = UserDefaults.standard.string(forKey: "workspace") ?? "zero" {
+        didSet { UserDefaults.standard.set(workspace, forKey: "workspace") }
+    }
     /// zerod's sessions as they come; views read `lives`, one observed object a task, so a change to one task redraws
     /// that task's page alone, not every page reading the mirror.
     @ObservationIgnored private var mirror = ZerodMirror()
@@ -104,7 +108,7 @@ import UserNotifications
     /// A task started on the Mac, in the workspace shown here: its session.
     func start(_ prompt: String, in folder: String, with provider: Provider, model: String?, effort: String?, permissions: Permissions = .auto) async throws -> String {
         guard let link else { throw ZerodError(message: "Not connected to your Mac") }
-        return try await link.start(provider: provider, cwd: folder, prompt: prompt, model: model, effort: effort, permissions: permissions, workspace: sidebar.workspace)
+        return try await link.start(provider: provider, cwd: folder, prompt: prompt, model: model, effort: effort, permissions: permissions, workspace: workspace)
     }
 
     /// What the agent may do without asking; between turns, as the agent starts again with it.
@@ -170,10 +174,8 @@ import UserNotifications
                     await self.arrange()
                     await self.name(rows)
                 case .later: await self.loadLater()
-                // The Mac's workspace changed, or the workspaces did: the list follows it.
-                case .workspaces:
-                    await self.loadWorkspaces()
-                    await self.arrange(now: true)
+                // The workspaces changed (one added, renamed, removed): the picker follows.
+                case .workspaces: await self.loadWorkspaces()
                 default: break
                 }
             }
@@ -218,7 +220,7 @@ import UserNotifications
     }
 
     /// The tasks as the Mac's sidebar lists them.
-    var tasks: [BoardRow] { BoardRow.sorted(rows.filter { $0.workspace == sidebar.workspace }, by: sidebar.sort, order: sidebar.order) }
+    var tasks: [BoardRow] { BoardRow.sorted(rows.filter { $0.workspace == workspace }, by: sidebar.sort, order: sidebar.order) }
 
     /// The Mac's arrangement again: asked with a board, as dragging or sorting there doesn't move the board; at most
     /// every few seconds, as a board comes up to four times a second while tasks work.
@@ -227,7 +229,7 @@ import UserNotifications
         guard now || Date().timeIntervalSince(arranged) > 5 else { return }
         arranged = Date()
         guard let got = try? await link?.call("sidebar", [:]) as? [String: String] else { return }
-        sidebar = (BoardRow.Sort(rawValue: got["sort"] ?? "") ?? .state, got["order"] ?? "", got["workspace"] ?? "zero")
+        sidebar = (BoardRow.Sort(rawValue: got["sort"] ?? "") ?? .state, got["order"] ?? "")
     }
 
     /// Each worker's name, as the Mac's sidebar has it: asked of zerod when the board shows a worker not named yet.
@@ -238,22 +240,23 @@ import UserNotifications
         names = Dictionary(all.map { ($0.id, TaskName.of($0)) }, uniquingKeysWith: { a, _ in a })
     }
 
-    /// The user's workspaces, as zerod has them; the one shown is the Mac's (`sidebar.workspace`) unless chosen here.
+    /// The user's workspaces, as zerod has them.
     private(set) var workspaces: [ZerodLink.Workspace] = []
 
     func loadWorkspaces() async {
         if let all = try? await link?.workspaces(), all != workspaces { workspaces = all }
+        // The one shown here deleted: Zero's.
+        if !workspaces.isEmpty, !workspaces.contains(where: { $0.id == workspace }) { workspace = "zero" }
     }
 
-    /// Shown here at once, and on the Mac too: the two show the same workspace.
+    /// Shown here; the Mac stays on its own.
     func switchWorkspace(_ id: String) {
-        guard id != sidebar.workspace else { return }
-        sidebar.workspace = id
+        guard id != workspace else { return }
+        workspace = id
         path = []
-        Task { _ = try? await link?.call("setWorkspace", ["workspace": id]) }
     }
 
-    var currentWorkspace: ZerodLink.Workspace? { workspaces.first { $0.id == sidebar.workspace } }
+    var currentWorkspace: ZerodLink.Workspace? { workspaces.first { $0.id == workspace } }
 
     /// The asks waiting on the user, oldest first.
     var waiting: [Ask] { asks.filter { ($0.state == .waiting || $0.state == .pending) && $0.kind != .note && $0.kind != .message && $0.sameAs == nil }.sorted { $0.createdAt < $1.createdAt } }

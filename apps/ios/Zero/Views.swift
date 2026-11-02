@@ -169,7 +169,7 @@ struct Home: View {
             .navigationDestination(for: String.self) { id in TaskView(model: model, session: id) }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Logo() }.sharedBackgroundVisibility(.hidden)
-                // The workspace shown, as the Mac's sidebar heading: the same one there and here, switched from either.
+                // The workspace shown, as the Mac's sidebar heading has it: the phone's own choice.
                 if model.workspaces.count > 1 {
                     ToolbarItem(placement: .topBarLeading) {
                         Button { choosing = true } label: {
@@ -379,7 +379,8 @@ struct TaskRow: View {
                     Image("chevron-down-outline").resizable().frame(width: 12, height: 12).foregroundStyle(.secondary)
                         .rotationEffect(.degrees(folded ? -90 : 0)).frame(width: 28, height: 28).contentShape(Rectangle())
                 }
-                .buttonStyle(.borderless)
+                // Plain: the Mac's grey, not the tint a borderless button takes.
+                .buttonStyle(.plain)
                 .accessibilityLabel(folded ? "Show its workers" : "Hide its workers")
             }
             StateGlyph(state: state).accessibilityLabel(StateGlyph.look(state).name)

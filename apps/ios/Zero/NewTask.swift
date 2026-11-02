@@ -50,10 +50,14 @@ struct NewTaskSheet: View {
                         }
                         .foregroundStyle(.primary)
                     }
+                }
+                // A list, not the system menu: the tick on the right, as everywhere else here.
+                Section("Permissions") {
                     Picker("Permissions", selection: $permissions) {
                         Text("Auto").tag(Permissions.auto)
                         Text("Unrestricted").tag(Permissions.unrestricted)
                     }
+                    .pickerStyle(.inline).labelsHidden()
                 }
                 if let problem { Text(problem).font(.footnote).foregroundStyle(.red) }
             }

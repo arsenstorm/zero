@@ -17,6 +17,7 @@ struct Composer: View {
     @State private var chosen: (model: String, effort: String?)?
     @State private var dictation = Dictation()
     @State private var selecting = false
+    @State private var permitting = false
     @State private var sending = false
     @FocusState private var focused: Bool
 
@@ -85,6 +86,7 @@ struct Composer: View {
                         Button { Task { _ = await model.unqueue(session, item: item.id) } } label: {
                             Image("trash-outline").resizable().frame(width: 16, height: 16).foregroundStyle(.secondary).frame(width: 32, height: 32)
                         }
+                        .buttonStyle(.plain)
                         .accessibilityLabel("Delete")
                         Button {
                             Task { await model.steer(session, item: item) }
@@ -188,16 +190,34 @@ struct Composer: View {
     // What the agent may do without asking, as the Mac's chip: changed between turns (the agent starts again with it).
     private var permissionsMenu: some View {
         let unrestricted = conversation?.permissions == .unrestricted
-        return Menu {
-            Picker("Permissions", selection: Binding(get: { conversation?.permissions ?? .auto }, set: { new in Task { await model.setPermissions(session, new) } })) {
-                Label("Auto: \(conversation?.provider.title ?? "it") asks you what isn't safe", image: "wand-sparkle-outline").tag(Permissions.auto)
-                Label("Unrestricted: anything, without asking", image: "bolt-lightning-glyph").tag(Permissions.unrestricted)
-            }
-        } label: {
+        return Button { permitting = true } label: {
             Image(unrestricted ? "bolt-lightning-glyph" : "wand-sparkle-outline").resizable().frame(width: 18, height: 18)
                 .foregroundStyle(unrestricted ? Color.orange : Color.primary).frame(width: 40, height: 40)
         }
+        .buttonStyle(.plain)
         .disabled(busy || conversation == nil)
+        .popover(isPresented: $permitting) {
+            VStack(spacing: 2) {
+                ForEach([Permissions.auto, .unrestricted], id: \.self) { choice in
+                    Button {
+                        permitting = false
+                        Task { await model.setPermissions(session, choice) }
+                    } label: {
+                        HStack {
+                            Text(choice == .auto ? "Auto" : "Unrestricted")
+                            Spacer(minLength: 16)
+                            Image("circle-check-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(Color.accentColor)
+                                .opacity((conversation?.permissions ?? .auto) == choice ? 1 : 0)
+                        }
+                        .padding(.horizontal, 14).frame(height: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(6)
+            .frame(width: 220)
+            .presentationCompactAdaptation(.popover)
+        }
         .accessibilityLabel(unrestricted ? "Permissions: unrestricted" : "Permissions: auto")
     }
 
