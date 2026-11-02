@@ -5,3 +5,9 @@ target/
 *.xcodeproj
 .swiftpm/
 apps/macos/Vendor/
+
+# Cloudflare's local state for the relay, not the relay
+.wrangler/
+# The iPhone app's project is kept (nothing generates it); Xcode's per-user state isn't
+!apps/ios/Zero.xcodeproj/
+xcuserdata/

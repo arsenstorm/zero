@@ -44,6 +44,7 @@ bundle: build
 	cp $(MACOS)/Resources/icons/*.png $(APP)/Contents/Resources/
 	cd $(MACOS)/Resources && cp AppIcon.icns logo/menubar.png logo/menubar@2x.png logo/mark.svg logo/mark-small.svg $(CURDIR)/$(APP)/Contents/Resources/
 	cp -R $(MACOS)/Resources/nucleo $(APP)/Contents/Resources/nucleo
+	cp /System/Library/Sounds/*.aiff $(APP)/Contents/Resources/
 	cp -R plugin $(APP)/Contents/Resources/plugin
 	rm -rf $(APP)/Contents/Resources/chrome && cp -R apps/chrome $(APP)/Contents/Resources/chrome
 	cp target/drop/zero-drop $(APP)/Contents/Resources/zero-drop-darwin-arm64
@@ -69,7 +70,7 @@ install: bundle
 	if [ $$changed = yes ] && printf '{"op":"restart"}\n' | nc -U $(HOME)/.zero/zerod.sock 2>/dev/null | grep -q restarting; then \
 		echo "zerod: restarting as the new build once turns under way have paused"; \
 	fi; \
-	open /Applications/Zero.app
+	open -g /Applications/Zero.app
 
 run: install
 
