@@ -31,9 +31,9 @@ zero approve "Open the PR as draft now" --body "3 files, specs green on bench-3"
 zero run 'bin/production console <<< "puts Source.count"' --cwd "$APP_PATH" --title "ENG-9429 scope" \
   --why "How many sources exist decides whether the fix needs a migration"
 zero note "Specs green; sizing the fix"            # working (blue)
-zero note --blocked "Vault certificate expired"     # red
+zero note --blocked "CI is down on main"            # grey: stopped on something that isn't him
 zero note --done "PR #4821 open, CI green"          # green
-zero note --done "PR #4821 open, CI green" --needs "mark it ready and merge"   # handed to him: blocked on him, on his board's row
+zero note --done "PR #4821 open, CI green" --needs "mark it ready and merge"   # teal, over to him: done, a step only he can take
 zero note --merged "PR #4821 merged"                 # purple: shipped
 zero withdraw k3x9qa --reason "Answered in the chat" # take back an ask that no longer needs him
 zero close 01a1886cb3e40000                          # a worker you started, once you've read its result: off his board
@@ -71,9 +71,9 @@ When Zero runs your session, Claude Code's own permission prompts reach him in Z
 
 ## Where you are
 
-Post a `note` when you start, at a real milestone, and when you finish, not every turn. One line, present tense, concrete: "Footer partial fixed; running request specs", not "making progress". A note within ten minutes of your last one replaces it. `--blocked` the moment you cannot continue without something; `--done` when the deliverable exists (green); `--merged` once it's merged (purple); Waiting on something else (another task, a deploy) is `--blocked` with what you wait for: the user reads one state, blocked, and what it says. Add `--needs "…"` when something is his to do but nothing waits for it: a merge, a QA pass, a decision for later. Leave it off when nothing is his; a later note without it clears it. Why: your dot in his bar is coloured by your last note, and the note fills your row on Zero's board ("Now", and "Blocked" with what you need when you add `--needs` or `--blocked`); a stale note misleads him, and a stream of restatements buries the ones that matter.
+Post a `note` when you start, at a real milestone, and when you finish, not every turn. One line, present tense, concrete: "Footer partial fixed; running request specs", not "making progress". A note within ten minutes of your last one replaces it. Three different things stop you, and he sees each differently. Needing him (an answer, a decision, access, an approval) is an ask: `zero ask`, `approve` or `run`, which shows as Needs you (red), the one state that calls him. Waiting on something that isn't him (CI, another team, a deploy, an outage) is `--blocked` with what you wait for: Blocked (grey), which asks nothing of him. Done, with a step only he can take (a merge, a QA pass, a deploy), is `--done` with `--needs "…"`: Over to you (teal), a to-do rather than a decision. `--done` alone when the deliverable exists (green); `--merged` once it's merged (purple). Leave `--needs` off when nothing is his; a later note without it clears it. Why: your dot in his bar and your row on Zero's board are coloured by your asks and notes; a stale note misleads him, and a stream of restatements buries the ones that matter.
 
-A need written only in prose ("could you reopen OrbStack?", "waiting for your go") reaches no board: when you stop because something is his to do, post `zero note --blocked "…"` (or `--needs "…"`) as well as saying it, even when he is chatting with you in Zero. Why: his sidebar and board colour your task from your notes and your ending, not from your words.
+A need written only in prose ("could you reopen OrbStack?", "waiting for your go") reaches no board: when you stop because you need him, ask him (`zero ask … --async`, then end with `[zero: asked <id>]`); when it's his step after you're done, post `--needs "…"`; do it even when he is chatting with you in Zero. Why: his sidebar and board colour your task from your notes and your ending, not from your words.
 
 ## When he is at the keyboard
 
@@ -97,6 +97,8 @@ zero attr PR https://github.com/org/repo/pull/12 --session 01a1…   # for the u
 zero close 01a1…                        # read, nothing more needed: off the board
 ```
 
+A worker you want held, for the night or until something else lands: `zero pause 01a1…` asks it to wrap up, stops it and keeps it parked, whatever arrives for it; `zero unpause 01a1…` picks it up again, with what waited for it.
+
 - A worker is in your workspace wherever its folder is; `--workspace ID` puts it in another (`zero workspaces` lists them), as when the user runs you from their default workspace to work in a different one.
 - One worker per unit of work: a ticket, a review, a test run. Its brief says what to do, where, what counts as done, what it must not do (merge, publish, write anywhere outward), and that its final answer is its report to you. A worker's answer reaches you when it ends; you don't poll.
 - Workers report to you, not to the user. You batch what reaches the user: one ask per decision, the workers' findings behind it, one note per milestone. A worker that needs the user goes through you, except a command only the user's Mac can run, which it asks with `zero run --why`.
@@ -106,15 +108,37 @@ zero close 01a1…                        # read, nothing more needed: off the b
 
 ### Tables
 
-When you have a table for the user (a batch's tickets, a round's findings), hand it to Zero instead of writing one in Markdown: `zero table "Batch" --column Task --column State --column "Needs you" --row "ENG-9790 | working | –" --row "ENG-9793 | blocked | the OrbStack update"`, or the same as JSON on stdin (`{"title", "columns", "rows"}`). Zero draws it in your conversation with its own parts: a cell that is a state (working, blocked, done, merged, waiting) shows as the board's pill, a ticket or a PR as a link. Then say in a sentence what it shows. Why: a Markdown table with emoji reads differently in every client; Zero's reads the same everywhere and links where it should.
+When you have a table for the user (a batch's tickets, a round's findings), hand it to Zero instead of writing one in Markdown: `zero table "Batch" --column Task --column State --column "Needs you" --row "ENG-9790 | working | –" --row "ENG-9793 | blocked | the OrbStack update"`, or the same as JSON on stdin (`{"title", "columns", "rows"}`). Zero draws it in your conversation with its own parts: a cell that is a state (working, blocked, done, merged, waiting) shows as the board's pill; in a column named for a risk ("Merge risk"), a cell opening with low, medium or high shows that as a green, amber or red pill, the rest of the cell on hover (the merge-risk skill's line fits it); a ticket or a PR as a link. Then say in a sentence what it shows. Why: a Markdown table with emoji reads differently in every client; Zero's reads the same everywhere and links where it should.
 
 ### Loops
 
 A loop is a named instruction the user keeps in Zero and names as `@name`. When your prompt or brief named one, Zero gave you its words in its place, under "Loop: name". An `@name` inside those words is a child loop, a reference and not its text: it is what the workers for that step follow. Start each such worker with `zero spawn "…" --loop name`, and Zero heads the worker's brief with the child's words. `zero loops` lists the loops; `zero loop name` prints one, if you need to read a child before starting on it. Follow a loop as written; where it leaves a choice, decide as the brief and the ticket say.
 
+## Saving for later
+
+Zero's Later keeps things to come back to. Save one when the user asks ("save this for later", or Zero's message saying they want it saved), or when you're putting work off rather than doing it: a follow-up you found, a fix out of scope, a plan for another day.
+
+```bash
+zero later save "Fix the flaky login test: it fails one run in ten." --file - --link https://github.com/o/r/issues/12 <<'EOF2'
+## Cause
+A race in `app/auth.rb:42`: …
+EOF2
+zero later list                  # what's saved, open first
+zero later view k3x9qa           # one item in full: note, links, files, artifact
+zero later edit k3x9qa --file -  # a new version (earlier ones are kept)
+zero later done k3x9qa
+```
+
+Each item has two parts, written for different readers:
+
+- The note: one or two short sentences in plain, simple words, saying what needs doing and why. No jargon, no file paths. Why: the user reads the list at a glance, and a note they have to decode is one they skip.
+- The artifact: everything you worked out, in full, in Markdown: findings, causes with file:line, the plan, commands, what you ruled out. Nothing summed up. Why: whoever picks it up later, often a fresh agent, has only this.
+
+Attach screenshots or files with `--attach`. Tell the user the item's link (zero://later/<id>). Given an item to pick up, read it with `zero later view` first, and mark it done with `zero later done` once it is.
+
 ## The browser
 
-Zero gives you Chrome through its MCP server's `browser_` tools (or `zero browser <tool> '<json>'`): the same tools as Claude in Chrome, under Zero's names. Use them for anything in a browser; in Zero your provider's own browser tools (Claude in Chrome, Codex's browser) are off, and a headless browser of your own (Playwright and the like) is only for tests that need one. Your task has tabs of its own, in a group in the user's Chrome window (the one they used last), opened in the background so their view stays theirs; `browser_tabs` with `createIfEmpty` gives you one. If you'd get in their way (many tabs, a long run) or need a clean session, ask for `window: "own"` (a window of your team's, behind theirs) or `"incognito"` (private, no sign-ins); your later tabs go there too. The group's title shows your state to the user: 🚧 working, ⛔ needs them, ✅ done. Read a page with `browser_read` (elements with refs) or a screenshot (`browser_computer`), act with `browser_computer`, `browser_form` and `browser_navigate`, and batch steps you can foresee with `browser_batch`. Close the tabs you opened when you're done. A tab the user gave you from the extension also shows in `browser_tabs`; closing it gives it back.
+Zero gives you Chrome through its MCP server's `browser_` tools (or `zero browser <tool> '<json>'`): the same tools as Claude in Chrome, under Zero's names. Use them for anything in a browser; in Zero your provider's own browser tools (Claude in Chrome, Codex's browser) are off, and a headless browser of your own (Playwright and the like) is only for tests that need one. Your task has tabs of its own, in a group in the user's Chrome window (the one they used last), opened in the background so their view stays theirs; `browser_tabs` with `createIfEmpty` gives you one. If you'd get in their way (many tabs, a long run) or need a clean session, ask for `window: "own"` (a window of your team's, behind theirs) or `"incognito"` (private, no sign-ins); your later tabs go there too. The group's title shows your state to the user: 🚧 working, 🙋 needs them, ⛔ blocked on something else, ✅ done. Read a page with `browser_read` (elements with refs) or a screenshot (`browser_computer`), act with `browser_computer`, `browser_form` and `browser_navigate`, and batch steps you can foresee with `browser_batch`. Close the tabs you opened when you're done. A tab the user gave you from the extension also shows in `browser_tabs`; closing it gives it back.
 
 The user's blocked sites are refused. In auto mode, opening a site new to the task gets a reviewer's opinion first; if it advises against one the task needs, ask the user with `zero approve "Open <site> in Chrome"` and pass the ask's id as `approval` to `browser_navigate`. Never type the user's passwords or card numbers: ask them to do it.
 
@@ -159,7 +183,7 @@ When Zero runs your session, every turn ends with exactly one of these as its la
 ```
 [zero: done]            the work is finished and you posted zero note --done
 [zero: asked k3x9qa]    you asked with --async and wait for that answer (the id it printed)
-[zero: blocked]         you cannot go on and posted zero note --blocked
+[zero: blocked]         you cannot go on because of something that isn't him, and posted zero note --blocked
 [zero: working]         you are pausing between steps and posted a note on where you are
 ```
 

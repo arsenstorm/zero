@@ -1,6 +1,6 @@
 {
   "name": "zero",
-  "version": "0.6.1",
+  "version": "0.8.0",
   "description": "Agents reach Arsen through Zero: the zero skill, Zero's rules at session start, a stop check that every turn ends with Zero's ending, and Zero's scratchpads over MCP.",
   "author": {
     "name": "Arsen Shkrumelyak"
