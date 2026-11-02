@@ -33,6 +33,8 @@ pub struct Claude {
     background: std::collections::HashSet<String>,
     /// Zero asked Claude to stop the turn: the error result that follows is the stop, not a failure.
     interrupting: bool,
+    /// Servers this process was asked to sign in to, so a later turn's init doesn't ask again.
+    signing_in: std::collections::HashSet<String>,
 }
 
 pub fn command(conversation: &Conversation, resume: bool, model: Option<&str>, effort: Option<&str>) -> Vec<String> {
@@ -144,6 +146,19 @@ impl Adapter for Claude {
                 if let Some(thread) = message["session_id"].as_str() {
                     effects.changes.push(Change::Thread { thread: thread.into(), model: message["model"].as_str().map(Into::into), effort: None });
                 }
+                // A server of Zero's that wants signing in: Claude's own sign-in for it, its link for the user.
+                for server in message["mcp_servers"].as_array().into_iter().flatten().filter(|s| s["status"] == "needs-auth") {
+                    if let Some(name) = server["name"].as_str() && crate::mcp_servers::signs_in(conversation, name).is_some() && self.signing_in.insert(name.into()) {
+                        effects.replies.push(json!({"type": "control_request", "request_id": format!("{}{name}", crate::mcp_servers::SIGN_IN),
+                                                    "request": {"subtype": "mcp_authenticate", "serverName": name}}));
+                    }
+                }
+            }
+            Some("control_response") if let Some(name) = message["response"]["request_id"].as_str().and_then(|id| id.strip_prefix(crate::mcp_servers::SIGN_IN)) => {
+                let response = &message["response"];
+                let url = response["response"]["authUrl"].as_str();
+                let error = (response["subtype"] != "success").then(|| response["error"].as_str().unwrap_or("Claude refused"));
+                crate::mcp_servers::signing_in(conversation, name, url, error, &mut effects);
             }
             Some("system") if message["subtype"] == "task_started" && message["is_backgrounded"] == true => {
                 if let Some(id) = message["tool_use_id"].as_str() { self.background.insert(id.into()); }
@@ -210,6 +225,8 @@ impl Adapter for Claude {
         self.queued = 0;
         self.said = None;
         self.background.clear();
+        // A new process listens afresh: its sign-in is a new link.
+        self.signing_in.clear();
     }
 }
 

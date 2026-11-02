@@ -201,7 +201,11 @@ impl Session {
     }
 
     /// The MCP servers its CLI is to be started with, from now on.
-    pub fn set_mcp(&self, servers: Vec<crate::mcp_servers::Resolved>) { self.lock().mcp = servers }
+    pub fn set_mcp(&self, servers: Vec<crate::mcp_servers::Resolved>) {
+        let mut inner = self.lock();
+        inner.mcp = servers.clone();
+        if let Some(core) = inner.core.as_mut() { core.set_mcp(servers) }
+    }
 
     /// The conversation with its latest `count` items (more, back to the start of their turn), and how many came before.
     pub fn recent(&self, count: usize) -> (Conversation, usize) {
@@ -650,7 +654,8 @@ impl Inner {
         self.touched = Instant::now();
         if self.core.is_none() {
             let loaded = self.dir.as_deref().and_then(|dir| replay(dir).ok()).map(|(core, _)| core);
-            let core = loaded.unwrap_or_else(|| Core::new(self.parked.as_ref().map(|p| p.summary.clone()).unwrap_or_else(|| Conversation::new("", Provider::Claude, ""))));
+            let mut core = loaded.unwrap_or_else(|| Core::new(self.parked.as_ref().map(|p| p.summary.clone()).unwrap_or_else(|| Conversation::new("", Provider::Claude, ""))));
+            core.set_mcp(self.mcp.clone());
             self.core = Some(core);
             self.parked = None;
         }

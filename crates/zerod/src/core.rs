@@ -46,6 +46,11 @@ impl Core {
         }
     }
 
+    /// The MCP servers its CLI was given: what the adapter may sign in to.
+    pub fn set_mcp(&mut self, servers: Vec<crate::mcp_servers::Resolved>) {
+        self.conversation.mcp = servers;
+    }
+
     pub fn conversation(&self) -> &Conversation {
         &self.conversation
     }

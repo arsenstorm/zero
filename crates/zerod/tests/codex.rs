@@ -149,3 +149,20 @@ fn codexs_request_for_input_is_a_question_answered_by_question_id() {
     core.receive(&json!({"method": "serverRequest/resolved", "params": {"threadId": "t", "requestId": 11}}));
     assert!(core.conversation().questions.is_empty());
 }
+
+#[test]
+fn a_server_of_zeros_that_needs_signing_in_gives_the_user_codexs_own_sign_in_link() {
+    let mut conversation = Conversation::new("s1", Provider::Codex, "/work/project");
+    conversation.mcp = vec![zerod::mcp_servers::Resolved { id: "cve-lookup".into(), name: "CVE lookup".into(), command: None, args: vec![],
+                                                           url: Some("https://cve.example/mcp".into()), env: vec![], headers: vec![] }];
+    let mut core = Core::new(conversation);
+    let needs = |name: &str| json!({"method": "mcpServer/startupStatus/updated", "params": {"name": name, "status": "failed", "failureReason": "reauthenticationRequired", "threadId": "t1"}});
+    assert!(core.receive(&needs("theirs")).replies.is_empty(), "the user's own servers are theirs to sign in to");
+    let effects = core.receive(&needs("cve-lookup"));
+    assert_eq!(effects.replies, [json!({"id": "mcp-auth-cve-lookup", "method": "mcpServer/oauth/login", "params": {"name": "cve-lookup", "threadId": "t1"}})]);
+    core.receive(&json!({"id": "mcp-auth-cve-lookup", "result": {"authorizationUrl": "https://cve.example/authorize?x=1"}}));
+    assert!(matches!(&core.conversation().items.last().unwrap().kind,
+                     ItemKind::Notice { text, error: false } if text == "CVE lookup needs you to sign in on your Mac: [open its sign-in page](https://cve.example/authorize?x=1)"), "{:?}", core.conversation().items);
+    core.receive(&json!({"method": "mcpServer/oauthLogin/completed", "params": {"name": "cve-lookup", "success": true, "threadId": "t1"}}));
+    assert!(matches!(&core.conversation().items.last().unwrap().kind, ItemKind::Notice { text, error: false } if text == "Signed in to CVE lookup"));
+}
