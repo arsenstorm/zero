@@ -868,6 +868,8 @@ enum Theme {
     static let done = dynamic(dark: NSColor(red: 0.40, green: 0.82, blue: 0.50, alpha: 1), light: NSColor(red: 0.09, green: 0.50, blue: 0.22, alpha: 1))
     /// An answer's row: a tint over whatever it sits on (a card, a question's panel), so it reads as a button on both.
     static let choice = dynamic(dark: NSColor(white: 1, alpha: 0.07), light: NSColor(white: 0, alpha: 0.05))
+    /// Its number's key cap: a tint over the row's, a step past it on any surface.
+    static let choiceCap = dynamic(dark: NSColor(white: 1, alpha: 0.1), light: NSColor(white: 0, alpha: 0.08))
     static let keycap = dynamic(dark: NSColor(white: 0.22, alpha: 1), light: NSColor(white: 0.88, alpha: 1))
     /// A fully solid knob; `.primary` is a translucent label colour.
     static let knob = dynamic(dark: .white, light: .black)
@@ -1707,7 +1709,7 @@ struct CardView: View {
         let failed = ask.delivery == .failed
         let settled = ask.state.isFinal && ask.delivery != .sending && !failed
         let surface: Color = chosen ? (failed ? Theme.redRow : settled ? Theme.greenRow : Theme.orangeRow) : Theme.choice
-        let cap: Color = chosen ? (failed ? Theme.redCap : settled ? Theme.greenCap : Theme.orangeCap) : Theme.keycap
+        let cap: Color = chosen ? (failed ? Theme.redCap : settled ? Theme.greenCap : Theme.orangeCap) : Theme.choiceCap
         return HStack(spacing: 10) {
             if let key {
                 Text(key).font(.system(size: 10, weight: .bold)).frame(width: 18, height: 18)
