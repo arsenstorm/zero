@@ -3,6 +3,10 @@
 
 import { run, stopped } from "./tools.js";
 import { setLight } from "./tabs.js";
+import { event, useZero } from "./cdp.js";
+
+/** Which browser this is: Firefox has the extension too, its debugger commands done by Zero. */
+const BROWSER = navigator.userAgent.includes("Firefox/") ? "Firefox" : "Chrome";
 
 const HOST = "dev.zero.browser";
 let port = null;
@@ -13,7 +17,7 @@ const replies = new Map();
 async function deviceId() {
   const { device } = await chrome.storage.local.get("device");
   if (device) return device;
-  const id = "chrome-" + crypto.randomUUID().slice(0, 8);
+  const id = BROWSER.toLowerCase() + "-" + crypto.randomUUID().slice(0, 8);
   await chrome.storage.local.set({ device: id });
   return id;
 }
@@ -35,7 +39,7 @@ async function connect() {
     replies.clear();
     retry();
   });
-  port.postMessage({ type: "hello", id: await deviceId(), name: "Chrome", version: chrome.runtime.getManifest().version });
+  port.postMessage({ type: "hello", id: await deviceId(), name: BROWSER, version: chrome.runtime.getManifest().version });
   wait = 1000;
 }
 
@@ -52,6 +56,8 @@ async function received(message) {
     } catch (error) {
       port?.postMessage({ type: "answer", call, error: String(error?.message || error) });
     }
+  } else if (message.type === "cdp") {
+    event(message.tabId, message.method, message.params);
   } else if (message.type === "state") {
     setLight(message.session, message.state).catch(() => {});
   } else if (message.type === "reply") {
@@ -71,6 +77,8 @@ export function ask(op, fields = {}) {
     port.postMessage({ type: "request", id, request: { op, ...fields } });
   });
 }
+
+useZero(ask);
 
 // From the popup and the page's Stop button.
 chrome.runtime.onMessage.addListener((message, sender, answer) => {

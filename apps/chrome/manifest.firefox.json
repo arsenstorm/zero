@@ -1,0 +1,67 @@
+{
+  "manifest_version": 3,
+  "name": "Zero",
+  "description": "Lets the agents Zero runs use Firefox: each task in tabs of its own.",
+  "version": "0.6.2",
+  "permissions": [
+    "tabs",
+    "tabGroups",
+    "scripting",
+    "storage",
+    "nativeMessaging",
+    "alarms",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "scripts": [
+      "worker.js"
+    ],
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Zero",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png"
+    }
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "page.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "indicator.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "incognito": "spanning",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "browser@zero.dev",
+      "strict_min_version": "139.0"
+    }
+  }
+}
