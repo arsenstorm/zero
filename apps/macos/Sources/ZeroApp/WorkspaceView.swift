@@ -128,8 +128,11 @@ struct WorkspaceView: View {
                 }
             }
         }
+        .overlay(alignment: .top) {
+            if let updating = workspace.updating { UpdatingBar(updating: updating).padding(.top, 12) }
+        }
         .overlay(alignment: .bottom) {
-            if let error = workspace.lastError {
+            if let error = workspace.lastError, workspace.updating == nil {
                 Text(error).font(.callout).padding(.horizontal, 14).padding(.vertical, 8)
                     .background(Theme.redRow, in: Capsule()).padding(16)
                     .onTapGesture { workspace.lastError = nil }
@@ -3982,3 +3985,42 @@ private struct StatusCard: View {
     }
 }
 
+
+/// Zero restarting for an update, said while it happens: what it's letting finish first (a task's command, for at most
+/// a couple of minutes), then that the new version is starting. Tasks it paused carry on by themselves afterwards.
+private struct UpdatingBar: View {
+    let updating: Workspace.Updating
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Spinner().frame(width: 12, height: 12).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Updating Zero").font(.system(size: 13, weight: .semibold))
+                    Text(detail(at: context.date)).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if !updating.starting {
+                        ForEach(updating.waiting.prefix(3)) { waiting in
+                            HStack(spacing: 6) {
+                                Text(waiting.task.isEmpty ? "A task" : waiting.task).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                                Text(waiting.command).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .frame(maxWidth: 460, alignment: .leading)
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke))
+            .compositingGroup().shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+        }
+    }
+
+    private func detail(at now: Date) -> String {
+        if updating.starting { return "Starting the new version. Tasks it paused carry on where they left off." }
+        if updating.waiting.isEmpty { return "Pausing tasks between steps; they carry on once it's done." }
+        let left = max(0, updating.most - Int(now.timeIntervalSince(updating.since)))
+        let count = updating.waiting.count == 1 ? "a command" : "\(updating.waiting.count) commands"
+        return "Letting \(count) finish first (at most \(left / 60):\(String(format: "%02d", left % 60)) more). Tasks carry on once it's done."
+    }
+}

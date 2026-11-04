@@ -194,6 +194,7 @@ public final class Workspace {
                         case .following: self?.followingVersion += 1
                         case .workspaces: self?.workspacesVersion += 1; Task { await self?.loadWorkspaces() }
                         case .signins: Task { await self?.loadSignIns() }
+                        case .restarting: self?.followUpdate()
                         case .clear: break
                         }
                     }
@@ -201,7 +202,13 @@ public final class Workspace {
                 fresh.onClose = { [weak self] in Task { @MainActor in self?.link = nil; self?.connected = false; Log.write("zerod connection closed") } }
                 link = fresh
                 Task { await self.handOverSeen(fresh) }
-                if (try? await fresh.subscribe()) != nil { connected = true; await loadWorkspaces(); await loadIntegrations() }
+                if (try? await fresh.subscribe()) != nil {
+                    connected = true
+                    updating = nil
+                    // Opened while zerod restarts (an install reopens the app first): said straight away.
+                    if (try? await fresh.restartStatus())?.restarting == true { followUpdate() }
+                    await loadWorkspaces(); await loadIntegrations()
+                }
             }
             // Without one, looked for again soon: zerod back from a restart is picked up within a moment.
             try? await Task.sleep(for: link == nil ? .milliseconds(300) : .seconds(2))
@@ -738,8 +745,37 @@ public final class Workspace {
         return link
     }
 
+    /// zerod restarting for an update, from the moment it says so until the new one is connected: what it waits for
+    /// (turns finishing a command, at most `most` seconds), then that it's starting.
+    public struct Updating: Equatable {
+        public var since = Date()
+        public var waiting: [ZerodLink.RestartStatus.Waiting] = []
+        public var most = 120
+        /// The old zerod has gone: the new one is starting.
+        public var starting = false
+    }
+    public private(set) var updating: Updating?
+
+    /// Follows a restart: what it waits for, asked every second while the old zerod answers.
+    func followUpdate() {
+        guard updating == nil else { return }
+        updating = Updating()
+        Task { [weak self] in
+            while let self, self.updating != nil {
+                if let link = self.link, let status = try? await link.restartStatus() {
+                    self.updating?.waiting = status.waiting
+                    self.updating?.most = status.most
+                } else {
+                    self.updating?.starting = true
+                }
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+    }
+
     private func attempt<T>(_ request: (ZerodLink) async throws -> T) async -> T? {
-        guard let link = await linked() else { lastError = "Zero's daemon isn't running"; Log.write("request with zerod not running"); return nil }
+        guard let link = await linked() else {
+            lastError = updating != nil ? "Zero is restarting for an update: try again in a moment" : "Zero's daemon isn't running"; Log.write("request with zerod not running"); return nil }
         do {
             let result = try await request(link)
             lastError = nil

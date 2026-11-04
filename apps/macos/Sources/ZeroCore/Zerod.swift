@@ -806,6 +806,8 @@ public final class ZerodLink: @unchecked Sendable {
         case following
         case workspaces
         case signins
+        /// zerod is restarting as a new build: pausing turns between steps first.
+        case restarting
         /// Notifications to take off a phone, by id: seen on the Mac (from the Mac's bridge, not zerod).
         case clear([String])
     }
@@ -1117,6 +1119,20 @@ public final class ZerodLink: @unchecked Sendable {
     /// The Chromes connected: id, name.
     public func browsers() async throws -> [(id: String, name: String)] {
         ((try await call("browsers")) as? [[String: Any]] ?? []).map { ($0["id"] as? String ?? "", $0["name"] as? String ?? "") }
+    }
+
+    /// While zerod restarts: what it's waiting for, each turn's task and the command it's letting finish.
+    public struct RestartStatus: Decodable, Sendable, Equatable {
+        public struct Waiting: Decodable, Sendable, Equatable, Identifiable { public let session: String; public let task: String; public let command: String; public var id: String { session } }
+        public let restarting: Bool
+        public let waiting: [Waiting]
+        /// The longest a command is waited for, in seconds.
+        public let most: Int
+    }
+
+    public func restartStatus() async throws -> RestartStatus {
+        let result = try await call("restartStatus")
+        return try JSONDecoder().decode(RestartStatus.self, from: JSONSerialization.data(withJSONObject: result ?? [:]))
     }
 
     /// Firefox Developer Edition opened under Zero's remote control, its extension installed.
@@ -1455,6 +1471,7 @@ public final class ZerodLink: @unchecked Sendable {
                 if event == "following" { onFeed?(.following); continue }
                 if event == "workspaces" { onFeed?(.workspaces); continue }
                 if event == "signins" { onFeed?(.signins); continue }
+                if event == "restarting" { onFeed?(.restarting); continue }
                 if event == "clear" { onFeed?(.clear(message["ids"] as? [String] ?? [])); continue }
                 let decoded: ZerodMirror.Message? = switch event {
                 case "session": (try? JSONDecoder().decode(Snapshot.self, from: data)).map { snapshot in
