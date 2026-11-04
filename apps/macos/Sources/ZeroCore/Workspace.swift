@@ -686,7 +686,15 @@ public final class Workspace {
     public func queue(_ session: String, text: String, images: [String] = []) async {
         let echo = Queued(id: "queuing-\(UUID().uuidString)", text: text, images: images.isEmpty ? nil : images)
         queuing[session, default: []].append(echo)
-        _ = await attempt { try await $0.queue(session: session, text: text, images: images) }
+        // While Zero restarts for an update it can't take it: kept (its echo stays in the queue) and sent once Zero is
+        // back, for up to five minutes. Refused for a reason of its own, it says why and goes.
+        for _ in 0..<300 {
+            if let link = await linked() {
+                do { _ = try await link.queue(session: session, text: text, images: images); break }
+                catch { if updating == nil { lastError = error.localizedDescription; break } }
+            }
+            try? await Task.sleep(for: .seconds(1))
+        }
         // Once the board has had a moment to show it, the echo goes either way: shown by zerod, or refused.
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(3))
