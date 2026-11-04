@@ -15,6 +15,7 @@ mod cli;
 mod codex;
 mod codex_login;
 mod firefox;
+mod compare;
 mod drops;
 mod e2e;
 mod events;

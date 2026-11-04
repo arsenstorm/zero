@@ -140,7 +140,7 @@ fn key(params: &Value) -> Option<Value> {
 }
 
 /// WebDriver's codes for keys that type nothing.
-fn special(name: &str) -> Option<&'static str> {
+pub fn special(name: &str) -> Option<&'static str> {
     Some(match name {
         "Enter" => "\u{E007}", "Tab" => "\u{E004}", "Backspace" => "\u{E003}", "Escape" => "\u{E00C}", "Delete" => "\u{E017}",
         "ArrowLeft" => "\u{E012}", "ArrowUp" => "\u{E013}", "ArrowRight" => "\u{E014}", "ArrowDown" => "\u{E015}",
@@ -233,6 +233,9 @@ pub struct Firefox {
     address: String,
     /// The extension's folder, given to Firefox as a temporary add-on.
     extension: PathBuf,
+    /// Where the session's id is kept: Firefox keeps a session after its connection closes and allows only one, so
+    /// zerod, started again, connects to that one.
+    kept: Option<PathBuf>,
 }
 
 #[derive(Default)]
@@ -249,8 +252,8 @@ struct Inner {
 }
 
 impl Firefox {
-    pub fn new(address: &str, extension: PathBuf, launcher: Option<Arc<dyn Fn() + Send + Sync>>) -> Arc<Firefox> {
-        Arc::new(Firefox { inner: Arc::default(), launcher, address: address.into(), extension })
+    pub fn new(address: &str, extension: PathBuf, launcher: Option<Arc<dyn Fn() + Send + Sync>>, kept: Option<PathBuf>) -> Arc<Firefox> {
+        Arc::new(Firefox { inner: Arc::default(), launcher, address: address.into(), extension, kept })
     }
 
     /// The user's Firefox Developer Edition, opened behind what they're doing, its remote control on.
@@ -269,7 +272,22 @@ impl Firefox {
     pub async fn ensure(&self) -> Result<(), String> {
         let _one = self.inner.connecting.lock().await;
         if self.connected() { return Ok(()) }
-        let mut attempt = crate::websocket::connect(&self.address, "/session").await;
+        let done = self.connect().await;
+        // Half connected is not connected: the next call starts over.
+        if done.is_err() { *self.inner.connection.lock().unwrap() = None }
+        done
+    }
+
+    async fn connect(&self) -> Result<(), String> {
+        // The session Firefox kept from zerod's last run, taken up again; else a new one.
+        let saved = self.kept.as_ref().and_then(|file| std::fs::read_to_string(file).ok()).filter(|id| !id.trim().is_empty());
+        let mut resumed = false;
+        let mut attempt = Err(String::new());
+        if let Some(id) = &saved {
+            attempt = crate::websocket::connect(&self.address, &format!("/session/{}", id.trim())).await;
+            resumed = attempt.is_ok();
+        }
+        if !resumed { attempt = crate::websocket::connect(&self.address, "/session").await }
         if attempt.is_err() && let Some(launch) = &self.launcher {
             launch();
             for _ in 0..40 {
@@ -305,8 +323,12 @@ impl Firefox {
                 for (_, waiting) in inner.pending.lock().unwrap().drain() { let _ = waiting.send(Err("Firefox closed".into())); }
             }
         });
-        // Prompts stay open for the agent to answer (browser_dialog) rather than being dismissed by the session.
-        self.run("session.new", json!({"capabilities": {"alwaysMatch": {"unhandledPromptBehavior": {"default": "ignore"}}}})).await?;
+        if !resumed {
+            // Prompts stay open for the agent to answer (browser_dialog) rather than being dismissed by the session.
+            let started = self.run("session.new", json!({"capabilities": {"alwaysMatch": {"unhandledPromptBehavior": {"default": "ignore"}}}})).await
+                .map_err(|e| if e.contains("active sessions") { "Firefox is under another remote control session (not Zero's): quit Firefox (⌘Q), and Zero opens it again".to_string() } else { e })?;
+            if let (Some(file), Some(id)) = (&self.kept, started["sessionId"].as_str()) { let _ = std::fs::write(file, id); }
+        }
         self.run("session.subscribe", json!({"events": EVENTS})).await?;
         self.run("webExtension.install", json!({"extensionData": {"type": "path", "path": self.extension.to_string_lossy()}})).await?;
         Ok(())

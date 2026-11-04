@@ -124,7 +124,9 @@ struct State {
 
 /// The Chromes connected, and the calls on their way to them.
 pub struct Browsers { file: PathBuf, media: PathBuf, state: Mutex<State>, launcher: Mutex<Option<Launcher>>, launched: Mutex<Option<std::time::Instant>>,
-                      firefox: Mutex<Option<Arc<crate::firefox::Firefox>>> }
+                      firefox: Mutex<Option<Arc<crate::firefox::Firefox>>>, safari: Mutex<Option<Arc<crate::safari::Safari>>>,
+                      /// The tab browser_compare uses, by session and browser.
+                      compared: Mutex<HashMap<(String, String), i64>> }
 
 /// Starts Chrome: `open -g` in zerod, a stand-in in tests (which never open the user's).
 pub type Launcher = Arc<dyn Fn() + Send + Sync>;
@@ -136,7 +138,7 @@ const OPEN_AGAIN: std::time::Duration = std::time::Duration::from_secs(60);
 impl Browsers {
     pub fn open(home: &Path) -> Arc<Browsers> {
         Arc::new(Browsers { file: home.join("browser.json"), media: home.join("media"), state: Mutex::default(), launcher: Mutex::new(None), launched: Mutex::new(None),
-                            firefox: Mutex::new(None) })
+                            firefox: Mutex::new(None), safari: Mutex::new(None), compared: Mutex::default() })
     }
 
     /// What opens Chrome when a call finds none connected; none, and the call is refused at once.
@@ -145,6 +147,83 @@ impl Browsers {
     /// Firefox under remote control, for browser_select's "firefox" and its extension's commands.
     pub fn set_firefox(&self, firefox: Arc<crate::firefox::Firefox>) { *self.firefox.lock().unwrap() = Some(firefox) }
     pub fn firefox(&self) -> Option<Arc<crate::firefox::Firefox>> { self.firefox.lock().unwrap().clone() }
+    /// Safari's automation windows, for browser_compare.
+    pub fn set_safari(&self, safari: Arc<crate::safari::Safari>) { *self.safari.lock().unwrap() = Some(safari) }
+
+    /// browser_compare: one step in Chrome, Firefox and Safari at once (or those `browsers` names), each ending with
+    /// how the page looks; side by side in one answer, a browser that couldn't saying why.
+    async fn compare(&self, session: Option<&str>, task: &Value, args: &Value) -> Result<Value, String> {
+        let step = crate::safari::Step::from(args)?;
+        let wanted: Vec<String> = args["browsers"].as_array().map(|b| b.iter().filter_map(|n| n.as_str().map(str::to_lowercase)).collect())
+            .unwrap_or_else(|| vec!["chrome".into(), "firefox".into(), "safari".into()]);
+        let one = async |name: String| -> (String, Result<Vec<Value>, String>) {
+            let safari = self.safari.lock().unwrap().clone();
+            let done = match name.as_str() {
+                "safari" => match safari {
+                    Some(safari) => safari.step(session.unwrap_or("zero"), &step).await,
+                    None => Err("Safari isn't set up in Zero".into()),
+                },
+                "chrome" | "firefox" => self.extension_step(session, task, &name, &step).await,
+                other => Err(format!("No browser {other}: chrome, firefox or safari")),
+            };
+            (name, done)
+        };
+        let done = futures_join(wanted.into_iter().map(one).collect()).await;
+        let mut content = vec![];
+        for (name, outcome) in done {
+            let title = match name.as_str() { "chrome" => "Chrome", "firefox" => "Firefox", "safari" => "Safari", other => other };
+            content.push(json!({"type": "text", "text": format!("## {title}")}));
+            match outcome {
+                Ok(said) => content.extend(said),
+                Err(error) => content.push(json!({"type": "text", "text": format!("Couldn't: {error}")})),
+            }
+        }
+        Ok(json!({"content": content}))
+    }
+
+    /// A comparison's step in Chrome or Firefox, through the extension's own tools in the task's tab there.
+    async fn extension_step(&self, session: Option<&str>, task: &Value, name: &str, step: &crate::safari::Step) -> Result<Vec<Value>, String> {
+        let id = if name == "firefox" {
+            self.firefox().ok_or("Firefox isn't set up in Zero")?.ensure().await?;
+            self.named("Firefox", OPENING).await.ok_or("Zero's extension didn't start in Firefox")?
+        } else {
+            self.opening().await;
+            self.named("Chrome", Duration::ZERO).await.ok_or("Zero for Chrome isn't connected")?
+        };
+        let key = (session.unwrap_or("").to_string(), id.clone());
+        let known = self.compared.lock().unwrap().get(&key).copied();
+        let tab = match known {
+            Some(tab) => tab,
+            None => {
+                let tabs = self.call_on(Some(&id), session, task.clone(), "browser_tabs", json!({"createIfEmpty": true})).await?;
+                let listed: Value = serde_json::from_str(tabs["content"][0]["text"].as_str().unwrap_or("[]")).unwrap_or_default();
+                let tab = listed[0]["tabId"].as_i64().ok_or("No tab to compare in")?;
+                self.compared.lock().unwrap().insert(key.clone(), tab);
+                tab
+            }
+        };
+        let run = async |tool: &str, mut args: Value| {
+            args["tabId"] = json!(tab);
+            self.call_on(Some(&id), session, task.clone(), tool, args).await.inspect_err(|_| { self.compared.lock().unwrap().remove(&key); })
+        };
+        let mut said = vec![];
+        if let Some(url) = &step.url { run("browser_navigate", json!({"url": url})).await?; }
+        if let (Some(width), Some(height)) = (step.width, step.height) { run("browser_resize", json!({"width": width, "height": height})).await?; }
+        match step.action.as_str() {
+            "click" => { run("browser_computer", json!({"action": "left_click", "ref": step.selector})).await?; }
+            "type" => {
+                if let Some(selector) = &step.selector { run("browser_computer", json!({"action": "left_click", "ref": selector})).await?; }
+                run("browser_computer", json!({"action": "type", "text": step.text})).await?;
+            }
+            "key" => { run("browser_computer", json!({"action": "key", "text": step.text})).await?; }
+            "scroll" => { run("browser_js", json!({"text": format!("window.scrollBy(0, {})", step.scroll.unwrap_or(0))})).await?; }
+            "js" => said.extend(run("browser_js", json!({"text": step.text})).await?["content"].as_array().cloned().unwrap_or_default()),
+            _ => {}
+        }
+        let shot = run("browser_computer", json!({"action": "screenshot", "full_page": step.full_page})).await?;
+        said.extend(shot["content"].as_array().cloned().unwrap_or_default());
+        Ok(said)
+    }
 
     /// The connected browser named `name` ("Firefox"), waited for a while: its id.
     async fn named(&self, name: &str, wait: Duration) -> Option<String> {
@@ -297,7 +376,13 @@ impl Browsers {
     /// Runs one tool for a task. `task` says which (its session, its tab group and window, its name); the user's blocked
     /// sites go with it. browser_list and browser_select are answered here; files to upload are read here, so the
     /// extension gets their bytes.
-    pub async fn call(&self, session: Option<&str>, mut task: Value, tool: &str, mut args: Value) -> Result<Value, String> {
+    pub async fn call(&self, session: Option<&str>, task: Value, tool: &str, args: Value) -> Result<Value, String> {
+        if tool == "browser_compare" { return self.compare(session, &task, &args).await }
+        self.call_on(None, session, task, tool, args).await
+    }
+
+    /// A tool in the browser `on` (by id), or the one the session uses.
+    async fn call_on(&self, on: Option<&str>, session: Option<&str>, mut task: Value, tool: &str, mut args: Value) -> Result<Value, String> {
         match tool {
             "browser_list" => return Ok(text(&serde_json::to_string_pretty(&self.list(session)).unwrap_or_default())),
             "browser_select" => {
@@ -325,7 +410,8 @@ impl Browsers {
         self.opening().await;
         let (call, waiting) = {
             let mut state = self.state.lock().unwrap();
-            let Some(browser) = Self::pick(&state, session) else {
+            let picked = match on { Some(id) => state.browsers.iter().find(|b| b.id == id), None => Self::pick(&state, session) };
+            let Some(browser) = picked else {
                 if let Some(session) = session.filter(|s| !s.is_empty()) { state.waiting.insert(session.to_string()); }
                 return Err("Zero for Chrome isn't connected, though Zero opened Chrome (its extension may be off, or Chrome hasn't finished starting). End your turn rather than retrying: Zero tells this task when it connects. If it's needed now, ask the user to check Chrome has the Zero extension on (Zero's Settings › Agents › Browser).".into());
             };
@@ -346,6 +432,21 @@ impl Browsers {
             }
         }
     }
+}
+
+/// Every future, run at once; their outputs in order.
+async fn futures_join<F: std::future::Future>(futures: Vec<F>) -> Vec<F::Output> {
+    let mut pinned: Vec<_> = futures.into_iter().map(Box::pin).collect();
+    let mut outputs: Vec<Option<F::Output>> = pinned.iter().map(|_| None).collect();
+    std::future::poll_fn(|cx| {
+        let mut pending = false;
+        for (future, output) in pinned.iter_mut().zip(outputs.iter_mut()) {
+            if output.is_some() { continue }
+            match future.as_mut().poll(cx) { std::task::Poll::Ready(value) => *output = Some(value), std::task::Poll::Pending => pending = true }
+        }
+        if pending { std::task::Poll::Pending } else { std::task::Poll::Ready(()) }
+    }).await;
+    outputs.into_iter().map(|o| o.expect("every future finished")).collect()
 }
 
 fn text(words: &str) -> Value { json!({"content": [{"type": "text", "text": words}]}) }

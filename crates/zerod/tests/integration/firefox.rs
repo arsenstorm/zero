@@ -68,17 +68,21 @@ pub async fn fake_firefox() -> (String, tokio::sync::mpsc::UnboundedReceiver<Val
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap().to_string();
     let (heard, hearing) = tokio::sync::mpsc::unbounded_channel();
-    tokio::spawn(async move {
+    tokio::spawn(async move { loop {
         let (mut stream, _) = listener.accept().await.unwrap();
+        let heard = heard.clone();
+        tokio::spawn(async move {
         let mut request = vec![];
         while !request.ends_with(b"\r\n\r\n") { let mut byte = [0u8; 1]; stream.read_exact(&mut byte).await.unwrap(); request.push(byte[0]) }
-        assert!(String::from_utf8_lossy(&request).starts_with("GET /session "));
+        let path = String::from_utf8_lossy(&request).split(' ').nth(1).unwrap_or("").to_string();
+        let _ = heard.send(json!({"path": path}));
         stream.write_all(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: x\r\n\r\n").await.unwrap();
         let (mut read, mut write) = stream.into_split();
         while let Some((_, opcode, data)) = read_frame(&mut read).await {
             if opcode != 1 { continue }
             let message: Value = serde_json::from_slice(&data).unwrap();
             let result = match message["method"].as_str().unwrap() {
+                "session.new" => json!({"sessionId": "sess-1", "capabilities": {}}),
                 "browsingContext.getTree" => json!({"contexts": [{"context": "ctx-0"}, {"context": "ctx-1"}]}),
                 "script.evaluate" if message["params"]["expression"].as_str().unwrap().contains("data-zero-tab") =>
                     json!({"type": "success", "result": {"type": "boolean", "value": message["params"]["target"]["context"] == "ctx-1"}}),
@@ -93,20 +97,21 @@ pub async fn fake_firefox() -> (String, tokio::sync::mpsc::UnboundedReceiver<Val
                 write.write_all(&server_frame(1, event.to_string().as_bytes())).await.unwrap();
             }
         }
-    });
+        });
+    } });
     (address, hearing)
 }
 
 #[tokio::test]
 async fn the_extensions_tab_is_found_by_its_mark_and_commands_go_to_it() {
     let (address, mut heard) = fake_firefox().await;
-    let firefox = Firefox::new(&address, "/Applications/Zero.app/Contents/Resources/chrome".into(), None);
+    let firefox = Firefox::new(&address, "/Applications/Zero.app/Contents/Resources/chrome".into(), None, None);
     let (events, mut told) = tokio::sync::mpsc::unbounded_channel();
     firefox.set_extension(Some(events));
     let density = firefox.command(7, Some("n-123"), "Runtime.evaluate", &json!({"expression": "devicePixelRatio", "returnByValue": true})).await.unwrap();
     assert_eq!(density, json!({"result": {"type": "number", "value": 2}}));
     let mut methods = vec![];
-    while let Ok(message) = heard.try_recv() { methods.push(message["method"].as_str().unwrap().to_string()); if message["method"] == "webExtension.install" {
+    while let Ok(message) = heard.try_recv() { if message.get("path").is_some() { continue } methods.push(message["method"].as_str().unwrap().to_string()); if message["method"] == "webExtension.install" {
         assert_eq!(message["params"]["extensionData"], json!({"type": "path", "path": "/Applications/Zero.app/Contents/Resources/chrome"}));
     } }
     assert_eq!(&methods[..4], ["session.new", "session.subscribe", "webExtension.install", "browsingContext.getTree"], "the session, then the extension, then the tab");
@@ -119,7 +124,7 @@ async fn the_extensions_tab_is_found_by_its_mark_and_commands_go_to_it() {
 
 #[tokio::test]
 async fn a_firefox_not_taking_remote_control_says_how_to_fix_it() {
-    let firefox = Firefox::new("127.0.0.1:1", "/tmp".into(), None);
+    let firefox = Firefox::new("127.0.0.1:1", "/tmp".into(), None, None);
     let refused = firefox.command(1, Some("n"), "Page.enable", &json!({})).await.unwrap_err();
     assert!(refused.contains("quit it"), "{refused}");
 }
@@ -128,7 +133,7 @@ async fn a_firefox_not_taking_remote_control_says_how_to_fix_it() {
 async fn choosing_firefox_opens_it_and_waits_for_its_extension() {
     let (address, _heard) = fake_firefox().await;
     let browsers = zerod::browser::Browsers::open(&crate::common::temp_dir("firefox-select"));
-    browsers.set_firefox(Firefox::new(&address, "/tmp/firefox".into(), None));
+    browsers.set_firefox(Firefox::new(&address, "/tmp/firefox".into(), None, None));
     let (chrome, _chrome_hears) = tokio::sync::mpsc::unbounded_channel();
     browsers.attach(&json!({"id": "chrome-1", "name": "Chrome"}), chrome);
     // Firefox's extension connects once the remote control has installed it.
@@ -145,4 +150,19 @@ async fn choosing_firefox_opens_it_and_waits_for_its_extension() {
         if message["event"] == "browserEvent" { return message }
     } }).await.unwrap();
     assert_eq!(event["tab"], 3);
+}
+
+#[tokio::test]
+async fn after_a_restart_zerod_takes_up_the_session_firefox_still_has() {
+    let (address, mut heard) = fake_firefox().await;
+    let kept = crate::common::temp_dir("firefox-session").join("firefox-session");
+    Firefox::new(&address, "/tmp/firefox".into(), None, Some(kept.clone())).ensure().await.unwrap();
+    assert_eq!(std::fs::read_to_string(&kept).unwrap(), "sess-1");
+    while heard.try_recv().is_ok() {}
+    // zerod again: Firefox keeps its one session, so zerod connects to it rather than asking for another.
+    Firefox::new(&address, "/tmp/firefox".into(), None, Some(kept.clone())).ensure().await.unwrap();
+    let mut asked = vec![];
+    while let Ok(message) = heard.try_recv() { asked.push(message["path"].as_str().map(String::from).or(message["method"].as_str().map(String::from)).unwrap()) }
+    assert_eq!(asked[0], "/session/sess-1");
+    assert!(!asked.contains(&"session.new".to_string()), "{asked:?}");
 }

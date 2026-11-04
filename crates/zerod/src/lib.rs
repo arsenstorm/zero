@@ -13,6 +13,7 @@ pub mod cli;
 pub mod codex;
 pub mod codex_login;
 pub mod firefox;
+pub mod safari;
 pub mod websocket;
 pub mod core;
 pub mod daemon;

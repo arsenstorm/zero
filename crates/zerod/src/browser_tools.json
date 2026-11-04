@@ -124,7 +124,7 @@
     },
     "ref": {
      "type": "string",
-     "description": "An element's ref from browser_read or browser_find (ref_12), in place of a coordinate. Needed for scroll_to."
+     "description": "An element's ref from browser_read or browser_find (ref_12), or a CSS selector (#save, button.primary), in place of a coordinate. Needed for scroll_to."
     },
     "text": {
      "type": "string",
@@ -541,6 +541,67 @@
    "required": [
     "actions"
    ]
+  }
+ },
+ {
+  "name": "browser_compare",
+  "description": "Runs one step in Chrome, Firefox and Safari at once and shows how the page looks in each, side by side: for checking a front-end change across browsers. Each browser uses a tab of this task's own (Chrome and Firefox are the user's, signed in; Safari is an automation window, signed out of everything). A step can open a page, size it, then act on it; every step ends with each browser's screenshot. Act by CSS selector, as refs and coordinates differ between browsers.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "url": {
+     "type": "string",
+     "description": "A page to open first."
+    },
+    "width": {
+     "type": "number",
+     "description": "The page's width to lay it out at, in CSS pixels (with height): a phone's 390, say."
+    },
+    "height": {
+     "type": "number",
+     "description": "The page's height, in CSS pixels (with width)."
+    },
+    "action": {
+     "type": "string",
+     "enum": [
+      "screenshot",
+      "click",
+      "type",
+      "key",
+      "scroll",
+      "js"
+     ],
+     "description": "What to do once the page is open; screenshot (the default) only looks."
+    },
+    "selector": {
+     "type": "string",
+     "description": "The element to click, or to type into, as a CSS selector."
+    },
+    "text": {
+     "type": "string",
+     "description": "What to type, the key to press (Enter, Tab, Escape…), or the script to run (its value is shown for each browser)."
+    },
+    "scroll": {
+     "type": "number",
+     "description": "How far to scroll down, in CSS pixels (negative scrolls up)."
+    },
+    "full_page": {
+     "type": "boolean",
+     "description": "The whole page rather than the view (Chrome and Firefox; Safari shows the view)."
+    },
+    "browsers": {
+     "type": "array",
+     "items": {
+      "type": "string",
+      "enum": [
+       "chrome",
+       "firefox",
+       "safari"
+      ]
+     },
+     "description": "Only these; all three when left out."
+    }
+   }
   }
  },
  {

@@ -117,7 +117,9 @@ async fn main() {
     // Firefox Developer Edition under remote control, with Zero's extension from the app's resources.
     if let Ok(exe) = std::env::current_exe() && exe.starts_with("/Applications") { let _ = zerod::browser::install_firefox(&exe); }
     let firefox_extension = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.parent()?.join("Resources/firefox"))).unwrap_or_default();
-    browsers.set_firefox(zerod::firefox::Firefox::new(&format!("127.0.0.1:{}", zerod::firefox::PORT), firefox_extension, Some(zerod::firefox::Firefox::launcher())));
+    browsers.set_safari(zerod::safari::Safari::new(Some(home.join("safari-session"))));
+    browsers.set_firefox(zerod::firefox::Firefox::new(&format!("127.0.0.1:{}", zerod::firefox::PORT), firefox_extension, Some(zerod::firefox::Firefox::launcher()),
+                                                   Some(home.join("firefox-session"))));
     browsers.follow(daemon.clone(), inbox.clone());
     let places = Arc::new(zerod::board::Places::default());
     tokio::spawn(places.clone().follow(home.clone()));
