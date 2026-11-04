@@ -11,7 +11,7 @@ struct McpServersPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
-            Text("Servers every task gets, in Claude Code, Codex and OpenCode alike, on top of their own. Put one in workspaces to have it only there.")
+            Text("Servers every task gets, whichever its agent; or only a workspace's.")
                 .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let workspace {
                 VStack(spacing: 0) {
@@ -88,7 +88,7 @@ private struct McpServerForm: View {
             .pickerStyle(.segmented).labelsHidden()
             if remote {
                 TextField("https://…/mcp", text: Binding(get: { server.url ?? "" }, set: { server.url = $0 })).textFieldStyle(.roundedBorder)
-                Text("One that signs in with OAuth needs no headers: the first task to use it shows a link to its sign-in page, and each agent keeps its own sign-in.")
+                Text("One that signs in with OAuth needs no headers: its first task shows a sign-in link.")
                     .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             } else {
                 TextField("Command (npx, uvx, a path)", text: Binding(get: { server.command ?? "" }, set: { server.command = $0 })).textFieldStyle(.roundedBorder)

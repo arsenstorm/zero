@@ -11,7 +11,7 @@ struct WorkspacesPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
-            Text("Views of your tasks, each with folders of its own: switch them in the sidebar's heading. Every workspace's tasks keep running.")
+            Text("Views of your tasks, each with its own folders; switch in the sidebar's heading.")
                 .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let workspace {
                 VStack(spacing: 0) {
@@ -146,7 +146,7 @@ private struct WorkspaceForm: View {
             if !workspace.id.isEmpty, !model.mcpServers.isEmpty {
                 field("MCP servers") {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Given to this workspace's tasks as their agent starts. Set them up in Settings › MCP servers.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                        Text("Given to this workspace's tasks; set them up in MCP servers.").font(.system(size: 11.5)).foregroundStyle(.secondary)
                         ForEach(model.mcpServers) { server in
                             if server.workspaces.isEmpty {
                                 Toggle(isOn: .constant(true)) { Text(server.name + " (every workspace)").font(.system(size: 12.5)) }

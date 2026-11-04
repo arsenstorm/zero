@@ -382,7 +382,7 @@ private struct GeneralPage: View {
                     SettingRow(title: "Finished", detail: "A task is done, replied, blocked or over to you.") {
                         Switch(isOn: $settings.notifyFinished)
                     }
-                    SettingRow(title: "Sounds", detail: "With each notification. While you're in Zero, a sound instead of the notification.") {
+                    SettingRow(title: "Sounds", detail: "With each notification; in Zero, a sound instead.") {
                         Switch(isOn: $settings.notificationSounds)
                     }
                 }
@@ -497,7 +497,7 @@ private struct ControlBarPage: View {
                     }
                 }
                 .listStyle(.plain).scrollContentBackground(.hidden).frame(height: min(320, CGFloat(names.count) * 44 + 8))
-                Text("Drag to reorder the bar. Removing an agent stops it; it comes back when it next asks you something.")
+                Text("Drag to reorder. A removed agent comes back when it next asks you something.")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             }
         }
@@ -563,7 +563,7 @@ private struct AgentsPage: View {
             SettingsSection(title: "Runtimes") { RuntimesRows(store: store, inbox: inbox) }
             SettingsSection(title: "Tasks") {
                 Rows {
-                    SettingRow(title: "Archive completed tasks", detail: "A task its agent says is done-done (shipped, checked, nothing left) is put away after this.") {
+                    SettingRow(title: "Archive completed tasks", detail: "Tasks that are done-done are put away after this.") {
                         ArchiveCompletedPicker()
                     }
                     SettingRow(title: "Where tasks run", detail: "A command printing [{\"ticket\": \"ENG-1\", \"place\": \"my-bench\"}], run in your login shell every five minutes. Each task's Where is its place, by ticket, in place of its folder.") {
@@ -676,8 +676,8 @@ private struct BrowserRows: View {
             SettingsSection(title: "Firefox") {
                 Rows {
                     SettingRow(title: "Firefox Developer Edition", detail: firefoxError ?? (firefox
-                        ? "Under Zero's remote control: agents use it with real clicks and keys, and your sign-ins."
-                        : "Opened by Zero when an agent asks for Firefox, under remote control (Firefox shows a striped address bar). If it's already open, quit it first.")) {
+                        ? "Under Zero's remote control, with your sign-ins"
+                        : "Opened by Zero under remote control when an agent asks for it")) {
                         if firefox { Text("Connected").font(.system(size: 12)).foregroundStyle(.secondary) }
                         else if opening { ProgressView().controlSize(.small) }
                         else { RowButton(title: "Open") { openFirefox() } }
@@ -686,8 +686,8 @@ private struct BrowserRows: View {
             }
             SettingsSection(title: "Safari") {
                 Rows {
-                    SettingRow(title: "Safari's automation windows", detail: safari.map { $0.isEmpty ? "Working: comparisons open a Safari window of their own, with real clicks and keys. It starts signed out and keeps nothing." : $0 }
-                        ?? "Used when an agent compares a page across browsers: a Safari window of its own, with real clicks and keys, signed out and keeping nothing. Needs Safari's Developer settings › Allow remote automation.") {
+                    SettingRow(title: "Safari's automation windows", detail: safari.map { $0.isEmpty ? "Working · comparisons get a signed-out Safari window" : $0 }
+                        ?? "For comparing pages: a signed-out Safari window with real clicks") {
                         if trying { ProgressView().controlSize(.small) }
                         else { RowButton(title: "Try it") { trySafari() } }
                     }
@@ -707,7 +707,7 @@ private struct BrowserRows: View {
     private var chrome: some View {
         VStack(alignment: .leading, spacing: 8) {
             Rows {
-                SettingRow(title: "Zero for Chrome", detail: chromes.map { $0.isEmpty ? "Lets every agent use Chrome, each task in tabs of its own, as Claude in Chrome does. Not connected." : "Connected: \($0.joined(separator: ", ")). Every agent can use Chrome, each task in tabs of its own." } ?? "Lets every agent use Chrome, each task in tabs of its own.") {
+                SettingRow(title: "Zero for Chrome", detail: chromes.map { $0.isEmpty ? "Not connected · set it up so agents can use Chrome" : "Connected · each task works in tabs of its own" } ?? "Lets agents use Chrome, each task in tabs of its own") {
                     RowButton(title: chromes?.isEmpty == false ? "Set up again" : "Set up", action: setUp)
                 }
             }
@@ -731,7 +731,7 @@ private struct BrowserRows: View {
     /// The sites no task may use, in every browser: one a row, removed from its row, added from the last.
     private var sites: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("No task may open these, or act on a tab showing one. A site covers its subdomains; any other site is allowed (in auto mode a reviewer looks at each new one first).")
+            Text("No task may open these sites or their subdomains.")
                 .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             VStack(spacing: 0) {
                 ForEach(blocked, id: \.self) { site in
@@ -807,7 +807,7 @@ private struct PluginRow: View {
         VStack(alignment: .leading, spacing: 8) {
             Rows {
                 SettingRow(picture: Image(nsImage: appTile), title: "Zero plugin",
-                           detail: "Configures your agents to work with Zero: asks and progress come to your inbox, and scratchpads are theirs too (Zero's MCP server, in Codex's and OpenCode's config).") {
+                           detail: "Lets your agents reach your inbox and use your scratchpads.") {
                     if let plugin {
                         Switch(isOn: Binding(get: { plugin }, set: { on in
                             self.plugin = nil
@@ -878,7 +878,7 @@ private struct ProjectsPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("New agents can start in these folders. Each runs in its own terminal and keeps running when Zero closes.")
+            Text("Where new tasks can start.")
                 .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if !folders.isEmpty {
                 Rows {
@@ -924,7 +924,7 @@ private struct DropFoldersPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Asks arrive as files in these folders and answers go back the same way, so agents on another machine that syncs with this Mac can reach you.")
+            Text("Agents on another machine reach you through files in these synced folders.")
                 .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Rows {
                 ForEach(settings.dropPatterns, id: \.self) { pattern in
@@ -978,14 +978,14 @@ private struct LinksPage: View {
         Sections {
             SettingsSection(title: "Where links open") {
                 Rows {
-                    SettingRow(title: "GitHub pull requests", detail: "#123 opens in the agent's repository. name#123 opens in this owner's; left empty, the owner of the repositories in the agent's folder.") {
+                    SettingRow(title: "GitHub pull requests", detail: "Where repo#123 opens: this owner's, or the agent's folder's if empty.") {
                         TextField("", text: $githubOwner, prompt: Text("Owner"))
                             .textFieldStyle(.roundedBorder).font(.system(size: 12).monospaced()).frame(width: 140)
                     }
                     SettingRow(title: "Linear issues in the app", detail: LinearLinks.installed ? "Rather than the browser, here and in messages." : "Linear's app isn't installed; issues open in the browser.") {
                         if LinearLinks.installed { Switch(isOn: $linearInApp) } else { Text("Not installed").font(.system(size: 12)).foregroundStyle(.secondary) }
                     }
-                    SettingRow(title: "Slack", detail: "#channel and Slack's message links open in Slack once a workspace is connected, under Integrations.") {
+                    SettingRow(title: "Slack", detail: "Channels and message links open in Slack once it's connected.") {
                         Text(Slack.shared.team.map { "Connected to \($0.name)" } ?? "Not connected").font(.system(size: 12)).foregroundStyle(.secondary)
                     }
                 }

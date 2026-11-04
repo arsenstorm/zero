@@ -2,9 +2,9 @@ import AppKit
 import SwiftUI
 import ZeroCore
 
-// Settings › Sign-ins: the accounts and keys each CLI runs as (zerod's signins.rs). Zero keeps them and gives each
-// task's CLI its own as it starts; the CLIs still make every call to their providers. A task runs as its CLI's
-// default unless it's started as another.
+// Settings › Accounts: the accounts and keys each CLI runs as (zerod's signins.rs). Zero keeps them and gives each
+// task's CLI one as it starts (the one with the least of its week left, so one is used up before the next); the CLIs
+// still make every call to their providers. Added in place, in the card, rather than in a sheet.
 
 struct SignInsPage: View {
     let workspace: Workspace?
@@ -14,8 +14,8 @@ struct SignInsPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
-            Text("The accounts your agents run as. A new task takes the one with the least of its week left, so one is used up before the next, and a task that hits a limit carries on as another. Zero keeps them in your Keychain; the agents talk to their providers themselves.")
-                .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Tasks use up one account's week before the next, and carry on as another at a limit.")
+                .font(.system(size: 13)).foregroundStyle(.secondary)
             if let workspace {
                 ForEach([Provider.claude, .codex, .opencode], id: \.self) { cli in
                     VStack(alignment: .leading, spacing: 10) {
@@ -27,8 +27,6 @@ struct SignInsPage: View {
                     }
                 }
                 .task { await workspace.loadSignIns() }
-                .sheet(item: $adding) { cli in AddSignIn(cli: cli, workspace: workspace) }
-                .sheet(item: $switching) { signin in AddSignIn(cli: .claude, replacing: signin, workspace: workspace) }
             }
         }
     }
@@ -38,16 +36,20 @@ struct SignInsPage: View {
         return VStack(spacing: 0) {
             ForEach(Array(mine.enumerated()), id: \.element.id) { index, signin in
                 if index > 0 { Divider().padding(.leading, 16) }
-                SignInRow(signin: signin, isDefault: workspace.signinDefaults[cli.rawValue] == signin.id, workspace: workspace) { switching = signin }
+                SignInRow(signin: signin, workspace: workspace) { switching = signin; adding = nil }
             }
             if !mine.isEmpty { Divider() }
-            Button { adding = cli } label: {
+            if adding == cli || switching?.cli == cli {
+                AddAccount(cli: cli, replacing: switching, workspace: workspace) { adding = nil; switching = nil }
+            } else {
+            Button { adding = cli; switching = nil } label: {
                 NucleoLabel(mine.isEmpty ? "Sign in" : "Add another", icon: "plus", size: 13).font(.system(size: 13)).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).frame(height: 40).contentShape(Rectangle())
             }
             .buttonStyle(Hovering(radius: 0))
             .clipShape(UnevenRoundedRectangle(topLeadingRadius: mine.isEmpty ? 14 : 0, bottomLeadingRadius: 14,
                                               bottomTrailingRadius: 14, topTrailingRadius: mine.isEmpty ? 14 : 0))
+            }
         }
         .background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.stroke))
@@ -58,7 +60,6 @@ extension Provider: @retroactive Identifiable { public var id: String { rawValue
 
 private struct SignInRow: View {
     let signin: ZerodLink.SignIn
-    let isDefault: Bool
     let workspace: Workspace
     /// A Claude account with a folder of its own: switched to a token, so it shares the user's MCP sign-ins.
     let switchToToken: () -> Void
@@ -92,7 +93,7 @@ private struct SignInRow: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 if let naming {
-                    TextField("A name for it", text: Binding(get: { naming }, set: { self.naming = $0 }))
+                    TextField("A name for it", text: Binding(get: { naming }, set: { self.naming = $0 }), prompt: Text("Whose account is this? (its email, or a name)"))
                         .textFieldStyle(.plain).font(.system(size: 13, weight: .medium)).focused($focused)
                         .onSubmit(rename).onExitCommand { self.naming = nil }
                         .onChange(of: focused) { if !focused { rename() } }
@@ -110,14 +111,6 @@ private struct SignInRow: View {
             if signin.kind == .claudeHome {
                 Button("Switch to a token", action: switchToToken).font(.system(size: 12, weight: .medium))
                     .tip("Signs it in again as a year-long token: its tasks then use your own Claude Code folder, MCP sign-ins and all")
-            }
-            if isDefault {
-                Text("Default").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                    .padding(.horizontal, 7).padding(.vertical, 2).background(Theme.row, in: Capsule())
-            } else if signin.pending != true {
-                Button("Make default") { Task { await workspace.makeDefault(signin) } }
-                    .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
-                    .opacity(hovered ? 1 : 0)
             }
             if signin.pending != true && naming == nil {
                 Button { naming = signin.label; focused = true } label: {
@@ -141,6 +134,8 @@ private struct SignInRow: View {
         .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 10)
         .contentShape(Rectangle())
         .onHover { hovered = $0; if !$0 { removing = false } }
+        // Claude doesn't say whose a token is: a new one asks, in its own row.
+        .onAppear { if signin.kind == .token && signin.label == "Claude account" && naming == nil { naming = ""; focused = true } }
     }
 
     private func rename() {
@@ -150,13 +145,14 @@ private struct SignInRow: View {
     }
 }
 
-/// Adding one: each CLI's own sign-in in the browser, or an API key.
-private struct AddSignIn: View {
+/// Adding one, in place in its card: how (its CLI's own sign-in in the browser, or an API key), then only what that
+/// step needs. Closes itself once the account is added (or its sign-in is under way in the browser).
+private struct AddAccount: View {
     let cli: Provider
     /// Signing this one in again (as a token), its id kept.
     var replacing: ZerodLink.SignIn? = nil
     let workspace: Workspace
-    @Environment(\.dismiss) private var dismiss
+    let done: () -> Void
     @State private var withKey = false
     @State private var label = ""
     @State private var key = ""
@@ -168,7 +164,7 @@ private struct AddSignIn: View {
 
     /// OpenCode's providers that take a key, and the variable OpenCode reads each from.
     enum OpenCodeProvider: String, CaseIterable, Identifiable {
-        case go = "OpenCode Go and Zen", anthropic = "Anthropic", openai = "OpenAI", openrouter = "OpenRouter"
+        case go = "OpenCode Go", anthropic = "Anthropic", openai = "OpenAI", openrouter = "OpenRouter"
         var id: String { rawValue }
         var variable: String {
             switch self {
@@ -181,99 +177,108 @@ private struct AddSignIn: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(replacing.map { "Switch \($0.label) to a token" } ?? "Add a \(cli.title) sign-in").font(.system(size: 15, weight: .semibold))
-            switch cli {
-            case .claude: claudeForm
-            case .codex: codexForm
-            case .opencode: openCodeForm
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                if replacing != nil {
+                    Text("Sign \(replacing!.label) in again as a token").font(.system(size: 13, weight: .medium))
+                } else if cli == .opencode {
+                    ForEach(OpenCodeProvider.allCases) { choice($0.rawValue, on: provider == $0) { provider = $0 } }
+                } else {
+                    choice(cli == .claude ? "Sign in with Claude" : "Sign in with ChatGPT", on: !withKey) { withKey = false }
+                    choice("API key", on: withKey) { withKey = true }
+                }
+                Spacer()
+                Button { claude.cancel(); done() } label: { NucleoIcon("xmark", size: 12).foregroundStyle(.secondary).frame(width: 26, height: 26) }
+                    .buttonStyle(Hovering(radius: 7)).tip("Cancel")
             }
-            if let problem { Text(problem).font(.system(size: 12)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
+            if cli == .opencode || withKey { keyForm } else if cli == .claude { claudeSteps } else { codexStep }
+            if let problem { Text(problem).font(.system(size: 12)).foregroundStyle(.red).lineLimit(2) }
         }
-        .padding(20).frame(width: 460)
+        .padding(.horizontal, 16).padding(.vertical, 12)
         // Closed mid-way: Claude Code's sign-in stops with it.
         .onDisappear { claude.cancel() }
     }
 
-    private var ways: some View {
-        Picker("", selection: $withKey) {
-            Text(cli == .claude ? "Sign in with Claude" : "Sign in with ChatGPT").tag(false)
-            Text("An API key").tag(true)
-        }
-        .pickerStyle(.segmented).labelsHidden()
+    /// How to add it: one of a few, the chosen one filled.
+    private func choice(_ title: String, on: Bool, pick: @escaping () -> Void) -> some View {
+        Button(action: pick) { Text(title).font(.system(size: 12, weight: .medium)).padding(.horizontal, 10).frame(height: 26) }
+            .buttonStyle(Hovering(selected: on, radius: 7)).foregroundStyle(on ? .primary : .secondary)
     }
 
-    @ViewBuilder private var claudeForm: some View {
-        if replacing == nil { ways }
-        if withKey {
-            TextField("A name for it (Team key)", text: $label).textFieldStyle(.roundedBorder)
-            SecureField("sk-ant-…", text: $key).textFieldStyle(.roundedBorder)
-            buttons("Save", disabled: label.trimmed.isEmpty || key.trimmed.isEmpty) { await keep(.init(cli: .claude, kind: .apiKey, label: label.trimmed)) }
-        } else {
-            switch claude.status {
-            case .signingIn, .checking:
-                Text("Finish signing in on Claude's page. If it shows a code, paste it here.").font(.system(size: 12)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                TextField("The code", text: $code).textFieldStyle(.roundedBorder).onSubmit { claude.submit(code: code) }
-                buttons("Send the code", disabled: code.trimmed.isEmpty || claude.status == .checking) { claude.submit(code: code) }
-            case .done:
-                Text("Signed in.").font(.system(size: 12)).foregroundStyle(.secondary)
-                HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction) }
-            case .failed(let why):
-                Text(why).font(.system(size: 12)).foregroundStyle(.red)
-                buttons("Try again", disabled: false) { claude.start(replacing: replacing, label: label.trimmed, in: workspace) }
-            case nil:
-                Text("Claude Code opens Claude's sign-in page in your browser and makes a year-long token for the account you sign in as. Its tasks use that token, and your own Claude Code folder for everything else, so your MCP sign-ins work in them.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                if replacing == nil {
-                    // Claude Code doesn't say whose a token is, so the user does.
-                    TextField("Whose it is (its email, or a name)", text: $label).textFieldStyle(.roundedBorder)
-                }
-                buttons("Sign in", disabled: false) { claude.start(replacing: replacing, label: label.trimmed, in: workspace) }
+    private func field(_ prompt: String, text: Binding<String>, secret: Bool = false) -> some View {
+        Group {
+            if secret { SecureField("", text: text, prompt: Text(prompt)) } else { TextField("", text: text, prompt: Text(prompt)) }
+        }
+        .textFieldStyle(.plain).font(.system(size: 13)).padding(.horizontal, 10).frame(height: 30)
+        .background(Theme.row, in: RoundedRectangle(cornerRadius: 7))
+    }
+
+    @ViewBuilder private var claudeSteps: some View {
+        switch claude.status {
+        case .signingIn, .checking:
+            HStack(spacing: 8) {
+                Spinner().frame(width: 12, height: 12)
+                Text("Finish signing in on Claude's page in your browser.").font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
+                field("Its code, if Claude shows one", text: $code).onSubmit { claude.submit(code: code) }
+                RowButton(title: "Send", enabled: !code.trimmed.isEmpty && claude.status != .checking) { claude.submit(code: code) }
+            }
+        case .done:
+            Color.clear.frame(height: 0).onAppear(perform: done)
+        case .failed(let why):
+            HStack {
+                Text(why).font(.system(size: 12)).foregroundStyle(.red).lineLimit(1)
+                Spacer()
+                RowButton(title: "Try again") { claude.start(replacing: replacing, in: workspace) }
+            }
+        case nil:
+            HStack {
+                Text("Opens Claude's sign-in page; its tasks get a year-long token.").font(.system(size: 12)).foregroundStyle(.secondary)
+                Spacer()
+                RowButton(title: "Sign in") { claude.start(replacing: replacing, in: workspace) }
             }
         }
     }
 
-    @ViewBuilder private var codexForm: some View {
-        ways
-        if withKey {
-            TextField("A name for it (Team key)", text: $label).textFieldStyle(.roundedBorder)
-            SecureField("sk-…", text: $key).textFieldStyle(.roundedBorder)
-            buttons("Save", disabled: label.trimmed.isEmpty || key.trimmed.isEmpty) { await codex(apiKey: key.trimmed) }
-        } else {
-            Text("Codex opens ChatGPT's sign-in page; once you're in, the account shows here with its email and plan.")
-                .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            buttons("Sign in", disabled: false) { await codex(apiKey: nil) }
-        }
-    }
-
-    @ViewBuilder private var openCodeForm: some View {
-        Picker("Provider", selection: $provider) { ForEach(OpenCodeProvider.allCases) { Text($0.rawValue).tag($0) } }
-        TextField("A name for it (\(provider.rawValue))", text: $label).textFieldStyle(.roundedBorder)
-        SecureField("Its API key", text: $key).textFieldStyle(.roundedBorder)
-        buttons("Save", disabled: key.trimmed.isEmpty) {
-            await keep(.init(cli: .opencode, kind: .apiKey, label: label.trimmed.isEmpty ? provider.rawValue : label.trimmed, variable: provider.variable))
-        }
-    }
-
-    private func buttons(_ title: String, disabled: Bool, action: @escaping () async -> Void) -> some View {
+    private var codexStep: some View {
         HStack {
+            Text("Opens ChatGPT's sign-in page; the account shows here once you're in.").font(.system(size: 12)).foregroundStyle(.secondary)
             Spacer()
-            Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-            Button(title) { Task { working = true; await action(); working = false } }
-                .keyboardShortcut(.defaultAction).disabled(disabled || working)
+            RowButton(title: "Sign in", enabled: !working) { Task { await codex(apiKey: nil) } }
+        }
+    }
+
+    private var keyForm: some View {
+        HStack(spacing: 8) {
+            field(cli == .opencode ? provider.rawValue : "A name for it", text: $label).frame(width: 170)
+            field("Its API key", text: $key, secret: true).onSubmit(save)
+            RowButton(title: "Save", enabled: !key.trimmed.isEmpty && !working, action: save)
+        }
+    }
+
+    private func save() {
+        guard !key.trimmed.isEmpty else { return }
+        working = true
+        Task {
+            switch cli {
+            case .codex: await codex(apiKey: key.trimmed)
+            case .claude: await keep(.init(cli: .claude, kind: .apiKey, label: label.trimmed.isEmpty ? "Anthropic API key" : label.trimmed))
+            case .opencode: await keep(.init(cli: .opencode, kind: .apiKey, label: label.trimmed.isEmpty ? provider.rawValue : label.trimmed, variable: provider.variable))
+            }
+            working = false
         }
     }
 
     private func keep(_ signin: ZerodLink.SignIn) async {
-        if let error = await workspace.addSignIn(signin, secret: key.trimmed) { problem = error } else { dismiss() }
+        if let error = await workspace.addSignIn(signin, secret: key.trimmed) { problem = error } else { done() }
     }
 
     private func codex(apiKey: String?) async {
-        let (page, error) = await workspace.signInCodex(label: apiKey == nil ? nil : label.trimmed, apiKey: apiKey)
+        let (page, error) = await workspace.signInCodex(label: apiKey == nil ? nil : (label.trimmed.isEmpty ? "OpenAI API key" : label.trimmed), apiKey: apiKey)
         if let error { problem = error; return }
         if let page { NSWorkspace.shared.open(page) }
-        dismiss()
+        done()
     }
 }
 

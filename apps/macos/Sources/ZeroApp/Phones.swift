@@ -348,7 +348,7 @@ struct DevicesPage: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Relay").font(.system(size: 13, weight: .semibold))
                 Rows {
-                    SettingRow(title: "Address", detail: "Your Zero relay on Cloudflare (apps/relay in Zero's source): it passes your phone's encrypted messages and can't read them.") {
+                    SettingRow(title: "Address", detail: "Passes your phone's encrypted messages; it can't read them.") {
                         TextField("", text: $relay, prompt: Text("wss://zero-relay.you.workers.dev"))
                             .textFieldStyle(.roundedBorder).frame(width: 260)
                             .onSubmit { phones.relay = relay }
@@ -364,7 +364,7 @@ struct DevicesPage: View {
                             RowButton(title: "Remove") { phones.remove(device) }
                         }
                     }
-                    SettingRow(title: "Add a phone", detail: "Scan the code with Zero on your phone. It's good once, for five minutes.") {
+                    SettingRow(title: "Add a phone", detail: "Scan the code with Zero on your phone; it lasts five minutes.") {
                         RowButton(title: phones.invite == nil ? "Show code" : "New code") { phones.addPhone() }
                             .disabled(phones.relay.isEmpty)
                     }
