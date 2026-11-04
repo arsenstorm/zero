@@ -7,8 +7,8 @@ struct ConversationView: View {
     let model: PhoneModel
     let conversation: Conversation
     /// A question, ask or approval just answered: the page keeps the height it had, so the card fades out where it was
-    /// and nothing above it moves; what comes next fills that room. Given back when you scroll.
-    @State private var room: CGFloat = 0
+    /// and nothing above it moves; what comes next fills that room. Given back when you scroll (the page's).
+    @Binding var room: CGFloat
     /// The conversation's own height, without that room: read when a card leaves, never by the body, so its every
     /// change redraws nothing.
     @State private var measured = Measured()
@@ -41,7 +41,6 @@ struct ConversationView: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { [measured] in measured.height = $0 }
         .frame(minHeight: room, alignment: .top)
         .onChange(of: waiting) { old, new in if !Set(old).subtracting(new).isEmpty { room = max(room, measured.height) } }
-        .simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { _ in if room > 0 { room = 0 } })
     }
 
     private var openAsks: [Ask] {

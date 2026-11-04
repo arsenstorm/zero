@@ -416,12 +416,15 @@ struct TaskView: View {
     @State private var atBottom = true
     @Environment(\.scenePhase) private var phase
     @State private var details = false
+    /// The room an answered card left (ConversationView's), given back once you scroll.
+    @State private var room: CGFloat = 0
 
     var body: some View {
         let conversation = model.conversation(session)
         ScrollView {
-            if let conversation { ConversationView(model: model, conversation: conversation).padding() }
+            if let conversation { ConversationView(model: model, conversation: conversation, room: $room).padding() }
         }
+        .onScrollPhaseChange { _, phase in if phase == .interacting, room > 0 { room = 0 } }
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom)
         // The keyboard goes as the conversation is dragged down, as in Messages, or with a tap on the conversation:
