@@ -1465,8 +1465,8 @@ private struct StateIcon: View {
         case .blocked: ("circle-minus", .red, "Blocked")
         case .done: ("circle-check", .green, "Done")
         case .answered: ("message-check", .indigo, "Replied")
-        // Done-done: nothing left, greyed with the rest of what needs nothing.
-        case .completed: ("badge-check", .secondary, "Completed")
+        // Done-done: purple, as GitHub shows a PR merged or an issue completed.
+        case .completed: ("badge-check", .purple, "Completed")
         case .paused: ("circle-pause", .secondary, "Paused")
         // Replied, and read: greyed, so what still needs reading stands out.
         case .read: ("message-check", .secondary, "Replied")

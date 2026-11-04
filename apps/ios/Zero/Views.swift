@@ -79,7 +79,7 @@ struct StateGlyph: View {
         case .blocked: ("circle-minus-glyph", .red, "Blocked")
         case .done: ("circle-check-glyph", .green, "Done")
         case .answered: ("message-check-glyph", .indigo, "Replied")
-        case .completed: ("badge-check-glyph", .secondary, "Completed")
+        case .completed: ("badge-check-glyph", .purple, "Completed")
         case .paused: ("circle-pause-glyph", .secondary, "Paused")
         case .read: ("message-check-glyph", .secondary, "Replied")
         case .idle: ("moon-glyph", .secondary, "Idle")

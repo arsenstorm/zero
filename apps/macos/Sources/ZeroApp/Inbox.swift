@@ -924,8 +924,8 @@ enum AgentStatus {
         case .handed: return .teal
         case .blocked: return .red
         case .done: return .green
-        // Completed (it was merged): nothing left, greyed.
-        case .merged: return .secondary
+        // Completed (it was merged): purple, as GitHub shows one.
+        case .merged: return .purple
         case .working: return .blue
         case .closed, .offline: return .gray
         }
