@@ -71,3 +71,16 @@ private func row(_ id: String, state: String, own: String? = nil, worker: String
     let alert = TaskAlerts.changes(from: [row("a", state: "working")], to: [row("a", state: "answered", now: "**Merged** `#42`")]).alerts[0]
     #expect(alert.body == "Replied: Merged #42")
 }
+
+@Test func aSettledTaskBackToTheSameEndAfterZerosTurnIsNoNewAlert() {
+    // Merged, announced; Zero passes on an event, the task works a moment, and it's merged still: nothing new.
+    var announced: [String: BoardRow.State] = [:]
+    let merged = TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "merged")], announced: &announced)
+    #expect(merged.alerts.count == 1)
+    _ = TaskAlerts.changes(from: [row("1", state: "merged")], to: [row("1", state: "working")], announced: &announced)
+    #expect(TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "merged")], announced: &announced).alerts.isEmpty)
+    // A task asking again is always news: its new question.
+    _ = TaskAlerts.changes(from: [row("2", state: "working")], to: [row("2", state: "needsYou", asks: ["Merge it?"])], announced: &announced)
+    _ = TaskAlerts.changes(from: [row("2", state: "needsYou")], to: [row("2", state: "working")], announced: &announced)
+    #expect(TaskAlerts.changes(from: [row("2", state: "working")], to: [row("2", state: "needsYou", asks: ["Deploy it?"])], announced: &announced).alerts.count == 1)
+}

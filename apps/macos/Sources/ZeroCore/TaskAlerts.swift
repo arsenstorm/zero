@@ -30,12 +30,25 @@ public enum TaskAlerts {
     /// From one board to the next: the tasks whose standing changed to one that asks something of the user, and those
     /// whose notification is out of date (moved on from, or gone from the board).
     public static func changes(from old: [BoardRow], to new: [BoardRow]) -> (alerts: [TaskAlert], cleared: [String]) {
+        var announced: [String: BoardRow.State] = [:]
+        return changes(from: old, to: new, announced: &announced)
+    }
+
+    /// Ends that a turn Zero started (passing on an event it follows, a worker's report) leaves as they were: a task
+    /// back at the one last announced, after a moment's work, has nothing new to say.
+    static let settled: Set<BoardRow.State> = [.done, .merged, .blocked, .handed]
+
+    /// As above, `announced` keeping each task's state as last announced (the notifier's, across boards).
+    public static func changes(from old: [BoardRow], to new: [BoardRow], announced: inout [String: BoardRow.State]) -> (alerts: [TaskAlert], cleared: [String]) {
         var alerts: [TaskAlert] = [], cleared: [String] = []
         for row in new {
             let now = standing(row), before = old.first { $0.session == row.session }.flatMap(standing)
             if now?.state == before?.state && now?.worker == before?.worker { continue }
             if before != nil { cleared.append(row.session) }
-            if let now { alerts.append(TaskAlert(session: row.session, kind: now.kind, state: now.state, title: plain(row.task), body: plain(body(row, now.state, worker: now.worker)))) }
+            guard let now else { continue }
+            if !now.worker && settled.contains(now.state) && announced[row.session] == now.state { continue }
+            announced[row.session] = now.state
+            alerts.append(TaskAlert(session: row.session, kind: now.kind, state: now.state, title: plain(row.task), body: plain(body(row, now.state, worker: now.worker))))
         }
         for row in old where !new.contains(where: { $0.session == row.session }) && standing(row) != nil { cleared.append(row.session) }
         return (alerts, cleared)

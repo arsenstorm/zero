@@ -15,6 +15,8 @@ import ZeroCore
     private let open: (String) -> Void
     /// The board last heard: none yet, so what tasks are in at launch isn't announced.
     private var last: [BoardRow]?
+    /// Each task's state as last announced: a settled one isn't announced again when a turn Zero started leaves it as it was.
+    private var announced: [String: BoardRow.State] = [:]
     /// The asks notified (not a task's), by notification id, and whose: their agent's page clears them.
     private var asks: [String: String] = [:]
 
@@ -38,7 +40,7 @@ import ZeroCore
         NSApp.dockTile.badgeLabel = TaskAlerts.needingYou(rows).nonZero.map(String.init)
         guard let last else { self.last = rows; return }
         self.last = rows
-        let (alerts, cleared) = TaskAlerts.changes(from: last, to: rows)
+        let (alerts, cleared) = TaskAlerts.changes(from: last, to: rows, announced: &announced)
         if !cleared.isEmpty { center.removeDeliveredNotifications(withIdentifiers: cleared); Phones.shared.clear(cleared) }
         for alert in alerts where wanted(alert.kind) { announce(alert) }
     }
