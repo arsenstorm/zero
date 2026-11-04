@@ -2582,6 +2582,8 @@ private struct CommandCard: View {
     let exitCode: Int?
     let status: ItemStatus
     @State private var open = false
+    /// How tall what it printed is: the box is that tall (up to 300 pt, then it scrolls), not the most it may be.
+    @State private var outputHeight: CGFloat = 0
 
     var body: some View {
         // A row like every step's; its output, opened, in a box beneath it, under its words.
@@ -2612,13 +2614,18 @@ private struct CommandCard: View {
                     .padding(.leading, 12).padding(.trailing, 6).padding(.vertical, 6)
                     .background(Color.primary.opacity(0.03))
                     Rectangle().fill(Theme.stroke).frame(height: 1)
+                    // Scrolling both ways, a box larger than what's in it centres it: anchored top left instead, and
+                    // only as tall as the output.
                     ScrollView([.vertical, .horizontal]) {
                         Text(output).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary).lineSpacing(2)
-                            .textSelection(.enabled).fixedSize().frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled).fixedSize()
                             .padding(.horizontal, 12).padding(.vertical, 10)
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { outputHeight = $0 }
                     }
+                    .defaultScrollAnchor(.topLeading)
                     .thinScrollbar()
-                    .frame(maxHeight: 300)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .frame(height: min(max(outputHeight, 1), 300))
                 }
                 .background(Theme.code, in: RoundedRectangle(cornerRadius: 10))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
