@@ -70,7 +70,14 @@
     return ref;
   }
 
+  /** An element by its ref, or by a CSS selector (its first match): a selector finds the same element in every
+   * browser, where refs are each page's own. */
   function element(ref) {
+    if (!/^ref_\d+$/.test(ref)) {
+      const found = document.querySelector(ref);
+      if (!found) throw new Error(`Nothing on the page matches ${ref}`);
+      return found;
+    }
     const e = elements.get(ref)?.deref();
     if (!e || !e.isConnected) throw new Error(`${ref} isn't on the page any more: read the page again`);
     return e;
