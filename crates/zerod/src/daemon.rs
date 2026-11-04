@@ -902,8 +902,16 @@ impl Daemon {
     /// on disk while it is offline.
     pub fn notify(&self, id: &str, text: &str) -> Result<(), String> { self.notify_from(id, "zero", text) }
 
-    /// Words from another task (`zero send` inside one), marked as its, as a worker's report is.
+    /// A task there, live or archived: done and put away, it still follows things, and hears of them (`notify`).
+    pub fn exists(&self, id: &str) -> bool { self.session(id).is_ok() || self.home.join("archive").join(id).join("meta.json").exists() }
+
+    /// Words from another task (`zero send` inside one), marked as its, as a worker's report is. An archived task
+    /// comes back (with its lead, if it went with one) to hear them.
     pub fn notify_from(&self, id: &str, from: &str, text: &str) -> Result<(), String> {
+        if self.session(id).is_err() && self.exists(id) {
+            let root = archived_with(&self.home.join("archive").join(id)).unwrap_or_else(|| id.to_string());
+            self.unarchive(&root)?;
+        }
         self.session(id)?;
         self.tell(id, crate::model::from_line(from, text));
         Ok(())

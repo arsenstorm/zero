@@ -356,3 +356,18 @@ async fn a_task_at_its_accounts_limit_carries_on_as_another_account() {
     let again = w.claude.lock().unwrap()[1].clone();
     assert!(again.said("user", 1).await[0]["message"]["content"].as_str().unwrap().contains("another account"));
 }
+
+#[tokio::test]
+async fn something_an_archived_task_follows_brings_it_back_to_hear_of_it() {
+    let w = world("follow-unarchive");
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let seen = lead_runtime(&w).await;
+    seen.said("user", 1).await;
+    seen.say(turn_ends());
+    w.daemon.archive(&lead).await.unwrap();
+    assert!(w.daemon.exists(&lead), "archived, it's still there to follow things: done isn't gone");
+    assert!(!w.daemon.exists("nothing"));
+    w.daemon.notify(&lead, "1 new event on what you follow").unwrap();
+    assert!(w.daemon.get(&lead).is_some(), "back from the archive");
+    assert!(!w.daemon.queued(&lead).1, "the event isn't held: it goes to the agent");
+}

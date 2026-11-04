@@ -110,7 +110,7 @@ async fn main() {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
-            poller.tick(|id| polled.get(id).is_some(), |id, words| if let Err(error) = polled.notify(id, words) { eprintln!("zerod: couldn't tell {id} what it follows changed: {error}") }).await;
+            poller.tick(|id| polled.exists(id), |id, words| if let Err(error) = polled.notify(id, words) { eprintln!("zerod: couldn't tell {id} what it follows changed: {error}") }).await;
         }
     });
     let browsers = zerod::browser::Browsers::open(&home);
