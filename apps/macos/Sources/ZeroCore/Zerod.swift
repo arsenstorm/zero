@@ -322,7 +322,8 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     /// can take. Blocked is on something that isn't the user.
     public enum State: String, Decodable, Sendable {
         /// `read`: Replied, and the user has seen the reply (it greys); the chat that's open shows it as Replied still.
-        case needsYou, trouble, working, handed, answered, blocked, done, merged, paused, read, idle, offline
+        /// `completed`: done-done (it was `merged`), last of all and archived after a while; `idle` shows no icon.
+        case needsYou, trouble, working, handed, answered, blocked, done, paused, read, completed, idle, offline
         /// Most urgent first, as the board sorts its rows.
         public var urgency: Int {
             switch self {
@@ -333,7 +334,7 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
             case .answered: 4
             case .blocked: 5
             case .done: 6
-            case .merged: 7
+            case .completed: 9
             default: 8
             }
         }
@@ -347,7 +348,7 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
             case .answered, .read: "Replied"
             case .blocked: "Blocked"
             case .done: "Done"
-            case .merged: "Merged"
+            case .completed: "Completed"
             case .paused: "Paused"
             case .idle: "Idle"
             case .offline: "Offline"
@@ -1008,6 +1009,11 @@ public final class ZerodLink: @unchecked Sendable {
         ((try await call("settings")) as? [String: Any])?["places"] as? String ?? ""
     }
     public func setPlacesCommand(_ command: String) async throws { _ = try await call("configure", ["places": command]) }
+    /// Seconds a completed task stays before zerod archives it; 0 never. Unset, a day.
+    public func archiveCompleted() async throws -> Int {
+        ((try await call("settings")) as? [String: Any])?["archiveCompleted"] as? Int ?? 24 * 3600
+    }
+    public func setArchiveCompleted(_ seconds: Int) async throws { _ = try await call("configure", ["archiveCompleted": seconds]) }
 
     /// The sessions `session` started, without their items, each with how it's doing (which zerod tells, since the
     /// items it would be worked out from are left out).

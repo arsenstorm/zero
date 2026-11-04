@@ -65,6 +65,8 @@ struct StateGlyph: View {
     var body: some View {
         let look = Self.look(state)
         if state == .working { Spinner().frame(width: 14, height: 14).frame(width: 16, height: 16) }
+        // Nothing to say (no reply yet, nothing under way): no icon, its space kept.
+        else if state == .idle { Color.clear.frame(width: 16, height: 16) }
         else { Image(look.icon).resizable().frame(width: 16, height: 16).foregroundStyle(look.color) }
     }
 
@@ -77,7 +79,7 @@ struct StateGlyph: View {
         case .blocked: ("circle-minus-glyph", .red, "Blocked")
         case .done: ("circle-check-glyph", .green, "Done")
         case .answered: ("message-check-glyph", .indigo, "Replied")
-        case .merged: ("code-branch-glyph", .purple, "Merged")
+        case .completed: ("badge-check-glyph", .secondary, "Completed")
         case .paused: ("circle-pause-glyph", .secondary, "Paused")
         case .read: ("message-check-glyph", .secondary, "Replied")
         case .idle: ("moon-glyph", .secondary, "Idle")
@@ -292,7 +294,7 @@ struct TasksView: View {
                         ForEach(members, id: \.session) { member in
                             let name = model.names[member.session] ?? member.place
                             TaskRow(name: name, state: member.state, worker: true, show: { model.path.append(member.session) })
-                                .opacity([.done, .merged, .idle, .offline].contains(member.state) ? 0.6 : 1)
+                                .opacity([.done, .completed, .idle, .offline].contains(member.state) ? 0.6 : 1)
                                 .contextMenu { actions(member.session, name: name, state: member.state, workers: 0) } preview: {
                                     if let worker = row.member(member.session) { TaskPeek(row: worker, name: name) }
                                 }

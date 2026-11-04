@@ -125,7 +125,7 @@ extension BoardRow.State {
         case "working": .working
         case "done": .done
         case "replied", "answered": .answered
-        case "merged": .merged
+        case "completed", "merged": .completed
         case "idle": .idle
         case "offline": .offline
         default: nil

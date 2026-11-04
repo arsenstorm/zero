@@ -1009,7 +1009,7 @@ private struct TaskDetails: View {
                         .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .opacity([.done, .merged, .idle, .offline].contains(member.state) ? 0.6 : 1)
+                    .opacity([.done, .completed, .idle, .offline].contains(member.state) ? 0.6 : 1)
                 }
     }
 
@@ -1445,6 +1445,8 @@ private struct StateIcon: View {
         Group {
             // At work it spins, as everywhere else in Zero something under way does.
             if state == .working { Spinner().frame(width: 12, height: 12).frame(width: 14, height: 14) }
+            // Nothing to say (no reply yet, nothing under way): no icon, its space kept.
+            else if state == .idle { Color.clear.frame(width: 14, height: 14) }
             else { NucleoIcon(Self.look(state).symbol, fill: "glyph", size: 14).foregroundStyle(Self.look(state).color) }
         }
         // A view of its own for each state: a spinner's AppKit view kept from Working could otherwise stand where the
@@ -1463,7 +1465,8 @@ private struct StateIcon: View {
         case .blocked: ("circle-minus", .red, "Blocked")
         case .done: ("circle-check", .green, "Done")
         case .answered: ("message-check", .indigo, "Replied")
-        case .merged: ("code-branch", .purple, "Merged")
+        // Done-done: nothing left, greyed with the rest of what needs nothing.
+        case .completed: ("badge-check", .secondary, "Completed")
         case .paused: ("circle-pause", .secondary, "Paused")
         // Replied, and read: greyed, so what still needs reading stands out.
         case .read: ("message-check", .secondary, "Replied")

@@ -12,7 +12,7 @@ func usage(help: Bool = false) -> Never {
       zero approve "what you want to do" [--body "details"] [--code 'command or snippet']   (Yes / No / Suggest something else…)
       zero run     'command' --why "what you need the output for" [--cwd DIR] [--title T]
                    runs on Arsen's Mac after he presses Run; a script file's contents are shown to him
-      zero note    "where you are now" [--blocked | --done | --merged | --waiting] [--needs "what Arsen should do, when he can"]
+      zero note    "where you are now" [--blocked | --done | --completed | --waiting] [--needs "what Arsen should do, when he can"]
                    (no answer; sets your agent's dot and its row on Zero's board: working, blocked, done, or
                    waiting on something other than Arsen)
       zero withdraw <id> [--reason "why"]   (take back an open ask that no longer needs Arsen)
@@ -51,7 +51,7 @@ func usage(help: Bool = false) -> Never {
       zero close   <session>...   (a worker you've read: it leaves the board; its record is kept in zerod's archive)
       zero table   "Title" --column NAME... --row "cell | cell | …"...   [--session ID]
                    (a table for the user, drawn by Zero in your conversation: a cell that is a state (working, blocked,
-                   done, merged, waiting) shows as its pill, and in a column named for a risk, a cell opening with low, medium
+                   done, completed, waiting) shows as its pill, and in a column named for a risk, a cell opening with low, medium
                    or high shows that as a pill, the rest on hover; tickets and PRs as links; or JSON on stdin: {"title","columns","rows"})
       zero attr    NAME [VALUE] [--session ID]   (something about this task for the user to see on it, such as
                    zero attr PR https://github.com/org/repo/pull/12; a link opens. No value takes it back)
@@ -114,7 +114,7 @@ while i < args.count {
     if arg == "--" { positional.append(contentsOf: args[(i + 1)...]); break }
     if arg.hasPrefix("--") {
         let key = String(arg.dropFirst(2))
-        if ["async", "blocked", "done", "merged", "waiting", "any", "mine", "all", "asked"].contains(key) {
+        if ["async", "blocked", "done", "merged", "completed", "waiting", "any", "mine", "all", "asked"].contains(key) {
             flags[key, default: []].append("1")
         } else {
             i += 1
@@ -447,7 +447,8 @@ case "note":
     guard let text = positional.first else { usage() }
     let socket = connect()
     var note = Ask(kind: .note, title: flag("ticket") ?? "Update", body: text, agent: agentIdentity())
-    note.status = ["blocked", "done", "merged", "waiting"].first { flag($0) != nil }
+    // --merged, as agents said it before: completed.
+    note.status = ["blocked", "done", "completed", "merged", "waiting"].first { flag($0) != nil }.map { $0 == "merged" ? "completed" : $0 }
     note.needs = flag("needs")
     shortDetail(note.needs, flag: "needs")
     try? socket.send(Request(op: "create", ask: note, wait: false))

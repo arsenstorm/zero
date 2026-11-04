@@ -357,7 +357,7 @@ private struct GeneralPage: View {
         Sounded(state: .done, name: "Done", detail: "Its work is finished."),
         Sounded(state: .answered, name: "Replied", detail: "It answered you."),
         Sounded(state: .blocked, name: "Blocked", detail: "It's stopped on something that isn't you."),
-        Sounded(state: .merged, name: "Merged", detail: "Its work is merged."),
+        Sounded(state: .completed, name: "Completed", detail: "The whole task is done: nothing left."),
     ]
     var body: some View {
         Sections {
@@ -563,6 +563,9 @@ private struct AgentsPage: View {
             SettingsSection(title: "Runtimes") { RuntimesRows(store: store, inbox: inbox) }
             SettingsSection(title: "Tasks") {
                 Rows {
+                    SettingRow(title: "Archive completed tasks", detail: "A task its agent says is done-done (shipped, checked, nothing left) is put away after this.") {
+                        ArchiveCompletedPicker()
+                    }
                     SettingRow(title: "Where tasks run", detail: "A command printing [{\"ticket\": \"ENG-1\", \"place\": \"my-bench\"}], run in your login shell every five minutes. Each task's Where is its place, by ticket, in place of its folder.") {
                         PlacesCommandField()
                     }
@@ -605,6 +608,24 @@ private struct RuntimesRows: View {
               FileManager.default.isExecutableFile(atPath: solo.helper) else { return "Not installed" }
         let socket = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/soloterm/solo-mcp.sock").path
         return FileManager.default.fileExists(atPath: socket) ? "Connected" : "Not running"
+    }
+}
+
+/// How long a completed task stays before zerod archives it: zerod's setting, so it holds while the app is closed.
+private struct ArchiveCompletedPicker: View {
+    @State private var seconds = 24 * 3600
+    @State private var link = try? ZerodLink()
+    static let choices: [(String, Int)] = [("After an hour", 3600), ("After a day", 24 * 3600), ("After a week", 7 * 24 * 3600), ("Never", 0)]
+
+    var body: some View {
+        Picker("", selection: Binding(get: { seconds }, set: { chosen in
+            seconds = chosen
+            Task { try? await link?.setArchiveCompleted(chosen) }
+        })) {
+            ForEach(Self.choices, id: \.1) { Text($0.0).tag($0.1) }
+        }
+        .labelsHidden().fixedSize()
+        .task { if let kept = try? await link?.archiveCompleted() { seconds = Self.choices.contains { $0.1 == kept } ? kept : 24 * 3600 } }
     }
 }
 

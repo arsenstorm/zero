@@ -246,7 +246,7 @@ final class InboxController {
                     case .handed: status = .handed
                     case .working: status = .working
                     case .done: status = .done
-                    case .merged: status = .merged
+                    case .completed: status = .merged
                     // On hold: off the bar, as a task that isn't running is.
                     case .paused: status = .offline
                     default: break
@@ -911,7 +911,7 @@ enum AgentStatus {
         switch last.status {
         case "blocked": return .blocked
         case "done": return .done
-        case "merged": return .merged
+        case "merged", "completed": return .merged
         case "closed": return .closed
         default: return .working
         }
@@ -924,7 +924,8 @@ enum AgentStatus {
         case .handed: return .teal
         case .blocked: return .red
         case .done: return .green
-        case .merged: return .purple
+        // Completed (it was merged): nothing left, greyed.
+        case .merged: return .secondary
         case .working: return .blue
         case .closed, .offline: return .gray
         }

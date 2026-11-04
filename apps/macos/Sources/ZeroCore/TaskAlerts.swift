@@ -22,7 +22,7 @@ public enum TaskAlerts {
         if row.state == .needsYou { return (.needsYou, .needsYou, true) }
         switch own {
         case .trouble: return (.trouble, own, false)
-        case .handed, .done, .answered, .blocked, .merged: return (.finished, own, false)
+        case .handed, .done, .answered, .blocked, .completed: return (.finished, own, false)
         default: return nil
         }
     }
@@ -36,7 +36,7 @@ public enum TaskAlerts {
 
     /// Ends that a turn Zero started (passing on an event it follows, a worker's report) leaves as they were: a task
     /// back at the one last announced, after a moment's work, has nothing new to say.
-    static let settled: Set<BoardRow.State> = [.done, .merged, .blocked, .handed]
+    static let settled: Set<BoardRow.State> = [.done, .completed, .blocked, .handed]
 
     /// As above, `announced` keeping each task's state as last announced (the notifier's, across boards).
     public static func changes(from old: [BoardRow], to new: [BoardRow], announced: inout [String: BoardRow.State]) -> (alerts: [TaskAlert], cleared: [String]) {
@@ -100,7 +100,7 @@ public enum TaskAlerts {
         case .handed: "Over to you"
         case .answered: "Replied"
         case .blocked: "Blocked"
-        case .merged: "Merged"
+        case .completed: "Completed"
         default: "Done"
         }
         // An ask's own question says it; the rest say their state first.
