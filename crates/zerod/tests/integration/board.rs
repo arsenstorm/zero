@@ -355,3 +355,12 @@ fn an_offline_task_shows_the_state_its_last_answer_left_it_in() {
     assert_eq!(ended("Merged and checked.\n\n[zero: completed]"), State::Completed);
     assert_eq!(ended("PR is up.\n\n[zero: done]"), State::Done);
 }
+
+#[test]
+fn zeros_own_lines_after_an_answer_dont_hide_it() {
+    // "Paused for Zero's update", "Zero updated: carrying on": Zero's words, not the agent's; its answer still says.
+    let mut lead = session("a", "/work/app", Status::Idle);
+    lead.items.push(Item { id: "1".into(), turn: None, kind: ItemKind::Agent { text: "What should I look at?".into(), final_answer: true }, status: ItemStatus::Done, at: None });
+    lead.items.push(Item { id: "2".into(), turn: None, kind: ItemKind::Notice { text: zerod::daemon::CARRIED.into(), error: false }, status: ItemStatus::Done, at: None });
+    assert_eq!(board(&[lead], &[])[0].state, State::NeedsYou);
+}

@@ -479,7 +479,8 @@ impl Conversation {
     /// Zero's ending, or a question put to them in prose (any line ending in one: "Could you reopen OrbStack?" comes
     /// mid-answer as often as last). An answer with neither is a turn finished, not a task.
     pub fn ended(&self) -> Attention {
-        match self.items.last().map(|i| &i.kind) {
+        // Zero's own lines after it (paused for an update, carried on) are Zero's, not the agent's: looked past.
+        match self.items.iter().rev().find(|i| !matches!(i.kind, ItemKind::Notice { .. })).map(|i| &i.kind) {
             Some(ItemKind::Agent { final_answer: true, .. }) if self.parent.is_some() => Attention::Done,
             Some(ItemKind::Agent { text, final_answer: true }) => match crate::board::ending(text) {
                 Some("done" | "completed") => Attention::Done,
