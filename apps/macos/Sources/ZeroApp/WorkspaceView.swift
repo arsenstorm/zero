@@ -129,7 +129,7 @@ struct WorkspaceView: View {
             }
         }
         .overlay(alignment: .top) {
-            if let updating = workspace.updating { UpdatingBar(updating: updating).padding(.top, 12) }
+            if let updating = workspace.updating { UpdatingBar(updating: updating).padding(.top, 44) }
         }
         .overlay(alignment: .bottom) {
             if let error = workspace.lastError, workspace.updating == nil {
@@ -3987,40 +3987,56 @@ private struct StatusCard: View {
 
 
 /// Zero restarting for an update, said while it happens: what it's letting finish first (a task's command, for at most
-/// a couple of minutes), then that the new version is starting. Tasks it paused carry on by themselves afterwards.
+/// a couple of minutes, counted down), then that the new version is starting. The tasks it paused say so themselves.
 private struct UpdatingBar: View {
     let updating: Workspace.Updating
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Spinner().frame(width: 12, height: 12).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 }
-                VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 9) {
+                    Spinner().frame(width: 12, height: 12)
                     Text("Updating Zero").font(.system(size: 13, weight: .semibold))
-                    Text(detail(at: context.date)).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    if !updating.starting {
-                        ForEach(updating.waiting.prefix(3)) { waiting in
-                            HStack(spacing: 6) {
-                                Text(waiting.task.isEmpty ? "A task" : waiting.task).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                                Text(waiting.command).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
-                            }
-                        }
+                    Text(status).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer(minLength: 8)
+                    if let left = left(at: context.date) {
+                        Text(left).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
                     }
                 }
+                if !updating.starting && !updating.waiting.isEmpty {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(updating.waiting.prefix(3).enumerated()), id: \.element.id) { index, waiting in
+                            if index > 0 { Divider().padding(.leading, 10) }
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(waiting.task.isEmpty ? "A task" : waiting.task).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                                Text(waiting.command).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                            }
+                            .padding(.horizontal, 10).padding(.vertical, 7)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.row, in: RoundedRectangle(cornerRadius: 6))
+                }
             }
-            .padding(.horizontal, 14).padding(.vertical, 10)
-            .frame(maxWidth: 460, alignment: .leading)
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke))
+            // Concentric: the commands' 6 pt corners inset 10 pt in the card's 16.
+            .padding(10)
+            .frame(width: 400, alignment: .leading)
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.stroke))
             .compositingGroup().shadow(color: .black.opacity(0.08), radius: 12, y: 4)
         }
     }
 
-    private func detail(at now: Date) -> String {
-        if updating.starting { return "Starting the new version. Tasks it paused carry on where they left off." }
-        if updating.waiting.isEmpty { return "Pausing tasks between steps; they carry on once it's done." }
+    private var status: String {
+        if updating.starting { return "Starting the new version" }
+        if updating.waiting.isEmpty { return "Pausing tasks between steps" }
+        return updating.waiting.count == 1 ? "Letting a command finish" : "Letting \(updating.waiting.count) commands finish"
+    }
+
+    /// The longest it may still wait, while it waits on commands.
+    private func left(at now: Date) -> String? {
+        guard !updating.starting, !updating.waiting.isEmpty else { return nil }
         let left = max(0, updating.most - Int(now.timeIntervalSince(updating.since)))
-        let count = updating.waiting.count == 1 ? "a command" : "\(updating.waiting.count) commands"
-        return "Letting \(count) finish first (at most \(left / 60):\(String(format: "%02d", left % 60)) more). Tasks carry on once it's done."
+        return "\(left / 60):\(String(format: "%02d", left % 60))"
     }
 }
