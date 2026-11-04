@@ -116,10 +116,15 @@ A loop is a named instruction the user keeps in Zero and names as `@name`. When 
 
 ## Saving for later
 
-Zero's Later keeps things to come back to. Save one when the user asks ("save this for later", or Zero's message saying they want it saved), or when you're putting work off rather than doing it: a follow-up you found, a fix out of scope, a plan for another day.
+Zero's Later is the user's list of work they'll come back to. Save one when the user asks ("save this for later", or Zero's message saying they want it saved), with `--asked`. Otherwise save only when you're stopping work the user will want to resume, a plan for another day; that's a suggestion, which the user keeps or dismisses, and goes in a week if they don't. A task has at most three open.
+
+Not for Later, as it fills the user's list with things they can't act on:
+- Ticket ideas and bugs you noticed along the way: tell the user in your answer, or put them in one item with the work they belong to.
+- Reminders to yourself (re-run a check at 23:45): that's yours to keep, in your own notes or a scheduled wake-up.
+- What needs the user (a decision, a step only they can take): ask them with `zero ask`.
 
 ```bash
-zero later save "Fix the flaky login test: it fails one run in ten." --file - --link https://github.com/o/r/issues/12 <<'EOF2'
+zero later save "Fix the flaky login test" --asked --file - --link https://github.com/o/r/issues/12 <<'EOF2'
 ## Cause
 A race in `app/auth.rb:42`: …
 EOF2
@@ -131,7 +136,7 @@ zero later done k3x9qa
 
 Each item has two parts, written for different readers:
 
-- The note: one or two short sentences in plain, simple words, saying what needs doing and why. No jargon, no file paths. Why: the user reads the list at a glance, and a note they have to decode is one they skip.
+- The note: a headline under 100 characters, in plain words, saying what's to be done. No ticket ids, file paths, dates or numbered lists; zero refuses a longer one. Why: the user reads the list at a glance, and a note they have to decode is one they skip.
 - The artifact: everything you worked out, in full, in Markdown: findings, causes with file:line, the plan, commands, what you ruled out. Nothing summed up. Why: whoever picks it up later, often a fresh agent, has only this.
 
 Attach screenshots or files with `--attach`. Tell the user the item's link (zero://later/<id>). Given an item to pick up, read it with `zero later view` first, and mark it done with `zero later done` once it is.
