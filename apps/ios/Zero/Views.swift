@@ -286,11 +286,15 @@ struct TasksView: View {
                             fold: { withAnimation(.snappy(duration: 0.2)) { if unfolded { open.remove(row.session) } else { open.insert(row.session) } } },
                             show: { model.path.append(row.session) })
                     .contextMenu { actions(row.session, name: row.task, state: row.ownState, workers: members.count) } preview: { TaskPeek(row: row, name: row.task) }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) { swipes(row.session, name: row.task, state: row.ownState, workers: members.count) }
+                    .swipeActions(edge: .leading) { renameSwipe(row.session, name: row.task) }
                     if unfolded {
                         ForEach(members, id: \.session) { member in
                             let name = model.names[member.session] ?? member.place
                             TaskRow(name: name, state: member.state, worker: true, show: { model.path.append(member.session) })
                                 .opacity([.done, .completed, .idle, .offline].contains(member.state) ? 0.6 : 1)
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) { swipes(member.session, name: name, state: member.state, workers: 0) }
+                                .swipeActions(edge: .leading) { renameSwipe(member.session, name: name) }
                                 .contextMenu { actions(member.session, name: name, state: member.state, workers: 0) } preview: {
                                     if let worker = row.member(member.session) { TaskPeek(row: worker, name: name) }
                                 }
@@ -322,6 +326,21 @@ struct TasksView: View {
 
 extension TasksView {
     /// A task's long press, as the Mac's row menu: pause or resume, rename, archive.
+    /// Swiped left: archive (asking first, as from the menu), and pause or resume.
+    @ViewBuilder func swipes(_ session: String, name: String, state: BoardRow.State, workers: Int) -> some View {
+        Button { archiving = (session, name, workers) } label: { Label("Archive", image: "trash-outline") }.tint(.red)
+        if state == .paused {
+            Button { Task { _ = await model.unpause([session]) } } label: { Label("Resume", image: "arrow-rotate-clockwise-glyph") }.tint(.blue)
+        } else {
+            Button { Task { _ = await model.pause([session]) } } label: { Label("Pause", image: "circle-pause-glyph") }.tint(.gray)
+        }
+    }
+
+    /// Swiped right: rename.
+    func renameSwipe(_ session: String, name: String) -> some View {
+        Button { newName = name; renaming = (session, name) } label: { Label("Rename", image: "pen-outline") }.tint(.indigo)
+    }
+
     @ViewBuilder func actions(_ session: String, name: String, state: BoardRow.State, workers: Int) -> some View {
         if state == .paused {
             Button { Task { _ = await model.unpause([session]) } } label: { Label("Resume", image: "arrow-rotate-clockwise-glyph") }
@@ -376,7 +395,8 @@ struct TaskRow: View {
             if let folded {
                 Button(action: fold) {
                     Image("chevron-down-outline").resizable().frame(width: 12, height: 12).foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(folded ? -90 : 0)).frame(width: 28, height: 28).contentShape(Rectangle())
+                        // As tall as the name's line, so a lead's row is as tall as any other's; wide enough to tap.
+                        .rotationEffect(.degrees(folded ? -90 : 0)).frame(width: 28, height: 22).contentShape(Rectangle())
                 }
                 // Plain: the Mac's grey, not the tint a borderless button takes.
                 .buttonStyle(.plain)
