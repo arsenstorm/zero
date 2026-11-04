@@ -559,15 +559,31 @@ struct ApprovalCard: View {
     let model: PhoneModel
     let session: String
     let approval: Approval
+    @State private var commandOpen = false
+
+    /// What's asked, short: the command or the changes are below it, not spelled out again in the question.
+    private var question: String {
+        if approval.command != nil { return "Allow this command?" }
+        if !approval.changes.isEmpty { return approval.changes.count == 1 ? "Allow this change?" : "Allow these changes?" }
+        return approval.title.hasSuffix("?") ? approval.title : approval.title + "?"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Approval", image: "shield-outline").font(.caption.weight(.medium)).foregroundStyle(.secondary)
-            Text(approval.title).font(.subheadline.weight(.semibold))
-            if let reason = approval.reason { Text(reason).font(.footnote).foregroundStyle(.secondary) }
+            Text(question).font(.subheadline.weight(.semibold))
+            if let reason = approval.reason { Text(reason).font(.footnote).foregroundStyle(.secondary).lineLimit(2) }
             if let command = approval.command {
-                ScrollView(.horizontal) { Text("$ " + command).font(.footnote.monospaced()).padding(10) }
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                let lines = command.split(separator: "\n", omittingEmptySubsequences: false).count
+                VStack(alignment: .leading, spacing: 6) {
+                    ScrollView(.horizontal) { Text("$ " + command).font(.footnote.monospaced()).lineLimit(commandOpen ? nil : 8) }
+                    if lines > 8 {
+                        Button(commandOpen ? "Show less" : "Show all \(lines) lines") { commandOpen.toggle() }
+                            .font(.caption.weight(.medium)).foregroundStyle(.secondary).buttonStyle(.plain)
+                    }
+                }
+                .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
             }
             ForEach(approval.changes, id: \.path) { change in Text(change.path).font(.footnote.monospaced()).foregroundStyle(.secondary) }
             ForEach(approval.choices) { choice in
