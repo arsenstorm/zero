@@ -2746,16 +2746,14 @@ private func relative(_ path: String, to folder: String) -> String {
 
 /// A diff's lines, additions green and removals red. A new file's contents arrive without markers: all added.
 
-/// The provider asking before it acts: what it wants (a command, or changes to files: shown, not spelled out again in
-/// the question), why, and its own choices, the first one the default (Return).
+/// The provider asking before it acts, in the panel a question has: "Approval" in its strip; what it wants (a command,
+/// or changes to files: shown, not spelled out again in the question), why, and its own choices as the question card's
+/// numbered rows, the first one the default (Return).
 private struct ApprovalCard: View {
     let approval: Approval
     let cwd: String
     let choose: (Choice) -> Void
     @State private var commandOpen = false
-
-    /// Quieter words on the card's orange: grey with orange in it, as plain grey looks dull there.
-    private static let muted = Color.orange.mix(with: .gray, by: 0.4)
 
     /// A command's lines shown before "Show all".
     private static let folded = 8
@@ -2775,47 +2773,56 @@ private struct ApprovalCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                NucleoIcon("shield", size: 15).foregroundStyle(.orange)
-                Text(question).font(.system(size: 14, weight: .semibold))
-            }
-            if let reason { Text(reason).font(.system(size: 13)).foregroundStyle(Self.muted).lineLimit(2) }
-            if let command = approval.command {
-                let lines = command.split(separator: "\n", omittingEmptySubsequences: false).count
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(command).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
-                        .lineLimit(commandOpen ? nil : Self.folded).fixedSize(horizontal: false, vertical: true)
-                    if lines > Self.folded {
-                        Button(commandOpen ? "Show less" : "Show all \(lines) lines") { commandOpen.toggle() }
-                            .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(Self.muted)
-                    }
-                }
-                .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Theme.code, in: RoundedRectangle(cornerRadius: 6))
-                .overlay(alignment: .topTrailing) { CopyButton(text: command).padding(4) }
-            }
-            ForEach(approval.changes, id: \.path) { change in FileChangeCard(change: change, status: .running, cwd: cwd) }
+        ArticlePanel {
             HStack(spacing: 6) {
-                ForEach(Array(approval.choices.enumerated()), id: \.element.id) { index, choice in
-                    if index == 0 {
-                        Button { choose(choice) } label: {
-                            Text(choice.label).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.onKnob)
-                                .padding(.horizontal, 12).frame(height: 26).background(Theme.knob, in: RoundedRectangle(cornerRadius: 6))
+                NucleoIcon("shield", size: 13)
+                Text("Approval").font(.system(size: 12, weight: .medium)).tracking(-0.2)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 14).padding(.vertical, 7)
+        } content: {
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(question).font(.system(size: 15, weight: .semibold))
+                    if let reason { Text(reason).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(2) }
+                }
+                if let command = approval.command {
+                    let lines = command.split(separator: "\n", omittingEmptySubsequences: false).count
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(command).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                            .lineLimit(commandOpen ? nil : Self.folded).fixedSize(horizontal: false, vertical: true)
+                        if lines > Self.folded {
+                            Button(commandOpen ? "Show less" : "Show all \(lines) lines") { commandOpen.toggle() }
+                                .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.plain).keyboardShortcut(.defaultAction)
-                    } else {
-                        Button { choose(choice) } label: {
-                            Text(choice.label).font(.system(size: 12, weight: .medium)).lineLimit(1).padding(.horizontal, 10).frame(height: 26)
+                    }
+                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.code, in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(alignment: .topTrailing) { CopyButton(text: command).padding(4) }
+                }
+                ForEach(approval.changes, id: \.path) { change in FileChangeCard(change: change, status: .running, cwd: cwd) }
+                // As the question card's options: a numbered row each.
+                VStack(spacing: 6) {
+                    ForEach(Array(approval.choices.enumerated()), id: \.element.id) { index, choice in
+                        let row = Button { choose(choice) } label: {
+                            HStack(spacing: 10) {
+                                Text("\(index + 1)").font(.system(size: 10, weight: .bold)).frame(width: 18, height: 18)
+                                    .background(Theme.keycap).clipShape(RoundedRectangle(cornerRadius: 5))
+                                Text(choice.label).font(.system(size: 13))
+                                Spacer()
+                            }
+                            .padding(.horizontal, 10).padding(.vertical, 8)
+                            .background(Theme.row, in: RoundedRectangle(cornerRadius: 10))
+                            .contentShape(RoundedRectangle(cornerRadius: 10))
                         }
-                        .buttonStyle(Hovering(selected: true, radius: 6, fill: Theme.row))
+                        .buttonStyle(.plain)
+                        if index == 0 { row.keyboardShortcut(.defaultAction) } else { row }
                     }
                 }
             }
-            .padding(.top, 2)
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        // Concentric: the 6 pt corners inside inset 10 pt in the card's 16.
-        .padding(10).background(Theme.orangeRow, in: RoundedRectangle(cornerRadius: 16))
     }
 }
 
