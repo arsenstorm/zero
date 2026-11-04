@@ -98,7 +98,10 @@ impl Bridge {
             for approval in &conversation.approvals {
                 let agent = self.agent(conversation);
                 let files: Vec<&str> = approval.changes.iter().map(|c| c.path.as_str()).collect();
-                let mut ask = Ask::new(AskKind::Permission, &approval.title, agent, 86400);
+                // Asked as what it is: the agent wanting to run a command (or change files), shown in its own block, not
+                // spelled out again in the question.
+                let title = if approval.command.is_some() { "Allow this command?" } else if !files.is_empty() { "Allow these changes?" } else { approval.title.as_str() };
+                let mut ask = Ask::new(AskKind::Permission, title, agent, 86400);
                 ask.body = approval.reason.clone().unwrap_or_default();
                 ask.options = approval.choices.iter().map(|c| c.label.clone()).collect();
                 ask.command = approval.command.clone().or_else(|| (!files.is_empty()).then(|| files.join("\n")));

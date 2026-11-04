@@ -55,7 +55,8 @@ async fn an_approval_becomes_one_permission_ask_with_the_providers_choices() {
     let asks = inbox.open_asks();
     assert_eq!(asks.len(), 1, "a snapshot seen twice asks once");
     let ask = &asks[0];
-    assert_eq!((ask.kind, ask.title.as_str(), ask.body.as_str(), ask.command.as_deref()), (AskKind::Permission, "Run make", "Build it", Some("make")));
+    // Asked as what it is, the agent wanting to run it: the command in its own block, not repeated in the question.
+    assert_eq!((ask.kind, ask.title.as_str(), ask.body.as_str(), ask.command.as_deref()), (AskKind::Permission, "Allow this command?", "Build it", Some("make")));
     assert_eq!(ask.options, ["Allow", "Always allow Bash(make)", "Deny", "Deny and stop"]);
     assert_eq!((ask.agent.runtime.as_deref(), ask.agent.reference.as_deref()), (Some("zerod"), Some(SESSION)));
     assert_eq!((ask.agent.name.as_str(), ask.agent.label.as_deref()), ("zerod-01a1aaaa00000001", Some("Fix the build")));
