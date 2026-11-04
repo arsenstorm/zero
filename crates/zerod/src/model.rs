@@ -470,22 +470,26 @@ impl Conversation {
             Status::Working | Status::Waiting => Attention::Working,
             Status::Starting => Attention::Starting,
             Status::Offline => Attention::Offline,
-            // Between turns. A worker's answer is its report to its lead: done. A lead's answer says whether the task
-            // is done or waits on the user: Zero's ending, or a question put to them in prose (any line ending in one:
-            // "Could you reopen OrbStack?" comes mid-answer as often as last). An answer with neither is a turn
-            // finished, not a task.
-            Status::Idle => match self.items.last().map(|i| &i.kind) {
-                Some(ItemKind::Agent { final_answer: true, .. }) if self.parent.is_some() => Attention::Done,
-                Some(ItemKind::Agent { text, final_answer: true }) => match crate::board::ending(text) {
-                    Some("done" | "completed") => Attention::Done,
-                    Some("asked") => Attention::NeedsYou,
-                    Some("blocked") => Attention::Blocked,
-                    Some(_) => Attention::Idle,
-                    None if text.lines().any(|l| l.trim_end().ends_with('?')) => Attention::NeedsYou,
-                    None => Attention::Answered,
-                },
-                _ => Attention::Idle,
+            Status::Idle => self.ended(),
+        }
+    }
+
+    /// How its last turn left it, between turns (or parked since, its process stopped while it waited). A worker's
+    /// answer is its report to its lead: done. A lead's answer says whether the task is done or waits on the user:
+    /// Zero's ending, or a question put to them in prose (any line ending in one: "Could you reopen OrbStack?" comes
+    /// mid-answer as often as last). An answer with neither is a turn finished, not a task.
+    pub fn ended(&self) -> Attention {
+        match self.items.last().map(|i| &i.kind) {
+            Some(ItemKind::Agent { final_answer: true, .. }) if self.parent.is_some() => Attention::Done,
+            Some(ItemKind::Agent { text, final_answer: true }) => match crate::board::ending(text) {
+                Some("done" | "completed") => Attention::Done,
+                Some("asked") => Attention::NeedsYou,
+                Some("blocked") => Attention::Blocked,
+                Some(_) => Attention::Idle,
+                None if text.lines().any(|l| l.trim_end().ends_with('?')) => Attention::NeedsYou,
+                None => Attention::Answered,
             },
+            _ => Attention::Idle,
         }
     }
 

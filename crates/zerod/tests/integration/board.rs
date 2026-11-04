@@ -341,3 +341,17 @@ fn a_completed_task_is_archived_once_its_been_completed_a_while() {
     due_to_archive(&again, &mut since, 5_000, Some(day));
     assert!(since.is_empty());
 }
+
+#[test]
+fn an_offline_task_shows_the_state_its_last_answer_left_it_in() {
+    // Its process stopped while it waited (parked): it's still waiting on what it said.
+    let ended = |text: &str| {
+        let mut lead = session("a", "/work/app", Status::Offline);
+        lead.items.push(Item { id: "1".into(), turn: None, kind: ItemKind::Agent { text: text.into(), final_answer: true }, status: ItemStatus::Done, at: None });
+        board(&[lead], &[])[0].state
+    };
+    assert_eq!(ended("Hey Arsen, what are we working on?"), State::NeedsYou, "its question is still open");
+    assert_eq!(ended("The build is green."), State::Answered);
+    assert_eq!(ended("Merged and checked.\n\n[zero: completed]"), State::Completed);
+    assert_eq!(ended("PR is up.\n\n[zero: done]"), State::Done);
+}

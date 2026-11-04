@@ -375,9 +375,14 @@ fn attention(conversation: &Conversation) -> State {
         Attention::Done => State::Done,
         Attention::Answered => State::Answered,
         Attention::Idle => State::Idle,
-        // Offline is only not running: its last known state is between turns, its answer still there to read.
-        Attention::Offline if conversation.replied() => State::Answered,
-        Attention::Offline => State::Idle,
+        // Offline is only not running (parked while it waited): it's as its last turn left it, a question still open.
+        Attention::Offline => match conversation.ended() {
+            Attention::NeedsYou => State::NeedsYou,
+            Attention::Done => State::Done,
+            Attention::Blocked => State::Blocked,
+            Attention::Answered => State::Answered,
+            _ => State::Idle,
+        },
     }
 }
 
