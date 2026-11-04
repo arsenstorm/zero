@@ -37,7 +37,7 @@ async fn allow_all(session: &Session, kind: ChoiceKind) -> Conversation {
 async fn codex_finished(dir: Option<std::path::PathBuf>) -> (Session, crate::common::Seen) {
     let (session, _) = session(Provider::Codex, dir);
     let (transport, seen) = play(fixture("codex-command"));
-    session.start(transport, "Run the shell command `ls -la` here", Some("gpt-6-sol"), Some("high")).await.unwrap();
+    session.start(transport, zerod::session::Message::text("Run the shell command `ls -la` here"), zerod::session::ModelChoice { model: Some("gpt-6-sol"), effort: Some("high") }).await.unwrap();
     allow_all(&session, ChoiceKind::Allow).await;
     (session, seen)
 }
@@ -63,7 +63,7 @@ async fn codex_starts_by_initializing_then_a_thread_and_its_first_turn() {
 async fn a_choice_not_offered_or_a_second_decision_is_refused_and_nothing_is_sent() {
     let (session, _) = session(Provider::Codex, None);
     let (transport, seen) = play(fixture("codex-command"));
-    session.start(transport, "ls", None, None).await.unwrap();
+    session.start(transport, zerod::session::Message::text("ls"), Default::default()).await.unwrap();
     let waiting = until(&session, |c| !c.approvals.is_empty()).await;
     let id = &waiting.approvals[0].id;
     assert!(session.decide(id, "made-up").await.is_err());
@@ -80,14 +80,14 @@ async fn a_choice_not_offered_or_a_second_decision_is_refused_and_nothing_is_sen
 async fn codex_is_steered_mid_turn_and_given_a_new_turn_otherwise() {
     let (session, _) = session(Provider::Codex, None);
     let (transport, seen) = play(fixture("codex-command"));
-    session.start(transport, "ls", None, None).await.unwrap();
+    session.start(transport, zerod::session::Message::text("ls"), Default::default()).await.unwrap();
     let waiting = until(&session, |c| !c.approvals.is_empty()).await;
-    session.send("and count the files", None, None).await.unwrap();
+    session.send(zerod::session::Message::text("and count the files"), Default::default()).await.unwrap();
     let steer = seen.first("turn/steer").expect("steered");
     assert_eq!(steer["params"]["expectedTurnId"], waiting.turn.unwrap().as_str());
     assert_eq!(steer["params"]["input"][0]["text"], "and count the files");
     allow_all(&session, ChoiceKind::Allow).await;
-    session.send("thanks", Some("gpt-6-luna"), Some("low")).await.unwrap();
+    session.send(zerod::session::Message::text("thanks"), zerod::session::ModelChoice { model: Some("gpt-6-luna"), effort: Some("low") }).await.unwrap();
     let turns: Vec<_> = seen.all().into_iter().filter(|m| m["method"] == "turn/start").collect();
     assert_eq!((turns.len(), &turns[1]["params"]["model"], &turns[1]["params"]["effort"]), (2, &json!("gpt-6-luna"), &json!("low")));
     assert_eq!(session.snapshot().model.as_deref(), Some("gpt-6-luna"));
@@ -97,7 +97,7 @@ async fn codex_is_steered_mid_turn_and_given_a_new_turn_otherwise() {
 async fn codex_interrupts_name_the_turn_and_need_one() {
     let (session, _) = session(Provider::Codex, None);
     let (transport, seen) = play(fixture("codex-command"));
-    session.start(transport, "ls", None, None).await.unwrap();
+    session.start(transport, zerod::session::Message::text("ls"), Default::default()).await.unwrap();
     let waiting = until(&session, |c| c.turn.is_some()).await;
     session.interrupt().await.unwrap();
     let interrupt = seen.first("turn/interrupt").unwrap();
@@ -123,7 +123,7 @@ async fn codex_resumes_an_offline_session_on_its_thread() {
     session.resume(transport).await.unwrap();
     assert_eq!(seen.first("thread/resume").unwrap()["params"]["threadId"], thread);
     assert_eq!(until(&session, |c| c.status == Status::Idle).await.title.as_deref(), Some("Listing files"));
-    session.send("again", None, None).await.unwrap();
+    session.send(zerod::session::Message::text("again"), Default::default()).await.unwrap();
     assert_eq!(seen.first("turn/start").unwrap()["params"]["threadId"], thread);
 }
 
@@ -133,7 +133,7 @@ async fn codex_resumes_an_offline_session_on_its_thread() {
 async fn claude_is_told_the_prompt_and_answered_on_stdin() {
     let (session, _) = session(Provider::Claude, None);
     let (transport, seen) = play(fixture("claude-file-change"));
-    session.start(transport, "Create a file named hello.txt containing exactly the line: hello from zero. Then reply done.", None, None).await.unwrap();
+    session.start(transport, zerod::session::Message::text("Create a file named hello.txt containing exactly the line: hello from zero. Then reply done."), Default::default()).await.unwrap();
     let done = allow_all(&session, ChoiceKind::Allow).await;
     let first = &seen.all()[0];
     assert_eq!(first["type"], "user");
@@ -148,9 +148,9 @@ async fn claude_is_told_the_prompt_and_answered_on_stdin() {
 async fn claude_queues_a_message_sent_mid_turn_and_interrupts_through_its_control_protocol() {
     let (session, _) = session(Provider::Claude, None);
     let (transport, seen) = play(fixture("claude-file-change"));
-    session.start(transport, "write it", None, None).await.unwrap();
+    session.start(transport, zerod::session::Message::text("write it"), Default::default()).await.unwrap();
     until(&session, |c| !c.approvals.is_empty()).await;
-    session.send("and say hi", None, None).await.unwrap();
+    session.send(zerod::session::Message::text("and say hi"), Default::default()).await.unwrap();
     assert_eq!(seen.said("user", 2).await[1]["message"]["content"], "and say hi");
     session.interrupt().await.unwrap();
     seen.said("control_request:interrupt", 1).await;
@@ -161,7 +161,7 @@ async fn claude_resumes_by_starting_again_on_its_session() {
     let dir = temp_dir("resume-claude");
     let (live, _) = session(Provider::Claude, Some(dir.clone()));
     let (transport, _) = play(fixture("claude-command"));
-    live.start(transport, "uname", None, None).await.unwrap();
+    live.start(transport, zerod::session::Message::text("uname"), Default::default()).await.unwrap();
     until(&live, answered).await;
     let (events, _) = broadcast::channel(16);
     let session = Session::load(&dir, events).unwrap();
@@ -169,7 +169,7 @@ async fn claude_resumes_by_starting_again_on_its_session() {
     let (transport, seen) = play(vec![]);
     session.resume(transport).await.unwrap();
     assert_eq!(session.snapshot().status, Status::Idle);
-    session.send("again", None, None).await.unwrap();
+    session.send(zerod::session::Message::text("again"), Default::default()).await.unwrap();
     assert_eq!(seen.said("user", 1).await[0]["message"]["content"], "again");
 }
 
@@ -179,7 +179,7 @@ async fn claude_resumes_by_starting_again_on_its_session() {
 async fn opencode_initializes_opens_a_session_sets_the_model_and_prompts() {
     let (session, _) = session(Provider::Opencode, None);
     let (transport, seen) = play(fixture("opencode-approval"));
-    session.start(transport, "mkdir and write", Some("opencode-go/beam-free"), Some("high")).await.unwrap();
+    session.start(transport, zerod::session::Message::text("mkdir and write"), zerod::session::ModelChoice { model: Some("opencode-go/beam-free"), effort: Some("high") }).await.unwrap();
     let done = allow_all(&session, ChoiceKind::Allow).await;
     let methods = seen.methods();
     assert_eq!(methods[..2], ["initialize", "session/new"]);
@@ -201,9 +201,9 @@ async fn opencode_initializes_opens_a_session_sets_the_model_and_prompts() {
 async fn opencode_cancels_mid_turn_and_refuses_a_second_prompt_while_one_runs() {
     let (session, _) = session(Provider::Opencode, None);
     let (transport, seen) = play(fixture("opencode-approval"));
-    session.start(transport, "mkdir and write", Some("opencode-go/beam-free"), None).await.unwrap();
+    session.start(transport, zerod::session::Message::text("mkdir and write"), zerod::session::ModelChoice { model: Some("opencode-go/beam-free"), effort: None }).await.unwrap();
     until(&session, |c| !c.approvals.is_empty()).await;
-    let refused = session.send("also this", None, None).await.unwrap_err();
+    let refused = session.send(zerod::session::Message::text("also this"), Default::default()).await.unwrap_err();
     assert!(refused.contains("OpenCode"), "{refused}");
     session.interrupt().await.unwrap();
     assert_eq!(seen.said("session/cancel", 1).await[0]["params"]["sessionId"], "ses_e87e6f601ffeztiWsg4jmIBG4V");
@@ -214,7 +214,7 @@ async fn opencode_resumes_its_session_without_replaying_it() {
     let dir = temp_dir("resume-opencode");
     let (live, _) = session(Provider::Opencode, Some(dir.clone()));
     let (transport, _) = play(fixture("opencode-command"));
-    live.start(transport, "mkdir", Some("opencode-go/beam-free"), None).await.unwrap();
+    live.start(transport, zerod::session::Message::text("mkdir"), zerod::session::ModelChoice { model: Some("opencode-go/beam-free"), effort: None }).await.unwrap();
     until(&live, answered).await;
     let (events, _) = broadcast::channel(16);
     let session = Session::load(&dir, events).unwrap();
@@ -232,7 +232,7 @@ async fn unrestricted_codex_runs_without_approvals_or_sandbox() {
     conversation.permissions = Permissions::Unrestricted;
     let session = Session::new(conversation, None, events).unwrap();
     let (transport, seen) = play(fixture("codex-command"));
-    session.start(transport, "ls", None, None).await.unwrap();
+    session.start(transport, zerod::session::Message::text("ls"), Default::default()).await.unwrap();
     let thread = seen.first("thread/start").unwrap();
     assert_eq!((&thread["params"]["approvalPolicy"], &thread["params"]["sandbox"]), (&json!("never"), &json!("danger-full-access")));
 }
@@ -245,7 +245,7 @@ async fn an_unrestricted_session_has_zerod_allow_whatever_the_agent_still_asks()
     conversation.permissions = Permissions::Unrestricted;
     let session = Session::new(conversation, None, events).unwrap();
     let (transport, seen) = play(fixture("opencode-approval"));
-    session.start(transport, "mkdir and write", Some("opencode-go/beam-free"), None).await.unwrap();
+    session.start(transport, zerod::session::Message::text("mkdir and write"), zerod::session::ModelChoice { model: Some("opencode-go/beam-free"), effort: None }).await.unwrap();
     let done = until(&session, answered).await;
     for id in [0, 1] {
         assert_eq!(seen.reply_to(&json!(id)).unwrap()["result"]["outcome"]["optionId"], "once");
@@ -261,7 +261,7 @@ async fn a_question_is_answered_once_through_the_session() {
         "input": {"questions": [{"question": "Redis or Postgres?", "header": "Cache", "multiSelect": false,
                                  "options": [{"label": "Redis", "description": ""}, {"label": "Postgres", "description": ""}]}]}}}});
     let (transport, seen) = play(vec![request]);
-    session.start(transport, "plan the cache", None, None).await.unwrap();
+    session.start(transport, zerod::session::Message::text("plan the cache"), Default::default()).await.unwrap();
     until(&session, |c| !c.questions.is_empty()).await;
     let answers = std::collections::HashMap::from([("0".to_string(), vec!["Postgres".to_string()])]);
     assert!(session.answer("nope", &answers).await.is_err());
@@ -279,7 +279,7 @@ async fn every_change_is_broadcast_in_order_and_rebuilds_the_conversation() {
     for (provider, name, model) in [(Provider::Codex, "codex-command", None), (Provider::Claude, "claude-command-approval", None), (Provider::Opencode, "opencode-approval", Some("opencode-go/beam-free"))] {
         let (session, mut events) = session(provider, None);
         let (transport, _) = play(fixture(name));
-        session.start(transport, "go", model, None).await.unwrap();
+        session.start(transport, zerod::session::Message::text("go"), zerod::session::ModelChoice { model, effort: None }).await.unwrap();
         let done = allow_all(&session, ChoiceKind::Allow).await;
         let mut mirror = Conversation::new("s1", provider, "/work/project");
         if provider == Provider::Claude { mirror.thread = Some(CLAUDE_SESSION.into()) }
@@ -297,7 +297,7 @@ async fn a_session_is_rebuilt_from_its_transcript_and_comes_back_offline() {
         let dir = temp_dir(&format!("transcript-{name}"));
         let (live, _) = session(provider, Some(dir.clone()));
         let (transport, _) = play(fixture(name));
-        live.start(transport, "go", model, None).await.unwrap();
+        live.start(transport, zerod::session::Message::text("go"), zerod::session::ModelChoice { model, effort: None }).await.unwrap();
         let before = allow_all(&live, ChoiceKind::Allow).await;
         let (events, _) = broadcast::channel(16);
         let after = Session::load(&dir, events).unwrap().snapshot();
@@ -312,10 +312,10 @@ async fn the_runtime_going_away_takes_the_session_offline_and_fails_what_waited_
     let (session, _) = session(Provider::Codex, None);
     let script = vec![fixture("codex-command")[0].clone(), fixture("codex-command")[1].clone(), json!({"hangup": true})];
     let (transport, _) = play(script);
-    assert!(session.start(transport, "ls", None, None).await.is_err(), "thread/start never came back");
+    assert!(session.start(transport, zerod::session::Message::text("ls"), Default::default()).await.is_err(), "thread/start never came back");
     let offline = until(&session, |c| c.status == Status::Offline).await;
     assert!(offline.approvals.is_empty());
-    assert!(session.send("hello?", None, None).await.is_err(), "no runtime until it is resumed");
+    assert!(session.send(zerod::session::Message::text("hello?"), Default::default()).await.is_err(), "no runtime until it is resumed");
 }
 
 #[tokio::test]

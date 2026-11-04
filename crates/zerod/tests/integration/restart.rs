@@ -27,8 +27,8 @@ async fn a_restart_waits_for_a_running_command_then_pauses_the_turn_to_carry_on(
     let home = temp_dir("restart");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
     let cwd = home.to_str().unwrap();
-    let working = daemon.start(Provider::Claude, cwd, "build it", None, None, Permissions::Auto).unwrap();
-    let idle = daemon.start(Provider::Claude, cwd, "done already", None, None, Permissions::Auto).unwrap();
+    let working = daemon.start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
+    let idle = daemon.start(Provider::Claude, "done already", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await; // their processes connect
     let session = daemon.session(&working).unwrap();
     session.change(Change::Status { status: Status::Working, turn: Some("t1".into()), error: None });
@@ -63,7 +63,7 @@ async fn a_restart_doesnt_wait_on_a_session_closed_while_its_command_ran() {
     let home = temp_dir("restart-closed");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
     let cwd = home.to_str().unwrap();
-    let working = daemon.start(Provider::Claude, cwd, "build it", None, None, Permissions::Auto).unwrap();
+    let working = daemon.start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     let session = daemon.session(&working).unwrap();
     session.change(Change::Status { status: Status::Working, turn: Some("t1".into()), error: None });
@@ -81,8 +81,8 @@ async fn after_a_restart_only_what_it_paused_carries_on() {
     let home = temp_dir("restart-carry");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
     let cwd = home.to_str().unwrap();
-    let paused = daemon.start(Provider::Claude, cwd, "build it", None, None, Permissions::Auto).unwrap();
-    let parked = daemon.start(Provider::Claude, cwd, "parked", None, None, Permissions::Auto).unwrap();
+    let paused = daemon.start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
+    let parked = daemon.start(Provider::Claude, "parked", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await; // their processes connect
     daemon.session(&paused).unwrap().change(Change::Status { status: Status::Working, turn: Some("t1".into()), error: None });
     daemon.session(&parked).unwrap().change(Change::Status { status: Status::Offline, turn: None, error: None });
@@ -102,7 +102,7 @@ async fn an_offline_session_whose_status_still_says_working_isnt_paused() {
     // Its process gone at once, as one that ended is.
     let gone: Runtime = Arc::new(|_, _, _| Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())));
     let daemon = Daemon::open(&home.join("zerod"), gone).unwrap();
-    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "old", None, None, Permissions::Auto).unwrap();
+    let id = daemon.start(Provider::Claude, "old", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     let session = daemon.session(&id).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     session.change(Change::Status { status: Status::Working, turn: Some("t1".into()), error: None });
@@ -115,7 +115,7 @@ async fn a_turn_carried_on_after_a_restart_says_so_in_place_of_interrupted() {
     // that line say what happened. A stop the user pressed stays "Interrupted".
     let home = temp_dir("restart-notice");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
-    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "build it", None, None, Permissions::Auto).unwrap();
+    let id = daemon.start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     let session = daemon.session(&id).unwrap();
     session.change(Change::Item { item: Item { at: None, id: "stop".into(), turn: None, kind: ItemKind::Notice { text: "Interrupted".into(), error: false }, status: ItemStatus::Done } });
@@ -128,7 +128,7 @@ async fn a_turn_carried_on_after_a_restart_says_so_in_place_of_interrupted() {
     let notices: Vec<String> = again.get(&id).unwrap().items.iter().filter_map(|i| match &i.kind { ItemKind::Notice { text, .. } => Some(text.clone()), _ => None }).collect();
     assert_eq!(notices, [zerod::daemon::CARRIED]);
     // No "Interrupted" noted (the old zerod went before the interrupt's result): the line is added on its own.
-    let other = again.start(Provider::Claude, home.to_str().unwrap(), "more", None, None, Permissions::Auto).unwrap();
+    let other = again.start(Provider::Claude, "more", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     again.session(&other).unwrap().change(Change::Status { status: Status::Idle, turn: None, error: None });
     std::fs::write(home.join("zerod/paused.json"), serde_json::to_vec(std::slice::from_ref(&other)).unwrap()).unwrap();
@@ -143,7 +143,7 @@ async fn a_worker_paused_for_a_restart_isnt_reported_to_its_lead_as_stopped() {
     let home = temp_dir("restart-report");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
     let cwd = home.to_str().unwrap();
-    let lead = daemon.start(Provider::Claude, cwd, "lead it", None, None, Permissions::Auto).unwrap();
+    let lead = daemon.start(Provider::Claude, "lead it", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
     let worker = daemon.spawn(&lead, Provider::Claude, "work", zerod::daemon::Options::default()).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await; // their processes connect
     daemon.session(&lead).unwrap().change(Change::Status { status: Status::Working, turn: Some("l1".into()), error: None });
@@ -164,7 +164,7 @@ async fn a_worker_paused_for_a_restart_isnt_reported_to_its_lead_as_stopped() {
 async fn a_turn_paused_for_an_update_says_so_once_however_its_agent_notes_the_stop() {
     let home = temp_dir("restart-once");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
-    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "build it", None, None, Permissions::Auto).unwrap();
+    let id = daemon.start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     let session = daemon.session(&id).unwrap();
     session.change(Change::Status { status: Status::Working, turn: Some("t1".into()), error: None });

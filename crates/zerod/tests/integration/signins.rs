@@ -81,9 +81,9 @@ async fn a_task_runs_as_its_sign_in_or_its_clis_default() {
     let a = daemon.signins.save(signin(Provider::Claude, Kind::Token, "a@example.com")).unwrap();
     let b = daemon.signins.save(signin(Provider::Claude, Kind::Token, "b@example.com")).unwrap();
     let token = |id: &str| zerod::process::environment(std::iter::empty(), id).into_iter().find(|(k, _)| k == "CLAUDE_CODE_OAUTH_TOKEN").map(|(_, v)| v);
-    let plain = daemon.start(Provider::Claude, project.to_str().unwrap(), "hi", None, None, zerod::model::Permissions::Auto).unwrap();
+    let plain = daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(project.to_str().unwrap().into()), ..Default::default() }).unwrap();
     assert_eq!(token(&plain), Some(format!("secret-for-{}", a.id)), "no account chosen: the CLI's default");
-    let chosen = daemon.start_with(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(project.to_str().unwrap().into()), signin: Some(b.id.clone()), ..Default::default() }).unwrap();
+    let chosen = daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(project.to_str().unwrap().into()), signin: Some(b.id.clone()), ..Default::default() }).unwrap();
     assert_eq!(token(&chosen), Some(format!("secret-for-{}", b.id)));
     assert_eq!(daemon.get(&chosen).unwrap().signin.as_deref(), Some(b.id.as_str()), "kept with the task, for its restarts");
 }
@@ -154,7 +154,7 @@ fn a_task_runs_as_the_account_with_the_least_of_its_week_left_that_isnt_at_a_lim
 async fn codex_and_opencode_get_zeros_own_tools_as_claude_code_does_from_its_plugin() {
     let home = temp_dir("zero-mcp");
     let daemon = zerod::daemon::Daemon::open(&home, Arc::new(|_, _, _| Ok(crate::common::play(vec![]).0))).unwrap();
-    let start = |provider| daemon.start(provider, home.to_str().unwrap(), "hi", None, None, zerod::model::Permissions::Auto).unwrap();
+    let start = |provider| daemon.start(provider, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     for provider in [Provider::Codex, Provider::Opencode] {
         let id = start(provider);
         let mcp = daemon.session(&id).unwrap().snapshot().mcp;

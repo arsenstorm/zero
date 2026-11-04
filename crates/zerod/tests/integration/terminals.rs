@@ -105,7 +105,7 @@ async fn a_task_goes_to_its_terminal_and_comes_back_with_what_happened_there() {
     let runtime: Runtime = Arc::new(|_, _, _| Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())));
     let daemon = Daemon::open(&home.join("zerod"), runtime).unwrap();
     daemon.place(&user, &socket);
-    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "hi", None, None, Permissions::Auto).unwrap();
+    let id = daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     let session = daemon.session(&id).unwrap();
     until(&session, |c| c.status == Status::Offline).await;
     let thread = session.snapshot().thread.unwrap();
@@ -118,7 +118,7 @@ async fn a_task_goes_to_its_terminal_and_comes_back_with_what_happened_there() {
     assert_eq!(spawned["cwd"], home.to_str().unwrap());
     assert!(spawned["argv"].as_array().unwrap().windows(2).any(|w| w[0] == "--resume" && w[1] == thread.as_str()), "{spawned}");
     assert_eq!(session.snapshot().terminal, Some(Opened { id: "term-1".into(), mark: 1 }), "what the file held before is already in the record");
-    assert_eq!(daemon.send(&id, "from Zero", None, None).await.unwrap_err(), "Claude Code is open in its terminal; type there, or go back to Zero");
+    assert_eq!(daemon.send(&id, zerod::session::Message::text("from Zero"), Default::default()).await.unwrap_err(), "Claude Code is open in its terminal; type there, or go back to Zero");
 
     let mut written = std::fs::read_to_string(&file).unwrap();
     for record in claude_turn() { written += &(record.to_string() + "\n") }
@@ -174,7 +174,7 @@ async fn a_terminal_left_idle_is_closed_and_its_task_comes_back_to_zero() {
     let runtime: Runtime = Arc::new(|_, _, _| Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())));
     let daemon = Daemon::open(&home.join("zerod"), runtime).unwrap();
     daemon.place(&user, &socket);
-    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "hi", None, None, Permissions::Auto).unwrap();
+    let id = daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     let session = daemon.session(&id).unwrap();
     until(&session, |c| c.status == Status::Offline).await;
     let file = zerod::handoff::claude_folder(&user, home.to_str().unwrap()).join(format!("{}.jsonl", session.snapshot().thread.unwrap()));

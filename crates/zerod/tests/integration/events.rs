@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::common::{Seen, fixture, play, temp_dir};
 use serde_json::json;
 use zerod::daemon::{Daemon, Options, Runtime};
-use zerod::model::{Attention, Conversation, Permissions, Provider};
+use zerod::model::{Attention, Conversation, Provider};
 
 struct World {
     daemon: Arc<Daemon>,
@@ -42,7 +42,7 @@ async fn until(daemon: &Daemon, session: &str, test: impl Fn(&Conversation) -> b
 
 /// A Claude session that has finished its first turn and sits idle, and what its runtime hears.
 async fn idle_claude(w: &World) -> (String, Seen) {
-    let id = w.daemon.start(Provider::Claude, w.project.to_str().unwrap(), "hi", None, None, Permissions::Auto).unwrap();
+    let id = w.daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(w.project.to_str().unwrap().into()), ..Default::default() }).unwrap();
     let mut seen = None;
     for _ in 0..500 {
         if let Some(found) = w.claude.lock().unwrap().last().cloned() { seen = Some(found); break }

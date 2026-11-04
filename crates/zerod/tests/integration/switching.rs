@@ -103,11 +103,11 @@ async fn a_session_switches_only_between_turns_and_only_to_a_provider_that_can_t
     // A runtime that ends at once: the session is left offline, as one out of usage is.
     let runtime: Runtime = Arc::new(|_, _, _| Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())));
     let daemon = Daemon::open(&home, runtime.clone()).unwrap();
-    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "hi", None, None, Permissions::Auto).unwrap();
+    let id = daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     crate::common::until(&daemon.session(&id).unwrap(), |c| c.status == Status::Offline).await;
-    daemon.switch(&id, Provider::Codex, Some("gpt-6-sol"), None).await.unwrap();
+    daemon.switch(&id, Provider::Codex, zerod::session::ModelChoice { model: Some("gpt-6-sol"), effort: None }).await.unwrap();
     assert_eq!(daemon.get(&id).unwrap().provider, Provider::Codex);
-    assert_eq!(daemon.switch(&id, Provider::Opencode, None, None).await.unwrap_err(), "Zero can't hand a task to OpenCode yet");
+    assert_eq!(daemon.switch(&id, Provider::Opencode, Default::default()).await.unwrap_err(), "Zero can't hand a task to OpenCode yet");
     // Kept across a restart: the switch is in the transcript.
     drop(daemon);
     let daemon = Daemon::open(&home, runtime).unwrap();
@@ -122,9 +122,9 @@ async fn a_model_picked_without_a_message_goes_on_the_next_turn() {
     let (transport, recorder) = crate::common::play(vec![]);
     session.attach(transport);
     session.change(zerod::model::Change::Thread { thread: "t1".into(), model: Some("gpt-6-sol".into()), effort: None });
-    session.set_model(Some("gpt-6-luna"), Some("high")).await.unwrap();
+    session.set_model(zerod::session::ModelChoice { model: Some("gpt-6-luna"), effort: Some("high") }).await.unwrap();
     assert_eq!(session.snapshot().model.as_deref(), Some("gpt-6-luna"));
-    session.send("hi", None, None).await.unwrap();
+    session.send(zerod::session::Message::text("hi"), Default::default()).await.unwrap();
     let turn = recorder.said("turn/start", 1).await;
     assert_eq!(turn[0]["params"]["model"], "gpt-6-luna");
     assert_eq!(turn[0]["params"]["effort"], "high");
@@ -156,7 +156,7 @@ async fn permissions_change_between_turns_and_the_next_turn_starts_the_agent_wit
     // A runtime that ends at once, as a parked session's would: what matters is the command each start used.
     let runtime: Runtime = Arc::new(move |_, _, argv| { seen.lock().unwrap().push(argv.join(" ")); Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())) });
     let daemon = Daemon::open(&home, runtime.clone()).unwrap();
-    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "hi", None, None, Permissions::Auto).unwrap();
+    let id = daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     crate::common::until(&daemon.session(&id).unwrap(), |c| c.status == Status::Offline).await;
     assert!(started.lock().unwrap()[0].contains("--permission-mode auto"), "{:?}", started.lock().unwrap());
 
@@ -185,7 +185,7 @@ async fn a_task_keeps_the_model_it_started_on_and_its_workers_take_it() {
     let seen = started.clone();
     let runtime: Runtime = Arc::new(move |_, _, argv| { seen.lock().unwrap().push(argv.join(" ")); Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())) });
     let daemon = Daemon::open(&home, runtime.clone()).unwrap();
-    let lead = daemon.start(Provider::Claude, home.to_str().unwrap(), "lead it", Some("claude-opus-5-5"), Some("high"), Permissions::Auto).unwrap();
+    let lead = daemon.start(Provider::Claude, "lead it", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), model: Some("claude-opus-5-5".into()), effort: Some("high".into()), ..Default::default() }).unwrap();
     crate::common::until(&daemon.session(&lead).unwrap(), |c| c.status == Status::Offline).await;
     drop(daemon);
     let daemon = Daemon::open(&home, runtime).unwrap();

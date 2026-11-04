@@ -33,7 +33,7 @@ async fn turn(session: &zerod::session::Session, n: usize, said: &str) {
 async fn a_reply_to_a_turn_zero_started_is_new_only_if_the_last_one_was_unread() {
     let home = temp_dir("replies");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
-    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "hi", None, None, Permissions::Auto).unwrap();
+    let id = daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     let session = daemon.session(&id).unwrap();
     turn(&session, 1, "Is the PR merged?").await;
@@ -53,7 +53,7 @@ async fn a_reply_to_a_turn_zero_started_is_new_only_if_the_last_one_was_unread()
 async fn seeing_a_reply_shows_on_the_board_at_once() {
     let home = temp_dir("replies-seen");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
-    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "hi", None, None, Permissions::Auto).unwrap();
+    let id = daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     turn(&daemon.session(&id).unwrap(), 1, "Is the PR merged?").await;
     let mut board_moves = daemon.subscribe_queues();

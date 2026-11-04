@@ -123,7 +123,7 @@ async fn a_session_with_no_word_from_its_agent_for_ten_minutes_is_stuck() {
 async fn waiting_on_arsen_is_not_stuck() {
     let session = session(Provider::Codex);
     let (transport, _) = play(fixture("codex-command"));
-    session.start(transport, "ls", None, None).await.unwrap();
+    session.start(transport, zerod::session::Message::text("ls"), Default::default()).await.unwrap();
     wait_minutes(30).await;
     let now = session.snapshot();
     assert!(!now.approvals.is_empty());

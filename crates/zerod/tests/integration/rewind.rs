@@ -59,7 +59,7 @@ async fn rewinding_takes_the_conversation_back_and_can_bring_the_folder_back() {
     let preview = daemon.rewind_preview(&id, &second).unwrap();
     assert_eq!((preview["snapshot"].as_bool(), preview["files"].as_u64()), (Some(true), Some(2)));
 
-    let rewound = daemon.rewind(&id, &second, true, true).await.unwrap();
+    let rewound = daemon.rewind(&id, &second, zerod::daemon::Rewind::Both).await.unwrap();
     assert_eq!(rewound["text"], "second", "the message, to send again or change");
     assert_eq!(texts(&daemon.get(&id).unwrap()), ["first", "done one"]);
     assert_eq!(std::fs::read_to_string(project.join("a.txt")).unwrap(), "one\n");
@@ -81,8 +81,8 @@ async fn rewinding_only_the_conversation_leaves_the_folder_and_the_first_message
     let (daemon, id, project, _) = task("rewind-first");
     let first = message(&daemon, &id, "first");
     std::fs::write(project.join("a.txt"), "agent's\n").unwrap();
-    assert!(daemon.rewind(&id, &first, false, true).await.is_err(), "no snapshot of the folder for it");
-    daemon.rewind(&id, &first, true, false).await.unwrap();
+    assert!(daemon.rewind(&id, &first, zerod::daemon::Rewind::Code).await.is_err(), "no snapshot of the folder for it");
+    daemon.rewind(&id, &first, zerod::daemon::Rewind::Conversation).await.unwrap();
     let task = daemon.get(&id).unwrap();
     assert!(task.items.is_empty());
     assert_eq!(task.thread, None, "nothing to resume: the next message starts a new thread");
@@ -93,7 +93,7 @@ async fn rewinding_only_the_conversation_leaves_the_folder_and_the_first_message
 async fn only_a_message_of_yours_can_be_gone_back_to() {
     let (daemon, id, _, _) = task("rewind-answer");
     let answer = daemon.get(&id).unwrap().items.iter().find(|i| matches!(i.kind, ItemKind::Agent { .. })).unwrap().id.clone();
-    assert!(daemon.rewind(&id, &answer, true, false).await.is_err());
+    assert!(daemon.rewind(&id, &answer, zerod::daemon::Rewind::Conversation).await.is_err());
     assert!(daemon.branch(&id, &answer).is_err());
 }
 

@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use crate::adapter::{Adapter, Answers, Effects, after_approval, json_rpc_answer, key};
 use crate::codex::file_title;
 use crate::model::{Approval, ApprovalKind, Change, Choice, ChoiceKind, Conversation, FileChange, Item, ItemKind, ItemStatus, Question, Status};
-use crate::session::{Session, Transport};
+use crate::session::{Message, ModelChoice, Session, Transport};
 
 #[derive(Default)]
 pub struct Acp {
@@ -271,23 +271,18 @@ fn status(call: &Value) -> ItemStatus {
 
 // The session's side: what Zero says to the agent, in order.
 
-pub async fn start(session: &Session, transport: Transport, prompt: &str, images: &[String], model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
-    start_with_context(session, transport, None, prompt, images, model, effort).await
-}
-
-/// A new session whose first prompt carries Zero's instructions and `context` (the conversation so far) in blocks of
-/// their own, marked so they aren't taken for the user's words.
-pub async fn start_with_context(session: &Session, transport: Transport, context: Option<&str>, prompt: &str, images: &[String], model: Option<&str>,
-                                effort: Option<&str>) -> Result<(), String> {
+/// A new session whose first prompt carries Zero's instructions and the message's context (the conversation so far)
+/// in blocks of their own, marked so they aren't taken for the user's words.
+pub async fn start(session: &Session, transport: Transport, message: Message<'_>, choice: ModelChoice<'_>) -> Result<(), String> {
     initialize(session, transport).await?;
     let snapshot = session.snapshot();
     let (cwd, servers) = (snapshot.cwd.clone(), mcp_servers(&snapshot.mcp));
     session.request(|id| json!({"jsonrpc": "2.0", "id": id, "method": "session/new", "params": {"cwd": cwd, "mcpServers": servers}})).await?;
-    configure(session, model, effort).await?;
-    let mut blocks = blocks(prompt, images);
+    configure(session, choice).await?;
+    let mut blocks = blocks(message.text, message.images);
     // ACP has no standing instructions (Claude's system prompt, Codex's developer ones): Zero's go first, as context.
     if let Some(list) = blocks.as_array_mut() {
-        for text in context.into_iter().chain([crate::adapter::INSTRUCTIONS]) {
+        for text in message.context.into_iter().chain([crate::adapter::INSTRUCTIONS]) {
             list.insert(0, json!({"type": "text", "text": text, "_meta": {"zero": "context"}}));
         }
     }
@@ -314,9 +309,9 @@ async fn initialize(session: &Session, transport: Transport) -> Result<(), Strin
 }
 
 /// Sets the model, then the effort (an option OpenCode adds for models that have one).
-pub(crate) async fn configure(session: &Session, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+pub(crate) async fn configure(session: &Session, choice: ModelChoice<'_>) -> Result<(), String> {
     let thread = session.snapshot().thread.ok_or("The agent opened no session")?;
-    for (option, value) in [("model", model), ("effort", effort)] {
+    for (option, value) in [("model", choice.model), ("effort", choice.effort)] {
         let Some(value) = value else { continue };
         session.request(|id| json!({"jsonrpc": "2.0", "id": id, "method": "session/set_config_option", "params": {"sessionId": thread, "configId": option, "value": value}})).await?;
     }
@@ -342,13 +337,13 @@ pub fn blocks(text: &str, images: &[String]) -> Value {
 
 /// ponytail: ACP has no steering and one prompt at a time, so a message mid-turn is refused; queue it in zerod if
 /// that gets in the way.
-pub async fn send(session: &Session, text: &str, images: &[String], model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+pub async fn send(session: &Session, message: Message<'_>, choice: ModelChoice<'_>) -> Result<(), String> {
     let conversation = session.snapshot();
     if conversation.turn.is_some() {
         return Err(format!("{} takes one message at a time: wait for its answer, or stop it first", conversation.provider.title()));
     }
-    configure(session, model, effort).await?;
-    prompt(session, text, images)
+    configure(session, choice).await?;
+    prompt(session, message.text, message.images)
 }
 
 pub async fn interrupt(session: &Session) -> Result<(), String> {

@@ -206,7 +206,7 @@ async fn a_live_session_is_answered_from_the_inbox() {
     let inbox = Inbox::open(None, vec![]);
     inbox.configure(Duration::from_millis(20), 3600);
     Bridge::start(daemon.clone(), inbox.clone());
-    let session = daemon.start(Provider::Codex, home.to_str().unwrap(), "ls", None, None, Permissions::Auto).unwrap();
+    let session = daemon.start(Provider::Codex, "ls", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     let mut ask = None;
     for _ in 0..500 {
         ask = inbox.open_asks().into_iter().find(|a| a.kind == AskKind::Permission);

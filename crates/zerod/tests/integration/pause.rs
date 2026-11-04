@@ -27,9 +27,9 @@ async fn a_paused_task_is_parked_with_its_workers_and_stays_paused_across_a_rest
     let home = temp_dir("pause");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
     let cwd = home.to_str().unwrap();
-    let lead = daemon.start(Provider::Claude, cwd, "lead it", None, None, Permissions::Auto).unwrap();
+    let lead = daemon.start(Provider::Claude, "lead it", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
     let worker = daemon.spawn(&lead, Provider::Claude, "work", zerod::daemon::Options::default()).unwrap();
-    let other = daemon.start(Provider::Claude, cwd, "something else", None, None, Permissions::Auto).unwrap();
+    let other = daemon.start(Provider::Claude, "something else", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await; // their processes connect
     for id in [&lead, &worker, &other] { idle(&daemon, id) }
 
@@ -51,8 +51,8 @@ async fn pausing_nothing_in_particular_pauses_every_task() {
     let home = temp_dir("pause-all");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
     let cwd = home.to_str().unwrap();
-    let one = daemon.start(Provider::Claude, cwd, "one task", None, None, Permissions::Auto).unwrap();
-    let two = daemon.start(Provider::Claude, cwd, "two tasks", None, None, Permissions::Auto).unwrap();
+    let one = daemon.start(Provider::Claude, "one task", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
+    let two = daemon.start(Provider::Claude, "two tasks", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     for id in [&one, &two] { idle(&daemon, id) }
     assert_eq!(daemon.pause(&[], Duration::from_secs(1)).await.len(), 2);
@@ -65,7 +65,7 @@ async fn pausing_nothing_in_particular_pauses_every_task() {
 async fn words_for_a_paused_task_wait_until_it_is_resumed() {
     let home = temp_dir("pause-words");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
-    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "build it", None, None, Permissions::Auto).unwrap();
+    let id = daemon.start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     idle(&daemon, &id);
     daemon.pause(std::slice::from_ref(&id), Duration::from_secs(1)).await;
@@ -84,7 +84,7 @@ async fn words_for_a_paused_task_wait_until_it_is_resumed() {
 async fn a_paused_task_with_nothing_waiting_stays_parked_when_resumed() {
     let home = temp_dir("pause-nothing");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
-    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "build it", None, None, Permissions::Auto).unwrap();
+    let id = daemon.start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     idle(&daemon, &id);
     daemon.pause(std::slice::from_ref(&id), Duration::from_secs(1)).await;
@@ -97,11 +97,11 @@ async fn a_paused_task_with_nothing_waiting_stays_parked_when_resumed() {
 async fn the_users_message_resumes_a_paused_task() {
     let home = temp_dir("pause-message");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
-    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "build it", None, None, Permissions::Auto).unwrap();
+    let id = daemon.start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     idle(&daemon, &id);
     daemon.pause(std::slice::from_ref(&id), Duration::from_secs(1)).await;
-    let _ = tokio::time::timeout(Duration::from_secs(2), daemon.send(&id, "back again", None, None)).await;
+    let _ = tokio::time::timeout(Duration::from_secs(2), daemon.send(&id, zerod::session::Message::text("back again"), Default::default())).await;
     assert!(!daemon.is_paused(&id));
 }
 
@@ -110,7 +110,7 @@ async fn a_working_task_is_asked_to_wrap_up_then_stopped_and_told_to_carry_on_wh
     let home = temp_dir("pause-working");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
     let cwd = home.to_str().unwrap();
-    let lead = daemon.start(Provider::Claude, cwd, "lead it", None, None, Permissions::Auto).unwrap();
+    let lead = daemon.start(Provider::Claude, "lead it", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
     let worker = daemon.spawn(&lead, Provider::Claude, "work", zerod::daemon::Options::default()).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     idle(&daemon, &lead);
@@ -137,7 +137,7 @@ async fn a_paused_task_shows_as_paused_on_the_board() {
     let home = temp_dir("pause-board");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
     let cwd = home.to_str().unwrap();
-    let lead = daemon.start(Provider::Claude, cwd, "lead it", None, None, Permissions::Auto).unwrap();
+    let lead = daemon.start(Provider::Claude, "lead it", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
     let worker = daemon.spawn(&lead, Provider::Claude, "work", zerod::daemon::Options::default()).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     for id in [&lead, &worker] { idle(&daemon, id) }

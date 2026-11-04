@@ -44,7 +44,7 @@ async fn a_message_with_an_image_keeps_it_through_a_restart() {
     session.attach(transport);
     let png = dir.join("shot.png");
     std::fs::write(&png, [1, 2, 3]).unwrap();
-    session.send_with_images("what's this?", &[png.to_str().unwrap().to_string()], None, None).await.unwrap();
+    session.send(zerod::session::Message { text: "what's this?", images: &[png.to_str().unwrap().to_string()], context: None }, Default::default()).await.unwrap();
     let mine = |conversation: &Conversation| conversation.items.iter().find_map(|i| match &i.kind { ItemKind::User { images, .. } => Some(images.clone()), _ => None });
     assert_eq!(mine(&session.snapshot()), Some(vec![png.to_str().unwrap().to_string()]));
     let again = Session::load(&dir, events).unwrap();
@@ -60,7 +60,7 @@ async fn a_task_starts_with_images_as_any_message_has_them() {
     std::fs::write(&png, [1, 2, 3]).unwrap();
     let path = png.to_str().unwrap().to_string();
     let (transport, recorder) = play(vec![json!({"out": {"type": "user"}})]);
-    session.start_with_images(transport, "what's this?", std::slice::from_ref(&path), None, None).await.unwrap();
+    session.start(transport, zerod::session::Message { text: "what's this?", images: std::slice::from_ref(&path), context: None }, Default::default()).await.unwrap();
     let sent = recorder.said("user", 1).await;
     assert_eq!(sent[0]["message"]["content"][1]["type"], "image", "{}", sent[0]);
     let mine = session.snapshot().items.iter().find_map(|i| match &i.kind { ItemKind::User { images, .. } => Some(images.clone()), _ => None });
@@ -100,7 +100,7 @@ async fn the_message_of_yours_keeps_its_words_beside_its_images() {
     session.attach(transport);
     let png = dir.join("shot.png");
     std::fs::write(&png, [1, 2, 3]).unwrap();
-    session.send_with_images("what's [Image #1] here?", &[png.to_str().unwrap().to_string()], None, None).await.unwrap();
+    session.send(zerod::session::Message { text: "what's [Image #1] here?", images: &[png.to_str().unwrap().to_string()], context: None }, Default::default()).await.unwrap();
     let words = session.snapshot().items.iter().find_map(|i| match &i.kind { ItemKind::User { text, .. } => Some(text.clone()), _ => None });
     assert_eq!(words.as_deref(), Some("what's [Image #1] here?"));
 }

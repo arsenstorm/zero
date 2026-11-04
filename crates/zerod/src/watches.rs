@@ -26,7 +26,7 @@ pub const COOL_DOWN: Duration = Duration::from_secs(60);
 /// At most this much read in one go, so a log that grew by gigabytes is caught up on over a few reads.
 pub const CHUNK: u64 = 8 << 20;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Watch {
     #[serde(default)]

@@ -47,7 +47,7 @@ async fn a_claude_code_session_from_elsewhere_becomes_a_task_with_its_history() 
 async fn an_archived_task_leaves_the_list_and_keeps_its_files() {
     let home = temp_dir("archive");
     let daemon = Daemon::open(&home.join("zerod"), quiet()).unwrap();
-    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "hi", None, None, Permissions::Auto).unwrap();
+    let id = daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     let mut events = daemon.subscribe();
     daemon.archive(&id).await.unwrap();
     assert!(daemon.get(&id).is_none());
@@ -66,8 +66,8 @@ async fn a_lead_adopts_tasks_and_claude_code_sessions_as_its_workers() {
     let daemon = Daemon::open(&home.join("zerod"), quiet()).unwrap();
     daemon.place(&user, &home.join("host.sock"));
     let cwd = project.to_str().unwrap();
-    let lead = daemon.start(Provider::Claude, cwd, "lead them", None, None, Permissions::Auto).unwrap();
-    let task = daemon.start(Provider::Claude, cwd, "one of yesterday's", None, None, Permissions::Auto).unwrap();
+    let lead = daemon.start(Provider::Claude, "lead them", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
+    let task = daemon.start(Provider::Claude, "one of yesterday's", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
 
     assert_eq!(daemon.adopt_into(&lead, &task).unwrap(), task, "a task Zero has, by its id");
     assert_eq!(daemon.get(&task).unwrap().parent.as_deref(), Some(lead.as_str()));

@@ -30,14 +30,14 @@ async fn answers_stops_and_resumes(provider: Provider, model: Option<&str>) {
     let project = home.join("project");
     std::fs::create_dir_all(&project).unwrap();
     let daemon = Daemon::open(&home, zerod::daemon::real_runtime()).unwrap();
-    let id = daemon.start(provider, project.to_str().unwrap(), "Reply with the single word pong, nothing else.", model, None, Default::default()).unwrap();
+    let id = daemon.start(provider, "Reply with the single word pong, nothing else.", zerod::daemon::Options { cwd: Some(project.to_str().unwrap().into()), model: model.map(Into::into), ..Default::default() }).unwrap();
     let first = until(&daemon, &id, |c| c.status == Status::Idle && answer(c).is_some()).await;
     assert!(answer(&first).unwrap().contains("pong"), "{first:#?}");
     assert!(first.thread.is_some());
 
     daemon.stop(&id).unwrap();
     until(&daemon, &id, |c| c.status == Status::Offline).await;
-    daemon.send(&id, "Now reply with the single word ping, nothing else.", None, None).await.unwrap();
+    daemon.send(&id, zerod::session::Message::text("Now reply with the single word ping, nothing else."), Default::default()).await.unwrap();
     let second = until(&daemon, &id, |c| c.status == Status::Idle && answer(c).is_some_and(|a| a.contains("ping"))).await;
     assert_eq!(second.thread, first.thread, "the same conversation, resumed");
 }
@@ -69,7 +69,7 @@ async fn claude_asks_a_question_and_uses_the_answer() {
     let daemon = Daemon::open(&home, zerod::daemon::real_runtime()).unwrap();
     let prompt = "Use the AskUserQuestion tool to ask me one question: which colour I prefer, with the options Teal and Amber. \
                   Then reply with only the colour I picked.";
-    let id = daemon.start(Provider::Claude, project.to_str().unwrap(), prompt, Some("haiku"), None, Default::default()).unwrap();
+    let id = daemon.start(Provider::Claude, prompt, zerod::daemon::Options { cwd: Some(project.to_str().unwrap().into()), model: Some("haiku".into()), ..Default::default() }).unwrap();
     let asked = until(&daemon, &id, |c| !c.questions.is_empty()).await;
     let question = &asked.questions[0];
     assert_eq!(question.fields[0].options.iter().map(|o| o.label.as_str()).collect::<Vec<_>>(), ["Teal", "Amber"], "{question:#?}");
@@ -87,9 +87,8 @@ async fn a_real_lead_hears_from_its_real_worker() {
     let project = home.join("project");
     std::fs::create_dir_all(&project).unwrap();
     let daemon = Daemon::open(&home, zerod::daemon::real_runtime()).unwrap();
-    let lead = daemon.start(Provider::Claude, project.to_str().unwrap(),
-        "You lead one worker. Reply now with only the word ready. Later a message will report what the worker found; \
-         when it does, reply with only the number it found.", Some("haiku"), None, Default::default()).unwrap();
+    let lead = daemon.start(Provider::Claude, "You lead one worker. Reply now with only the word ready. Later a message will report what the worker found; \
+         when it does, reply with only the number it found.", zerod::daemon::Options { cwd: Some(project.to_str().unwrap().into()), model: Some("haiku".into()), ..Default::default() }).unwrap();
     until(&daemon, &lead, |c| c.status == Status::Idle && answer(c).is_some_and(|a| a.contains("ready"))).await;
     let options = zerod::daemon::Options { label: Some("Counter".into()), model: Some("haiku".into()), ..Default::default() };
     let worker = daemon.spawn(&lead, Provider::Claude, "Reply with only the number 4217, nothing else.", options).unwrap();

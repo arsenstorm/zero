@@ -44,7 +44,7 @@ async fn task(home: &std::path::Path, provider: Provider) -> (Arc<Daemon>, Strin
     let sent = Arc::new(std::sync::Mutex::new(String::new()));
     let daemon = Daemon::open(&home.join("zerod"), listening(sent.clone())).unwrap();
     daemon.require_endings();
-    let id = daemon.start(provider, home.to_str().unwrap(), "hi", None, None, Permissions::Auto).unwrap();
+    let id = daemon.start(provider, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     (daemon, id, sent)
 }

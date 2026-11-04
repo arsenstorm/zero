@@ -228,7 +228,7 @@ async fn perform(daemon: &Daemon, act: Act) -> Result<(), String> {
         Act::Answer { session, question, answers } => daemon.answer(&session, &question, &answers).await,
         Act::Decide { session, approval, choice, words } => {
             daemon.decide(&session, &approval, &choice).await?;
-            match words { Some(words) => daemon.send(&session, &words, None, None).await, None => Ok(()) }
+            match words { Some(words) => daemon.send(&session, crate::session::Message::text(&words), Default::default()).await, None => Ok(()) }
         }
     }
 }

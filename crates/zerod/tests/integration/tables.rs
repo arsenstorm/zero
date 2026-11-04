@@ -12,7 +12,7 @@ async fn a_table_is_an_item_of_the_conversation_kept_across_a_restart() {
     let home = temp_dir("tables");
     let runtime: Runtime = Arc::new(|_, _, _| Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())));
     let daemon = Daemon::open(&home, runtime.clone()).unwrap();
-    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "lead", None, None, Permissions::Auto).unwrap();
+    let id = daemon.start(Provider::Claude, "lead", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     daemon.table(&id, "Batch", vec!["Task".into(), "State".into()], vec![vec!["ENG-9790".into(), "working".into()], vec!["ENG-9793".into()]]).unwrap();
     assert_eq!(daemon.table(&id, "Empty", vec![], vec![]).unwrap_err(), "A table needs columns");
     let table = |daemon: &Daemon| daemon.get(&id).unwrap().items.into_iter().find_map(|i| match i.kind { ItemKind::Table { title, columns, rows } => Some((title, columns, rows)), _ => None });

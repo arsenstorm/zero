@@ -3,6 +3,10 @@
 //! ends the session goes offline, keeps its conversation, and `resume` gives it a new process on the same
 //! conversation. After a restart of the daemon, `load` rebuilds it from the transcript.
 
+mod pages;
+mod process;
+mod turns;
+
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, Write};
@@ -21,38 +25,10 @@ use crate::core::Core;
 use crate::model::{Change, ChoiceKind, Conversation, Event, Item, ItemKind, ItemStatus, Permissions, Provider};
 use crate::{acp, claude, codex};
 
-unsafe extern "C" {
-    safe fn kill(pid: i32, signal: i32) -> i32;
-}
-const SIGKILL: i32 = 9;
+pub use process::Transport;
+pub use turns::{Message, ModelChoice};
+use pages::turn_start;
 
-/// How long a request waits for its answer. Turns run long, but the requests that wait answer at once.
-const ANSWER_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// When a working session counts as stuck: no word from its agent, one command running, or the same command in a row.
-/// ponytail: fixed; a setting per project if a suite legitimately runs longer.
-const SILENT: Duration = Duration::from_secs(10 * 60);
-const LONG_COMMAND: Duration = Duration::from_secs(30 * 60);
-const REPEATS: usize = 5;
-const WATCH_EVERY: Duration = Duration::from_secs(15);
-
-/// The two ends of a runtime's stdio, and its process when there is one.
-pub struct Transport {
-    reader: Box<dyn AsyncRead + Send + Unpin>,
-    writer: Box<dyn AsyncWrite + Send + Unpin>,
-    child: Option<Child>,
-}
-
-impl Transport {
-    pub fn new(reader: impl AsyncRead + Send + Unpin + 'static, writer: impl AsyncWrite + Send + Unpin + 'static) -> Self {
-        Transport { reader: Box::new(reader), writer: Box::new(writer), child: None }
-    }
-
-    pub fn with_child(mut self, child: Child) -> Self {
-        self.child = Some(child);
-        self
-    }
-}
 
 #[derive(Clone)]
 pub struct Session(Arc<Mutex<Inner>>);
@@ -207,63 +183,6 @@ impl Session {
         if let Some(core) = inner.core.as_mut() { core.set_mcp(servers) }
     }
 
-    /// The conversation with its latest `count` items (more, back to the start of their turn), and how many came before.
-    pub fn recent(&self, count: usize) -> (Conversation, usize) {
-        let mut inner = self.lock();
-        if let Some(parked) = inner.parked.as_ref().filter(|p| count <= p.tail.len() || p.tail.len() == p.total) {
-            let start = turn_start(&parked.tail, parked.tail.len().saturating_sub(count));
-            return (parked.summary.with_items(parked.tail[start..].to_vec()), parked.total - (parked.tail.len() - start));
-        }
-        let conversation = inner.core().conversation();
-        let start = turn_start(&conversation.items, conversation.items.len().saturating_sub(count));
-        (conversation.with_items(conversation.items[start..].to_vec()), start)
-    }
-
-    /// Items before `before` (all of them with none): from `from` if given, else the last `limit` of them.
-    pub fn items(&self, before: Option<&str>, from: Option<&str>, limit: usize) -> Vec<Item> {
-        let mut inner = self.lock();
-        let items = &inner.core().conversation().items;
-        let end = before.and_then(|id| items.iter().position(|i| i.id == id)).unwrap_or(items.len());
-        let start = match from.and_then(|id| items[..end].iter().position(|i| i.id == id)) {
-            Some(start) => start,
-            None => turn_start(items, end.saturating_sub(limit)),
-        };
-        items[start..end].to_vec()
-    }
-
-    /// A page of the conversation anywhere in it, and how many items lie before and after it: from a message (the
-    /// rail's jump), after one (scrolled to the page's foot), or the latest page. ponytail: positions by scanning
-    /// for the id; index them if conversations reach the hundreds of thousands of items.
-    pub fn window(&self, from: Option<&str>, after: Option<&str>, limit: usize) -> (Vec<Item>, usize, usize) {
-        let mut inner = self.lock();
-        let items = &inner.core().conversation().items;
-        let find = |id: &str| items.iter().position(|i| i.id == id);
-        let start = match (from, after) {
-            (Some(id), _) => match find(id) { Some(at) => at, None => return (vec![], 0, 0) },
-            (None, Some(id)) => match find(id) { Some(at) => at + 1, None => return (vec![], 0, 0) },
-            (None, None) => turn_start(items, items.len().saturating_sub(limit)),
-        };
-        let end = if from.is_none() && after.is_none() { items.len() } else { (start + limit).min(items.len()) };
-        (items[start..end].to_vec(), start, items.len() - end)
-    }
-
-    /// Each message of yours with the start of its answer: the app's rail, whole however little of the conversation
-    /// is loaded.
-    pub fn outline(&self) -> Value {
-        let mut inner = self.lock();
-        let items = &inner.core().conversation().items;
-        let mut marks: Vec<Value> = vec![];
-        for (index, item) in items.iter().enumerate() {
-            // Yours only: what Zero gave the session (a worker's report) isn't a mark of yours.
-            let ItemKind::User { text, .. } = &item.kind else { continue };
-            if crate::model::from(text).is_some() { continue }
-            let answer = items[index + 1..].iter().take_while(|i| !matches!(i.kind, ItemKind::User { .. }))
-                .find_map(|i| match &i.kind { ItemKind::Agent { text, final_answer: true } => Some(text.chars().take(400).collect::<String>()), _ => None });
-            marks.push(json!({"id": item.id, "text": text.chars().take(300).collect::<String>(), "answer": answer}));
-        }
-        Value::Array(marks)
-    }
-
     /// The conversation without its items but its latest answer and last item: what a list and the board need.
     pub fn summary(&self) -> Conversation {
         // Read without touching it: the board reading every task mustn't keep them all in memory.
@@ -324,132 +243,6 @@ impl Session {
         idle.then(|| inner.heard.elapsed())
     }
 
-    /// Starts the runtime's side of the session, with `prompt` as its first turn.
-    pub async fn start(&self, transport: Transport, prompt: &str, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
-        self.start_with_images(transport, prompt, &[], model, effort).await
-    }
-
-    /// The first turn with images (their files), kept as any message's are.
-    pub async fn start_with_images(&self, transport: Transport, prompt: &str, images: &[String], model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
-        self.keep_images(images);
-        match self.provider() {
-            Provider::Codex => codex::start(self, transport, prompt, images, model, effort).await,
-            Provider::Claude => claude::start(self, transport, prompt, images).await,
-            Provider::Opencode => acp::start(self, transport, prompt, images, model, effort).await,
-        }
-    }
-
-    /// A new thread for a conversation without one: for OpenCode, which can't be handed a conversation, the earlier one
-    /// goes with the message as context (handoff.rs), not as words of yours.
-    pub async fn restart(&self, transport: Transport, context: Option<&str>, prompt: &str, images: &[String], model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
-        match (self.provider(), context) {
-            (Provider::Opencode, Some(context)) => {
-                self.keep_images(images);
-                acp::start_with_context(self, transport, Some(context), prompt, images, model, effort).await
-            }
-            _ => self.start_with_images(transport, prompt, images, model, effort).await,
-        }
-    }
-
-    /// The images go on the next message of yours, now and on replay.
-    fn keep_images(&self, images: &[String]) {
-        if images.is_empty() { return }
-        let mut inner = self.lock();
-        inner.record(json!({"attach": images}));
-        inner.core().attach(images.to_vec());
-    }
-
-    /// Gives an offline session a new process on its conversation.
-    pub async fn resume(&self, transport: Transport) -> Result<(), String> {
-        match self.provider() {
-            Provider::Codex => codex::resume(self, transport).await,
-            Provider::Claude => claude::resume(self, transport).await,
-            Provider::Opencode => acp::resume(self, transport).await,
-        }
-    }
-
-    /// Arsen's words: steering or queued behind the turn in progress where the provider allows it, else a new turn.
-    pub async fn send(&self, text: &str, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
-        self.send_with_images(text, &[], model, effort).await
-    }
-
-    /// A model (and effort) picked without a message, for the turns from here: told to the agent now where it takes
-    /// that (Claude Code, OpenCode), and kept so the next turn carries it (Codex) and a restart starts with it.
-    pub async fn set_model(&self, model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
-        if model.is_none() && effort.is_none() { return Ok(()) }
-        let conversation = self.snapshot();
-        let thread = conversation.thread.clone()
-            .ok_or_else(|| format!("{} hasn't started yet: pick the model with your next message", conversation.provider.title()))?;
-        if self.is_attached() {
-            match conversation.provider {
-                Provider::Claude => if let Some(model) = model { claude::set_model(self, model).await? },
-                Provider::Opencode => acp::configure(self, model, effort).await?,
-                Provider::Codex => {}
-            }
-        }
-        self.change(Change::Thread { thread, model: model.map(Into::into), effort: effort.map(Into::into) });
-        Ok(())
-    }
-
-    /// Words with images (their files): kept in the transcript first, so the message keeps them on replay.
-    pub async fn send_with_images(&self, text: &str, images: &[String], model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
-        let conversation = self.snapshot();
-        if !self.is_attached() { return Err(format!("{} is offline; resume it first", conversation.id)) }
-        self.keep_images(images);
-        match conversation.provider {
-            Provider::Codex => codex::send(self, text, images, model, effort).await,
-            Provider::Claude => claude::send(self, text, images, model).await,
-            Provider::Opencode => acp::send(self, text, images, model, effort).await,
-        }
-    }
-
-    pub async fn interrupt(&self) -> Result<(), String> {
-        match self.provider() {
-            Provider::Codex => codex::interrupt(self).await,
-            Provider::Claude => claude::interrupt(self).await,
-            Provider::Opencode => acp::interrupt(self).await,
-        }
-    }
-
-    /// Answers an open approval with one of the choices it offers, once.
-    pub async fn decide(&self, approval: &str, choice: &str) -> Result<(), String> {
-        let mut inner = self.lock();
-        if inner.answered.contains(approval) { return Err(format!("{approval} was already answered")) }
-        let line = inner.core().answer(approval, choice)?;
-        inner.send(line)?;
-        inner.answered.insert(approval.into());
-        Ok(())
-    }
-
-    /// Answers an open question, every field of it, once.
-    pub async fn answer(&self, question: &str, answers: &crate::adapter::Answers) -> Result<(), String> {
-        let mut inner = self.lock();
-        if inner.answered.contains(question) { return Err(format!("{question} was already answered")) }
-        let line = inner.core().reply(question, answers)?;
-        inner.send(line)?;
-        inner.answered.insert(question.into());
-        Ok(())
-    }
-
-    /// Ends the runtime's process; the session stays, offline, to be resumed.
-    pub fn stop(&self) {
-        let generation = {
-            let mut inner = self.lock();
-            match inner.child.as_mut() {
-                // Its output ends when it and everything it started (its process group) are gone, and that takes the
-                // session offline.
-                Some(child) => {
-                    if let Some(pid) = child.id().and_then(|pid| i32::try_from(pid).ok()) { kill(-pid, SIGKILL); }
-                    let _ = child.start_kill();
-                    return;
-                }
-                None => inner.generation,
-            }
-        };
-        // Without a process of its own there is nothing to wait for.
-        self.ended(generation);
-    }
-
     /// Tells subscribers the session exists, before its runtime has said anything.
     pub fn announce(&self) {
         let conversation = self.snapshot();
@@ -464,122 +257,6 @@ impl Session {
         inner.broadcast(changes);
     }
 
-    /// Connects a runtime's stdio to the session and starts reading it.
-    pub fn attach(&self, transport: Transport) {
-        let Transport { reader, mut writer, child } = transport;
-        let (out, mut lines_out) = mpsc::unbounded_channel::<Value>();
-        let generation = {
-            let mut inner = self.lock();
-            inner.generation += 1;
-            inner.out = Some(out);
-            inner.child = child;
-            inner.answered.clear();
-            inner.heard = Instant::now();
-            inner.generation
-        };
-        let watched = self.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(WATCH_EVERY).await;
-                if !watched.watch(generation) { break }
-            }
-        });
-        tokio::spawn(async move {
-            while let Some(message) = lines_out.recv().await {
-                let mut line = serde_json::to_vec(&message).unwrap_or_default();
-                line.push(b'\n');
-                if writer.write_all(&line).await.is_err() || writer.flush().await.is_err() { break }
-            }
-        });
-        let session = self.clone();
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(reader).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                // Anything that isn't JSON (a shell's greeting before the runtime starts) is not the runtime speaking.
-                if let Ok(message) = serde_json::from_str::<Value>(&line) { session.receive(message) }
-            }
-            session.ended(generation);
-        });
-    }
-
-    fn receive(&self, message: Value) {
-        let mut inner = self.lock();
-        let at = now_ms();
-        inner.record(json!({"in": message, "at": at}));
-        inner.core().at(at);
-        inner.heard = Instant::now();
-        let effects = inner.core().receive(&message);
-        for change in &effects.changes {
-            if let Change::Item { item } = change {
-                if item.status == ItemStatus::Running && matches!(item.kind, ItemKind::Command { .. }) { inner.running.entry(item.id.clone()).or_insert_with(Instant::now); }
-                else { inner.running.remove(&item.id); }
-            }
-        }
-        for change in &effects.changes {
-            if let Change::Resolved { approval: id } | Change::Answered { question: id } = change { inner.answered.remove(id); }
-        }
-        let asked: Vec<_> = effects.changes.iter().filter_map(|c| match c { Change::Approval { approval } => Some(approval.clone()), _ => None }).collect();
-        inner.broadcast(effects.changes);
-        if inner.core().conversation().permissions == Permissions::Unrestricted {
-            for approval in asked { inner.allow(&approval); }
-        }
-        if let Some((id, outcome)) = inner.core().answers(&message) && let Some(waiter) = inner.waiting.remove(&id) {
-            let _ = waiter.send(outcome);
-        }
-        for reply in effects.replies { let _ = inner.send(reply); }
-    }
-
-    /// The runtime's output ended: its process is gone, and so is everything waiting on it.
-    fn ended(&self, generation: u64) {
-        let mut inner = self.lock();
-        if inner.generation != generation { return }
-        inner.out = None;
-        inner.child = None;
-        let provider = inner.core().conversation().provider.title();
-        for (_, waiter) in inner.waiting.drain() { let _ = waiter.send(Err(format!("{provider} stopped"))); }
-        inner.record(json!({"offline": true}));
-        let changes = inner.core().offline();
-        inner.broadcast(changes);
-    }
-
-    /// Looks for a working session that has stopped making progress, and marks or clears it. False once the
-    /// process it watched is gone.
-    fn watch(&self, generation: u64) -> bool {
-        let mut inner = self.lock();
-        if inner.generation != generation || inner.out.is_none() { return false }
-        let Some(core) = inner.core.as_ref() else { return true };
-        let conversation = core.conversation();
-        let reason = if conversation.status != crate::model::Status::Working { None } else {
-            let longest = inner.running.iter().filter_map(|(id, started)| {
-                let elapsed = started.elapsed();
-                let command = match conversation.item(id).map(|i| &i.kind) { Some(ItemKind::Command { command, .. }) => command.clone(), _ => return None };
-                (elapsed >= LONG_COMMAND).then(|| format!("{command} has been running for {} minutes", elapsed.as_secs() / 60))
-            }).next();
-            // The same command again and again with nothing else between: counted in full, so the number grows as it goes
-            // on. Another step between (a different tool, a file changed) is work, not a loop.
-            let steps = conversation.items.iter().rev().take_while(|i| i.turn == conversation.turn || conversation.turn.is_none())
-                .filter(|i| !matches!(i.kind, ItemKind::Reasoning { .. } | ItemKind::Agent { .. }));
-            let mut run: Option<(&str, usize)> = None;
-            for step in steps {
-                match (&step.kind, run) {
-                    (ItemKind::Command { command, .. }, None) => run = Some((command, 1)),
-                    (ItemKind::Command { command, .. }, Some((same, n))) if command == same => run = Some((same, n + 1)),
-                    _ => break,
-                }
-            }
-            let repeated = run.filter(|(_, n)| *n >= REPEATS).map(|(command, n)| format!("Ran {command} {n} times in a row"));
-            let silent = (inner.heard.elapsed() >= SILENT).then(|| format!("No word from {} for {} minutes", conversation.provider.title(), SILENT.as_secs() / 60));
-            longest.or(repeated).or(silent)
-        };
-        if reason != conversation.stalled {
-            let change = inner.core().change(Change::Stalled { reason });
-            inner.broadcast(vec![change]);
-        }
-        true
-    }
-
-    // What the providers' flows use to talk to their runtime.
-
     /// A change Zero makes itself (a model switched, a label given), kept in the transcript so a restart replays it.
     /// Its turn is being paused for Zero's update: the agent's note of the stop says so.
     pub fn pause_for_update(&self) { self.lock().core().pausing(true) }
@@ -593,38 +270,6 @@ impl Session {
         inner.broadcast(vec![change]);
     }
 
-    /// Writes a line that nothing waits on an answer to.
-    pub(crate) fn write(&self, message: Value) -> Result<(), String> {
-        self.lock().send(message)
-    }
-
-    /// Sends a request with a fresh id, and waits for its answer.
-    pub(crate) async fn request(&self, build: impl FnOnce(&str) -> Value) -> Result<Value, String> {
-        let (answer, provider) = {
-            let mut inner = self.lock();
-            let id = inner.fresh_id();
-            let (tell, answer) = oneshot::channel();
-            inner.waiting.insert(id.clone(), tell);
-            if let Err(error) = inner.send(build(&id)) {
-                inner.waiting.remove(&id);
-                return Err(error);
-            }
-            (answer, inner.core().conversation().provider.title())
-        };
-        match tokio::time::timeout(ANSWER_TIMEOUT, answer).await {
-            Ok(Ok(outcome)) => outcome,
-            Ok(Err(_)) => Err(format!("{provider} stopped")),
-            Err(_) => Err(format!("{provider} didn't answer")),
-        }
-    }
-
-    /// Sends a request with a fresh id whose answer the adapter handles when it comes (an ACP prompt, which answers
-    /// only when its turn ends).
-    pub(crate) fn request_later(&self, build: impl FnOnce(&str) -> Value) -> Result<(), String> {
-        let mut inner = self.lock();
-        let id = inner.fresh_id();
-        inner.send(build(&id))
-    }
 }
 
 impl Inner {
@@ -647,24 +292,6 @@ impl Inner {
         self.record(json!({"change": change}));
         let change = self.core().change(change);
         self.broadcast(vec![change]);
-    }
-
-    fn fresh_id(&mut self) -> String {
-        let id = format!("z{}", self.next);
-        self.next += 1;
-        id
-    }
-
-    /// Every line to the runtime goes through the adapter first, which may change the conversation (Claude's and
-    /// ACP's prompts start turns; their answers settle approvals).
-    fn send(&mut self, message: Value) -> Result<(), String> {
-        let out = self.out.clone().ok_or_else(|| format!("{} isn't running", self.core().conversation().provider.title()))?;
-        let at = now_ms();
-        self.record(json!({"out": message, "at": at}));
-        self.core().at(at);
-        let changes = self.core().sent(&message);
-        self.broadcast(changes);
-        out.send(message).map_err(|_| "The runtime isn't running".to_string())
     }
 
     /// ponytail: written under the session's lock, a line at a time; buffer if transcripts get hot.
@@ -701,13 +328,6 @@ impl Inner {
             let _ = self.events.send(Event { session: conversation.id.clone(), seq: first + offset as u64, change });
         }
     }
-}
-
-/// Where the turn holding `items[start]` begins (the message of yours it answers), so a page never splits a turn: the
-/// app folds a turn into one row, and half of one shows the wrong time.
-fn turn_start(items: &[Item], start: usize) -> usize {
-    if start >= items.len() { return start }
-    items[..=start].iter().rposition(|i| matches!(i.kind, ItemKind::User { .. })).unwrap_or(0)
 }
 
 /// Without its items but its latest answer (the board's) and its last item (how it's doing).

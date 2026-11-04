@@ -50,7 +50,7 @@ async fn until(daemon: &Daemon, session: &str, test: impl Fn(&Conversation) -> b
 }
 
 fn start(daemon: &Daemon, provider: Provider, cwd: &std::path::Path, prompt: &str) -> String {
-    daemon.start(provider, cwd.to_str().unwrap(), prompt, None, None, Permissions::Auto).unwrap()
+    daemon.start(provider, prompt, zerod::daemon::Options { cwd: Some(cwd.to_str().unwrap().into()), ..Default::default() }).unwrap()
 }
 
 fn named(label: &str, ticket: Option<&str>) -> Options {
@@ -83,7 +83,7 @@ async fn finished_worker(w: &World, lead: &str) -> String {
 #[tokio::test]
 async fn a_worker_knows_its_lead_and_runs_in_its_folder_with_its_permissions() {
     let w = world("leads-spawn");
-    let lead = w.daemon.start(Provider::Claude, w.project.to_str().unwrap(), "lead the work", None, None, Permissions::Unrestricted).unwrap();
+    let lead = w.daemon.start(Provider::Claude, "lead the work", zerod::daemon::Options { cwd: Some(w.project.to_str().unwrap().into()), permissions: Some(Permissions::Unrestricted), ..Default::default() }).unwrap();
     let worker = w.daemon.spawn(&lead, Provider::Codex, "list the files", named("Listing", Some("WEB-7"))).unwrap();
     let conversation = w.daemon.get(&worker).unwrap();
     assert_eq!(conversation.parent.as_deref(), Some(lead.as_str()));
@@ -180,7 +180,7 @@ async fn a_model_switched_mid_session_is_still_the_model_after_a_restart() {
     let waiting = until(&w.daemon, &session, |c| !c.approvals.is_empty()).await;
     w.daemon.decide(&session, &waiting.approvals[0].id, &waiting.approvals[0].choices[0].id).await.unwrap();
     until(&w.daemon, &session, |c| matches!(c.attention(), Attention::Idle | Attention::Answered | Attention::Done) && c.answer().is_some()).await;
-    w.daemon.send(&session, "again, on luna", Some("gpt-6-luna"), None).await.unwrap();
+    w.daemon.send(&session, zerod::session::Message::text("again, on luna"), zerod::session::ModelChoice { model: Some("gpt-6-luna"), effort: None }).await.unwrap();
     assert_eq!(w.daemon.get(&session).unwrap().model.as_deref(), Some("gpt-6-luna"));
     let again = Daemon::open(&w.home, runtime(w.claude.clone())).unwrap();
     assert_eq!(again.get(&session).unwrap().model.as_deref(), Some("gpt-6-luna"));
@@ -301,12 +301,12 @@ async fn a_worker_is_in_its_leads_workspace_wherever_it_runs() {
     let elsewhere = w.home.join("elsewhere");
     std::fs::create_dir_all(&elsewhere).unwrap();
     // Started from Zero into Acme: the lead is there, and its worker in another folder is too.
-    let lead = w.daemon.start_with(Provider::Claude, "lead", Options { cwd: Some(w.project.to_str().unwrap().into()), workspace: Some("work".into()), ..Default::default() }).unwrap();
+    let lead = w.daemon.start(Provider::Claude, "lead", Options { cwd: Some(w.project.to_str().unwrap().into()), workspace: Some("work".into()), ..Default::default() }).unwrap();
     let worker = w.daemon.spawn(&lead, Provider::Claude, "work", Options { cwd: Some(elsewhere.to_str().unwrap().into()), ..Default::default() }).unwrap();
     let rows = zerod::board::board_in(&w.daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(), &[], &Default::default(), &Default::default(), &|c| w.daemon.workspace_of(c));
     assert_eq!(rows.iter().map(|r| (r.session.as_str(), r.workspace.as_str())).collect::<Vec<_>>(), [(lead.as_str(), "work")]);
     assert_eq!(w.daemon.workspace_of(&w.daemon.get(&worker).unwrap()), "work");
-    assert_eq!(w.daemon.start_with(Provider::Claude, "x", Options { cwd: Some(w.project.to_str().unwrap().into()), workspace: Some("nope".into()), ..Default::default() }).unwrap_err(), "No workspace nope");
+    assert_eq!(w.daemon.start(Provider::Claude, "x", Options { cwd: Some(w.project.to_str().unwrap().into()), workspace: Some("nope".into()), ..Default::default() }).unwrap_err(), "No workspace nope");
     // Moved, and moved back to its folder's: Zero's.
     w.daemon.place_in_workspace(&lead, None).unwrap();
     assert_eq!(w.daemon.workspace_of(&w.daemon.get(&lead).unwrap()), "zero");

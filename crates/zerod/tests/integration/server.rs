@@ -546,3 +546,23 @@ async fn a_task_asks_runs_and_notes_through_zeros_tools_whatever_sandbox_its_age
     assert!(asks.iter().any(|a| a["kind"] == "run" && a["command"] == "bin/prod-check" && a["body"] == "the counts"));
     assert!(asks.iter().any(|a| a["kind"] == "note" && a["status"] == "waiting"));
 }
+
+/// Every op reaches its handler: asked without what it needs, each says what's missing rather than "Unknown op".
+/// Left out: ops that act with nothing given (restart, sign-ins, connecting services, setting browsers up, pausing).
+#[tokio::test]
+async fn every_op_is_routed_to_its_handler() {
+    let h = harness("server-routes").await;
+    let mut client = Client::connect(&h.socket).await;
+    let ops = "adopt agentAsk answer answerAsk archive archived asks attr board branch browserCall browserSettings browserState browsers \
+        cancelRun choose close closeTerminal configure connectSlack create decide defaultSignIn deleteLoop deleteMcpServer deleteSignIn \
+        deleteView deleteWorkspace deliver detach dismiss firefox follow following get hello interrupt items label later list loop loops \
+        mcpServers message migrate notify openTerminal orderViews outline pad place placeInWorkspace press queue recent release remind \
+        reply restartStatus result resume rewind rewindPreview saveBrowserSettings saveLoop saveMcpServer saveSignIn saveView saveWorkspace \
+        schedule schedules screen seen send setIntegration setPermissions settings signIns spawn start startTask stop switch switchModel \
+        table takeBack unarchive unfollow unqueue unschedule unwatch viewItems wait watch watchFile watches window withdraw workers workspaces";
+    for op in ops.split_whitespace() {
+        let answer = client.call(json!({"op": op})).await;
+        let error = answer["error"].as_str().unwrap_or_default();
+        assert!(!error.starts_with("Unknown op"), "{op} isn't routed: {answer}");
+    }
+}

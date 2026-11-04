@@ -8,7 +8,7 @@ use std::time::Duration;
 use crate::common::{Seen, play, temp_dir};
 use serde_json::json;
 use zerod::daemon::{Daemon, Runtime};
-use zerod::model::{Permissions, Provider};
+use zerod::model::Provider;
 use zerod::watches::{Reading, Watch};
 
 fn watch(alerts: &[&str], done: Option<&str>) -> Watch {
@@ -54,16 +54,16 @@ async fn a_task_hears_when_its_watched_log_goes_wrong_and_when_its_done() {
     let started = Arc::new(Mutex::new(vec![]));
     let daemon = Daemon::open(&home, runtime(started.clone())).unwrap();
     zerod::watches::poll_every(Duration::from_millis(30));
-    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "build it", None, None, Permissions::Auto).unwrap();
+    let id = daemon.start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     for _ in 0..200 { if !started.lock().unwrap().is_empty() { break } tokio::time::sleep(Duration::from_millis(10)).await }
     let seen = started.lock().unwrap()[0].clone();
     seen.said("user", 1).await;
     seen.say(json!({"type": "result", "subtype": "success", "is_error": false, "result": "watching"}));
     let log = home.join("build.log");
     std::fs::write(&log, "[1/3] old line: error: from before the watch\n").unwrap();
-    assert!(daemon.watch_file(&id, &log, vec![": error: ".into()], Some("1".into()), None).unwrap_err().contains("almost every line"),
+    assert!(daemon.watch_file(zerod::watches::Watch { session: id.clone(), file: log.clone(), alerts: vec![": error: ".into()], done: Some("1".into()), quiet: None, ..Default::default() }).unwrap_err().contains("almost every line"),
             "a text that short would end it on the first line");
-    let watched = daemon.watch_file(&id, &log, vec![": error: ".into()], Some("[3/3]".into()), None).unwrap();
+    let watched = daemon.watch_file(zerod::watches::Watch { session: id.clone(), file: log.clone(), alerts: vec![": error: ".into()], done: Some("[3/3]".into()), quiet: None, ..Default::default() }).unwrap();
     assert_eq!(daemon.watches(Some(&id)).len(), 1);
     let append = |text: &str| { use std::io::Write; std::fs::OpenOptions::new().append(true).open(&log).unwrap().write_all(text.as_bytes()).unwrap() };
     append("[2/3] Building b.cpp\nsrc/b.cpp:4:2: error: no member named 'y'\n");

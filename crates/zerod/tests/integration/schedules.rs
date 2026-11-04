@@ -22,7 +22,7 @@ fn now() -> i64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EP
 async fn a_scheduled_wake_is_kept_listed_and_can_be_taken_back() {
     let home = temp_dir("schedules");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
-    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "watch the scan", None, None, Permissions::Auto).unwrap();
+    let id = daemon.start(Provider::Claude, "watch the scan", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     let morning = daemon.schedule(&id, now() + 3600, "Check the Image Scan shows no OS packages").unwrap();
     let later = daemon.schedule(&id, now() + 7200, "Look at the deploy").unwrap();
     assert!(daemon.schedule(&id, now() + 60, "  ").is_err(), "a wake says what for");
@@ -39,7 +39,7 @@ async fn a_scheduled_wake_is_kept_listed_and_can_be_taken_back() {
 async fn when_its_due_the_task_hears_it_as_zeros_word() {
     let home = temp_dir("schedules-due");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
-    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "watch the scan", None, None, Permissions::Auto).unwrap();
+    let id = daemon.start(Provider::Claude, "watch the scan", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     daemon.session(&id).unwrap().change(Change::Status { status: Status::Working, turn: Some("t1".into()), error: None });
     daemon.schedule(&id, now() + 1, "Check the scan").unwrap();
@@ -53,7 +53,7 @@ async fn when_its_due_the_task_hears_it_as_zeros_word() {
 async fn one_due_while_zero_was_down_is_told_when_its_back_and_says_so() {
     let home = temp_dir("schedules-late");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
-    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "watch the scan", None, None, Permissions::Auto).unwrap();
+    let id = daemon.start(Provider::Claude, "watch the scan", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     daemon.session(&id).unwrap().change(Change::Status { status: Status::Working, turn: Some("t1".into()), error: None });
     daemon.schedule(&id, now() + 3600, "Check the scan").unwrap();

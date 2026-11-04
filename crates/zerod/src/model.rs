@@ -497,51 +497,18 @@ impl Conversation {
     pub fn apply(&mut self, change: Change) {
         self.seq += 1;
         match change {
-            Change::Thread { thread, model, effort } => {
-                self.thread = Some(thread);
-                if model.is_some() { self.model = model }
-                if effort.is_some() { self.effort = effort }
-            }
+            Change::Thread { thread, model, effort } => self.set_thread(thread, model, effort),
             Change::Title { title } => self.title = title,
-            Change::Named { label, ticket } => {
-                self.label = label;
-                self.ticket = ticket;
-            }
+            Change::Named { label, ticket } => (self.label, self.ticket) = (label, ticket),
             Change::Placed { workspace } => self.workspace = workspace,
             Change::SignedIn { signin } => self.signin = signin,
-            Change::Permitted { permissions } => {
-                self.permissions = permissions;
-                let text = match permissions { Permissions::Auto => "Auto from here: it asks before what isn't safe", Permissions::Unrestricted => "Unrestricted from here: it acts without asking" };
-                self.items.push(Item { at: None, id: format!("permitted-{}", self.items.len()), turn: None, kind: ItemKind::Notice { text: text.into(), error: false }, status: ItemStatus::Done });
-            }
-            Change::Status { status, turn, error } => {
-                self.status = status;
-                self.turn = turn;
-                self.error = error;
-            }
-            Change::Item { item } => match self.items.iter_mut().find(|existing| existing.id == item.id) {
-                Some(existing) => *existing = item,
-                None => self.items.push(item),
-            },
-            Change::Delta { item, text } => {
-                if let Some(item) = self.items.iter_mut().find(|existing| existing.id == item) {
-                    match &mut item.kind {
-                        ItemKind::User { text: body, .. } | ItemKind::Agent { text: body, .. } | ItemKind::Reasoning { text: body }
-                        | ItemKind::Plan { text: body } | ItemKind::Notice { text: body, .. } => body.push_str(&text),
-                        ItemKind::Command { output, .. } => output.push_str(&text),
-                        ItemKind::FileChange { .. } | ItemKind::Tool { .. } | ItemKind::Table { .. } => {}
-                    }
-                }
-            }
-            Change::Approval { approval } => {
-                self.approvals.retain(|existing| existing.id != approval.id);
-                self.approvals.push(approval);
-            }
+            Change::Permitted { permissions } => self.permit(permissions),
+            Change::Status { status, turn, error } => (self.status, self.turn, self.error) = (status, turn, error),
+            Change::Item { item } => self.put_item(item),
+            Change::Delta { item, text } => self.append_to(&item, &text),
+            Change::Approval { approval } => put_last(&mut self.approvals, approval, |a| &a.id),
             Change::Resolved { approval } => self.approvals.retain(|existing| existing.id != approval),
-            Change::Question { question } => {
-                self.questions.retain(|existing| existing.id != question.id);
-                self.questions.push(question);
-            }
+            Change::Question { question } => put_last(&mut self.questions, question, |q| &q.id),
             Change::Answered { question } => self.questions.retain(|existing| existing.id != question),
             Change::Usage { usage } => self.usage = Some(usage),
             Change::Failed { failure } => self.failure = failure,
@@ -552,39 +519,90 @@ impl Conversation {
             Change::Place { place } => self.place = place,
             Change::Parent { parent } => self.parent = parent,
             Change::Snapshot { item, commit } => { self.snapshots.insert(item, commit); }
-            Change::Attribute { name, value } => match value {
-                Some(value) => { self.attributes.insert(name, value); }
-                None => { self.attributes.remove(&name); }
-            },
-            Change::Rewound { before } => {
-                if let Some(at) = self.items.iter().position(|i| i.id == before) { self.items.truncate(at) }
-                let kept: std::collections::HashSet<&str> = self.items.iter().map(|i| i.id.as_str()).collect();
-                self.snapshots.retain(|item, _| kept.contains(item.as_str()));
-                self.thread = None;
-                self.turn = None;
-                self.approvals.clear();
-                self.questions.clear();
-                self.diff = None;
-                self.error = None;
-                self.failure = None;
-                self.stalled = None;
-            }
-            Change::Switched { provider, model, effort } => {
-                self.provider = provider;
-                self.thread = None;
-                self.model = model;
-                self.effort = effort;
-                // Where each provider took over, in the conversation itself (handoff.rs leaves notices out). Stopped
-                // for the handover, the two are one line.
-                if let Some(last) = self.items.last_mut() && let ItemKind::Notice { text, error: false } = &mut last.kind && text == "Interrupted" {
-                    *text = format!("Interrupted and continued in {}", provider.title());
-                } else {
-                    let id = format!("switched-{}", self.seq);
-                    self.items.push(Item { at: None, id, turn: None, kind: ItemKind::Notice { text: format!("Continued in {}", provider.title()), error: false }, status: ItemStatus::Done });
-                }
-            }
+            Change::Attribute { name, value } => self.set_attribute(name, value),
+            Change::Rewound { before } => self.rewind_to(&before),
+            Change::Switched { provider, model, effort } => self.switch_to(provider, model, effort),
         }
     }
+
+    /// On its thread; the model and effort only when it says which.
+    fn set_thread(&mut self, thread: String, model: Option<String>, effort: Option<String>) {
+        self.thread = Some(thread);
+        if model.is_some() { self.model = model }
+        if effort.is_some() { self.effort = effort }
+    }
+
+    /// New permissions, and a notice in the conversation of what they let the agent do.
+    fn permit(&mut self, permissions: Permissions) {
+        self.permissions = permissions;
+        let text = match permissions { Permissions::Auto => "Auto from here: it asks before what isn't safe", Permissions::Unrestricted => "Unrestricted from here: it acts without asking" };
+        self.items.push(Item { at: None, id: format!("permitted-{}", self.items.len()), turn: None, kind: ItemKind::Notice { text: text.into(), error: false }, status: ItemStatus::Done });
+    }
+
+    /// The item in place of the one with its id, where that one was; else last.
+    fn put_item(&mut self, item: Item) {
+        match self.items.iter_mut().find(|existing| existing.id == item.id) {
+            Some(existing) => *existing = item,
+            None => self.items.push(item),
+        }
+    }
+
+    /// Streamed text added to the item's: its words, or a command's output.
+    fn append_to(&mut self, id: &str, text: &str) {
+        let Some(item) = self.items.iter_mut().find(|existing| existing.id == id) else { return };
+        match &mut item.kind {
+            ItemKind::User { text: body, .. } | ItemKind::Agent { text: body, .. } | ItemKind::Reasoning { text: body }
+            | ItemKind::Plan { text: body } | ItemKind::Notice { text: body, .. } => body.push_str(text),
+            ItemKind::Command { output, .. } => output.push_str(text),
+            ItemKind::FileChange { .. } | ItemKind::Tool { .. } | ItemKind::Table { .. } => {}
+        }
+    }
+
+    /// An attribute set, or with no value taken back.
+    fn set_attribute(&mut self, name: String, value: Option<String>) {
+        match value {
+            Some(value) => { self.attributes.insert(name, value); }
+            None => { self.attributes.remove(&name); }
+        }
+    }
+
+    /// Back to just before the item `before`: what came from it on, and the thread, turn and what was pending, gone.
+    fn rewind_to(&mut self, before: &str) {
+        if let Some(at) = self.items.iter().position(|i| i.id == before) { self.items.truncate(at) }
+        let kept: std::collections::HashSet<&str> = self.items.iter().map(|i| i.id.as_str()).collect();
+        self.snapshots.retain(|item, _| kept.contains(item.as_str()));
+        self.thread = None;
+        self.turn = None;
+        self.approvals.clear();
+        self.questions.clear();
+        self.diff = None;
+        self.error = None;
+        self.failure = None;
+        self.stalled = None;
+    }
+
+    /// On another provider, with no thread of its own yet.
+    fn switch_to(&mut self, provider: Provider, model: Option<String>, effort: Option<String>) {
+        self.provider = provider;
+        self.thread = None;
+        self.model = model;
+        self.effort = effort;
+        // Where each provider took over, in the conversation itself (handoff.rs leaves notices out). Stopped
+        // for the handover, the two are one line.
+        if let Some(last) = self.items.last_mut() && let ItemKind::Notice { text, error: false } = &mut last.kind && text == "Interrupted" {
+            *text = format!("Interrupted and continued in {}", provider.title());
+        } else {
+            let id = format!("switched-{}", self.seq);
+            self.items.push(Item { at: None, id, turn: None, kind: ItemKind::Notice { text: format!("Continued in {}", provider.title()), error: false }, status: ItemStatus::Done });
+        }
+    }
+}
+
+/// `new` in place of the one with its id, which goes; `new` last.
+fn put_last<T>(list: &mut Vec<T>, new: T, id: impl Fn(&T) -> &str) {
+    let key = id(&new);
+    list.retain(|existing| id(existing) != key);
+    list.push(new);
 }
 
 #[cfg(test)]
