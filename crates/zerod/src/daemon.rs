@@ -1304,6 +1304,8 @@ impl Daemon {
         if seen.get(id).is_some_and(|(kept, _)| *kept == answer) && at.is_none() { return Ok(()) }
         seen.insert(id.to_string(), (answer, at.unwrap_or_else(now)));
         let _ = std::fs::write(self.home.join(SEEN), serde_json::to_vec(&*seen).unwrap_or_default());
+        // Its row greys now, on every client: the board is worked out again at once, as for a queue the user changed.
+        let _ = self.queues.send(());
         Ok(())
     }
 

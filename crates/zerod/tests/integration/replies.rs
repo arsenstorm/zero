@@ -48,3 +48,16 @@ async fn a_reply_to_a_turn_zero_started_is_new_only_if_the_last_one_was_unread()
     turn(&session, 4, &from_line("worker-1", "Worker finished")).await;
     assert!(!daemon.has_read(&id), "the reply before it was still unread");
 }
+
+#[tokio::test]
+async fn seeing_a_reply_shows_on_the_board_at_once() {
+    let home = temp_dir("replies-seen");
+    let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
+    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "hi", None, None, Permissions::Auto).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    turn(&daemon.session(&id).unwrap(), 1, "Is the PR merged?").await;
+    let mut board_moves = daemon.subscribe_queues();
+    daemon.mark_seen(&id, None, None).unwrap();
+    // The board is worked out again now, not when something else next changes.
+    assert!(tokio::time::timeout(Duration::from_secs(1), board_moves.recv()).await.is_ok(), "the board hears it");
+}

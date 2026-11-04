@@ -169,8 +169,9 @@ pub fn board_in(conversations: &[Conversation], asks: &[Ask], places: &HashMap<S
     rows
 }
 
-/// A reply is read once the user has seen it (`seen`: that answer's item, and when) and it's still the latest. The
-/// chat that's open stays Replied in its app until it's left, so nothing changes under the eyes of whoever reads it.
+/// A reply is read once the user has seen it (`seen`: that answer's item, and when) and it's still the latest. The apps
+/// tell zerod when a task is opened, and when the user does something in the one they're on (a reply arriving while
+/// it's open isn't seen until then).
 pub fn read(seen: Option<(&str, i64)>, latest: Option<&str>, now: i64) -> bool {
     seen.is_some_and(|(answer, at)| Some(answer) == latest && at <= now)
 }
