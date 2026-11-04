@@ -61,15 +61,15 @@ public final class Workspace {
     /// Views being fetched again, while what they last showed stays up.
     public private(set) var refreshing: Set<String> = []
 
-    /// Every task at once (crates/zerod/src/board.rs), while the window shows it, Replied rows settled (below).
+    /// Every task at once (crates/zerod/src/board.rs), as it shows: the open chat's read reply still Replied (below).
     public private(set) var board: [BoardRow] = []
     private var rawBoard: [BoardRow] = []
 
     /// Told each board as it changes, for the app's notifications.
     @ObservationIgnored public var onBoard: (([BoardRow]) -> Void)?
 
-    /// The latest answer of each task the user looked at, as last told to zerod (which settles Replied to Idle a while
-    /// after, on every client).
+    /// The latest answer of each task the user looked at, as last told to zerod (which greys Replied to read, on every
+    /// client; the chat that's open keeps it Replied until it's left).
     @ObservationIgnored private var told: [String: String] = [:]
 
     /// The user is looking at this task now: its latest answer is seen, as zerod is told.
@@ -79,14 +79,18 @@ public final class Workspace {
         Task { try? await link.seen(session: id, answer: answer) }
     }
 
+    /// The task whose chat is open: its reply, once read, stays Replied until it's left (BoardRow.showing).
+    public var open: String? { didSet { if open != oldValue { resettle() } } }
+
     func resettle() {
-        let rows = rawBoard
+        let rows = BoardRow.showing(rawBoard, open: open)
         if rows != board {
             for row in rows where board.first(where: { $0.session == row.session })?.state != row.state {
                 Log.write("task \(row.session) \(row.state.rawValue): \(row.task)")
             }
             board = rows
-            onBoard?(rows)
+            // Notifications follow zerod's own states: opening a chat again isn't a new reply.
+            onBoard?(rawBoard)
         }
     }
 

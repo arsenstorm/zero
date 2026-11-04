@@ -12,6 +12,10 @@ import UserNotifications
     enum Status: Equatable { case unpaired, connecting, connected, offline(String) }
     private(set) var status = Status.unpaired
     private(set) var rows: [BoardRow] = []
+    /// zerod's board as it came; `rows` is it as it shows, the open chat's read reply still Replied.
+    private var rawRows: [BoardRow] = []
+    /// The task whose chat is open: its reply, once read, stays Replied until it's left (BoardRow.showing).
+    var open: String? { didSet { if open != oldValue { rows = BoardRow.showing(rawRows, open: open) } } }
     private(set) var asks: [Ask] = []
     /// How the Mac's sidebar arranges tasks: its sort and its dragged order.
     private(set) var sidebar = (sort: BoardRow.Sort.state, order: "")
@@ -172,7 +176,8 @@ import UserNotifications
                 switch feed {
                 case .board(let rows):
                     let before = self.rows
-                    self.rows = rows
+                    self.rawRows = rows
+                    self.rows = BoardRow.showing(rows, open: self.open)
                     self.tidy(after: before)
                     ZeroIndex.update(rows)
                     await self.arrange()

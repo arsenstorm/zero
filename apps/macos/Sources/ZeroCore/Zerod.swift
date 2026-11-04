@@ -321,7 +321,8 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     /// As zerod's board has them (board.rs), most urgent first. Handed is "Over to you": done, with a step only the user
     /// can take. Blocked is on something that isn't the user.
     public enum State: String, Decodable, Sendable {
-        case needsYou, trouble, working, handed, answered, blocked, done, merged, paused, idle, offline
+        /// `read`: Replied, and the user has seen the reply (it greys); the chat that's open shows it as Replied still.
+        case needsYou, trouble, working, handed, answered, blocked, done, merged, paused, read, idle, offline
         /// Most urgent first, as the board sorts its rows.
         public var urgency: Int {
             switch self {
@@ -343,7 +344,7 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
             case .trouble: "In trouble"
             case .working: "Working"
             case .handed: "Over to you"
-            case .answered: "Replied"
+            case .answered, .read: "Replied"
             case .blocked: "Blocked"
             case .done: "Done"
             case .merged: "Merged"
@@ -370,6 +371,19 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     public var own: State?
     /// What the lead itself is doing: its icon in the sidebar, its status in the details pane.
     public var ownState: State { own ?? state }
+
+    /// The board as it shows: the open chat's read reply still Replied (purple) until it's left, so nothing changes
+    /// under the eyes of whoever is reading it; every other read reply greyed.
+    public static func showing(_ rows: [BoardRow], open: String?) -> [BoardRow] {
+        guard let open else { return rows }
+        return rows.map { row in
+            guard row.session == open else { return row }
+            var row = row
+            if row.state == .read { row.state = .answered }
+            if row.own == .read { row.own = .answered }
+            return row
+        }
+    }
     public var now: String?
     public var needs: String?
     /// The open asks of the lead and its workers.

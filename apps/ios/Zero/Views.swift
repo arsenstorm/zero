@@ -79,6 +79,7 @@ struct StateGlyph: View {
         case .answered: ("message-check-glyph", .indigo, "Replied")
         case .merged: ("code-branch-glyph", .purple, "Merged")
         case .paused: ("circle-pause-glyph", .secondary, "Paused")
+        case .read: ("message-check-glyph", .secondary, "Replied")
         case .idle: ("moon-glyph", .secondary, "Idle")
         case .offline: ("power-off-glyph", .secondary, "Offline")
         }
@@ -441,12 +442,15 @@ struct TaskView: View {
         // Seen: its notification goes (on the Mac too, the board moving on).
         .onAppear {
             model.follow(session)
+            // Open: its reply, once read, stays Replied until it's left.
+            model.open = session
             UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [session])
             model.markSeen(session)
             settle()
         }
         // A reply arriving while it's open is read as it comes.
         .onChange(of: conversation?.items.last?.id) { model.markSeen(session) }
+        .onDisappear { if model.open == session { model.open = nil } }
         .task { await model.load(session) }
         .navigationBarTitleDisplayMode(.inline)
     }

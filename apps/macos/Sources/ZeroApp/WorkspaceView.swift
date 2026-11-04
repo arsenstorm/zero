@@ -22,6 +22,10 @@ struct WorkspaceView: View {
         .task { await workspace.loadLoops() }
         .task { await workspace.loadLater() }
         .onChange(of: workspace.loops.map(\.name), initial: true) { _, names in LoopNames.known = names }
+        // The chat that's open keeps a reply it has read Replied (purple) until it's left; then it greys.
+        .onChange(of: navigation.place.key, initial: true) {
+            if case .task(let id) = navigation.place { workspace.open = id } else { workspace.open = nil }
+        }
         // Each workspace opens on the task last open in it: kept as tasks are opened, and gone back to on a switch.
         .onChange(of: [navigation.place.key, navigation.worker ?? ""]) {
             guard case .task(let id) = navigation.place, let lead = workspace.conversation(id) else { return }
@@ -1461,6 +1465,8 @@ private struct StateIcon: View {
         case .answered: ("message-check", .indigo, "Replied")
         case .merged: ("code-branch", .purple, "Merged")
         case .paused: ("circle-pause", .secondary, "Paused")
+        // Replied, and read: greyed, so what still needs reading stands out.
+        case .read: ("message-check", .secondary, "Replied")
         case .idle: ("moon", .secondary, "Idle")
         case .offline: ("power-off", .secondary, "Offline")
         }
