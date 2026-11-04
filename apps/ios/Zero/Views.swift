@@ -74,10 +74,9 @@ struct StateGlyph: View {
         case .trouble: ("triangle-warning-glyph", .orange, "In trouble")
         case .working: ("arrow-rotate-clockwise-glyph", .blue, "Working")
         case .handed: ("hand-holding-box-glyph", .teal, "Over to you")
-        case .blocked: ("circle-minus-glyph", .red, "Blocked")
-        case .done: ("circle-check-glyph", .green, "Done")
+        case .waiting: ("hourglass-glyph", .secondary, "Waiting")
         case .answered: ("message-check-glyph", .indigo, "Replied")
-        case .completed: ("badge-check-glyph", .purple, "Completed")
+        case .done: ("badge-check-glyph", .purple, "Done")
         case .paused: ("circle-pause-glyph", .secondary, "Paused")
         case .read: ("message-check-glyph", .secondary, "Replied")
         case .idle: ("moon-glyph", .secondary, "Idle")
@@ -292,7 +291,7 @@ struct TasksView: View {
                         ForEach(members, id: \.session) { member in
                             let name = model.names[member.session] ?? member.place
                             TaskRow(name: name, state: member.state, worker: true, show: { model.path.append(member.session) })
-                                .opacity([.done, .completed, .idle, .offline].contains(member.state) ? 0.6 : 1)
+                                .opacity([.done, .idle, .offline].contains(member.state) ? 0.6 : 1)
                                 .swipeActions(edge: .trailing, allowsFullSwipe: false) { swipes(member.session, name: name, state: member.state, workers: 0) }
                                 .swipeActions(edge: .leading) { renameSwipe(member.session, name: name) }
                                 .contextMenu { actions(member.session, name: name, state: member.state, workers: 0) } preview: {

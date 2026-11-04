@@ -318,12 +318,12 @@ public struct IntegrationTag: Codable, Equatable, Sendable, Hashable {
 
 /// One row of the board (crates/zerod/src/board.rs): a lead session with its workers folded in.
 public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
-    /// As zerod's board has them (board.rs), most urgent first. Handed is "Over to you": done, with a step only the user
-    /// can take. Blocked is on something that isn't the user.
+    /// As zerod's board has them (board.rs), most urgent first. Handed is "Over to you": a step only the user can take.
+    /// Waiting is on someone or something that isn't the user.
     public enum State: String, Decodable, Sendable {
         /// `read`: Replied, and the user has seen the reply (it greys); the chat that's open shows it as Replied still.
-        /// `completed`: done-done (it was `merged`), last of all and archived after a while.
-        case needsYou, trouble, working, handed, answered, blocked, done, paused, read, completed, idle, offline
+        /// `done`: nothing left that the agent can do, last of all and archived after a while.
+        case needsYou, trouble, working, handed, answered, waiting, paused, read, done, idle, offline
         /// Most urgent first, as the board sorts its rows.
         public var urgency: Int {
             switch self {
@@ -332,9 +332,8 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
             case .working: 2
             case .handed: 3
             case .answered: 4
-            case .blocked: 5
-            case .done: 6
-            case .completed: 9
+            case .waiting: 5
+            case .done: 9
             default: 8
             }
         }
@@ -346,9 +345,8 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
             case .working: "Working"
             case .handed: "Over to you"
             case .answered, .read: "Replied"
-            case .blocked: "Blocked"
+            case .waiting: "Waiting"
             case .done: "Done"
-            case .completed: "Completed"
             case .paused: "Paused"
             case .idle: "Idle"
             case .offline: "Offline"
@@ -526,9 +524,9 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
             guard case let .agent(text, true)? = items.last?.kind else { return .idle }
             if parent != nil { return .done }
             switch ZeroEnding.split(text).1 {
-            case .done?, .completed?: return .done
+            case .done?: return .done
             case .asked?: return .needsYou
-            case .blocked?: return .blocked
+            case .waiting?: return .blocked
             case .working?: return .idle
             case nil: return text.split(whereSeparator: \.isNewline).contains { $0.trimmingCharacters(in: .whitespaces).hasSuffix("?") } ? .needsYou : .answered
             }

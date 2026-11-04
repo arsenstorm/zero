@@ -353,11 +353,10 @@ private struct GeneralPage: View {
     static let sounded = [
         Sounded(state: .needsYou, name: "Needs you", detail: "It asks you something, or one of its workers does."),
         Sounded(state: .trouble, name: "In trouble", detail: "It failed, got stuck or ran out of usage."),
-        Sounded(state: .handed, name: "Over to you", detail: "Done, with a step for you."),
-        Sounded(state: .done, name: "Done", detail: "Its work is finished."),
+        Sounded(state: .handed, name: "Over to you", detail: "It has a step for you."),
         Sounded(state: .answered, name: "Replied", detail: "It answered you."),
-        Sounded(state: .blocked, name: "Blocked", detail: "It's stopped on something that isn't you."),
-        Sounded(state: .completed, name: "Completed", detail: "The whole task is done: nothing left."),
+        Sounded(state: .waiting, name: "Waiting", detail: "The next move is someone else's."),
+        Sounded(state: .done, name: "Done", detail: "Nothing is left that it can do."),
     ]
     var body: some View {
         Sections {
@@ -563,7 +562,7 @@ private struct AgentsPage: View {
             SettingsSection(title: "Runtimes") { RuntimesRows(store: store, inbox: inbox) }
             SettingsSection(title: "Tasks") {
                 Rows {
-                    SettingRow(title: "Archive completed tasks", detail: "Tasks that are done-done are put away after this.") {
+                    SettingRow(title: "Archive done tasks", detail: "Put away after this; back when something they follow changes.") {
                         ArchiveCompletedPicker()
                     }
                     SettingRow(title: "Where tasks run", detail: "A command printing [{\"ticket\": \"ENG-1\", \"place\": \"my-bench\"}], run in your login shell every five minutes. Each task's Where is its place, by ticket, in place of its folder.") {

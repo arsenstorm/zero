@@ -242,11 +242,10 @@ final class InboxController {
                     switch row.state {
                     case .needsYou: status = .needsYou
                     case .trouble: status = .trouble
-                    case .blocked: status = .blocked
+                    case .waiting: status = .waiting
                     case .handed: status = .handed
                     case .working: status = .working
                     case .done: status = .done
-                    case .completed: status = .merged
                     // On hold: off the bar, as a task that isn't running is.
                     case .paused: status = .offline
                     default: break
@@ -900,18 +899,17 @@ func shortAge(_ date: Date, now: Date = Date()) -> String {
 }
 
 /// What an agent's dot says, in the board's colours: blue it needs you, orange it's in trouble, teal it's over to you,
-/// red it's blocked, green it said it is done, blue it is working. Closed means the user shut it: no dot until it
+/// grey it waits on someone else, purple it's done, blue it is working. Closed means the user shut it: no dot until it
 /// speaks again.
 enum AgentStatus {
-    case needsYou, trouble, handed, blocked, done, merged, working, closed, offline
+    case needsYou, trouble, handed, waiting, done, working, closed, offline
 
     static func of(_ asks: [Ask]) -> AgentStatus {
         if asks.contains(where: { $0.state == .waiting || $0.state == .pending }) { return .needsYou }
         guard let last = asks.last(where: { $0.kind != .message }) else { return .working }
         switch last.status {
-        case "blocked": return .blocked
-        case "done": return .done
-        case "merged", "completed": return .merged
+        case "blocked", "waiting": return .waiting
+        case "done", "merged", "completed": return .done
         case "closed": return .closed
         default: return .working
         }
@@ -922,10 +920,9 @@ enum AgentStatus {
         case .needsYou: return .blue
         case .trouble: return .orange
         case .handed: return .teal
-        case .blocked: return .red
-        case .done: return .green
-        // Completed (it was merged): purple, as GitHub shows one.
-        case .merged: return .purple
+        case .waiting: return .gray
+        // Done: purple, as GitHub shows a merged pull request.
+        case .done: return .purple
         case .working: return .blue
         case .closed, .offline: return .gray
         }

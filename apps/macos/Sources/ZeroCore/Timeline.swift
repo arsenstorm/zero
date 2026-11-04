@@ -119,13 +119,12 @@ extension BoardRow.State {
     public static func named(_ text: String) -> Self? {
         switch text.trimmingCharacters(in: .whitespaces).lowercased() {
         case "needs you", "needsyou": .needsYou
-        case "blocked", "waiting": .blocked
+        case "blocked", "waiting": .waiting
         case "over to you", "handed": .handed
         case "trouble", "in trouble", "failed", "stuck": .trouble
         case "working": .working
-        case "done": .done
+        case "done", "completed", "merged": .done
         case "replied", "answered": .answered
-        case "completed", "merged": .completed
         case "idle": .idle
         case "offline": .offline
         default: nil

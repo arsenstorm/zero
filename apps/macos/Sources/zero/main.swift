@@ -12,7 +12,7 @@ func usage(help: Bool = false) -> Never {
       zero approve "what you want to do" [--body "details"] [--code 'command or snippet']   (Yes / No / Suggest something else…)
       zero run     'command' --why "what you need the output for" [--cwd DIR] [--title T]
                    runs on Arsen's Mac after he presses Run; a script file's contents are shown to him
-      zero note    "where you are now" [--blocked | --done | --completed | --waiting] [--needs "what Arsen should do, when he can"]
+      zero note    "where you are now" [--done | --waiting] [--needs "what Arsen should do, when he can"]
                    (no answer; sets your agent's dot and its row on Zero's board: working, blocked, done, or
                    waiting on something other than Arsen)
       zero withdraw <id> [--reason "why"]   (take back an open ask that no longer needs Arsen)

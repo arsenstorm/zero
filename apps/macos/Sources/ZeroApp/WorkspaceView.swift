@@ -1058,7 +1058,7 @@ private struct TaskDetails: View {
                         .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .opacity([.done, .completed, .idle, .offline].contains(member.state) ? 0.6 : 1)
+                    .opacity([.done, .idle, .offline].contains(member.state) ? 0.6 : 1)
                 }
     }
 
@@ -1449,15 +1449,14 @@ private struct TaskRow: View {
            case let .agent(text, _) = answer.kind, let ending = ZeroEnding.split(text).1 {
             switch ending {
             case .done: return .done
-            case .completed: return .completed
             case .working: return .idle
-            case .blocked: return .blocked
+            case .waiting: return .waiting
             case .asked: return .needsYou
             }
         }
         return switch worker.attention {
         case .needsYou: .needsYou
-        case .blocked: .blocked
+        case .blocked: .waiting
         case .limited, .stuck, .failed: .trouble
         case .working, .starting: .working
         case .done: .done
@@ -1509,12 +1508,11 @@ private struct StateIcon: View {
         case .working: ("arrow-rotate-clockwise", .blue, "Working")
         // Done, with a step for the user: a calm to-do, not a decision.
         case .handed: ("hand-holding-box", .teal, "Over to you")
-        // No entry, in red: stopped.
-        case .blocked: ("circle-minus", .red, "Blocked")
-        case .done: ("circle-check", .green, "Done")
+        // The next move is someone else's: grey, as it asks nothing of the user.
+        case .waiting: ("hourglass", .secondary, "Waiting")
         case .answered: ("message-check", .indigo, "Replied")
-        // Done-done: purple, as GitHub shows a PR merged or an issue completed.
-        case .completed: ("badge-check", .purple, "Completed")
+        // Nothing left it can do: purple, as GitHub shows a PR merged or an issue completed.
+        case .done: ("badge-check", .purple, "Done")
         case .paused: ("circle-pause", .secondary, "Paused")
         // Replied, and read: greyed, so what still needs reading stands out.
         case .read: ("message-check", .secondary, "Replied")
