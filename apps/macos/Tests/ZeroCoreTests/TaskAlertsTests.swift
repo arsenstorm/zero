@@ -74,7 +74,7 @@ private func row(_ id: String, state: String, own: String? = nil, worker: String
 
 @Test func aSettledTaskBackToTheSameEndAfterZerosTurnIsNoNewAlert() {
     // Merged, announced; Zero passes on an event, the task works a moment, and it's merged still: nothing new.
-    var announced: [String: BoardRow.State] = [:]
+    var announced: [String: String] = [:]
     let merged = TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "done")], announced: &announced)
     #expect(merged.alerts.count == 1)
     _ = TaskAlerts.changes(from: [row("1", state: "done")], to: [row("1", state: "working")], announced: &announced)
@@ -91,4 +91,17 @@ private func row(_ id: String, state: String, own: String? = nil, worker: String
     #expect(TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "answered")]).alerts.count == 1, "a reply to the user is")
     #expect(TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "needsYou", asks: ["Merge it?"], quiet: true)]).alerts.count == 1,
             "what needs the user is news, whoever started the turn")
+}
+
+@Test func aTaskBackAtTheSameOpenQuestionAfterZerosTurnIsNoNewAlert() {
+    // It asked, and was announced; an event and a worker's report each start a turn that ends on the same open ask.
+    var announced: [String: String] = [:]
+    #expect(TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "needsYou", asks: ["Merge it?"])], announced: &announced).alerts.count == 1)
+    for _ in 0..<2 {
+        _ = TaskAlerts.changes(from: [row("1", state: "needsYou", asks: ["Merge it?"])], to: [row("1", state: "working", asks: ["Merge it?"])], announced: &announced)
+        #expect(TaskAlerts.changes(from: [row("1", state: "working", asks: ["Merge it?"])], to: [row("1", state: "needsYou", asks: ["Merge it?"], quiet: true)],
+                                   announced: &announced).alerts.isEmpty, "the same question, still open: nothing new")
+    }
+    // Another question is news.
+    #expect(TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "needsYou", asks: ["Merge it?", "Deploy it?"])], announced: &announced).alerts.count == 1)
 }

@@ -15,8 +15,8 @@ import ZeroCore
     private let open: (String) -> Void
     /// The board last heard: none yet, so what tasks are in at launch isn't announced.
     private var last: [BoardRow]?
-    /// Each task's state as last announced: a settled one isn't announced again when a turn Zero started leaves it as it was.
-    private var announced: [String: BoardRow.State] = [:]
+    /// What each task was last announced as: it isn't announced again when a turn Zero started leaves it as it was.
+    private var announced: [String: String] = [:]
     /// The asks notified (not a task's), by notification id, and whose: their agent's page clears them.
     private var asks: [String: String] = [:]
 
