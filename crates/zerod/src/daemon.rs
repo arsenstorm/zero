@@ -1111,6 +1111,7 @@ impl Daemon {
         let under_way = |a: Attention| matches!(a, Attention::Starting | Attention::Working | Attention::NeedsYou | Attention::Stuck);
         let ended = matches!(now, Attention::Done | Attention::Answered | Attention::Blocked | Attention::Failed | Attention::Limited | Attention::Offline | Attention::Idle);
         let came_to_an_end = before.is_some_and(under_way) && ended;
+        if came_to_an_end { self.carry_read(&conversation) }
         let got_stuck = now == Attention::Stuck && before != Some(Attention::Stuck);
         // While zerod restarts, a turn ending is the pause for it: the new zerod carries it on, so its lead hears nothing.
         let restarting = self.restarting.load(Ordering::Relaxed);
@@ -1304,6 +1305,19 @@ impl Daemon {
         seen.insert(id.to_string(), (answer, at.unwrap_or_else(now)));
         let _ = std::fs::write(self.home.join(SEEN), serde_json::to_vec(&*seen).unwrap_or_default());
         Ok(())
+    }
+
+    /// A turn Zero started (an event it follows, a worker's report, a wake-up) has come to an end: its reply is nothing
+    /// new for the user if they had read the one before it, so it's read too. One to their own message stays new.
+    fn carry_read(&self, conversation: &Conversation) {
+        let items = &conversation.items;
+        let Some(asked) = items.iter().rposition(|i| matches!(i.kind, ItemKind::User { .. })) else { return };
+        let ItemKind::User { text, .. } = &items[asked].kind else { return };
+        if !text.starts_with(crate::model::FROM) { return }
+        let answer = |range: &[crate::model::Item]| range.iter().rev().find(|i| matches!(i.kind, ItemKind::Agent { final_answer: true, .. })).map(|i| i.id.clone());
+        let (Some(before), Some(latest)) = (answer(&items[..asked]), answer(&items[asked..])) else { return };
+        let read_before = self.seen.lock().unwrap().get(&conversation.id).is_some_and(|(seen, _)| *seen == before);
+        if read_before { let _ = self.mark_seen(&conversation.id, Some(&latest), None); }
     }
 
     /// Whether the user has read the task's reply (board::read).
