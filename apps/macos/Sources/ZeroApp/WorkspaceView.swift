@@ -22,10 +22,6 @@ struct WorkspaceView: View {
         .task { await workspace.loadLoops() }
         .task { await workspace.loadLater() }
         .onChange(of: workspace.loops.map(\.name), initial: true) { _, names in LoopNames.known = names }
-        // The chat that's open keeps a reply it has read Replied (purple) until it's left; then it greys.
-        .onChange(of: navigation.place.key, initial: true) {
-            if case .task(let id) = navigation.place { workspace.open = id } else { workspace.open = nil }
-        }
         // Each workspace opens on the task last open in it: kept as tasks are opened, and gone back to on a switch.
         .onChange(of: [navigation.place.key, navigation.worker ?? ""]) {
             guard case .task(let id) = navigation.place, let lead = workspace.conversation(id) else { return }
@@ -1893,6 +1889,7 @@ private struct ConversationView: View {
                     // for older items show asks for the next page (one page per gesture, never a chain).
                     userScrolling = phase == .interacting || phase == .decelerating
                     if phase == .interacting {
+                        workspace.markSeen(conversation.id)
                         following = false
                         if olderShown, !olderArmed { olderArmed = true; Task { await loadOlder() } }
                     }
@@ -2022,17 +2019,19 @@ private struct ConversationView: View {
                 .onAppear {
                     if let kept = Drafts.load("task:" + conversation.id) { draft = kept.text; images = kept.images }
                     // Kept as it's typed, here rather than in an onChange this view would have to read it for.
-                    let (key, imagesNow) = ("task:" + conversation.id, { images })
-                    box.saved = { text in Drafts.save(key, text: text, images: imagesNow()) }
-                    if let waiting = workspace.pendingDrafts.removeValue(forKey: conversation.id) { draft = waiting }
                     let id = conversation.id
+                    let (key, imagesNow) = ("task:" + id, { images })
+                    // Typing in it is doing something in it: its reply is seen.
+                    box.saved = { [weak workspace] text in Drafts.save(key, text: text, images: imagesNow()); workspace?.markSeen(id) }
+                    if let waiting = workspace.pendingDrafts.removeValue(forKey: conversation.id) { draft = waiting }
                     Task { try? await Task.sleep(for: .milliseconds(600)); workspace.markSeen(id) }
                     watchEscape()
                 }
                 .onDisappear { if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }; escapeMonitor = nil }
                 .onChange(of: active, initial: true) { isActive = active }
-                // An answer that lands while you're here is seen too.
-                .onChange(of: conversation.items.last?.id) { workspace.markSeen(conversation.id) }
+                // An answer that lands while you're here is seen once you do something in the task (click, scroll,
+                // type): just having it open isn't reading it.
+                .simultaneousGesture(TapGesture().onEnded { workspace.markSeen(conversation.id) })
                 .onChange(of: images) { Drafts.save("task:" + conversation.id, text: box.text, images: images) }
                 .overlay {
                     if pickingRewind {

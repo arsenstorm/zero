@@ -372,19 +372,6 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     public var own: State?
     /// What the lead itself is doing: its icon in the sidebar, its status in the details pane.
     public var ownState: State { own ?? state }
-
-    /// The board as it shows: the open chat's read reply still Replied (purple) until it's left, so nothing changes
-    /// under the eyes of whoever is reading it; every other read reply greyed.
-    public static func showing(_ rows: [BoardRow], open: String?) -> [BoardRow] {
-        guard let open else { return rows }
-        return rows.map { row in
-            guard row.session == open else { return row }
-            var row = row
-            if row.state == .read { row.state = .answered }
-            if row.own == .read { row.own = .answered }
-            return row
-        }
-    }
     public var now: String?
     public var needs: String?
     /// The open asks of the lead and its workers.

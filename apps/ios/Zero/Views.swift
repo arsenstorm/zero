@@ -444,15 +444,14 @@ struct TaskView: View {
         // Seen: its notification goes (on the Mac too, the board moving on).
         .onAppear {
             model.follow(session)
-            // Open: its reply, once read, stays Replied until it's left.
-            model.open = session
             UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [session])
             model.markSeen(session)
             settle()
         }
-        // A reply arriving while it's open is read as it comes.
-        .onChange(of: conversation?.items.last?.id) { model.markSeen(session) }
-        .onDisappear { if model.open == session { model.open = nil } }
+        // A reply arriving while it's open is seen once you do something in it (tap, scroll): having it open isn't
+        // reading it.
+        .simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { _ in model.markSeen(session) })
+        .simultaneousGesture(TapGesture().onEnded { model.markSeen(session) })
         .task { await model.load(session) }
         .navigationBarTitleDisplayMode(.inline)
     }
