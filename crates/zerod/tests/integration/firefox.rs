@@ -166,3 +166,15 @@ async fn after_a_restart_zerod_takes_up_the_session_firefox_still_has() {
     assert_eq!(asked[0], "/session/sess-1");
     assert!(!asked.contains(&"session.new".to_string()), "{asked:?}");
 }
+
+#[tokio::test]
+async fn a_task_that_didnt_choose_firefox_stays_on_chrome_whichever_connected_first() {
+    let browsers = zerod::browser::Browsers::open(&crate::common::temp_dir("firefox-default"));
+    let (firefox, _f) = tokio::sync::mpsc::unbounded_channel();
+    let (chrome, _c) = tokio::sync::mpsc::unbounded_channel();
+    browsers.attach(&json!({"id": "firefox-1", "name": "Firefox"}), firefox);
+    browsers.attach(&json!({"id": "chrome-1", "name": "Chrome"}), chrome);
+    let listed = browsers.list(Some("s1"));
+    let used: Vec<&str> = listed.as_array().unwrap().iter().filter(|b| b["used"] == true).filter_map(|b| b["id"].as_str()).collect();
+    assert_eq!(used, ["chrome-1"], "Firefox only for a task that asks for it");
+}

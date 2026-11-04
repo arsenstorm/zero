@@ -242,7 +242,7 @@ impl Browsers {
 
     /// No Chrome connected: it's opened (at most once a minute), and the call waits a while for its extension.
     async fn opening(&self) {
-        if !self.state.lock().unwrap().browsers.is_empty() { return }
+        if self.state.lock().unwrap().browsers.iter().any(|b| b.name != "Firefox") { return }
         let Some(launcher) = self.launcher.lock().unwrap().clone() else { return };
         {
             let mut launched = self.launched.lock().unwrap();
@@ -252,7 +252,7 @@ impl Browsers {
             }
         }
         let deadline = tokio::time::Instant::now() + OPENING;
-        while self.state.lock().unwrap().browsers.is_empty() && tokio::time::Instant::now() < deadline {
+        while !self.state.lock().unwrap().browsers.iter().any(|b| b.name != "Firefox") && tokio::time::Instant::now() < deadline {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
     }
@@ -370,7 +370,9 @@ impl Browsers {
     }
 
     fn pick<'a>(state: &'a State, session: Option<&str>) -> Option<&'a Browser> {
-        session.and_then(|s| state.chosen.get(s)).and_then(|id| state.browsers.iter().find(|b| &b.id == id)).or_else(|| state.browsers.first())
+        // Firefox only for a task that chose it: whichever connected first, the rest use Chrome.
+        session.and_then(|s| state.chosen.get(s)).and_then(|id| state.browsers.iter().find(|b| &b.id == id))
+            .or_else(|| state.browsers.iter().find(|b| b.name != "Firefox"))
     }
 
     /// Runs one tool for a task. `task` says which (its session, its tab group and window, its name); the user's blocked
