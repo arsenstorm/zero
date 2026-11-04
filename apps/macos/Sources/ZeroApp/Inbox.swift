@@ -1432,7 +1432,9 @@ struct CardView: View {
 
     private var selected: Bool { controller.selected == ask.id }
     /// A command it can't run here, for you to run yourself and say how it went: a two-step card.
-    private var manual: Bool { ask.kind != .run && ask.command != nil && ask.state == .waiting }
+    /// A command for you to run yourself (an agent's question with `--code`: another machine's shell, sudo), laid out as
+    /// steps. An approval's command is the agent's own, to allow or not, so it's never this.
+    private var manual: Bool { (ask.kind == .question || ask.kind == .choice) && ask.command != nil && ask.state == .waiting }
 
     private func step(_ number: Int, _ title: String) -> some View {
         HStack(spacing: 8) {
@@ -1499,7 +1501,7 @@ struct CardView: View {
             case .declined: return "Command rejected"
             default: return "Allow this command?"
             }
-        case .permission: return ask.title + "?"
+        case .permission: return ask.title.hasSuffix("?") ? ask.title : ask.title + "?"
         case .approve: return ask.title.hasSuffix("?") ? ask.title : ask.title + "?"
         case .note, .message: return ask.body
         default: return ask.body.isEmpty ? ask.title : ask.body

@@ -414,7 +414,9 @@ struct AskCard: View {
     @State private var words = ""
 
     /// A command it can't run itself, for the user to run and say how it went.
-    private var manual: Bool { ask.kind != .run && ask.command != nil && ask.state == .waiting }
+    /// A command for you to run yourself (an agent's question with `--code`: another machine's shell, sudo), laid out as
+    /// steps. An approval's command is the agent's own, to allow or not, so it's never this.
+    private var manual: Bool { (ask.kind == .question || ask.kind == .choice) && ask.command != nil && ask.state == .waiting }
 
     private var kindName: String {
         switch ask.kind {
