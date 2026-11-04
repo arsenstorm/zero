@@ -522,6 +522,8 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             zerod.browsers.tell_state(&session()?, request.browser.as_ref().and_then(|b| b["state"].as_str()).ok_or("Which state?")?);
             Ok(Value::Null)
         }
+        // Safari tried (Settings › Browsers): its automation session started, as browser_compare starts it.
+        "checkSafari" => { zerod.browsers.safari().ok_or("Safari isn't set up in Zero")?.check().await?; Ok(Value::Null) }
         // Firefox opened under remote control (Settings › Browsers), its extension installed.
         "openFirefox" => { zerod.browsers.firefox().ok_or("Firefox isn't set up in Zero")?.ensure().await?; Ok(Value::Null) }
         // A Chrome debugger command from Zero's extension in Firefox, done through Firefox's remote control.

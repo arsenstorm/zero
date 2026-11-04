@@ -149,6 +149,7 @@ impl Browsers {
     pub fn firefox(&self) -> Option<Arc<crate::firefox::Firefox>> { self.firefox.lock().unwrap().clone() }
     /// Safari's automation windows, for browser_compare.
     pub fn set_safari(&self, safari: Arc<crate::safari::Safari>) { *self.safari.lock().unwrap() = Some(safari) }
+    pub fn safari(&self) -> Option<Arc<crate::safari::Safari>> { self.safari.lock().unwrap().clone() }
 
     /// browser_compare: one step in Chrome, Firefox and Safari at once (or those `browsers` names), each ending with
     /// how the page looks; side by side in one answer, a browser that couldn't saying why.

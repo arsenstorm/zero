@@ -143,6 +143,12 @@ impl Safari {
         Ok(session)
     }
 
+    /// Whether Safari takes remote control: its automation session started (or found), as browser_compare would.
+    pub async fn check(&self) -> Result<(), String> {
+        let mut state = self.state.lock().await;
+        self.session(&mut state).await.map(|_| ())
+    }
+
     /// One step in the task's window: what it said, and the page as it looks after.
     pub async fn step(&self, task: &str, step: &Step) -> Result<Vec<Value>, String> {
         let mut state = self.state.lock().await;

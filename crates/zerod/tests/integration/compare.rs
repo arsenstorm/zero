@@ -109,3 +109,11 @@ async fn after_a_restart_zerod_takes_up_the_session_safari_still_has() {
     Safari::at(&address, Some(kept)).step("t", &Step::default()).await.unwrap();
     assert!(!heard.lock().unwrap().contains(&"POST /session".to_string()), "{:?}", heard.lock().unwrap());
 }
+
+#[tokio::test]
+async fn safari_can_be_tried_from_settings() {
+    let (address, heard) = fake_safaridriver().await;
+    Safari::at(&address, None).check().await.unwrap();
+    assert_eq!(*heard.lock().unwrap(), ["POST /session"], "its session started, as a comparison would");
+    assert!(Safari::at("127.0.0.1:1", None).check().await.unwrap_err().contains("isn't running"), "says why when it can't");
+}
