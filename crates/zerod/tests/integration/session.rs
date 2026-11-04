@@ -187,7 +187,11 @@ async fn opencode_initializes_opens_a_session_sets_the_model_and_prompts() {
     let settings: Vec<_> = seen.all().into_iter().filter(|m| m["method"] == "session/set_config_option").map(|m| m["params"].clone()).collect();
     assert_eq!(settings[0], json!({"sessionId": "ses_e87e6f601ffeztiWsg4jmIBG4V", "configId": "model", "value": "opencode-go/beam-free"}));
     assert_eq!(settings[1]["configId"], "effort");
-    assert_eq!(seen.first("session/prompt").unwrap()["params"]["prompt"][0]["text"], "mkdir and write");
+    // ACP has no standing instructions: Zero's come first, as context the transcript leaves out.
+    let prompt = seen.first("session/prompt").unwrap()["params"]["prompt"].clone();
+    assert_eq!((prompt[0]["text"].as_str(), &prompt[0]["_meta"]), (Some(zerod::adapter::INSTRUCTIONS), &json!({"zero": "context"})));
+    assert_eq!(prompt[1]["text"], "mkdir and write");
+    assert_eq!(session.snapshot().items.iter().find_map(|i| match &i.kind { ItemKind::User { text, .. } => Some(text.clone()), _ => None }).as_deref(), Some("mkdir and write"));
     assert_eq!(seen.reply_to(&json!(0)).unwrap(), json!({"jsonrpc": "2.0", "id": 0, "result": {"outcome": {"outcome": "selected", "optionId": "once"}}}));
     assert!(seen.reply_to(&json!(1)).is_some());
     assert!(matches!(&done.items.last().unwrap().kind, ItemKind::Agent { text, final_answer: true } if text == "done"));

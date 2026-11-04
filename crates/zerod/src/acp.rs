@@ -275,8 +275,8 @@ pub async fn start(session: &Session, transport: Transport, prompt: &str, images
     start_with_context(session, transport, None, prompt, images, model, effort).await
 }
 
-/// A new session whose first prompt carries `context` (the conversation so far) in a block of its own, marked so
-/// it isn't taken for the user's words.
+/// A new session whose first prompt carries Zero's instructions and `context` (the conversation so far) in blocks of
+/// their own, marked so they aren't taken for the user's words.
 pub async fn start_with_context(session: &Session, transport: Transport, context: Option<&str>, prompt: &str, images: &[String], model: Option<&str>,
                                 effort: Option<&str>) -> Result<(), String> {
     initialize(session, transport).await?;
@@ -285,8 +285,11 @@ pub async fn start_with_context(session: &Session, transport: Transport, context
     session.request(|id| json!({"jsonrpc": "2.0", "id": id, "method": "session/new", "params": {"cwd": cwd, "mcpServers": servers}})).await?;
     configure(session, model, effort).await?;
     let mut blocks = blocks(prompt, images);
-    if let (Some(context), Some(list)) = (context, blocks.as_array_mut()) {
-        list.insert(0, json!({"type": "text", "text": context, "_meta": {"zero": "context"}}));
+    // ACP has no standing instructions (Claude's system prompt, Codex's developer ones): Zero's go first, as context.
+    if let Some(list) = blocks.as_array_mut() {
+        for text in context.into_iter().chain([crate::adapter::INSTRUCTIONS]) {
+            list.insert(0, json!({"type": "text", "text": text, "_meta": {"zero": "context"}}));
+        }
     }
     let thread = session.snapshot().thread.ok_or("The agent opened no session")?;
     session.request_later(|id| json!({"jsonrpc": "2.0", "id": id, "method": "session/prompt", "params": {"sessionId": thread, "prompt": blocks}}))
