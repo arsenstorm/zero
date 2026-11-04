@@ -1114,8 +1114,12 @@ impl Daemon {
                 while session.is_attached() && (session.running_command() || session.summary().status == Status::Starting) && tokio::time::Instant::now() < deadline {
                     tokio::time::sleep(Duration::from_millis(250)).await;
                 }
+                session.pause_for_update();
                 if session.is_attached() { let _ = tokio::time::timeout(Duration::from_secs(5), session.interrupt()).await; }
-                note_pause(&session, PAUSED_FOR_UPDATE);
+                // The agent's own note of the stop says it's paused for the update; a moment for it, else Zero's.
+                let noted = || session.recent(5).0.items.iter().any(|i| matches!(&i.kind, ItemKind::Notice { text, .. } if text == PAUSED_FOR_UPDATE));
+                for _ in 0..10 { if noted() { break } tokio::time::sleep(Duration::from_millis(100)).await }
+                if !noted() { note_pause(&session, PAUSED_FOR_UPDATE) }
                 if let Some(daemon) = me.upgrade() { daemon.held_up.lock().unwrap().remove(&conversation.id); }
                 conversation.id
             });
@@ -1123,7 +1127,12 @@ impl Daemon {
         let mut paused = vec![];
         while let Some(done) = pausing.join_next().await { if let Ok(id) = done { paused.push(id) } }
         for id in &paused {
-            self.pending.lock().unwrap().entry(id.clone()).or_default().push(Queued { id: new_id(), text: CARRY_ON.into(), images: vec![], report: true });
+            // Once, however many restarts paused it before it carried on.
+            let mut pending = self.pending.lock().unwrap();
+            let list = pending.entry(id.clone()).or_default();
+            if list.iter().any(|q| q.text == CARRY_ON) { continue }
+            list.push(Queued { id: new_id(), text: CARRY_ON.into(), images: vec![], report: true });
+            drop(pending);
             self.keep_pending(id);
         }
         // Which turns to carry on: these, and only these (words waiting for a parked task wait for you to resume it).

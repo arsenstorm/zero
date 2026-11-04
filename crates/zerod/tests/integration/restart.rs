@@ -157,3 +157,33 @@ async fn a_worker_paused_for_a_restart_isnt_reported_to_its_lead_as_stopped() {
     let waiting = std::fs::read_to_string(home.join("zerod/sessions").join(&lead).join("pending.json")).unwrap_or_default();
     assert!(!waiting.contains("Worker"), "a turn paused to carry on isn't a worker stopping: {waiting}");
 }
+
+#[tokio::test]
+async fn a_turn_paused_for_an_update_says_so_once_however_its_agent_notes_the_stop() {
+    let home = temp_dir("restart-once");
+    let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
+    let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "build it", None, None, Permissions::Auto).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let session = daemon.session(&id).unwrap();
+    session.change(Change::Status { status: Status::Working, turn: Some("t1".into()), error: None });
+    // Two restarts at once (the second asked for before the first had carried it on): told to carry on once.
+    let pausing = tokio::spawn({ let daemon = daemon.clone(); async move { daemon.pause_for_restart().await } });
+    let again = tokio::spawn({ let daemon = daemon.clone(); async move { daemon.pause_for_restart().await } });
+    // The agent notes its stop as it always does, a moment after the pause began.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    session.change(Change::Item { item: Item { at: None, id: "stop".into(), turn: None, kind: ItemKind::Notice { text: "Interrupted".into(), error: false }, status: ItemStatus::Done } });
+    tokio::time::timeout(Duration::from_secs(15), pausing).await.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(15), again).await.unwrap().unwrap();
+    let notices: Vec<String> = daemon.get(&id).unwrap().items.iter().filter_map(|i| match &i.kind { ItemKind::Notice { text, .. } => Some(text.clone()), _ => None }).collect();
+    assert_eq!(notices, [zerod::daemon::PAUSED_FOR_UPDATE], "one line, saying why it stopped");
+    let words = std::fs::read_to_string(home.join("zerod/sessions").join(&id).join("pending.json")).unwrap();
+    assert_eq!(words.matches("carry on").count(), 1, "{words}");
+}
+
+#[test]
+fn zeros_carry_on_is_never_shown_as_a_message_of_the_users() {
+    let carry = zerod::daemon::CARRY_ON;
+    assert_eq!(zerod::core::without_carry_on(&format!("{carry}\n\n{carry}")), None, "twice over is still only Zero's");
+    assert_eq!(zerod::core::without_carry_on(&format!("{carry}\n\nWorker done.")).as_deref(), Some("Worker done."), "what came with it stays");
+    assert_eq!(zerod::core::without_carry_on("Hello").as_deref(), Some("Hello"));
+}

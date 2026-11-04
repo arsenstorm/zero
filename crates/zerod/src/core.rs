@@ -14,12 +14,14 @@ pub struct Core {
     /// Images sent with the message on its way: they go on the next message of yours seen, however its provider
     /// echoes it (at once, or when the turn starts).
     attach: Vec<String>,
+    /// Being paused for Zero's update: the agent's own note of the stop says so.
+    pausing: bool,
 }
 
 impl Core {
     pub fn new(conversation: Conversation) -> Self {
         let adapter = conversation.provider.adapter();
-        Core { conversation, adapter, clock: None, attach: vec![] }
+        Core { conversation, adapter, clock: None, attach: vec![], pausing: false }
     }
 
     /// The images sent with the next message of yours.
@@ -90,7 +92,17 @@ impl Core {
 
     /// Applies a change Zero makes itself and returns it for the clients. A switch brings the new provider's adapter, so
     /// its lines are read its way from here on, live and on replay.
+    /// The turn's being paused for Zero's update: its stop, as the agent notes it, says that.
+    pub fn pausing(&mut self, on: bool) { self.pausing = on }
+
+    fn paused_for_update(&self, change: &mut Change) {
+        if self.pausing && let Change::Item { item } = change && let ItemKind::Notice { text, error: false } = &mut item.kind && text == "Interrupted" {
+            *text = crate::daemon::PAUSED_FOR_UPDATE.into();
+        }
+    }
+
     pub fn change(&mut self, mut change: Change) -> Change {
+        self.paused_for_update(&mut change);
         if let Change::Switched { provider, .. } = &change { self.adapter = provider.adapter() }
         self.stamp(&mut change);
         self.conversation.apply(change.clone());
@@ -117,7 +129,14 @@ impl Core {
     /// Applies the changes, then classifies the session's error if it changed: the same for every provider.
     fn apply(&mut self, mut changes: Vec<Change>) -> Vec<Change> {
         // Zero's own words to the agent (the restart's carry-on) aren't a message of yours: no item for them.
-        changes.retain(|change| !matches!(change, Change::Item { item } if matches!(&item.kind, ItemKind::User { text, .. } if text == crate::daemon::CARRY_ON)));
+        changes.retain_mut(|change| match change {
+            Change::Item { item } => match &mut item.kind {
+                ItemKind::User { text, .. } => match without_carry_on(text) { Some(rest) => { *text = rest; true } None => false },
+                _ => true,
+            },
+            _ => true,
+        });
+        for change in &mut changes { self.paused_for_update(change) }
         // A loop named in a message of yours: the agent got its words, the record keeps the name (loops.rs).
         for change in &mut changes {
             if let Change::Item { item } = change && let ItemKind::User { text, .. } = &mut item.kind && text.contains("<!-- loop: ") { *text = crate::loops::collapse(text) }
@@ -134,4 +153,13 @@ impl Core {
         }
         changes
     }
+}
+
+/// A message's text without Zero's carry-on (delivered with what else was waiting, or more than once, it's still not
+/// the user's); none when nothing else is left.
+pub fn without_carry_on(text: &str) -> Option<String> {
+    if !text.contains(crate::daemon::CARRY_ON) { return Some(text.to_string()) }
+    let rest = text.split("\n\n").filter(|part| part.trim() != crate::daemon::CARRY_ON).collect::<Vec<_>>().join("\n\n");
+    let rest = rest.trim();
+    (!rest.is_empty()).then(|| rest.to_string())
 }

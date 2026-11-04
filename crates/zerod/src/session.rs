@@ -581,6 +581,9 @@ impl Session {
     // What the providers' flows use to talk to their runtime.
 
     /// A change Zero makes itself (a model switched, a label given), kept in the transcript so a restart replays it.
+    /// Its turn is being paused for Zero's update: the agent's note of the stop says so.
+    pub fn pause_for_update(&self) { self.lock().core().pausing(true) }
+
     pub fn change(&self, change: Change) {
         let mut inner = self.lock();
         inner.core().at(now_ms());
