@@ -109,3 +109,18 @@ async fn a_turn_stopped_by_the_user_or_a_restart_isnt_sent_back() {
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(sent_back(&sent), 1, "it didn't end, it was stopped: {}", sent.lock().unwrap());
 }
+
+#[tokio::test]
+async fn a_turn_stopped_after_it_said_something_isnt_sent_back_either() {
+    let home = temp_dir("endings-stopped-late");
+    let (daemon, id, sent) = task(&home, Provider::Claude).await;
+    let session = daemon.session(&id).unwrap();
+    session.change(Change::Status { status: Status::Working, turn: Some("t1".into()), error: None });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    session.change(item("u1", ItemKind::User { text: "Fix it".into(), images: vec![] }));
+    session.change(item("a1", ItemKind::Agent { text: "Fixed the CLI too:".into(), final_answer: true }));
+    session.change(item("n1", ItemKind::Notice { text: "Interrupted".into(), error: false }));
+    session.change(Change::Status { status: Status::Idle, turn: None, error: None });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(sent_back(&sent), 0, "stopped mid-way, its words so far aren't its answer: {}", sent.lock().unwrap());
+}

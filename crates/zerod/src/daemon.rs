@@ -1350,6 +1350,8 @@ impl Daemon {
         // This turn's own answer (since the last message to it): a turn stopped before it answered (by the user, by
         // a restart) didn't end, and an earlier turn's answer isn't this one's.
         let turn = conversation.items.iter().rposition(|i| matches!(i.kind, ItemKind::User { .. })).map_or(&conversation.items[..], |at| &conversation.items[at..]);
+        // Stopped (its "Interrupted", or a restart pausing it): what it said so far isn't how it ended.
+        if self.restarting.load(Ordering::Relaxed) || turn.last().is_some_and(|i| matches!(i.kind, ItemKind::Notice { .. })) { return }
         let Some(answer) = turn.iter().rev().find_map(|i| match &i.kind { ItemKind::Agent { text, final_answer: true } => Some(text.as_str()), _ => None }) else { return };
         let ending = crate::board::ending(answer);
         if ending.is_some() && (ending == Some("asked") || !unasked_question(answer)) { return }
