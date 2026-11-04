@@ -100,7 +100,7 @@ async fn a_reminder_wakes_a_session_later() {
     tokio::time::sleep(Duration::from_secs(110)).await;
     assert!(told(&seen).is_empty());
     tokio::time::sleep(Duration::from_secs(20)).await;
-    assert_eq!(seen.said("user", 2).await[1]["message"]["content"], "<!-- from: zero -->\nReminder: Check whether the deploy finished");
+    assert_eq!(seen.said("user", 2).await[1]["message"]["content"], "<!-- from: zero -->\nScheduled: Check whether the deploy finished");
 }
 
 fn now() -> i64 {

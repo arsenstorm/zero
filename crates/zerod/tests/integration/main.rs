@@ -16,6 +16,7 @@ mod codex;
 mod codex_login;
 mod firefox;
 mod compare;
+mod schedules;
 mod drops;
 mod e2e;
 mod events;

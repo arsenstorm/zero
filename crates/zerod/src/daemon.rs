@@ -71,6 +71,8 @@ pub struct Daemon {
     resuming: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// Files watched for tasks (watches.rs), by id.
     watches: Mutex<HashMap<String, crate::watches::Watch>>,
+    /// Each task's scheduled wakes (schedules.rs).
+    schedules: Mutex<Vec<crate::schedules::Schedule>>,
     me: Weak<Daemon>,
 }
 
@@ -160,6 +162,7 @@ impl Daemon {
             signins: crate::signins::SignIns::open(home),
             resuming: Mutex::new(HashMap::new()),
             watches: Mutex::new(crate::watches::load(home).into_iter().map(|w| (w.id.clone(), w)).collect()),
+            schedules: Mutex::new(crate::schedules::load(home)),
             paused: Mutex::new(std::fs::read(home.join(PAUSED)).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default()),
             seen: Mutex::new(std::fs::read(home.join(SEEN)).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default()),
         });
@@ -184,6 +187,9 @@ impl Daemon {
         // Watches kept from before a restart carry on from where they'd read to.
         let kept: Vec<String> = daemon.watches.lock().unwrap().keys().cloned().collect();
         for id in kept { daemon.follow_file(id) }
+        // Wakes kept from before a restart: armed again, any already due told now.
+        let due: Vec<crate::schedules::Schedule> = daemon.schedules.lock().unwrap().clone();
+        for schedule in due { daemon.arm(schedule) }
         Ok(daemon)
     }
 
@@ -995,13 +1001,54 @@ impl Daemon {
     /// Tells the session `text` after `after`. ponytail: held in memory, so a daemon restart forgets it; keep it on disk
     /// beside pending.json if reminders start spanning restarts.
     pub fn remind(&self, id: &str, after: Duration, text: &str) -> Result<(), String> {
+        self.schedule(id, now() + after.as_secs() as i64, text).map(|_| ())
+    }
+
+    /// Wakes `id` at `at` (seconds since 1970) with `text`: kept on disk, told as Zero's word when due.
+    pub fn schedule(&self, id: &str, at: i64, text: &str) -> Result<crate::schedules::Schedule, String> {
         self.session(id)?;
-        let (me, id, text) = (self.me.clone(), id.to_string(), text.to_string());
-        tokio::spawn(async move {
-            tokio::time::sleep(after).await;
-            if let Some(daemon) = me.upgrade() { daemon.tell(&id, crate::model::from_line("zero", &format!("Reminder: {text}"))) }
-        });
+        let text = text.trim();
+        if text.is_empty() { return Err("Schedule it with what for: the words to hear then".into()) }
+        let schedule = crate::schedules::Schedule { id: new_id(), session: id.into(), at, text: text.into() };
+        self.schedules.lock().unwrap().push(schedule.clone());
+        self.keep_schedules();
+        self.arm(schedule.clone());
+        Ok(schedule)
+    }
+
+    /// The wakes scheduled, soonest first: `session`'s, or everyone's.
+    pub fn schedules(&self, session: Option<&str>) -> Vec<crate::schedules::Schedule> {
+        let mut list: Vec<_> = self.schedules.lock().unwrap().iter().filter(|s| session.is_none_or(|id| s.session == id)).cloned().collect();
+        list.sort_by_key(|s| s.at);
+        list
+    }
+
+    pub fn unschedule(&self, schedule: &str) -> Result<(), String> {
+        let mut list = self.schedules.lock().unwrap();
+        let before = list.len();
+        list.retain(|s| s.id != schedule);
+        if list.len() == before { return Err(format!("Nothing is scheduled as {schedule}")) }
+        drop(list);
+        self.keep_schedules();
         Ok(())
+    }
+
+    /// When `id` next wakes, for its board row.
+    pub fn next_wake(&self, id: &str) -> Option<i64> { self.schedules.lock().unwrap().iter().filter(|s| s.session == id).map(|s| s.at).min() }
+
+    fn keep_schedules(&self) { crate::schedules::keep(&self.home, &self.schedules.lock().unwrap()) }
+
+    /// Told when due, if it's still scheduled then (not taken back); once.
+    fn arm(&self, schedule: crate::schedules::Schedule) {
+        let me = self.me.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs((schedule.at - now()).max(0) as u64)).await;
+            let Some(daemon) = me.upgrade() else { return };
+            let still = { let mut list = daemon.schedules.lock().unwrap(); let before = list.len(); list.retain(|s| s.id != schedule.id); list.len() < before };
+            if !still { return }
+            daemon.keep_schedules();
+            daemon.tell_from_zero(&schedule.session, &schedule.told(now()));
+        });
     }
 
     /// Each provider's limits as its CLI last reported them, from the session that heard last.

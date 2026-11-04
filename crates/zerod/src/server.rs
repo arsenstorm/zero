@@ -177,6 +177,7 @@ impl Zerod {
         let mut rows = crate::board::board_in(&daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(), &self.inbox.asks(), &self.places.get(), &daemon.queues(), &|c| daemon.workspace_of(c));
         crate::board::mark_read(&mut rows, &|id| daemon.has_read(id));
         crate::board::mark_paused(&mut rows, &|id| daemon.is_paused(id));
+        for row in rows.iter_mut() { row.wakes = daemon.next_wake(&row.session) }
         rows
     }
 }
@@ -457,6 +458,17 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             let after = std::time::Duration::from_secs(request.minutes.ok_or("Remind in how many minutes?")? * 60);
             daemon.remind(&session()?, after, request.text.as_deref().ok_or("Remind with text")?).map(|_| Value::Null)
         }
+        // A task waking itself at a time: `at` (seconds since 1970) or in `minutes`.
+        "schedule" => {
+            let at = match (request.at, request.minutes) {
+                (Some(at), _) => at,
+                (None, Some(minutes)) => std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0) + minutes as i64 * 60,
+                _ => return Err("When? at (seconds since 1970) or minutes".into()),
+            };
+            daemon.schedule(&session()?, at, request.text.as_deref().ok_or("Schedule it with what for?")?).map(|s| json!(s))
+        }
+        "schedules" => Ok(json!(daemon.schedules(request.session.as_deref()))),
+        "unschedule" => daemon.unschedule(request.item.as_ref().and_then(Value::as_str).ok_or("Which schedule?")?).map(|_| Value::Null),
         "usage" => Ok(json!(daemon.usage().into_iter().map(|(provider, usage)| json!({"provider": provider, "usage": usage})).collect::<Vec<_>>())),
         // The user saw a task's reply, on whichever client: Replied settles to Idle five minutes on, everywhere.
         "seen" => daemon.mark_seen(&session()?, request.answer.as_deref(), request.at).map(|_| Value::Null),
