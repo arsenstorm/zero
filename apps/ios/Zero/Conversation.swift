@@ -426,6 +426,8 @@ struct RiskPill: View {
 struct AskCard: View {
     let model: PhoneModel
     let ask: Ask
+    /// In a list's row, which is the card already: no card of its own (never a card in a card).
+    var flat = false
     @State private var typing: Int?
     @State private var words = ""
 
@@ -443,16 +445,36 @@ struct AskCard: View {
         }
     }
 
+    /// The question itself, as the Mac's card has it: a question's words (its --title is the agent's context), an
+    /// approval's request.
+    private var headline: String {
+        switch ask.kind {
+        case .run: ask.state == .waiting ? "Allow this command?" : ask.title
+        case .question, .choice: ask.body.isEmpty ? ask.title : ask.body
+        default: ask.title
+        }
+    }
+
+    /// Under it: a question's --body, why a run or an approval is wanted.
+    private var supporting: String? {
+        let text = switch ask.kind {
+        case .question, .choice: ask.detail ?? ""
+        default: ask.body
+        }
+        return text.isEmpty || text == headline ? nil : text
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Label(kindName, image: ask.kind == .run || manual ? "terminal-outline" : "circle-question-glyph")
-                Text("· " + (ask.agent.label ?? ask.agent.name)).lineLimit(1)
+            HStack(spacing: 5) {
+                Image(ask.kind == .run || manual ? "terminal-outline" : "circle-question-glyph").resizable().frame(width: 13, height: 13)
+                Text(kindName)
+                Text("·")
+                Text(ask.agent.label ?? ask.agent.name).lineLimit(1)
             }
-            .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-            Text(ask.kind == .run && ask.state == .waiting ? "Allow this command?" : ask.title).font(.subheadline.weight(.semibold))
-            if !ask.body.isEmpty { MarkdownView(text: ask.body).font(.footnote).foregroundStyle(.secondary) }
-            if let detail = ask.detail, !detail.isEmpty { Text(detail).font(.caption).foregroundStyle(.secondary) }
+            .font(.footnote.weight(.medium)).foregroundStyle(.secondary)
+            Text(headline).font(.body.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+            if let supporting { MarkdownView(text: supporting).font(.subheadline).foregroundStyle(.secondary) }
             if let command = ask.command {
                 // What runs is what's read: the command, the script it runs, and what it printed.
                 let shown = [(ask.kind == .run ? "$ " : "") + command, ask.script, ask.output.isEmpty ? nil : ask.output].compactMap { $0 }.joined(separator: "\n")
@@ -478,8 +500,11 @@ struct AskCard: View {
                         Button {
                             if Ask.expectsText(option) { typing = index } else { Task { await model.choose(ask, option: index) } }
                         } label: {
-                            Text(option).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.vertical, 9)
-                                .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                            Text(option).font(.subheadline.weight(.medium))
+                                .foregroundStyle(Ask.expectsText(option) ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 14).padding(.vertical, 12)
+                                .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                                .contentShape(RoundedRectangle(cornerRadius: 12))
                         }
                         .buttonStyle(.plain)
                     }
@@ -502,9 +527,10 @@ struct AskCard: View {
                 Text("Running…").font(.footnote).foregroundStyle(.secondary)
             }
         }
-        .padding(14)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
+        .padding(flat ? 0 : 14)
+        .padding(.vertical, flat ? 6 : 0)
+        .background(flat ? AnyShapeStyle(.clear) : AnyShapeStyle(.background.secondary), in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(flat ? AnyShapeStyle(.clear) : AnyShapeStyle(.quaternary)))
     }
 
     private func answerField(_ send: @escaping (String) async -> Void) -> some View {

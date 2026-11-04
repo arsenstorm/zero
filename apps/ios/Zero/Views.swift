@@ -579,10 +579,10 @@ struct InboxView: View {
         let unread = model.tasks.filter { $0.ownState == .answered }
         List {
             if !model.waiting.isEmpty {
-                Section { ForEach(model.waiting) { ask in AskCard(model: model, ask: ask) } } header: { heading("Needs you", "Asks waiting for your answer") }
+                Section { ForEach(model.waiting) { ask in AskCard(model: model, ask: ask, flat: true) } } header: { heading("Needs you") }
             }
             if !handed.isEmpty {
-                Section { ForEach(handed) { row in item(row, row.needs ?? row.now) } } header: { heading("Over to you", "Done, with a step only you can take") }
+                Section { ForEach(handed) { row in item(row, row.needs ?? row.now) } } header: { heading("Over to you") }
             }
             if !unread.isEmpty {
                 Section { ForEach(unread) { row in item(row, row.now) } } header: { heading("Unread replies") }
@@ -598,12 +598,8 @@ struct InboxView: View {
         .refreshable { model.connect() }
     }
 
-    private func heading(_ title: String, _ detail: String? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.headline).foregroundStyle(.primary)
-            if let detail { Text(detail).font(.footnote).foregroundStyle(.secondary) }
-        }
-        .textCase(nil).padding(.bottom, 2)
+    private func heading(_ title: String) -> some View {
+        Text(title).font(.headline).foregroundStyle(.primary).textCase(nil).padding(.bottom, 2)
     }
 
     /// A task's row: its name and state, then what it says (its reply, or the step that's the user's).
