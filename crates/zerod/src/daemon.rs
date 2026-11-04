@@ -58,8 +58,6 @@ pub struct Daemon {
     restarting: std::sync::atomic::AtomicBool,
     /// While a restart waits: each turn it waits on, and the command it's letting finish.
     held_up: Mutex<HashMap<String, String>>,
-    /// The turns a restart has paused, shown as Paused until the new zerod carries them on.
-    updating: Mutex<std::collections::HashSet<String>>,
     /// The turns a restart has paused, shown as paused until the new zerod carries them on.
     updating: Mutex<std::collections::HashSet<String>>,
     /// Sessions the user put on hold: parked, and kept parked whatever arrives for them, until resumed. Kept in
@@ -160,7 +158,7 @@ impl Daemon {
         let daemon = Arc::new_cyclic(|me| Daemon {
             home: home.into(), sessions: Mutex::new(sessions), events, runtime, attention: Mutex::new(attention), pending: Mutex::new(pending),
             held: Mutex::new(held), delivering: Mutex::new(HashSet::new()), queues: broadcast::channel(64).0,
-            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(), held_up: Mutex::default(), updating: Mutex::default(), updating: Mutex::default(),
+            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(), held_up: Mutex::default(), updating: Mutex::default(),
             workspaces: crate::workspaces::Workspaces::open(home),
             mcp_servers: crate::mcp_servers::McpServers::open(home),
             signins: crate::signins::SignIns::open(home),
@@ -1167,7 +1165,6 @@ impl Daemon {
                     tokio::time::sleep(Duration::from_millis(250)).await;
                 }
                 session.pause_for_update();
-                if let Some(daemon) = me.upgrade() { daemon.updating.lock().unwrap().insert(conversation.id.clone()); }
                 if session.is_attached() { let _ = tokio::time::timeout(Duration::from_secs(5), session.interrupt()).await; }
                 // The agent's own note of the stop says it's paused for the update; a moment for it, else Zero's.
                 let noted = || session.recent(5).0.items.iter().any(|i| matches!(&i.kind, ItemKind::Notice { text, .. } if text == PAUSED_FOR_UPDATE));
@@ -1229,9 +1226,6 @@ impl Daemon {
     }
 
     /// Paused by a restart, until the new zerod carries it on: the board shows it as paused.
-    pub fn is_paused_for_update(&self, id: &str) -> bool { self.updating.lock().unwrap().contains(id) }
-
-    /// Paused by a restart under way: Paused on the board, as one the user paused is.
     pub fn is_paused_for_update(&self, id: &str) -> bool { self.updating.lock().unwrap().contains(id) }
 
     pub fn is_paused(&self, id: &str) -> bool { self.paused.lock().unwrap().contains(id) }
