@@ -1614,7 +1614,7 @@ struct CardView: View {
                                  text: Binding(get: { controller.drafts[ask.id, default: ""] }, set: { controller.drafts[ask.id] = $0 }),
                                  key: ask.id, focus: focus, dictating: dictating,
                                  onMic: { controller.select(ask.id); controller.toggleDictation() }, onSend: { controller.send(ask.id) })
-                            .background(Theme.row).clipShape(RoundedRectangle(cornerRadius: 10))
+                            .background(Theme.choice).clipShape(RoundedRectangle(cornerRadius: 10))
                     } else {
                         // Not `.disabled`: that greys the whole label, chosen row included. Decided rows just ignore clicks.
                         // A decided row takes a click only to retry an answer that didn't reach the agent.
@@ -1679,7 +1679,7 @@ struct CardView: View {
                          text: Binding(get: { controller.drafts[ask.id, default: ""] }, set: { controller.drafts[ask.id] = $0 }),
                          key: ask.id, focus: focus, dictating: dictating,
                          onMic: { controller.select(ask.id); controller.toggleDictation() }, onSend: { controller.send(ask.id) })
-                    .background(Theme.row).clipShape(RoundedRectangle(cornerRadius: 10))
+                    .background(Theme.choice).clipShape(RoundedRectangle(cornerRadius: 10))
             }
         case .pending:
             EmptyView()
