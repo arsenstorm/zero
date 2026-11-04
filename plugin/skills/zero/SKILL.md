@@ -105,6 +105,10 @@ A worker you want held, for the night or until something else lands: `zero pause
 - Close a worker once you have read its result and need nothing more from it. Keep one you may send back to. Set `zero attr` for what the user should see on the task (its PR, say) as soon as it exists.
 - Zero's restarts pause a worker's turn and carry it on; nothing is lost and nothing needs redoing. Never put work that must outlive your turn in a subagent.
 
+### Taking in a session from outside Zero
+
+When the user asks you to bring a Claude Code, Codex or OpenCode session into Zero, `zero migrate <its session id>` (`--label "…"`, `--workspace ID`) makes it a task where it ran, with its history. It isn't opened or started: it waits, offline, until a message resumes it on its own thread. Tell the user the task id it prints.
+
 ### Tables
 
 When you have a table for the user (a batch's tickets, a round's findings), hand it to Zero instead of writing one in Markdown: `zero table "Batch" --column Task --column State --column "Needs you" --row "ENG-9790 | working | –" --row "ENG-9793 | blocked | the OrbStack update"`, or the same as JSON on stdin (`{"title", "columns", "rows"}`). Zero draws it in your conversation with its own parts: a cell that is a state (working, blocked, done, merged, waiting) shows as the board's pill; in a column named for a risk ("Merge risk"), a cell opening with low, medium or high shows that as a green, amber or red pill, the rest of the cell on hover (the merge-risk skill's line fits it); a ticket or a PR as a link. Then say in a sentence what it shows. Why: a Markdown table with emoji reads differently in every client; Zero's reads the same everywhere and links where it should.
