@@ -176,6 +176,7 @@ fn how_the_agent_ended_its_turn_is_the_rows_state() {
         board(&[lead], &[])[0].state
     };
     assert_eq!(ended("PR #13336 is open.\n\n[zero: done]"), State::Done);
+    assert_eq!(ended("Pushed all four commits; nothing left.\n\n[zero: completed]"), State::Completed, "done-done, said by its ending");
     assert_eq!(ended("Can't reach staging.\n[zero: blocked]"), State::Blocked, "blocked on something, not on the user: they'd be asked");
     assert_eq!(ended("Which one?\n[zero: asked 3f2a]"), State::NeedsYou);
     assert_eq!(ended("Waiting on CI.\n[zero: working]"), State::Answered, "pausing between steps: its reply, to read like any other");

@@ -477,7 +477,7 @@ impl Conversation {
             Status::Idle => match self.items.last().map(|i| &i.kind) {
                 Some(ItemKind::Agent { final_answer: true, .. }) if self.parent.is_some() => Attention::Done,
                 Some(ItemKind::Agent { text, final_answer: true }) => match crate::board::ending(text) {
-                    Some("done") => Attention::Done,
+                    Some("done" | "completed") => Attention::Done,
                     Some("asked") => Attention::NeedsYou,
                     Some("blocked") => Attention::Blocked,
                     Some(_) => Attention::Idle,

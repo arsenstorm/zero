@@ -199,7 +199,8 @@ Zero names you by `ZERO_AGENT`, or by your Solo process id. If neither is set, e
 When Zero runs your session, every turn ends with exactly one of these as its last line, after you have done what it says. Zero's stop check reads it; a turn without one is sent back to you.
 
 ```
-[zero: done]            the work is finished and you posted zero note --done
+[zero: done]            the work is finished but something still follows (a review, a merge, QA), and you posted zero note --done
+[zero: completed]       the whole task is done-done: nothing left for anyone (pushed and checked, merged and QA'd, the question answered with nothing to follow); Zero archives it after a while
 [zero: asked k3x9qa]    you asked with --async and wait for that answer (the id it printed)
 [zero: blocked]         you cannot go on because of something that isn't him, and posted zero note --blocked
 [zero: working]         you are pausing between steps and posted a note on where you are

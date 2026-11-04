@@ -234,6 +234,8 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
     if own.is_none() && matches!(state, State::Idle | State::Done) && let Some(ending) = session.answer().and_then(ending) {
         state = match ending {
             "done" => State::Done,
+            // Done-done: nothing left for anyone.
+            "completed" => State::Completed,
             // Between steps, its work going on elsewhere: a reply to read, as any.
             "working" => State::Answered,
             "blocked" => State::Blocked,
@@ -271,6 +273,7 @@ pub fn ending(answer: &str) -> Option<&'static str> {
     let inner = last.strip_prefix("[zero: ")?.strip_suffix(']')?;
     match inner.split_whitespace().next()? {
         "done" => Some("done"),
+        "completed" => Some("completed"),
         "blocked" => Some("blocked"),
         "working" => Some("working"),
         "asked" => Some("asked"),
