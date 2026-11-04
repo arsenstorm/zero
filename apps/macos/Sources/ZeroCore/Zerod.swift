@@ -986,6 +986,9 @@ public final class ZerodLink: @unchecked Sendable {
         return session
     }
 
+    /// A worker (by its task's id, or its session's) let go of its lead: a task of its own.
+    public func detach(_ target: String) async throws { _ = try await call("detach", ["thread": target]) }
+
     /// A task (by its id, or its Claude Code session's) made a worker of `lead`, taken in first if Zero hasn't it.
     public func adopt(lead: String, target: String) async throws -> String {
         let result = try await call("adopt", ["session": lead, "thread": target])
