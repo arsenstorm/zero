@@ -122,7 +122,8 @@ struct WorkspaceView: View {
             .padding(.top, 38).padding([.trailing, .bottom], 4) // under the window's buttons, as ChatGPT's
         }
         .overlay {
-            if let id = workspace.archiving {
+            // In the middle only for a task the sidebar doesn't show; there, it opens under its row.
+            if let id = workspace.archiving, !workspace.board.contains(where: { $0.session == id && $0.workspace == workspace.current }) {
                 ArchiveConfirm(workspace: workspace, id: id) {
                     if navigation.place == .task(id) { navigation.place = .home }
                 }
@@ -158,10 +159,23 @@ private struct ArchiveConfirm: View {
     let leaving: () -> Void
 
     var body: some View {
-        let name = workspace.conversation(id).map { Workspace.label(of: $0) } ?? id
-        let workers = workspace.team(of: id).count
         ZStack {
             Color.black.opacity(0.12).contentShape(Rectangle()).onTapGesture { workspace.archiving = nil }
+            ArchiveCard(workspace: workspace, id: id, leaving: leaving).frame(width: 340)
+        }
+    }
+}
+
+/// The question itself: under the task's row in the sidebar (where you asked, so you don't lose your place), or in
+/// the middle of the window when the task isn't in the sidebar. Return archives, Escape cancels.
+struct ArchiveCard: View {
+    let workspace: Workspace
+    let id: String
+    let leaving: () -> Void
+
+    var body: some View {
+        let name = workspace.conversation(id).map { Workspace.label(of: $0) } ?? id
+        let workers = workspace.team(of: id).count
             VStack(alignment: .leading, spacing: 8) {
                 Text("Archive \(name)?").font(.system(size: 14, weight: .semibold)).lineLimit(2)
                 Text((workers == 0 ? "It" : "It and its \(workers == 1 ? "worker" : "\(workers) workers")") + " will be put away. Bring "
@@ -179,13 +193,12 @@ private struct ArchiveConfirm: View {
                 }
                 .padding(.top, 6)
             }
-            .padding(16)
-            .frame(width: 340, alignment: .leading)
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.composer, in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke))
             .compositingGroup()
             .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
-        }
     }
 }
 
@@ -398,11 +411,20 @@ private struct TasksSidebar: View {
         })
     }
 
-    /// Leads that aren't on the board: finished and gone offline with nothing for him.
+    /// Leads that aren't on the board: finished and gone offline with nothing for him. One running isn't (a task just
+    /// started, before the board has it, is among the tasks: `starting`); one being archived isn't either.
     private func earlier(_ all: [Conversation]) -> [Conversation] {
         let ids = Set(all.map(\.id)), onBoard = Set(workspace.board.map(\.session))
-        // One being archived is gone from the board a moment before the list: not Earlier in between.
-        return all.filter { lead in (lead.parent.map { !ids.contains($0) } ?? true) && !onBoard.contains(lead.id) && !workspace.putAway.contains(lead.id) }.reversed()
+        return all.filter { lead in (lead.parent.map { !ids.contains($0) } ?? true) && !onBoard.contains(lead.id) && !workspace.putAway.contains(lead.id)
+            && lead.status == .offline }.reversed()
+    }
+
+    /// Leads started and running that the board hasn't got to yet: rows of their own, Working, until it has.
+    private func starting(_ all: [Conversation]) -> [BoardRow] {
+        let ids = Set(all.map(\.id)), onBoard = Set(workspace.board.map(\.session))
+        return all.filter { lead in (lead.parent.map { !ids.contains($0) } ?? true) && !onBoard.contains(lead.id) && !workspace.putAway.contains(lead.id)
+            && lead.status != .offline && workspace.workspace(of: lead) == workspace.current }
+            .compactMap { BoardRow.starting(session: $0.id, task: Workspace.label(of: $0), workspace: workspace.current) }
     }
 
     @State private var namingWorkspace = false
@@ -469,7 +491,7 @@ private struct TasksSidebar: View {
                         Text("No tasks").font(.system(size: 13)).foregroundStyle(.tertiary).padding(.horizontal, 10)
                     }
                     let folded = Set(folded.split(separator: "\n").map(String.init))
-                    let rows = sorted(workspace.board.filter { $0.workspace == workspace.current })
+                    let rows = sorted(workspace.board.filter { $0.workspace == workspace.current } + starting(all))
                     let ids = rows.map(\.session)
                     ForEach(rows) { row in
                         let workers = workersOf[row.session] ?? []
@@ -500,7 +522,16 @@ private struct TasksSidebar: View {
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { heights[row.session] = $0 }
                         .offset(y: drag?.lead == row.session ? drag!.y : shift(of: row.session, in: ids))
                         .animation(drag?.lead == row.session || reduceMotion ? nil : .snappy(duration: 0.2), value: dropIndex(in: ids))
-                        .zIndex(drag?.lead == row.session ? 1 : 0)
+                        // Asked to archive it: the question under its row, over the rows below.
+                        .overlay(alignment: .topLeading) {
+                            if workspace.archiving == row.session {
+                                ArchiveCard(workspace: workspace, id: row.session) { if place == .task(row.session) { place = .home } }
+                                    .offset(y: (heights[row.session] ?? 30) + 4)
+                            }
+                        }
+                        .zIndex(drag?.lead == row.session ? 1 : workspace.archiving == row.session ? 2 : 0)
+                        // A task arriving slides in under the heading as the rest move down; one leaving fades.
+                        .transition(.asymmetric(insertion: .move(edge: .top).combined(with: .opacity), removal: .opacity))
                     }
                     if !earlier.isEmpty {
                         SidebarHeading(text: "Earlier")
@@ -512,6 +543,8 @@ private struct TasksSidebar: View {
                 }
                 // The last task clear of the fade at the foot.
                 .padding(.bottom, 36)
+                // Tasks coming and going move the rest smoothly, Earlier's included.
+                .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: (workspace.board.map(\.session) + starting(all).map(\.session) + earlier.map(\.id)))
             }
             .thinScrollbar(outset: 10, remember: "sidebar.tasks") // in the sidebar's padding: at its edge, clear of the rows
             .scrollIndicators(.never)

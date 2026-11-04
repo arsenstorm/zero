@@ -372,6 +372,14 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     public var own: State?
     /// What the lead itself is doing: its icon in the sidebar, its status in the details pane.
     public var ownState: State { own ?? state }
+
+    /// A task just started, before zerod's board has its row: Working, under its name, so it takes its place among the
+    /// tasks at once (rather than showing elsewhere first and jumping when the board catches up).
+    public static func starting(session: String, task: String, workspace: String) -> BoardRow? {
+        let row: [String: Any] = ["session": session, "task": task, "workspace": workspace, "place": "", "online": true,
+                                  "state": "working", "own": "working", "asks": [], "workers": 0]
+        return (try? JSONSerialization.data(withJSONObject: row)).flatMap { try? JSONDecoder().decode(BoardRow.self, from: $0) }
+    }
     public var now: String?
     public var needs: String?
     /// The open asks of the lead and its workers.
