@@ -14,25 +14,31 @@ struct SettingsView: View {
     var showOnboarding: () -> Void = {}
 
     enum Page: String, CaseIterable, Identifiable {
-        case general = "General", controlBar = "Control bar", composer = "Composer and inbox", devices = "Devices"
-        case agents = "Agents", projects = "Projects", workspaces = "Workspaces", mcp = "MCP servers", links = "Links", events = "Events"
+        case general = "General", controlBar = "Control bar", composer = "Composer and inbox", devices = "Phone"
+        case agents = "Agents", signins = "Accounts", mcp = "MCP servers", chrome = "Browsers"
+        case workspaces = "Workspaces", projects = "Folders", links = "Links", events = "Following"
         var id: String { rawValue }
+        /// One each, none shared: the sidebar is scanned by its icons.
         var icon: String {
             switch self {
             case .general: "sliders"
-            case .controlBar: "sidebar-right"
+            case .controlBar: "layout-top"
             case .composer: "inbox"
-            case .agents: "robot"
-            case .projects: "layers"
-            case .links: "link"
-            case .events: "bell"
-            case .workspaces: "layers"
             case .devices: "mobile"
+            case .agents: "robot"
+            case .signins: "circle-user"
             case .mcp: "plug"
+            case .chrome: "globe"
+            case .workspaces: "suitcase"
+            case .projects: "folder"
+            case .links: "link"
+            case .events: "eye"
             }
         }
-        /// General leads on its own, where Home's New task is, so switching between the two moves no row.
-        static let groups: [(String, [Page])] = [("Personal", [.controlBar, .composer, .devices]), ("Agents", [.agents, .projects, .workspaces, .mcp, .links, .events])]
+        /// General leads on its own, where Home's New task is, so switching between the two moves no row. Then the
+        /// app itself, what agents run with, and how the work is laid out.
+        static let groups: [(String, [Page])] = [("App", [.controlBar, .composer, .devices]), ("Agents", [.agents, .signins, .mcp, .chrome]),
+                                                 ("Work", [.workspaces, .projects, .links, .events])]
     }
     @State private var page = Page.general
     /// A page asked for from elsewhere (the sidebar's Workspace settings…), taken when the view appears.
@@ -76,6 +82,8 @@ struct SettingsView: View {
         case .events: EventsPage(workspace: workspace)
         case .workspaces: WorkspacesPage(workspace: workspace)
         case .mcp: McpServersPage(workspace: workspace)
+        case .signins: SignInsPage(workspace: workspace)
+        case .chrome: if let workspace { BrowserRows(workspace: workspace) }
         }
     }
 }
@@ -93,6 +101,8 @@ struct SidebarColumn<Content: View>: View {
     let title: String
     /// The heading as a selector (the tasks sidebar's workspace): the rows it opens.
     var picker: (() -> [SelectorSection])? = nil
+    /// The heading's logo: a workspace's glyph; none, Zero's mark.
+    var glyph = ""
     /// A row at the foot under a divider (an integration's Edit views), level with the rail's settings.
     var footer: AnyView? = nil
     @ViewBuilder let content: () -> Content
@@ -102,7 +112,7 @@ struct SidebarColumn<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            SidebarHeader(title: title, picker: picker)
+            SidebarHeader(title: title, picker: picker, glyph: glyph)
                 .padding(.horizontal, -10).padding(.bottom, -4)
             content()
             if let footer {
@@ -138,6 +148,7 @@ struct SidebarColumn<Content: View>: View {
 struct SidebarHeader: View {
     let title: String
     var picker: (() -> [SelectorSection])? = nil
+    var glyph = ""
     @State private var anchor = CGRect.zero
     @State private var hovered = false
 
@@ -150,11 +161,12 @@ struct SidebarHeader: View {
             // The mark over the rows' icons and the title over their text (10 + 10 + an 18 pt icon + 9), level with the
             // rail's home icon (its centre 28 pt under the panel's top).
             HStack(spacing: 9) {
-                ZeroMark(small: true).frame(width: 20, height: 19).frame(width: 18)
                 if let picker {
                     let open = WorkspaceSelector.shared.open == "workspace"
+                    // The logo and the name, one button: either opens the workspaces.
                     Button { WorkspaceSelector.shared.toggle("workspace", kind: .menu, anchor: anchor, rows: picker) } label: {
                         HStack(spacing: 5) {
+                            WorkspaceGlyph(glyph: glyph, size: 18).frame(width: 18).padding(.trailing, 4)
                             Text(title).font(.system(size: 17, weight: .semibold)).lineLimit(1)
                             NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).opacity(hovered || open ? 1 : 0.55)
                         }
@@ -169,6 +181,7 @@ struct SidebarHeader: View {
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { anchor = $0 }
                     .tip("Switch workspace")
                 } else {
+                    ZeroMark(small: true).frame(width: 20, height: 19).frame(width: 18)
                     Text(title).font(.system(size: 17, weight: .semibold))
                 }
             }
@@ -546,9 +559,8 @@ private struct AgentsPage: View {
     let workspace: Workspace?
     var body: some View {
         Sections {
-            SettingsSection(title: "Runtimes") { RuntimesRows(store: store, inbox: inbox) }
             SettingsSection(title: "Setup") { PluginRow() }
-            if let workspace { SettingsSection(title: "Browser") { BrowserRows(workspace: workspace) } }
+            SettingsSection(title: "Runtimes") { RuntimesRows(store: store, inbox: inbox) }
             SettingsSection(title: "Tasks") {
                 Rows {
                     SettingRow(title: "Where tasks run", detail: "A command printing [{\"ticket\": \"ENG-1\", \"place\": \"my-bench\"}], run in your login shell every five minutes. Each task's Where is its place, by ticket, in place of its folder.") {
@@ -619,31 +631,35 @@ private struct PlacesCommandField: View {
     }
 }
 
-/// The Zero plugin, which has Claude Code send its asks and progress to the inbox.
-/// Zero for Chrome: set up (the native host's manifest, then the extension loaded in Chrome by hand, unpacked), whether a
-/// Chrome is connected, and the sites no task may use.
+/// Settings › Browsers: the browsers agents use, each task in tabs of its own. Zero for Chrome is set up by hand (the
+/// native host's manifest, then the extension loaded unpacked); Firefox Developer Edition needs nothing, as Zero opens
+/// it under remote control and installs its extension itself. The sites no task may use are every browser's.
 private struct BrowserRows: View {
     let workspace: Workspace
     @State private var connected: [String]?
     @State private var folder: String?
     @State private var blocked = ""
+    @State private var opening = false
+    @State private var firefoxError: String?
+
+    private var chromes: [String]? { connected?.filter { $0 != "Firefox" } }
+    private var firefox: Bool { connected?.contains("Firefox") == true }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Rows {
-                SettingRow(title: "Chrome", detail: connected.map { $0.isEmpty ? "Lets every agent use Chrome, each task in tabs of its own, as Claude in Chrome does. Not connected." : "Connected: \($0.joined(separator: ", ")). Every agent can use Chrome, each task in tabs of its own." } ?? "Lets every agent use Chrome, each task in tabs of its own.") {
-                    RowButton(title: connected?.isEmpty == false ? "Set up again" : "Set up", action: setUp)
-                }
-                SettingRow(title: "Blocked sites", detail: "No task may open these, or act on a tab showing one. A site covers its subdomains. Any other site is allowed; in auto mode a reviewer looks at each new one first.") {
-                    TextField("bank.com, mail.google.com", text: $blocked)
-                        .textFieldStyle(.roundedBorder).font(.system(size: 12)).frame(width: 220)
-                        .onSubmit { Task { await workspace.saveBlockedSites(blocked.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }) } }
+        Sections {
+            SettingsSection(title: "Chrome") { chrome }
+            SettingsSection(title: "Firefox") {
+                Rows {
+                    SettingRow(title: "Firefox Developer Edition", detail: firefoxError ?? (firefox
+                        ? "Under Zero's remote control: agents use it with real clicks and keys, and your sign-ins."
+                        : "Opened by Zero when an agent asks for Firefox, under remote control (Firefox shows a striped address bar). If it's already open, quit it first.")) {
+                        if firefox { Text("Connected").font(.system(size: 12)).foregroundStyle(.secondary) }
+                        else if opening { ProgressView().controlSize(.small) }
+                        else { RowButton(title: "Open") { openFirefox() } }
+                    }
                 }
             }
-            if let folder {
-                Text("In Chrome's Extensions page (open now): turn on Developer mode, choose Load unpacked, and pick the folder Finder shows (\((folder as NSString).abbreviatingWithTildeInPath)). Zero for Chrome connects by itself.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-            }
+            SettingsSection(title: "Every browser") { sites }
         }
         .task {
             blocked = await workspace.blockedSites().joined(separator: ", ")
@@ -652,6 +668,40 @@ private struct BrowserRows: View {
                 try? await Task.sleep(for: .seconds(3))
             }
         }
+    }
+
+    private var chrome: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Rows {
+                SettingRow(title: "Zero for Chrome", detail: chromes.map { $0.isEmpty ? "Lets every agent use Chrome, each task in tabs of its own, as Claude in Chrome does. Not connected." : "Connected: \($0.joined(separator: ", ")). Every agent can use Chrome, each task in tabs of its own." } ?? "Lets every agent use Chrome, each task in tabs of its own.") {
+                    RowButton(title: chromes?.isEmpty == false ? "Set up again" : "Set up", action: setUp)
+                }
+            }
+            if let folder {
+                Text("In Chrome's Extensions page (open now): turn on Developer mode, choose Load unpacked, and pick the folder Finder shows (\((folder as NSString).abbreviatingWithTildeInPath)). Zero for Chrome connects by itself.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            }
+        }
+    }
+
+    private func openFirefox() {
+        opening = true
+        firefoxError = nil
+        Task {
+            firefoxError = await workspace.openFirefox()
+            connected = await workspace.browsers()
+            opening = false
+        }
+    }
+
+    private var sites: some View {
+            Rows {
+                SettingRow(title: "Blocked sites", detail: "No task may open these, or act on a tab showing one. A site covers its subdomains. Any other site is allowed; in auto mode a reviewer looks at each new one first.") {
+                    TextField("bank.com, mail.google.com", text: $blocked)
+                        .textFieldStyle(.roundedBorder).font(.system(size: 12)).frame(width: 220)
+                        .onSubmit { Task { await workspace.saveBlockedSites(blocked.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }) } }
+                }
+            }
     }
 
     private func setUp() {

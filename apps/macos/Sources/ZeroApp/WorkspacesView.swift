@@ -11,7 +11,7 @@ struct WorkspacesPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
-            Text("A workspace is a view of your tasks: switch it in the sidebar's heading, and every workspace's tasks keep running. A task is in the workspace it was started in; otherwise the workspace one of whose folders holds it; otherwise Zero. A lead's workers are in its workspace wherever they run, and a task can be started into another workspace from New task.")
+            Text("Views of your tasks, each with folders of its own: switch them in the sidebar's heading. Every workspace's tasks keep running.")
                 .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let workspace {
                 VStack(spacing: 0) {
@@ -105,10 +105,24 @@ private struct WorkspaceForm: View {
             if workspace.id != "zero" {
                 field("Name") { TextField("Acme", text: $workspace.name).textFieldStyle(.roundedBorder) }
             }
-            field("Glyph") {
-                HStack(spacing: 8) {
-                    TextField("An emoji, or a Nucleo icon's name", text: $workspace.glyph).textFieldStyle(.roundedBorder)
-                    WorkspaceGlyph(glyph: workspace.glyph, size: 16).foregroundStyle(.secondary).frame(width: 22)
+            field("Logo") {
+                VStack(alignment: .leading, spacing: 8) {
+                    // Logos to pick from, Zero's mark first; or an emoji, typed. As many as fit the sheet's width, a few short rows: no scroll box, nothing pushed past the edge.
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 30, maximum: 30), spacing: 4)], alignment: .leading, spacing: 4) {
+                            ForEach([""] + Self.icons, id: \.self) { name in
+                                Button { workspace.glyph = name } label: {
+                                    WorkspaceGlyph(glyph: name, size: 16).foregroundStyle(workspace.glyph == name ? .primary : .secondary)
+                                        .frame(width: 30, height: 30)
+                                        .background(workspace.glyph == name ? Theme.chip : .clear, in: RoundedRectangle(cornerRadius: 7))
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(Hovering(radius: 7)).tip(name.isEmpty ? "Zero's mark" : name)
+                            }
+                    }
+                    HStack(spacing: 8) {
+                        TextField("Or an emoji", text: $workspace.glyph).textFieldStyle(.roundedBorder)
+                        WorkspaceGlyph(glyph: workspace.glyph, size: 16).foregroundStyle(.secondary).frame(width: 22)
+                    }
                 }
             }
             if workspace.id != "zero" {
@@ -171,6 +185,16 @@ private struct WorkspaceForm: View {
             Task { _ = await model.saveMcpServer(server, secrets: [:]) }
         }
     }
+
+    /// Zero's own icons (Resources/nucleo), each once, by name.
+    /// Icons that read as a workspace's logo: things and places, not the app's controls (arrows, headings).
+    static let icons: [String] = [
+        "layers", "suitcase", "house", "code", "terminal", "rocket", "star", "heart", "globe", "book", "flask", "cube",
+        "chart-bar", "bug", "shield", "lock", "key", "robot", "microchip", "database", "server", "atom", "lightbulb",
+        "puzzle-piece", "magnifier", "camera", "music", "headphones", "palette", "leaf", "sun", "moon", "cloud", "fire",
+        "bolt-lightning", "trophy", "crown", "flag", "gift", "compass", "map-pin", "anchor", "plane", "car", "mug",
+        "gamepad", "graduation-cap", "wallet", "calendar", "megaphone", "folder",
+    ]
 
     private func addFolder() {
         let path = ((folder.trimmingCharacters(in: .whitespaces)) as NSString).expandingTildeInPath

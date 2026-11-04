@@ -66,3 +66,27 @@ private func title(_ session: String, _ seq: UInt64, _ text: String) -> ZerodMir
     #expect((copy.status, copy.turn, copy.model, copy.effort) == (.working, "u", "gpt", "high"))
     #expect(copy.seq == 9, "every change counts, even one that finds nothing")
 }
+
+private func said(_ id: String) -> ConversationItem { ConversationItem(id: id, turn: nil, kind: .agent(text: id, finalAnswer: false), status: .done) }
+
+/// Jumped back through a long conversation: a window of it, not everything from there to the end. What comes while the
+/// window stops short of the end is counted below it, never put after its last item (that would leave a gap).
+@Test func aWindowAwayFromTheEndCountsWhatComesAfterItAndNewerPagesJoinIt() {
+    var mirror = ZerodMirror()
+    var c = conversation("s1", seq: 1)
+    c.items = [said("x98"), said("x99")]
+    mirror.receive(.session(c))
+    mirror.receive(.earlier(session: "s1", count: 98))
+    mirror.window("s1", items: [said("x10"), said("x11")], earlier: 10, later: 88)
+    #expect(mirror.conversations["s1"]?.items.map(\.id) == ["x10", "x11"])
+    #expect((mirror.earlier["s1"], mirror.later["s1"]) == (10, 88))
+    mirror.receive(.change(ZerodEvent(session: "s1", seq: 2, change: .item(said("x100")))))
+    #expect(mirror.conversations["s1"]?.items.map(\.id) == ["x10", "x11"], "not after the window")
+    #expect(mirror.later["s1"] == 89)
+    mirror.append("s1", items: [said("x12")], later: 88)
+    #expect(mirror.conversations["s1"]?.items.map(\.id) == ["x10", "x11", "x12"])
+    #expect(mirror.later["s1"] == 88)
+    // A fresh snapshot is the latest again.
+    mirror.receive(.session(c))
+    #expect(mirror.later["s1"] == 0)
+}

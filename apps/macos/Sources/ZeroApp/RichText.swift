@@ -35,6 +35,23 @@ enum RichMarkdown {
     }
 
     /// The text as rendered before, if it has been.
+    /// A code block as its monospaced lines alone, at the text's own indent: for a bubble, which is already its
+    /// background. Its lines still copy as lines.
+    static func flat(_ text: NSAttributedString) -> NSAttributedString {
+        let out = NSMutableAttributedString(attributedString: text)
+        out.enumerateAttribute(.zeroCodeBlock, in: NSRange(location: 0, length: out.length)) { value, range, _ in
+            guard value != nil else { return }
+            out.removeAttribute(.zeroCodeBlock, range: range)
+            guard let style = (out.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle else { return }
+            style.headIndent = max(0, style.headIndent - 12)
+            style.firstLineHeadIndent = max(0, style.firstLineHeadIndent - 12)
+            style.tailIndent = 0
+            style.paragraphSpacingBefore = 0
+            out.addAttribute(.paragraphStyle, value: style, range: range)
+        }
+        return out
+    }
+
     static func kept(_ text: String, size: CGFloat, compact: Bool, repo: String?, yours: Bool = false) -> NSAttributedString? {
         rendered.object(forKey: "\(size)|\(compact)|\(yours)|\(repo ?? "")|\(text)" as NSString)
     }
@@ -238,16 +255,21 @@ enum RichMarkdown {
 /// Draws what the attributes ask for behind the text: rounded pills for inline code, a panel for a code block, a bar for
 /// a quote, a hairline for a rule.
 final class RichLayoutManager: NSLayoutManager {
+    /// A code block's panel: 12 pt either side of its text, 8 pt above and below; where the copy button goes too.
+    static func panel(for range: NSRange, storage: NSTextStorage, manager: NSLayoutManager, container: NSTextContainer, origin: NSPoint) -> NSRect {
+        let rect = manager.boundingRect(forGlyphRange: manager.glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: container)
+        let style = storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
+        let left = (style?.headIndent ?? 12) - 12 + container.lineFragmentPadding
+        return NSRect(x: origin.x + left, y: origin.y + rect.minY - 8, width: container.size.width - left - container.lineFragmentPadding, height: rect.height + 16)
+    }
+
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
         guard let storage = textStorage, let container = textContainers.first else { return }
         let characters = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
         storage.enumerateAttribute(.zeroCodeBlock, in: characters) { value, range, _ in
             guard value != nil else { return }
-            let rect = boundingRect(forGlyphRange: glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: container)
-            let style = storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
-            let left = (style?.headIndent ?? 12) - 12 + container.lineFragmentPadding
-            let panel = NSRect(x: origin.x + left, y: origin.y + rect.minY - 8, width: container.size.width - left - container.lineFragmentPadding, height: rect.height + 16)
+            let panel = Self.panel(for: range, storage: storage, manager: self, container: container, origin: origin)
             RichMarkdown.blockFill.setFill()
             NSBezierPath(roundedRect: panel, xRadius: 8, yRadius: 8).fill()
         }
@@ -328,6 +350,86 @@ final class RichTextView: NSTextView {
         shown = text
         measured = nil
         textStorage?.setAttributedString(text)
+        hovered = nil
+    }
+
+    // Copying: a code block's lines are joined by line separators (one paragraph, one panel); copied, they're newlines.
+
+    override func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
+        guard let storage = textStorage else { return false }
+        let picked = NSMutableAttributedString()
+        for range in selectedRanges.map(\.rangeValue) where range.length > 0 { picked.append(storage.attributedSubstring(from: range)) }
+        guard picked.length > 0 else { return false }
+        picked.mutableString.replaceOccurrences(of: "\u{2028}", with: "\n", options: [], range: NSRange(location: 0, length: picked.length))
+        pboard.clearContents()
+        if let rtf = try? picked.data(from: NSRange(location: 0, length: picked.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]) {
+            pboard.setData(rtf, forType: .rtf)
+        }
+        return pboard.setString(picked.string, forType: .string)
+    }
+
+    /// The code block under the pointer, and the button on its corner that copies it whole.
+    private var hovered: NSRange? { didSet { if hovered != oldValue { placeCopy() } } }
+    private lazy var copyButton: NSButton = {
+        let button = NSButton(image: Nucleo.image("copy", size: 14) ?? NSImage(), target: self, action: #selector(copyBlock))
+        button.isBordered = false
+        button.contentTintColor = .secondaryLabelColor
+        button.toolTip = "Copy"
+        button.frame.size = NSSize(width: 26, height: 26)
+        button.wantsLayer = true
+        button.layer?.cornerRadius = 6
+        button.layer?.backgroundColor = RichMarkdown.blockFill.cgColor
+        button.layer?.borderWidth = 1
+        button.layer?.borderColor = NSColor.separatorColor.cgColor
+        button.isHidden = true
+        addSubview(button)
+        return button
+    }()
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.filter { $0.owner === self && $0.userInfo?["code"] != nil }.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self, userInfo: ["code": true]))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        let point = convert(event.locationInWindow, from: nil)
+        hovered = codePanels().first { $0.panel.contains(point) }?.range
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        hovered = nil
+    }
+
+    /// Each code block's range and its panel in the view, as RichLayoutManager draws it.
+    private func codePanels() -> [(range: NSRange, panel: NSRect)] {
+        guard let storage = textStorage, let manager = layoutManager, let container = textContainer, storage.length > 0 else { return [] }
+        var panels: [(NSRange, NSRect)] = []
+        storage.enumerateAttribute(.zeroCodeBlock, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard value != nil else { return }
+            panels.append((range, RichLayoutManager.panel(for: range, storage: storage, manager: manager, container: container, origin: textContainerOrigin)))
+        }
+        return panels
+    }
+
+    private func placeCopy() {
+        guard let hovered, let panel = codePanels().first(where: { $0.range == hovered })?.panel else { copyButton.isHidden = true; return }
+        copyButton.image = Nucleo.image("copy", size: 14)
+        // Its top-right corner, inside it (the view is flipped: y grows down).
+        copyButton.frame.origin = NSPoint(x: panel.maxX - copyButton.frame.width - 6, y: panel.minY + 6)
+        copyButton.isHidden = false
+    }
+
+    @objc private func copyBlock() {
+        guard let hovered, let storage = textStorage else { return }
+        let code = storage.attributedSubstring(from: hovered).string.replacingOccurrences(of: "\u{2028}", with: "\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(code.hasSuffix("\n") ? String(code.dropLast()) : code, forType: .string)
+        // A tick for a moment says it did.
+        copyButton.image = Nucleo.image("check", size: 14)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in self?.copyButton.image = Nucleo.image("copy", size: 14) }
     }
 
     /// Its height at `width`, laid out once per text and width: SwiftUI asks several times a layout.

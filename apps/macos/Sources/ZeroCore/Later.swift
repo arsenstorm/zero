@@ -6,9 +6,9 @@ public enum LaterAsk {
         let what = answer.map { "what this answer of yours says:\n\n> " + $0.split(separator: "\n", omittingEmptySubsequences: false).prefix(12).joined(separator: "\n> ") + "\n\n" }
             ?? "what you have so far: where the work stands and what's left. "
         return """
-        The user wants to save \(what)for later. Save it with `zero later save "note" --file -` and the artifact on stdin \
+        The user wants to save \(what)for later. Save it with `zero later save "note" --asked --file -` and the artifact on stdin \
         (add --link for related threads or pages, --attach for screenshots or files):
-        - The note: one or two short sentences in plain, simple words, saying what needs doing later and why. No jargon.
+        - The note: a headline under 100 characters in plain words, saying what needs doing later. No ids, paths or lists.
         - The artifact: everything you've worked out behind it, in full, in Markdown. Findings, causes with file:line, \
         the plan, commands, links. Nothing summed up or left out: someone starting from it later has only this.
         Then tell the user its link, and carry on with anything you were doing.

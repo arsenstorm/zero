@@ -2144,7 +2144,9 @@ struct MarkdownText: View {
         RichMarkdown.cached(text, size: size, compact: compact, repo: links.repo, yours: links.skills) {
             let made = RichMarkdown.render(MarkdownBlock.parse(ZeroEnding.split(text).0), size: size, inline: { inline($0, links: links) },
                                            key: "\(links.repo ?? "")|\(links.owner ?? "")|\(links.skills)|\(compact)")
-            return compact ? RichMarkdown.compact(made, size: size) : made
+            // Yours, in a bubble: its code without a panel of its own (never a card in a card).
+            let flat = links.skills ? RichMarkdown.flat(made) : made
+            return compact ? RichMarkdown.compact(flat, size: size) : flat
         }
     }
 

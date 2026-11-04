@@ -38,9 +38,11 @@ func usage(help: Bool = false) -> Never {
       zero result  <session>   (its last answer)
       zero loops   (the loops Zero keeps: named instructions, used as @name in a message or a brief, or with spawn --loop)
       zero loop    <name>   (a loop's words; an @name inside it is a child loop: start workers on it with spawn --loop)
-      zero later   save "note" [--file artifact.md | --file -] [--link URL]... [--attach FILE]...
-                   (saves something for later, in Zero's Later: the note is what's to be done, in a sentence or two of
-                   plain, simple words; the artifact is everything you worked out behind it, in full, nothing summed up)
+      zero later   save "note" [--asked] [--file artifact.md | --file -] [--link URL]... [--attach FILE]...
+                   (saves work the user will come back to, in Zero's Later: the note is a headline under 100 characters
+                   in plain words; the artifact is everything you worked out behind it, in full. --asked only when the
+                   user asked you to save it; otherwise it's a suggestion, at most 3 open per task, gone in a week
+                   unless the user keeps it. Not for ticket ideas, reminders to yourself, or what needs the user: ask)
       zero later   list [words] | view <id> [--version N] | edit <id> [--note "…"] [--file …] [--link …] [--attach …]
                    | done <id> | open <id> | delete <id>   (an item's link is zero://later/<id>; view prints it all)
       zero pause   [session...]   (puts tasks on hold with their workers, every task when none is named: each working one
@@ -68,6 +70,11 @@ func usage(help: Bool = false) -> Never {
       zero notify  <session> "text"   (words for a session, given between its turns: for event sources and scripts)
       zero watch   [--session ID] -- command...   (runs it in the background; this session is told how it ended, so end
                    your turn instead of polling: zero watch -- gh pr checks 42 --watch)
+      zero watch   --file PATH [--alert TEXT]... [--until TEXT] [--quiet MINUTES]   (watches a log as it grows, from now
+                   on: a line with an --alert text is told with the lines before it, at most once a minute; --until ends
+                   the watch when a line with it is printed; --quiet says when the file stops growing. Each is text, or a pattern
+                   between slashes; pick what only trouble has: a compiler's errors are "/:\\d+:\\d+: (fatal )?error: /"
+                   (plain ": error: " also matches source quoting one). zero watch list | zero watch stop ID)
       zero remind  <minutes> "text" [--session ID]   (this session is told it then)
       zero usage   (each provider's limits as its CLI last reported them)
       zero mcp     (Zero's MCP server on stdio, giving an agent the user's scratchpads: add it as an MCP server's command)
@@ -103,7 +110,7 @@ while i < args.count {
     if arg == "--" { positional.append(contentsOf: args[(i + 1)...]); break }
     if arg.hasPrefix("--") {
         let key = String(arg.dropFirst(2))
-        if ["async", "blocked", "done", "merged", "waiting", "any", "mine", "all"].contains(key) {
+        if ["async", "blocked", "done", "merged", "waiting", "any", "mine", "all", "asked"].contains(key) {
             flags[key, default: []].append("1")
         } else {
             i += 1
@@ -612,7 +619,7 @@ case "later":
     case "save":
         let note = rest.joined(separator: " ")
         guard !note.isEmpty else { usage() }
-        let item = await later("save", ["note": note, "artifact": artifact() ?? "", "links": flags["link"] ?? [], "files": paths("attach")]) as? [String: Any] ?? [:]
+        let item = await later("save", ["note": note, "artifact": artifact() ?? "", "links": flags["link"] ?? [], "files": paths("attach"), "asked": flag("asked") != nil]) as? [String: Any] ?? [:]
         print("zero: saved for later as \(item["link"] as? String ?? "?")")
     case "edit", "done", "open":
         guard let id = rest.first else { usage() }
@@ -670,6 +677,24 @@ case "browser":
 case "notify":
     guard positional.count >= 2 else { usage() }
     await zerod { try await $0.notify(session: positional[0], text: positional[1...].joined(separator: " ")) }
+case "watch" where positional.first == "list":
+    let session = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"]
+    let watches = await zerod { try await $0.watches(session: session) }
+    if watches.isEmpty { print("zero: nothing watched") }
+    for watch in watches {
+        let alerts = (watch["alerts"] as? [String] ?? []).map { "alert \"\($0)\"" }
+        let rest = [(watch["done"] as? String).map { "until \"\($0)\"" }, (watch["quiet"] as? Int).map { "quiet \($0)m" }].compactMap { $0 }
+        print("\(watch["id"] as? String ?? "")  \(watch["file"] as? String ?? "")  \((alerts + rest).joined(separator: ", "))")
+    }
+case "watch" where positional.first == "stop":
+    guard positional.count == 2 else { usage() }
+    await zerod { try await $0.unwatch(positional[1]) }
+    print("zero: stopped watching")
+case "watch" where flag("file") != nil:
+    guard let session = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"], let file = flag("file") else { usage() }
+    let path = URL(fileURLWithPath: (file as NSString).expandingTildeInPath).standardizedFileURL.path
+    let id = await zerod { try await $0.watchFile(session: session, file: path, alerts: flags["alert"] ?? [], done: flag("until"), quiet: flag("quiet").flatMap(Int.init)) }
+    print("zero: watching \(path) (\(id)); this session will be told when it prints what you're watching for")
 case "watch" where flag("session") != nil || ProcessInfo.processInfo.environment["ZERO_SESSION"] != nil:
     guard !positional.isEmpty, let session = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"] else { usage() }
     await zerod { try await $0.watch(session: session, command: positional.joined(separator: " ")) }

@@ -11,7 +11,7 @@ struct McpServersPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
-            Text("Servers here are given to every task as its agent starts, in Claude Code, Codex and OpenCode alike, on top of the ones each has set up itself. Put one in workspaces to have it only there: a CVE lookup in a Cybersecurity workspace, say. A task moved to another workspace gets that workspace's servers the next time its agent starts.")
+            Text("Servers every task gets, in Claude Code, Codex and OpenCode alike, on top of their own. Put one in workspaces to have it only there.")
                 .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let workspace {
                 VStack(spacing: 0) {
@@ -38,7 +38,6 @@ struct McpServersPage: View {
 
     private func row(_ server: ZerodLink.McpServer, in workspace: Workspace) -> some View {
         HStack(spacing: 12) {
-            NucleoIcon("plug", size: 15).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 3) {
                 Text(server.name).font(.system(size: 13, weight: .medium))
                 Text(server.url ?? ([server.command ?? ""] + server.args).joined(separator: " ")).font(.system(size: 11.5, design: .monospaced))

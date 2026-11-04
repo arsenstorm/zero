@@ -25,7 +25,11 @@ struct WorkspaceView: View {
         // Each workspace opens on the task last open in it: kept as tasks are opened, and gone back to on a switch.
         .onChange(of: [navigation.place.key, navigation.worker ?? ""]) {
             guard case .task(let id) = navigation.place, let lead = workspace.conversation(id) else { return }
-            navigation.remember(id, worker: navigation.worker, in: workspace.workspace(of: root(lead)))
+            let home = workspace.workspace(of: root(lead))
+            navigation.remember(id, worker: navigation.worker, in: home)
+            // A task of another workspace opened (a notification, the inbox, a link): the window goes to its workspace.
+            // Remembered first, so arriving there keeps this task open.
+            if home != workspace.current { workspace.current = home }
         }
         .onChange(of: workspace.current) { _, now in
             navigation.arrive(in: now) { id in workspace.conversation(id).map { workspace.workspace(of: root($0)) == now } ?? false }
@@ -409,7 +413,7 @@ private struct TasksSidebar: View {
     }
 
     var body: some View {
-        SidebarColumn(title: workspace.currentWorkspace.name, picker: workspaceRows) {
+        SidebarColumn(title: workspace.currentWorkspace.name, picker: workspaceRows, glyph: workspace.currentWorkspace.glyph) {
             SidebarItem("New task", icon: "compose", selected: place == .home) { place = .home }
                 .keyboardShortcut("n", modifiers: .command)
             SidebarItem("All tasks", icon: "list-checkbox", selected: place == .board) { place = .board }
@@ -1637,6 +1641,7 @@ private struct ConversationView: View {
     /// The rows standing in for older items are on screen: only then is the next page fetched, and one page per
     /// approach: the next only once those rows have left the screen and come back as you scroll on.
     @State private var olderShown = false
+    @State private var newerShown = false
     @State private var olderArmed = true
     /// How tall the composer is: the conversation fades out just above it.
     @State private var composerHeight: CGFloat = 0
@@ -1761,7 +1766,8 @@ private struct ConversationView: View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 // A step waiting on an approval shows once, in the approval.
-                let blocks = TimelineBlock.of(conversation.items.filter { item in !conversation.approvals.contains { $0.item == item.id } },
+                // What's just been sent shows at once, before its agent has it (Sending).
+                let blocks = TimelineBlock.of(Sending.merge(conversation.items, workspace.sending[conversation.id] ?? []).filter { item in !conversation.approvals.contains { $0.item == item.id } },
                                               working: conversation.status == .working || conversation.status == .waiting)
                 let turns = TimelineBlock.turns(blocks)
                 ScrollView {
@@ -1799,7 +1805,8 @@ private struct ConversationView: View {
                             waiting(conversation)
                         }
                         // Its provider still getting ready (signing in, say): say so, rather than an empty page.
-                        if conversation.status == .starting {
+                        // Or woken by a message just sent: its agent is starting, the message waiting for it above.
+                        if conversation.status == .starting || (conversation.status == .offline && !(workspace.sending[conversation.id] ?? []).isEmpty) {
                             Thinking(text: "Starting \(conversation.provider.title)…").id("starting")
                         }
                         // Stuck or out of usage: a callout where the trouble is, at the end of the work, like a failure's.
@@ -1823,6 +1830,13 @@ private struct ConversationView: View {
                                     .clipShape(RoundedRectangle(cornerRadius: 10))
                                     .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
                             }.padding(.top, 4)
+                        }
+                        // Newer than the window jumped to: rows standing in for them, the next page fetched as they come
+                        // into view (page after page while they stay on screen).
+                        if live.later > 0 {
+                            SkeletonTurns().id("later")
+                                .onScrollVisibilityChange(threshold: 0.01) { newerShown = $0 }
+                                .task(id: newerShown ? live.later : -1) { if newerShown { await workspace.loadNewer(conversation.id) } }
                         }
                         // Room for the composer and the fade above it: scrolled to the end, the last message sits just
                         // above the composer, and the scrollbar is at the bottom. Just sent, a page of room, so the
@@ -1886,7 +1900,7 @@ private struct ConversationView: View {
                         // At the end means at it, not near it: a release of the lift leaves the end a few points off.
                         if let g = tracker.geometry, !lifted {
                             let end = g.contentSize.height + g.contentInsets.bottom - g.contentInsets.top - g.containerSize.height
-                            following = end - g.contentOffset.y < 2
+                            following = live.later == 0 && end - g.contentOffset.y < 2
                         }
                     }
                 }
@@ -1942,21 +1956,34 @@ private struct ConversationView: View {
                 }
                 // Scrolled up: a way back down, just above the composer.
                 .overlay(alignment: .bottom) {
-                    WayDown(tracker: tracker) { following = true; lifted = false; withAnimation { proxy.scrollTo("end", anchor: .bottom) } }.padding(.bottom, composerHeight + 6)
+                    WayDown(tracker: tracker, away: live.later > 0) {
+                        Task {
+                            // Jumped back through it: the latest page again first.
+                            if live.later > 0 { await workspace.loadLatest(conversation.id); try? await Task.sleep(for: .milliseconds(50)) }
+                            following = true; lifted = false
+                            withAnimation { proxy.scrollTo("end", anchor: .bottom) }
+                        }
+                    }
+                    .padding(.bottom, composerHeight + 6)
                 }
                 .overlay(alignment: .trailing) { ThinScrollbar(tracker: tracker) { following = false; lifted = false; position.scrollTo(y: $0) }.padding(.trailing, 2) }
                 .overlay(alignment: .leading) {
                     // Every message of yours, loaded or not, from zerod's outline of the conversation.
-                    let marks = (workspace.outlines[conversation.id] ?? []).map { MessageRail.Mark(id: $0.id, text: $0.text, answer: $0.answer.map { ZeroEnding.split($0).0 }) }
+                    let marks = workspace.outlines[conversation.id] ?? []
                     if marks.count > 1 {
                         MessageRail(marks: marks, tracker: tracker, inset: 18) { id in
                             Task {
-                                // Not loaded yet: everything from it down to what is, then there.
                                 following = false
-                                if !conversation.items.contains(where: { $0.id == id }) { await workspace.loadEarlier(conversation.id, from: id) }
-                                withAnimation { proxy.scrollTo(id, anchor: .top) }
+                                if conversation.items.contains(where: { $0.id == id }) { withAnimation { proxy.scrollTo(id, anchor: .top) }; return }
+                                // Not loaded: a page from it, in place of what is (not every item from it to the end,
+                                // all laid out), and straight there rather than animated across it.
+                                await workspace.jump(conversation.id, to: id)
+                                try? await Task.sleep(for: .milliseconds(50))
+                                proxy.scrollTo(id, anchor: .top)
                             }
                         }
+                        // Redrawn when its marks change, not with every word the conversation streams.
+                        .equatable()
                         .padding(.vertical, 40)
                     }
                 }
@@ -1971,7 +1998,7 @@ private struct ConversationView: View {
                 .task {
                     guard let kept = ScrollMemory.place(in: conversation.id) else { return }
                     following = false
-                    if !conversation.items.contains(where: { $0.id == kept.turn }) { await workspace.loadEarlier(conversation.id, from: kept.turn) }
+                    if !conversation.items.contains(where: { $0.id == kept.turn }) { await workspace.jump(conversation.id, to: kept.turn) }
                     try? await Task.sleep(for: .milliseconds(80))
                     position.scrollTo(id: kept.block, anchor: .top)
                 }
@@ -2026,7 +2053,8 @@ private struct ConversationView: View {
 
     private var composer: some View {
         let busy = conversation.status == .working || conversation.status == .waiting
-        return Composer(draft: Binding(get: { box.text }, set: { box.text = $0 }), placeholder: placeholder, canSend: conversation.status != .starting, folder: conversation.cwd, workspace: workspace,
+        // Typing to a task whose agent has stopped starts it now, so the message goes the moment it's sent.
+        return Composer(draft: Binding(get: { box.text }, set: { box.text = $0; if !$0.isEmpty { workspace.warm(conversation.id) } }), placeholder: placeholder, canSend: conversation.status != .starting, folder: conversation.cwd, workspace: workspace,
                  images: $images, active: active, stop: busy && conversation.terminal == nil ? { Task { await workspace.interrupt(conversation.id) } } : nil,
                  queue: busy && conversation.terminal == nil ? {
                      // Return while it works: the message waits for after this turn, in the strip above.
@@ -2089,7 +2117,13 @@ private struct ConversationView: View {
                 guard await workspace.switchProvider(conversation.id, to: chosen, model: model, effort: effort) else { return }
                 provider = nil
             }
-            await workspace.send(conversation.id, text: text, images: images, model: model, effort: effort)
+            // Sent from a window back in it: to the latest, where the message will be.
+            if live.later > 0 { await workspace.loadLatest(conversation.id) }
+            // Not sent (zerod refused it, or wasn't there): the words back in the box, never lost.
+            guard await workspace.send(conversation.id, text: text, images: images, model: model, effort: effort) else {
+                if draft.isEmpty { draft = text; self.images = images.map { URL(fileURLWithPath: $0) } }
+                return
+            }
             self.model = nil
             self.effort = nil
         }
@@ -3480,7 +3514,8 @@ private struct ComposerChip: View {
         switch provider {
         case .claude: SoloAdapter().spawnModels(for: SpawnChoice(id: "claude", name: "Claude"))
         case .codex: SoloAdapter().spawnModels(for: SpawnChoice(id: "codex", name: "Codex"))
-        case .opencode: []
+        // Its own list, read in the background: the rows fill in once it's in.
+        case .opencode: { OpenCodeModels.shared.refresh(); return OpenCodeModels.shared.models }()
         }
     }
 
@@ -3553,7 +3588,8 @@ private struct NewTaskView: View {
                          workspace: workspace, images: $images) { start() } controls: {
                     ComposerChip(id: "new.agent", label: agentLabel, symbol: "terminal", icon: chosen.mark, kind: .runtime, prominent: true, rows: {
                         ComposerRows.models(Provider.allCases, selected: { provider, id in
-                            provider == chosen && (id == model || (model.isEmpty && id == (ComposerRows.catalogue(provider).first?.id ?? "")))
+                            // Nothing picked: the provider's first, except OpenCode's, whose default is its own config's.
+                            provider == chosen && (id == model || (model.isEmpty && provider != .opencode && id == (ComposerRows.catalogue(provider).first?.id ?? "")))
                         }, pick: { picked, choice in
                             provider = picked.rawValue
                             model = choice.id
@@ -3615,7 +3651,7 @@ private struct NewTaskView: View {
     /// "Opus 5.5 · High": the model, its provider as the chip's icon. None picked, the provider's first; a provider with
     /// no catalogue (OpenCode) by its name.
     private var agentLabel: String {
-        [models.first { $0.id == model }?.name ?? (model.isEmpty ? (models.first?.name ?? chosen.title) : model), effort.isEmpty ? nil : effortLabel(effort, short: true)]
+        [models.first { $0.id == model }?.name ?? (model.isEmpty ? (chosen == .opencode ? nil : models.first?.name) ?? chosen.title : model), effort.isEmpty ? nil : effortLabel(effort, short: true)]
             .compactMap { $0 }.joined(separator: " · ")
     }
 

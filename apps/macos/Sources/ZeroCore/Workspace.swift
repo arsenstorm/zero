@@ -10,6 +10,8 @@ public final class LiveConversation {
     public fileprivate(set) var conversation: Conversation
     /// Its items not loaded, before those that are.
     public fileprivate(set) var earlier: Int
+    /// And after them: jumped back through it (the rail), what's newer comes as it's scrolled down to.
+    public fileprivate(set) var later = 0
     init(_ conversation: Conversation, earlier: Int) { self.conversation = conversation; self.earlier = earlier }
 }
 
@@ -134,15 +136,18 @@ public final class Workspace {
         let first = full.items.first { if case .user = $0.kind { true } else { false } } ?? roster[id]?.items.first { if case .user = $0.kind { true } else { false } }
         // Only once its turn has ended, so words streaming into it don't change the roster; nor does the turn's diff.
         let isAnswer = { (item: ConversationItem) in if case .agent(_, true) = item.kind { true } else { false } }
-        let answer = full.turn == nil ? full.items.last(where: isAnswer) : roster[id]?.items.last(where: isAnswer)
+        // A window short of the end has an old answer last: the one already known stays.
+        let windowed = (mirror.later[id] ?? 0) > 0
+        let answer = full.turn == nil && !windowed ? full.items.last(where: isAnswer) : roster[id]?.items.last(where: isAnswer)
         light.items = [first, answer].compactMap { $0 }
         light.diff = nil
         light.seq = 0
         if roster[id] != light { roster[id] = light }
         if let live = lives[id] {
             live.conversation = full
-            let earlier = mirror.earlier[id] ?? 0
+            let earlier = mirror.earlier[id] ?? 0, later = mirror.later[id] ?? 0
             if live.earlier != earlier { live.earlier = earlier }
+            if live.later != later { live.later = later }
         }
     }
 
@@ -188,6 +193,8 @@ public final class Workspace {
                         case .later: Task { await self?.loadLater() }
                         case .following: self?.followingVersion += 1
                         case .workspaces: self?.workspacesVersion += 1; Task { await self?.loadWorkspaces() }
+                        case .signins: Task { await self?.loadSignIns() }
+                        case .clear: break
                         }
                     }
                 }
@@ -196,7 +203,8 @@ public final class Workspace {
                 Task { await self.handOverSeen(fresh) }
                 if (try? await fresh.subscribe()) != nil { connected = true; await loadWorkspaces(); await loadIntegrations() }
             }
-            try? await Task.sleep(for: .seconds(2))
+            // Without one, looked for again soon: zerod back from a restart is picked up within a moment.
+            try? await Task.sleep(for: link == nil ? .milliseconds(300) : .seconds(2))
         }
     }
 
@@ -284,7 +292,31 @@ public final class Workspace {
 
     /// Back to its latest items, as a snapshot has them: the rest is fetched again when it's wanted.
     public func trim(_ session: String) {
+        if (mirror.later[session] ?? 0) > 0 { Task { await loadLatest(session) }; return }
         mirror.trim(session, keep: 40)
+        sync(session)
+    }
+
+    /// A page from a message (the rail's jump, a place gone back to), in place of what's loaded: not every item from
+    /// there to the end, which a long conversation would have to lay out whole.
+    public func jump(_ session: String, to item: String) async {
+        guard let page = try? await link?.window(session: session, from: item, limit: 60), !page.items.isEmpty else { return }
+        mirror.window(session, items: page.items, earlier: page.earlier, later: page.later)
+        sync(session)
+    }
+
+    /// The page after what's loaded, when the window stops short of the end.
+    public func loadNewer(_ session: String) async {
+        guard (mirror.later[session] ?? 0) > 0, let last = mirror.conversations[session]?.items.last?.id,
+              let page = try? await link?.window(session: session, after: last, limit: 60) else { return }
+        mirror.append(session, items: page.items, later: page.later)
+        sync(session)
+    }
+
+    /// The latest page again, as a snapshot has it: back to the end from a window.
+    public func loadLatest(_ session: String) async {
+        guard (mirror.later[session] ?? 0) > 0, let page = try? await link?.window(session: session, limit: 40) else { return }
+        mirror.window(session, items: page.items, earlier: page.earlier, later: page.later)
         sync(session)
     }
 
@@ -311,7 +343,9 @@ public final class Workspace {
 
     @discardableResult
     public func outline(_ session: String) async -> [OutlineMark] {
-        guard let marks = try? await link?.outline(session: session) else { return outlines[session] ?? [] }
+        guard var marks = try? await link?.outline(session: session) else { return outlines[session] ?? [] }
+        // The rail shows each answer without its ending line: taken off once here, not on every redraw.
+        for i in marks.indices { marks[i].answer = marks[i].answer.map { ZeroEnding.split($0).0 } }
         if outlines[session] != marks { outlines[session] = marks }
         return marks
     }
@@ -358,7 +392,7 @@ public final class Workspace {
 
     /// Saved with its Keychain values put in the Keychain (`secrets`, by name), never in zerod's file; an error to show.
     public func saveMcpServer(_ server: ZerodLink.McpServer, secrets: [String: String]) async -> String? {
-        guard let link else { return "Zero's daemon isn't running" }
+        guard let link = await linked() else { return "Zero's daemon isn't running" }
         do {
             let saved = try await link.saveMcpServer(server)
             for (name, value) in secrets where !value.isEmpty {
@@ -387,7 +421,7 @@ public final class Workspace {
 
     /// Saved, or why not (a name that isn't one, a child that leads back to it).
     public func saveLoop(_ name: String, description: String, body: String) async -> String? {
-        guard let link else { return "Zero's daemon isn't running" }
+        guard let link = await linked() else { return "Zero's daemon isn't running" }
         do { _ = try await link.saveLoop(name, description: description, body: body); await loadLoops(); return nil } catch { return error.localizedDescription }
     }
 
@@ -400,7 +434,7 @@ public final class Workspace {
     /// Saves a workspace (an empty id makes one); the error to show, or nil.
     @discardableResult public func saveWorkspace(_ workspace: ZerodLink.Workspace) async -> String? {
         do {
-            guard let link else { return "Zero's daemon isn't running" }
+            guard let link = await linked() else { return "Zero's daemon isn't running" }
             let saved = try await link.saveWorkspace(workspace)
             await loadWorkspaces()
             if workspace.id.isEmpty { current = saved.id }
@@ -435,6 +469,11 @@ public final class Workspace {
     public func browserSetup() async -> String? { await attempt { try await $0.browserSetup().extension } }
     /// The Chromes connected to Zero, by name.
     public func browsers() async -> [String] { ((try? await link?.browsers()) ?? []).map(\.name) }
+    /// Opens Firefox under Zero's remote control; an error to show.
+    public func openFirefox() async -> String? {
+        guard let link = await linked() else { return "Zero's daemon isn't running" }
+        do { try await link.openFirefox(); return nil } catch { return error.localizedDescription }
+    }
     public func blockedSites() async -> [String] { (try? await link?.browserSettings()) ?? [] }
     public func saveBlockedSites(_ sites: [String]) async { _ = await attempt { try await $0.saveBrowserSettings(blocked: sites) } }
 
@@ -477,7 +516,7 @@ public final class Workspace {
 
     /// The text written, if nobody has changed the pad since `revision`; the error says so if they have.
     public func writePad(_ id: String, content: String, revision: String?) async throws -> Pad {
-        guard let link else { throw ZerodError(message: "Zero's daemon isn't running") }
+        guard let link = await linked() else { throw ZerodError(message: "Zero's daemon isn't running") }
         var args: [String: Any] = ["pad": id, "content": content]
         if let revision { args["revision"] = revision }
         let written = try await link.pad("write", args, as: Pad.self)
@@ -540,7 +579,7 @@ public final class Workspace {
     /// Connects Slack with a user token of Zero's app; the error to show, or nil.
     public func connectSlack(token: String) async -> String? {
         do {
-            guard let link else { return "Zero's daemon isn't running" }
+            guard let link = await linked() else { return "Zero's daemon isn't running" }
             integrations = try await link.connectSlack(token: token)
             return nil
         } catch { return error.localizedDescription }
@@ -613,9 +652,19 @@ public final class Workspace {
         await attempt { try await $0.start(provider: provider, cwd: cwd, prompt: prompt, images: images, model: model, effort: effort, permissions: permissions, workspace: workspace) }
     }
 
-    public func send(_ session: String, text: String, images: [String] = [], model: String? = nil, effort: String? = nil) async {
-        _ = await attempt { try await $0.send(session: session, text: text, images: images, model: model, effort: effort) }
+    /// Whether it went (or is queued): false, and the words are for the box again.
+    @discardableResult
+    public func send(_ session: String, text: String, images: [String] = [], model: String? = nil, effort: String? = nil) async -> Bool {
+        // Shown at once, while its agent starts (a parked one takes seconds): the conversation's own takes its place.
+        let echo = Sending(text: text, images: images)
+        sending[session, default: []].append(echo)
+        let sent = await attempt { try await $0.send(session: session, text: text, images: images, model: model, effort: effort) } != nil
+        sending[session]?.removeAll { $0.id == echo.id }
+        return sent
     }
+
+    /// Messages sent from here that their conversation doesn't have yet, by session.
+    public private(set) var sending: [String: [Sending]] = [:]
 
     /// Messages queued here that zerod's board doesn't show yet, by session: shown at once, so queueing never waits on
     /// the board's next round.
@@ -642,6 +691,15 @@ public final class Workspace {
     public func interrupt(_ session: String) async { _ = await attempt { try await $0.interrupt(session: session) } }
     public func stop(_ session: String) async { _ = await attempt { try await $0.stop(session: session) } }
     public func resume(_ session: String) async { _ = await attempt { try await $0.resume(session: session) } }
+
+    /// Being written to while its agent has stopped (parked after a while idle): its agent started in the background,
+    /// at most once a minute, so the message doesn't wait for it to start. Never for a task the user has paused.
+    public func warm(_ session: String) {
+        guard roster[session]?.status == .offline, !isPaused(session), Date().timeIntervalSince(warmed[session] ?? .distantPast) > 60 else { return }
+        warmed[session] = Date()
+        Task { _ = try? await link?.resume(session: session) }
+    }
+    @ObservationIgnored private var warmed: [String: Date] = [:]
     /// On hold with their workers, and off it: a working one wraps up first (zerod gives it five minutes).
     public func pause(_ sessions: [String]) async { _ = await attempt { try await $0.pause(sessions: sessions) } }
     public func unpause(_ sessions: [String]) async { _ = await attempt { try await $0.unpause(sessions: sessions) } }
@@ -672,8 +730,16 @@ public final class Workspace {
         _ = await attempt { try await $0.decide(session: session, approval: approval, choice: choice) }
     }
 
+    /// The connection, waited for a moment when there's none: zerod restarting for an update is gone for a few
+    /// seconds, and what's sent then goes once it's back rather than failing.
+    private func linked(within seconds: Double = 15) async -> ZerodLink? {
+        let deadline = Date().addingTimeInterval(seconds)
+        while link == nil, Date() < deadline { try? await Task.sleep(for: .milliseconds(100)) }
+        return link
+    }
+
     private func attempt<T>(_ request: (ZerodLink) async throws -> T) async -> T? {
-        guard let link else { lastError = "Zero's daemon isn't running"; Log.write("request with zerod not running"); return nil }
+        guard let link = await linked() else { lastError = "Zero's daemon isn't running"; Log.write("request with zerod not running"); return nil }
         do {
             let result = try await request(link)
             lastError = nil
@@ -683,6 +749,78 @@ public final class Workspace {
             Log.write("zerod refused: " + (lastError ?? ""))
             return nil
         }
+    }
+
+    // Sign-ins: zerod keeps what each is; the app puts its value in the Keychain, so it never crosses zerod's socket.
+
+    public private(set) var signins: [ZerodLink.SignIn] = []
+    /// Each CLI's default sign-in, by the CLI's name.
+    public private(set) var signinDefaults: [String: String] = [:]
+
+    /// Each sign-in's usage as its CLI last reported it, by id: what zerod chooses accounts by.
+    public private(set) var signinUsage: [String: Usage] = [:]
+
+    public func loadSignIns() async {
+        guard let (list, defaults, usage) = try? await link?.signIns() else { return }
+        if list != signins { signins = list }
+        if defaults != signinDefaults { signinDefaults = defaults }
+        if usage != signinUsage { signinUsage = usage }
+    }
+
+    /// A token or key kept: zerod gives it an id, its value goes in the Keychain under it. An error to show, or nil.
+    public func addSignIn(_ signin: ZerodLink.SignIn, secret: String) async -> String? {
+        guard let link = await linked() else { return "Zero's daemon isn't running" }
+        do {
+            let saved = try await link.saveSignIn(signin)
+            Keychain.saveString(secret, service: ZerodLink.signInKeychain, account: saved.id)
+            guard Keychain.loadString(service: ZerodLink.signInKeychain, account: saved.id) != nil else {
+                try? await link.deleteSignIn(saved.id)
+                return "Couldn't keep it in the Keychain"
+            }
+            await loadSignIns()
+            return nil
+        } catch { return error.localizedDescription }
+    }
+
+    /// Its name, which the user gives when its CLI can't say whose it is (a Claude token doesn't).
+    public func renameSignIn(_ signin: ZerodLink.SignIn, to label: String) async {
+        let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty, label != signin.label else { return }
+        var renamed = signin
+        renamed.label = label
+        _ = await attempt { try await $0.saveSignIn(renamed) }
+        await loadSignIns()
+    }
+
+    public func removeSignIn(_ signin: ZerodLink.SignIn) async {
+        _ = await attempt { try await $0.deleteSignIn(signin.id) }
+        Keychain.saveString(nil, service: ZerodLink.signInKeychain, account: signin.id)
+        await loadSignIns()
+    }
+
+    public func makeDefault(_ signin: ZerodLink.SignIn) async {
+        _ = await attempt { try await $0.defaultSignIn(signin.cli, id: signin.id) }
+        await loadSignIns()
+    }
+
+    /// A Claude account, signed in by Claude Code itself (it opens its page): that page in case it didn't, or why not.
+    public func signInClaude() async -> (page: URL?, error: String?) {
+        guard let link = await linked() else { return (nil, "Zero's daemon isn't running") }
+        do {
+            let (_, page) = try await link.claudeSignIn()
+            await loadSignIns()
+            return (page, nil)
+        } catch { return (nil, error.localizedDescription) }
+    }
+
+    /// A Codex account, signed in by Codex itself: its ChatGPT page to open (none for a key), or why not.
+    public func signInCodex(label: String?, apiKey: String?) async -> (page: URL?, error: String?) {
+        guard let link = await linked() else { return (nil, "Zero's daemon isn't running") }
+        do {
+            let (_, page) = try await link.codexSignIn(label: label, apiKey: apiKey)
+            await loadSignIns()
+            return (page, nil)
+        } catch { return (nil, error.localizedDescription) }
     }
 
     /// The name the user or its lead gave it, else the session's title, else what it was asked first, else the

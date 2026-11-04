@@ -13,7 +13,12 @@ public protocol LineConnection: AnyObject {
 
 public final class UnixSocket: LineConnection {
     public let fd: Int32
-    private var buffer = Data()
+    /// What's been read and not yet given out, from `start`; `scanned` bytes past it are known to hold no newline,
+    /// so a line of megabytes arriving in chunks is searched once, not again from its start with every chunk.
+    private var buffer: [UInt8] = []
+    private var start = 0
+    private var scanned = 0
+    private var chunk = [UInt8](repeating: 0, count: 1 << 18)
     private var closed = false
 
     private init(fd: Int32) {
@@ -71,26 +76,39 @@ public final class UnixSocket: LineConnection {
     /// Next line without its newline; nil at end of stream.
     public func readLine() -> String? {
         while true {
-            if let nl = buffer.firstIndex(of: 0x0A) {
-                let line = String(decoding: buffer[buffer.startIndex..<nl], as: UTF8.self)
-                buffer.removeSubrange(buffer.startIndex...nl)
+            if let newline = nextNewline() {
+                let line = String(decoding: buffer[start..<newline], as: UTF8.self)
+                start = newline + 1
+                scanned = 0
+                // Given out to its end: emptied in place. Far into it: what's left moves to the front.
+                if start == buffer.count { buffer.removeAll(keepingCapacity: true); start = 0 }
+                else if start > 1 << 22 { buffer.removeFirst(start); start = 0 }
                 return line
             }
-            var chunk = [UInt8](repeating: 0, count: 65536)
-            let n = read(fd, &chunk, chunk.count)
+            scanned = buffer.count - start
+            let n = chunk.withUnsafeMutableBytes { read(fd, $0.baseAddress!, $0.count) }
             if n <= 0 {
-                guard !buffer.isEmpty else { return nil }
-                defer { buffer.removeAll() }
-                return String(decoding: buffer, as: UTF8.self)
+                guard start < buffer.count else { return nil }
+                defer { buffer.removeAll(); start = 0; scanned = 0 }
+                return String(decoding: buffer[start...], as: UTF8.self)
             }
-            buffer.append(chunk, count: n)
+            buffer.append(contentsOf: chunk[0..<n])
+        }
+    }
+
+    /// Where the next newline is, searching only what hasn't been searched.
+    private func nextNewline() -> Int? {
+        let from = start + scanned
+        guard from < buffer.count else { return nil }
+        return buffer.withUnsafeBytes { bytes in
+            memchr(bytes.baseAddress! + from, 0x0A, bytes.count - from).map { bytes.baseAddress!.distance(to: UnsafeRawPointer($0)) }
         }
     }
 
     /// Bytes read past the last line, for a connection that switches from lines to a raw stream.
     public func takeBuffered() -> Data {
-        defer { buffer.removeAll() }
-        return buffer
+        defer { buffer.removeAll(); start = 0; scanned = 0 }
+        return Data(buffer[start...])
     }
 
     public func write(line: String) throws {

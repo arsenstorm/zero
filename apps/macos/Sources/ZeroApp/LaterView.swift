@@ -9,6 +9,8 @@ struct LaterPage: View {
     let workspace: Workspace
     @Bindable var navigation: Navigation
     @State private var writing = false
+    /// The suggestions agents saved unasked, folded away until opened.
+    @AppStorage("later.suggestionsOpen") private var suggestionsOpen = false
 
     private var shown: String? { if case .laterItem(let id) = navigation.place { id } else { nil } }
 
@@ -23,15 +25,21 @@ struct LaterPage: View {
                 .padding(.bottom, 6)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 1) {
-                        ForEach(workspace.later) { item in
-                            Button { navigation.place = .laterItem(item.id) } label: { LaterRow(item: item) }
-                                .buttonStyle(Hovering(selected: shown == item.id))
-                                .contextMenu {
-                                    Button("Copy link") { copy(item.link) }
-                                    Button(item.done ? "Not done" : "Done") { Task { await workspace.editLater(item.id, ["done": !item.done]) } }
-                                    Divider()
-                                    Button("Delete") { Task { await workspace.deleteLater(item.id); if shown == item.id { navigation.place = .later } } }
+                        let suggested = workspace.later.filter { $0.suggested == true && !$0.done }
+                        ForEach(workspace.later.filter { $0.suggested != true || $0.done }) { item in row(item) }
+                        if !suggested.isEmpty {
+                            Button { suggestionsOpen.toggle() } label: {
+                                HStack(spacing: 6) {
+                                    Text("Suggested by agents · \(suggested.count)")
+                                    NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(suggestionsOpen ? 180 : 0))
+                                    Spacer(minLength: 0)
                                 }
+                                .font(.system(size: 12)).foregroundStyle(.secondary)
+                                .padding(.horizontal, 10).frame(height: 28).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain).padding(.top, 10)
+                            .tip("Saved without you asking. Keep the ones you want; the rest go a week after they were saved.")
+                            if suggestionsOpen { ForEach(suggested) { item in row(item) } }
                         }
                     }
                     .padding(.bottom, 8)
@@ -61,6 +69,18 @@ struct LaterPage: View {
                 Task { if let id = await workspace.saveLater(note: note, artifact: artifact) { navigation.place = .laterItem(id) } }
             }
         }
+    }
+
+    private func row(_ item: ZerodLink.LaterItem) -> some View {
+        Button { navigation.place = .laterItem(item.id) } label: { LaterRow(item: item) }
+            .buttonStyle(Hovering(selected: shown == item.id))
+            .contextMenu {
+                Button("Copy link") { copy(item.link) }
+                if item.suggested == true { Button("Keep") { Task { await workspace.editLater(item.id, ["keep": true]) } } }
+                Button(item.done ? "Not done" : "Done") { Task { await workspace.editLater(item.id, ["done": !item.done]) } }
+                Divider()
+                Button(item.suggested == true ? "Dismiss" : "Delete") { Task { await workspace.deleteLater(item.id); if shown == item.id { navigation.place = .later } } }
+            }
     }
 }
 
@@ -101,6 +121,7 @@ private struct LaterDetail: View {
                             }
                             Text(item.createdAt.formatted(.relative(presentation: .named)))
                             if item.done { StatePill(text: "Done", color: .green) }
+                            if item.suggested == true && !item.done { StatePill(text: "Suggested", color: .secondary) }
                         }
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                     }
@@ -161,6 +182,10 @@ private struct LaterDetail: View {
             } label: { Text("Send to a task") }
                 .fixedSize()
             Button("Copy") { copy(item.note + (item.artifact.map { "\n\n" + $0 } ?? "")) }
+            if item.suggested == true {
+                Button("Keep") { Task { await workspace.editLater(item.id, ["keep": true]); await load() } }
+                    .tip("Keep it in Later; otherwise it goes a week after it was saved")
+            }
             Button(item.done ? "Not done" : "Done") { Task { await workspace.editLater(item.id, ["done": !item.done]); await load() } }
             Spacer()
             if item.versions.count > 1 {
@@ -173,7 +198,7 @@ private struct LaterDetail: View {
                 } label: { Text("Version \(version ?? item.version)") }
                     .fixedSize()
             }
-            Button("Delete", role: .destructive) { Task { await workspace.deleteLater(item.id); navigation.place = .later } }
+            Button(item.suggested == true ? "Dismiss" : "Delete", role: .destructive) { Task { await workspace.deleteLater(item.id); navigation.place = .later } }
         }
         .controlSize(.regular)
     }

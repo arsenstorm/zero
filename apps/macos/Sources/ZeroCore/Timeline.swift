@@ -166,6 +166,27 @@ public enum Took {
 }
 
 /// A tool as people say it, and its arguments as their values: "Linear · list comments", "ENG-9737 · 5".
+/// A message sent from here that its conversation doesn't have yet (its agent still starting, say): shown at once,
+/// as yours, until the conversation has a message of yours from after it was sent.
+public struct Sending: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let text: String
+    public let images: [String]
+    /// When it was sent, in milliseconds since 1970, as items' times are.
+    public let at: Int
+    public init(text: String, images: [String], at: Int = Int(Date().timeIntervalSince1970 * 1000)) {
+        id = "sending-\(UUID().uuidString)"; self.text = text; self.images = images; self.at = at
+    }
+
+    /// The conversation's items, then those sent and not in it yet.
+    public static func merge(_ items: [ConversationItem], _ sending: [Sending]) -> [ConversationItem] {
+        guard !sending.isEmpty else { return items }
+        let latest = items.last { if case .user = $0.kind { true } else { false } }?.at ?? 0
+        let waiting = sending.filter { latest < $0.at }
+        return items + waiting.map { ConversationItem(id: $0.id, turn: nil, kind: .user(text: $0.text, images: $0.images), status: .done, at: $0.at) }
+    }
+}
+
 /// What a task is called: the name it was given, its title, the gist of your first message, or its agent and folder.
 public enum TaskName {
     public static func of(_ conversation: Conversation) -> String {

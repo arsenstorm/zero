@@ -9,7 +9,7 @@ struct EventsPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
-            Text("An agent follows a pull request, a Linear issue or a Slack thread with zero follow <url>. Zero reads each followed thing every minute and tells the agent what changed between its turns: a review, a comment, a failed check, a reply. A parked agent is woken for it. A follow goes with its task.")
+            Text("What agents follow with zero follow <url>: Zero checks each every minute and tells the agent what changed, waking it if it's parked.")
                 .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let workspace {
                 let sources = Integration.allCases.filter { source in workspace.followed.contains { $0.source == source.rawValue } }

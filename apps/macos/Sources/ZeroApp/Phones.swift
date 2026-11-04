@@ -96,8 +96,10 @@ import ZeroCore
         }
     }
 
-    /// Takes tasks' notifications off the phones (seen, or moved on): a quiet push the app wakes for.
+    /// Takes tasks' notifications off the phones (seen, or moved on): told now to a phone that's connected, and a quiet
+    /// push for the rest, which iOS delivers when it chooses (it rations them, and drops them for an app closed).
     func clear(_ ids: [String]) {
+        for bridge in bridges.values { bridge.event("clear", ["ids": ids]) }
         let ids = ids.filter { pushed.contains($0) }
         guard !ids.isEmpty else { return }
         pushed.subtract(ids)
@@ -324,8 +326,8 @@ import ZeroCore
     }
 
     /// Something changed that isn't zerod's to say (the Mac's workspace): told as its event.
-    func event(_ name: String) {
-        if let line = try? JSONSerialization.data(withJSONObject: ["event": name]) { toPhone(line) }
+    func event(_ name: String, _ fields: [String: Any] = [:]) {
+        if let line = try? JSONSerialization.data(withJSONObject: fields.merging(["event": name]) { a, _ in a }) { toPhone(line) }
     }
 
     private func toPhone(_ line: Data) {

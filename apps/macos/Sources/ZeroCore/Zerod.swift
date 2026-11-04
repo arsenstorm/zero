@@ -463,6 +463,8 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
     public var parent: String?
     /// The workspace it was put in; nil, and its folder decides (Workspace.workspace(of:)).
     public var workspace: String?
+    /// The sign-in its CLI runs as (zerod's signins.rs); none, its CLI's own.
+    public var signin: String?
     /// The provider's own id for the conversation, once it has one.
     public var thread: String?
     public var title: String?
@@ -530,6 +532,7 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
         case let .title(title): self.title = title
         case let .named(label, ticket): self.label = label; self.ticket = ticket
         case let .placed(workspace): self.workspace = workspace
+        case let .signedIn(signin): self.signin = signin
         case let .permitted(permissions):
             // As zerod records it (model.rs): the change, and a line in the conversation saying so.
             self.permissions = permissions
@@ -593,6 +596,8 @@ public enum Change: Decodable, Equatable, Sendable {
     case title(String?)
     case named(label: String?, ticket: String?)
     case placed(String?)
+    /// Runs as another sign-in from its next start (zerod's signins.rs).
+    case signedIn(String?)
     /// What the agent may do without asking, from its next start.
     case permitted(Permissions)
     case status(SessionStatus, turn: String?, error: String?)
@@ -623,7 +628,7 @@ public enum Change: Decodable, Equatable, Sendable {
     /// Back to just before this message of yours: it and everything after it are gone.
     case rewound(String)
 
-    private enum Keys: String, CodingKey { case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label, ticket, provider, terminal, place, parent, before, name, value, workspace, permissions }
+    private enum Keys: String, CodingKey { case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label, ticket, provider, terminal, place, parent, before, name, value, workspace, permissions, signin }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -633,6 +638,7 @@ public enum Change: Decodable, Equatable, Sendable {
         case "title": self = .title(try c.decodeIfPresent(String.self, forKey: .title))
         case "named": self = .named(label: try c.decodeIfPresent(String.self, forKey: .label), ticket: try c.decodeIfPresent(String.self, forKey: .ticket))
         case "placed": self = .placed(try c.decodeIfPresent(String.self, forKey: .workspace))
+        case "signedIn": self = .signedIn(try c.decodeIfPresent(String.self, forKey: .signin))
         case "permitted": self = .permitted(try c.decode(Permissions.self, forKey: .permissions))
         case "status": self = .status(try c.decode(SessionStatus.self, forKey: .status), turn: try c.decodeIfPresent(String.self, forKey: .turn),
                                       error: try c.decodeIfPresent(String.self, forKey: .error))
@@ -681,6 +687,8 @@ public struct ZerodMirror: Sendable {
     public private(set) var conversations: [String: Conversation] = [:]
     /// Each session's items not loaded, before the ones that are.
     public private(set) var earlier: [String: Int] = [:]
+    /// And after them: a window jumped to (the rail's) stops short of the end; newer pages come as it's scrolled down.
+    public private(set) var later: [String: Int] = [:]
     /// Session ids in the order they first arrived.
     public private(set) var order: [String] = []
 
@@ -694,6 +702,7 @@ public struct ZerodMirror: Sendable {
         case let .session(conversation):
             if conversations[conversation.id] == nil { order.append(conversation.id) }
             conversations[conversation.id] = conversation
+            later[conversation.id] = 0
             return true
         case let .earlier(session, count):
             earlier[session] = count
@@ -701,13 +710,20 @@ public struct ZerodMirror: Sendable {
         case let .change(event) where event.change == .archived:
             conversations[event.session] = nil
             earlier[event.session] = nil
+            later[event.session] = nil
             order.removeAll { $0 == event.session }
             return true
         case let .change(event):
             guard var conversation = conversations[event.session] else { return false }
             if event.seq <= conversation.seq { return true }
             guard event.seq == conversation.seq + 1 else { return false }
+            let count = conversation.items.count
             conversation.apply(event.change)
+            // Short of the end, what's new lies past the window: counted there, not put after its last item.
+            if let cut = later[event.session], cut > 0, conversation.items.count > count {
+                later[event.session] = cut + conversation.items.count - count
+                conversation.items.removeLast(conversation.items.count - count)
+            }
             conversations[event.session] = conversation
             return true
         }
@@ -720,6 +736,24 @@ public struct ZerodMirror: Sendable {
         conversation.items = items.filter { !loaded.contains($0.id) } + conversation.items
         conversations[session] = conversation
         earlier[session] = remaining
+    }
+
+    /// A page of it anywhere, in place of what was loaded, with how many items lie either side.
+    public mutating func window(_ session: String, items: [ConversationItem], earlier before: Int, later after: Int) {
+        guard var conversation = conversations[session] else { return }
+        conversation.items = items
+        conversations[session] = conversation
+        earlier[session] = before
+        later[session] = after
+    }
+
+    /// Newer items, put after those loaded; `later` are still after them.
+    public mutating func append(_ session: String, items: [ConversationItem], later after: Int) {
+        guard var conversation = conversations[session] else { return }
+        let loaded = Set(conversation.items.map(\.id))
+        conversation.items += items.filter { !loaded.contains($0.id) }
+        conversations[session] = conversation
+        later[session] = after
     }
 
     /// Back to the latest `keep` items: the older ones are fetched again if they're wanted.
@@ -771,6 +805,9 @@ public final class ZerodLink: @unchecked Sendable {
         case later
         case following
         case workspaces
+        case signins
+        /// Notifications to take off a phone, by id: seen on the Mac (from the Mac's bridge, not zerod).
+        case clear([String])
     }
 
     /// The board and notices, on the link's reading thread.
@@ -1001,6 +1038,8 @@ public final class ZerodLink: @unchecked Sendable {
         public let created: Int
         public let updated: Int
         public let done: Bool
+        /// Saved by an agent without the user asking: shown apart until kept, gone after a week if not.
+        public let suggested: Bool?
         public let version: Int
         public let versions: [Version]
         public let link: String
@@ -1080,6 +1119,9 @@ public final class ZerodLink: @unchecked Sendable {
         ((try await call("browsers")) as? [[String: Any]] ?? []).map { ($0["id"] as? String ?? "", $0["name"] as? String ?? "") }
     }
 
+    /// Firefox Developer Edition opened under Zero's remote control, its extension installed.
+    public func openFirefox() async throws { _ = try await call("openFirefox") }
+
     public func browserSettings() async throws -> [String] { ((try await call("browserSettings")) as? [String: Any])?["blocked"] as? [String] ?? [] }
     public func saveBrowserSettings(blocked: [String]) async throws { _ = try await call("saveBrowserSettings", ["browser": ["blocked": blocked]]) }
 
@@ -1096,6 +1138,49 @@ public final class ZerodLink: @unchecked Sendable {
     }
 
     public func workspaces() async throws -> [Workspace] { try decode([Workspace].self, from: await call("workspaces")) }
+
+    /// One of the CLIs' sign-ins Zero keeps (zerod's signins.rs): what it is, never its value (that's in the
+    /// Keychain, under `signInKeychain` by its id, or in a Codex account's own home).
+    public struct SignIn: Codable, Equatable, Sendable, Identifiable {
+        public var id: String
+        public var cli: Provider
+        public var kind: Kind
+        /// The account's email, or the name given to a key.
+        public var label: String
+        public var plan: String?
+        /// An OpenCode provider's key: the variable OpenCode reads it from.
+        public var variable: String?
+        /// Still being signed in (a Codex account waiting on the browser).
+        public var pending: Bool?
+        public enum Kind: String, Codable, Sendable { case token, apiKey, codexHome, claudeHome }
+        public init(cli: Provider, kind: Kind, label: String, variable: String? = nil) {
+            id = ""; self.cli = cli; self.kind = kind; self.label = label; self.variable = variable
+        }
+    }
+    public static let signInKeychain = "Zero sign-ins"
+
+    public func signIns() async throws -> (list: [SignIn], defaults: [String: String], usage: [String: Usage]) {
+        struct Listed: Decodable { let signins: [SignIn]; let defaults: [String: String]; let usage: [String: Usage]? }
+        let listed = try decode(Listed.self, from: await call("signIns"))
+        return (listed.signins, listed.defaults, listed.usage ?? [:])
+    }
+    public func saveSignIn(_ signin: SignIn) async throws -> SignIn {
+        let data = try JSONEncoder().encode(signin)
+        return try decode(SignIn.self, from: await call("saveSignIn", ["signin": try JSONSerialization.jsonObject(with: data)]))
+    }
+    public func deleteSignIn(_ id: String) async throws { _ = try await call("deleteSignIn", ["signin": id]) }
+    public func defaultSignIn(_ cli: Provider, id: String) async throws { _ = try await call("defaultSignIn", ["signin": ["cli": cli.rawValue, "id": id]]) }
+    /// Claude Code signs an account in itself, in a folder of its own, opening its page in the browser: that page,
+    /// when it printed one, in case the browser didn't open.
+    public func claudeSignIn() async throws -> (id: String, page: URL?) {
+        let result = try await call("claudeSignIn") as? [String: Any]
+        return (result?["id"] as? String ?? "", (result?["page"] as? String).flatMap(URL.init(string:)))
+    }
+    /// Codex signs an account in itself, in a home of its own: its ChatGPT page to open (none for an API key).
+    public func codexSignIn(label: String?, apiKey: String?) async throws -> (id: String, page: URL?) {
+        let result = try await call("codexSignIn", ["signin": ["label": label as Any, "apiKey": apiKey as Any]]) as? [String: Any]
+        return (result?["id"] as? String ?? "", (result?["page"] as? String).flatMap(URL.init(string:)))
+    }
 
     /// An MCP server set up in Zero (zerod's mcp_servers.rs): every task's CLI in its workspaces is given it as it starts.
     public struct McpServer: Codable, Equatable, Sendable, Identifiable {
@@ -1185,6 +1270,14 @@ public final class ZerodLink: @unchecked Sendable {
     /// Runs `command` in the session's folder and tells the session how it ended.
     public func watch(session: String, command: String) async throws { _ = try await call("watch", ["session": session, "command": command]) }
 
+    /// A file watched for the session (zerod's watches.rs): its id.
+    public func watchFile(session: String, file: String, alerts: [String], done: String?, quiet: Int?) async throws -> String {
+        let result = try await call("watchFile", ["session": session, "watch": ["file": file, "alerts": alerts, "done": done as Any, "quiet": quiet as Any]]) as? [String: Any]
+        return result?["watch"] as? String ?? ""
+    }
+    public func watches(session: String?) async throws -> [[String: Any]] { try await call("watches", ["session": session]) as? [[String: Any]] ?? [] }
+    public func unwatch(_ id: String) async throws { _ = try await call("unwatch", ["watch": id]) }
+
     public func remind(session: String, minutes: Int, text: String) async throws {
         _ = try await call("remind", ["session": session, "minutes": minutes, "text": text])
     }
@@ -1200,6 +1293,12 @@ public final class ZerodLink: @unchecked Sendable {
     /// Older items of a session: the page before `before`, or all of them from `from` up to it.
     public func items(session: String, before: String?, from: String? = nil, limit: Int = 60) async throws -> [ConversationItem] {
         try decode([ConversationItem].self, from: await call("items", ["session": session, "before": before, "from": from, "limit": limit]))
+    }
+    /// A page anywhere in a session: from a message, after one, or the latest; with how many items lie either side.
+    public func window(session: String, from: String? = nil, after: String? = nil, limit: Int = 60) async throws -> (items: [ConversationItem], earlier: Int, later: Int) {
+        struct Window: Decodable { let items: [ConversationItem]; let earlier: Int; let later: Int }
+        let page = try decode(Window.self, from: await call("window", ["session": session, "from": from, "after": after, "limit": limit]))
+        return (page.items, page.earlier, page.later)
     }
     public func outline(session: String) async throws -> [OutlineMark] { try decode([OutlineMark].self, from: await call("outline", ["session": session])) }
 
@@ -1355,6 +1454,8 @@ public final class ZerodLink: @unchecked Sendable {
                 if event == "later" { onFeed?(.later); continue }
                 if event == "following" { onFeed?(.following); continue }
                 if event == "workspaces" { onFeed?(.workspaces); continue }
+                if event == "signins" { onFeed?(.signins); continue }
+                if event == "clear" { onFeed?(.clear(message["ids"] as? [String] ?? [])); continue }
                 let decoded: ZerodMirror.Message? = switch event {
                 case "session": (try? JSONDecoder().decode(Snapshot.self, from: data)).map { snapshot in
                     onMessage?(.earlier(session: snapshot.conversation.id, count: snapshot.earlier ?? 0))

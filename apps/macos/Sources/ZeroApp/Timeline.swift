@@ -302,12 +302,8 @@ struct MessageBlock<Content: View>: View {
 /// A tick for each message of yours, down the left, as Codex has them: brighter for those on screen. Hovering grows the
 /// tick under the pointer and, a little, its neighbours, dims the rest, and shows that message with the start of its
 /// answer; a click goes there.
-struct MessageRail: View {
-    struct Mark: Identifiable {
-        let id: String
-        let text: String
-        let answer: String?
-    }
+struct MessageRail: View, Equatable {
+    typealias Mark = OutlineMark
     let marks: [Mark]
     let tracker: ScrollTracker
     /// Room at the left, between the page's edge and the ticks, that answers the pointer as the ticks do: the pointer
@@ -320,6 +316,9 @@ struct MessageRail: View {
     @State private var scrubbed: Int?
     /// The pointer is on the card: it stays, so its links can be clicked.
     @State private var onCard = false
+
+    /// The same marks at the same inset draw the same rail: what's on screen is read from the tracker, inside.
+    nonisolated static func == (a: MessageRail, b: MessageRail) -> Bool { a.marks == b.marks && a.inset == b.inset }
 
     /// How long a tick is, by how far it is from the one hovered.
     private static let lengths: [CGFloat] = [24, 17, 13]
@@ -421,10 +420,12 @@ struct MessageRail: View {
 /// Back to the latest, once it's well below what's on screen.
 struct WayDown: View {
     let tracker: ScrollTracker
+    /// Away from the end whatever the scroll says: a window jumped to, the latest not loaded.
+    var away = false
     let go: () -> Void
 
     var body: some View {
-        if let scroll = tracker.geometry, scroll.contentSize.height + scroll.contentInsets.bottom - (scroll.contentOffset.y + scroll.containerSize.height) > 200 {
+        if away || tracker.geometry.map({ $0.contentSize.height + $0.contentInsets.bottom - ($0.contentOffset.y + $0.containerSize.height) > 200 }) == true {
             Button(action: go) {
                 NucleoIcon("arrow-up", size: 14).rotationEffect(.degrees(180)).foregroundStyle(.primary)
                     .frame(width: 32, height: 32).background(Theme.card, in: Circle())
