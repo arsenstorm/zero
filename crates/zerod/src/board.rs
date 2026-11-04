@@ -224,6 +224,14 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
     // the lead.
     let mut state = team.iter().skip(1).map(|c| attention(c)).filter(|s| *s <= State::Working).min().unwrap_or(State::Idle).min(attention(session));
     if !open.is_empty() { state = State::NeedsYou }
+    // Ended on an ask that's no longer open (answered, withdrawn, expired), its question no longer anyone's: what it
+    // said is a reply to read. Agents repeat the ending through later turns, long after the answer came.
+    if state == State::NeedsYou && open.is_empty() && session.questions.is_empty() && session.approvals.is_empty()
+        && team.iter().skip(1).all(|c| attention(c) != State::NeedsYou)
+        && let Some(id) = session.answer().and_then(asked)
+        && asks.iter().any(|a| a.id == id && a.state.is_final()) {
+        state = State::Answered;
+    }
     if let Some(note) = own && state > State::Trouble {
         state = match note.status.as_deref() {
             // Waiting on what isn't the user (what needs them is an ask).
@@ -252,6 +260,11 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
 
 /// The ending Zero has an agent close its turn with, when it's the answer's last line: "done", "waiting", "working",
 /// or "asked" (its ask's id dropped). "completed" and "blocked", as agents said them before, are "done" and "waiting".
+/// The ask an answer's ending waits on: `[zero: asked <id>]`'s id.
+fn asked(answer: &str) -> Option<&str> {
+    answer.trim_end().lines().last()?.trim().strip_prefix("[zero: asked ")?.strip_suffix(']').map(str::trim)
+}
+
 /// A line without its list marker ("- ", "* ", "3. "), if it has one.
 fn unlisted(line: &str) -> &str {
     if let Some(rest) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) { return rest.trim_start() }

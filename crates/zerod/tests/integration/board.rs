@@ -1,7 +1,7 @@
 //! The board: one row per task Zero runs, across every agent at once. A lead's workers fold into its row; the row says
 //! where it runs, its state, where the agent is now (its latest note) and what it needs from the user.
 
-use zerod::ask::{AgentIdentity, Ask, AskKind};
+use zerod::ask::{AgentIdentity, Ask, AskKind, AskState};
 use zerod::board::{State, Waiting, board};
 use zerod::model::*;
 
@@ -378,4 +378,18 @@ fn a_reply_to_a_turn_zero_started_is_quiet() {
     lead.items.extend([said("u2", &from_line("zero", "1 new event on what you follow")), answer("a2")]);
     let row = &board(&[lead], &[])[0];
     assert_eq!((row.state, row.quiet), (State::Answered, true));
+}
+
+#[test]
+fn ending_on_an_ask_already_answered_doesnt_need_the_user() {
+    let ended = |asks: &[Ask]| {
+        let mut lead = session("a", "/work/app", Status::Idle);
+        lead.items.push(Item { id: "1".into(), turn: None, kind: ItemKind::Agent { text: "Nothing new on ENG-1.\n\n[zero: asked k3x9qa]".into(), final_answer: true }, status: ItemStatus::Done, at: None });
+        board(&[lead], asks)[0].state
+    };
+    let mut ask = Ask::new(AskKind::Choice, "Ship it?", agent("a"), 3600);
+    ask.id = "k3x9qa".into();
+    assert_eq!(ended(std::slice::from_ref(&ask)), State::NeedsYou, "still open: it waits on the user");
+    ask.state = AskState::Answered;
+    assert_eq!(ended(&[ask]), State::Answered, "answered already: the ending is stale, a reply like any other");
 }
