@@ -410,6 +410,8 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             daemon.adopt(request.provider.unwrap_or(Provider::Claude), request.thread.as_deref().ok_or("Which session?")?,
                          request.cwd.as_deref().ok_or("Which folder?")?, options).map(|id| json!({"session": id}))
         }
+        // A worker let go of its lead: a task of its own.
+        "detach" => daemon.detach(request.thread.as_deref().ok_or("Which worker? Its task's id")?).map(|_| Value::Null),
         // A Claude Code, Codex or OpenCode session from outside Zero, by its id: a task, offline, not opened.
         "migrate" => {
             let options = crate::daemon::Options { workspace: workspace_id(), label: request.label.clone(), ticket: request.ticket.clone(), ..Default::default() };

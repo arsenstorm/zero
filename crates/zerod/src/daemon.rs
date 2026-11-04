@@ -471,6 +471,16 @@ impl Daemon {
         Ok(id)
     }
 
+    /// A worker let go of its lead: a task of its own (a lead itself), by its id or its session's. Its lead isn't told
+    /// of it any more.
+    pub fn detach(&self, target: &str) -> Result<(), String> {
+        let id = self.sessions().iter().map(|s| s.summary()).find(|c| c.id == target || c.thread.as_deref() == Some(target)).map(|c| c.id)
+            .ok_or_else(|| format!("No task {target}"))?;
+        let session = self.session(&id)?;
+        if session.summary().parent.is_some() { session.change(Change::Parent { parent: None }) }
+        Ok(())
+    }
+
     /// Puts a task away with the workers it still has: stopped, out of the list, their files moved to archive/. Each
     /// worker is marked as gone with it, so unarchiving the task brings back those and no others (one put away on its
     /// own before stays put away).

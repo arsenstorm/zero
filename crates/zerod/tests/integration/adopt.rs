@@ -86,6 +86,13 @@ async fn a_lead_adopts_tasks_and_claude_code_sessions_as_its_workers() {
 
     // Kept: another start of zerod has it under its lead.
     assert_eq!(Daemon::open(&home.join("zerod"), quiet()).unwrap().get(&task).unwrap().parent.as_deref(), Some(lead.as_str()));
+
+    // And let go again: a task of its own, a lead itself, by its id or its session's.
+    daemon.detach("9f00").unwrap();
+    assert_eq!(daemon.get(&adopted).unwrap().parent, None);
+    daemon.detach(&adopted).unwrap();
+    assert!(daemon.detach("nope").is_err());
+    assert_eq!(Daemon::open(&home.join("zerod"), quiet()).unwrap().get(&adopted).unwrap().parent, None, "kept");
 }
 
 #[tokio::test]
