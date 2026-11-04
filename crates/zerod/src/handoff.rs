@@ -115,7 +115,12 @@ pub fn from_claude_session(records: &[Value]) -> Vec<Item> {
         }
         stamp_from(record, &mut items, before);
     }
-    // The last thing the agent said before you spoke again (or at the end) was its answer.
+    answers(&mut items);
+    items
+}
+
+/// The last thing the agent said before you spoke again (or at the end) was its answer.
+fn answers(items: &mut [Item]) {
     let mut answered = false;
     for item in items.iter_mut().rev() {
         match &mut item.kind {
@@ -124,7 +129,66 @@ pub fn from_claude_session(records: &[Value]) -> Vec<Item> {
             _ => {}
         }
     }
-    items
+}
+
+/// A Codex session's rollout file (`~/.codex/sessions/…/rollout-…-<id>.jsonl`) as the task's folder and items: its
+/// completed items, what was typed, said and run. Its reasoning and bookkeeping stay out.
+pub fn from_codex_rollout(records: &[Value]) -> Option<(String, Vec<Item>)> {
+    let cwd = records.iter().find(|r| r["type"] == "session_meta")?["payload"]["cwd"].as_str()?.to_string();
+    let mut items = vec![];
+    for record in records.iter().filter(|r| r["type"] == "event_msg" && r["payload"]["type"] == "item_completed") {
+        let it = &record["payload"]["item"];
+        let text = || it["content"].as_array().into_iter().flatten().filter_map(|c| c["text"].as_str()).collect::<Vec<_>>().join("\n");
+        let kind = match it["type"].as_str() {
+            Some("UserMessage") => ItemKind::User { text: text(), images: vec![] },
+            Some("AgentMessage") if !text().trim().is_empty() => ItemKind::Agent { text: text(), final_answer: false },
+            Some("CommandExecution") => {
+                // The shell's own wrapper (zsh -lc 'the command') left off: the command as it was given.
+                let argv: Vec<&str> = it["command"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                let command = match argv.as_slice() { [_, "-lc" | "-c", command] => command.to_string(), _ => argv.join(" ") };
+                let exit_code = it["exit_code"].as_i64().or_else(|| it["exit_code"].as_str()?.parse().ok());
+                let duration_ms = it["duration"]["secs"].as_i64().map(|s| s * 1000 + it["duration"]["nanos"].as_i64().unwrap_or(0) / 1_000_000);
+                ItemKind::Command { command, cwd: it["cwd"].as_str().unwrap_or("").trim_start_matches("file://").into(),
+                                    output: it["aggregated_output"].as_str().unwrap_or("").into(), exit_code, duration_ms }
+            }
+            Some("McpToolCall") => ItemKind::Tool { name: format!("{}.{}", it["server"].as_str().unwrap_or("mcp"), it["tool"].as_str().unwrap_or("tool")), detail: detail(&it["arguments"]) },
+            _ => continue,
+        };
+        let mut taken = Item { id: format!("codex-{}", it["id"].as_str().unwrap_or("")), turn: None, kind, status: ItemStatus::Done, at: None };
+        taken.at = record["timestamp"].as_str().and_then(millis);
+        items.push(taken);
+    }
+    answers(&mut items);
+    Some((cwd, items))
+}
+
+/// An OpenCode session as `opencode session export` prints it, as the task's folder and items: what was typed, said
+/// and run. Its reasoning and OpenCode's own notices (system, idle, model switches) stay out.
+pub fn from_opencode_export(export: &Value) -> Option<(String, Vec<Item>)> {
+    let cwd = export["info"]["location"]["directory"].as_str().or(export["info"]["directory"].as_str())?.to_string();
+    let mut items = vec![];
+    for message in export["messages"].as_array().into_iter().flatten() {
+        let (id, at) = (message["id"].as_str().unwrap_or(""), message["time"]["created"].as_i64());
+        let mut push = |n: usize, kind: ItemKind| items.push(Item { id: format!("opencode-{id}-{n}"), turn: None, kind, status: ItemStatus::Done, at });
+        match message["type"].as_str() {
+            Some("user") => push(0, ItemKind::User { text: message["text"].as_str().unwrap_or("").into(), images: vec![] }),
+            Some("assistant") => for (n, part) in message["content"].as_array().into_iter().flatten().enumerate() {
+                let state = &part["state"];
+                match (part["type"].as_str(), part["name"].as_str()) {
+                    (Some("text"), _) if !part["text"].as_str().unwrap_or("").trim().is_empty() => push(n, ItemKind::Agent { text: part["text"].as_str().unwrap_or("").into(), final_answer: false }),
+                    (Some("tool"), Some("bash")) => push(n, ItemKind::Command {
+                        command: state["input"]["command"].as_str().unwrap_or("").into(), cwd: String::new(),
+                        output: state["content"].as_array().into_iter().flatten().filter_map(|c| c["text"].as_str()).collect::<Vec<_>>().join("\n"),
+                        exit_code: None, duration_ms: None }),
+                    (Some("tool"), name) => push(n, ItemKind::Tool { name: name.unwrap_or("tool").into(), detail: detail(&state["input"]) }),
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+    }
+    answers(&mut items);
+    Some((cwd, items))
 }
 
 fn item(uuid: &str, n: usize, kind: ItemKind) -> Item {

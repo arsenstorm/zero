@@ -87,3 +87,76 @@ async fn a_lead_adopts_tasks_and_claude_code_sessions_as_its_workers() {
     // Kept: another start of zerod has it under its lead.
     assert_eq!(Daemon::open(&home.join("zerod"), quiet()).unwrap().get(&task).unwrap().parent.as_deref(), Some(lead.as_str()));
 }
+
+#[tokio::test]
+async fn a_session_from_claude_code_or_codex_migrates_by_its_id_alone() {
+    let home = temp_dir("migrate");
+    let (user, project) = (home.join("user"), home.join("project"));
+    std::fs::create_dir_all(&project).unwrap();
+    let daemon = Daemon::open(&home.join("zerod"), quiet()).unwrap();
+    daemon.place(&user, &home.join("host.sock"));
+    let cwd = project.to_str().unwrap();
+    let lines = |records: &[serde_json::Value]| records.iter().map(|r| r.to_string() + "\n").collect::<String>();
+    // Claude Code's: its folder is in its records.
+    let claude = zerod::handoff::claude_folder(&user, cwd).join("c1a0-0000.jsonl");
+    std::fs::create_dir_all(claude.parent().unwrap()).unwrap();
+    std::fs::write(&claude, lines(&[json!({"type": "user", "uuid": "u1", "cwd": cwd, "message": {"role": "user", "content": "Fix the footer"}}),
+        json!({"type": "assistant", "uuid": "a1", "cwd": cwd, "message": {"role": "assistant", "content": [{"type": "text", "text": "Fixed."}]}})])).unwrap();
+    // Codex's: a rollout file under its day, the folder in its first record.
+    let rollout = user.join(".codex/sessions/2026/11/04/rollout-2026-11-04T10-00-00-01a1-c0de.jsonl");
+    std::fs::create_dir_all(rollout.parent().unwrap()).unwrap();
+    let done = |item: serde_json::Value| json!({"timestamp": "2026-11-04T10:00:05.000Z", "type": "event_msg", "payload": {"type": "item_completed", "item": item}});
+    std::fs::write(&rollout, lines(&[
+        json!({"timestamp": "2026-11-04T10:00:00.000Z", "type": "session_meta", "payload": {"id": "01a1-c0de", "cwd": cwd}}),
+        done(json!({"type": "UserMessage", "id": "u1", "content": [{"type": "text", "text": "Fix the flaky test"}]})),
+        done(json!({"type": "AgentMessage", "id": "m1", "content": [{"type": "Text", "text": "Running it first."}], "phase": "commentary"})),
+        done(json!({"type": "CommandExecution", "id": "c1", "command": ["/bin/zsh", "-lc", "bin/rspec spec/x_spec.rb"], "cwd": format!("file://{cwd}"),
+                    "aggregated_output": "1 example, 0 failures", "exit_code": 0, "duration": {"secs": 2, "nanos": 0}})),
+        done(json!({"type": "McpToolCall", "id": "t1", "server": "linear", "tool": "get_issue", "arguments": {"id": "ENG-1"}})),
+        done(json!({"type": "AgentMessage", "id": "m2", "content": [{"type": "Text", "text": "Fixed: it raced the clock."}], "phase": "final_answer"})),
+    ])).unwrap();
+
+    let from_claude = daemon.migrate("c1a0-0000", Options::default()).unwrap();
+    let task = daemon.get(&from_claude).unwrap();
+    assert_eq!((task.provider, task.cwd.as_str(), task.thread.as_deref(), task.status), (Provider::Claude, cwd, Some("c1a0-0000"), Status::Offline),
+               "taken in where it ran, offline until a message resumes it on its own thread");
+    let from_codex = daemon.migrate("01a1-c0de", Options { label: Some("Flaky test".into()), ..Default::default() }).unwrap();
+    let task = daemon.get(&from_codex).unwrap();
+    assert_eq!((task.provider, task.cwd.as_str(), task.thread.as_deref(), task.label.as_deref()), (Provider::Codex, cwd, Some("01a1-c0de"), Some("Flaky test")));
+    let kinds: Vec<String> = task.items.iter().map(|i| match &i.kind {
+        ItemKind::User { text, .. } => format!("user {text}"),
+        ItemKind::Agent { text, final_answer } => format!("agent{} {text}", if *final_answer { " (answer)" } else { "" }),
+        ItemKind::Command { command, output, exit_code, .. } => format!("$ {command} → {exit_code:?} {output}"),
+        ItemKind::Tool { name, .. } => format!("tool {name}"),
+        other => format!("{other:?}"),
+    }).collect();
+    assert_eq!(kinds, ["user Fix the flaky test", "agent Running it first.", "$ bin/rspec spec/x_spec.rb → Some(0) 1 example, 0 failures",
+                       "tool linear.get_issue", "agent (answer) Fixed: it raced the clock."]);
+    assert_eq!(daemon.migrate("01a1-c0de", Options::default()).unwrap(), from_codex, "the same session is one task");
+    assert!(daemon.migrate("nope", Options::default()).unwrap_err().contains("No Claude Code, Codex or OpenCode session nope"));
+}
+
+#[test]
+fn an_opencode_export_reads_as_the_tasks_history() {
+    let export = json!({"info": {"id": "ses_1", "location": {"directory": "/work/app"}}, "messages": [
+        {"id": "m1", "type": "user", "time": {"created": 1_793_785_113_145_i64}, "text": "Check the CVE"},
+        {"id": "m2", "type": "system", "text": "The tool catalog changed."},
+        {"id": "m3", "type": "assistant", "time": {"created": 1_793_785_113_157_i64}, "content": [
+            {"type": "reasoning", "text": "Let me think."},
+            {"type": "text", "text": "Looking it up."},
+            {"type": "tool", "id": "t1", "name": "bash", "state": {"status": "completed", "input": {"command": "git log -1"}, "content": [{"type": "text", "text": "abc123"}]}},
+            {"type": "tool", "id": "t2", "name": "webfetch", "state": {"status": "completed", "input": {"url": "https://cve.example/1"}}},
+            {"type": "text", "text": "Not affected."}]},
+        {"id": "m4", "type": "idle", "outcome": "succeeded"}]});
+    let (cwd, items) = zerod::handoff::from_opencode_export(&export).unwrap();
+    assert_eq!(cwd, "/work/app");
+    let kinds: Vec<String> = items.iter().map(|i| match &i.kind {
+        ItemKind::User { text, .. } => format!("user {text}"),
+        ItemKind::Agent { text, final_answer } => format!("agent{} {text}", if *final_answer { " (answer)" } else { "" }),
+        ItemKind::Command { command, output, .. } => format!("$ {command} {output}"),
+        ItemKind::Tool { name, detail } => format!("tool {name} {detail}"),
+        other => format!("{other:?}"),
+    }).collect();
+    assert_eq!(kinds, ["user Check the CVE", "agent Looking it up.", "$ git log -1 abc123", "tool webfetch https://cve.example/1", "agent (answer) Not affected."],
+               "what was typed, said and run; its thinking and OpenCode's own notices stay out");
+}

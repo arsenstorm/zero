@@ -397,13 +397,54 @@ impl Daemon {
         conversation.branch = branch(Path::new(cwd));
         let text = std::fs::read_to_string(self.claude_file(&conversation)).map_err(|_| format!("No Claude Code session {thread} in {cwd}"))?;
         let records: Vec<serde_json::Value> = text.lines().filter_map(|line| serde_json::from_str(line).ok()).collect();
+        self.take_in(conversation, crate::handoff::from_claude_session(&records), options)
+    }
+
+    /// A session started outside Zero, by its id alone (Claude Code's, Codex's or OpenCode's), taken in as a task
+    /// where it ran, with its history: offline, not opened, until a message resumes it on its own thread.
+    pub fn migrate(&self, thread: &str, options: Options) -> Result<String, String> {
+        if let Some(known) = self.sessions().iter().map(|s| s.summary()).find(|c| c.thread.as_deref() == Some(thread)) { return Ok(known.id) }
+        let user = self.user_home();
+        let claude = std::fs::read_dir(user.join(".claude/projects")).into_iter().flatten().flatten()
+            .map(|e| e.path().join(format!("{thread}.jsonl"))).find(|f| f.is_file());
+        if let Some(file) = claude {
+            let cwd = claude_cwd(&file).ok_or_else(|| format!("Claude Code session {thread} doesn't say its folder"))?;
+            return self.adopt(Provider::Claude, thread, &cwd, options);
+        }
+        let (provider, (cwd, items)) = if let Some(file) = rollout(&user.join(".codex/sessions"), thread) {
+            let text = std::fs::read_to_string(&file).map_err(|e| e.to_string())?;
+            let records: Vec<serde_json::Value> = text.lines().filter_map(|line| serde_json::from_str(line).ok()).collect();
+            (Provider::Codex, crate::handoff::from_codex_rollout(&records).ok_or_else(|| format!("Codex session {thread} doesn't say its folder"))?)
+        } else if thread.starts_with("ses_") {
+            // ponytail: waits on OpenCode's export (a second or two) in the caller's thread; spawn it if that matters.
+            let argv = crate::adapter::login_shell(&["opencode", "session", "export", thread]);
+            let printed = std::process::Command::new(&argv[0]).args(&argv[1..]).current_dir(&user).output().map_err(|e| format!("OpenCode didn't run: {e}"))?;
+            let text = String::from_utf8_lossy(&printed.stdout);
+            let export: serde_json::Value = text.find('{').and_then(|at| serde_json::from_str(&text[at..]).ok())
+                .ok_or_else(|| format!("No Claude Code, Codex or OpenCode session {thread}"))?;
+            (Provider::Opencode, crate::handoff::from_opencode_export(&export).ok_or_else(|| format!("OpenCode session {thread} doesn't say its folder"))?)
+        } else {
+            return Err(format!("No Claude Code, Codex or OpenCode session {thread}"));
+        };
+        if !Path::new(&cwd).is_dir() { return Err(format!("{cwd} isn't a folder any more")) }
+        let mut conversation = Conversation::new(&new_id(), provider, &cwd);
+        conversation.thread = Some(thread.into());
+        conversation.permissions = options.permissions.unwrap_or_default();
+        conversation.branch = branch(Path::new(&cwd));
+        self.take_in(conversation, items, options)
+    }
+
+    /// A conversation from elsewhere, with its history, kept as a task: offline until a message resumes it.
+    fn take_in(&self, conversation: Conversation, items: Vec<crate::model::Item>, options: Options) -> Result<String, String> {
+        let id = conversation.id.clone();
         let session = Session::new(conversation, Some(self.home.join("sessions").join(&id)), self.events.clone()).map_err(|e| e.to_string())?;
         session.change(Change::Status { status: Status::Offline, turn: None, error: None });
-        for item in crate::handoff::from_claude_session(&records) { session.change(Change::Item { item }) }
+        for item in items { session.change(Change::Item { item }) }
         if options.label.is_some() || options.ticket.is_some() { session.change(Change::Named { label: options.label, ticket: options.ticket }) }
         self.attention.lock().unwrap().insert(id.clone(), Attention::Offline);
         self.sessions.lock().unwrap().push(session.clone());
         session.announce();
+        if let Some(workspace) = options.workspace.as_deref() { self.place_in_workspace(&id, Some(workspace))? }
         Ok(id)
     }
 
@@ -1581,6 +1622,17 @@ fn millis() -> u128 {
 }
 
 /// The folder a Claude Code session ran in, from the first of its records that says.
+/// Codex's rollout file for a thread, under its sessions' year/month/day folders: `rollout-<time>-<thread>.jsonl`.
+fn rollout(folder: &Path, thread: &str) -> Option<PathBuf> {
+    let suffix = format!("-{thread}.jsonl");
+    for entry in std::fs::read_dir(folder).ok()?.flatten() {
+        let path = entry.path();
+        if path.is_dir() { if let Some(found) = rollout(&path, thread) { return Some(found) } }
+        else if path.file_name().is_some_and(|n| n.to_string_lossy().ends_with(&suffix)) { return Some(path) }
+    }
+    None
+}
+
 fn claude_cwd(file: &Path) -> Option<String> {
     use std::io::BufRead;
     std::io::BufReader::new(std::fs::File::open(file).ok()?).lines().map_while(Result::ok)
