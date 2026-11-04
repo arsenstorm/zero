@@ -29,5 +29,5 @@ for wait in 0 1 2; do
   last=$(tail -n 400 "$transcript" | grep '"type":"assistant"' | tail -n 1)
   if printf '%s' "$last" | grep -Eq "$ending"; then exit 0; fi
 done
-reason="This turn has no Zero ending. If you need Arsen, ask him now with $ZERO_CLIENT ask or $ZERO_CLIENT approve (use --async if you must end the turn) and end with [zero: asked <id>]. If the work is finished, run $ZERO_CLIENT note --done and end with [zero: done]; if the whole task is done-done (nothing left for anyone), end with [zero: completed]. If you cannot go on, run $ZERO_CLIENT note --blocked and end with [zero: blocked]. If you are only pausing between steps, end with [zero: working] (a note is optional; post one only when something changed)."
+reason="This turn has no Zero ending. If you need the user, ask them now with $ZERO_CLIENT ask or $ZERO_CLIENT approve (use --async if you must end the turn) and end with [zero: asked <id>]. If the work is finished, run $ZERO_CLIENT note --done and end with [zero: done]; if the whole task is done-done (nothing left for anyone), end with [zero: completed]. If you cannot go on, run $ZERO_CLIENT note --blocked and end with [zero: blocked]. If you are only pausing between steps, end with [zero: working] (a note is optional; post one only when something changed)."
 printf '{"decision":"block","reason":"%s"}\n' "$reason"
