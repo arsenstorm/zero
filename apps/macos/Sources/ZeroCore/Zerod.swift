@@ -975,6 +975,17 @@ public final class ZerodLink: @unchecked Sendable {
         return session
     }
 
+    /// A Claude Code, Codex or OpenCode session from outside Zero, by its id, taken in as a task where it ran, with its
+    /// history: offline and not opened, until a message resumes it on its own thread.
+    public func migrate(_ thread: String, label: String? = nil, workspace: String? = nil) async throws -> String {
+        var params: [String: Any] = ["thread": thread]
+        if let label { params["label"] = label }
+        if let workspace { params["workspace"] = workspace }
+        let result = try await call("migrate", params)
+        guard let session = (result as? [String: Any])?["session"] as? String else { throw ZerodError(message: "zerod migrated nothing") }
+        return session
+    }
+
     /// A task (by its id, or its Claude Code session's) made a worker of `lead`, taken in first if Zero hasn't it.
     public func adopt(lead: String, target: String) async throws -> String {
         let result = try await call("adopt", ["session": lead, "thread": target])

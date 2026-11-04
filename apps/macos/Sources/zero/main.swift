@@ -34,6 +34,8 @@ func usage(help: Bool = false) -> Never {
       zero workers   (the sessions this one started, or adopted)
       zero adopt   <task | Claude Code session id>   (makes it a worker of this session, taken into Zero first if it isn't
                    there: you're told when it finishes, and zero send, wait and result reach it)
+      zero migrate <session id> [--label L] [--workspace ID]   (a Claude Code, Codex or OpenCode session from outside Zero
+                   becomes a task where it ran, with its history; not opened: a message resumes it on its own thread)
       zero tasks   (every task Zero has: id, state, lead, ticket, Claude Code session and name)
       zero result  <session>   (its last answer)
       zero loops   (the loops Zero keeps: named instructions, used as @name in a message or a brief, or with spawn --loop)
@@ -527,6 +529,9 @@ case "adopt":
         fail("zero: adopt which task, into which session? (zero adopt ID, from inside a session or with --session ID)")
     }
     print(await zerod { try await $0.adopt(lead: lead, target: target) })
+case "migrate":
+    guard let thread = positional.first else { fail("zero: migrate which session? (zero migrate ID: a Claude Code, Codex or OpenCode session's id)") }
+    print(await zerod { try await $0.migrate(thread, label: flag("label"), workspace: flag("workspace")) })
 case "tasks":
     for task in await zerod({ try await $0.list() }) {
         let columns = [task.id, task.status.rawValue, task.parent.map { "under \($0)" } ?? "lead", task.ticket ?? "-", task.thread ?? "-", Workspace.label(of: task)]
