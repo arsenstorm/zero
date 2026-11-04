@@ -31,10 +31,9 @@ zero approve "Open the PR as draft now" --body "3 files, specs green on bench-3"
 zero run 'bin/production console <<< "puts Source.count"' --cwd "$APP_PATH" --title "ENG-9429 scope" \
   --why "How many sources exist decides whether the fix needs a migration"
 zero note "Specs green; sizing the fix"            # working (blue)
-zero note --blocked "CI is down on main"            # grey: stopped on something that isn't him
-zero note --done "PR #4821 open, CI green"          # green
-zero note --done "PR #4821 open, CI green" --needs "mark it ready and merge"   # teal, over to him: done, a step only he can take
-zero note --completed "PR #4821 merged, QA passed, ticket closed"   # done-done: nothing left; archived after a while
+zero note --waiting "Deploying; QA checks after"    # grey: the next move is someone else's, not his
+zero note --done "PR #4821 open, CI green" --needs "mark it ready and merge"   # teal, over to him: a step only he can take
+zero note --done "PR #4821 merged, QA passed; the PM moves the ticket"   # purple: nothing left you can do; archived after a while
 zero withdraw k3x9qa --reason "Answered in the chat" # take back an ask that no longer needs him
 zero close 01a1886cb3e40000                          # a worker you started, once you've read its result: off his board
 ```
@@ -71,7 +70,7 @@ When Zero runs your session, Claude Code's own permission prompts reach him in Z
 
 ## Where you are
 
-Post a `note` when you start, at a real milestone, and when you finish, not every turn. One line, present tense, concrete: "Footer partial fixed; running request specs", not "making progress". A note within ten minutes of your last one replaces it. Three different things stop you, and he sees each differently. Needing him (an answer, a decision, access, an approval) is an ask: `zero ask`, `approve` or `run`, which shows as Needs you (red), the one state that calls him. Waiting on something that isn't him (CI, another team, a deploy, an outage) is `--blocked` with what you wait for: Blocked (grey), which asks nothing of him. Done, with a step only he can take (a merge, a QA pass, a deploy), is `--done` with `--needs "…"`: Over to you (teal), a to-do rather than a decision. `--done` alone when the deliverable exists (green), whatever still follows it (a merge, QA, a review); `--completed` only when the whole task is done-done: shipped, checked, nothing left for anyone, as Zero archives a completed task after a while (`--merged` means the same). Leave `--needs` off when nothing is his; a later note without it clears it. Why: your dot in his bar and your row on Zero's board are coloured by your asks and notes; a stale note misleads him, and a stream of restatements buries the ones that matter.
+Post a `note` when you start, at a real milestone, and when you finish, not every turn. One line, present tense, concrete: "Footer partial fixed; running request specs", not "making progress". A note within ten minutes of your last one replaces it. Three different things stop you, and he sees each differently. Needing him (an answer, a decision, access, an approval) is an ask: `zero ask`, `approve` or `run`, which shows as Needs you (red), the one state that calls him. Waiting on something that isn't him (CI, another team, a deploy, QA, an outage) is `--waiting` with what you wait for: Waiting (grey), which asks nothing of him. Done, with a step only he can take (a merge, a deploy), is `--done` with `--needs "…"`: Over to you (teal), a to-do rather than a decision. `--done` alone only when nothing is left that you can do, even if others still have steps (a PM moving the ticket, QA you follow): Done (purple), which Zero archives after a while; what you follow changing brings the task back (`--completed` and `--merged` mean the same, `--blocked` the same as `--waiting`). Leave `--needs` off when nothing is his; a later note without it clears it. Why: your dot in his bar and your row on Zero's board are coloured by your asks and notes; a stale note misleads him, and a stream of restatements buries the ones that matter.
 
 A need written only in prose ("could you reopen OrbStack?", "waiting for your go") reaches no board: when you stop because you need him, ask him (`zero ask … --async`, then end with `[zero: asked <id>]`); when it's his step after you're done, post `--needs "…"`; do it even when he is chatting with you in Zero. Why: his sidebar and board colour your task from your notes and your ending, not from your words.
 
@@ -156,7 +155,7 @@ zero schedule cancel k3x9qa
 
 ## The browser
 
-Zero gives you Chrome through its MCP server's `browser_` tools (or `zero browser <tool> '<json>'`): the same tools as Claude in Chrome, under Zero's names. Use them for anything in a browser; in Zero your provider's own browser tools (Claude in Chrome, Codex's browser) are off, and a headless browser of your own (Playwright and the like) is only for tests that need one. Your task has tabs of its own, in a group in the user's Chrome window (the one they used last), opened in the background so their view stays theirs; `browser_tabs` with `createIfEmpty` gives you one. If you'd get in their way (many tabs, a long run) or need a clean session, ask for `window: "own"` (a window of your team's, behind theirs) or `"incognito"` (private, no sign-ins); your later tabs go there too. The group's title shows your state to the user: 🚧 working, 🙋 needs them, ⛔ blocked on something else, ✅ done. Read a page with `browser_read` (elements with refs) or a screenshot (`browser_computer`), act with `browser_computer`, `browser_form` and `browser_navigate`, and batch steps you can foresee with `browser_batch`. Close the tabs you opened when you're done. A tab the user gave you from the extension also shows in `browser_tabs`; closing it gives it back.
+Zero gives you Chrome through its MCP server's `browser_` tools (or `zero browser <tool> '<json>'`): the same tools as Claude in Chrome, under Zero's names. Use them for anything in a browser; in Zero your provider's own browser tools (Claude in Chrome, Codex's browser) are off, and a headless browser of your own (Playwright and the like) is only for tests that need one. Your task has tabs of its own, in a group in the user's Chrome window (the one they used last), opened in the background so their view stays theirs; `browser_tabs` with `createIfEmpty` gives you one. If you'd get in their way (many tabs, a long run) or need a clean session, ask for `window: "own"` (a window of your team's, behind theirs) or `"incognito"` (private, no sign-ins); your later tabs go there too. The group's title shows your state to the user: 🚧 working, 🙋 needs them, ⛔ waiting on something else, ✅ done. Read a page with `browser_read` (elements with refs) or a screenshot (`browser_computer`), act with `browser_computer`, `browser_form` and `browser_navigate`, and batch steps you can foresee with `browser_batch`. Close the tabs you opened when you're done. A tab the user gave you from the extension also shows in `browser_tabs`; closing it gives it back.
 
 The user's blocked sites are refused. In auto mode, opening a site new to the task gets a reviewer's opinion first; if it advises against one the task needs, ask the user with `zero approve "Open <site> in Chrome"` and pass the ask's id as `approval` to `browser_navigate`. Never type the user's passwords or card numbers: ask them to do it.
 
@@ -199,10 +198,9 @@ Zero names you by `ZERO_AGENT`, or by your Solo process id. If neither is set, e
 When Zero runs your session, every turn ends with exactly one of these as its last line, after you have done what it says. Zero's stop check reads it; a turn without one is sent back to you.
 
 ```
-[zero: done]            the work is finished but something still follows (a review, a merge, QA), and you posted zero note --done
-[zero: completed]       the whole task is done-done: nothing left for anyone (pushed and checked, merged and QA'd, the question answered with nothing to follow); Zero archives it after a while
+[zero: done]            nothing is left that you can do, even if others still have steps (a PM, QA you follow); Zero archives it after a while, and what you follow changing brings it back
+[zero: waiting]         the next move is someone else's, not his (CI, a deploy, a review, QA); what you follow wakes you
 [zero: asked k3x9qa]    you asked with --async and wait for that answer (the id it printed)
-[zero: blocked]         you cannot go on because of something that isn't him, and posted zero note --blocked
 [zero: working]         you are pausing between steps and posted a note on where you are
 ```
 

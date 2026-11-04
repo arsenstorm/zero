@@ -91,9 +91,8 @@ pub const CARRIED: &str = "Zero updated: carrying on where it left off";
 /// the user it never asked: sent once, unseen in the conversation. Every agent gets it, whichever runs the task.
 pub const END_YOUR_TURN_MARK: &str = "Zero can't tell where your turn left the task";
 pub const END_YOUR_TURN: &str = "Zero can't tell where your turn left the task. End it with exactly one of these as its last line: \
-[zero: done] (the work is finished, something still follows), [zero: completed] (done-done, nothing left for anyone), \
-[zero: blocked] (stopped on something that isn't the user), [zero: working] (pausing between steps), or \
-[zero: asked <id>]. Anything you need from the user (a decision, a command for them to run, steps for them to take) \
+[zero: done] (nothing is left that you can do, even if others still have steps), [zero: waiting] (the next move is \
+someone else's, not the user's), [zero: working] (pausing between steps), or [zero: asked <id>]. Anything you need from the user (a decision, a command for them to run, steps for them to take) \
 goes through zero ask, zero run or zero approve with --async (or Zero's zero_ask and zero_run tools), and the turn ends [zero: asked <id>]: a question left in \
 your words reaches no one. Don't repeat your answer; do what's missing and end.";
 pub const CARRY_ON: &str = "Zero restarted while you were working: your turn was paused between steps. Please carry on where you left off.";
@@ -1530,7 +1529,7 @@ pub fn report(worker: &Conversation, attention: Attention) -> String {
                     let id = full.trim_end().lines().last().and_then(|l| l.trim().trim_end_matches(']').split_whitespace().nth(2)).unwrap_or("");
                     format!("is waiting on the user's answer (ask {id}): {answer}")
                 }
-                Some("blocked") => format!("is blocked: {answer}"),
+                Some("waiting") => format!("is waiting: {answer}"),
                 _ => format!("finished: {answer}"),
             }
         }

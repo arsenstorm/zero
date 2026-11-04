@@ -24,17 +24,17 @@ pub enum State {
     Handed,
     /// It answered the user and waits on nothing: Replied, until the user has read it.
     Answered,
-    /// Blocked on something that isn't the user (CI, another team, an outage): nothing they can do, so it sorts low.
-    Blocked,
-    /// The work is finished: its code done, not yet merged.
-    Done,
+    /// Waiting on someone or something that isn't the user (CI, a deploy, QA, a review, an outage): nothing they can
+    /// do, so it sorts low. Blocked, as agents said it before.
+    Waiting,
     /// Put on hold by the user (daemon.rs `pause`), until they resume it.
     Paused,
     /// It answered the user, who has seen the answer: Replied still, but nothing waits on them.
     Read,
-    /// Done-done, by the agent's note: shipped, checked, nothing left (`--completed`, or `--merged` as it was). Last of
-    /// all, and archived after a while (Settings › archiveCompleted).
-    Completed,
+    /// Nothing left that the agent can do, by its ending or note (`--done`; `--completed` and `--merged` as it was),
+    /// whatever others (a review, QA) still have to. Last of all, and archived after a while (Settings ›
+    /// archiveCompleted); something it follows changing brings it back.
+    Done,
     Idle,
     Offline,
 }
@@ -190,10 +190,10 @@ pub fn mark_read(rows: &mut [Row], read: &dyn Fn(&str) -> bool) {
     rows.sort_by_key(|row| row.state);
 }
 
-/// The completed tasks due to be archived: those completed for `after` seconds (never, with none). `since` keeps when
-/// each was first seen completed, across boards; a task taken up again starts over.
+/// The done tasks due to be archived: those done for `after` seconds (never, with none). `since` keeps when each was
+/// first seen done, across boards; a task taken up again starts over.
 pub fn due_to_archive(rows: &[Row], since: &mut HashMap<String, i64>, now: i64, after: Option<i64>) -> Vec<String> {
-    let completed: Vec<&str> = rows.iter().filter(|r| r.state == State::Completed && r.own == State::Completed).map(|r| r.session.as_str()).collect();
+    let completed: Vec<&str> = rows.iter().filter(|r| r.state == State::Done && r.own == State::Done).map(|r| r.session.as_str()).collect();
     since.retain(|id, _| completed.contains(&id.as_str()));
     for id in &completed { since.entry(id.to_string()).or_insert(now); }
     let Some(after) = after else { return vec![] };
@@ -226,12 +226,11 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
     if !open.is_empty() { state = State::NeedsYou }
     if let Some(note) = own && state > State::Trouble {
         state = match note.status.as_deref() {
-            // Blocked, or waiting on something: on what isn't the user (what needs them is an ask).
-            Some("blocked" | "waiting") => State::Blocked,
+            // Waiting on what isn't the user (what needs them is an ask).
+            Some("blocked" | "waiting") => State::Waiting,
             _ if state == State::Working => state,
             _ if note.needs.is_some() => State::Handed,
-            Some("done") => State::Done,
-            Some("completed" | "merged") => State::Completed,
+            Some("done" | "completed" | "merged") => State::Done,
             _ => state,
         };
     }
@@ -239,11 +238,9 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
     if own.is_none() && matches!(state, State::Idle | State::Done) && let Some(ending) = session.answer().and_then(ending) {
         state = match ending {
             "done" => State::Done,
-            // Done-done: nothing left for anyone.
-            "completed" => State::Completed,
             // Between steps, its work going on elsewhere: a reply to read, as any.
             "working" => State::Answered,
-            "blocked" => State::Blocked,
+            "waiting" => State::Waiting,
             _ => State::NeedsYou, // asked: it waits on the user's answer
         };
     }
@@ -253,8 +250,8 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
     Standing { state, online, now: own.map(|n| n.body.clone()).filter(|b| !b.is_empty()).or(answer), needs: own.and_then(|n| n.needs.clone()), asks: open }
 }
 
-/// The ending Zero's hook has an agent close its turn with, when it's the answer's last line: "done", "blocked",
-/// "working", or "asked" (its ask's id dropped).
+/// The ending Zero has an agent close its turn with, when it's the answer's last line: "done", "waiting", "working",
+/// or "asked" (its ask's id dropped). "completed" and "blocked", as agents said them before, are "done" and "waiting".
 /// A line without its list marker ("- ", "* ", "3. "), if it has one.
 fn unlisted(line: &str) -> &str {
     if let Some(rest) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) { return rest.trim_start() }
@@ -277,9 +274,8 @@ pub fn ending(answer: &str) -> Option<&'static str> {
     let last = answer.trim_end().lines().last()?.trim();
     let inner = last.strip_prefix("[zero: ")?.strip_suffix(']')?;
     match inner.split_whitespace().next()? {
-        "done" => Some("done"),
-        "completed" => Some("completed"),
-        "blocked" => Some("blocked"),
+        "done" | "completed" => Some("done"),
+        "waiting" | "blocked" => Some("waiting"),
         "working" => Some("working"),
         "asked" => Some("asked"),
         _ => None,
@@ -375,7 +371,7 @@ fn attention(conversation: &Conversation) -> State {
     match conversation.attention() {
         Attention::NeedsYou => State::NeedsYou,
         Attention::Limited | Attention::Stuck | Attention::Failed => State::Trouble,
-        Attention::Blocked => State::Blocked,
+        Attention::Blocked => State::Waiting,
         Attention::Working | Attention::Starting => State::Working,
         Attention::Done => State::Done,
         Attention::Answered => State::Answered,
@@ -384,7 +380,7 @@ fn attention(conversation: &Conversation) -> State {
         Attention::Offline => match conversation.ended() {
             Attention::NeedsYou => State::NeedsYou,
             Attention::Done => State::Done,
-            Attention::Blocked => State::Blocked,
+            Attention::Blocked => State::Waiting,
             Attention::Answered => State::Answered,
             _ => State::Idle,
         },

@@ -58,8 +58,8 @@ fn the_agents_own_note_says_where_it_is_and_what_it_needs() {
     assert_eq!((row.state, row.needs.as_deref(), row.now.as_deref()), (State::Done, None, Some("Round 4 pushed")), "a later note without needs clears them");
     // Done is the work finished; merged is it shipped.
     let shipped = [note("a", "Merged #13336", Some("merged"), None)];
-    assert_eq!(board(std::slice::from_ref(&lead), &shipped)[0].state, State::Completed, "merged, as agents said it before: completed");
-    assert_eq!(board(&[lead], &[note("a", "Shipped and checked", Some("completed"), None)])[0].state, State::Completed);
+    assert_eq!(board(std::slice::from_ref(&lead), &shipped)[0].state, State::Done, "merged, as agents said it before: done");
+    assert_eq!(board(&[lead], &[note("a", "Shipped and checked", Some("completed"), None)])[0].state, State::Done, "completed, as agents said it before: done");
 }
 
 #[test]
@@ -79,10 +79,10 @@ fn done_or_merged_stands_through_turns_zero_started_until_the_user_speaks() {
     let said = |text: &str, at: i64| Item { at: Some(at * 1000), id: format!("u{at}"), turn: None, kind: ItemKind::User { text: text.into(), images: vec![] }, status: ItemStatus::Done };
     lead.items.push(said(&from_line("zero", "1 new event on what you follow"), 1_100));
     let asks = [merged.clone(), dot("Working", None), dot("Done", Some("done"))];
-    assert_eq!(board(&[lead.clone()], &asks)[0].state, State::Completed);
+    assert_eq!(board(&[lead.clone()], &asks)[0].state, State::Done);
     // The user's own word after it: whatever it was is theirs to settle again.
     lead.items.push(said("Can you also bump the base image?", 1_200));
-    assert_ne!(board(&[lead], &asks)[0].state, State::Completed);
+    assert_ne!(board(&[lead], &asks)[0].state, State::Done);
 }
 
 #[test]
@@ -118,7 +118,7 @@ fn states_come_from_the_session_and_the_note_most_urgent_first() {
     let states: Vec<(&str, State)> = rows.iter().map(|r| (r.session.as_str(), r.state)).collect();
     // An agent that says it's blocked (or waits on something) is blocked on something the user can't fix: below what's
     // under way. One stuck or failing on its own is in trouble.
-    assert_eq!(states, [("stuck", State::Trouble), ("working", State::Working), ("waits", State::Blocked), ("failing", State::Blocked), ("done", State::Idle)],
+    assert_eq!(states, [("stuck", State::Trouble), ("working", State::Working), ("waits", State::Waiting), ("failing", State::Waiting), ("done", State::Idle)],
                "blocked elsewhere asks nothing of the user: it sorts below the work"); 
 }
 
@@ -175,9 +175,10 @@ fn how_the_agent_ended_its_turn_is_the_rows_state() {
         lead.items.push(Item { id: "1".into(), turn: None, kind: ItemKind::Agent { text: text.into(), final_answer: true }, status: ItemStatus::Done, at: None });
         board(&[lead], &[])[0].state
     };
-    assert_eq!(ended("PR #13336 is open.\n\n[zero: done]"), State::Done);
-    assert_eq!(ended("Pushed all four commits; nothing left.\n\n[zero: completed]"), State::Completed, "done-done, said by its ending");
-    assert_eq!(ended("Can't reach staging.\n[zero: blocked]"), State::Blocked, "blocked on something, not on the user: they'd be asked");
+    assert_eq!(ended("Merged, deployed and checked; the PM moves the issue on.\n\n[zero: done]"), State::Done, "nothing left that it can do");
+    assert_eq!(ended("Pushed all four commits; nothing left.\n\n[zero: completed]"), State::Done, "completed, as agents said it before: done");
+    assert_eq!(ended("Deploying; QA checks after.\n[zero: waiting]"), State::Waiting, "the next move is someone else's, not the user's: they'd be asked");
+    assert_eq!(ended("Can't reach staging.\n[zero: blocked]"), State::Waiting, "blocked, as agents said it before: waiting");
     assert_eq!(ended("Which one?\n[zero: asked 3f2a]"), State::NeedsYou);
     assert_eq!(ended("Waiting on CI.\n[zero: working]"), State::Answered, "pausing between steps: its reply, to read like any other");
     assert_eq!(ended("Just an answer."), State::Answered, "a turn ended is not a task done; it is a reply to read");
@@ -185,7 +186,7 @@ fn how_the_agent_ended_its_turn_is_the_rows_state() {
     // The agent's own note this turn says more than its ending.
     let mut lead = session("a", "/work/app", Status::Idle);
     lead.items.push(Item { id: "1".into(), turn: None, kind: ItemKind::Agent { text: "Merged.\n[zero: done]".into(), final_answer: true }, status: ItemStatus::Done, at: None });
-    assert_eq!(board(&[lead], &[note("a", "Merged #1", Some("merged"), None)])[0].state, State::Completed);
+    assert_eq!(board(&[lead], &[note("a", "Merged #1", Some("merged"), None)])[0].state, State::Done);
 }
 
 #[test]
@@ -320,11 +321,12 @@ fn a_reply_the_user_has_seen_is_read_for_every_client() {
     mark_read(&mut rows, &|id| id == "a");
     let a = rows.iter().find(|r| r.session == "a").unwrap();
     assert_eq!((a.state, a.own), (State::Read, State::Read), "Replied still, greyed: read, nothing waiting on the user");
-    assert!(State::Read > State::Done && State::Read < State::Completed && State::Completed < State::Idle, "it sorts with what needs nothing, the done-done last");
+    assert!(State::Read > State::Waiting && State::Read < State::Done && State::Done < State::Idle, "it sorts with what needs nothing, the done last");
+    assert_eq!((serde_json::json!(State::Done), serde_json::json!(State::Waiting)), (serde_json::json!("done"), serde_json::json!("waiting")));
 }
 
 #[test]
-fn a_completed_task_is_archived_once_its_been_completed_a_while() {
+fn a_done_task_is_archived_once_its_been_done_a_while() {
     use std::collections::HashMap;
     use zerod::board::due_to_archive;
     let mut lead = session("a", "/work/app", Status::Idle);
@@ -352,8 +354,8 @@ fn an_offline_task_shows_the_state_its_last_answer_left_it_in() {
     };
     assert_eq!(ended("Hey Arsen, what are we working on?"), State::NeedsYou, "its question is still open");
     assert_eq!(ended("The build is green."), State::Answered);
-    assert_eq!(ended("Merged and checked.\n\n[zero: completed]"), State::Completed);
-    assert_eq!(ended("PR is up.\n\n[zero: done]"), State::Done);
+    assert_eq!(ended("Merged and checked.\n\n[zero: done]"), State::Done);
+    assert_eq!(ended("Deploying.\n\n[zero: waiting]"), State::Waiting);
 }
 
 #[test]

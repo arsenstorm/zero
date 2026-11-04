@@ -483,9 +483,9 @@ impl Conversation {
         match self.items.iter().rev().find(|i| !matches!(i.kind, ItemKind::Notice { .. })).map(|i| &i.kind) {
             Some(ItemKind::Agent { final_answer: true, .. }) if self.parent.is_some() => Attention::Done,
             Some(ItemKind::Agent { text, final_answer: true }) => match crate::board::ending(text) {
-                Some("done" | "completed") => Attention::Done,
+                Some("done") => Attention::Done,
                 Some("asked") => Attention::NeedsYou,
-                Some("blocked") => Attention::Blocked,
+                Some("waiting") => Attention::Blocked,
                 Some(_) => Attention::Idle,
                 None if text.lines().any(|l| l.trim_end().ends_with('?')) => Attention::NeedsYou,
                 None => Attention::Answered,

@@ -87,12 +87,12 @@ pub fn verdict(printed: &str) -> Result<String, String> {
 }
 
 /// A task's state as its tab group shows it, Chrome's own four: working, needs (the user: a question, an approval),
-/// blocked (on something else, or in trouble), done (everything finished, answered, handed over or parked).
+/// blocked (waiting on something else, or in trouble), done (everything finished, answered, handed over or parked).
 pub fn light(state: crate::board::State) -> &'static str {
     use crate::board::State::*;
     match state {
         NeedsYou => "needs",
-        Trouble | Blocked => "blocked",
+        Trouble | Waiting => "blocked",
         Working => "working",
         _ => "done",
     }

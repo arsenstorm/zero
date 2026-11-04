@@ -179,8 +179,8 @@ fn a_tasks_state_is_a_light_for_its_tab_group() {
     use zerod::board::State::*;
     use zerod::browser::light;
     // Chrome's own four: working, needs you (a question, an approval, an alert), blocked, done; nothing more.
-    for (state, expected) in [(NeedsYou, "needs"), (Trouble, "blocked"), (Blocked, "blocked"), (Working, "working"), (Handed, "done"), (Answered, "done"),
-                              (Done, "done"), (Completed, "done"), (Idle, "done"), (Offline, "done")] {
+    for (state, expected) in [(NeedsYou, "needs"), (Trouble, "blocked"), (Waiting, "blocked"), (Working, "working"), (Handed, "done"), (Answered, "done"),
+                              (Done, "done"), (Idle, "done"), (Offline, "done")] {
         assert_eq!(light(state), expected, "{state:?}");
     }
 }

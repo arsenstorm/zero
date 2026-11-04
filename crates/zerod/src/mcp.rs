@@ -34,7 +34,7 @@ fn zero_tools() -> Vec<Value> {
                    "command": string("The command."), "why": string("What you need its output for."), "cwd": string("Where to run it; left out, the task's folder.")}}}),
         json!({"name": "zero_note", "description": "Says where the task stands, on its row in Zero.",
                "inputSchema": {"type": "object", "required": ["text"], "properties": {
-                   "text": string("Where it stands, one line."), "state": string("done, completed, blocked or waiting."), "needs": string("What it needs from the user, if anything.")}}}),
+                   "text": string("Where it stands, one line."), "state": string("done (nothing left that you can do) or waiting (on someone else); left out, working."), "needs": string("What it needs from the user, if anything.")}}}),
     ]
 }
 

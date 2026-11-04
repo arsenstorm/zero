@@ -327,7 +327,7 @@ fn a_workers_report_says_how_it_ended_its_turn() {
     let asked = zerod::daemon::report(&worker("Asked which colour.\n[zero: asked n25cmk]"), Attention::Done);
     assert!(asked.starts_with("Worker Listing is waiting on the user's answer (ask n25cmk): Asked which colour."), "{asked}");
     let blocked = zerod::daemon::report(&worker("CI is down.\n[zero: blocked]"), Attention::Done);
-    assert!(blocked.starts_with("Worker Listing is blocked: CI is down."), "{blocked}");
+    assert!(blocked.starts_with("Worker Listing is waiting: CI is down."), "{blocked}");
     let done = zerod::daemon::report(&worker("All 4 files listed.\n\n[zero: done]"), Attention::Done);
     assert!(done.starts_with("Worker Listing finished: All 4 files listed.\n"), "the ending line left out: {done}");
 }
