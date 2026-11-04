@@ -32,6 +32,8 @@ pub enum State {
     Merged,
     /// Put on hold by the user (daemon.rs `pause`), until they resume it.
     Paused,
+    /// It answered the user, who has seen the answer: Replied still, but nothing waits on them.
+    Read,
     Idle,
     Offline,
 }
@@ -166,19 +168,17 @@ pub fn board_in(conversations: &[Conversation], asks: &[Ask], places: &HashMap<S
     rows
 }
 
-/// How long a read reply stays Replied: it doesn't change under the eyes of whoever is reading it.
-pub const SETTLE_AFTER: i64 = 5 * 60;
-
-/// A reply is read when the user saw it (`seen`: that answer's item, and when) and it's still the latest, a while ago.
+/// A reply is read once the user has seen it (`seen`: that answer's item, and when) and it's still the latest. The
+/// chat that's open stays Replied in its app until it's left, so nothing changes under the eyes of whoever reads it.
 pub fn read(seen: Option<(&str, i64)>, latest: Option<&str>, now: i64) -> bool {
-    seen.is_some_and(|(answer, at)| Some(answer) == latest && now - at >= SETTLE_AFTER)
+    seen.is_some_and(|(answer, at)| Some(answer) == latest && at <= now)
 }
 
-/// The rows whose reply the user has read, Idle rather than Replied: on every client alike.
+/// The rows whose reply the user has read: Read rather than Replied, on every client alike.
 pub fn mark_read(rows: &mut [Row], read: &dyn Fn(&str) -> bool) {
     for row in rows.iter_mut().filter(|r| (r.state == State::Answered || r.own == State::Answered) && read(&r.session)) {
-        if row.state == State::Answered { row.state = State::Idle }
-        if row.own == State::Answered { row.own = State::Idle }
+        if row.state == State::Answered { row.state = State::Read }
+        if row.own == State::Answered { row.own = State::Read }
     }
     rows.sort_by_key(|row| row.state);
 }

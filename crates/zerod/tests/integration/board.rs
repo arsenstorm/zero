@@ -305,11 +305,10 @@ fn a_working_lead_is_working_itself_while_its_worker_waits_on_the_user() {
 }
 
 #[test]
-fn a_reply_read_a_while_ago_settles_to_idle_for_every_client() {
+fn a_reply_the_user_has_seen_is_read_for_every_client() {
     use zerod::board::{mark_read, read};
-    // Read, and its answer is still the latest: settled once a while has passed, so it doesn't change under the eyes.
-    assert!(read(Some(("answer-1", 1_000)), Some("answer-1"), 1_300));
-    assert!(!read(Some(("answer-1", 1_000)), Some("answer-1"), 1_060), "just read: still Replied for a while");
+    // Seen, and its answer is still the latest: read at once (the app keeps the chat that's open purple until it's left).
+    assert!(read(Some(("answer-1", 1_000)), Some("answer-1"), 1_000));
     assert!(!read(Some(("answer-1", 1_000)), Some("answer-2"), 5_000), "a newer answer is unread");
     assert!(!read(None, Some("answer-1"), 5_000));
     let mut lead = session("a", "/work/app", Status::Idle);
@@ -318,5 +317,6 @@ fn a_reply_read_a_while_ago_settles_to_idle_for_every_client() {
     assert_eq!(rows.iter().find(|r| r.session == "a").unwrap().state, State::Answered);
     mark_read(&mut rows, &|id| id == "a");
     let a = rows.iter().find(|r| r.session == "a").unwrap();
-    assert_eq!((a.state, a.own), (State::Idle, State::Idle));
+    assert_eq!((a.state, a.own), (State::Read, State::Read), "Replied still, greyed: read, nothing waiting on the user");
+    assert!(State::Read > State::Merged && State::Read < State::Idle, "it sorts with what needs nothing");
 }
