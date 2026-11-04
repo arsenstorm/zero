@@ -364,3 +364,16 @@ fn zeros_own_lines_after_an_answer_dont_hide_it() {
     lead.items.push(Item { id: "2".into(), turn: None, kind: ItemKind::Notice { text: zerod::daemon::CARRIED.into(), error: false }, status: ItemStatus::Done, at: None });
     assert_eq!(board(&[lead], &[])[0].state, State::NeedsYou);
 }
+
+#[test]
+fn a_reply_to_a_turn_zero_started_is_quiet() {
+    // Unread still (purple), but nothing to tell the user about: Zero passed on an event, or a worker reported.
+    let said = |id: &str, text: &str| Item { at: None, id: id.into(), turn: None, kind: ItemKind::User { text: text.into(), images: vec![] }, status: ItemStatus::Done };
+    let answer = |id: &str| Item { at: None, id: id.into(), turn: None, kind: ItemKind::Agent { text: "Noted.".into(), final_answer: true }, status: ItemStatus::Done };
+    let mut lead = session("a", "/work/app", Status::Idle);
+    lead.items = vec![said("u1", "Is it merged?"), answer("a1")];
+    assert!(!board(std::slice::from_ref(&lead), &[])[0].quiet, "a reply to the user's own message");
+    lead.items.extend([said("u2", &from_line("zero", "1 new event on what you follow")), answer("a2")]);
+    let row = &board(&[lead], &[])[0];
+    assert_eq!((row.state, row.quiet), (State::Answered, true));
+}

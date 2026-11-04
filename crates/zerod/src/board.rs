@@ -79,6 +79,10 @@ pub struct Row {
     /// When it next wakes itself (`zero schedule`), in seconds since 1970.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wakes: Option<i64>,
+    /// Its last turn was Zero's (an event it follows, a worker's report, a wake-up), not the user's: a reply to it is
+    /// shown (unread, if it is) but not announced.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub quiet: bool,
 }
 
 /// A worker on a lead's row: its own state, where it runs, where it is and what it needs.
@@ -163,6 +167,7 @@ pub fn board_in(conversations: &[Conversation], asks: &[Ask], places: &HashMap<S
         Row {
             session: lead.id.clone(), task: crate::bridge::label(lead), workspace: workspace_of(lead), ticket: lead.ticket.clone(), place, path, online: its.online,
             state: its.state, own, now: its.now, needs: its.needs, asks: its.asks, workers: team.len() - 1, team: members, queued, held, wakes: None,
+            quiet: lead.items.iter().rev().find_map(|i| match &i.kind { ItemKind::User { text, .. } => Some(text.starts_with(crate::model::FROM)), _ => None }).unwrap_or(false),
         }
     }).collect();
     rows.sort_by_key(|row| row.state);

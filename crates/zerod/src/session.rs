@@ -718,7 +718,9 @@ fn summarize(conversation: &Conversation) -> Conversation {
     // The user's latest word of their own: until they speak again, done or merged stands (board.rs).
     let spoke = conversation.items.iter().rev().find(|i| matches!(&i.kind, ItemKind::User { text, .. } if !text.starts_with(crate::model::FROM)));
     let mut items: Vec<Item> = Vec::new();
-    for item in asked.into_iter().chain(spoke).chain(answer).chain(conversation.items.last()) {
+    // And its latest message of any kind: whether its last turn was the user's or Zero's (board.rs `quiet`).
+    let latest = conversation.items.iter().rev().find(|i| matches!(i.kind, ItemKind::User { .. }));
+    for item in asked.into_iter().chain(spoke).chain(latest).chain(answer).chain(conversation.items.last()) {
         if !items.iter().any(|kept| kept.id == item.id) { items.push(item.clone()) }
     }
     conversation.with_items(items)
