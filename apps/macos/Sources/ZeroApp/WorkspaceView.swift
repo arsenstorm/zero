@@ -1720,6 +1720,12 @@ private struct ConversationView: View {
     @State private var pageHeight: CGFloat = 0
     /// The room just gone: growth still anchors to the top until scrolling settles, so taking it away moves nothing.
     @State private var settling = false
+    /// A question, ask or approval just answered: the page keeps the height it had, so the card fades out where it
+    /// was and nothing above it moves; what comes next (its agent starting, its reply) fills that room. Given back
+    /// when you scroll.
+    @State private var room: CGFloat = 0
+    /// The conversation's own height, without that room.
+    @State private var columnHeight: CGFloat = 0
     /// An older page is coming in above: the page keeps its distance from the end through that, so what's read stays.
     @State private var loadingAbove = false
     /// Another provider picked for the next message; nil keeps the task's own.
@@ -1762,6 +1768,11 @@ private struct ConversationView: View {
 
     /// One block as a row: compared before it's drawn (a word streamed into the last answer redraws only that one),
     /// and reporting whether it's on screen, for the rail.
+    /// What waits on you in the chat, by id: a card leaving this is one answered.
+    private func waitingIds(_ conversation: Conversation) -> [String] {
+        conversation.questions.map(\.id) + inbox.store.asks.filter { AgentAskCard.open($0, in: conversation) }.map(\.id) + conversation.approvals.map(\.id)
+    }
+
     /// The provider's questions and approvals, and what the agent asked through Zero.
     @ViewBuilder private func waiting(_ conversation: Conversation) -> some View {
         ForEach(conversation.questions) { question in
@@ -1769,16 +1780,18 @@ private struct ConversationView: View {
                 Task { await workspace.answer(conversation.id, question: question.id, answers: answers) }
             }
             .id("question-" + question.id)
+            .transition(.opacity)
         }
         // What the agent asked through Zero (zero ask, approve, run): the inbox's own card, here too.
         ForEach(inbox.store.asks.filter { AgentAskCard.open($0, in: conversation) }) { ask in
-            AgentAskCard(ask: ask, inbox: inbox).id("ask-" + ask.id)
+            AgentAskCard(ask: ask, inbox: inbox).id("ask-" + ask.id).transition(.opacity)
         }
         ForEach(conversation.approvals) { approval in
             ApprovalCard(approval: approval, cwd: conversation.cwd) { choice in
                 Task { await workspace.decide(conversation.id, approval: approval.id, choice: choice.id) }
             }
             .id("approval-" + approval.id)
+            .transition(.opacity)
         }
     }
 
@@ -1905,6 +1918,10 @@ private struct ConversationView: View {
                         // message can sit at the top.
                         Color.clear.frame(height: composerHeight + 32).id("end")
                     }
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { columnHeight = $0 }
+                    .frame(minHeight: room, alignment: .top)
+                    // A card answered fades out where it was.
+                    .animation(.easeOut(duration: 0.2), value: waitingIds(conversation))
                     .padding(.top, 20)
                     .centredColumn(760)
                     .environment(\.askInbox, inbox)
@@ -1933,12 +1950,21 @@ private struct ConversationView: View {
                         liftPlaced = true
                     }
                 }
+                // An answered card leaving: the page keeps its height (see `room`).
+                .onChange(of: waitingIds(conversation)) { old, new in
+                    if !Set(old).subtracting(new).isEmpty { room = max(room, columnHeight) }
+                }
                 // Where you were in it, kept when scrolling stops and when you leave.
                 .onScrollPhaseChange { _, phase in
                     // Scrolled by you: it stops following the end, until you're back at it. Scrolling while the rows
                     // for older items show asks for the next page (one page per gesture, never a chain).
                     userScrolling = phase == .interacting || phase == .decelerating
                     if phase == .interacting {
+                        // The room an answered card left goes back, the page kept where you are.
+                        if room > 0, let offset = tracker.geometry?.contentOffset.y {
+                            room = 0
+                            DispatchQueue.main.async { position.scrollTo(y: offset) }
+                        }
                         workspace.markSeen(conversation.id)
                         following = false
                         if olderShown, !olderArmed { olderArmed = true; Task { await loadOlder() } }
