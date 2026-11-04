@@ -54,8 +54,7 @@ struct FollowRows: View {
                 }
             }
         }
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.stroke))
+        .settingsCard()
         .task(id: workspace.followingVersion) { await workspace.loadFollowing() }
     }
 }

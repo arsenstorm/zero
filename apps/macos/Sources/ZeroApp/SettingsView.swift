@@ -267,6 +267,12 @@ struct PageTitle: View {
 }
 
 extension View {
+    /// Settings' card: its surface, rounded, with a hairline edge. Rows put theirs on one.
+    func settingsCard() -> some View {
+        background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.stroke))
+    }
+
     /// A column at most `width` wide, centred in what's left, its contents to its leading edge.
     func centredColumn(_ width: CGFloat) -> some View {
         frame(maxWidth: width, alignment: .leading).padding(.horizontal, 36).frame(maxWidth: .infinity)
@@ -289,8 +295,7 @@ struct Rows<Content: View>: View {
                 }
             }
             .padding(.horizontal, 18)
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.stroke))
+            .settingsCard()
             // In Settings the card bleeds past the column by its own inset, so its text lines up with the headings.
             .padding(.horizontal, -bleed)
         }
@@ -300,6 +305,43 @@ struct Rows<Content: View>: View {
 struct Switch: View {
     @Binding var isOn: Bool
     var body: some View { Toggle("", isOn: $isOn).labelsHidden().toggleStyle(.switch) }
+}
+
+/// A setting's choice: what's chosen and a chevron, on a chip that opens Zero's selector as a plain menu, as a
+/// composer's chip opens it; groups of choices with a line between. A soft fill under the pointer and while it's open.
+struct SettingChoice<Value: Hashable>: View {
+    /// The selector's name for this chip, one per setting.
+    let id: String
+    let choices: [[(title: String, value: Value)]]
+    @Binding var selection: Value
+    @State private var anchor = CGRect.zero
+    @State private var hovered = false
+
+    var body: some View {
+        let open = WorkspaceSelector.shared.open == id
+        let chosen = choices.joined().first { $0.value == selection } ?? choices.first?.first
+        Button { WorkspaceSelector.shared.toggle(id, kind: .menu, anchor: anchor, rows: { sections }) } label: {
+            HStack(spacing: 5) {
+                Text(chosen?.title ?? "").font(.system(size: 13)).lineLimit(1)
+                NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0))
+            }
+            .padding(.horizontal, 8).frame(height: 28)
+            .background(open || hovered ? Theme.row : .clear, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain).fixedSize()
+        .onHover { hovered = $0 }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { anchor = $0 }
+    }
+
+    private var sections: [SelectorSection] {
+        choices.enumerated().map { index, group in SelectorSection(id: "\(index)", title: "", icon: nil, rows: group.map(row)) }
+    }
+
+    private func row(_ choice: (title: String, value: Value)) -> SelectorRow {
+        SelectorRow(id: "\(choice.value)", title: choice.title, provider: nil, providerIcon: nil, detail: nil, context: nil,
+                    levels: [], defaultLevel: nil, modelID: nil, selected: choice.value == selection) { selection = choice.value }
+    }
 }
 
 /// How far a card reaches past its column, so its rows' text starts where the text around it does.
@@ -414,17 +456,13 @@ private struct SoundPicker: View {
     @Bindable var settings: Settings
     let state: BoardRow.State
     var body: some View {
-        Picker("", selection: Binding(get: { settings.sound(for: state) }, set: { sound in
+        let sounds = Settings.sounds.map { sound in (title: sound == Settings.defaultSound(state) ? "\(sound) (default)" : sound, value: sound) }
+        // ponytail: the selector's menu doesn't scroll; these 15 rows are about 450 pt, cut off where neither side of
+        // the chip has that room. Let the menu kind scroll (Selector.swift) if a screen that short turns up.
+        SettingChoice(id: "sound-" + state.rawValue, choices: [sounds, [(title: "None", value: "")]], selection: Binding(get: { settings.sound(for: state) }, set: { sound in
             settings.stateSounds[state.rawValue] = sound
             if !sound.isEmpty { NSSound(named: sound)?.play() }
-        })) {
-            ForEach(Settings.sounds, id: \.self) { sound in
-                Text(sound == Settings.defaultSound(state) ? "\(sound) (default)" : sound).tag(sound)
-            }
-            Divider()
-            Text("None").tag("")
-        }
-        .labelsHidden().fixedSize()
+        }))
     }
 }
 
@@ -445,12 +483,7 @@ private struct ControlBarPage: View {
                         Switch(isOn: $settings.followActiveScreen)
                     }
                     SettingRow(title: "Bar in the window", detail: "The bar sits in Zero's window instead of at the screen's edge.") {
-                        Picker("", selection: $settings.barDock) {
-                            Text("When it fills the screen").tag(Settings.BarDock.auto)
-                            Text("Always").tag(Settings.BarDock.always)
-                            Text("Never").tag(Settings.BarDock.never)
-                        }
-                        .labelsHidden().fixedSize()
+                        SettingChoice(id: "barDock", choices: [[("When it fills the screen", .auto), ("Always", .always), ("Never", .never)]], selection: $settings.barDock)
                     }
                 }
             }
@@ -537,11 +570,8 @@ private struct ComposerPage: View {
             SettingsSection(title: "Dictation") {
                 Rows {
                     SettingRow(title: "Microphone", detail: missing ? "Not connected; the system default is used." : "Used when you dictate a reply.") {
-                        Picker("", selection: Binding(get: { settings.inputDeviceUID ?? "" }, set: { settings.inputDeviceUID = $0.isEmpty ? nil : $0 })) {
-                            Text("System default").tag("")
-                            ForEach(microphones, id: \.uid) { mic in Text(mic.name).tag(mic.uid) }
-                        }
-                        .labelsHidden().pickerStyle(.menu)
+                        SettingChoice(id: "microphone", choices: [[(title: "System default", value: "")] + microphones.map { (title: $0.name, value: $0.uid) }],
+                                      selection: Binding(get: { settings.inputDeviceUID ?? "" }, set: { settings.inputDeviceUID = $0.isEmpty ? nil : $0 }))
                     }
                 }
             }
@@ -617,13 +647,10 @@ private struct ArchiveCompletedPicker: View {
     static let choices: [(String, Int)] = [("After an hour", 3600), ("After a day", 24 * 3600), ("After a week", 7 * 24 * 3600), ("Never", 0)]
 
     var body: some View {
-        Picker("", selection: Binding(get: { seconds }, set: { chosen in
+        SettingChoice(id: "archiveCompleted", choices: [Self.choices.map { (title: $0.0, value: $0.1) }], selection: Binding(get: { seconds }, set: { chosen in
             seconds = chosen
             Task { try? await link?.setArchiveCompleted(chosen) }
-        })) {
-            ForEach(Self.choices, id: \.1) { Text($0.0).tag($0.1) }
-        }
-        .labelsHidden().fixedSize()
+        }))
         .task { if let kept = try? await link?.archiveCompleted() { seconds = Self.choices.contains { $0.1 == kept } ? kept : 24 * 3600 } }
     }
 }
@@ -749,8 +776,7 @@ private struct BrowserRows: View {
                 }
                 .padding(.horizontal, 16).frame(height: 40)
             }
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.stroke))
+            .settingsCard()
             .padding(.horizontal, -18)
         }
     }

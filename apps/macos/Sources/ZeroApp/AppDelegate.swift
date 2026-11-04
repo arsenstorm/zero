@@ -1,0 +1,334 @@
+import AppKit
+import Carbon.HIToolbox
+import SwiftUI
+import ZeroCore
+
+@MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
+    let store = Store()
+    lazy var inbox = InboxController(store: store)
+    var pill: Panel!
+    var inboxPanel: Panel!
+    private var hotKey: EventHotKeyRef?
+    private var statusItem: NSStatusItem!
+    var selectorPanel: Panel?
+    /// The chip's point in the selector view, bottom-left origin: the card scales out of it and back into it.
+    var selectorAnchor = CGPoint.zero
+    var selectorMonitors: [Any] = []
+    /// The window the open selector gives the keys back to, when it isn't the inbox.
+    var selectorReturn: NSWindow?
+    /// zerod's sessions and their approvals; made once the store's other change handlers are in place.
+    var workspace: Workspace!
+    var workspaceWindow: NSWindow?
+    var notifier: Notifier?
+    /// Waiting to reopen the window until you come to Zero (another app was full screen when it started).
+    private var restoreWatch: NSObjectProtocol?
+    let navigation = Navigation(restoring: true)
+    let settings = Settings()
+    var pinnedDisplay: CGDirectDisplayID?
+    var pillHosting: FirstMouseHostingView<AnyView>!
+    /// Opened by ⌥Space, a notification or a click in the pill: stays until Esc, or until the pointer has come in and left.
+    var openedByIntent = false
+    var pointerWasInside = false
+    var onboardingWindow: NSWindow?
+    private var responderWatch: NSKeyValueObservation?
+    /// The app that was in front before Zero took it for typing; it comes back when the inbox closes.
+    var returnTo: NSRunningApplication?
+    /// The app in front when the inbox last took the keyboard.
+    var keyboardFront: NSRunningApplication?
+    private var hotKeyHandlerInstalled = false
+
+    /// A zero://pad link, clicked anywhere: the pad, at its section. A zero://loop link: the loop.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        if let other = urls.first(where: { $0.scheme == "zero" && ["loop", "later"].contains($0.host) }) { openZeroURL(other); return }
+        guard let (id, section) = urls.lazy.compactMap(PadLinks.parse).first else { return }
+        navigation.place = .pad(id)
+        navigation.padSection = section
+        openWorkspace()
+    }
+
+    @objc func openZeroURL(_ url: URL) {
+        let name = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        switch url.host {
+        case "loop": navigation.place = name.isEmpty ? .loops : .loop(name)
+        case "later": navigation.place = name.isEmpty ? .later : .laterItem(name)
+        case "task" where !name.isEmpty: navigation.place = .task(name)
+        default: return
+        }
+        openWorkspace()
+    }
+
+    // Opening Zero again, from the Dock or Finder, opens the workspace.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openWorkspace()
+        return false
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+        NSApp.mainMenu = Self.editMenu()
+        Task { await Linear.shared.refresh() }
+        connectStore()
+        connectWorkspace()
+        connectInbox()
+        makePanels()
+        restoreWorkspace()
+        activateForTypingInInbox()
+        makeStatusItem()
+        applySettings()
+        settings.onChange = { [weak self] in self?.applySettings() }
+        registerHotKey()
+        monitorEvents()
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { [weak self] _ in
+            DispatchQueue.main.async { self?.updateDock() }
+        }
+        if !UserDefaults.standard.bool(forKey: "onboarded") { openOnboarding() }
+    }
+
+    /// The asks' store: an ask arriving sounds, one ending takes back its notification.
+    private func connectStore() {
+        store.onCreate = { [weak self] ask in self?.arrived(ask) }
+        store.onChange = { [weak self] ask in if ask.state.isFinal { self?.notifier?.askEnded(ask.id) } }
+        store.onRemove = { [weak self] id in self?.notifier?.askEnded(id) }
+        Task { [store] in await store.connect() }
+    }
+
+    /// zerod's sessions, their notifications, and the phones that see them.
+    private func connectWorkspace() {
+        workspace = Workspace()
+        let notifier = makeNotifier()
+        self.notifier = notifier
+        workspace.onBoard = { [weak notifier] rows in notifier?.board(rows) }
+        Phones.shared.mcpServers = { [weak self] in await self?.mcpServersForPhones() ?? [] }
+        Phones.shared.start()
+        Task { [workspace] in await workspace?.connect() }
+        workspace?.keepSlackFresh()
+    }
+
+    /// The MCP servers as the phones list them: their names, what they run, their workspaces, on or off.
+    private func mcpServersForPhones() async -> [[String: Any]] {
+        guard let workspace else { return [] }
+        await workspace.loadMcpServers()
+        let names = Dictionary(workspace.workspaces.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
+        return workspace.mcpServers.map { server in
+            ["name": server.name, "runs": server.url ?? ([server.command ?? ""] + server.args).joined(separator: " "),
+             "workspaces": server.workspaces.map { names[$0] ?? $0 }, "enabled": server.enabled] as [String: Any]
+        }
+    }
+
+    private func makeNotifier() -> Notifier {
+        Notifier(navigation: navigation, settings: settings, windowShown: { [weak self] in
+            guard let window = self?.workspaceWindow else { return false }
+            return window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible)
+        }, open: { [weak self] id in
+            guard let self else { return }
+            navigation.place = .task(id)
+            navigation.worker = nil
+            openWorkspace()
+            NSApp.activate()
+        })
+    }
+
+    private func connectInbox() {
+        inbox.hide = { [weak self] in self?.hideInbox() }
+        inbox.onTyping = { [weak self] typing in if typing { self?.activateForTyping() } }
+        inbox.presentSelector = { [weak self] anchor in self?.showSelector(anchorInInbox: anchor) }
+        inbox.dismissSelector = { [weak self] in self?.hideSelector() }
+    }
+
+    /// Back where you were: the window, if it was open when Zero last quit. Not over someone's full-screen app (a film,
+    /// while Zero updates): a window made then opens in that app's Space, on top of it. It waits for you to come
+    /// to Zero instead.
+    private func restoreWorkspace() {
+        guard UserDefaults.standard.bool(forKey: "workspaceOpen") else { return }
+        guard Self.anotherAppFillsTheScreen() else { openWorkspace(); return }
+        restoreWatch = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.restoreOnceActive() }
+        }
+    }
+
+    /// Once: the first time you come to Zero, it opens where you were; after that, as you leave it.
+    private func restoreOnceActive() {
+        if let watch = restoreWatch { NotificationCenter.default.removeObserver(watch); restoreWatch = nil }
+        if workspaceWindow == nil { openWorkspace() }
+    }
+
+    /// Whatever put it there (a click, picking "Something else…", a key), a text box in the inbox holding the
+    /// keyboard makes Zero the active app, so dictation and paste tools that target the active app land in it.
+    private func activateForTypingInInbox() {
+        responderWatch = inboxPanel.observe(\.firstResponder, options: [.new]) { [weak self] panel, _ in
+            MainActor.assumeIsolated {
+                guard panel.firstResponder is NSTextView else { return }
+                self?.activateForTyping()
+            }
+        }
+    }
+
+    private func monitorEvents() {
+
+        // The pointer: following the active screen, the inbox's safe zone, and closing a peeked inbox. Followed as it
+        // moves, over other apps and Zero's own windows, rather than looked at ten times a second: a still pointer costs
+        // nothing.
+        let follow: (NSEvent) -> Void = { [weak self] _ in MainActor.assumeIsolated { self?.trackPointer() } }
+        NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged], handler: follow)
+        NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { event in follow(event); return event }
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, event.window === inboxPanel else { return event }
+            return inbox.handle(event) ? nil : event
+        }
+        // The mouse's side buttons go back and forward through the workspace window, as in a browser: as buttons 4 and
+        // 5, or as the swipe Logitech's driver sends for them (and a trackpad's swipe between pages), as Safari takes it.
+        NSEvent.addLocalMonitorForEvents(matching: [.otherMouseDown, .swipe]) { [weak self] event in
+            guard let self, event.window === workspaceWindow else { return event }
+            switch event.type {
+            case .otherMouseDown where event.buttonNumber == 3: navigation.goBack()
+            case .otherMouseDown where event.buttonNumber == 4: navigation.goForward()
+            case .swipe where event.deltaX > 0: navigation.goBack()
+            case .swipe where event.deltaX < 0: navigation.goForward()
+            default: return event
+            }
+            return nil
+        }
+    }
+
+    /// Zero is in the Dock only while one of its windows (onboarding, the workspace) is open; otherwise it is a menu
+    /// bar app with its bar.
+    private func updateDock() {
+        let windowOpen = [onboardingWindow, workspaceWindow].contains { $0?.isVisible == true }
+        let policy: NSApplication.ActivationPolicy = windowOpen ? .regular : .accessory
+        if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
+    }
+
+    @objc func openOnboarding() {
+        if onboardingWindow == nil {
+            let view = OnboardingView(settings: settings, tryIt: { [weak self] in self?.sendSampleAsk() },
+                                      finish: { [weak self] in
+                                          UserDefaults.standard.set(true, forKey: "onboarded")
+                                          self?.onboardingWindow?.close()
+                                      })
+            let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+            window.styleMask = [.titled, .closable, .fullSizeContentView]
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            window.isMovableByWindowBackground = true
+            window.isReleasedWhenClosed = false
+            window.setContentSize(NSSize(width: 560, height: 600))
+            window.center()
+            onboardingWindow = window
+        }
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        onboardingWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    /// The ask an agent would send, so the first card answered is a real one; the inbox opens on it.
+    private func sendSampleAsk() {
+        let zero = AgentIdentity(name: "zero", host: ProcessInfo.processInfo.hostName, label: "Zero")
+        store.create(Ask(kind: .approve, title: "Onboarding", body: "Zero is set up. Finish onboarding?",
+                             options: ["Yes", "No", "Suggest something else…"], agent: zero, ttl: 600))
+        pin(agent: nil)
+    }
+
+    private func applySettings() {
+        store.configure(takeBack: settings.takeBackSeconds, ttl: settings.defaultTTLMinutes * 60, patterns: settings.dropPatterns)
+        inbox.autoAdvance = settings.autoAdvance
+        inbox.suggestCommands = settings.suggestCommands
+        inbox.suggestFiles = settings.suggestFiles
+        inbox.dictation.deviceUID = settings.inputDeviceUID
+        if hotKey != nil { registerHotKey() }
+        placeBar()
+    }
+
+    private func makeStatusItem() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let mark = NSImage(named: "menubar")
+        mark?.isTemplate = true
+        mark?.size = NSSize(width: 18, height: 18)
+        statusItem.button?.image = mark
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Workspace", action: #selector(openWorkspace), keyEquivalent: "0")
+        menu.addItem(withTitle: "Open Log", action: #selector(openLog), keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        menu.addItem(withTitle: "Show onboarding", action: #selector(openOnboarding), keyEquivalent: "")
+        menu.addItem(withTitle: "Quit Zero", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        for item in menu.items where item.action != #selector(NSApplication.terminate(_:)) { item.target = self }
+        statusItem.menu = menu
+    }
+
+    @objc private func openLog() { NSWorkspace.shared.open(Log.file) }
+
+    @objc func goBack() { navigation.goBack() }
+
+    @objc func goForward() { navigation.goForward() }
+
+    /// Settings live in the workspace window.
+    @objc func openSettings() {
+        navigation.place = .settings
+        openWorkspace()
+    }
+
+    /// Zero shows no menu bar, but ⌘V, ⌘C, ⌘X, ⌘A and ⌘Z reach a text box only through menu items with those
+    /// keys: without this, paste did nothing in the composer.
+    private static func editMenu() -> NSMenu {
+        let main = NSMenu()
+        let app = NSMenuItem()
+        app.submenu = NSMenu()
+        app.submenu?.addItem(withTitle: "Quit Zero", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        main.addItem(app)
+        // ⌘W closes the window and leaves Zero in the menu bar; ⌘Q quits Zero, and zerod keeps the agents running.
+        let file = NSMenuItem()
+        file.submenu = NSMenu(title: "File")
+        file.submenu?.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        main.addItem(file)
+        let edit = NSMenuItem()
+        let menu = NSMenu(title: "Edit")
+        menu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = menu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.submenu = menu
+        main.addItem(edit)
+        // Reaches the delegate through the responder chain.
+        let go = NSMenuItem()
+        go.submenu = NSMenu(title: "Go")
+        go.submenu?.addItem(withTitle: "Back", action: #selector(AppDelegate.goBack), keyEquivalent: "[")
+        go.submenu?.addItem(withTitle: "Forward", action: #selector(AppDelegate.goForward), keyEquivalent: "]")
+        main.addItem(go)
+        return main
+    }
+
+    /// ⌥Space: open the inbox on the oldest waiting ask and start listening.
+    private func talk() {
+        open(byIntent: true)
+        if inbox.dictatingFor == nil { inbox.startDictation() } else { inbox.stopDictation() }
+    }
+
+    /// A new ask is announced by a sound and the bar's orange dot, not a banner: the card is already in the inbox,
+    /// and a banner on top of it said the same thing twice (and on whichever screen macOS chose).
+    private func arrived(_ ask: Ask) {
+        guard ask.kind != .note, ask.kind != .message else { return }
+        layout()
+        // A task's ask sounds with its task's notification (Notifications.swift), once the board has it.
+        if let id = ask.session, workspace?.conversations.contains(where: { $0.id == id }) == true { return }
+        notifier?.ask(ask, agent: store.displayName(of: ask.agent.name))
+    }
+
+    private func registerHotKey() {
+        if let hotKey { UnregisterEventHotKey(hotKey); self.hotKey = nil }
+        if !hotKeyHandlerInstalled {
+            var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+            InstallEventHandler(GetApplicationEventTarget(), { _, _, userData in
+                guard let userData else { return noErr }
+                Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue().talk()
+                return noErr
+            }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), nil)
+            hotKeyHandlerInstalled = true
+        }
+        let id = EventHotKeyID(signature: 0x5A45524F, id: 1) // "ZERO"
+        RegisterEventHotKey(UInt32(settings.hotKeyCode), UInt32(settings.hotKeyModifiers), id, GetApplicationEventTarget(), 0, &hotKey)
+    }
+}

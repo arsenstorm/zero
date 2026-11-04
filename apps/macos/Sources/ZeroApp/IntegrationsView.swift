@@ -166,8 +166,7 @@ struct IntegrationsPane: View {
             }
         } else {
             ConnectCard(integration: shown, workspace: workspace)
-                .background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
-                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.stroke))
+                .settingsCard()
         }
     }
 
@@ -192,8 +191,7 @@ struct IntegrationsPane: View {
             if !rows.isEmpty { Divider() }
             AddViewRow { form(for: nil) }
         }
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.stroke))
+        .settingsCard()
     }
 
     /// The form for a view (nil: a new one), saving to zerod.

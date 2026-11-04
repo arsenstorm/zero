@@ -28,8 +28,7 @@ struct WorkspacesPage: View {
                     .buttonStyle(Hovering(radius: 0))
                     .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: 14, bottomTrailingRadius: 14))
                 }
-                .background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
-                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.stroke))
+                .settingsCard()
                 .task(id: workspace.workspacesVersion) { await workspace.loadWorkspaces() }
                 .sheet(item: $editing) { w in WorkspaceForm(workspace: w, model: workspace) { edited in Task { await workspace.saveWorkspace(edited) } } }
                 .sheet(isPresented: $adding) { WorkspaceForm(workspace: ZerodLink.Workspace(name: ""), model: workspace) { made in Task { await workspace.saveWorkspace(made) } } }

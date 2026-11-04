@@ -51,8 +51,7 @@ struct SignInsPage: View {
                                               bottomTrailingRadius: 14, topTrailingRadius: mine.isEmpty ? 14 : 0))
             }
         }
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.stroke))
+        .settingsCard()
     }
 }
 

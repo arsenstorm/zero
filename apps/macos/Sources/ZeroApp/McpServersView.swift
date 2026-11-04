@@ -28,8 +28,7 @@ struct McpServersPage: View {
                     .clipShape(UnevenRoundedRectangle(topLeadingRadius: workspace.mcpServers.isEmpty ? 14 : 0, bottomLeadingRadius: 14,
                                                       bottomTrailingRadius: 14, topTrailingRadius: workspace.mcpServers.isEmpty ? 14 : 0))
                 }
-                .background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
-                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.stroke))
+                .settingsCard()
                 .task { await workspace.loadMcpServers(); await workspace.loadWorkspaces() }
                 .sheet(item: $editing) { server in McpServerForm(server: server, workspace: workspace) }
             }
