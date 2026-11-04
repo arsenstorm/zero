@@ -161,8 +161,11 @@ struct Home: View {
             // Four tabs at most: a fourth, when one is needed, is a ⋯ menu of the rest.
         TabView(selection: $model.tab) {
                 Tab("Tasks", image: "list-checkbox-glyph", value: PhoneModel.Place.tasks) { TasksView(model: model) }
+                // What waits on the user: its count, as the Mac's inbox has one.
+                Tab("Inbox", image: "inbox-glyph", value: PhoneModel.Place.inbox) { InboxView(model: model) }
+                    .badge(model.waiting.count)
                 Tab("Later", image: "bookmark-glyph", value: PhoneModel.Place.later) { LaterView(model: model) }
-                Tab("Record", image: "record-glyph", value: PhoneModel.Place.record) { RecordView(model: model) }
+                Tab("More", image: "dots-glyph", value: PhoneModel.Place.more) { MoreView(model: model) }
             }
             .tabBarMinimizeBehavior(.onScrollDown)
             .sheet(isPresented: $settings) { SettingsView(model: model) }
@@ -277,11 +280,6 @@ struct TasksView: View {
 
     var body: some View {
         List {
-            if !model.waiting.isEmpty {
-                Section("Waiting on you") {
-                    ForEach(model.waiting) { ask in AskCard(model: model, ask: ask) }
-                }
-            }
             Section("Tasks") {
                 ForEach(model.tasks) { row in
                     let members = (row.team ?? []).filter { $0.session != row.session }.sorted { $0.state.urgency < $1.state.urgency }
@@ -549,6 +547,80 @@ struct TaskDetails: View {
             }
             .navigationTitle(row?.task ?? model.names[session] ?? "Details")
             .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+}
+
+/// What needs the user, as the Mac's All tasks lays a board out: a heading and a line on what it holds, then its
+/// rows. Asks to answer (in place), tasks over to them with a step only they can take, and replies not read yet; a
+/// row opens its task.
+struct InboxView: View {
+    let model: PhoneModel
+
+    var body: some View {
+        let handed = model.tasks.filter { $0.ownState == .handed }
+        let unread = model.tasks.filter { $0.ownState == .answered }
+        List {
+            if !model.waiting.isEmpty {
+                Section { ForEach(model.waiting) { ask in AskCard(model: model, ask: ask) } } header: { heading("Needs you", "Asks waiting for your answer") }
+            }
+            if !handed.isEmpty {
+                Section { ForEach(handed) { row in item(row, row.needs ?? row.now) } } header: { heading("Over to you", "Done, with a step only you can take") }
+            }
+            if !unread.isEmpty {
+                Section { ForEach(unread) { row in item(row, row.now) } } header: { heading("Unread replies", "Replies you haven't read yet") }
+            }
+        }
+        .overlay {
+            if model.waiting.isEmpty && handed.isEmpty && unread.isEmpty {
+                ContentUnavailableView { Label { Text("Nothing for you") } icon: { Image("inbox-glyph") } } description: {
+                    Text("Asks, steps for you and unread replies show here.")
+                }
+            }
+        }
+        .refreshable { model.connect() }
+    }
+
+    private func heading(_ title: String, _ detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.headline).foregroundStyle(.primary)
+            Text(detail).font(.footnote).foregroundStyle(.secondary)
+        }
+        .textCase(nil).padding(.bottom, 2)
+    }
+
+    /// A task's row: its name and state, then what it says (its reply, or the step that's the user's).
+    private func item(_ row: BoardRow, _ said: String?) -> some View {
+        Button { model.path.append(row.session) } label: {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(row.task).lineLimit(1)
+                    if let said, !said.isEmpty { Text(said).font(.subheadline).foregroundStyle(.secondary).lineLimit(2) }
+                }
+                Spacer(minLength: 8)
+                StateGlyph(state: row.ownState)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// ⋯: what doesn't need a tab of its own.
+struct MoreView: View {
+    let model: PhoneModel
+    @State private var recording = false
+
+    var body: some View {
+        List {
+            Button { recording = true } label: { Label { Text("Record your screen") } icon: { Image("record-glyph") } }
+                .foregroundStyle(.primary)
+        }
+        .fullScreenCover(isPresented: $recording) {
+            NavigationStack {
+                RecordView(model: model)
+                    .toolbar { ToolbarItem(placement: .topBarLeading) { Button("Done") { recording = false } } }
+            }
         }
     }
 }

@@ -35,7 +35,8 @@ import UserNotifications
     @ObservationIgnored private var pushToken: String?
     /// The tasks open, as the navigation stack shows them: a tapped notification puts its task here.
     var path: [String] = []
-    enum Place: Hashable { case tasks, later, record }
+    /// The tabs: Tasks, Inbox and Later, then ⋯ for the rest (recording).
+    enum Place: Hashable { case tasks, inbox, later, more }
     var tab = Place.tasks
 
     init() {
