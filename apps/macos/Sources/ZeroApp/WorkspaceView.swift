@@ -1724,8 +1724,6 @@ private struct ConversationView: View {
     /// was and nothing above it moves; what comes next (its agent starting, its reply) fills that room. Given back
     /// when you scroll.
     @State private var room: CGFloat = 0
-    /// The conversation's own height, without that room.
-    @State private var columnHeight: CGFloat = 0
     /// An older page is coming in above: the page keeps its distance from the end through that, so what's read stays.
     @State private var loadingAbove = false
     /// Another provider picked for the next message; nil keeps the task's own.
@@ -1768,6 +1766,10 @@ private struct ConversationView: View {
 
     /// One block as a row: compared before it's drawn (a word streamed into the last answer redraws only that one),
     /// and reporting whether it's on screen, for the rail.
+    /// A card answered fades out where it was (and a new one in): its own animation, so nothing else in the
+    /// conversation is animated with it.
+    static let fade = AnyTransition.opacity.animation(.easeOut(duration: 0.2))
+
     /// What waits on you in the chat, by id: a card leaving this is one answered.
     private func waitingIds(_ conversation: Conversation) -> [String] {
         conversation.questions.map(\.id) + inbox.store.asks.filter { AgentAskCard.open($0, in: conversation) }.map(\.id) + conversation.approvals.map(\.id)
@@ -1780,18 +1782,18 @@ private struct ConversationView: View {
                 Task { await workspace.answer(conversation.id, question: question.id, answers: answers) }
             }
             .id("question-" + question.id)
-            .transition(.opacity)
+            .transition(Self.fade)
         }
         // What the agent asked through Zero (zero ask, approve, run): the inbox's own card, here too.
         ForEach(inbox.store.asks.filter { AgentAskCard.open($0, in: conversation) }) { ask in
-            AgentAskCard(ask: ask, inbox: inbox).id("ask-" + ask.id).transition(.opacity)
+            AgentAskCard(ask: ask, inbox: inbox).id("ask-" + ask.id).transition(Self.fade)
         }
         ForEach(conversation.approvals) { approval in
             ApprovalCard(approval: approval, cwd: conversation.cwd) { choice in
                 Task { await workspace.decide(conversation.id, approval: approval.id, choice: choice.id) }
             }
             .id("approval-" + approval.id)
-            .transition(.opacity)
+            .transition(Self.fade)
         }
     }
 
@@ -1918,10 +1920,8 @@ private struct ConversationView: View {
                         // message can sit at the top.
                         Color.clear.frame(height: composerHeight + 32).id("end")
                     }
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { columnHeight = $0 }
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { [tracker] in tracker.columnHeight = $0 }
                     .frame(minHeight: room, alignment: .top)
-                    // A card answered fades out where it was.
-                    .animation(.easeOut(duration: 0.2), value: waitingIds(conversation))
                     .padding(.top, 20)
                     .centredColumn(760)
                     .environment(\.askInbox, inbox)
@@ -1952,7 +1952,7 @@ private struct ConversationView: View {
                 }
                 // An answered card leaving: the page keeps its height (see `room`).
                 .onChange(of: waitingIds(conversation)) { old, new in
-                    if !Set(old).subtracting(new).isEmpty { room = max(room, columnHeight) }
+                    if !Set(old).subtracting(new).isEmpty { room = max(room, tracker.columnHeight) }
                 }
                 // Where you were in it, kept when scrolling stops and when you leave.
                 .onScrollPhaseChange { _, phase in

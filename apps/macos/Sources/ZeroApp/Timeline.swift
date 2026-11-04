@@ -415,6 +415,9 @@ struct MessageRail: View, Equatable {
     var geometry: ScrollGeometry?
     /// The blocks on screen, by the message of yours each answers to.
     var seen: [String: String] = [:]
+    /// The conversation's own height (without the room an answered card keeps): read when a card leaves, never by a
+    /// view's body, so its every change redraws nothing.
+    var columnHeight: CGFloat = 0
 }
 
 /// Back to the latest, once it's well below what's on screen.

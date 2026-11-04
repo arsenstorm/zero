@@ -9,8 +9,12 @@ struct ConversationView: View {
     /// A question, ask or approval just answered: the page keeps the height it had, so the card fades out where it was
     /// and nothing above it moves; what comes next fills that room. Given back when you scroll.
     @State private var room: CGFloat = 0
-    /// The conversation's own height, without that room.
-    @State private var height: CGFloat = 0
+    /// The conversation's own height, without that room: read when a card leaves, never by the body, so its every
+    /// change redraws nothing.
+    @State private var measured = Measured()
+    final class Measured { var height: CGFloat = 0 }
+    /// A card answered fades out where it was (and a new one in): its own animation, nothing else animated with it.
+    private static let fade = AnyTransition.opacity.animation(.easeOut(duration: 0.2))
 
     var body: some View {
         let blocks = TimelineBlock.of(Sending.merge(conversation.items, model.sending[conversation.id] ?? []).filter { item in !conversation.approvals.contains { $0.item == item.id } },
@@ -29,15 +33,14 @@ struct ConversationView: View {
                 case let .step(item): StepView(model: model, session: conversation.id, item: item)
                 }
             }
-            ForEach(conversation.questions) { question in QuestionCard(model: model, session: conversation.id, question: question).transition(.opacity) }
-            ForEach(conversation.approvals) { approval in ApprovalCard(model: model, session: conversation.id, approval: approval).transition(.opacity) }
+            ForEach(conversation.questions) { question in QuestionCard(model: model, session: conversation.id, question: question).transition(Self.fade) }
+            ForEach(conversation.approvals) { approval in ApprovalCard(model: model, session: conversation.id, approval: approval).transition(Self.fade) }
             // Still waiting after its turn (an ask sent with --async), its step folded away with the rest.
-            ForEach(openAsks) { ask in AskCard(model: model, ask: ask).transition(.opacity) }
+            ForEach(openAsks) { ask in AskCard(model: model, ask: ask).transition(Self.fade) }
         }
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { [measured] in measured.height = $0 }
         .frame(minHeight: room, alignment: .top)
-        .animation(.easeOut(duration: 0.2), value: waiting)
-        .onChange(of: waiting) { old, new in if !Set(old).subtracting(new).isEmpty { room = max(room, height) } }
+        .onChange(of: waiting) { old, new in if !Set(old).subtracting(new).isEmpty { room = max(room, measured.height) } }
         .simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { _ in if room > 0 { room = 0 } })
     }
 
