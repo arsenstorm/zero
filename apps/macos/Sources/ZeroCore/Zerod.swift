@@ -516,7 +516,7 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
             guard case let .agent(text, true)? = items.last?.kind else { return .idle }
             if parent != nil { return .done }
             switch ZeroEnding.split(text).1 {
-            case .done?: return .done
+            case .done?, .completed?: return .done
             case .asked?: return .needsYou
             case .blocked?: return .blocked
             case .working?: return .idle
