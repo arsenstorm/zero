@@ -666,10 +666,12 @@ case "browser":
     let input = positional.dropFirst().joined(separator: " ")
     guard let args = (input.isEmpty ? [:] : (try? JSONSerialization.jsonObject(with: Data(input.utf8))) as? [String: Any]) else { fail("zero: the input is a JSON object, such as '{\"url\": \"example.com\"}'") }
     let session = flag("session") ?? ProcessInfo.processInfo.environment["ZERO_SESSION"]
-    for part in await zerod({ try await $0.browserCall(session: session, tool: tool, args: args) }) {
+    // Each image a file of its own: one answer can have several (browser_compare's, one per browser).
+    for (index, part) in await zerod({ try await $0.browserCall(session: session, tool: tool, args: args) }).enumerated() {
         if let text = part["text"] as? String { print(text) }
         if let data = (part["data"] as? String).flatMap({ Data(base64Encoded: $0) }) {
-            let file = FileManager.default.temporaryDirectory.appendingPathComponent("zero-screenshot-\(Int(Date().timeIntervalSince1970 * 1000)).jpg")
+            let kind = (part["mimeType"] as? String) == "image/png" ? "png" : "jpg"
+            let file = FileManager.default.temporaryDirectory.appendingPathComponent("zero-screenshot-\(Int(Date().timeIntervalSince1970 * 1000))-\(index).\(kind)")
             try? data.write(to: file)
             print("[image: \(file.path)]")
         }
