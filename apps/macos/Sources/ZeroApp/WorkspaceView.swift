@@ -401,7 +401,8 @@ private struct TasksSidebar: View {
     /// Leads that aren't on the board: finished and gone offline with nothing for him.
     private func earlier(_ all: [Conversation]) -> [Conversation] {
         let ids = Set(all.map(\.id)), onBoard = Set(workspace.board.map(\.session))
-        return all.filter { lead in (lead.parent.map { !ids.contains($0) } ?? true) && !onBoard.contains(lead.id) }.reversed()
+        // One being archived is gone from the board a moment before the list: not Earlier in between.
+        return all.filter { lead in (lead.parent.map { !ids.contains($0) } ?? true) && !onBoard.contains(lead.id) && !workspace.putAway.contains(lead.id) }.reversed()
     }
 
     @State private var namingWorkspace = false

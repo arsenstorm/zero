@@ -271,7 +271,12 @@ public final class Workspace {
         return team
     }
 
+    /// Tasks put away from here: the board drops one before the list of sessions does, and in between it would show
+    /// under Earlier for a moment (the sidebar shifting twice).
+    public private(set) var putAway: Set<String> = []
+
     public func archive(_ id: String) async {
+        putAway.insert(id)
         _ = await attempt { try await $0.archive(session: id) }
         await refreshBoard()
     }
@@ -281,6 +286,7 @@ public final class Workspace {
 
     /// A task back from the archive, with the workers that went with it.
     public func unarchive(_ id: String) async {
+        putAway.remove(id)
         _ = await attempt { try await $0.unarchive(session: id) }
         await refreshBoard()
     }
