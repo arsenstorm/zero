@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use serde::Serialize;
 
 use crate::ask::{Ask, AskKind, AskState};
-use crate::model::{Attention, Conversation, Queued};
+use crate::model::{Attention, Conversation, ItemKind, Queued};
 
 /// Most urgent first: the board sorts by it.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -331,13 +331,19 @@ fn is(ask: &Ask, conversation: &Conversation) -> bool {
 /// about the last one) or it was closed since.
 fn note<'a>(conversation: &Conversation, asks: &'a [Ask]) -> Option<&'a Ask> {
     let notes = asks.iter().filter(|a| a.kind == AskKind::Note && is(a, conversation));
-    let mut own = None;
+    // When the user last said something themselves (not Zero passing on an event, a worker's report, a wake-up).
+    let spoke = conversation.items.iter().filter_map(|i| match &i.kind {
+        ItemKind::User { text, .. } if !text.starts_with(crate::model::FROM) => i.at.map(|ms| ms / 1000), _ => None }).max();
+    let mut own: Option<&Ask> = None;
     for note in notes {
         // Closed, by the user or its runtime: nothing it said still stands.
         // zerod's own "Offline" dot is no closing: a restart takes every session offline.
         let ours = note.request.as_deref() == Some(ATTENTION);
         let closed = !ours && note.status.as_deref() == Some("closed");
-        if closed || (ours && note.status.is_none()) { own = None } else if !ours { own = Some(note) }
+        // A new turn clears what it said, except that done or merged stands through turns Zero started (an event it
+        // follows, a worker's report): only the user's own word since makes it theirs to settle again.
+        let final_state = own.is_some_and(|n| matches!(n.status.as_deref(), Some("done" | "merged")) && spoke.is_none_or(|at| at < n.created_at.0));
+        if closed || (ours && note.status.is_none() && !final_state) { own = None } else if !ours { own = Some(note) }
     }
     own
 }

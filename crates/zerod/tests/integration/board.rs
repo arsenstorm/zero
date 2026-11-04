@@ -70,6 +70,21 @@ fn a_new_turn_clears_what_the_last_note_said() {
 }
 
 #[test]
+fn done_or_merged_stands_through_turns_zero_started_until_the_user_speaks() {
+    // Merged, then told of a QA write-up it follows: that turn changes nothing, and Merged stands.
+    let mut lead = session("a", "/work/app", Status::Idle);
+    let mut merged = note("a", "Merged #6714", Some("merged"), None);
+    merged.created_at = zerod::ask::Time(1_000);
+    let said = |text: &str, at: i64| Item { at: Some(at * 1000), id: format!("u{at}"), turn: None, kind: ItemKind::User { text: text.into(), images: vec![] }, status: ItemStatus::Done };
+    lead.items.push(said(&from_line("zero", "1 new event on what you follow"), 1_100));
+    let asks = [merged.clone(), dot("Working", None), dot("Done", Some("done"))];
+    assert_eq!(board(&[lead.clone()], &asks)[0].state, State::Merged);
+    // The user's own word after it: whatever it was is theirs to settle again.
+    lead.items.push(said("Can you also bump the base image?", 1_200));
+    assert_ne!(board(&[lead], &asks)[0].state, State::Merged);
+}
+
+#[test]
 fn without_a_note_it_shows_the_agents_last_answer() {
     let mut lead = session("a", "/work/app", Status::Idle);
     lead.items.push(Item { at: None, id: "1".into(), turn: None, kind: ItemKind::Agent { text: "PR #13336 is open.\n\nDetails follow.".into(), final_answer: true }, status: ItemStatus::Done });

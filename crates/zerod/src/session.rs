@@ -715,8 +715,10 @@ fn summarize(conversation: &Conversation) -> Conversation {
     // The first message too: it names the task on the board when nothing else does.
     let asked = conversation.items.iter().find(|i| matches!(i.kind, ItemKind::User { .. }));
     let answer = conversation.items.iter().rev().find(|i| matches!(i.kind, ItemKind::Agent { final_answer: true, .. }));
+    // The user's latest word of their own: until they speak again, done or merged stands (board.rs).
+    let spoke = conversation.items.iter().rev().find(|i| matches!(&i.kind, ItemKind::User { text, .. } if !text.starts_with(crate::model::FROM)));
     let mut items: Vec<Item> = Vec::new();
-    for item in asked.into_iter().chain(answer).chain(conversation.items.last()) {
+    for item in asked.into_iter().chain(spoke).chain(answer).chain(conversation.items.last()) {
         if !items.iter().any(|kept| kept.id == item.id) { items.push(item.clone()) }
     }
     conversation.with_items(items)

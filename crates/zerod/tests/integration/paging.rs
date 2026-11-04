@@ -46,7 +46,8 @@ fn the_outline_is_each_message_of_yours_with_the_start_of_its_answer() {
 #[test]
 fn a_summary_has_only_what_a_list_or_the_board_needs() {
     let summary = session(50).summary();
-    assert_eq!(ids(&summary.items), ["u0", "a49"], "its first message, for the board's label, and its answer, for the board's Now; not the conversation");
+    assert_eq!(ids(&summary.items), ["u0", "u49", "a49"], "its first message, for the board's label; the user's latest, for whether a done or merged note \
+                                                        still stands; and its answer, for the board's Now; not the conversation");
     assert_eq!(summary.answer(), Some("answer 49"));
     // Asked again unchanged, the same; after a change, the new one (it's cached by sequence number).
     let session = session(50);
