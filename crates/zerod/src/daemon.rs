@@ -56,6 +56,8 @@ pub struct Daemon {
     user: Mutex<(PathBuf, PathBuf)>,
     /// zerod is about to become a new build: words wait for it, rather than starting turns the restart would cut.
     restarting: std::sync::atomic::AtomicBool,
+    /// While a restart waits: each turn it waits on, and the command it's letting finish.
+    held_up: Mutex<HashMap<String, String>>,
     /// Sessions the user put on hold: parked, and kept parked whatever arrives for them, until resumed. Kept in
     /// paused-by-user.json (the restart's paused.json is its own, and short-lived).
     paused: Mutex<HashSet<String>>,
@@ -74,6 +76,9 @@ pub struct Daemon {
 
 /// What a turn paused for a restart is told once the new zerod is up. Zero's own words, not yours: never shown as a
 /// message (core.rs leaves its item out).
+/// What a turn paused for an update says, as it's paused, and once it's carried on.
+pub const PAUSED_FOR_UPDATE: &str = "Paused for Zero's update: it carries on once Zero has restarted";
+pub const CARRIED: &str = "Zero updated: carrying on where it left off";
 pub const CARRY_ON: &str = "Zero restarted while you were working: your turn was paused between steps. Please carry on where you left off.";
 /// What a working session is told when the user pauses it, steering its turn to an end it can be picked up from.
 pub const WRAP_UP: &str = "The user is pausing you (for the night, or while they're away): finish the step you're on, leave the work so it can \
@@ -149,7 +154,7 @@ impl Daemon {
         let daemon = Arc::new_cyclic(|me| Daemon {
             home: home.into(), sessions: Mutex::new(sessions), events, runtime, attention: Mutex::new(attention), pending: Mutex::new(pending),
             held: Mutex::new(held), delivering: Mutex::new(HashSet::new()), queues: broadcast::channel(64).0,
-            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(),
+            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(), held_up: Mutex::default(),
             workspaces: crate::workspaces::Workspaces::open(home),
             mcp_servers: crate::mcp_servers::McpServers::open(home),
             signins: crate::signins::SignIns::open(home),
@@ -1097,13 +1102,21 @@ impl Daemon {
             let conversation = session.summary();
             // Only a turn with a process behind it: an offline session's last status may still say it was working.
             if !session.is_attached() || !matches!(conversation.status, Status::Working | Status::Waiting | Status::Starting) { continue }
+            let me = self.me.clone();
             pausing.spawn(async move {
                 let deadline = tokio::time::Instant::now() + COMMAND_WAIT;
+                // What it's waiting for, for the app to show while it waits.
+                let (recent, _) = session.recent(50);
+                let running = recent.items.iter().rev().find_map(|i| match (&i.kind, i.status) {
+                    (ItemKind::Command { command, .. }, crate::model::ItemStatus::Running) => Some(command.clone()), _ => None });
+                if let (Some(command), Some(daemon)) = (running, me.upgrade()) { daemon.held_up.lock().unwrap().insert(conversation.id.clone(), command); }
                 // A session closed or gone offline meanwhile has no command to wait for, whatever its last item says.
                 while session.is_attached() && (session.running_command() || session.summary().status == Status::Starting) && tokio::time::Instant::now() < deadline {
                     tokio::time::sleep(Duration::from_millis(250)).await;
                 }
                 if session.is_attached() { let _ = tokio::time::timeout(Duration::from_secs(5), session.interrupt()).await; }
+                note_pause(&session, PAUSED_FOR_UPDATE);
+                if let Some(daemon) = me.upgrade() { daemon.held_up.lock().unwrap().remove(&conversation.id); }
                 conversation.id
             });
         }
@@ -1131,21 +1144,22 @@ impl Daemon {
             // The turn was paused for the update and carried on, not stopped: said in the conversation, in place of the
             // pause's "Interrupted" when that was noted, on a line of its own when it wasn't (the old zerod may have
             // gone before the interrupt's result was recorded).
-            let conversation = session.snapshot();
-            let noted = "Paused for Zero's update, then carried on";
-            match conversation.items.last().cloned() {
-                Some(mut last) if matches!(&last.kind, ItemKind::Notice { text, error: false } if text == "Interrupted") => {
-                    last.kind = ItemKind::Notice { text: noted.into(), error: false };
-                    session.change(Change::Item { item: last });
-                }
-                _ => session.change(Change::Item { item: crate::model::Item { at: None, id: format!("paused-{}", conversation.seq + 1), turn: None,
-                                                                             kind: ItemKind::Notice { text: noted.into(), error: false }, status: crate::model::ItemStatus::Done } }),
-            }
+            note_pause(&session, CARRIED);
             let Some(daemon) = self.me.upgrade() else { break };
             resumed.push(id.clone());
             tokio::spawn(async move { if let Err(error) = daemon.resume(&id).await { eprintln!("zerod: couldn't resume {id} to carry on: {error}") } });
         }
         resumed
+    }
+
+    /// Whether a restart is under way, and the turns it's waiting on: each one's task and the command it lets finish
+    /// (at most COMMAND_WAIT), for the app to say what Zero is waiting for.
+    pub fn restart_status(&self) -> serde_json::Value {
+        let waiting: Vec<serde_json::Value> = self.held_up.lock().unwrap().iter().map(|(id, command)| {
+            let task = self.session(id).map(|s| { let c = s.summary(); c.label.or(c.title).unwrap_or_default() }).unwrap_or_default();
+            serde_json::json!({"session": id, "task": task, "command": command})
+        }).collect();
+        serde_json::json!({"restarting": self.restarting.load(Ordering::Relaxed), "waiting": waiting, "most": COMMAND_WAIT.as_secs()})
     }
 
     pub fn is_paused(&self, id: &str) -> bool { self.paused.lock().unwrap().contains(id) }
@@ -1498,6 +1512,21 @@ fn parked_label(dir: &Path) -> Option<String> {
     Some(crate::bridge::label(&summary))
 }
 
+/// A turn paused for an update says so: in place of the pause's "Interrupted" (or the line saying it's paused, once
+/// it's carried on), else on a line of its own (the old zerod may have gone before the interrupt was recorded).
+fn note_pause(session: &Session, words: &str) {
+    let conversation = session.snapshot();
+    let item = match conversation.items.last().cloned() {
+        Some(mut last) if matches!(&last.kind, ItemKind::Notice { text, error: false } if text == "Interrupted" || text == PAUSED_FOR_UPDATE) => {
+            last.kind = ItemKind::Notice { text: words.into(), error: false };
+            last
+        }
+        _ => crate::model::Item { at: None, id: format!("paused-{}", conversation.seq + 1), turn: None,
+                                  kind: ItemKind::Notice { text: words.into(), error: false }, status: crate::model::ItemStatus::Done },
+    };
+    session.change(Change::Item { item });
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1509,3 +1538,4 @@ mod tests {
         assert_eq!(ids[0].len(), 16);
     }
 }
+

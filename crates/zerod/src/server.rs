@@ -389,8 +389,12 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "archived" => Ok(json!(daemon.archived(request.limit.unwrap_or(1000)))),
         // A new build is on disk: turns under way pause between steps, then zerod becomes the new one, which carries
         // them on. Answered at once; the restart happens when the last turn has paused.
+        // While a restart waits for turns to pause: what it's waiting for.
+        "restartStatus" => Ok(daemon.restart_status()),
         "restart" => {
             let daemon = daemon.clone();
+            // The app hears a restart is under way, and asks what it waits for.
+            let _ = zerod.notices.send("restarting");
             tokio::spawn(async move {
                 let paused = daemon.pause_for_restart().await;
                 eprintln!("zerod: restarting as the new build; {} turn(s) paused to carry on", paused.len());

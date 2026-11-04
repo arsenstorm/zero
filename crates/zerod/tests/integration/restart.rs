@@ -38,13 +38,20 @@ async fn a_restart_waits_for_a_running_command_then_pauses_the_turn_to_carry_on(
     let pausing = tokio::spawn({ let daemon = daemon.clone(); async move { daemon.pause_for_restart().await } });
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert!(!pausing.is_finished(), "the command is left to finish");
+    // The app can say what Zero waits for meanwhile: this turn's command.
+    let status = daemon.restart_status();
+    assert_eq!((status["restarting"].as_bool(), status["waiting"][0]["session"].as_str(), status["waiting"][0]["command"].as_str()),
+               (Some(true), Some(working.as_str()), Some("make test")));
 
     session.change(command(ItemStatus::Done));
     let paused = tokio::time::timeout(Duration::from_secs(10), pausing).await.unwrap().unwrap(); // its interrupt goes unanswered here: 5 s
     assert_eq!(paused, std::slice::from_ref(&working), "only what was under way");
+    assert_eq!(daemon.restart_status()["waiting"], serde_json::json!([]), "nothing left to wait for");
     let words = std::fs::read_to_string(home.join("zerod/sessions").join(&working).join("pending.json")).unwrap();
     assert!(words.contains("carry on"), "kept for the new zerod to give it: {words}");
     assert!(!home.join("zerod/sessions").join(&idle).join("pending.json").exists());
+    // Said in the conversation as it happens, so a turn that stops reads as paused for the update, not stopped.
+    assert!(daemon.get(&working).unwrap().items.iter().any(|i| matches!(&i.kind, ItemKind::Notice { text, .. } if text == zerod::daemon::PAUSED_FOR_UPDATE)));
 }
 
 #[tokio::test]
@@ -117,7 +124,7 @@ async fn a_turn_carried_on_after_a_restart_says_so_in_place_of_interrupted() {
     let again = Daemon::open(&home.join("zerod"), alive()).unwrap();
     assert_eq!(again.carry_on(), std::slice::from_ref(&id));
     let notices: Vec<String> = again.get(&id).unwrap().items.iter().filter_map(|i| match &i.kind { ItemKind::Notice { text, .. } => Some(text.clone()), _ => None }).collect();
-    assert_eq!(notices, ["Paused for Zero's update, then carried on"]);
+    assert_eq!(notices, [zerod::daemon::CARRIED]);
     // No "Interrupted" noted (the old zerod went before the interrupt's result): the line is added on its own.
     let other = again.start(Provider::Claude, home.to_str().unwrap(), "more", None, None, Permissions::Auto).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -126,7 +133,7 @@ async fn a_turn_carried_on_after_a_restart_says_so_in_place_of_interrupted() {
     drop(again);
     let third = Daemon::open(&home.join("zerod"), alive()).unwrap();
     assert_eq!(third.carry_on(), std::slice::from_ref(&other));
-    assert!(third.get(&other).unwrap().items.iter().any(|i| matches!(&i.kind, ItemKind::Notice { text, .. } if text == "Paused for Zero's update, then carried on")));
+    assert!(third.get(&other).unwrap().items.iter().any(|i| matches!(&i.kind, ItemKind::Notice { text, .. } if text == zerod::daemon::CARRIED)));
 }
 
 #[tokio::test]
