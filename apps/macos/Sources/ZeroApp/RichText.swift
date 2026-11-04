@@ -453,6 +453,13 @@ final class RichTextView: NSTextView {
         super.draw(dirtyRect)
     }
 
+    /// Laid out at the width it's given, whatever it was last measured at: SwiftUI measures a cell at its narrowest
+    /// too (a table's), and that measure left as the layout drew the words a letter a line, over the rows below.
+    override func setFrameSize(_ size: NSSize) {
+        super.setFrameSize(size)
+        if let container = textContainer, size.width > 0, container.size.width != size.width { _ = self.size(at: size.width) }
+    }
+
     /// On whole pixels: text drawn at a fractional position is resampled, and blurs.
     override func setFrameOrigin(_ origin: NSPoint) {
         let scale = window?.backingScaleFactor ?? 2
