@@ -973,13 +973,24 @@ final class SpinnerView: NSView {
 
     override func layout() {
         super.layout()
+        fit()
+    }
+
+    /// The arc drawn to the view's size. Also on every resize: a row that's new is laid out at no size first, and given
+    /// its size without another layout pass, which left its arc at none (a task just started showed no spinner).
+    override func setFrameSize(_ size: NSSize) {
+        super.setFrameSize(size)
+        fit()
+    }
+
+    private func fit() {
         arc.frame = bounds
         arc.path = CGPath(ellipseIn: bounds.insetBy(dx: 2, dy: 2), transform: nil)
         recolor()
         spin()
     }
 
-    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); spin() }
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); if window != nil { fit() } }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); recolor() }
 
     private func recolor() {
