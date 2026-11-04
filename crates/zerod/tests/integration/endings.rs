@@ -90,3 +90,22 @@ async fn a_worker_reports_to_its_lead_and_needs_no_ending() {
     turn(&daemon.session(&worker).unwrap(), 1, "check it", "Checked: all green.").await;
     assert_eq!(sent_back(&sent), 0);
 }
+
+#[tokio::test]
+async fn a_turn_stopped_by_the_user_or_a_restart_isnt_sent_back() {
+    let home = temp_dir("endings-stopped");
+    let (daemon, id, sent) = task(&home, Provider::Claude).await;
+    let session = daemon.session(&id).unwrap();
+    // An answer without an ending, sent back, and taken as it was the second time.
+    turn(&session, 1, "Is it merged?", "Yes.").await;
+    turn(&session, 2, "(sent back)", "Yes, merged.").await;
+    // Then a turn stopped before it answered: the earlier answer isn't this turn's.
+    session.change(Change::Status { status: Status::Working, turn: Some("t3".into()), error: None });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    session.change(item("u3", ItemKind::User { text: "Fix it".into(), images: vec![] }));
+    session.change(item("a3", ItemKind::Agent { text: "Looking at the logs.".into(), final_answer: false }));
+    session.change(item("n3", ItemKind::Notice { text: "Interrupted".into(), error: false }));
+    session.change(Change::Status { status: Status::Idle, turn: None, error: None });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(sent_back(&sent), 1, "it didn't end, it was stopped: {}", sent.lock().unwrap());
+}

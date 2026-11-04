@@ -1340,7 +1340,10 @@ impl Daemon {
         if !self.endings.load(Ordering::Relaxed) || conversation.parent.is_some() { return }
         // Its ending after being sent back: taken as it is.
         if self.sent_back.lock().unwrap().remove(&conversation.id) { return }
-        let Some(answer) = conversation.answer() else { return };
+        // This turn's own answer (since the last message to it): a turn stopped before it answered (by the user, by
+        // a restart) didn't end, and an earlier turn's answer isn't this one's.
+        let turn = conversation.items.iter().rposition(|i| matches!(i.kind, ItemKind::User { .. })).map_or(&conversation.items[..], |at| &conversation.items[at..]);
+        let Some(answer) = turn.iter().rev().find_map(|i| match &i.kind { ItemKind::Agent { text, final_answer: true } => Some(text.as_str()), _ => None }) else { return };
         let ending = crate::board::ending(answer);
         if ending.is_some() && (ending == Some("asked") || !unasked_question(answer)) { return }
         self.sent_back.lock().unwrap().insert(conversation.id.clone());
