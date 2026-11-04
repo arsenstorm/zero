@@ -158,8 +158,9 @@ impl Core {
 /// A message's text without Zero's carry-on (delivered with what else was waiting, or more than once, it's still not
 /// the user's); none when nothing else is left.
 pub fn without_carry_on(text: &str) -> Option<String> {
-    if !text.contains(crate::daemon::CARRY_ON) { return Some(text.to_string()) }
-    let rest = text.split("\n\n").filter(|part| part.trim() != crate::daemon::CARRY_ON).collect::<Vec<_>>().join("\n\n");
+    if !text.contains(crate::daemon::CARRY_ON) && !text.contains(crate::daemon::END_YOUR_TURN_MARK) { return Some(text.to_string()) }
+    let rest = text.split("\n\n").filter(|part| part.trim() != crate::daemon::CARRY_ON && !part.trim().starts_with(crate::daemon::END_YOUR_TURN_MARK))
+        .collect::<Vec<_>>().join("\n\n");
     let rest = rest.trim();
     (!rest.is_empty()).then(|| rest.to_string())
 }

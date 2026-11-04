@@ -75,6 +75,8 @@ async fn main() {
     };
     // After a restart: the turns it paused carry on.
     daemon.carry_on();
+    // Every task's turns end on Zero's ending, whichever agent runs it: one that doesn't is sent back once.
+    daemon.require_endings();
     let runtimes: Vec<Arc<dyn Runtime>> = vec![
         Arc::new(zerod::daemon::Sessions::of(&daemon)), Arc::new(zerod::solo::Solo::installed()),
         Arc::new(zerod::rex::Rex::installed()), Arc::new(zerod::host::Host::installed()),

@@ -18,6 +18,7 @@ mod firefox;
 mod compare;
 mod schedules;
 mod replies;
+mod endings;
 mod drops;
 mod e2e;
 mod events;

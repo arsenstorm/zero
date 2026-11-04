@@ -58,6 +58,10 @@ pub struct Daemon {
     restarting: std::sync::atomic::AtomicBool,
     /// While a restart waits: each turn it waits on, and the command it's letting finish.
     held_up: Mutex<HashMap<String, String>>,
+    /// Tasks sent back to end their turn properly: their next ending is taken as it is, so it can't go round.
+    sent_back: Mutex<std::collections::HashSet<String>>,
+    /// Whether turns must end on Zero's ending (zerod turns it on; tests of other things run agents without one).
+    endings: std::sync::atomic::AtomicBool,
     /// The turns a restart has paused, shown as paused until the new zerod carries them on.
     updating: Mutex<std::collections::HashSet<String>>,
     /// Sessions the user put on hold: parked, and kept parked whatever arrives for them, until resumed. Kept in
@@ -83,6 +87,15 @@ pub struct Daemon {
 /// What a turn paused for an update says, as it's paused, and once it's carried on.
 pub const PAUSED_FOR_UPDATE: &str = "Paused for Zero's update: it carries on once Zero has restarted";
 pub const CARRIED: &str = "Zero updated: carrying on where it left off";
+/// What a task is told when its turn ends without saying where it left the task (no Zero ending), or on a question to
+/// the user it never asked: sent once, unseen in the conversation. Every agent gets it, whichever runs the task.
+pub const END_YOUR_TURN_MARK: &str = "Zero can't tell where your turn left the task";
+pub const END_YOUR_TURN: &str = "Zero can't tell where your turn left the task. End it with exactly one of these as its last line: \
+[zero: done] (the work is finished, something still follows), [zero: completed] (done-done, nothing left for anyone), \
+[zero: blocked] (stopped on something that isn't the user), [zero: working] (pausing between steps), or \
+[zero: asked <id>]. Anything you need from the user (a decision, a command for them to run, steps for them to take) \
+goes through zero ask, zero run or zero approve with --async, and the turn ends [zero: asked <id>]: a question left in \
+your words reaches no one. Don't repeat your answer; do what's missing and end.";
 pub const CARRY_ON: &str = "Zero restarted while you were working: your turn was paused between steps. Please carry on where you left off.";
 /// What a working session is told when the user pauses it, steering its turn to an end it can be picked up from.
 pub const WRAP_UP: &str = "The user is pausing you (for the night, or while they're away): finish the step you're on, leave the work so it can \
@@ -158,7 +171,7 @@ impl Daemon {
         let daemon = Arc::new_cyclic(|me| Daemon {
             home: home.into(), sessions: Mutex::new(sessions), events, runtime, attention: Mutex::new(attention), pending: Mutex::new(pending),
             held: Mutex::new(held), delivering: Mutex::new(HashSet::new()), queues: broadcast::channel(64).0,
-            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(), held_up: Mutex::default(), updating: Mutex::default(),
+            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(), held_up: Mutex::default(), updating: Mutex::default(), sent_back: Mutex::default(), endings: Default::default(),
             workspaces: crate::workspaces::Workspaces::open(home),
             mcp_servers: crate::mcp_servers::McpServers::open(home),
             signins: crate::signins::SignIns::open(home),
@@ -1113,7 +1126,7 @@ impl Daemon {
         let under_way = |a: Attention| matches!(a, Attention::Starting | Attention::Working | Attention::NeedsYou | Attention::Stuck);
         let ended = matches!(now, Attention::Done | Attention::Answered | Attention::Blocked | Attention::Failed | Attention::Limited | Attention::Offline | Attention::Idle);
         let came_to_an_end = before.is_some_and(under_way) && ended;
-        if came_to_an_end { self.carry_read(&conversation) }
+        if came_to_an_end { self.carry_read(&conversation); self.check_ending(&conversation) }
         let got_stuck = now == Attention::Stuck && before != Some(Attention::Stuck);
         // While zerod restarts, a turn ending is the pause for it: the new zerod carries it on, so its lead hears nothing.
         let restarting = self.restarting.load(Ordering::Relaxed);
@@ -1316,6 +1329,24 @@ impl Daemon {
         // Its row greys now, on every client: the board is worked out again at once, as for a queue the user changed.
         let _ = self.queues.send(());
         Ok(())
+    }
+
+    /// A task's turn has ended: if it doesn't say where it left the task (Zero's ending), or ends on a question it
+    /// never asked the user, it's sent back once to end properly. A worker reports to its lead and needs none.
+    /// Every task's turns end on Zero's ending from now on (zerod, as it starts).
+    pub fn require_endings(&self) { self.endings.store(true, Ordering::Relaxed) }
+
+    fn check_ending(&self, conversation: &Conversation) {
+        if !self.endings.load(Ordering::Relaxed) || conversation.parent.is_some() { return }
+        // Its ending after being sent back: taken as it is.
+        if self.sent_back.lock().unwrap().remove(&conversation.id) { return }
+        let Some(answer) = conversation.answer() else { return };
+        let ending = crate::board::ending(answer);
+        if ending.is_some() && (ending == Some("asked") || !unasked_question(answer)) { return }
+        self.sent_back.lock().unwrap().insert(conversation.id.clone());
+        self.pending.lock().unwrap().entry(conversation.id.clone()).or_default().push(Queued { id: new_id(), text: END_YOUR_TURN.into(), images: vec![], report: true });
+        self.keep_pending(&conversation.id);
+        if between_turns(conversation) { self.deliver(&conversation.id) }
     }
 
     /// A turn Zero started (an event it follows, a worker's report, a wake-up) has come to an end: its reply is nothing
@@ -1608,6 +1639,12 @@ fn note_pause(session: &Session, words: &str) {
     session.change(Change::Item { item });
 }
 
+/// Whether an answer ends on a question to the user: one of its last few lines (Zero's ending aside) ends with "?".
+fn unasked_question(answer: &str) -> bool {
+    answer.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("[zero:")).rev().take(3)
+        .any(|l| l.trim_end_matches(['*', '_', ')', '"']).ends_with('?'))
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1619,4 +1656,5 @@ mod tests {
         assert_eq!(ids[0].len(), 16);
     }
 }
+
 
