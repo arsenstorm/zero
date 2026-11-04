@@ -2,9 +2,8 @@
 //! stdio), on real output (tests/fixtures/claude-*, recorded from Claude Code 2.1.310 on Haiku, every request
 //! allowed). Zero runs the installed `claude` and never touches its sign-in.
 
-mod common;
 
-use common::replay;
+use crate::common::replay;
 use serde_json::json;
 use zerod::core::Core;
 use zerod::model::{ApprovalKind, Change, ChoiceKind, Conversation, ItemKind, ItemStatus, Permissions, Provider, Status};

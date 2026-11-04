@@ -1,11 +1,10 @@
 //! How a session is doing, beyond its status: the usage limits its CLI reports, failures by kind, and sessions that
 //! have stopped making progress. All of it adds up to one attention state, which the app's bar shows as a dot.
 
-mod common;
 
 use std::time::Duration;
 
-use common::{fixture, play, replay};
+use crate::common::{fixture, play, replay};
 use serde_json::json;
 use tokio::sync::broadcast;
 use zerod::core::Core;

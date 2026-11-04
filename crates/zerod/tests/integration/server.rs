@@ -1,12 +1,11 @@
 //! The daemon over its socket, as Zero's apps use it: requests answered by id, and a subscription that sends
 //! each session's snapshot and then every change after it.
 
-mod common;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use common::{Seen, fixture, play, temp_dir};
+use crate::common::{Seen, fixture, play, temp_dir};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -507,4 +506,20 @@ async fn a_task_gets_its_workspaces_mcp_servers_when_it_starts() {
     assert_eq!(configs.len(), 2, "{configs:?}");
     assert_eq!(configs[0]["mcp_servers.cve-lookup"]["env"]["REGION"], "eu", "the Cybersecurity task has its server");
     assert!(configs[1].get("mcp_servers.cve-lookup").is_none(), "Zero's doesn't: {}", configs[1]);
+}
+
+#[tokio::test]
+async fn the_app_keeps_sign_ins_through_zerod_and_never_sees_their_values() {
+    let h = harness("server-signins").await;
+    let mut client = Client::connect(&h.socket).await;
+    let saved = client.call(json!({"op": "saveSignIn", "signin": {"cli": "claude", "kind": "token", "label": "a@example.com"}})).await;
+    let a = saved["result"]["id"].as_str().unwrap_or_else(|| panic!("{saved}")).to_string();
+    let b = client.call(json!({"op": "saveSignIn", "signin": {"cli": "claude", "kind": "token", "label": "b@example.com"}})).await["result"]["id"].as_str().unwrap().to_string();
+    client.call(json!({"op": "defaultSignIn", "signin": {"cli": "claude", "id": b}})).await;
+    let listed = client.call(json!({"op": "signIns"})).await;
+    let rows = listed["result"]["signins"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(listed["result"]["defaults"]["claude"], b.as_str());
+    client.call(json!({"op": "deleteSignIn", "signin": a})).await;
+    assert_eq!(client.call(json!({"op": "signIns"})).await["result"]["signins"].as_array().unwrap().len(), 1);
 }

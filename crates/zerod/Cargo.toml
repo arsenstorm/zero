@@ -7,6 +7,7 @@ description = "Zero's daemon: runs agent sessions and keeps them, whether or not
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+regex = { version = "1", default-features = false, features = ["std", "unicode-perl"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "io-util", "io-std", "sync", "time", "fs", "signal"] }
 
 [dev-dependencies]

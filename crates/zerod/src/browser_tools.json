@@ -545,7 +545,7 @@
  },
  {
   "name": "browser_list",
-  "description": "The Chromes connected to Zero (one per profile with Zero for Chrome), and which one this task uses.",
+  "description": "The browsers connected to Zero (each Chrome profile with Zero for Chrome, and Firefox when it's under Zero's remote control), and which one this task uses.",
   "inputSchema": {
    "type": "object",
    "properties": {},
@@ -554,13 +554,13 @@
  },
  {
   "name": "browser_select",
-  "description": "Uses another connected Chrome for this task from now on.",
+  "description": "Uses another browser for this task from now on: a connected one by its id, or \"firefox\" for the user's Firefox Developer Edition (Zero opens it under remote control if it isn't, with the same tools) or \"chrome\" to go back. For front-end changes, check them in Firefox too.",
   "inputSchema": {
    "type": "object",
    "properties": {
     "browser": {
      "type": "string",
-     "description": "Its id, from browser_list."
+     "description": "Its id from browser_list, or firefox or chrome."
     }
    },
    "required": [

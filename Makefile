@@ -47,6 +47,7 @@ bundle: build
 	cp /System/Library/Sounds/*.aiff $(APP)/Contents/Resources/
 	cp -R plugin $(APP)/Contents/Resources/plugin
 	rm -rf $(APP)/Contents/Resources/chrome && cp -R apps/chrome $(APP)/Contents/Resources/chrome
+	rm -rf $(APP)/Contents/Resources/firefox && cp -R apps/chrome $(APP)/Contents/Resources/firefox && mv $(APP)/Contents/Resources/firefox/manifest.firefox.json $(APP)/Contents/Resources/firefox/manifest.json
 	cp target/drop/zero-drop $(APP)/Contents/Resources/zero-drop-darwin-arm64
 	cp target/x86_64-unknown-linux-musl/drop/zero-drop $(APP)/Contents/Resources/zero-drop-linux-x86_64
 	cp target/aarch64-unknown-linux-musl/drop/zero-drop $(APP)/Contents/Resources/zero-drop-linux-aarch64

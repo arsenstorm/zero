@@ -2,11 +2,10 @@
 //! its history read from its session file, resumed on its own thread by the next message; a task archived leaves the
 //! list but stays on disk.
 
-mod common;
 
 use std::sync::Arc;
 
-use common::temp_dir;
+use crate::common::temp_dir;
 use serde_json::json;
 use zerod::daemon::{Daemon, Options, Runtime};
 use zerod::model::*;

@@ -1,9 +1,8 @@
 //! Runtime processes: started in the session's folder with a clean environment, their output read as the
 //! session's input, their errors kept in a file, and ended by `stop`.
 
-mod common;
 
-use common::{temp_dir, until};
+use crate::common::{temp_dir, until};
 use tokio::sync::broadcast;
 use zerod::model::{Conversation, Provider, Status};
 use zerod::process;

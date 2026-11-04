@@ -2,12 +2,11 @@
 //! that follows its attention. Answered in the inbox, the session hears once; settled elsewhere, the ask is withdrawn.
 //! Ported from the Swift app's Workspace tests, since the bridge is the daemon's now.
 
-mod common;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::{fixture, play, temp_dir};
+use crate::common::{fixture, play, temp_dir};
 use serde_json::json;
 use zerod::ask::{Ask, AskKind, AskState};
 use zerod::bridge::{Act, Bridge};

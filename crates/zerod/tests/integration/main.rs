@@ -1,0 +1,53 @@
+#![recursion_limit = "256"]
+//! zerod's integration tests, one program: each file a module, run in parallel. One program, not one per file: each
+//! freshly built test program costs seconds to start the first time (macOS checks it), and cargo runs them one after
+//! another, so 46 of them spent minutes before any test ran.
+
+mod common;
+mod adopt;
+mod attributes;
+mod board;
+mod bridge;
+mod browser;
+mod claude;
+mod claude_login;
+mod cli;
+mod codex;
+mod codex_login;
+mod firefox;
+mod drops;
+mod e2e;
+mod events;
+mod following;
+mod health;
+mod images;
+mod inbox;
+mod integrations;
+mod later;
+mod leads;
+mod loops;
+mod mcp;
+mod mcp_servers;
+mod mirror;
+mod one_at_a_time;
+mod opencode;
+mod pads;
+mod paging;
+mod parked;
+mod parking;
+mod pause;
+mod process;
+mod restart;
+mod rewind;
+mod runtimes;
+mod server;
+mod session;
+mod signins;
+mod snapshots;
+mod switching;
+mod tables;
+mod terminals;
+mod timing;
+mod watches;
+mod wire;
+mod workspaces;

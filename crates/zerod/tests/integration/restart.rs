@@ -1,12 +1,11 @@
 //! zerod replacing itself with a new build without losing anyone's work: each turn under way is paused between steps
 //! (a command running is waited for, never cut off), noted to carry on, and carried on by the new zerod.
 
-mod common;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::temp_dir;
+use crate::common::temp_dir;
 use zerod::daemon::{Daemon, Runtime};
 use zerod::model::*;
 

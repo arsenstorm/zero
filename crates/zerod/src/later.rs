@@ -30,6 +30,9 @@ pub struct Item {
     pub created: i64,
     pub updated: i64,
     pub done: bool,
+    /// Saved by an agent without the user asking: shown apart until the user keeps it, and gone after a week if they
+    /// don't.
+    pub suggested: bool,
     pub version: u32,
     pub versions: Vec<Version>,
     pub link: String,
@@ -56,6 +59,8 @@ pub struct New {
     pub from: Option<String>,
     pub task: Option<String>,
     pub workspace: Option<String>,
+    /// The user asked for it to be saved; otherwise, from a task, it's a suggestion.
+    pub asked: bool,
 }
 
 #[derive(Deserialize, Clone, Debug, Default)]
@@ -67,10 +72,18 @@ pub struct Edit {
     pub links: Vec<String>,
     pub files: Vec<String>,
     pub done: Option<bool>,
+    /// The user keeps a suggestion.
+    pub keep: Option<bool>,
     pub by: Option<String>,
 }
 
 const TRASH: &str = ".trash";
+/// The longest note: a headline read at a glance.
+pub const NOTE: usize = 100;
+/// The most suggestions one task has open: past that it adds to one it has.
+pub const SUGGESTIONS: usize = 3;
+/// How long a suggestion waits to be kept.
+const SUGGESTED_FOR: i64 = 7 * 86400;
 
 impl Later {
     pub fn open(root: &Path) -> Later {
@@ -80,6 +93,16 @@ impl Later {
 
     pub fn save(&self, new: New) -> Result<Item, String> {
         let note = clean_note(&new.note)?;
+        if new.from.is_some() { headline(&note)? }
+        let suggested = !new.asked && new.from.is_some();
+        if suggested {
+            let open: Vec<String> = self.list(None).into_iter().filter(|i| i.suggested && !i.done && i.from == new.from).map(|i| i.id).collect();
+            if open.len() >= SUGGESTIONS {
+                return Err(format!("This task already has {} suggestions open in Later ({}), the most it may have. Add this to the one it belongs with \
+                                    (`zero later edit <id> --file -`), or leave it out: Later is for what the user will come back to, not every \
+                                    idea along the way.", open.len(), open.join(", ")));
+            }
+        }
         let id = self.new_id();
         let dir = self.root.join(&id);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -89,7 +112,7 @@ impl Later {
         };
         let now = now();
         let item = Item { id: id.clone(), note: note.clone(), artifact: None, from: new.from.clone(), task: new.task, workspace: new.workspace,
-            links: new.links, files, created: now, updated: now, done: false, version: 1,
+            links: new.links, files, created: now, updated: now, done: false, suggested, version: 1,
             versions: vec![Version { version: 1, note, at: now, by: new.from }], link: link(&id) };
         std::fs::write(dir.join("artifact.md"), &new.artifact).map_err(|e| e.to_string())?;
         self.store(&item)?;
@@ -104,6 +127,10 @@ impl Later {
             let id = entry.file_name().to_string_lossy().to_string();
             if id.starts_with('.') { return None }
             let item = self.load(&id).ok()?;
+            if item.suggested && !item.done && now() - item.created > SUGGESTED_FOR {
+                let _ = self.delete(&id);
+                return None
+            }
             if let Some(query) = &query {
                 let artifact = std::fs::read_to_string(self.root.join(&id).join("artifact.md")).unwrap_or_default();
                 let words = format!("{}\n{}\n{}", item.note, item.task.as_deref().unwrap_or(""), artifact).to_lowercase();
@@ -137,6 +164,7 @@ impl Later {
         let dir = self.root.join(&id);
         let artifact = std::fs::read_to_string(dir.join("artifact.md")).unwrap_or_default();
         let note = edit.note.as_deref().map(clean_note).transpose()?;
+        if let Some(note) = &note && edit.by.is_some() { headline(note)? }
         let changed = note.as_ref().is_some_and(|n| *n != kept.note) || edit.artifact.as_ref().is_some_and(|a| *a != artifact);
         let now = now();
         if changed {
@@ -151,6 +179,7 @@ impl Later {
         kept.files.dedup();
         for link in edit.links { if !kept.links.contains(&link) { kept.links.push(link) } }
         if let Some(done) = edit.done { kept.done = done }
+        if edit.keep == Some(true) { kept.suggested = false }
         kept.updated = now;
         self.store(&kept)?;
         self.view(&id, None)
@@ -218,6 +247,14 @@ impl Later {
 fn clean_note(note: &str) -> Result<String, String> {
     let note = note.trim();
     if note.is_empty() { Err("Something saved for later needs a note: what's to be done, in plain words".into()) } else { Ok(note.to_string()) }
+}
+
+/// A note short enough to read at a glance; what's behind it goes in the artifact.
+fn headline(note: &str) -> Result<(), String> {
+    let length = note.chars().count();
+    if length <= NOTE { return Ok(()) }
+    Err(format!("The note is {length} characters; keep it under {NOTE}: a headline the user reads at a glance, in plain words, \
+                 saying what's to be done (no ids, paths or lists). Everything else goes in the artifact (--file)."))
 }
 
 fn link(id: &str) -> String { format!("zero://later/{id}") }

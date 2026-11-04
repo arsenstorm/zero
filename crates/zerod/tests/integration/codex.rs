@@ -1,9 +1,8 @@
 //! Codex through `codex app-server`, on real output (tests/fixtures/codex-*, recorded from codex-cli 0.160.1 with
 //! its approvals accepted): what each turn becomes in Zero's model.
 
-mod common;
 
-use common::replay;
+use crate::common::replay;
 use serde_json::json;
 use zerod::core::Core;
 use zerod::model::{ApprovalKind, Change, ChoiceKind, Conversation, ItemKind, ItemStatus, Provider, Status};

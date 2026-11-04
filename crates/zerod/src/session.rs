@@ -231,6 +231,22 @@ impl Session {
         items[start..end].to_vec()
     }
 
+    /// A page of the conversation anywhere in it, and how many items lie before and after it: from a message (the
+    /// rail's jump), after one (scrolled to the page's foot), or the latest page. ponytail: positions by scanning
+    /// for the id; index them if conversations reach the hundreds of thousands of items.
+    pub fn window(&self, from: Option<&str>, after: Option<&str>, limit: usize) -> (Vec<Item>, usize, usize) {
+        let mut inner = self.lock();
+        let items = &inner.core().conversation().items;
+        let find = |id: &str| items.iter().position(|i| i.id == id);
+        let start = match (from, after) {
+            (Some(id), _) => match find(id) { Some(at) => at, None => return (vec![], 0, 0) },
+            (None, Some(id)) => match find(id) { Some(at) => at + 1, None => return (vec![], 0, 0) },
+            (None, None) => turn_start(items, items.len().saturating_sub(limit)),
+        };
+        let end = if from.is_none() && after.is_none() { items.len() } else { (start + limit).min(items.len()) };
+        (items[start..end].to_vec(), start, items.len() - end)
+    }
+
     /// Each message of yours with the start of its answer: the app's rail, whole however little of the conversation
     /// is loaded.
     pub fn outline(&self) -> Value {

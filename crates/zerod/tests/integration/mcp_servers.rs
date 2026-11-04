@@ -1,9 +1,8 @@
 //! MCP servers set up once in Zero and given to every task's CLI as it starts: each for every workspace, or only the
 //! workspaces it's put in; a secret from the Keychain, the server's own command, or Zero's file.
 
-mod common;
 
-use common::temp_dir;
+use crate::common::temp_dir;
 use zerod::mcp_servers::*;
 
 fn server(name: &str, workspaces: &[&str]) -> McpServer {

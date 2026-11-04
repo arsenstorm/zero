@@ -30,13 +30,28 @@ pub fn host_manifest(zerod: &Path) -> Value {
     json!({"name": HOST, "description": "Zero", "path": zerod.to_string_lossy(), "type": "stdio", "allowed_origins": [format!("chrome-extension://{EXTENSION}/")]})
 }
 
+/// Firefox's host manifest: the same host, for Zero's extension in Firefox.
+pub fn firefox_host_manifest(zerod: &Path) -> Value {
+    json!({"name": HOST, "description": "Zero", "path": zerod.to_string_lossy(), "type": "stdio", "allowed_extensions": [crate::firefox::EXTENSION]})
+}
+
 /// Puts the host manifest where Chrome looks for it; where it went.
 pub fn install(zerod: &Path) -> Result<PathBuf, String> {
-    let home = std::env::var("HOME").map_err(|_| "No home folder")?;
-    let folder = PathBuf::from(home).join("Library/Application Support/Google/Chrome/NativeMessagingHosts");
-    std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+    write_host(&home()?.join("Library/Application Support/Google/Chrome/NativeMessagingHosts"), &host_manifest(zerod))
+}
+
+/// Puts Firefox's host manifest where Firefox looks for it, as zerod starts: Firefox's extension is installed by Zero,
+/// with no setting up by hand to do it in.
+pub fn install_firefox(zerod: &Path) -> Result<PathBuf, String> {
+    write_host(&home()?.join("Library/Application Support/Mozilla/NativeMessagingHosts"), &firefox_host_manifest(zerod))
+}
+
+fn home() -> Result<PathBuf, String> { std::env::var("HOME").map(PathBuf::from).map_err(|_| "No home folder".into()) }
+
+fn write_host(folder: &Path, manifest: &Value) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(folder).map_err(|e| e.to_string())?;
     let file = folder.join(format!("{HOST}.json"));
-    std::fs::write(&file, serde_json::to_vec_pretty(&host_manifest(zerod)).unwrap_or_default()).map_err(|e| e.to_string())?;
+    std::fs::write(&file, serde_json::to_vec_pretty(manifest).unwrap_or_default()).map_err(|e| e.to_string())?;
     Ok(file)
 }
 
@@ -103,13 +118,65 @@ struct State {
     lights: HashMap<String, String>,
     /// The sites each session may open, reviewed already. ponytail: in memory, so a restart reviews again.
     allowed: HashMap<String, std::collections::HashSet<String>>,
+    /// Sessions whose call found no Chrome connected: told when one connects.
+    waiting: std::collections::BTreeSet<String>,
 }
 
 /// The Chromes connected, and the calls on their way to them.
-pub struct Browsers { file: PathBuf, media: PathBuf, state: Mutex<State> }
+pub struct Browsers { file: PathBuf, media: PathBuf, state: Mutex<State>, launcher: Mutex<Option<Launcher>>, launched: Mutex<Option<std::time::Instant>>,
+                      firefox: Mutex<Option<Arc<crate::firefox::Firefox>>> }
+
+/// Starts Chrome: `open -g` in zerod, a stand-in in tests (which never open the user's).
+pub type Launcher = Arc<dyn Fn() + Send + Sync>;
+
+/// How long a call waits for the Chrome it opened to connect, and how often Chrome is opened at most.
+const OPENING: std::time::Duration = std::time::Duration::from_secs(20);
+const OPEN_AGAIN: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl Browsers {
-    pub fn open(home: &Path) -> Arc<Browsers> { Arc::new(Browsers { file: home.join("browser.json"), media: home.join("media"), state: Mutex::default() }) }
+    pub fn open(home: &Path) -> Arc<Browsers> {
+        Arc::new(Browsers { file: home.join("browser.json"), media: home.join("media"), state: Mutex::default(), launcher: Mutex::new(None), launched: Mutex::new(None),
+                            firefox: Mutex::new(None) })
+    }
+
+    /// What opens Chrome when a call finds none connected; none, and the call is refused at once.
+    pub fn set_launcher(&self, launcher: Launcher) { *self.launcher.lock().unwrap() = Some(launcher) }
+
+    /// Firefox under remote control, for browser_select's "firefox" and its extension's commands.
+    pub fn set_firefox(&self, firefox: Arc<crate::firefox::Firefox>) { *self.firefox.lock().unwrap() = Some(firefox) }
+    pub fn firefox(&self) -> Option<Arc<crate::firefox::Firefox>> { self.firefox.lock().unwrap().clone() }
+
+    /// The connected browser named `name` ("Firefox"), waited for a while: its id.
+    async fn named(&self, name: &str, wait: Duration) -> Option<String> {
+        let deadline = tokio::time::Instant::now() + wait;
+        loop {
+            if let Some(id) = self.state.lock().unwrap().browsers.iter().find(|b| b.name.eq_ignore_ascii_case(name)).map(|b| b.id.clone()) { return Some(id) }
+            if tokio::time::Instant::now() >= deadline { return None }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+
+    /// The user's Chrome, opened behind what they're doing (`open -g`), its windows as Chrome restores them.
+    pub fn chrome() -> Launcher {
+        Arc::new(|| { std::thread::spawn(|| std::process::Command::new("/usr/bin/open").args(["-g", "-b", "com.google.Chrome"]).status()); })
+    }
+
+    /// No Chrome connected: it's opened (at most once a minute), and the call waits a while for its extension.
+    async fn opening(&self) {
+        if !self.state.lock().unwrap().browsers.is_empty() { return }
+        let Some(launcher) = self.launcher.lock().unwrap().clone() else { return };
+        {
+            let mut launched = self.launched.lock().unwrap();
+            if launched.is_none_or(|at| at.elapsed() >= OPEN_AGAIN) {
+                *launched = Some(std::time::Instant::now());
+                launcher();
+            }
+        }
+        let deadline = tokio::time::Instant::now() + OPENING;
+        while self.state.lock().unwrap().browsers.is_empty() && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }
 
     /// What the extension asked to keep (a screenshot saved to disk, a recording) written to zerod's media folder, each
     /// file's path told in the answer in place of its bytes.
@@ -153,13 +220,18 @@ impl Browsers {
         state.browsers.retain(|b| b.id != id);
         for (session, light) in &state.lights { let _ = send.send(json!({"event": "browserState", "session": session, "state": light})); }
         let version = hello["version"].as_str().unwrap_or("").to_string();
+        if name == "Firefox" && let Some(firefox) = self.firefox.lock().unwrap().as_ref() { firefox.set_extension(Some(send.clone())) }
         state.browsers.push(Browser { id: id.clone(), name, version, send });
         id
     }
 
+    /// The sessions waiting for a Chrome to connect, to be told one has: taken, so each is told once.
+    pub fn take_waiting(&self) -> Vec<String> { std::mem::take(&mut self.state.lock().unwrap().waiting).into_iter().collect() }
+
     /// A Chrome went: the calls waiting on it are told.
     pub fn detach(&self, id: &str) {
         let mut state = self.state.lock().unwrap();
+        if state.browsers.iter().any(|b| b.id == id && b.name == "Firefox") && let Some(firefox) = self.firefox.lock().unwrap().as_ref() { firefox.set_extension(None) }
         state.browsers.retain(|b| b.id != id);
         let gone: Vec<u64> = state.pending.iter().filter(|(_, (to, _))| to == id).map(|(call, _)| *call).collect();
         for call in gone {
@@ -229,7 +301,17 @@ impl Browsers {
         match tool {
             "browser_list" => return Ok(text(&serde_json::to_string_pretty(&self.list(session)).unwrap_or_default())),
             "browser_select" => {
-                let want = args["browser"].as_str().ok_or("Which browser? Its id, from browser_list")?;
+                let mut want = args["browser"].as_str().ok_or("Which browser? Its id from browser_list, or firefox")?.to_string();
+                // Firefox by name: opened under remote control if it isn't, and its extension waited for.
+                if want.eq_ignore_ascii_case("firefox") {
+                    let firefox = self.firefox().ok_or("Firefox isn't set up in Zero")?;
+                    firefox.ensure().await?;
+                    want = self.named("Firefox", OPENING).await.ok_or("Firefox is under Zero's remote control, but Zero's extension didn't start in it")?;
+                } else if want.eq_ignore_ascii_case("chrome") {
+                    self.opening().await;
+                    want = self.named("Chrome", Duration::ZERO).await.ok_or("Zero for Chrome isn't connected")?;
+                }
+                let want = want.as_str();
                 let mut state = self.state.lock().unwrap();
                 if !state.browsers.iter().any(|b| b.id == want) { return Err(format!("No browser {want}: browser_list says which are connected")) }
                 state.chosen.insert(session.unwrap_or("").to_string(), want.to_string());
@@ -239,10 +321,13 @@ impl Browsers {
             _ => {}
         }
         task["blocked"] = self.settings()["blocked"].clone();
+        // Chrome closed: opened, and given a moment to connect, before the call is refused.
+        self.opening().await;
         let (call, waiting) = {
             let mut state = self.state.lock().unwrap();
             let Some(browser) = Self::pick(&state, session) else {
-                return Err("Zero for Chrome isn't connected: the user needs Chrome open with the Zero extension (Zero's Settings › Agents › Browser)".into());
+                if let Some(session) = session.filter(|s| !s.is_empty()) { state.waiting.insert(session.to_string()); }
+                return Err("Zero for Chrome isn't connected, though Zero opened Chrome (its extension may be off, or Chrome hasn't finished starting). End your turn rather than retrying: Zero tells this task when it connects. If it's needed now, ask the user to check Chrome has the Zero extension on (Zero's Settings › Agents › Browser).".into());
             };
             let (send, to) = (browser.send.clone(), browser.id.clone());
             state.next += 1;
@@ -343,6 +428,8 @@ async fn relay<W: AsyncWrite + Unpin>(stream: tokio::net::UnixStream, hello: &Va
                 let Ok(message) = serde_json::from_str::<Value>(&line) else { continue };
                 let out = if message["event"] == "browserCall" {
                     json!({"type": "call", "call": message["call"], "tool": message["tool"], "args": message["args"], "task": message["task"]})
+                } else if message["event"] == "browserEvent" {
+                    json!({"type": "cdp", "tabId": message["tab"], "method": message["method"], "params": message["params"]})
                 } else if message["event"] == "browserState" {
                     json!({"type": "state", "session": message["session"], "state": message["state"]})
                 } else if let Some(id) = message["id"].get("chrome") {

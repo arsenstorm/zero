@@ -2,12 +2,11 @@
 //! which relays Chrome's framing (a 4-byte length, then JSON) to zerod's socket. A task's browser tools go to the
 //! extension as calls, with the task they're for; the extension answers each by its id.
 
-mod common;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::temp_dir;
+use crate::common::temp_dir;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, DuplexStream};
 use zerod::daemon::Daemon;
@@ -203,4 +202,49 @@ async fn chrome_hears_when_a_tasks_state_changes() {
     assert_eq!(reply["ok"], true, "{reply}");
     let told = unframe(&mut extension).await;
     assert_eq!((told["type"].as_str(), told["session"].as_str(), told["state"].as_str()), (Some("state"), Some("s1"), Some("blocked")));
+}
+
+/// Chrome closed: a task's call is told to end its turn rather than retry, and the task is told once Chrome is back.
+#[tokio::test]
+async fn a_task_that_found_chrome_gone_is_told_when_its_back() {
+    let browsers = zerod::browser::Browsers::open(&temp_dir("browser-back"));
+    // Chrome won't open (not here, not now): the call is refused, and the task told once it's back.
+    let gone = browsers.call(Some("s1"), json!({}), "browser_tabs", json!({})).await.unwrap_err();
+    assert!(gone.contains("isn't connected") && gone.contains("End your turn"), "{gone}");
+    assert!(browsers.take_waiting().contains(&"s1".to_string()), "waiting for it");
+    browsers.call(Some("s1"), json!({}), "browser_tabs", json!({})).await.unwrap_err();
+    let (send, _hear) = tokio::sync::mpsc::unbounded_channel();
+    browsers.attach(&json!({"id": "c1", "name": "Chrome"}), send);
+    assert_eq!(browsers.take_waiting(), ["s1"], "Chrome's back: the task that was waiting, once");
+    assert!(browsers.take_waiting().is_empty());
+}
+
+/// Chrome closed: zerod opens it (in the background) and the call goes through once its extension connects.
+#[tokio::test]
+async fn a_call_with_chrome_closed_opens_it_and_goes_on() {
+    let browsers = zerod::browser::Browsers::open(&temp_dir("browser-open"));
+    let launched = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (chrome, mut calls) = tokio::sync::mpsc::unbounded_channel();
+    let (opener, count) = (browsers.clone(), launched.clone());
+    let chrome = std::sync::Mutex::new(Some(chrome));
+    browsers.set_launcher(Arc::new(move || {
+        count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // Chrome starting: its extension connects a moment later.
+        let (opener, send) = (opener.clone(), chrome.lock().unwrap().take());
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            if let Some(send) = send { opener.attach(&json!({"id": "c1", "name": "Chrome"}), send); }
+        });
+    }));
+    let answerer = browsers.clone();
+    tokio::spawn(async move {
+        while let Some(message) = calls.recv().await {
+            if message["event"] == "browserCall" { answerer.answer(&json!({"call": message["call"], "result": {"content": [{"type": "text", "text": "tabs"}]}})) }
+        }
+    });
+    let answer = browsers.call(Some("s1"), json!({}), "browser_tabs", json!({})).await.unwrap();
+    assert_eq!(answer["content"][0]["text"], "tabs");
+    assert_eq!(launched.load(std::sync::atomic::Ordering::Relaxed), 1);
+    browsers.call(Some("s1"), json!({}), "browser_tabs", json!({})).await.unwrap();
+    assert_eq!(launched.load(std::sync::atomic::Ordering::Relaxed), 1, "open: not opened again");
 }

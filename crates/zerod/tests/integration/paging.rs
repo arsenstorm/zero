@@ -68,3 +68,20 @@ fn a_page_starts_at_a_message_of_yours_so_a_long_turn_comes_whole() {
     let page = session.items(Some("s45"), None, 10);
     assert_eq!((page.first().unwrap().id.as_str(), page.len()), ("u1", 46), "a page back to the message its turn began with");
 }
+
+#[test]
+fn a_window_starts_at_a_message_or_after_one_and_says_how_many_lie_either_side() {
+    let session = session(50);
+    // The rail's jump: from that message, a page down; not everything from it to the end.
+    let (page, earlier, later) = session.window(Some("u10"), None, 6);
+    assert_eq!((ids(&page), earlier, later), (vec!["u10", "a10", "u11", "a11", "u12", "a12"], 20, 74));
+    // Scrolled to its foot: the page after.
+    let (next, earlier, later) = session.window(None, Some("a12"), 4);
+    assert_eq!((ids(&next), earlier, later), (vec!["u13", "a13", "u14", "a14"], 26, 70));
+    // Back to the latest: the last page, from the start of its turn.
+    let (latest, earlier, later) = session.window(None, None, 3);
+    assert_eq!((ids(&latest), earlier, later), (vec!["u48", "a48", "u49", "a49"], 96, 0));
+    assert_eq!(session.window(Some("nope"), None, 6).0, ids_none(), "a message that isn't there: nothing");
+}
+
+fn ids_none() -> Vec<Item> { vec![] }

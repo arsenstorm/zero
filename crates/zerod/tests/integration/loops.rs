@@ -1,9 +1,8 @@
 //! Loops: named instructions an agent follows, kept as Markdown files, named as `@name` in a message or a brief and
 //! expanded into their words for the agent; a loop names its children, never a parent; each use is recorded.
 
-mod common;
 
-use common::temp_dir;
+use crate::common::temp_dir;
 use serde_json::json;
 use zerod::core::Core;
 use zerod::loops::*;

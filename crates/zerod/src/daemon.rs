@@ -63,6 +63,12 @@ pub struct Daemon {
     pub workspaces: crate::workspaces::Workspaces,
     /// The MCP servers set up in Zero, each task's CLI given its workspace's as it starts.
     pub mcp_servers: crate::mcp_servers::McpServers,
+    /// The CLIs' sign-ins, handed to each as a task starts.
+    pub signins: crate::signins::SignIns,
+    /// A lock per session held while its agent starts (resume).
+    resuming: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// Files watched for tasks (watches.rs), by id.
+    watches: Mutex<HashMap<String, crate::watches::Watch>>,
     me: Weak<Daemon>,
 }
 
@@ -102,6 +108,8 @@ pub struct Options {
     pub force: bool,
     /// Images with the first message, by their files.
     pub images: Vec<String>,
+    /// The sign-in its CLI runs as; none, and the CLI's default.
+    pub signin: Option<String>,
 }
 
 /// Its turn over and nothing of the provider's waiting on the user (an approval, a question): what's queued can go,
@@ -144,6 +152,9 @@ impl Daemon {
             resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(),
             workspaces: crate::workspaces::Workspaces::open(home),
             mcp_servers: crate::mcp_servers::McpServers::open(home),
+            signins: crate::signins::SignIns::open(home),
+            resuming: Mutex::new(HashMap::new()),
+            watches: Mutex::new(crate::watches::load(home).into_iter().map(|w| (w.id.clone(), w)).collect()),
             paused: Mutex::new(std::fs::read(home.join(PAUSED)).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default()),
             seen: Mutex::new(std::fs::read(home.join(SEEN)).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default()),
         });
@@ -165,6 +176,9 @@ impl Daemon {
                 }
             }
         });
+        // Watches kept from before a restart carry on from where they'd read to.
+        let kept: Vec<String> = daemon.watches.lock().unwrap().keys().cloned().collect();
+        for id in kept { daemon.follow_file(id) }
         Ok(daemon)
     }
 
@@ -303,10 +317,15 @@ impl Daemon {
         conversation.parent = parent;
         if let Some(workspace) = &options.workspace && !self.workspaces.exists(workspace) { return Err(format!("No workspace {workspace}")) }
         conversation.workspace = options.workspace.clone();
+        if let Some(signin) = &options.signin && self.signins.get(signin).is_none_or(|s| s.cli != provider) { return Err(format!("No {} sign-in {signin}", provider.title())) }
+        // Chosen, else its lead's (a worker of the same CLI runs as its lead does), else the CLI's default.
+        let lead = conversation.parent.as_deref().and_then(|lead| self.get(lead)).filter(|lead| lead.provider == provider).and_then(|lead| lead.signin);
+        conversation.signin = options.signin.clone().or(lead)
+            .or_else(|| self.signins.choose(provider, now(), None).or_else(|| self.signins.default_for(provider)).map(|s| s.id));
         conversation.branch = branch(folder);
         // Claude takes its conversation's id from Zero, so the session can be resumed even if it never answered.
         if provider == Provider::Claude { conversation.thread = Some(claude::new_session_id()) }
-        conversation.mcp = self.mcp_for(&conversation);
+        conversation.mcp = self.mcp_for(&conversation)?;
         let session = Session::new(conversation.clone(), Some(dir.clone()), self.events.clone()).map_err(|e| e.to_string())?;
         session.set_mcp(conversation.mcp.clone());
         // The workspace it starts in, kept in its history as a move into it is: restarted, it's still there (only
@@ -585,6 +604,11 @@ impl Daemon {
         }
         // Writing to a paused task resumes it.
         if self.is_paused(id) { self.unpause(&[id.to_string()]).await; }
+        // OpenCode takes one message at a time: one sent mid-turn waits for the turn's end, as Return does while it
+        // works, rather than being refused (and lost from the box it was written in).
+        if session.is_attached() && let Some(now) = self.get(id) && now.provider == Provider::Opencode && now.turn.is_some() {
+            return self.queue(id, text, images).map(|_| ());
+        }
         // The folder as it is before the agent reads the message: what rewinding to it brings back.
         let kept = self.keep_folder(&session).await;
         let conversation = session.snapshot();
@@ -615,7 +639,7 @@ impl Daemon {
             conversation.thread = Some(thread);
         }
         let (model, effort) = (model.or(conversation.model.as_deref()).map(String::from), effort.or(conversation.effort.as_deref()).map(String::from));
-        conversation.mcp = self.mcp_for(&conversation);
+        conversation.mcp = self.mcp_for(&conversation)?;
         session.set_mcp(conversation.mcp.clone());
         let argv = conversation.provider.command(&conversation, false, model.as_deref(), effort.as_deref());
         let transport = (self.runtime)(&conversation, &self.home.join("sessions").join(&conversation.id), &argv)
@@ -623,14 +647,16 @@ impl Daemon {
         session.restart(transport, context.as_deref(), text, images, model.as_deref(), effort.as_deref()).await
     }
 
-    /// ponytail: two resumes of one session at once each start a process, and the later one wins; a per-session
-    /// lock if clients ever race.
+    /// One at a time per session: a second resume (the app warming it as the user types, their message arriving)
+    /// waits for the first and finds its agent running, rather than starting another.
     pub async fn resume(&self, id: &str) -> Result<(), String> {
         let session = self.session(id)?;
+        let lock = self.resuming.lock().unwrap().entry(id.to_string()).or_default().clone();
+        let _one = lock.lock().await;
         if session.is_attached() { return Ok(()) }
         let mut conversation = session.snapshot();
         // Its workspace's servers as they are now: one moved since, or a server added, applies from this start.
-        conversation.mcp = self.mcp_for(&conversation);
+        conversation.mcp = self.mcp_for(&conversation)?;
         session.set_mcp(conversation.mcp.clone());
         let argv = conversation.provider.command(&conversation, true, conversation.model.as_deref(), conversation.effort.as_deref());
         let transport = (self.runtime)(&conversation, &self.home.join("sessions").join(id), &argv)
@@ -779,15 +805,26 @@ impl Daemon {
     }
 
     /// Names a session and says what it's for.
-    /// The MCP servers a session's CLI starts with: its workspace's, their values read (the Keychain's now). Claude's
-    /// values go in its process's environment alone, for its `--mcp-config` to refer to.
-    fn mcp_for(&self, conversation: &Conversation) -> Vec<crate::mcp_servers::Resolved> {
+    /// What a session's CLI starts with: its sign-in (signins.rs) and its workspace's MCP servers, their values read
+    /// (the Keychain's now). Both go in its process's environment alone: the sign-in as its CLI reads one, Claude's
+    /// MCP values for its `--mcp-config` to refer to. A sign-in gone from the Keychain stops the start, said.
+    fn mcp_for(&self, conversation: &Conversation) -> Result<Vec<crate::mcp_servers::Resolved>, String> {
         let workspace = self.workspace_of(conversation);
-        let servers: Vec<_> = self.mcp_servers.for_workspace(&workspace).iter().map(|s| s.resolve(&crate::mcp_servers::keychain)).collect();
-        let env = if conversation.provider == Provider::Claude { claude::mcp_config(&servers).map(|(_, env)| env).unwrap_or_default() } else { vec![] };
+        let mut servers: Vec<_> = self.mcp_servers.for_workspace(&workspace).iter().map(|s| s.resolve(&crate::mcp_servers::keychain)).collect();
+        // Zero's own tools (scratchpads, the browser: `zerod mcp`), for the CLIs that don't have them from Zero's plugin
+        // as Claude Code does. Told which task it serves; Codex gives a server only the variables it's given.
+        if conversation.provider != Provider::Claude && let Ok(zerod) = std::env::current_exe() {
+            servers.insert(0, crate::mcp_servers::Resolved { id: "zero".into(), name: "Zero".into(), command: Some(zerod.to_string_lossy().into()),
+                args: vec!["mcp".into()], url: None, env: vec![("ZERO_SESSION".into(), conversation.id.clone())], headers: vec![] });
+        }
+        let mut env = match conversation.signin.as_deref().and_then(|id| self.signins.get(id)) {
+            Some(signin) => self.signins.environment(&signin)?,
+            None => vec![],
+        };
+        if conversation.provider == Provider::Claude { env.extend(claude::mcp_config(&servers).map(|(_, env)| env).unwrap_or_default()) }
         let mut all = crate::process::SESSION_ENV.lock().unwrap();
         if env.is_empty() { all.remove(&conversation.id); } else { all.insert(conversation.id.clone(), env); }
-        servers
+        Ok(servers)
     }
 
     /// Which workspace a conversation is in: the one it was put in, else its folder's, else Zero.
@@ -855,9 +892,99 @@ impl Daemon {
             let (code, printed) = process::run(&command, &cwd, &id).await;
             let how = code.map(|c| format!("with exit {c}")).unwrap_or_else(|| "when it was stopped".into());
             let words = if printed.is_empty() { format!("`{command}` finished {how} and printed nothing.") } else { format!("`{command}` finished {how}:\n{printed}") };
-            if let Some(daemon) = me.upgrade() { daemon.tell(&id, words) }
+            if let Some(daemon) = me.upgrade() { daemon.tell(&id, crate::model::from_line("zero", &words)) }
         });
         Ok(())
+    }
+
+    /// Zero's word for a session, between its turns (a parked one resumed for it), shown as Zero's, not the user's.
+    pub fn tell_from_zero(&self, id: &str, words: &str) {
+        if self.session(id).is_ok() { self.tell(id, crate::model::from_line("zero", words)) }
+    }
+
+    /// Watches `file` for `session` from now on (watches.rs): lines with any of `alerts` told with what led up to them,
+    /// at most one alert a minute; the file not growing for `quiet` minutes told once; a line with `done` told, and
+    /// the watch ended. Its id.
+    pub fn watch_file(&self, session: &str, file: &Path, alerts: Vec<String>, done: Option<String>, quiet: Option<u64>) -> Result<String, String> {
+        self.session(session)?;
+        let offset = std::fs::metadata(file).map_err(|e| format!("Can't watch {}: {e}", file.display()))?.len();
+        let alerts: Vec<String> = alerts.into_iter().filter(|a| !a.is_empty()).collect();
+        if alerts.is_empty() && done.is_none() && quiet.is_none() { return Err("Watch it for what? --alert TEXT, --until TEXT or --quiet MINUTES".into()) }
+        if let Some(short) = alerts.iter().chain(done.iter()).find(|text| text.trim().chars().count() < 3) {
+            return Err(format!("`{short}` is in almost every line: watch for text only that line has"));
+        }
+        let watch = crate::watches::Watch { id: crate::ask::new_id(), session: session.into(), file: file.into(), alerts, done, quiet, offset };
+        crate::watches::Reading::new(&watch)?;
+        let id = watch.id.clone();
+        self.watches.lock().unwrap().insert(id.clone(), watch);
+        self.keep_watches();
+        self.follow_file(id.clone());
+        Ok(id)
+    }
+
+    /// The watches, of `session` or everyone's.
+    pub fn watches(&self, session: Option<&str>) -> Vec<crate::watches::Watch> {
+        let mut all: Vec<_> = self.watches.lock().unwrap().values().filter(|w| session.is_none_or(|s| w.session == s)).cloned().collect();
+        all.sort_by(|a, b| a.id.cmp(&b.id));
+        all
+    }
+
+    pub fn unwatch(&self, id: &str) -> Result<(), String> {
+        self.watches.lock().unwrap().remove(id).ok_or_else(|| format!("No watch {id}"))?;
+        self.keep_watches();
+        Ok(())
+    }
+
+    fn keep_watches(&self) {
+        let all: Vec<_> = self.watches.lock().unwrap().values().cloned().collect();
+        crate::watches::keep(&self.home, &all);
+    }
+
+    /// Reads a watch's file as it grows, until the watch is stopped or its file says it's done.
+    fn follow_file(&self, id: String) {
+        let me = self.me.clone();
+        tokio::spawn(async move {
+            use std::io::{Read, Seek};
+            let Some(first) = me.upgrade().and_then(|daemon| daemon.watches.lock().unwrap().get(&id).cloned()) else { return };
+            let Ok(mut reading) = crate::watches::Reading::new(&first) else { return };
+            let mut alerted = std::time::Instant::now().checked_sub(crate::watches::COOL_DOWN).unwrap_or_else(std::time::Instant::now);
+            let (mut grew, mut said_quiet, mut kept) = (std::time::Instant::now(), false, std::time::Instant::now());
+            loop {
+                tokio::time::sleep(crate::watches::poll()).await;
+                let Some(daemon) = me.upgrade() else { return };
+                let Some(mut watch) = daemon.watches.lock().unwrap().get(&id).cloned() else { return };
+                // Its task archived: nobody to tell.
+                if daemon.session(&watch.session).is_err() { let _ = daemon.unwatch(&id); return }
+                let length = std::fs::metadata(&watch.file).map(|m| m.len()).unwrap_or(watch.offset);
+                // Started again (truncated or replaced): from its top.
+                if length < watch.offset { watch.offset = 0 }
+                if length > watch.offset {
+                    let mut bytes = vec![];
+                    if let Ok(mut file) = std::fs::File::open(&watch.file) && file.seek(std::io::SeekFrom::Start(watch.offset)).is_ok() {
+                        let _ = file.take(crate::watches::CHUNK).read_to_end(&mut bytes);
+                    }
+                    watch.offset += bytes.len() as u64;
+                    reading.read(&watch, &String::from_utf8_lossy(&bytes));
+                    (grew, said_quiet) = (std::time::Instant::now(), false);
+                    if let Some(kept_watch) = daemon.watches.lock().unwrap().get_mut(&id) { kept_watch.offset = watch.offset }
+                    if kept.elapsed() > Duration::from_secs(30) { daemon.keep_watches(); kept = std::time::Instant::now() }
+                }
+                if !reading.hits.is_empty() && alerted.elapsed() >= crate::watches::COOL_DOWN {
+                    let hits = std::mem::take(&mut reading.hits);
+                    daemon.tell(&watch.session, crate::model::from_line("zero", &watch.alert(&hits, reading.latest.as_deref())));
+                    alerted = std::time::Instant::now();
+                }
+                if let Some(line) = reading.done.take() {
+                    daemon.tell(&watch.session, crate::model::from_line("zero", &watch.finished(&line)));
+                    let _ = daemon.unwatch(&id);
+                    return;
+                }
+                if let Some(minutes) = watch.quiet && !said_quiet && grew.elapsed() >= Duration::from_secs(minutes * 60) {
+                    daemon.tell(&watch.session, crate::model::from_line("zero", &watch.quieted(reading.latest.as_deref())));
+                    said_quiet = true;
+                }
+            }
+        });
     }
 
     /// Tells the session `text` after `after`. ponytail: held in memory, so a daemon restart forgets it; keep it on disk
@@ -867,7 +994,7 @@ impl Daemon {
         let (me, id, text) = (self.me.clone(), id.to_string(), text.to_string());
         tokio::spawn(async move {
             tokio::time::sleep(after).await;
-            if let Some(daemon) = me.upgrade() { daemon.tell(&id, text) }
+            if let Some(daemon) = me.upgrade() { daemon.tell(&id, crate::model::from_line("zero", &format!("Reminder: {text}"))) }
         });
         Ok(())
     }
@@ -884,6 +1011,27 @@ impl Daemon {
     }
 
     /// A session stopped by a usage limit is told to go on once the limit has reset.
+    /// At its account's usage limit: carried on as another of its CLI's accounts, the one the policy picks
+    /// (signins.rs choose), its agent started again on the same conversation. False when there's none to go to.
+    fn switch_account(&self, conversation: &Conversation) -> bool {
+        if conversation.usage.as_ref().is_none_or(|u| !u.limited) { return false }
+        let Some(next) = self.signins.choose(conversation.provider, now(), conversation.signin.as_deref()) else { return false };
+        let Ok(session) = self.session(&conversation.id) else { return false };
+        session.change(Change::SignedIn { signin: Some(next.id.clone()) });
+        // The limit was the last account's: this one starts clear.
+        session.change(Change::Usage { usage: crate::model::Usage { limited: false, resets_at: None, windows: vec![] } });
+        // As is the error that said so (the failure is worked out from it).
+        session.change(Change::Status { status: conversation.status, turn: conversation.turn.clone(), error: None });
+        session.change(Change::Failed { failure: None });
+        let (me, id) = (self.me.clone(), conversation.id.clone());
+        tokio::spawn(async move {
+            let Some(daemon) = me.upgrade() else { return };
+            if let Ok(session) = daemon.session(&id) { daemon.take_offline(&session).await }
+            daemon.tell(&id, crate::model::from_line("zero", "Your account reached its usage limit, so Zero carries this task on as another account: carry on with what you were doing."));
+        });
+        true
+    }
+
     fn after_reset(&self, conversation: &Conversation) {
         let Some(usage) = conversation.usage.clone().filter(|u| u.limited) else { return };
         let Some(at) = usage.resets_at else { return };
@@ -896,7 +1044,7 @@ impl Daemon {
             let Ok(session) = daemon.session(&id) else { return };
             // The provider says nothing when a limit resets; the clock does.
             session.change(Change::Usage { usage: crate::model::Usage { limited: false, resets_at: None, ..usage } });
-            daemon.tell(&id, "The usage limit has reset: carry on with what you were doing.".into());
+            daemon.tell(&id, crate::model::from_line("zero", "The usage limit has reset: carry on with what you were doing."));
         });
     }
 
@@ -918,7 +1066,9 @@ impl Daemon {
         if let Some(lead) = &conversation.parent && (came_to_an_end || got_stuck) && !restarting && !self.is_paused(id) {
             self.tell(lead, crate::model::from_line(&conversation.id, &report(&conversation, now)));
         }
-        if now == Attention::Limited { self.after_reset(&conversation) }
+        // What its CLI says of its account's usage is the account's, for choosing accounts by.
+        if let (Some(signin), Some(usage)) = (&conversation.signin, &conversation.usage) { self.signins.record_usage(signin, usage) }
+        if now == Attention::Limited && !self.switch_account(&conversation) { self.after_reset(&conversation) }
         if between_turns(&conversation) { self.deliver(id) }
     }
 

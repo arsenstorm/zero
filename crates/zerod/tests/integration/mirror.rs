@@ -1,9 +1,8 @@
 //! What every provider's session becomes is the same for a client as for the daemon: the changes, sent as JSON and
 //! applied in order to an empty conversation, end in the daemon's conversation.
 
-mod common;
 
-use common::replay;
+use crate::common::replay;
 use zerod::model::{Conversation, Provider};
 
 #[test]

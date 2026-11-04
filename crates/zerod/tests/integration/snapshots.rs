@@ -1,12 +1,11 @@
 //! A task's folder as it was at each message of yours, kept with git and never touching what's yours: the index, HEAD
 //! and the files stay as they are until a rewind asks for the folder back.
 
-mod common;
 
 use std::path::Path;
 use std::process::Command;
 
-use common::temp_dir;
+use crate::common::temp_dir;
 use zerod::snapshots;
 
 fn git(dir: &Path, args: &[&str]) -> String {

@@ -1,9 +1,8 @@
 //! Live sessions against recorded runtimes: each provider's protocol spoken in the recorded order, approvals
 //! answered in the provider's own words, and what every provider shares (broadcasts, transcripts, going offline).
 
-mod common;
 
-use common::{fixture, play, temp_dir, until};
+use crate::common::{fixture, play, temp_dir, until};
 use serde_json::json;
 use tokio::sync::broadcast;
 use zerod::model::{ChoiceKind, Conversation, Event, ItemKind, Permissions, Provider, Status};
@@ -35,7 +34,7 @@ async fn allow_all(session: &Session, kind: ChoiceKind) -> Conversation {
 }
 
 /// The Codex command fixture started and run to its end, its approval allowed.
-async fn codex_finished(dir: Option<std::path::PathBuf>) -> (Session, common::Seen) {
+async fn codex_finished(dir: Option<std::path::PathBuf>) -> (Session, crate::common::Seen) {
     let (session, _) = session(Provider::Codex, dir);
     let (transport, seen) = play(fixture("codex-command"));
     session.start(transport, "Run the shell command `ls -la` here", Some("gpt-6-sol"), Some("high")).await.unwrap();

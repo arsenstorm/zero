@@ -26,8 +26,9 @@ async fn main() {
     let mut args = std::env::args().skip(1).peekable();
     // `zerod mcp`: the MCP server on stdio, for an agent, talking to the running zerod.
     let mcp = args.next_if_eq("mcp").is_some();
-    // Started by Chrome as Zero for Chrome's native host: its origin first, then Chrome's own arguments.
-    if args.peek().is_some_and(|a| a.starts_with("chrome-extension://")) {
+    // Started by Chrome as Zero for Chrome's native host (its origin first, then Chrome's own arguments), or by Firefox
+    // (the host manifest's path, then the extension's id).
+    if args.peek().is_some_and(|a| a.starts_with("chrome-extension://") || a.ends_with(&format!("/{}.json", zerod::browser::HOST))) {
         zerod::browser::host(tokio::io::stdin(), tokio::io::stdout(), socket).await;
         // Out at once: the runtime would otherwise wait on its blocking read of Chrome's stdin, which Chrome keeps open.
         std::process::exit(0);
@@ -111,10 +112,18 @@ async fn main() {
         }
     });
     let browsers = zerod::browser::Browsers::open(&home);
+    // A call that finds Chrome closed opens it, behind what the user's doing.
+    browsers.set_launcher(zerod::browser::Browsers::chrome());
+    // Firefox Developer Edition under remote control, with Zero's extension from the app's resources.
+    if let Ok(exe) = std::env::current_exe() && exe.starts_with("/Applications") { let _ = zerod::browser::install_firefox(&exe); }
+    let firefox_extension = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.parent()?.join("Resources/firefox"))).unwrap_or_default();
+    browsers.set_firefox(zerod::firefox::Firefox::new(&format!("127.0.0.1:{}", zerod::firefox::PORT), firefox_extension, Some(zerod::firefox::Firefox::launcher())));
     browsers.follow(daemon.clone(), inbox.clone());
     let places = Arc::new(zerod::board::Places::default());
     tokio::spawn(places.clone().follow(home.clone()));
     let zerod = zerod::server::Zerod { daemon: daemon.clone(), inbox, drops: Some(drops), integrations, pads, later, loops, following, browsers, places, notices: tokio::sync::broadcast::channel(64).0 };
+    let (named, notices) = (daemon.clone(), zerod.notices.clone());
+    tokio::spawn(async move { zerod::server::name_codex_accounts(&named, &notices).await });
     // Codex processes end with the daemon: their input closes when it exits.
     tokio::select! {
         served = zerod::server::serve(zerod, socket.clone()) => if let Err(error) = served { eprintln!("zerod: {error}"); std::process::exit(1) },

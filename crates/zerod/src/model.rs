@@ -31,6 +31,9 @@ pub struct Conversation {
     /// The workspace it was put in (workspaces.rs); none, and its folder decides.
     #[serde(default)]
     pub workspace: Option<String>,
+    /// The sign-in its CLI runs as (signins.rs), by id; none, and the CLI's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signin: Option<String>,
     /// The MCP servers its CLI is given when it starts (its workspace's, from Zero's list): in memory only, never sent
     /// to clients or kept (their values may be secrets).
     #[serde(skip)]
@@ -374,6 +377,8 @@ pub enum Change {
     Named { label: Option<String>, ticket: Option<String> },
     /// Put in a workspace (none: back to its folder's).
     Placed { workspace: Option<String> },
+    /// Runs as another sign-in from its next start (signins.rs): one of its CLI's accounts at its limit, say.
+    SignedIn { signin: Option<String> },
     /// What the agent may do without asking, from its next start (set between turns).
     Permitted { permissions: Permissions },
     Status { status: Status, turn: Option<String>, error: Option<String> },
@@ -419,7 +424,7 @@ pub struct Event {
 impl Conversation {
     pub fn new(id: &str, provider: Provider, cwd: &str) -> Self {
         Conversation {
-            id: id.into(), provider, cwd: cwd.into(), permissions: Permissions::Auto, label: None, ticket: None, place: None, branch: None, parent: None, workspace: None, thread: None, title: None, model: None, effort: None,
+            id: id.into(), provider, cwd: cwd.into(), permissions: Permissions::Auto, label: None, ticket: None, place: None, branch: None, parent: None, workspace: None, signin: None, thread: None, title: None, model: None, effort: None,
             status: Status::Starting, turn: None, error: None, items: vec![], snapshots: Default::default(), attributes: Default::default(), approvals: vec![], questions: vec![], usage: None,
             failure: None, stalled: None, diff: None, terminal: None, seq: 0, mcp: vec![],
         }
@@ -434,7 +439,7 @@ impl Conversation {
     pub fn with_items(&self, items: Vec<Item>) -> Conversation {
         Conversation {
             id: self.id.clone(), provider: self.provider, cwd: self.cwd.clone(), permissions: self.permissions, label: self.label.clone(),
-            ticket: self.ticket.clone(), place: self.place.clone(), branch: self.branch.clone(), parent: self.parent.clone(), workspace: self.workspace.clone(), thread: self.thread.clone(),
+            ticket: self.ticket.clone(), place: self.place.clone(), branch: self.branch.clone(), parent: self.parent.clone(), workspace: self.workspace.clone(), signin: self.signin.clone(), thread: self.thread.clone(),
             title: self.title.clone(), model: self.model.clone(), effort: self.effort.clone(), status: self.status, turn: self.turn.clone(),
             error: self.error.clone(), items, snapshots: self.snapshots.clone(), attributes: self.attributes.clone(), approvals: self.approvals.clone(), questions: self.questions.clone(), usage: self.usage.clone(),
             failure: self.failure.clone(), stalled: self.stalled.clone(), diff: self.diff.clone(), terminal: self.terminal.clone(), seq: self.seq,
@@ -498,6 +503,7 @@ impl Conversation {
                 self.ticket = ticket;
             }
             Change::Placed { workspace } => self.workspace = workspace,
+            Change::SignedIn { signin } => self.signin = signin,
             Change::Permitted { permissions } => {
                 self.permissions = permissions;
                 let text = match permissions { Permissions::Auto => "Auto from here: it asks before what isn't safe", Permissions::Unrestricted => "Unrestricted from here: it acts without asking" };

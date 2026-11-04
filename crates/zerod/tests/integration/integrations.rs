@@ -1,11 +1,10 @@
 //! Integrations: GitHub and Linear as views, each a saved filter the user names and changes, fetched by zerod (GitHub
 //! through `gh`, which keeps its own sign-in; Linear through its API on a connection zerod makes and keeps).
 
-mod common;
 
 use std::sync::{Arc, Mutex};
 
-use common::temp_dir;
+use crate::common::temp_dir;
 use serde_json::{Value, json};
 use zerod::integrations::*;
 

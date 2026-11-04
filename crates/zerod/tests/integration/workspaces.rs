@@ -1,9 +1,8 @@
 //! Workspaces: the user's work split by who it's for. A task is in the workspace it was started in, else its folder's,
 //! else Zero; a worker is its lead's.
 
-mod common;
 
-use common::temp_dir;
+use crate::common::temp_dir;
 use zerod::workspaces::{Workspace, Workspaces, DEFAULT};
 
 fn workspace(name: &str, folders: &[&str]) -> Workspace { Workspace { id: String::new(), name: name.into(), glyph: String::new(), folders: folders.iter().map(|f| f.to_string()).collect() } }

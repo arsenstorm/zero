@@ -1,11 +1,10 @@
 //! What an agent says about its task beyond its name and ticket (a pull request, say), as named attributes: shown on
 //! the task, kept with it.
 
-mod common;
 
 use std::sync::Arc;
 
-use common::temp_dir;
+use crate::common::temp_dir;
 use zerod::daemon::{Daemon, Runtime};
 use zerod::model::*;
 

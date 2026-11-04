@@ -2,11 +2,10 @@
 //! Ignored by default, since each runs as its CLI's own sign-in and spends two short turns of its usage:
 //! `cargo test -p zerod --test e2e -- --ignored`, or one provider with its name after `--ignored`.
 
-mod common;
 
 use std::time::Duration;
 
-use common::temp_dir;
+use crate::common::temp_dir;
 use zerod::daemon::Daemon;
 use zerod::model::{Conversation, ItemKind, Provider, Status};
 

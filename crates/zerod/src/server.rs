@@ -111,6 +111,13 @@ struct Request {
     /// items: the page of a session's items before this one, or all of them from `from`.
     before: Option<String>,
     from: Option<String>,
+    /// window: the page after this item.
+    after: Option<String>,
+    /// watchFile: {file, alerts, done, quiet}; unwatch: its id.
+    watch: Option<Value>,
+    /// start, spawn: the sign-in its CLI runs as, by id; saveSignIn: the sign-in; deleteSignIn: its id;
+    /// defaultSignIn: {cli, id}.
+    signin: Option<Value>,
     limit: Option<usize>,
     #[serde(flatten)]
     settings: Settings,
@@ -218,6 +225,10 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
         // The native host of a Chrome with Zero for Chrome: calls for it go down this connection, its answers come up it.
         if request.op == "browserAttach" {
             browser = Some(zerod.browsers.attach(request.browser.as_ref().unwrap_or(&Value::Null), out.clone()));
+            // Tasks whose browser call found Chrome gone are told it's back, as Zero's word between their turns.
+            for session in zerod.browsers.take_waiting() {
+                zerod.daemon.tell_from_zero(&session, "Zero for Chrome is connected again: carry on with the browser work.");
+            }
             continue;
         }
         if request.op == "browserAnswer" {
@@ -335,7 +346,7 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             let options = crate::daemon::Options {
                 cwd: Some(cwd.into()), workspace: workspace_id(), model: request.model.clone(), effort: request.effort.clone(), permissions: Some(request.permissions.unwrap_or_default()),
                 label: request.label.clone(), ticket: request.ticket.clone(), force: request.force.unwrap_or(false),
-                images: request.images.clone().unwrap_or_default(),
+                images: request.images.clone().unwrap_or_default(), signin: request.signin.as_ref().and_then(Value::as_str).map(String::from),
             };
             // A loop named in the prompt (@name) is given as its words, and its use recorded once the session exists.
             let (prompt, loops) = zerod.loops.expand(request.prompt.as_deref().unwrap_or(""));
@@ -418,7 +429,7 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             let options = crate::daemon::Options {
                 cwd: request.cwd.clone(), workspace: workspace_id(), model: request.model.clone(), effort: request.effort.clone(), permissions: request.permissions,
                 label: request.label.clone(), ticket: request.ticket.clone(), force: request.force.unwrap_or(false),
-                images: request.images.clone().unwrap_or_default(),
+                images: request.images.clone().unwrap_or_default(), signin: request.signin.as_ref().and_then(Value::as_str).map(String::from),
             };
             let (prompt, loops) = zerod.loops.expand(request.prompt.as_deref().unwrap_or(""));
             let id = daemon.spawn(&lead, provider, &prompt, options)?;
@@ -428,6 +439,16 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         // From another task when `from` says which: marked as its words.
         "notify" => daemon.notify_from(&session()?, request.from.as_deref().unwrap_or("zero"), request.text.as_deref().ok_or("Notify with text")?).map(|_| Value::Null),
         "watch" => daemon.watch(&session()?, request.command.as_deref().ok_or("Watch which command?")?).map(|_| Value::Null),
+        // A file watched for the session: {file, alerts, done, quiet}.
+        "watchFile" => {
+            let watch = request.watch.as_ref().ok_or("Watch what?")?;
+            let file = watch["file"].as_str().ok_or("Watch which file?")?;
+            let alerts = watch["alerts"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+            daemon.watch_file(&session()?, std::path::Path::new(file), alerts, watch["done"].as_str().map(String::from), watch["quiet"].as_u64())
+                .map(|id| json!({"watch": id}))
+        }
+        "watches" => Ok(json!(daemon.watches(request.session.as_deref()))),
+        "unwatch" => daemon.unwatch(request.watch.as_ref().and_then(Value::as_str).ok_or("Which watch?")?).map(|_| Value::Null),
         "remind" => {
             let after = std::time::Duration::from_secs(request.minutes.ok_or("Remind in how many minutes?")? * 60);
             daemon.remind(&session()?, after, request.text.as_deref().ok_or("Remind with text")?).map(|_| Value::Null)
@@ -460,6 +481,15 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             zerod.browsers.tell_state(&session()?, request.browser.as_ref().and_then(|b| b["state"].as_str()).ok_or("Which state?")?);
             Ok(Value::Null)
         }
+        // Firefox opened under remote control (Settings › Browsers), its extension installed.
+        "openFirefox" => { zerod.browsers.firefox().ok_or("Firefox isn't set up in Zero")?.ensure().await?; Ok(Value::Null) }
+        // A Chrome debugger command from Zero's extension in Firefox, done through Firefox's remote control.
+        "firefox" => {
+            let args = request.args.as_ref().ok_or("Which command?")?;
+            let firefox = zerod.browsers.firefox().ok_or("Firefox isn't set up in Zero")?;
+            firefox.command(args["tab"].as_i64().ok_or("Which tab?")?, args["nonce"].as_str(), args["method"].as_str().ok_or("Which method?")?,
+                            &args["params"]).await
+        }
         "browserSettings" => Ok(zerod.browsers.settings()),
         "saveBrowserSettings" => zerod.browsers.save_settings(request.browser.as_ref().ok_or("Which settings?")?),
         "browserSetup" => {
@@ -469,6 +499,36 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             Ok(json!({"manifest": manifest, "extension": extension, "id": crate::browser::EXTENSION}))
         }
         // MCP servers set up in Zero: each task's CLI gets its workspace's as it starts.
+        // The CLIs' sign-ins: what each is (never its value, which the app keeps in the Keychain) and each CLI's default.
+        "signIns" => {
+            let list = daemon.signins.list();
+            let defaults: serde_json::Map<String, Value> = [Provider::Claude, Provider::Codex, Provider::Opencode].into_iter()
+                .filter_map(|cli| daemon.signins.default_for(cli).map(|s| (format!("{cli:?}").to_lowercase(), json!(s.id)))).collect();
+            let usage: serde_json::Map<String, Value> = list.iter().filter_map(|s| daemon.signins.usage(&s.id).map(|u| (s.id.clone(), json!(u)))).collect();
+            Ok(json!({"signins": list, "defaults": defaults, "usage": usage}))
+        }
+        "saveSignIn" => {
+            let signin = serde_json::from_value(request.signin.clone().ok_or("Which sign-in?")?).map_err(|e| format!("Not a sign-in: {e}"))?;
+            let saved = daemon.signins.save(signin)?;
+            let _ = zerod.notices.send("signins");
+            Ok(json!(saved))
+        }
+        // A Codex account signed in by Codex itself, in a home of its own: its page back now, the rest in the background.
+        "codexSignIn" => codex_sign_in(zerod, request.signin.as_ref()).await,
+        // A Claude account signed in by Claude Code itself, in a folder of its own: the same, through `claude auth login`.
+        "claudeSignIn" => claude_sign_in(zerod).await,
+        "deleteSignIn" => {
+            daemon.signins.delete(request.signin.as_ref().and_then(|s| s.as_str()).ok_or("Which sign-in?")?)?;
+            let _ = zerod.notices.send("signins");
+            Ok(Value::Null)
+        }
+        "defaultSignIn" => {
+            let chosen = request.signin.as_ref().ok_or("Which sign-in?")?;
+            let cli: Provider = serde_json::from_value(chosen["cli"].clone()).map_err(|_| "Which CLI?")?;
+            daemon.signins.set_default(cli, chosen["id"].as_str().ok_or("Which sign-in?")?)?;
+            let _ = zerod.notices.send("signins");
+            Ok(Value::Null)
+        }
         "mcpServers" => Ok(json!(daemon.mcp_servers.list())),
         "saveMcpServer" => {
             let server = serde_json::from_value(request.server.clone().ok_or("Which server?")?).map_err(|e| format!("Not a server: {e}"))?;
@@ -525,6 +585,10 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             Ok(json!({"conversation": conversation, "earlier": earlier}))
         }
         "items" => Ok(json!(daemon.session(&session()?)?.items(request.before.as_deref(), request.from.as_deref(), request.limit.unwrap_or(60)))),
+        "window" => {
+            let (items, earlier, later) = daemon.session(&session()?)?.window(request.from.as_deref(), request.after.as_deref(), request.limit.unwrap_or(60));
+            Ok(json!({"items": items, "earlier": earlier, "later": later}))
+        }
         "outline" => Ok(daemon.session(&session()?)?.outline()),
         "place" => daemon.set_place(&session()?, request.place.as_deref()).map(|_| Value::Null),
         "settings" => Ok(json!(Settings::load(daemon.home()))),
@@ -590,7 +654,7 @@ fn start_task(zerod: &Zerod, integration: &str, view: &str, item: Value) -> Resu
     let options = crate::daemon::Options {
         cwd: Some(match start.cwd.strip_prefix("~/") { Some(rest) => format!("{}/{rest}", std::env::var("HOME").unwrap_or_default()), None => start.cwd.clone() }),
         workspace: None, model: start.model.clone(), effort: start.effort.clone(), permissions: Some(permissions.unwrap_or_default()),
-        label: Some(format!("{ticket} {}", item.title)), ticket: Some(ticket), force: false, images: vec![],
+        label: Some(format!("{ticket} {}", item.title)), ticket: Some(ticket), force: false, images: vec![], signin: None,
     };
     let session = zerod.daemon.start_with(provider, &crate::integrations::task_prompt(&start.prompt, &item, &pad), options)?;
     Ok(json!({"session": session, "existing": false, "pad": pad}))
@@ -729,4 +793,96 @@ async fn follow_inbox(inbox: Arc<Inbox>, out: mpsc::UnboundedSender<Value>) {
         };
         if !sent { return }
     }
+}
+
+/// Starts a Codex sign-in: a pending sign-in and its home, Codex's app-server run there, and its ChatGPT page given
+/// back for the app to open (none for an API key). Once Codex says who signed in, the sign-in takes their email and
+/// plan; turned down or left for a quarter of an hour, it goes. The key, if one is given, goes only to Codex.
+async fn codex_sign_in(zerod: &Zerod, asked: Option<&Value>) -> Result<Value, String> {
+    use crate::signins::{Kind, SignIn};
+    let key = asked.and_then(|a| a["apiKey"].as_str()).filter(|k| !k.trim().is_empty()).map(|k| k.trim().to_string());
+    let label = asked.and_then(|a| a["label"].as_str()).filter(|l| !l.trim().is_empty()).unwrap_or(if key.is_some() { "OpenAI API key" } else { "Codex" }).to_string();
+    let signins = &zerod.daemon.signins;
+    let signin = signins.save(SignIn { id: String::new(), cli: Provider::Codex, kind: Kind::CodexHome, label: label.clone(), plan: None, variable: None, pending: true })?;
+    let home = signins.folder(Provider::Codex, &signin.id)?;
+    let (child, input, output) = codex_in(&home).inspect_err(|_| { let _ = signins.delete(&signin.id); })?;
+    let (page, opened) = tokio::sync::oneshot::channel();
+    let method = key.map(crate::codex_login::Method::ApiKey).unwrap_or(crate::codex_login::Method::ChatGpt);
+    let (daemon, notices, id) = (zerod.daemon.clone(), zerod.notices.clone(), signin.id.clone());
+    tokio::spawn(async move {
+        let outcome = tokio::time::timeout(SIGN_IN_TIME, crate::codex_login::sign_in(output, input, method, page)).await
+            .unwrap_or_else(|_| Err("the sign-in wasn't finished".into()));
+        signed_in(&daemon, &notices, &id, label, outcome);
+        drop(child);
+        name_codex_accounts(&daemon, &notices).await;
+    });
+    let _ = zerod.notices.send("signins");
+    let page = tokio::time::timeout(std::time::Duration::from_secs(30), opened).await.ok().and_then(Result::ok).flatten();
+    Ok(json!({"id": signin.id, "page": page}))
+}
+
+/// Codex's app-server, run in a sign-in's home.
+fn codex_in(home: &std::path::Path) -> Result<(tokio::process::Child, tokio::process::ChildStdin, tokio::process::ChildStdout), String> {
+    let argv = Provider::Codex.command(&crate::model::Conversation::new("", Provider::Codex, ""), false, None, None);
+    let mut child = tokio::process::Command::new(&argv[0]).args(&argv[1..]).env("CODEX_HOME", home).current_dir(home)
+        .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null())
+        .kill_on_drop(true).spawn().map_err(|e| format!("Couldn't start Codex: {e}"))?;
+    let (Some(input), Some(output)) = (child.stdin.take(), child.stdout.take()) else { return Err("Codex has no stdio".into()) };
+    Ok((child, input, output))
+}
+
+/// Codex accounts that don't say whose they are (signed in before Zero asked, or Codex hadn't said yet) are asked
+/// of Codex, in their homes: the email becomes the name unless the user gave it one, and the plan is kept.
+pub async fn name_codex_accounts(daemon: &Daemon, notices: &broadcast::Sender<&'static str>) {
+    use crate::signins::Kind;
+    for mut signin in daemon.signins.list() {
+        if signin.kind != Kind::CodexHome || signin.pending || signin.plan.is_some() { continue }
+        let Ok(home) = daemon.signins.folder(Provider::Codex, &signin.id) else { continue };
+        let Ok((child, input, output)) = codex_in(&home) else { continue };
+        let account = tokio::time::timeout(std::time::Duration::from_secs(30), crate::codex_login::account(output, input)).await;
+        drop(child);
+        let Ok(Ok(account)) = account else { continue };
+        let before = signin.clone();
+        if signin.label == "Codex" && let Some(email) = account.email { signin.label = email }
+        signin.plan = account.plan;
+        if signin != before && daemon.signins.save(signin).is_ok() { let _ = notices.send("signins"); }
+    }
+}
+
+/// How long a sign-in is waited for in the browser before it's let go.
+const SIGN_IN_TIME: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// A sign-in's end: who signed in, on the pending sign-in; else it goes.
+fn signed_in(daemon: &Daemon, notices: &broadcast::Sender<&'static str>, id: &str, label: String, outcome: Result<crate::codex_login::Account, String>) {
+    match (outcome, daemon.signins.get(id)) {
+        (Ok(account), Some(mut signin)) => {
+            signin.label = account.email.unwrap_or(label);
+            signin.plan = account.plan;
+            signin.pending = false;
+            let _ = daemon.signins.save(signin);
+        }
+        (Err(error), _) => { eprintln!("zerod: sign-in: {error}"); let _ = daemon.signins.delete(id); }
+        (Ok(_), None) => {}
+    }
+    let _ = notices.send("signins");
+}
+
+/// Starts a Claude sign-in: a pending sign-in and its own Claude Code folder, `claude auth login` run there (Claude
+/// Code opens its page in the browser), and that page given back in case it didn't open. Once Claude Code is signed
+/// in, the sign-in takes the account's email and plan from `claude auth status`.
+async fn claude_sign_in(zerod: &Zerod) -> Result<Value, String> {
+    use crate::signins::{Kind, SignIn};
+    let signins = &zerod.daemon.signins;
+    let signin = signins.save(SignIn { id: String::new(), cli: Provider::Claude, kind: Kind::ClaudeHome, label: "Claude".into(), plan: None, variable: None, pending: true })?;
+    let env = signins.environment(&SignIn { pending: false, ..signin.clone() })?;
+    let (page, opened) = tokio::sync::oneshot::channel();
+    let (daemon, notices, id) = (zerod.daemon.clone(), zerod.notices.clone(), signin.id.clone());
+    tokio::spawn(async move {
+        let outcome = tokio::time::timeout(SIGN_IN_TIME, crate::claude_login::sign_in(&crate::claude_login::Commands::claude(), &env, page)).await
+            .unwrap_or_else(|_| Err("the sign-in wasn't finished".into()));
+        signed_in(&daemon, &notices, &id, "Claude".into(), outcome);
+    });
+    let _ = zerod.notices.send("signins");
+    let page = tokio::time::timeout(std::time::Duration::from_secs(3), opened).await.ok().and_then(Result::ok).flatten();
+    Ok(json!({"id": signin.id, "page": page}))
 }

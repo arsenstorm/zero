@@ -1,9 +1,8 @@
 //! `zerod mcp`: Zero's MCP server on stdio, for any agent, giving it the scratchpads as tools. Each call goes to the
 //! running zerod; here, straight to a store.
 
-mod common;
 
-use common::temp_dir;
+use crate::common::temp_dir;
 use serde_json::{Value, json};
 use zerod::mcp::respond;
 use zerod::pads::{Pads, call};

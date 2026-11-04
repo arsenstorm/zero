@@ -1,10 +1,9 @@
 //! A table an agent hands to Zero to draw (`zero table`): an item of its conversation, kept and replayed like any.
 
-mod common;
 
 use std::sync::Arc;
 
-use common::temp_dir;
+use crate::common::temp_dir;
 use zerod::daemon::{Daemon, Runtime};
 use zerod::model::*;
 

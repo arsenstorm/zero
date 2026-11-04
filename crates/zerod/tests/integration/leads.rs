@@ -1,13 +1,12 @@
 //! Sessions that start sessions: a lead spawns workers, gives them names and references, waits on them, and hears
 //! from each one when it finishes, without polling. Driven through the daemon as the `zero` CLI drives it.
 
-mod common;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use common::{Seen, fixture, play, temp_dir};
+use crate::common::{Seen, fixture, play, temp_dir};
 use serde_json::json;
 use zerod::daemon::{Daemon, Options, Runtime};
 use zerod::model::{Attention, Conversation, Permissions, Provider};
@@ -331,4 +330,29 @@ fn a_workers_report_says_how_it_ended_its_turn() {
     assert!(blocked.starts_with("Worker Listing is blocked: CI is down."), "{blocked}");
     let done = zerod::daemon::report(&worker("All 4 files listed.\n\n[zero: done]"), Attention::Done);
     assert!(done.starts_with("Worker Listing finished: All 4 files listed.\n"), "the ending line left out: {done}");
+}
+
+#[tokio::test]
+async fn a_task_at_its_accounts_limit_carries_on_as_another_account() {
+    let w = world("signin-switch");
+    let dot = w.home.join("dot-claude");
+    std::fs::create_dir_all(&dot).unwrap();
+    w.daemon.signins.set_claude_dir(dot);
+    let account = |label: &str| w.daemon.signins.save(zerod::signins::SignIn { id: String::new(), cli: Provider::Claude, kind: zerod::signins::Kind::ClaudeHome,
+                                                                              label: label.into(), plan: None, variable: None, pending: false }).unwrap();
+    let (first, second) = (account("a@example.com"), account("b@example.com"));
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    assert_eq!(w.daemon.get(&lead).unwrap().signin.as_deref(), Some(first.id.as_str()));
+    let seen = lead_runtime(&w).await;
+    seen.said("user", 1).await;
+    let resets = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64 + 3_600;
+    seen.say(json!({"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "resetsAt": resets,
+                    "unifiedWindows": {"five_hour": {"utilization": 1.0, "resetsAt": resets}, "seven_day": {"utilization": 0.6, "resetsAt": resets + 86_400}}}}));
+    seen.say(json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "You've hit your limit"}));
+    until(&w.daemon, &lead, |c| c.signin.as_deref() == Some(second.id.as_str())).await;
+    assert!(w.daemon.signins.usage(&first.id).is_some_and(|u| u.limited), "the first account's limit is known, for choosing later");
+    // Its agent started again as the second account, and told to carry on.
+    for _ in 0..200 { if w.claude.lock().unwrap().len() > 1 { break } tokio::time::sleep(Duration::from_millis(10)).await }
+    let again = w.claude.lock().unwrap()[1].clone();
+    assert!(again.said("user", 1).await[0]["message"]["content"].as_str().unwrap().contains("another account"));
 }

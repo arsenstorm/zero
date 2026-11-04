@@ -2,11 +2,10 @@
 //! Codex) and carry on with the whole conversation. Zero's record is the conversation; each provider gets it in the form
 //! it reads natively (a Claude Code session file, which Codex imports).
 
-mod common;
 
 use std::sync::Arc;
 
-use common::{fixture, temp_dir};
+use crate::common::{fixture, temp_dir};
 use serde_json::{Value, json};
 use zerod::daemon::{Daemon, Runtime};
 use zerod::handoff;
@@ -105,7 +104,7 @@ async fn a_session_switches_only_between_turns_and_only_to_a_provider_that_can_t
     let runtime: Runtime = Arc::new(|_, _, _| Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())));
     let daemon = Daemon::open(&home, runtime.clone()).unwrap();
     let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "hi", None, None, Permissions::Auto).unwrap();
-    common::until(&daemon.session(&id).unwrap(), |c| c.status == Status::Offline).await;
+    crate::common::until(&daemon.session(&id).unwrap(), |c| c.status == Status::Offline).await;
     daemon.switch(&id, Provider::Codex, Some("gpt-6-sol"), None).await.unwrap();
     assert_eq!(daemon.get(&id).unwrap().provider, Provider::Codex);
     assert_eq!(daemon.switch(&id, Provider::Opencode, None, None).await.unwrap_err(), "Zero can't hand a task to OpenCode yet");
@@ -120,7 +119,7 @@ async fn a_model_picked_without_a_message_goes_on_the_next_turn() {
     let dir = temp_dir("switch-model");
     let (events, _) = tokio::sync::broadcast::channel(64);
     let session = zerod::session::Session::new(Conversation::new("s1", Provider::Codex, "/work/project"), Some(dir.clone()), events.clone()).unwrap();
-    let (transport, recorder) = common::play(vec![]);
+    let (transport, recorder) = crate::common::play(vec![]);
     session.attach(transport);
     session.change(zerod::model::Change::Thread { thread: "t1".into(), model: Some("gpt-6-sol".into()), effort: None });
     session.set_model(Some("gpt-6-luna"), Some("high")).await.unwrap();
@@ -158,7 +157,7 @@ async fn permissions_change_between_turns_and_the_next_turn_starts_the_agent_wit
     let runtime: Runtime = Arc::new(move |_, _, argv| { seen.lock().unwrap().push(argv.join(" ")); Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())) });
     let daemon = Daemon::open(&home, runtime.clone()).unwrap();
     let id = daemon.start(Provider::Claude, home.to_str().unwrap(), "hi", None, None, Permissions::Auto).unwrap();
-    common::until(&daemon.session(&id).unwrap(), |c| c.status == Status::Offline).await;
+    crate::common::until(&daemon.session(&id).unwrap(), |c| c.status == Status::Offline).await;
     assert!(started.lock().unwrap()[0].contains("--permission-mode auto"), "{:?}", started.lock().unwrap());
 
     daemon.set_permissions(&id, Permissions::Unrestricted).await.unwrap();
@@ -187,7 +186,7 @@ async fn a_task_keeps_the_model_it_started_on_and_its_workers_take_it() {
     let runtime: Runtime = Arc::new(move |_, _, argv| { seen.lock().unwrap().push(argv.join(" ")); Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())) });
     let daemon = Daemon::open(&home, runtime.clone()).unwrap();
     let lead = daemon.start(Provider::Claude, home.to_str().unwrap(), "lead it", Some("claude-opus-5-5"), Some("high"), Permissions::Auto).unwrap();
-    common::until(&daemon.session(&lead).unwrap(), |c| c.status == Status::Offline).await;
+    crate::common::until(&daemon.session(&lead).unwrap(), |c| c.status == Status::Offline).await;
     drop(daemon);
     let daemon = Daemon::open(&home, runtime).unwrap();
     assert_eq!(daemon.get(&lead).unwrap().model.as_deref(), Some("claude-opus-5-5"), "kept with the task");

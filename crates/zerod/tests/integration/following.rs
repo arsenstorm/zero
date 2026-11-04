@@ -1,12 +1,10 @@
-#![recursion_limit = "256"]
 //! Following: a session follows a pull request, an issue or a thread; zerod polls it and tells the session what
 //! changed between its turns, so an agent that ended its turn is woken by a review or a reply.
 
-mod common;
 
 use std::sync::{Arc, Mutex};
 
-use common::temp_dir;
+use crate::common::temp_dir;
 use serde_json::{Value, json};
 use zerod::following::*;
 use zerod::integrations::{Fetcher, Integrations};

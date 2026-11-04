@@ -1,9 +1,8 @@
 //! OpenCode through the Agent Client Protocol (`opencode acp`), on real output (tests/fixtures/opencode-*,
 //! recorded from OpenCode 2.1.4 on opencode-go/beam-free; the approval run had a project config that asks).
 
-mod common;
 
-use common::replay;
+use crate::common::replay;
 use serde_json::json;
 use zerod::core::Core;
 use zerod::model::{ApprovalKind, Change, ChoiceKind, Conversation, ItemKind, ItemStatus, Provider, Status};

@@ -1,9 +1,8 @@
 //! Images with a message: each provider gets them its own way (Claude and OpenCode as data, Codex as a file), and the
 //! message in the conversation keeps their files, so the app shows them, a restart included.
 
-mod common;
 
-use common::{temp_dir, play};
+use crate::common::{temp_dir, play};
 use serde_json::json;
 use tokio::sync::broadcast;
 use zerod::core::Core;

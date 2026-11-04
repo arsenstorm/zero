@@ -2,13 +2,12 @@
 //! door to what only that provider has. The terminal takes over the task's own thread (Zero stops its headless process
 //! first); back in Zero, what happened there joins the task's record, so nothing is lost and switching still works.
 
-mod common;
 
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use common::{temp_dir, until};
+use crate::common::{temp_dir, until};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use zerod::daemon::{Daemon, Runtime};
@@ -154,7 +153,7 @@ async fn a_resume_that_fails_lets_go_of_the_process_it_started() {
         json!({"out": {"id": "z2", "method": "thread/resume"}}), json!({"in": {"id": "z2", "error": {"code": -1, "message": "thread t1 already has an active writer"}}}),
     ];
     let script = Mutex::new(Some(script));
-    let runtime: Runtime = Arc::new(move |_, _, _| Ok(common::play(script.lock().unwrap().take().unwrap()).0));
+    let runtime: Runtime = Arc::new(move |_, _, _| Ok(crate::common::play(script.lock().unwrap().take().unwrap()).0));
     let daemon = Daemon::open(&home, runtime).unwrap();
     let error = daemon.resume("01a100000000000a").await.unwrap_err();
     assert!(error.contains("active writer"), "{error}");

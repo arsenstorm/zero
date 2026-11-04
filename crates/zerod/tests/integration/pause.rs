@@ -1,12 +1,11 @@
 //! Pausing tasks: the user puts a task (a lead and its workers) or every task on hold, and picks them up later. A
 //! paused session is parked and stays parked whatever arrives for it; those words wait until it's resumed.
 
-mod common;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::temp_dir;
+use crate::common::temp_dir;
 use zerod::daemon::{Daemon, Runtime};
 use zerod::model::*;
 

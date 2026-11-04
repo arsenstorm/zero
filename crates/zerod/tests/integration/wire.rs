@@ -3,9 +3,8 @@
 //! files: a change to the wire on either side fails one of the two. `ZERO_WIRE_UPDATE=1 cargo test -p zerod --test
 //! wire` rewrites them after a deliberate change.
 
-mod common;
 
-use common::replay;
+use crate::common::replay;
 use zerod::model::{Attention, Conversation, Event, Failure, FailureKind, Field, Item, ItemKind, ItemStatus, Provider, Question, QuestionOption, Status, Usage, UsageWindow};
 
 const RECORDINGS: [(Provider, &str); 9] = [

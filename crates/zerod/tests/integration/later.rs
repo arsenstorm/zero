@@ -1,9 +1,8 @@
 //! Later: things to come back to. Each is a note in plain words and the artifact behind it (everything an agent worked
 //! out, in full), with the links and files that go with it, the task it came from, and every earlier version.
 
-mod common;
 
-use common::temp_dir;
+use crate::common::temp_dir;
 use serde_json::json;
 use zerod::later::*;
 
@@ -78,4 +77,45 @@ fn the_tools_are_called_by_name() {
     assert_eq!(call(&later, "list", &json!({})).unwrap()[0]["note"], "Write the API docs");
     assert_eq!(call(&later, "delete", &json!({"item": id})).unwrap()["deleted"], true);
     assert_eq!(call(&later, "nope", &json!({})).unwrap_err(), "No later tool nope");
+}
+
+#[test]
+fn a_note_is_a_headline_and_the_rest_goes_in_the_artifact() {
+    let later = Later::open(&temp_dir("later-headline"));
+    let long = "Ticket ideas from the production check: (1) the bell dropdown never closes on Escape; (2) a literal false class.";
+    let refused = later.save(New { note: long.into(), from: Some("s1".into()), asked: true, ..Default::default() }).unwrap_err();
+    assert!(refused.contains("100") && refused.contains("artifact"), "says how short, and where the rest goes: {refused}");
+    let item = later.save(New { note: "Two small bugs from a production check".into(), from: Some("s1".into()), asked: true, ..Default::default() }).unwrap();
+    assert!(later.edit(&item.id, Edit { note: Some(long.into()), by: Some("s1".into()), ..Default::default() }).is_err(), "an agent's edit too");
+}
+
+#[test]
+fn what_an_agent_saves_unasked_is_a_suggestion_a_few_per_task_gone_after_a_week() {
+    let root = temp_dir("later-suggested");
+    let later = Later::open(&root);
+    let save = |note: &str, from: &str, asked: bool| later.save(New { note: note.into(), from: Some(from.into()), asked, ..Default::default() });
+    let asked = save("Asked for", "s1", true).unwrap();
+    assert!(!asked.suggested, "the user asked for it");
+    let first = save("One", "s1", false).unwrap();
+    assert!(first.suggested);
+    save("Two", "s1", false).unwrap();
+    save("Three", "s1", false).unwrap();
+    let refused = save("Four", "s1", false).unwrap_err();
+    assert!(refused.contains("zero later edit") && refused.contains(&first.id), "points at the ones it has: {refused}");
+    save("Another task's", "s2", false).unwrap();
+    // Kept by the user: an item like any other, and no longer one of the task's suggestions.
+    let kept = later.edit(&first.id, Edit { keep: Some(true), ..Default::default() }).unwrap();
+    assert!(!kept.suggested);
+    save("Four", "s1", false).unwrap();
+    // A suggestion not kept within a week goes; what was kept or asked for stays.
+    let old = |id: &str| {
+        let file = root.join(id).join("item.json");
+        let mut item: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        item["created"] = json!(item["created"].as_i64().unwrap() - 8 * 86400);
+        std::fs::write(&file, item.to_string()).unwrap();
+    };
+    let gone = save("Old suggestion", "s3", false).unwrap();
+    for id in [&gone.id, &first.id, &asked.id] { old(id) }
+    let left: Vec<String> = later.list(None).into_iter().map(|i| i.id).collect();
+    assert!(!left.contains(&gone.id) && left.contains(&first.id) && left.contains(&asked.id));
 }

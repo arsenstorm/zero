@@ -2,13 +2,12 @@
 //! it when it ends, a reminder wakes it later, and a session stopped by a usage limit is told to go on once the limit
 //! resets. Plus what each provider last said about its limits, so no one starts more agents into one.
 
-mod common;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use common::{Seen, fixture, play, temp_dir};
+use crate::common::{Seen, fixture, play, temp_dir};
 use serde_json::json;
 use zerod::daemon::{Daemon, Options, Runtime};
 use zerod::model::{Attention, Conversation, Permissions, Provider};
@@ -79,7 +78,7 @@ async fn a_watched_command_wakes_its_session_with_how_it_ended() {
     let (id, seen) = idle_claude(&w).await;
     w.daemon.watch(&id, "echo checks done; echo all green; exit 3").unwrap();
     let words = seen.said("user", 2).await[1]["message"]["content"].as_str().unwrap().to_string();
-    assert!(words.starts_with("`echo checks done; echo all green; exit 3` finished with exit 3"), "{words}");
+    assert!(words.starts_with("<!-- from: zero -->\n`echo checks done; echo all green; exit 3` finished with exit 3"), "Zero's word, not the user's: {words}");
     assert!(words.contains("checks done\nall green"), "{words}");
 }
 
@@ -101,7 +100,7 @@ async fn a_reminder_wakes_a_session_later() {
     tokio::time::sleep(Duration::from_secs(110)).await;
     assert!(told(&seen).is_empty());
     tokio::time::sleep(Duration::from_secs(20)).await;
-    assert_eq!(seen.said("user", 2).await[1]["message"]["content"], "Check whether the deploy finished");
+    assert_eq!(seen.said("user", 2).await[1]["message"]["content"], "<!-- from: zero -->\nReminder: Check whether the deploy finished");
 }
 
 fn now() -> i64 {
@@ -119,7 +118,7 @@ async fn a_session_stopped_by_a_limit_goes_on_once_it_resets() {
     assert!(told(&seen).is_empty(), "not before the reset");
     tokio::time::sleep(Duration::from_secs(3 * 60)).await;
     let words = seen.said("user", 2).await[1]["message"]["content"].as_str().unwrap().to_string();
-    assert!(words.starts_with("The usage limit has reset"), "{words}");
+    assert!(words.starts_with("<!-- from: zero -->\nThe usage limit has reset"), "{words}");
 }
 
 #[tokio::test]

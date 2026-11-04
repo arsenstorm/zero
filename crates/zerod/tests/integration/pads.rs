@@ -2,9 +2,8 @@
 //! by (zero://pad/<id>, or zero://pad/<id>#<section> for one heading's part), and a revision that guards a write
 //! against one made since it was read.
 
-mod common;
 
-use common::temp_dir;
+use crate::common::temp_dir;
 use zerod::pads::*;
 
 const PLAN: &str = "# Release plan\n\nIntro.\n\n## Plan\n\n- ship it\n\n### Risks\n\nNone.\n\n## Notes\n\n```\n## not a heading\n```\n\n## Plan\n\nAgain.\n";
