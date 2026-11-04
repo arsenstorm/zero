@@ -161,7 +161,7 @@ private struct ArchiveConfirm: View {
     var body: some View {
         ZStack {
             Color.black.opacity(0.12).contentShape(Rectangle()).onTapGesture { workspace.archiving = nil }
-            ArchiveCard(workspace: workspace, id: id, leaving: leaving).frame(width: 340)
+            ArchiveCard(workspace: workspace, id: id, named: true, leaving: leaving).frame(width: 340)
         }
     }
 }
@@ -171,34 +171,43 @@ private struct ArchiveConfirm: View {
 struct ArchiveCard: View {
     let workspace: Workspace
     let id: String
+    /// In the middle of the window, away from its row: the question names the task.
+    var named = false
     let leaving: () -> Void
 
     var body: some View {
-        let name = workspace.conversation(id).map { Workspace.label(of: $0) } ?? id
         let workers = workspace.team(of: id).count
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Archive \(name)?").font(.system(size: 14, weight: .semibold)).lineLimit(2)
-                Text((workers == 0 ? "It" : "It and its \(workers == 1 ? "worker" : "\(workers) workers")") + " will be put away. Bring "
-                     + (workers == 0 ? "it" : "them") + " back from Archived tasks.")
-                    .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 8) {
-                    Spacer()
-                    Button("Cancel") { workspace.archiving = nil }.keyboardShortcut(.cancelAction)
-                    Button("Archive") {
-                        workspace.archiving = nil
-                        leaving()
-                        Task { await workspace.archive(id) }
-                    }
-                    .keyboardShortcut(.defaultAction)
+        VStack(alignment: .leading, spacing: 4) {
+            // Under its row, no name is needed; away from it, the task is named.
+            Text(named ? "Archive \(workspace.conversation(id).map { Workspace.label(of: $0) } ?? "this task")?" : "Archive this task?")
+                .font(.system(size: 13, weight: .semibold)).lineLimit(2)
+            Text(workers == 0 ? "Bring it back from Archived tasks." : "Its \(workers == 1 ? "worker goes" : "\(workers) workers go") with it; bring them back from Archived tasks.")
+                .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 6) {
+                Spacer()
+                Button { workspace.archiving = nil } label: {
+                    Text("Cancel").font(.system(size: 12, weight: .medium)).padding(.horizontal, 10).frame(height: 26)
                 }
-                .padding(.top, 6)
+                .buttonStyle(Hovering(selected: true, radius: 6, fill: Theme.row)).keyboardShortcut(.cancelAction)
+                Button {
+                    workspace.archiving = nil
+                    leaving()
+                    Task { await workspace.archive(id) }
+                } label: {
+                    Text("Archive").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.onKnob)
+                        .padding(.horizontal, 12).frame(height: 26).background(Theme.knob, in: RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain).keyboardShortcut(.defaultAction)
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.composer, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke))
-            .compositingGroup()
-            .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+            .padding(.top, 6)
+        }
+        // Concentric: the buttons' 6 pt corners inset 10 pt in the card's 16.
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.composer, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.stroke))
+        .compositingGroup()
+        .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
     }
 }
 
@@ -355,7 +364,10 @@ private struct TasksSidebar: View {
     /// Leads whose workers are folded away, one per line.
     @AppStorage("foldedLeads") private var folded = ""
     /// Where each lead's row starts down the window's task area: where its hover card goes.
-    @State private var tops: [String: CGFloat] = [:]
+    /// Each row's top, for the peek card on hover: kept where writing it doesn't redraw the sidebar (rows moving in an
+    /// animation write theirs every frame).
+    @State private var tops = Tops()
+    final class Tops { var y: [String: CGFloat] = [:]; subscript(_ id: String) -> CGFloat? { get { y[id] } set { y[id] = newValue } } }
     /// How the tasks are ordered: by state (the board's own order), by name, or as they were dragged.
     @AppStorage("taskSort") private var sort = BoardRow.Sort.state
     /// The dragged order, one lead per line; tasks not in it yet go on top.
@@ -493,6 +505,9 @@ private struct TasksSidebar: View {
                     let folded = Set(folded.split(separator: "\n").map(String.init))
                     let rows = sorted(workspace.board.filter { $0.workspace == workspace.current } + starting(all))
                     let ids = rows.map(\.session)
+                    // The rows in a stack of their own, masked at its top: one arriving slides in from under the heading
+                    // as the rest move down, rather than across it. The mask reaches well below, for the archive card.
+                    VStack(alignment: .leading, spacing: 1) {
                     ForEach(rows) { row in
                         let workers = workersOf[row.session] ?? []
                         let open = !folded.contains(row.session)
@@ -533,6 +548,8 @@ private struct TasksSidebar: View {
                         // A task arriving slides in under the heading as the rest move down; one leaving fades.
                         .transition(.asymmetric(insertion: .move(edge: .top).combined(with: .opacity), removal: .opacity))
                     }
+                    }
+                    .mask(alignment: .top) { Rectangle().padding(.bottom, -800) }
                     if !earlier.isEmpty {
                         SidebarHeading(text: "Earlier")
                         ForEach(earlier) { lead in
@@ -1478,8 +1495,6 @@ private struct StateIcon: View {
         Group {
             // At work it spins, as everywhere else in Zero something under way does.
             if state == .working { Spinner().frame(width: 12, height: 12).frame(width: 14, height: 14) }
-            // Nothing to say (no reply yet, nothing under way): no icon, its space kept.
-            else if state == .idle { Color.clear.frame(width: 14, height: 14) }
             else { NucleoIcon(Self.look(state).symbol, fill: "glyph", size: 14).foregroundStyle(Self.look(state).color) }
         }
         // A view of its own for each state: a spinner's AppKit view kept from Working could otherwise stand where the

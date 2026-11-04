@@ -322,7 +322,7 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     /// can take. Blocked is on something that isn't the user.
     public enum State: String, Decodable, Sendable {
         /// `read`: Replied, and the user has seen the reply (it greys); the chat that's open shows it as Replied still.
-        /// `completed`: done-done (it was `merged`), last of all and archived after a while; `idle` shows no icon.
+        /// `completed`: done-done (it was `merged`), last of all and archived after a while.
         case needsYou, trouble, working, handed, answered, blocked, done, paused, read, completed, idle, offline
         /// Most urgent first, as the board sorts its rows.
         public var urgency: Int {

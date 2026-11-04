@@ -65,8 +65,6 @@ struct StateGlyph: View {
     var body: some View {
         let look = Self.look(state)
         if state == .working { Spinner().frame(width: 14, height: 14).frame(width: 16, height: 16) }
-        // Nothing to say (no reply yet, nothing under way): no icon, its space kept.
-        else if state == .idle { Color.clear.frame(width: 16, height: 16) }
         else { Image(look.icon).resizable().frame(width: 16, height: 16).foregroundStyle(look.color) }
     }
 
