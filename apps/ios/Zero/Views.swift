@@ -160,10 +160,10 @@ struct Home: View {
         NavigationStack(path: $model.path) {
             // Four tabs at most: a fourth, when one is needed, is a ⋯ menu of the rest.
         TabView(selection: $model.tab) {
-                Tab("Tasks", image: "list-checkbox-glyph", value: PhoneModel.Place.tasks) { TasksView(model: model) }
-                // What waits on the user: its count, as the Mac's inbox has one.
+                // What waits on the user first: its count, as the Mac's inbox has one.
                 Tab("Inbox", image: "inbox-glyph", value: PhoneModel.Place.inbox) { InboxView(model: model) }
                     .badge(model.waiting.count)
+                Tab("Tasks", image: "list-checkbox-glyph", value: PhoneModel.Place.tasks) { TasksView(model: model) }
                 Tab("Later", image: "bookmark-glyph", value: PhoneModel.Place.later) { LaterView(model: model) }
                 Tab("More", image: "dots-glyph", value: PhoneModel.Place.more) { MoreView(model: model) }
             }
@@ -568,7 +568,7 @@ struct InboxView: View {
                 Section { ForEach(handed) { row in item(row, row.needs ?? row.now) } } header: { heading("Over to you", "Done, with a step only you can take") }
             }
             if !unread.isEmpty {
-                Section { ForEach(unread) { row in item(row, row.now) } } header: { heading("Unread replies", "Replies you haven't read yet") }
+                Section { ForEach(unread) { row in item(row, row.now) } } header: { heading("Unread replies") }
             }
         }
         .overlay {
@@ -581,10 +581,10 @@ struct InboxView: View {
         .refreshable { model.connect() }
     }
 
-    private func heading(_ title: String, _ detail: String) -> some View {
+    private func heading(_ title: String, _ detail: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title).font(.headline).foregroundStyle(.primary)
-            Text(detail).font(.footnote).foregroundStyle(.secondary)
+            if let detail { Text(detail).font(.footnote).foregroundStyle(.secondary) }
         }
         .textCase(nil).padding(.bottom, 2)
     }
