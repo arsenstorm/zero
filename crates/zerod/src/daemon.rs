@@ -94,7 +94,7 @@ pub const END_YOUR_TURN: &str = "Zero can't tell where your turn left the task. 
 [zero: done] (the work is finished, something still follows), [zero: completed] (done-done, nothing left for anyone), \
 [zero: blocked] (stopped on something that isn't the user), [zero: working] (pausing between steps), or \
 [zero: asked <id>]. Anything you need from the user (a decision, a command for them to run, steps for them to take) \
-goes through zero ask, zero run or zero approve with --async, and the turn ends [zero: asked <id>]: a question left in \
+goes through zero ask, zero run or zero approve with --async (or Zero's zero_ask and zero_run tools), and the turn ends [zero: asked <id>]: a question left in \
 your words reaches no one. Don't repeat your answer; do what's missing and end.";
 pub const CARRY_ON: &str = "Zero restarted while you were working: your turn was paused between steps. Please carry on where you left off.";
 /// What a working session is told when the user pauses it, steering its turn to an end it can be picked up from.

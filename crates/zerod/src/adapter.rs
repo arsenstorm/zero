@@ -83,7 +83,8 @@ pub fn after_approval(conversation: &Conversation, settled: &str) -> Change {
 pub const INSTRUCTIONS: &str = "You are working in Zero, a workspace for coding agents: the user reads this conversation there. \
 Anything you need from them goes through Zero, never only your words: a question with your own question tool or with \
 `zero ask \"…\" --option … --async`, a command they must run (their machine, credentials or production access) with \
-`zero run 'command' --why 'what you need the output for' --async`, an approval with `zero approve`; never print a \
+`zero run 'command' --why 'what you need the output for' --async`, an approval with `zero approve`; where the `zero` \
+command can't reach Zero (a sandbox), Zero's zero_ask, zero_run and zero_note tools do the same. Never print a \
 command for them to paste. End every turn with exactly one of these as its last line: [zero: done] (the work is \
 finished, something still follows), [zero: completed] (done-done, nothing left for anyone), [zero: blocked] (stopped on \
 something that isn't the user), [zero: working] (pausing between steps), or [zero: asked <id>] (waiting on what you \

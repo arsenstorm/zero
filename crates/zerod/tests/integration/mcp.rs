@@ -23,7 +23,7 @@ async fn it_introduces_itself_and_lists_the_scratchpad_tools() {
     let names: Vec<&str> = tools["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert_eq!(names[..11], ["scratchpad_list", "scratchpad_read", "scratchpad_create", "scratchpad_write", "scratchpad_append", "scratchpad_edit",
                        "scratchpad_find", "scratchpad_rename", "scratchpad_move", "scratchpad_delete", "scratchpad_folder"]);
-    assert!(names[11..].iter().all(|n| n.starts_with("browser_")) && names.contains(&"browser_computer"), "then Zero for Chrome's: {names:?}");
+    assert!(names[11..].iter().all(|n| n.starts_with("browser_") || n.starts_with("zero_")) && names.contains(&"browser_computer"), "then Zero for Chrome's and Zero's own: {names:?}");
     let unknown = ask(&pads, json!({"jsonrpc": "2.0", "id": 3, "method": "resources/list"})).await.unwrap();
     assert_eq!(unknown["error"]["code"], -32601);
 }
@@ -43,4 +43,23 @@ async fn an_agent_writes_a_pad_and_reads_one_section_by_its_link() {
     let stale = ask(&pads, tool(3, "scratchpad_edit", json!({"pad": pad["id"], "section": "later", "content": "Less.", "revision": "000000000000"}))).await.unwrap();
     assert_eq!(stale["result"]["isError"], true);
     assert!(stale["result"]["content"][0]["text"].as_str().unwrap().contains("read it again"));
+}
+
+#[tokio::test]
+async fn an_agent_asks_runs_and_notes_through_zeros_tools() {
+    let list = respond(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}), |_, _| async { Ok(json!({})) }).await.unwrap();
+    let names: Vec<&str> = list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+    assert!(["zero_ask", "zero_run", "zero_note"].iter().all(|n| names.contains(n)), "{names:?}");
+    // Each goes to zerod as it is; an ask or a run comes back with the ending that waits on it.
+    let heard = std::sync::Arc::new(std::sync::Mutex::new(vec![]));
+    let call = |name: &str, arguments: Value| {
+        let heard = heard.clone();
+        let message = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": name, "arguments": arguments}});
+        async move { respond(&message, |tool, args| { heard.lock().unwrap().push((tool, args)); async { Ok(json!({"id": "a1"})) } }).await.unwrap() }
+    };
+    let asked = call("zero_ask", json!({"question": "Which?", "options": ["A", "B"]})).await;
+    assert!(asked["result"]["content"][0]["text"].as_str().unwrap().contains("[zero: asked a1]"), "{asked}");
+    assert_eq!(heard.lock().unwrap()[0], ("zero_ask".to_string(), json!({"question": "Which?", "options": ["A", "B"]})));
+    let noted = call("zero_note", json!({"text": "Blocked on CI", "state": "blocked"})).await;
+    assert!(!noted["result"]["content"][0]["text"].as_str().unwrap().contains("asked"), "a note waits on nothing");
 }

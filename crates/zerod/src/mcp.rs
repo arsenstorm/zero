@@ -14,7 +14,29 @@ Zero's scratchpads: Markdown notes the user keeps in Zero, in folders, shared wi
 A pad's link is zero://pad/<id>; zero://pad/<id>#<section> is one heading's part (its anchor as GitHub makes them). When the \
 user gives you such a link, read it with scratchpad_read. Read before you change a pad, and pass the revision you read to \
 scratchpad_write or scratchpad_edit, so changes made since aren't lost; scratchpad_append needs none. Give the user links \
-to what you wrote, as Markdown: [Title › Section](zero://pad/<id>#section).";
+to what you wrote, as Markdown: [Title › Section](zero://pad/<id>#section). \
+In a Zero task, anything you need from the user goes through zero_ask (a question, a choice), zero_run (a command they run on their \
+Mac, its output coming back to you) or zero_note (where the task stands), when the `zero` command can't reach Zero (a sandbox).";
+
+/// Zero's own: what a task asks of the user, as `zero ask`, `zero run` and `zero note` do, for agents whose commands
+/// can't reach Zero's socket.
+fn zero_tools() -> Vec<Value> {
+    let string = |about: &str| json!({"type": "string", "description": about});
+    vec![
+        json!({"name": "zero_ask", "description": "Asks the user, in Zero's inbox: a question, or a choice with options. End your turn with [zero: asked <id>]; the answer comes to you as a message.",
+               "inputSchema": {"type": "object", "required": ["question"], "properties": {
+                   "question": string("The question, one line."),
+                   "options": {"type": "array", "items": {"type": "string"}, "description": "The choices, if it's one of a few."},
+                   "body": string("What the user needs to answer it: context, a recommendation."),
+                   "code": string("A command or snippet the question is about, shown as code.")}}}),
+        json!({"name": "zero_run", "description": "Asks the user to run a command on their Mac (their credentials, their access); its output comes back to you as a message. End your turn with [zero: asked <id>].",
+               "inputSchema": {"type": "object", "required": ["command", "why"], "properties": {
+                   "command": string("The command."), "why": string("What you need its output for."), "cwd": string("Where to run it; left out, the task's folder.")}}}),
+        json!({"name": "zero_note", "description": "Says where the task stands, on its row in Zero.",
+               "inputSchema": {"type": "object", "required": ["text"], "properties": {
+                   "text": string("Where it stands, one line."), "state": string("done, completed, blocked or waiting."), "needs": string("What it needs from the user, if anything.")}}}),
+    ]
+}
 
 /// An argument: its name, what it is, whether it's needed.
 type Arg = (&'static str, &'static str, bool);
@@ -66,11 +88,23 @@ where
                 "properties": args.iter().map(|(arg, about, _)| (arg.to_string(), json!({"type": "string", "description": about}))).collect::<serde_json::Map<_, _>>(),
                 "required": args.iter().filter(|(_, _, required)| *required).map(|(arg, _, _)| *arg).collect::<Vec<_>>(),
             },
-        })).chain(crate::browser::tools()).collect::<Vec<_>>()}),
+        })).chain(crate::browser::tools()).chain(zero_tools()).collect::<Vec<_>>()}),
         // A browser tool's answer is already MCP content (text and screenshots), as the extension made it.
         "tools/call" if params["name"].as_str().is_some_and(|n| n.starts_with("browser_")) => {
             match call(params["name"].as_str().unwrap_or_default().to_string(), params["arguments"].clone()).await {
                 Ok(answer) => json!({"content": answer["content"], "isError": answer["isError"].as_bool().unwrap_or(false)}),
+                Err(why) => json!({"content": [{"type": "text", "text": why}], "isError": true}),
+            }
+        }
+        "tools/call" if params["name"].as_str().is_some_and(|n| n.starts_with("zero_")) => {
+            let name = params["name"].as_str().unwrap_or_default().to_string();
+            let note = name == "zero_note";
+            match call(name, params["arguments"].clone()).await {
+                Ok(_) if note => json!({"content": [{"type": "text", "text": "Noted."}], "isError": false}),
+                Ok(made) => {
+                    let id = made["id"].as_str().unwrap_or_default();
+                    json!({"content": [{"type": "text", "text": format!("Asked as {id}. End your turn with [zero: asked {id}]; the answer comes to you as a message.")}], "isError": false})
+                }
                 Err(why) => json!({"content": [{"type": "text", "text": why}], "isError": true}),
             }
         }
@@ -128,8 +162,13 @@ pub async fn connect(socket: &Path) -> Result<tokio::net::UnixStream, String> {
 /// One tool call to zerod: a scratchpad's (`pad`), or a browser's (`browserCall`, for the session this server runs in).
 async fn through(socket: &Path, tool: String, args: Value) -> Result<Value, String> {
     let mut stream = connect(socket).await?;
-    let request = if tool.starts_with("browser_") {
-        json!({"id": 1, "op": "browserCall", "tool": tool, "args": args, "session": std::env::var("ZERO_SESSION").ok()})
+    let session = std::env::var("ZERO_SESSION").ok();
+    let request = if let Some(own) = tool.strip_prefix("zero_") {
+        let mut args = if args.is_object() { args } else { json!({}) };
+        args["tool"] = json!(own);
+        json!({"id": 1, "op": "agentAsk", "session": session.ok_or("zero_ tools are for Zero's tasks; elsewhere, use the zero command")?, "args": args})
+    } else if tool.starts_with("browser_") {
+        json!({"id": 1, "op": "browserCall", "tool": tool, "args": args, "session": session})
     } else {
         json!({"id": 1, "op": "pad", "tool": tool, "args": args})
     };

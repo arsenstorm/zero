@@ -523,3 +523,26 @@ async fn the_app_keeps_sign_ins_through_zerod_and_never_sees_their_values() {
     client.call(json!({"op": "deleteSignIn", "signin": a})).await;
     assert_eq!(client.call(json!({"op": "signIns"})).await["result"]["signins"].as_array().unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn a_task_asks_runs_and_notes_through_zeros_tools_whatever_sandbox_its_agent_is_in() {
+    // Codex runs commands in a sandbox that can't reach Zero's socket: Zero's MCP server (outside it) asks for it.
+    let h = harness("server-agent-ask").await;
+    let mut control = Client::connect(&h.socket).await;
+    let started = control.call(json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": "ls"})).await;
+    let session = started["result"]["session"].as_str().unwrap().to_string();
+    let asked = control.call(json!({"op": "agentAsk", "session": session, "args": {"tool": "ask", "question": "Start the check, or wait for Dana?",
+                                                                                     "options": ["Start it", "Wait for Dana"]}})).await;
+    assert_eq!(asked["ok"], true, "{asked}");
+    let id = asked["result"]["id"].as_str().unwrap().to_string();
+    let ran = control.call(json!({"op": "agentAsk", "session": session, "args": {"tool": "run", "command": "bin/prod-check", "why": "the counts"}})).await;
+    assert_eq!(ran["ok"], true, "{ran}");
+    control.call(json!({"op": "agentAsk", "session": session, "args": {"tool": "note", "text": "Waiting on QA", "state": "waiting"}})).await;
+    assert!(control.call(json!({"op": "agentAsk", "session": session, "args": {"tool": "run", "command": "x"}})).await["ok"] == false, "a run says why");
+    let asks = control.call(json!({"op": "asks"})).await["result"].as_array().unwrap().clone();
+    let question = asks.iter().find(|a| a["id"] == id.as_str()).unwrap();
+    assert_eq!((question["kind"].as_str(), question["title"].as_str()), (Some("choice"), Some("Start the check, or wait for Dana?")));
+    assert_eq!(question["agent"]["runtime"], "zerod", "the task's own ask, joining its approvals in the inbox");
+    assert!(asks.iter().any(|a| a["kind"] == "run" && a["command"] == "bin/prod-check" && a["body"] == "the counts"));
+    assert!(asks.iter().any(|a| a["kind"] == "note" && a["status"] == "waiting"));
+}

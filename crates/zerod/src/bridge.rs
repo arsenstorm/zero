@@ -199,12 +199,7 @@ impl Bridge {
     }
 
     /// The identity the inbox and the bar know a session by.
-    fn agent(&self, conversation: &Conversation) -> AgentIdentity {
-        AgentIdentity {
-            name: format!("zerod-{}", conversation.id), host: self.host.clone(), cwd: Some(conversation.cwd.clone()),
-            label: Some(label(conversation)), runtime: Some("zerod".into()), reference: Some(conversation.id.clone()), ..Default::default()
-        }
-    }
+    fn agent(&self, conversation: &Conversation) -> AgentIdentity { identity(conversation, &self.host) }
 
     /// One field of a question as an ask: its options, then "Something else…" where the agent takes free text.
     fn field(&self, field: &crate::model::Field, question: &str, conversation: &Conversation) -> Ask {
@@ -253,7 +248,15 @@ unsafe extern "C" {
     fn gethostname(name: *mut std::ffi::c_char, length: usize) -> i32;
 }
 
-fn hostname() -> String {
+/// The identity the inbox and the bar know a session by, on `host`.
+pub fn identity(conversation: &Conversation, host: &str) -> AgentIdentity {
+    AgentIdentity {
+        name: format!("zerod-{}", conversation.id), host: host.into(), cwd: Some(conversation.cwd.clone()),
+        label: Some(label(conversation)), runtime: Some("zerod".into()), reference: Some(conversation.id.clone()), ..Default::default()
+    }
+}
+
+pub fn hostname() -> String {
     let mut buffer = [0u8; 256];
     // SAFETY: the buffer is as long as said; gethostname writes at most that and terminates it.
     if unsafe { gethostname(buffer.as_mut_ptr().cast(), buffer.len()) } != 0 { return "localhost".into() }

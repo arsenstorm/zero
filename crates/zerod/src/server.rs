@@ -613,6 +613,48 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
                 "error": c.failure.as_ref().map(|f| &f.message), "stalled": c.stalled,
             })).collect::<Vec<_>>()))
         }
+        // A task asking, running or noting through Zero's own tools (the MCP server's zero_ ones): for agents whose
+        // commands can't reach Zero's socket (Codex's sandbox), the same asks `zero ask`, `zero run` and `zero note` make.
+        "agentAsk" => {
+            use crate::ask::{Ask, AskKind};
+            let id = session()?;
+            let conversation = daemon.get(&id).ok_or_else(|| format!("No session {id}"))?;
+            let args = request.args.clone().unwrap_or(json!({}));
+            let text = |key: &str| args[key].as_str().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+            let agent = crate::bridge::identity(&conversation, &crate::bridge::hostname());
+            let ttl = Settings::load(daemon.home()).ttl.unwrap_or(3600);
+            let ask = match args["tool"].as_str() {
+                Some("ask") => {
+                    let question = text("question").ok_or("Ask what? question")?;
+                    let options: Vec<String> = args["options"].as_array().into_iter().flatten().filter_map(|o| o.as_str().map(String::from)).collect();
+                    let mut ask = Ask::new(if options.is_empty() { AskKind::Question } else { AskKind::Choice }, &question, agent, ttl);
+                    ask.options = options;
+                    ask.detail = text("body");
+                    ask.command = text("code");
+                    ask
+                }
+                Some("run") => {
+                    let command = text("command").ok_or("Run what? command")?;
+                    let why = text("why").ok_or("A run says why: what you need its output for, so the user knows what they're running")?;
+                    let mut ask = Ask::new(AskKind::Run, "Run a command", agent, ttl);
+                    ask.body = why;
+                    ask.command = Some(command);
+                    ask.cwd = text("cwd").or(Some(conversation.cwd.clone()));
+                    ask.options = ["Run", "Reject", "Suggest something else…"].map(String::from).to_vec();
+                    ask
+                }
+                Some("note") => {
+                    let mut note = Ask::new(AskKind::Note, "Update", agent, 0);
+                    note.body = text("text").ok_or("Note what? text")?;
+                    note.status = text("state").map(|s| if s == "merged" { "completed".into() } else { s });
+                    note.needs = text("needs");
+                    note
+                }
+                other => return Err(format!("No tool {other:?}: ask, run or note")),
+            };
+            let made = inbox.create(ask, false);
+            Ok(json!({"id": made.id}))
+        }
         // The inbox.
         "create" => {
             let incoming: crate::ask::Ask = serde_json::from_value(request.ask.clone().ok_or("Create which ask?")?).map_err(|e| format!("Not an ask: {e}"))?;
