@@ -2831,12 +2831,12 @@ private struct ApprovalCard: View {
                         let row = Button { choose(choice) } label: {
                             HStack(spacing: 10) {
                                 Text("\(index + 1)").font(.system(size: 10, weight: .bold)).frame(width: 18, height: 18)
-                                    .background(Theme.keycap).clipShape(RoundedRectangle(cornerRadius: 5))
+                                    .background(Theme.choiceCap).clipShape(RoundedRectangle(cornerRadius: 5))
                                 Text(choice.label).font(.system(size: 13))
                                 Spacer()
                             }
                             .padding(.horizontal, 10).padding(.vertical, 8)
-                            .background(Theme.row, in: RoundedRectangle(cornerRadius: 10))
+                            .background(Theme.choice, in: RoundedRectangle(cornerRadius: 10))
                             .contentShape(RoundedRectangle(cornerRadius: 10))
                         }
                         .buttonStyle(.plain)
