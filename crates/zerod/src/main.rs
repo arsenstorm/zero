@@ -124,6 +124,7 @@ async fn main() {
     let places = Arc::new(zerod::board::Places::default());
     tokio::spawn(places.clone().follow(home.clone()));
     let zerod = zerod::server::Zerod { daemon: daemon.clone(), inbox, drops: Some(drops), integrations, pads, later, loops, following, browsers, places, notices: tokio::sync::broadcast::channel(64).0 };
+    tokio::spawn(zerod::server::archive_completed(zerod.clone()));
     let (named, notices) = (daemon.clone(), zerod.notices.clone());
     tokio::spawn(async move { zerod::server::name_codex_accounts(&named, &notices).await });
     // Codex processes end with the daemon: their input closes when it exits.

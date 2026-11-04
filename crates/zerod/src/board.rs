@@ -28,12 +28,13 @@ pub enum State {
     Blocked,
     /// The work is finished: its code done, not yet merged.
     Done,
-    /// Merged: shipped, by the agent's note.
-    Merged,
     /// Put on hold by the user (daemon.rs `pause`), until they resume it.
     Paused,
     /// It answered the user, who has seen the answer: Replied still, but nothing waits on them.
     Read,
+    /// Done-done, by the agent's note: shipped, checked, nothing left (`--completed`, or `--merged` as it was). Last of
+    /// all, and archived after a while (Settings › archiveCompleted).
+    Completed,
     Idle,
     Offline,
 }
@@ -183,6 +184,18 @@ pub fn mark_read(rows: &mut [Row], read: &dyn Fn(&str) -> bool) {
     rows.sort_by_key(|row| row.state);
 }
 
+/// The completed tasks due to be archived: those completed for `after` seconds (never, with none). `since` keeps when
+/// each was first seen completed, across boards; a task taken up again starts over.
+pub fn due_to_archive(rows: &[Row], since: &mut HashMap<String, i64>, now: i64, after: Option<i64>) -> Vec<String> {
+    let completed: Vec<&str> = rows.iter().filter(|r| r.state == State::Completed && r.own == State::Completed).map(|r| r.session.as_str()).collect();
+    since.retain(|id, _| completed.contains(&id.as_str()));
+    for id in &completed { since.entry(id.to_string()).or_insert(now); }
+    let Some(after) = after else { return vec![] };
+    let mut due: Vec<String> = since.iter().filter(|(_, at)| now - **at >= after).map(|(id, _)| id.clone()).collect();
+    due.sort();
+    due
+}
+
 /// The rows of tasks the user paused, and their paused workers, shown as Paused whatever they were doing.
 pub fn mark_paused(rows: &mut [Row], paused: &dyn Fn(&str) -> bool) {
     for row in rows.iter_mut() {
@@ -212,7 +225,7 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
             _ if state == State::Working => state,
             _ if note.needs.is_some() => State::Handed,
             Some("done") => State::Done,
-            Some("merged") => State::Merged,
+            Some("completed" | "merged") => State::Completed,
             _ => state,
         };
     }
@@ -220,7 +233,8 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
     if own.is_none() && matches!(state, State::Idle | State::Done) && let Some(ending) = session.answer().and_then(ending) {
         state = match ending {
             "done" => State::Done,
-            "working" => State::Idle,
+            // Between steps, its work going on elsewhere: a reply to read, as any.
+            "working" => State::Answered,
             "blocked" => State::Blocked,
             _ => State::NeedsYou, // asked: it waits on the user's answer
         };
@@ -342,7 +356,7 @@ fn note<'a>(conversation: &Conversation, asks: &'a [Ask]) -> Option<&'a Ask> {
         let closed = !ours && note.status.as_deref() == Some("closed");
         // A new turn clears what it said, except that done or merged stands through turns Zero started (an event it
         // follows, a worker's report): only the user's own word since makes it theirs to settle again.
-        let final_state = own.is_some_and(|n| matches!(n.status.as_deref(), Some("done" | "merged")) && spoke.is_none_or(|at| at < n.created_at.0));
+        let final_state = own.is_some_and(|n| matches!(n.status.as_deref(), Some("done" | "merged" | "completed")) && spoke.is_none_or(|at| at < n.created_at.0));
         if closed || (ours && note.status.is_none() && !final_state) { own = None } else if !ours { own = Some(note) }
     }
     own

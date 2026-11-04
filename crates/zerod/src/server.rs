@@ -139,9 +139,17 @@ pub struct Settings {
     /// A command printing where tasks run by ticket, `[{"ticket", "place"}]`, rerun every minute (board.rs); empty for none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub places: Option<String>,
+    /// Seconds a completed task stays before it's archived; 0 never. Unset, a day.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archive_completed: Option<i64>,
 }
 
 impl Settings {
+    /// How long a completed task stays before it's archived; none, never.
+    pub fn archive_after(&self) -> Option<i64> {
+        match self.archive_completed { None => Some(24 * 3600), Some(0) => None, Some(seconds) => Some(seconds.max(60)) }
+    }
+
     pub fn load(home: &std::path::Path) -> Settings {
         std::fs::read(home.join("settings.json")).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default()
     }
@@ -179,6 +187,23 @@ impl Zerod {
         crate::board::mark_paused(&mut rows, &|id| daemon.is_paused(id));
         for row in rows.iter_mut() { row.wakes = daemon.next_wake(&row.session) }
         rows
+    }
+}
+
+/// Archives each task completed for as long as the settings say (a day, unless the user changed it), looked at every
+/// few minutes. ponytail: when it was first seen completed is kept in memory, so a restart starts the clock again.
+pub async fn archive_completed(zerod: Zerod) {
+    let mut since = HashMap::new();
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(5 * 60)).await;
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        let after = Settings::load(zerod.daemon.home()).archive_after();
+        for id in crate::board::due_to_archive(&zerod.board(), &mut since, now, after) {
+            match zerod.daemon.archive(&id).await {
+                Ok(()) => { since.remove(&id); }
+                Err(error) => eprintln!("zerod: couldn't archive completed {id}: {error}"),
+            }
+        }
     }
 }
 
@@ -628,6 +653,7 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             settings.ttl = given.ttl.or(settings.ttl);
             settings.patterns = given.patterns.or(settings.patterns);
             settings.places = given.places.or(settings.places);
+            settings.archive_completed = given.archive_completed.or(settings.archive_completed);
             settings.apply(inbox, zerod.drops.as_deref());
             let _ = std::fs::write(daemon.home().join("settings.json"), serde_json::to_vec_pretty(&settings).unwrap_or_default());
             Ok(Value::Null)

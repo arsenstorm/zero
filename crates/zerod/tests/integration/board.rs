@@ -58,7 +58,8 @@ fn the_agents_own_note_says_where_it_is_and_what_it_needs() {
     assert_eq!((row.state, row.needs.as_deref(), row.now.as_deref()), (State::Done, None, Some("Round 4 pushed")), "a later note without needs clears them");
     // Done is the work finished; merged is it shipped.
     let shipped = [note("a", "Merged #13336", Some("merged"), None)];
-    assert_eq!(board(&[lead], &shipped)[0].state, State::Merged);
+    assert_eq!(board(std::slice::from_ref(&lead), &shipped)[0].state, State::Completed, "merged, as agents said it before: completed");
+    assert_eq!(board(&[lead], &[note("a", "Shipped and checked", Some("completed"), None)])[0].state, State::Completed);
 }
 
 #[test]
@@ -78,10 +79,10 @@ fn done_or_merged_stands_through_turns_zero_started_until_the_user_speaks() {
     let said = |text: &str, at: i64| Item { at: Some(at * 1000), id: format!("u{at}"), turn: None, kind: ItemKind::User { text: text.into(), images: vec![] }, status: ItemStatus::Done };
     lead.items.push(said(&from_line("zero", "1 new event on what you follow"), 1_100));
     let asks = [merged.clone(), dot("Working", None), dot("Done", Some("done"))];
-    assert_eq!(board(&[lead.clone()], &asks)[0].state, State::Merged);
+    assert_eq!(board(&[lead.clone()], &asks)[0].state, State::Completed);
     // The user's own word after it: whatever it was is theirs to settle again.
     lead.items.push(said("Can you also bump the base image?", 1_200));
-    assert_ne!(board(&[lead], &asks)[0].state, State::Merged);
+    assert_ne!(board(&[lead], &asks)[0].state, State::Completed);
 }
 
 #[test]
@@ -177,13 +178,13 @@ fn how_the_agent_ended_its_turn_is_the_rows_state() {
     assert_eq!(ended("PR #13336 is open.\n\n[zero: done]"), State::Done);
     assert_eq!(ended("Can't reach staging.\n[zero: blocked]"), State::Blocked, "blocked on something, not on the user: they'd be asked");
     assert_eq!(ended("Which one?\n[zero: asked 3f2a]"), State::NeedsYou);
-    assert_eq!(ended("Waiting on CI.\n[zero: working]"), State::Idle, "pausing between steps is idle, not a state of its own");
+    assert_eq!(ended("Waiting on CI.\n[zero: working]"), State::Answered, "pausing between steps: its reply, to read like any other");
     assert_eq!(ended("Just an answer."), State::Answered, "a turn ended is not a task done; it is a reply to read");
     assert_eq!(ended("Relaunch both, or one session each?"), State::NeedsYou, "a question put to the user in prose waits on them");
     // The agent's own note this turn says more than its ending.
     let mut lead = session("a", "/work/app", Status::Idle);
     lead.items.push(Item { id: "1".into(), turn: None, kind: ItemKind::Agent { text: "Merged.\n[zero: done]".into(), final_answer: true }, status: ItemStatus::Done, at: None });
-    assert_eq!(board(&[lead], &[note("a", "Merged #1", Some("merged"), None)])[0].state, State::Merged);
+    assert_eq!(board(&[lead], &[note("a", "Merged #1", Some("merged"), None)])[0].state, State::Completed);
 }
 
 #[test]
@@ -219,7 +220,7 @@ fn a_rows_workers_each_carry_their_own_state_place_and_asks() {
     assert_eq!(row.own, State::Idle, "and the lead as it is itself: it waits on nothing, its worker does");
     let team: Vec<(&str, State, &str, Option<&str>, usize)> =
         row.team.iter().map(|m| (m.session.as_str(), m.state, m.place.as_str(), m.path.as_deref(), m.asks.len())).collect();
-    assert_eq!(team, [("w1", State::Idle, "red-owl", Some("/b/red-owl"), 0), ("w2", State::NeedsYou, "wt", None, 1)],
+    assert_eq!(team, [("w1", State::Answered, "red-owl", Some("/b/red-owl"), 0), ("w2", State::NeedsYou, "wt", None, 1)],
                "each worker as it is itself, by the same rules as a lead");
 }
 
@@ -318,5 +319,24 @@ fn a_reply_the_user_has_seen_is_read_for_every_client() {
     mark_read(&mut rows, &|id| id == "a");
     let a = rows.iter().find(|r| r.session == "a").unwrap();
     assert_eq!((a.state, a.own), (State::Read, State::Read), "Replied still, greyed: read, nothing waiting on the user");
-    assert!(State::Read > State::Merged && State::Read < State::Idle, "it sorts with what needs nothing");
+    assert!(State::Read > State::Done && State::Read < State::Completed && State::Completed < State::Idle, "it sorts with what needs nothing, the done-done last");
+}
+
+#[test]
+fn a_completed_task_is_archived_once_its_been_completed_a_while() {
+    use std::collections::HashMap;
+    use zerod::board::due_to_archive;
+    let mut lead = session("a", "/work/app", Status::Idle);
+    lead.label = Some("Ship it".into());
+    let rows = board(&[lead.clone(), session("b", "/work/api", Status::Idle)], &[note("a", "Shipped", Some("completed"), None)]);
+    let mut since = HashMap::new();
+    let day = 24 * 3600;
+    assert!(due_to_archive(&rows, &mut since, 1_000, Some(day)).is_empty(), "completed from now");
+    assert!(due_to_archive(&rows, &mut since, 1_000 + day - 1, Some(day)).is_empty());
+    assert_eq!(due_to_archive(&rows, &mut since, 1_000 + day, Some(day)), ["a"], "a day on");
+    assert!(due_to_archive(&rows, &mut since, 1_000 + 9 * day, None).is_empty(), "never, if the user says so");
+    // Taken up again (not completed any more): its clock starts over when it's completed again.
+    let again = board(&[lead], &[]);
+    due_to_archive(&again, &mut since, 5_000, Some(day));
+    assert!(since.is_empty());
 }
