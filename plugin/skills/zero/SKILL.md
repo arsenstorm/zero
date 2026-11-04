@@ -205,7 +205,7 @@ When Zero runs your session, every turn ends with exactly one of these as its la
 ```
 [zero: done]            nothing is left that you can do, even if others still have steps (a PM, QA you follow); Zero archives it after a while, and what you follow changing brings it back
 [zero: waiting]         the next move is someone else's, not theirs (CI, a deploy, a review, QA); what you follow wakes you
-[zero: asked k3x9qa]    you asked with --async and wait for that answer (the id it printed)
+[zero: asked k3x9qa]    you asked with --async and wait for that answer (the id it printed); once it's answered, end with what's true now
 [zero: working]         you are pausing between steps and posted a note on where you are
 ```
 
