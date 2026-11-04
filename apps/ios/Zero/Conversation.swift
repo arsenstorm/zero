@@ -6,6 +6,11 @@ import SwiftUI
 struct ConversationView: View {
     let model: PhoneModel
     let conversation: Conversation
+    /// A question, ask or approval just answered: the page keeps the height it had, so the card fades out where it was
+    /// and nothing above it moves; what comes next fills that room. Given back when you scroll.
+    @State private var room: CGFloat = 0
+    /// The conversation's own height, without that room.
+    @State private var height: CGFloat = 0
 
     var body: some View {
         let blocks = TimelineBlock.of(Sending.merge(conversation.items, model.sending[conversation.id] ?? []).filter { item in !conversation.approvals.contains { $0.item == item.id } },
@@ -24,14 +29,25 @@ struct ConversationView: View {
                 case let .step(item): StepView(model: model, session: conversation.id, item: item)
                 }
             }
-            ForEach(conversation.questions) { question in QuestionCard(model: model, session: conversation.id, question: question) }
-            ForEach(conversation.approvals) { approval in ApprovalCard(model: model, session: conversation.id, approval: approval) }
+            ForEach(conversation.questions) { question in QuestionCard(model: model, session: conversation.id, question: question).transition(.opacity) }
+            ForEach(conversation.approvals) { approval in ApprovalCard(model: model, session: conversation.id, approval: approval).transition(.opacity) }
             // Still waiting after its turn (an ask sent with --async), its step folded away with the rest.
-            if conversation.status != .working, conversation.status != .waiting {
-                ForEach(model.asks.filter { $0.isAgents(in: conversation.id) && !$0.state.isFinal }) { ask in AskCard(model: model, ask: ask) }
-            }
+            ForEach(openAsks) { ask in AskCard(model: model, ask: ask).transition(.opacity) }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        .frame(minHeight: room, alignment: .top)
+        .animation(.easeOut(duration: 0.2), value: waiting)
+        .onChange(of: waiting) { old, new in if !Set(old).subtracting(new).isEmpty { room = max(room, height) } }
+        .simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { _ in if room > 0 { room = 0 } })
     }
+
+    private var openAsks: [Ask] {
+        guard conversation.status != .working, conversation.status != .waiting else { return [] }
+        return model.asks.filter { $0.isAgents(in: conversation.id) && !$0.state.isFinal }
+    }
+
+    /// What waits on you, by id: a card leaving this is one answered.
+    private var waiting: [String] { conversation.questions.map(\.id) + conversation.approvals.map(\.id) + openAsks.map(\.id) }
 }
 
 /// An answer: its Markdown, and under it a copy button and the way to pick out part of it (as ChatGPT's): SwiftUI's
