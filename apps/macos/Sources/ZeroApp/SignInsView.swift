@@ -182,7 +182,7 @@ private struct AddAccount: View {
                 if replacing != nil {
                     Text("Sign \(replacing!.label) in again as a token").font(.system(size: 13, weight: .medium))
                 } else if cli == .opencode {
-                    ForEach(OpenCodeProvider.allCases) { choice($0.rawValue, on: provider == $0) { provider = $0 } }
+                    ForEach(OpenCodeProvider.allCases) { option in choice(option.rawValue, on: provider == option) { provider = option } }
                 } else {
                     choice(cli == .claude ? "Sign in with Claude" : "Sign in with ChatGPT", on: !withKey) { withKey = false }
                     choice("API key", on: withKey) { withKey = true }
