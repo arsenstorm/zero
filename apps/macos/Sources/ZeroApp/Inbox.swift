@@ -866,6 +866,8 @@ enum Theme {
     static let sendIdle = dynamic(dark: NSColor(white: 0.36, alpha: 1), light: NSColor(white: 0.56, alpha: 1))
     /// "Done" in a pill: the system green reads pale as small text on its own light fill; this one has weight.
     static let done = dynamic(dark: NSColor(red: 0.40, green: 0.82, blue: 0.50, alpha: 1), light: NSColor(red: 0.09, green: 0.50, blue: 0.22, alpha: 1))
+    /// An answer's row: a tint over whatever it sits on (a card, a question's panel), so it reads as a button on both.
+    static let choice = dynamic(dark: NSColor(white: 1, alpha: 0.07), light: NSColor(white: 0, alpha: 0.05))
     static let keycap = dynamic(dark: NSColor(white: 0.22, alpha: 1), light: NSColor(white: 0.88, alpha: 1))
     /// A fully solid knob; `.primary` is a translucent label colour.
     static let knob = dynamic(dark: .white, light: .black)
@@ -1704,7 +1706,7 @@ struct CardView: View {
         // An answer Zero types into an agent that isn't waiting stays orange until it lands, and goes red if it can't.
         let failed = ask.delivery == .failed
         let settled = ask.state.isFinal && ask.delivery != .sending && !failed
-        let surface: Color = chosen ? (failed ? Theme.redRow : settled ? Theme.greenRow : Theme.orangeRow) : Theme.row
+        let surface: Color = chosen ? (failed ? Theme.redRow : settled ? Theme.greenRow : Theme.orangeRow) : Theme.choice
         let cap: Color = chosen ? (failed ? Theme.redCap : settled ? Theme.greenCap : Theme.orangeCap) : Theme.keycap
         return HStack(spacing: 10) {
             if let key {
