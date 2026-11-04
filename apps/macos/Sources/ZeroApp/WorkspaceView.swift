@@ -1561,6 +1561,10 @@ struct TaskPeekCard: View {
             ForEach(row.asks.prefix(3), id: \.id) { ask in line("circle-question", ask.title) }
             if row.asks.count > 3 { Text("and \(row.asks.count - 3) more asks").font(.system(size: 11.5)).foregroundStyle(.tertiary) }
             if let queued = row.queued, !queued.isEmpty { line("clock", "\(queued.count) queued" + (row.held == true ? ", held" : "")) }
+            if let wakes = row.wakes {
+                let at = Date(timeIntervalSince1970: TimeInterval(wakes))
+                line("alarm-clock", "Wakes " + (Calendar.current.isDateInToday(at) ? at.formatted(date: .omitted, time: .shortened) : at.formatted(.dateTime.weekday(.abbreviated).hour().minute())))
+            }
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
         .frame(width: 300, alignment: .leading)

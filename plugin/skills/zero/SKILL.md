@@ -120,7 +120,7 @@ Zero's Later is the user's list of work they'll come back to. Save one when the 
 
 Not for Later, as it fills the user's list with things they can't act on:
 - Ticket ideas and bugs you noticed along the way: tell the user in your answer, or put them in one item with the work they belong to.
-- Reminders to yourself (re-run a check at 23:45): that's yours to keep, in your own notes or a scheduled wake-up.
+- Reminders to yourself (re-run a check at 23:45): schedule them, below.
 - What needs the user (a decision, a step only they can take): ask them with `zero ask`.
 
 ```bash
@@ -140,6 +140,19 @@ Each item has two parts, written for different readers:
 - The artifact: everything you worked out, in full, in Markdown: findings, causes with file:line, the plan, commands, what you ruled out. Nothing summed up. Why: whoever picks it up later, often a fresh agent, has only this.
 
 Attach screenshots or files with `--attach`. Tell the user the item's link (zero://later/<id>). Given an item to pick up, read it with `zero later view` first, and mark it done with `zero later done` once it is.
+
+## Waking yourself later
+
+When something needs checking at a time (tomorrow's 05:12 UTC scan, a deploy in an hour), schedule it instead of noting it somewhere and hoping: Zero wakes this task then, saying `Scheduled: <your words>`, resuming it if it's parked, and keeps the schedule across its own restarts. Write the words for yourself then: what to check and what you expect.
+
+```bash
+zero schedule "Check tomorrow's Image Scan for OPS-3154 lists no OS packages" --at 05:30Z
+zero schedule "Look at the ENG-9818 deploy's error rate" --in 90m
+zero schedule list                # this task's
+zero schedule cancel k3x9qa
+```
+
+--at takes your clock's time (05:30, the next one), UTC (05:30Z) or a date (2026-11-05T05:30Z); --in takes 90m, 2h, 1d. End your turn after scheduling: there's nothing to wait for until then, and your row shows when you wake.
 
 ## The browser
 

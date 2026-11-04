@@ -380,6 +380,8 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     /// Your messages waiting for after the current turn, in order; held, they wait for your say (you stopped the agent).
     public var queued: [Queued]?
     public var held: Bool?
+    /// When it next wakes itself (`zero schedule`), in seconds since 1970.
+    public var wakes: Int?
     public var id: String { session }
     public struct Waiting: Decodable, Equatable, Sendable { public var id: String; public var title: String }
 
@@ -1293,6 +1295,13 @@ public final class ZerodLink: @unchecked Sendable {
     }
     public func watches(session: String?) async throws -> [[String: Any]] { try await call("watches", ["session": session]) as? [[String: Any]] ?? [] }
     public func unwatch(_ id: String) async throws { _ = try await call("unwatch", ["watch": id]) }
+
+    /// Wakes `session` at `at` with `text` (zerod's schedules.rs): the schedule, as zerod keeps it.
+    public func schedule(session: String, at: Date, text: String) async throws -> [String: Any] {
+        try await call("schedule", ["session": session, "at": Int(at.timeIntervalSince1970), "text": text]) as? [String: Any] ?? [:]
+    }
+    public func schedules(session: String?) async throws -> [[String: Any]] { try await call("schedules", ["session": session]) as? [[String: Any]] ?? [] }
+    public func unschedule(_ id: String) async throws { _ = try await call("unschedule", ["item": id]) }
 
     public func remind(session: String, minutes: Int, text: String) async throws {
         _ = try await call("remind", ["session": session, "minutes": minutes, "text": text])
