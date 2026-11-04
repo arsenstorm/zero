@@ -427,7 +427,9 @@ private struct TasksSidebar: View {
             // Not before the first board: until then every lead looks like it isn't on it.
             let earlier = workspace.board.isEmpty ? [] : earlier(all).filter { workspace.workspace(of: $0) == workspace.current }
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
+                // Not lazy: a lazy stack reuses row views, and a task added at the top showed a reused row whose state icon
+                // wasn't its own (or none). A sidebar holds tens of tasks, not thousands.
+                VStack(alignment: .leading, spacing: 1) {
                     // The heading where every sidebar's is, its sort button centred over the tasks' state icons below.
                     HStack(spacing: 0) {
                         Text("Tasks").font(.system(size: 13)).foregroundStyle(.secondary).padding(.leading, 10)
@@ -1397,6 +1399,7 @@ private struct TaskRow: View {
            case let .agent(text, _) = answer.kind, let ending = ZeroEnding.split(text).1 {
             switch ending {
             case .done: return .done
+            case .completed: return .completed
             case .working: return .idle
             case .blocked: return .blocked
             case .asked: return .needsYou
@@ -4060,3 +4063,4 @@ private struct UpdatingBar: View {
         return "\(left / 60):\(String(format: "%02d", left % 60))"
     }
 }
+
