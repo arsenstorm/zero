@@ -933,9 +933,9 @@ enum AgentStatus {
 }
 
 /// An arc turning once a second; a plain dot under Reduce Motion.
-/// A spinner driven by Core Animation: the arc turns on the render server, so a busy main thread (a Solo call
-/// during a spawn, a layout pass in the bar) cannot stall it, and a view rebuild does not restart it. A SwiftUI
-/// rotationEffect did both.
+/// A spinner drawn by SwiftUI, an arc turning once a second, its angle taken from the clock: it moves with the row it's
+/// in (an AppKit view in a row could stay where it was drawn as rows moved, showing in the wrong row or none), and a
+/// rebuild of the view doesn't restart it.
 struct Spinner: View {
     var color: Color = .blue
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -943,72 +943,13 @@ struct Spinner: View {
         if reduceMotion {
             Circle().fill(color)
         } else {
-            SpinnerLayer(color: NSColor(color))
+            TimelineView(.animation) { context in
+                let turn = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1)
+                Circle().inset(by: 2).trim(from: 0.15, to: 1)
+                    .stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .rotationEffect(.degrees(turn * 360)) // clockwise, as it always turned
+            }
         }
-    }
-}
-
-private struct SpinnerLayer: NSViewRepresentable {
-    let color: NSColor
-    func makeNSView(context: Context) -> SpinnerView { SpinnerView() }
-    func updateNSView(_ view: SpinnerView, context: Context) { view.color = color }
-}
-
-final class SpinnerView: NSView {
-    var color: NSColor = .systemBlue { didSet { recolor() } }
-    private let arc = CAShapeLayer()
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        wantsLayer = true
-        arc.fillColor = nil
-        arc.lineWidth = 2
-        arc.lineCap = .round
-        arc.strokeStart = 0.15
-        layer?.addSublayer(arc)
-    }
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-
-    /// Pointer events pass through, so the gestures on the dot or row underneath keep working.
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-    override func layout() {
-        super.layout()
-        fit()
-    }
-
-    /// The arc drawn to the view's size. Also on every resize: a row that's new is laid out at no size first, and given
-    /// its size without another layout pass, which left its arc at none (a task just started showed no spinner).
-    override func setFrameSize(_ size: NSSize) {
-        super.setFrameSize(size)
-        fit()
-    }
-
-    private func fit() {
-        arc.frame = bounds
-        arc.path = CGPath(ellipseIn: bounds.insetBy(dx: 2, dy: 2), transform: nil)
-        recolor()
-        spin()
-    }
-
-    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); if window != nil { fit() } }
-    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); recolor() }
-
-    private func recolor() {
-        effectiveAppearance.performAsCurrentDrawingAppearance { arc.strokeColor = color.cgColor }
-    }
-
-    /// One turn a second, clockwise, forever; re-added whenever the view comes back on screen, since Core
-    /// Animation drops animations from layers that leave the hierarchy.
-    private func spin() {
-        guard window != nil, arc.animation(forKey: "spin") == nil else { return }
-        let turn = CABasicAnimation(keyPath: "transform.rotation.z")
-        turn.fromValue = 0
-        turn.toValue = -2 * Double.pi
-        turn.duration = 1
-        turn.repeatCount = .infinity
-        turn.isRemovedOnCompletion = false
-        arc.add(turn, forKey: "spin")
     }
 }
 
