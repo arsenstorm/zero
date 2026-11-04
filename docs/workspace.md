@@ -30,7 +30,8 @@ providers' own types are close at hand.
 
 1. **Runtime**: the provider's own process (`codex app-server`, later `claude --print --input-format stream-json`,
    `opencode acp`), started by zerod through the login shell in the session's folder with a clean environment.
-   Zero never re-implements a provider and never handles its credentials: each process signs in as its CLI does.
+   Zero never re-implements a provider. It keeps the CLIs' sign-ins (`signins.rs`) and gives each process the one
+   chosen for its task, as that CLI reads one (a token or key in its environment, a Codex account's home).
 2. **Adapter** (`zerod/src/codex.rs`): one provider's protocol in, `Change`s to Zero's model out, with no I/O, so
    a live session and a replay of its transcript run the same code.
 3. **Core** (`zerod/src/model.rs`, `session.rs`, `daemon.rs`): the provider-neutral conversation, its sessions and
@@ -63,8 +64,8 @@ assuming every provider has everything.
 
 Each provider has an adapter in `crates/zerod/src` behind one trait (`adapter.rs`): its protocol in, `Change`s out,
 and the command line that starts it. Everything else (sessions, transcripts, replay, the socket) is shared. Each
-runtime is the provider's own CLI, unmodified, signed in as it always is; zerod never reads or holds a credential
-and makes no calls to any provider's service itself.
+runtime is the provider's own CLI, unmodified, signed in with the sign-in Zero hands it (`signins.rs`); zerod makes
+no calls to any provider's service itself.
 
 | | Runtime | Approvals | Mid-turn message | Resume |
 |---|---|---|---|---|

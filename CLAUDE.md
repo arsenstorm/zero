@@ -16,7 +16,9 @@ is their UI and the inbox where agents reach the user. `docs/workspace.md` has t
 
 - Work on `main`; no branches. Commit only when the user says, one line each: `type(scope): message` under 72
   characters, no body or trailers (scopes in use: `zerod`, `app`). Pushing also needs their word.
-- zerod is test first: write the failing test in `crates/zerod/tests/`, then the code. Swift UI isn't unit tested;
+- zerod is test first: write the failing test in `crates/zerod/tests/integration/` (one test program: a new file
+  there is a `mod` in its `main.rs`, never a test file of its own, as each program costs seconds to start), then the
+  code. Swift UI isn't unit tested;
   `ZeroCore` is (`apps/macos/Tests/ZeroCoreTests`).
 - Before installing: `cargo test -p zerod`, `cargo clippy -p zerod --all-targets` (clean), `swift test --package-path apps/macos`.
 - `make install` builds, installs `/Applications/Zero.app` and reopens it where the user was (their drafts are kept).
@@ -31,8 +33,10 @@ is their UI and the inbox where agents reach the user. `docs/workspace.md` has t
 
 - Zero is a general tool: no one team's specifics in code, prompts or docs. A team's workflow is
   evidence for general mechanisms (places commands, attributes, drops), not features. Agent-facing text says "the user".
-- zerod never reads, stores or forwards provider credentials, and never calls providers' services itself: each CLI
-  signs itself in. Use the `claude` CLI (stream-json), never the Agent SDK with a subscription.
+- Zero keeps the CLIs' sign-ins (`signins.rs`: values in the Keychain, a Codex account's in the home Codex keeps it
+  in) and hands each CLI the chosen one as it starts, in the form that CLI reads. It never calls providers' services
+  itself (the CLIs make every call), and never logs, prints or sends a sign-in anywhere but to its CLI. Use the
+  `claude` CLI (stream-json), never the Agent SDK with a subscription.
 - Never commit `~/.zero/asks.jsonl` or anything from `~/.zero`; never print secrets.
 - Don't change the user's OpenCode permission config unasked.
 
