@@ -659,7 +659,11 @@ private struct BrowserRows: View {
     let workspace: Workspace
     @State private var connected: [String]?
     @State private var folder: String?
-    @State private var blocked = ""
+    @State private var blocked: [String] = []
+    @State private var adding = ""
+    /// Safari tried: nil not yet, "" fine, else why not.
+    @State private var safari: String?
+    @State private var trying = false
     @State private var opening = false
     @State private var firefoxError: String?
 
@@ -680,10 +684,19 @@ private struct BrowserRows: View {
                     }
                 }
             }
-            SettingsSection(title: "Every browser") { sites }
+            SettingsSection(title: "Safari") {
+                Rows {
+                    SettingRow(title: "Safari's automation windows", detail: safari.map { $0.isEmpty ? "Working: comparisons open a Safari window of their own, with real clicks and keys. It starts signed out and keeps nothing." : $0 }
+                        ?? "Used when an agent compares a page across browsers: a Safari window of its own, with real clicks and keys, signed out and keeping nothing. Needs Safari's Developer settings › Allow remote automation.") {
+                        if trying { ProgressView().controlSize(.small) }
+                        else { RowButton(title: "Try it") { trySafari() } }
+                    }
+                }
+            }
+            SettingsSection(title: "Blocked sites") { sites }
         }
         .task {
-            blocked = await workspace.blockedSites().joined(separator: ", ")
+            blocked = await workspace.blockedSites()
             while !Task.isCancelled {
                 connected = await workspace.browsers()
                 try? await Task.sleep(for: .seconds(3))
@@ -715,14 +728,45 @@ private struct BrowserRows: View {
         }
     }
 
+    /// The sites no task may use, in every browser: one a row, removed from its row, added from the last.
     private var sites: some View {
-            Rows {
-                SettingRow(title: "Blocked sites", detail: "No task may open these, or act on a tab showing one. A site covers its subdomains. Any other site is allowed; in auto mode a reviewer looks at each new one first.") {
-                    TextField("bank.com, mail.google.com", text: $blocked)
-                        .textFieldStyle(.roundedBorder).font(.system(size: 12)).frame(width: 220)
-                        .onSubmit { Task { await workspace.saveBlockedSites(blocked.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }) } }
+        VStack(alignment: .leading, spacing: 8) {
+            Text("No task may open these, or act on a tab showing one. A site covers its subdomains; any other site is allowed (in auto mode a reviewer looks at each new one first).")
+                .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 0) {
+                ForEach(blocked, id: \.self) { site in
+                    BlockedSiteRow(site: site) { saveSites(blocked.filter { $0 != site }) }
+                    Divider().padding(.leading, 16)
                 }
+                HStack(spacing: 10) {
+                    NucleoIcon("plus", size: 13).foregroundStyle(.secondary)
+                    TextField("Add a site (bank.com)", text: $adding).textFieldStyle(.plain).font(.system(size: 13))
+                        .onSubmit {
+                            let site = adding.trimmingCharacters(in: .whitespaces).lowercased()
+                            guard !site.isEmpty, !blocked.contains(site) else { adding = ""; return }
+                            saveSites(blocked + [site])
+                            adding = ""
+                        }
+                }
+                .padding(.horizontal, 16).frame(height: 40)
             }
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.stroke))
+            .padding(.horizontal, -18)
+        }
+    }
+
+    private func saveSites(_ sites: [String]) {
+        blocked = sites
+        Task { await workspace.saveBlockedSites(sites) }
+    }
+
+    private func trySafari() {
+        trying = true
+        Task {
+            safari = await workspace.checkSafari() ?? ""
+            trying = false
+        }
     }
 
     private func setUp() {
@@ -734,6 +778,23 @@ private struct BrowserRows: View {
                 NSWorkspace.shared.open([page], withApplicationAt: chrome, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
             }
         }
+    }
+}
+
+/// A blocked site's row: its name, and a trash icon on hover that removes it.
+private struct BlockedSiteRow: View {
+    let site: String
+    let remove: () -> Void
+    @State private var hovered = false
+    var body: some View {
+        HStack {
+            Text(site).font(.system(size: 13))
+            Spacer()
+            Button(action: remove) { NucleoIcon("trash", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28) }
+                .buttonStyle(Hovering(radius: 7)).tip("Unblock it").opacity(hovered ? 1 : 0)
+        }
+        .padding(.leading, 16).padding(.trailing, 8).frame(height: 40)
+        .contentShape(Rectangle()).onHover { hovered = $0 }
     }
 }
 

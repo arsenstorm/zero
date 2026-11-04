@@ -480,6 +480,12 @@ public final class Workspace {
     public func browserSetup() async -> String? { await attempt { try await $0.browserSetup().extension } }
     /// The Chromes connected to Zero, by name.
     public func browsers() async -> [String] { ((try? await link?.browsers()) ?? []).map(\.name) }
+    /// Tries Safari's automation windows; an error to show.
+    public func checkSafari() async -> String? {
+        guard let link = await linked() else { return "Zero's daemon isn't running" }
+        do { try await link.checkSafari(); return nil } catch { return error.localizedDescription }
+    }
+
     /// Opens Firefox under Zero's remote control; an error to show.
     public func openFirefox() async -> String? {
         guard let link = await linked() else { return "Zero's daemon isn't running" }

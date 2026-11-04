@@ -1157,6 +1157,9 @@ public final class ZerodLink: @unchecked Sendable {
         return try JSONDecoder().decode(RestartStatus.self, from: JSONSerialization.data(withJSONObject: result ?? [:]))
     }
 
+    /// Safari's automation session started, as browser_compare starts it: whether Safari takes remote control.
+    public func checkSafari() async throws { _ = try await call("checkSafari") }
+
     /// Firefox Developer Edition opened under Zero's remote control, its extension installed.
     public func openFirefox() async throws { _ = try await call("openFirefox") }
 
