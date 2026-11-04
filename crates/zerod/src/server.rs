@@ -184,7 +184,7 @@ impl Zerod {
         let daemon = &self.daemon;
         let mut rows = crate::board::board_in(&daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(), &self.inbox.asks(), &self.places.get(), &daemon.queues(), &|c| daemon.workspace_of(c));
         crate::board::mark_read(&mut rows, &|id| daemon.has_read(id));
-        crate::board::mark_paused(&mut rows, &|id| daemon.is_paused(id));
+        crate::board::mark_paused(&mut rows, &|id| daemon.is_paused(id) || daemon.is_paused_for_update(id));
         for row in rows.iter_mut() { row.wakes = daemon.next_wake(&row.session) }
         rows
     }

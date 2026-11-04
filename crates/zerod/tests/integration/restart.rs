@@ -47,6 +47,8 @@ async fn a_restart_waits_for_a_running_command_then_pauses_the_turn_to_carry_on(
     let paused = tokio::time::timeout(Duration::from_secs(10), pausing).await.unwrap().unwrap(); // its interrupt goes unanswered here: 5 s
     assert_eq!(paused, std::slice::from_ref(&working), "only what was under way");
     assert_eq!(daemon.restart_status()["waiting"], serde_json::json!([]), "nothing left to wait for");
+    // Shown as paused meanwhile, as one the user paused is: not as a task with nothing to say.
+    assert!(daemon.is_paused_for_update(&working) && !daemon.is_paused_for_update(&idle));
     let words = std::fs::read_to_string(home.join("zerod/sessions").join(&working).join("pending.json")).unwrap();
     assert!(words.contains("carry on"), "kept for the new zerod to give it: {words}");
     assert!(!home.join("zerod/sessions").join(&idle).join("pending.json").exists());
