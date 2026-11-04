@@ -102,6 +102,7 @@ A worker you want held, for the night or until something else lands: `zero pause
 - One worker per unit of work: a ticket, a review, a test run. Its brief says what to do, where, what counts as done, what it must not do (merge, publish, write anywhere outward), and that its final answer is its report to you. A worker's answer reaches you when it ends; you don't poll.
 - Workers report to you, not to the user. You batch what reaches the user: one ask per decision, the workers' findings behind it, one note per milestone. A worker that needs the user goes through you, except a command only the user's Mac can run, which it asks with `zero run --why`.
 - `zero wait` to wait, `zero result` to read, `zero send` to answer a worker's question or send back findings; it resumes where it was. A worker may start workers of its own the same way (a reviewer, a runner) and closes them when it has read them.
+- A worker the user wants as a task of its own (a lead, not under you): `zero detach <its id>`. `zero adopt <id>` puts a task under you.
 - Close a worker once you have read its result and need nothing more from it. Keep one you may send back to. Set `zero attr` for what the user should see on the task (its PR, say) as soon as it exists.
 - Zero's restarts pause a worker's turn and carry it on; nothing is lost and nothing needs redoing. Never put work that must outlive your turn in a subagent.
 
