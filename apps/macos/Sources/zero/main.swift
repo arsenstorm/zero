@@ -7,20 +7,20 @@ func usage(help: Bool = false) -> Never {
     let text = """
     usage:
       zero ask     "short question?" [--option A --option B ...] [--body "details"] [--title T] [--code 'command or snippet']
-                   the question is one line (about 12 words); the details Arsen may need go in --body
-                   an option ending with "…" asks Arsen for text; the answer is then "label: text"
+                   the question is one line (about 12 words); the details the user may need go in --body
+                   an option ending with "…" asks the user for text; the answer is then "label: text"
       zero approve "what you want to do" [--body "details"] [--code 'command or snippet']   (Yes / No / Suggest something else…)
       zero run     'command' --why "what you need the output for" [--cwd DIR] [--title T]
-                   runs on Arsen's Mac after he presses Run; a script file's contents are shown to him
-      zero note    "where you are now" [--done | --waiting] [--needs "what Arsen should do, when he can"]
-                   (no answer; sets your agent's dot and its row on Zero's board: working, blocked, done, or
-                   waiting on something other than Arsen)
-      zero withdraw <id> [--reason "why"]   (take back an open ask that no longer needs Arsen)
+                   runs on the user's Mac after they press Run; a script file's contents are shown to them
+      zero note    "where you are now" [--done | --waiting] [--needs "what the user should do, when they can"]
+                   (no answer; sets your agent's dot and its row on Zero's board: working, waiting on something
+                   other than the user, or done: nothing left you can do)
+      zero withdraw <id> [--reason "why"]   (take back an open ask that no longer needs the user)
       zero wait    <id>
       zero status  <id>
       zero list
       zero attach  [agent]   (shows one of Zero's own agents' terminal here to watch or type in; ⌃] lets go. No agent: lists them)
-      zero say     <agent> "text"   (sends Arsen's words to the agent through Zero, as the inbox's message box does)
+      zero say     <agent> "text"   (sends the user's words to the agent through Zero, as the inbox's message box does)
     sessions Zero runs (from inside one, the session you are in is the lead):
       zero spawn   "task" [--brief FILE] [--loop NAME] [--provider codex|claude|opencode] [--model M] [--effort E] [--cwd DIR]
                    [--label NAME] [--ticket REF] [--permissions auto|unrestricted] [--workspace ID]
@@ -344,7 +344,7 @@ case "approve":
     create(Ask(kind: .approve, title: what, body: flag("body") ?? "", options: ["Yes", "No", "Suggest something else…"],
                command: flag("code"), agent: agentIdentity(), ttl: ttl))
 case "permission":
-    // Claude Code's PermissionRequest hook input on stdin; Arsen's answer goes back as the hook's decision. If Zero
+    // Claude Code's PermissionRequest hook input on stdin; the user's answer goes back as the hook's decision. If Zero
     // can't be reached or the ask expires, nothing is printed and Claude Code's own permission flow carries on.
     let hook = FileHandle.standardInput.readDataToEndOfFile()
     // Claude Code's own questions are answered by the question hook, as questions, not as a permission.
@@ -359,7 +359,7 @@ case "permission":
             hookReply(["hookSpecificOutput": ["hookEventName": "PermissionRequest", "decision": decision]])
         case .declined:
             hookReply(["hookSpecificOutput": ["hookEventName": "PermissionRequest",
-                                              "decision": ["behavior": "deny", "message": "Arsen said no in Zero" + (reason(done).map { ": \($0)" } ?? "")]]])
+                                              "decision": ["behavior": "deny", "message": "The user said no in Zero" + (reason(done).map { ": \($0)" } ?? "")]]])
         default:
             exit(0)
         }
@@ -396,7 +396,7 @@ case "withdraw":
     guard let reply = socket.receive(Response.self), reply.op == "withdrawn" else { fail("zero: no reply from Zero.app") }
 case "prompt":
     // The plugin's UserPromptSubmit hook. Works out who sent the prompt: a Solo timer or a background result
-    // (machinery), Zero (an answer or a message from the inbox), the lead (a worker's brief), or Arsen typing in
+    // (machinery), Zero (an answer or a message from the inbox), the lead (a worker's brief), or the user typing in
     // the terminal. Records it for the stop hook and tells the agent how to treat the turn.
     let input = (try? JSONSerialization.jsonObject(with: FileHandle.standardInput.readDataToEndOfFile())) as? [String: Any] ?? [:]
     let prompt = (input["prompt"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -408,13 +408,13 @@ case "prompt":
     let previous = saved?.first.map(String.init)
     let typedRecently = previous == "human" && (saved?.dropFirst().first.flatMap { Double($0) }).map { Date().timeIntervalSince1970 - $0 < 600 } == true
     let machinery = ["[Solo timer", "<task-notification>", "<system-reminder>", "Caveat:"].contains { prompt.hasPrefix($0) }
-    let zeroSaid = ["Arsen answered your ask", "Arsen declined your ask", "Arsen ran your command", "Arsen rejected your command", "Your ask "]
+    let zeroSaid = ["The user answered your ask", "The user declined your ask", "The user ran your command", "The user rejected your command", "Your ask "]
         .contains { prompt.hasPrefix($0) }
     let brief = prompt.range(of: #"\b(BRIEF|FIX|REVIEW|TEST)[\w.-]*\.md\b"#, options: .regularExpression) != nil
     var source: String
     if previous == "worker" || brief { source = "worker" }
-    // A timer, a background result or Zero's answer arriving while Arsen is in the chat (often mid-turn) doesn't
-    // mean he left: within ten minutes of his last typed prompt the turn stays his. After that, Zero's rules again.
+    // A timer, a background result or Zero's answer arriving while the user is in the chat (often mid-turn) doesn't
+    // mean they left: within ten minutes of their last typed prompt the turn stays theirs. After that, Zero's rules again.
     else if machinery || zeroSaid { source = typedRecently ? "human" : "zero" }
     else {
         // Zero's own inbox messages look typed; Zero knows what it sent. Unknown without Zero: treat as typed.
@@ -428,15 +428,15 @@ case "prompt":
     let stamp = source == "human" && typedRecently && (machinery || zeroSaid) ? (saved?.dropFirst().first.map(String.init) ?? "") : String(Int(Date().timeIntervalSince1970))
     try? "\(source) \(stamp)".write(to: file, atomically: true, encoding: .utf8)
     let context: String? = switch source {
-    case "human": "Arsen typed this in the terminal and is at the keyboard: answer him here in the chat. This turn needs no Zero note and no [zero: …] ending, and anything you'd ask him, ask here."
-    case "worker": "You were started from a brief by a lead agent: report to that lead as the brief says, not to Arsen. Don't post Zero notes or asks and don't end turns with [zero: …]. Only use zero run, with --why, for a command only Arsen can run on his Mac."
+    case "human": "The user typed this in the terminal and is at the keyboard: answer them here in the chat. This turn needs no Zero note and no [zero: …] ending, and anything you'd ask them, ask here."
+    case "worker": "You were started from a brief by a lead agent: report to that lead as the brief says, not to the user. Don't post Zero notes or asks and don't end turns with [zero: …]. Only use zero run, with --why, for a command only the user can run on their Mac."
     default: nil
     }
     guard let context else { exit(0) }
     hookReply(["hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": context]])
 case "run":
     guard let shell = positional.first else { usage() }
-    guard flag("why") != nil || flag("body") != nil else { fail("zero run needs --why: say what you need the output for, so Arsen knows what he is running") }
+    guard flag("why") != nil || flag("body") != nil else { fail("zero run needs --why: say what you need the output for, so the user knows what they are running") }
     shortDetail(flag("why") ?? flag("body"), flag: "why")
     let folder = flag("cwd") ?? FileManager.default.currentDirectoryPath
     var run = Ask(kind: .run, title: flag("title") ?? flag("ticket") ?? "Run a command", body: flag("why") ?? flag("body") ?? "",
