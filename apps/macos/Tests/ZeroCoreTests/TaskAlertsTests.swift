@@ -4,13 +4,13 @@ import Testing
 
 /// A lead's row as zerod's board sends it: its team's state, its own, and a worker's when it has one.
 private func row(_ id: String, state: String, own: String? = nil, worker: String? = nil, now: String? = nil, needs: String? = nil,
-                 asks: [String] = []) -> BoardRow {
+                 asks: [String] = [], quiet: Bool = false) -> BoardRow {
     let team = worker.map { #"[{"session":"w-\#(id)","state":"\#($0)","place":"w","asks":[]}]"# } ?? "[]"
     let json = """
     {"session":"\(id)","task":"Task \(id)","workspace":"zero","place":"p","online":true,"state":"\(state)","own":"\(own ?? state)",
      "now":\(now.map { "\"\($0)\"" } ?? "null"),"needs":\(needs.map { "\"\($0)\"" } ?? "null"),
      "asks":[\(asks.enumerated().map { #"{"id":"a\#($0.offset)","title":"\#($0.element)"}"# }.joined(separator: ","))],
-     "workers":\(worker == nil ? 0 : 1),"team":\(team)}
+     "workers":\(worker == nil ? 0 : 1),"team":\(team),"quiet":\(quiet)}
     """
     return try! JSONDecoder().decode(BoardRow.self, from: Data(json.utf8))
 }
@@ -83,4 +83,12 @@ private func row(_ id: String, state: String, own: String? = nil, worker: String
     _ = TaskAlerts.changes(from: [row("2", state: "working")], to: [row("2", state: "needsYou", asks: ["Merge it?"])], announced: &announced)
     _ = TaskAlerts.changes(from: [row("2", state: "needsYou")], to: [row("2", state: "working")], announced: &announced)
     #expect(TaskAlerts.changes(from: [row("2", state: "working")], to: [row("2", state: "needsYou", asks: ["Deploy it?"])], announced: &announced).alerts.count == 1)
+}
+
+@Test func aReplyToATurnZeroStartedIsNoAlert() {
+    // An event it follows passed on, a worker's report: the reply shows (unread), but there's nothing to tell.
+    #expect(TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "answered", quiet: true)]).alerts.isEmpty)
+    #expect(TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "answered")]).alerts.count == 1, "a reply to the user is")
+    #expect(TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "needsYou", asks: ["Merge it?"], quiet: true)]).alerts.count == 1,
+            "what needs the user is news, whoever started the turn")
 }

@@ -22,6 +22,8 @@ public enum TaskAlerts {
         if row.state == .needsYou { return (.needsYou, .needsYou, true) }
         switch own {
         case .trouble: return (.trouble, own, false)
+        // A reply to a turn Zero started (an event, a worker's report): there to read, nothing to tell.
+        case .answered where row.quiet == true: return nil
         case .handed, .done, .answered, .blocked, .completed: return (.finished, own, false)
         default: return nil
         }

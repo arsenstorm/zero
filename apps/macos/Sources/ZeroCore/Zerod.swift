@@ -392,6 +392,8 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     public var held: Bool?
     /// When it next wakes itself (`zero schedule`), in seconds since 1970.
     public var wakes: Int?
+    /// Its last turn was Zero's (an event it follows, a worker's report), not the user's: a reply to it isn't announced.
+    public var quiet: Bool?
     public var id: String { session }
     public struct Waiting: Decodable, Equatable, Sendable { public var id: String; public var title: String }
 
