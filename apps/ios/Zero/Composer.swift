@@ -11,6 +11,7 @@ struct Composer: View {
     let session: String
     @State private var draft = ""
     @State private var picked: [PhotosPickerItem] = []
+    @State private var picking = false
     @State private var images: [UIImage] = []
     @State private var models: [PhoneModel.ModelChoice] = []
     /// Chosen here for the next message; until then, the task's own.
@@ -22,13 +23,18 @@ struct Composer: View {
     @FocusState private var focused: Bool
 
     private var empty: Bool { draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && images.isEmpty }
-    /// Not being written in (the keyboard down, nothing typed or attached, not listening): one slim capsule.
-    private var compact: Bool { !focused && empty && !dictation.listening }
+    /// Not being written in (the keyboard down, not listening): one slim capsule, whatever's in it. What's written
+    /// shows as its first line and sends from there; a tap opens it again, all of it there.
+    private var compact: Bool { !focused && !dictation.listening }
 
+    /// Asks for the picker, which hangs off the composer itself: the button moves as the composer folds and opens
+    /// (opening the picker takes the keyboard, which folds it), and a sheet on the button went with it, closing at once.
     private var photos: some View {
-        PhotosPicker(selection: $picked, maxSelectionCount: 10, matching: .images) {
+        Button { picking = true } label: {
             Image("plus-outline").resizable().frame(width: 20, height: 20).frame(width: 40, height: 40)
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add photos")
     }
 
     private var microphone: some View {
@@ -113,11 +119,19 @@ struct Composer: View {
             queueStrip
             box
         }
+        .photosPicker(isPresented: $picking, selection: $picked, maxSelectionCount: 10, matching: .images)
+        // What's written is kept on the phone as it's typed: back after the app is closed or restarted, gone once sent.
+        .onAppear { if draft.isEmpty, let kept = UserDefaults.standard.string(forKey: draftKey) { draft = kept } }
+        .onChange(of: draft) { _, text in
+            if text.isEmpty { UserDefaults.standard.removeObject(forKey: draftKey) } else { UserDefaults.standard.set(text, forKey: draftKey); model.warm(session) }
+        }
     }
+
+    private var draftKey: String { "draft." + session }
 
     private var box: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if !images.isEmpty {
+            if !images.isEmpty && !compact {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(Array(images.enumerated()), id: \.offset) { index, image in
@@ -139,7 +153,7 @@ struct Composer: View {
             HStack(alignment: .center, spacing: 0) {
                 if compact { photos }
                 TextField(dictation.listening ? "Listening…" : "Write to this task", text: $draft, axis: .vertical)
-                    .lineLimit(1...8)
+                    .lineLimit(compact ? 1...1 : 1...8)
                     .focused($focused)
                     .padding(.leading, compact ? 4 : 18).padding(.trailing, compact ? 4 : 18)
                     .padding(.top, compact ? 0 : 16).padding(.bottom, compact ? 0 : 6)
@@ -164,6 +178,16 @@ struct Composer: View {
         // Concentric: the 40 pt buttons sit 4 pt in a 48 pt capsule (20 + 4), 8 pt in the open box (20 + 8). Closed, it
         // also sits further in from the screen's edges, so its round ends follow the screen's corners.
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: compact ? 24 : 28))
+        // Open, a grabber on its top edge, as a sheet has: swiped down, the keyboard goes and it folds to its capsule,
+        // what's written kept. Only a mostly downward swipe: selecting text and scrolling a long draft still work.
+        .overlay(alignment: .top) {
+            if !compact { Capsule().fill(.tertiary).frame(width: 36, height: 5).padding(.top, 6).allowsHitTesting(false).transition(.opacity) }
+        }
+        .simultaneousGesture(DragGesture(minimumDistance: 14).onEnded { drag in
+            guard !compact, drag.translation.height > 30, drag.translation.height > abs(drag.translation.width) * 1.5 else { return }
+            dictation.stop()
+            focused = false
+        })
         .padding(.horizontal, compact ? 30 : 12).padding(.bottom, compact ? 2 : 8)
         .animation(.smooth(duration: 0.28), value: compact)
         .onChange(of: picked) {
@@ -245,6 +269,8 @@ struct Composer: View {
         dictation.stop()
         let text = draft, photos = images.compactMap { $0.jpegData(compressionQuality: 0.8) }, choice = chosen
         draft = ""; images = []; picked = []; chosen = nil
+        // The keyboard can put words back that were mid-correction as the box emptied: emptied again once it's done.
+        DispatchQueue.main.async { if !draft.isEmpty { draft = "" } }
         sending = true
         Task {
             defer { sending = false }
@@ -292,7 +318,8 @@ struct Composer: View {
                 let said = result?.bestTranscription.formattedString
                 let done = error != nil || result?.isFinal == true
                 Task { @MainActor in
-                    if let said { write(before.isEmpty ? said : before + " " + said) }
+                    // Stopped (the message sent, say): the recogniser's last word doesn't write the box again.
+                    if let said, self?.listening == true { write(before.isEmpty ? said : before + " " + said) }
                     if done { self?.stop() }
                 }
             }

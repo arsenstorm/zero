@@ -139,6 +139,8 @@ import UserNotifications
         guard self.link === link else { return }
         if answered.yes {
             for id in path { await load(id, again: true) }
+            // Back in front: what's shown checked against how things are now.
+            tidyShown()
         } else {
             Log.write("phone: the connection went quiet while away; connecting again")
             link.close()
@@ -169,11 +171,15 @@ import UserNotifications
                 guard let self else { return }
                 switch feed {
                 case .board(let rows):
+                    let before = self.rows
                     self.rows = rows
+                    self.tidy(after: before)
                     ZeroIndex.update(rows)
                     await self.arrange()
                     await self.name(rows)
                 case .later: await self.loadLater()
+                // Seen on the Mac: off here too, now (the quiet push for it may never come).
+                case .clear(let ids): UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids)
                 // The workspaces changed (one added, renamed, removed): the picker follows.
                 case .workspaces: await self.loadWorkspaces()
                 default: break
@@ -211,13 +217,43 @@ import UserNotifications
 
     private func inbox(_ message: ZerodLink.InboxMessage) {
         switch message {
-        case let .asks(all, _, _): asks = all
+        case let .asks(all, _, _): asks = all; asksKnown = true
         case let .ask(ask):
             if let index = asks.firstIndex(where: { $0.id == ask.id }) { asks[index] = ask } else { asks.append(ask) }
         case let .removed(id): asks.removeAll { $0.id == id }
         case .output, .agents: break
         }
     }
+
+    /// Notifications for what no longer needs the user (an answer seen, a task moved on, an ask answered) taken off
+    /// the phone itself, whether or not the Mac's quiet push for them came: iOS rations those, and drops them for an app
+    /// closed. On each new board, the tasks that moved on; on the first since connecting, every notification shown.
+    private func tidy(after before: [BoardRow]) {
+        let center = UNUserNotificationCenter.current()
+        if !before.isEmpty {
+            let cleared = TaskAlerts.changes(from: before, to: rows).cleared
+            if !cleared.isEmpty { center.removeDeliveredNotifications(withIdentifiers: cleared) }
+            return
+        }
+        tidyShown()
+    }
+
+    /// Every notification shown, against the board (and the asks, once they've come): those for nothing that needs
+    /// the user now are taken off. Never without a board: an empty one would take them all.
+    private func tidyShown() {
+        guard !rows.isEmpty else { return }
+        let (rows, asks, asksKnown) = (rows, asks, asksKnown)
+        Task {
+            let center = UNUserNotificationCenter.current()
+            let shown = await center.deliveredNotifications().map(\.request.identifier)
+            let stale = shown.filter { id in
+                if id.hasPrefix(TaskAlerts.askPrefix) { return asksKnown && !asks.contains { TaskAlerts.askPrefix + $0.id == id && $0.state == .waiting } }
+                return rows.first { $0.session == id }.flatMap(TaskAlerts.standing) == nil
+            }
+            if !stale.isEmpty { center.removeDeliveredNotifications(withIdentifiers: stale) }
+        }
+    }
+    @ObservationIgnored private var asksKnown = false
 
     /// The tasks as the Mac's sidebar lists them.
     var tasks: [BoardRow] { BoardRow.sorted(rows.filter { $0.workspace == workspace }, by: sidebar.sort, order: sidebar.order) }
@@ -257,6 +293,11 @@ import UserNotifications
     }
 
     var currentWorkspace: ZerodLink.Workspace? { workspaces.first { $0.id == workspace } }
+
+    /// A task of another workspace opened (a notification, Siri): the list goes to its workspace, the task kept open.
+    func follow(_ session: String) {
+        if let home = row(session)?.workspace, home != workspace { workspace = home }
+    }
 
     /// The asks waiting on the user, oldest first.
     var waiting: [Ask] { asks.filter { ($0.state == .waiting || $0.state == .pending) && $0.kind != .note && $0.kind != .message && $0.sameAs == nil }.sorted { $0.createdAt < $1.createdAt } }
@@ -324,8 +365,15 @@ import UserNotifications
     /// Images sent to a task: each kept on the Mac (its "upload"), then the message naming them.
     func send(_ text: String, images: [Data], to session: String, model: String? = nil, effort: String? = nil) async throws {
         guard let link else { throw ZerodError(message: "Not connected to your Mac") }
+        // Shown at once, while its agent starts: the conversation's own takes its place.
+        let echo = Sending(text: text, images: [])
+        sending[session, default: []].append(echo)
+        defer { sending[session]?.removeAll { $0.id == echo.id } }
         try await link.send(session: session, text: text, images: upload(images, through: link), model: model, effort: effort)
     }
+
+    /// Messages sent from here that their conversation doesn't have yet, by session.
+    private(set) var sending: [String: [Sending]] = [:]
 
     /// For after the task's current turn: queued behind what's waiting, as the Mac's Return while it works.
     func queue(_ text: String, images: [Data], to session: String) async throws {
@@ -340,6 +388,15 @@ import UserNotifications
         }
         return paths
     }
+
+    /// Being written to while its agent has stopped: started in the background, at most once a minute, so the message
+    /// doesn't wait for it. Never for a task the user has paused.
+    func warm(_ session: String) {
+        guard let row = row(session), !row.online, row.ownState != .paused, Date().timeIntervalSince(warmed[session] ?? .distantPast) > 60 else { return }
+        warmed[session] = Date()
+        Task { try? await link?.resume(session: session) }
+    }
+    @ObservationIgnored private var warmed: [String: Date] = [:]
 
     func unqueue(_ session: String, item: String) async -> Bool { (try? await link?.unqueue(session: session, item: item)) != nil }
     /// A queued message sent now, mid-turn, its images as they were kept on the Mac.

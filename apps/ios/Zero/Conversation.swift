@@ -8,7 +8,7 @@ struct ConversationView: View {
     let conversation: Conversation
 
     var body: some View {
-        let blocks = TimelineBlock.of(conversation.items.filter { item in !conversation.approvals.contains { $0.item == item.id } },
+        let blocks = TimelineBlock.of(Sending.merge(conversation.items, model.sending[conversation.id] ?? []).filter { item in !conversation.approvals.contains { $0.item == item.id } },
                                       working: conversation.status == .working || conversation.status == .waiting)
         // Not lazy: a lazy stack under a bottom anchor drew nothing until scrolled, and the phone holds one page only.
         VStack(alignment: .leading, spacing: 24) {
@@ -182,7 +182,8 @@ struct WorkBlock: View {
                     StepView(model: model, session: session, item: item, until: index + 1 < items.count ? items[index + 1].date : end)
                 }
             }
-            if live { Text("Thinking…").font(.subheadline).foregroundStyle(.tertiary) }
+            // Under steps of work, what it's at now; with only thought so far the heading says "Thinking" already.
+            if live, worked { Text("Thinking…").font(.subheadline).foregroundStyle(.tertiary) }
         }
     }
 
@@ -330,13 +331,22 @@ struct TableView: View {
         VStack(alignment: .leading, spacing: 8) {
             if !title.isEmpty { Text(title).font(.subheadline.weight(.semibold)) }
             ScrollView(.horizontal) {
-                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+                // A column with long words is a set width its cells wrap in, so each row is as tall as its words;
+                // the rest are as wide as they need, on one line. (In a sideways scroll a cell is otherwise measured
+                // on one line and only then narrowed, its wrapped lines spilling over the rows below.)
+                let wide = columns.indices.map { column in rows.contains { column < $0.count && $0[column].count > 28 } }
+                Grid(alignment: .topLeading, horizontalSpacing: 14, verticalSpacing: 10) {
                     GridRow { ForEach(Array(columns.enumerated()), id: \.offset) { _, column in Text(column).font(.caption.weight(.semibold)) } }
                     Divider()
                     ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                         GridRow {
                             ForEach(Array(row.enumerated()), id: \.offset) { index, cell in
-                                Cell(text: cell, column: index < columns.count ? columns[index] : "").frame(maxWidth: 260, alignment: .leading)
+                                let content = Cell(text: cell, column: index < columns.count ? columns[index] : "")
+                                if index < wide.count, wide[index] {
+                                    content.fixedSize(horizontal: false, vertical: true).frame(width: 240, alignment: .leading)
+                                } else {
+                                    content.fixedSize()
+                                }
                             }
                         }
                     }

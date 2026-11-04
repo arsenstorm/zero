@@ -440,6 +440,7 @@ struct TaskView: View {
         .navigationTitle(model.rows.first { $0.session == session }?.task ?? model.names[session] ?? "Task")
         // Seen: its notification goes (on the Mac too, the board moving on).
         .onAppear {
+            model.follow(session)
             UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [session])
             model.markSeen(session)
             settle()
