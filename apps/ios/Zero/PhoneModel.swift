@@ -301,7 +301,7 @@ import UserNotifications
     }
 
     /// The asks waiting on the user, oldest first.
-    var waiting: [Ask] { asks.filter { ($0.state == .waiting || $0.state == .pending) && $0.kind != .note && $0.kind != .message && $0.sameAs == nil }.sorted { $0.createdAt < $1.createdAt } }
+    var waiting: [Ask] { asks.filter { ($0.state == .waiting || $0.state == .pending) && $0.isForYou }.sorted { $0.createdAt < $1.createdAt } }
 
     func conversation(_ id: String) -> Conversation? { lives[id]?.conversation }
 

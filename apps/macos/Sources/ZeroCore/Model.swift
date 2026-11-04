@@ -75,6 +75,9 @@ public struct Ask: Codable, Identifiable, Sendable {
     /// For a note: what the agent hands to Arsen without waiting for it ("mark the PR ready and merge it").
     public var needs: String?
 
+    /// An ask for the user to answer: not a note or a message, not expired, and not a run sharing another's card.
+    public var isForYou: Bool { kind != .note && kind != .message && state != .expired && sameAs == nil }
+
     /// An option ending with "…" asks for text: picking it opens an input, and the answer is "label: text".
     public static func expectsText(_ option: String) -> Bool { option.hasSuffix("…") || option.hasSuffix("...") }
 

@@ -8,9 +8,14 @@ is their UI and the inbox where agents reach the user. `docs/workspace.md` has t
 - `crates/zerod`: the daemon on `~/.zero/zerod.sock`. Sessions and their adapters (`claude.rs`, `codex.rs`, `acp.rs`),
   the board, the inbox, scratchpads (`pads.rs`, `mcp.rs`), folder snapshots for rewind (`snapshots.rs`), graceful restart.
 - `apps/macos/Sources/ZeroCore`: the app's model and its client of zerod (`Zerod.swift`, `Workspace.swift`).
-- `apps/macos/Sources/ZeroApp`: the UI. `WorkspaceView.swift` (window, sidebar, conversation, composer, details pane),
-  `Timeline.swift` (a conversation's blocks, rail, scrollbar), `Inbox.swift` (the bar, its panel and the ask cards).
-- `apps/macos/Sources/zero`: the `zero` CLI agents use. `plugin/`: Claude Code's plugin for Zero.
+- `apps/macos/Sources/ZeroApp`: the UI, a file per topic. The window: `WorkspaceView.swift` (window, rail),
+  `TasksSidebar.swift`, `TaskView.swift`, `ConversationView.swift`, `Composer.swift`, `TaskDetails.swift` (details
+  pane); `Timeline.swift` (a conversation's blocks, rail, scrollbar). The control bar: `PillView.swift` (the bar),
+  `InboxView.swift` (its panel), `InboxController.swift`, `CardView.swift` (the ask cards). The app: `ZeroApp.swift`
+  (entry point), `AppDelegate.swift` (launch, menus, hot key), `InboxPanel.swift`, `WorkspaceWindow.swift`,
+  `SelectorPanel.swift`, `Settings.swift`.
+- `apps/macos/Sources/zero`: the `zero` CLI agents use: `main.swift` parses the arguments and dispatches, one file per
+  topic (Asks, Hooks, Sessions, Board, Follow, Later, Watch). `plugin/`: Claude Code's plugin for Zero.
 
 ## Working on it
 

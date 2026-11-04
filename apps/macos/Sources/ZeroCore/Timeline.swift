@@ -114,6 +114,22 @@ extension BoardRow {
     }
 }
 
+/// A cell of a table an agent handed over (`zero table`), as the Mac and the phone draw it: a risk column's grade
+/// with the gaps behind it, a state as the board's pill, a dash for nothing, or words.
+public enum TableCell: Equatable, Sendable {
+    case risk(level: String, gaps: String)
+    case state(BoardRow.State)
+    case empty
+    case text(String)
+
+    public static func of(_ text: String, column: String) -> TableCell {
+        if column.localizedCaseInsensitiveContains("risk"), let (level, rest) = BoardRow.risk(text) { return .risk(level: level, gaps: rest) }
+        if let state = BoardRow.State.named(text) { return .state(state) }
+        if ["", "-", "—", "–"].contains(text) { return .empty }
+        return .text(text)
+    }
+}
+
 extension BoardRow.State {
     /// A cell that names a state, in the board's words or the agents' usual ones.
     public static func named(_ text: String) -> Self? {

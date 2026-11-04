@@ -382,15 +382,15 @@ struct TableView: View {
         let column: String
         @State private var showing = false
         var body: some View {
-            if column.localizedCaseInsensitiveContains("risk"), let (level, rest) = BoardRow.risk(text) {
+            switch TableCell.of(text, column: column) {
+            case let .risk(level, gaps):
                 Button { showing.toggle() } label: { RiskPill(level: level) }
                     .buttonStyle(.plain)
-                    .popover(isPresented: $showing) { Text(rest).font(.footnote).padding().presentationCompactAdaptation(.popover) }
-                    .disabled(rest.isEmpty)
-            } else if let state = BoardRow.State.named(text) {
-                StatePill(state: state)
-            } else {
-                MarkdownView.inline(text == "-" || text.isEmpty ? "–" : text)
+                    .popover(isPresented: $showing) { Text(gaps).font(.footnote).padding().presentationCompactAdaptation(.popover) }
+                    .disabled(gaps.isEmpty)
+            case let .state(state): StatePill(state: state)
+            case .empty: MarkdownView.inline("–")
+            case let .text(text): MarkdownView.inline(text)
             }
         }
     }

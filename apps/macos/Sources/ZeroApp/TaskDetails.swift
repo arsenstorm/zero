@@ -1,0 +1,307 @@
+import AppKit
+import SwiftUI
+import ZeroCore
+
+/// The pane on a task's right: where it stands, what it needs from you, the agent on it, where it works, its workers.
+struct TaskDetails: View {
+    let workspace: Workspace
+    /// For answering what it's blocked on, from its status.
+    let inbox: InboxController
+    let navigation: Navigation
+    let row: BoardRow?
+    let conversation: Conversation
+    /// Beside a terminal: a full-height column on the sidebar's grey rather than a floating card.
+    var docked = false
+    /// How far in from the panel's edges it floats, and its corners: together the panel's radius (12).
+    static let inset: CGFloat = 6
+    static let radius: CGFloat = 12 - inset
+    /// The status card, beside the pane level with the Status row: open while the pointer is on the pill or the card,
+    /// held once clicked into (an answer being typed) until a click outside it or Esc.
+    @State private var peek = false
+    @State private var peekY: CGFloat = 0
+    @State private var overPill = false
+    @State private var overCard = false
+    @State private var held = false
+    @State private var cardFrame = CGRect.zero
+    @State private var monitor: Any?
+    /// The Agent row's selector: where it opens from, and the row under the pointer.
+    @State private var agentAnchor = CGRect.zero
+    /// Every worker listed, not only the ones that need attention.
+    @State private var allWorkers = false
+    @State private var overAgent = false
+    private var agentChip: String { "details.\(conversation.id).agent" }
+
+    var body: some View {
+        // Its properties, then its workers.
+        VStack(alignment: .leading, spacing: 0) { properties; workers }.padding(16)
+        .frame(width: 280, alignment: .leading)
+        .frame(maxHeight: docked ? .infinity : nil, alignment: .top)
+        // Concentric with the panel's corner it sits in: its radius and its inset add up to the panel's (6 + 6 = 12).
+        .background(docked ? Theme.composer : Theme.card, in: RoundedRectangle(cornerRadius: docked ? 0 : Self.radius))
+        .overlay { if !docked { RoundedRectangle(cornerRadius: Self.radius).strokeBorder(Theme.stroke) } }
+        .compositingGroup()
+        .shadow(color: .black.opacity(docked ? 0 : 0.04), radius: 10, y: 2)
+        .coordinateSpace(name: "details")
+        .overlay(alignment: .topLeading) {
+            if peek, let row {
+                StatusCard(row: row, inbox: inbox)
+                    .onHover { inside in overCard = inside; if !inside { closeSoon() } }
+                    .simultaneousGesture(TapGesture().onEnded { hold() })
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { cardFrame = $0 }
+                    .offset(x: -(StatusCard.width + 8), y: max(0, peekY - 14))
+            }
+        }
+        .onDisappear(perform: release)
+    }
+
+    /// A moment to cross from the pill to the card; held, it stays.
+    private func closeSoon() {
+        Task {
+            try? await Task.sleep(for: .milliseconds(200))
+            if !overPill && !overCard && !held { peek = false }
+        }
+    }
+
+    /// Clicked into: it stays until a click outside it, or Esc.
+    private func hold() {
+        guard !held else { return }
+        held = true
+        let (frame, close) = ({ cardFrame }, { release() })
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .keyDown]) { event in
+            if event.type == .keyDown {
+                guard event.keyCode == 53 else { return event }
+                close()
+                return nil
+            }
+            guard let content = event.window?.contentView else { return event }
+            let point = CGPoint(x: event.locationInWindow.x, y: content.bounds.height - event.locationInWindow.y)
+            if !frame().contains(point) { close() }
+            return event
+        }
+    }
+
+    private func release() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        held = false
+        peek = false
+    }
+
+    /// The agent on it, where it works, its status (its detail, and what it's blocked on, on hover), then what its agent
+    /// says about it: its branch, ticket, and whatever it set with `zero attr` (a PR, say); a link opens.
+    private var properties: some View {
+        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 9) {
+            property("Agent") {
+                VStack(alignment: .leading, spacing: 2) {
+                    // The provider's mark and the model by its name ("Opus 5.5"), not its id: a click picks another
+                    // model, or another provider to take the task over.
+                    let open = WorkspaceSelector.shared.open == agentChip
+                    HStack(spacing: 6) {
+                    Button {
+                        WorkspaceSelector.shared.toggle(agentChip, kind: .runtime, anchor: agentAnchor, rows: {
+                            ComposerRows.taskModels(conversation, chosen: (conversation.provider, conversation.model)) { picked, choice in
+                                Task { await workspace.switchProvider(conversation.id, to: picked, model: choice.id.isEmpty ? nil : choice.id) }
+                            }
+                        }, level: { id in id == "\(conversation.provider.rawValue)/\(conversation.model ?? "")" ? conversation.effort : nil },
+                           setLevel: { _, level in Task { await workspace.switchProvider(conversation.id, to: conversation.provider, model: conversation.model, effort: level) } })
+                    } label: {
+                        HStack(spacing: 5) {
+                            if let mark = conversation.provider.mark {
+                                mark.resizable().aspectRatio(contentMode: .fit).frame(width: 13, height: 13).clipShape(RoundedRectangle(cornerRadius: 3))
+                            }
+                            Text([modelName ?? conversation.provider.title, conversation.effort.map { effortLabel($0, short: true) }].compactMap { $0 }.joined(separator: " · "))
+                                .lineLimit(1).truncationMode(.tail).tip([conversation.provider.title, conversation.model].compactMap { $0 }.joined(separator: " · "))
+                            NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0))
+                        }
+                        .padding(.horizontal, 6).padding(.vertical, 3).padding(.leading, -6)
+                        .background(open || overAgent ? Theme.row : .clear, in: Capsule())
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain).fixedSize()
+                    .onHover { overAgent = $0 }
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { agentAnchor = $0 }
+                    .disabled(conversation.status == .working || conversation.status == .waiting)
+                    // Unrestricted: a bolt beside the agent, as the composer's permissions chip shows it.
+                    if conversation.permissions == .unrestricted {
+                        // A square to hover, so the tip shows: a bare icon gives macOS nothing to track.
+                        NucleoIcon("bolt-lightning", fill: "glyph", size: 13).foregroundStyle(.orange)
+                            .frame(width: 18, height: 18).contentShape(Rectangle())
+                            .tip("Unrestricted: it acts without asking")
+                    }
+                    }
+                    if let usage { Text(usage).font(.system(size: 11.5)).foregroundStyle(.tertiary) }
+                }
+            }
+            property("Where") {
+                // The place's own folder when the places command says (a bench's), else the task's.
+                let folder = row?.path ?? conversation.cwd
+                Button { NSWorkspace.shared.open(URL(fileURLWithPath: folder)) } label: {
+                    Self.linked(row?.place ?? (conversation.cwd as NSString).lastPathComponent).truncationMode(.middle)
+                }
+                .buttonStyle(.plain).tip((folder as NSString).abbreviatingWithTildeInPath + " — open in Finder")
+            }
+            if let row {
+                property("Status") {
+                    StateLabel(state: row.ownState)
+                        .onHover { inside in
+                            overPill = inside
+                            if inside { peek = true } else { closeSoon() }
+                        }
+                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named("details")).minY } action: { peekY = $0 }
+                }
+            }
+            if let branch = conversation.branch {
+                property("Branch") { Text(branch).lineLimit(1).truncationMode(.middle).tip(branch) }
+            }
+            if let ticket = conversation.ticket {
+                property("Ticket") { link(ticket, to: ticketURL(ticket)) }
+            }
+            ForEach(attributes, id: \.name) { attribute in
+                property(attribute.name) { link(Self.shown(attribute.value), to: Self.url(attribute.value)) }
+            }
+        }
+        .font(.system(size: 12.5))
+    }
+
+    /// Its workers, what each is on and where it stands, most urgent first; a click shows that worker.
+    @ViewBuilder private var workers: some View {
+        let members = (row?.team ?? []).filter { $0.session != conversation.id }.sorted { $0.state.urgency < $1.state.urgency }
+        if !members.isEmpty {
+            // The few that matter (needing you, in trouble, at work), the rest behind their count; opened, the whole
+            // list scrolls inside the pane rather than running off the window.
+            let urgent = members.filter { $0.state.urgency <= 2 }
+            let shown = allWorkers ? members : Array((urgent.isEmpty ? members : urgent).prefix(8))
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Workers").foregroundStyle(.secondary)
+                    Spacer()
+                    if members.count > shown.count || allWorkers {
+                        Button(allWorkers ? "Fewer" : "All \(members.count)") { allWorkers.toggle() }.buttonStyle(.plain).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.top, 14).padding(.bottom, 2)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) { workerRows(shown) }
+                }
+                .thinScrollbar()
+                .frame(maxHeight: allWorkers ? 360 : .infinity)
+                .fixedSize(horizontal: false, vertical: !allWorkers)
+            }
+            .font(.system(size: 12.5))
+        }
+    }
+
+    @ViewBuilder private func workerRows(_ members: [BoardRow.Member]) -> some View {
+                ForEach(members, id: \.session) { member in
+                    Button { navigation.worker = member.session } label: {
+                        HStack(alignment: .top, spacing: 7) {
+                            TaskStateIcon(state: member.state).frame(width: 14, height: 16)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(title(of: member)).fontWeight(.medium).lineLimit(1)
+                                if let now = member.needs ?? member.now, !now.isEmpty {
+                                    Text(now).foregroundStyle(.secondary).lineLimit(2)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .opacity([.done, .idle, .offline].contains(member.state) ? 0.6 : 1)
+                }
+    }
+
+    private func title(of member: BoardRow.Member) -> String {
+        workspace.conversations.first { $0.id == member.session }.map(Workspace.label(of:)) ?? member.place
+    }
+
+    /// A row of the pane's properties: its name in a narrow column, its value beside it.
+    private func property(_ name: String, @ViewBuilder value: () -> some View) -> some View {
+        GridRow {
+            Text(name).foregroundStyle(.secondary).gridColumnAlignment(.leading).frame(width: 52, alignment: .leading)
+            value().frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// The ticket's page: from the integration's view that lists it, else Linear's link for its team's workspace.
+    private func ticketURL(_ ticket: String) -> URL? {
+        if let listed = workspace.items.values.lazy.flatMap({ $0 }).first(where: { $0.ticketKey == ticket })?.url { return LinearLinks.url(listed) }
+        guard let team = ticket.split(separator: "-").first, let space = Linear.shared.teams[String(team)] else { return nil }
+        return LinearLinks.url("https://linear.app/\(space)/issue/\(ticket)")
+    }
+
+    /// Something that opens, as the pane shows it: a little heavier, on a dashed underline; no icon, no blue.
+    static func linked(_ text: String) -> some View {
+        Text(text).fontWeight(.medium).lineLimit(1)
+            // Drawn, not the system's underline, which sits too far below the words: just under the baseline.
+            .overlay(alignment: .bottom) {
+                Rule().stroke(.secondary.opacity(0.55), style: StrokeStyle(lineWidth: 1, dash: [2, 2])).frame(height: 1).offset(y: -1.5)
+            }
+    }
+
+    /// A line across, for the dashed underline.
+    private struct Rule: Shape {
+        func path(in rect: CGRect) -> Path { Path { $0.move(to: CGPoint(x: rect.minX, y: rect.midY)); $0.addLine(to: CGPoint(x: rect.maxX, y: rect.midY)) } }
+    }
+
+    /// Its value as a link when it is one, plain words otherwise.
+    @ViewBuilder private func link(_ text: String, to url: URL?) -> some View {
+        if let url {
+            Button { NSWorkspace.shared.open(url) } label: { Self.linked(text) }
+                .buttonStyle(.plain).tip("Open " + url.absoluteString)
+        } else {
+            Text(text).lineLimit(2)
+        }
+    }
+
+    /// What its agent set (`zero attr`), by name; a pull request the conversation mentions, until one's set.
+    private var attributes: [(name: String, value: String)] {
+        var all = (conversation.attributes ?? [:]).sorted { $0.key < $1.key }.map { (name: $0.key, value: $0.value) }
+        if !all.contains(where: { $0.name.uppercased() == "PR" }), let found = mentionedPR { all.insert((name: "PR", value: found), at: 0) }
+        return all
+    }
+
+    /// The latest pull request the task's words mention: a GitHub link, or "repo#123" for a repository one of the
+    /// GitHub views shows (which says whose it is).
+    private var mentionedPR: String? {
+        let texts = [row?.asks.first?.title, row?.needs, row?.now].compactMap { $0 }
+            + (workspace.live(conversation.id)?.conversation.items ?? []).reversed().compactMap { item -> String? in
+                switch item.kind { case let .agent(text, _), let .user(text, _): text; default: nil }
+            }
+        let owners = Dictionary(workspace.items.values.flatMap { $0 }.compactMap { item -> (String, String)? in
+            let parts = item.url.split(separator: "/")
+            guard item.url.contains("github.com/"), parts.count >= 4 else { return nil }
+            return (String(parts[3]).lowercased(), String(parts[2]))
+        }, uniquingKeysWith: { first, _ in first })
+        for text in texts {
+            if let match = text.firstMatch(of: #/https://github\.com/[\w.-]+/[\w.-]+/pull/\d+/#) { return String(match.0) }
+            if let match = text.firstMatch(of: #/\b([\w.-]+)#(\d+)\b/#), let owner = owners[String(match.1).lowercased()] {
+                return "https://github.com/\(owner)/\(match.1)/pull/\(match.2)"
+            }
+        }
+        return nil
+    }
+
+    /// A GitHub pull request as "repo#123"; any other link without its scheme; words as they are.
+    static func shown(_ value: String) -> String {
+        if let pr = value.firstMatch(of: #/github\.com/[\w.-]+/([\w.-]+)/pull/(\d+)/#) { return "\(pr.1)#\(pr.2)" }
+        if value.hasPrefix("https://") || value.hasPrefix("http://") { return String(value.split(separator: "/", maxSplits: 1).last ?? Substring(value)).trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
+        return value
+    }
+
+    static func url(_ value: String) -> URL? {
+        guard value.hasPrefix("https://") || value.hasPrefix("http://") else { return nil }
+        return URL(string: value)
+    }
+
+    /// The model as its provider's catalogue names it; nil leaves the provider's name (its default model).
+    private var modelName: String? {
+        guard let model = conversation.model else { return nil }
+        return ComposerRows.catalogue(conversation.provider).first { $0.id == model }?.name ?? model
+    }
+
+    /// "5 hours 18% · 7 days 5%": what the provider last reported for the account.
+    private var usage: String? {
+        guard let windows = conversation.usage?.windows, !windows.isEmpty else { return nil }
+        return windows.map { "\($0.name) \(Int(($0.used * 100).rounded()))%" }.joined(separator: " · ")
+    }
+}
