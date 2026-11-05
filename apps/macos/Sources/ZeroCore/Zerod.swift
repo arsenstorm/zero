@@ -618,6 +618,8 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
             var all = attributes ?? [:]
             all[name] = value
             attributes = all.isEmpty ? nil : all
+        case .other:
+            break
         case let .rewound(before):
             // As zerod does (model.rs): the message and what followed go, and with them the provider's thread.
             if let at = items.firstIndex(where: { $0.id == before }) { items.removeSubrange(at...) }
@@ -668,6 +670,9 @@ public enum Change: Decodable, Equatable, Sendable {
     case snapshot
     /// Its agent said something about the task; nil takes it back.
     case attribute(String, String?)
+    /// A change of a kind this app doesn't know (a newer zerod's): counted, so the changes after it still apply, and
+    /// otherwise passed over. The board carries what the app shows of it (an issue's row, say).
+    case other(String)
     /// Back to just before this message of yours: it and everything after it are gone.
     case rewound(String)
 
@@ -704,7 +709,7 @@ public enum Change: Decodable, Equatable, Sendable {
         case "rewound": self = .rewound(try c.decode(String.self, forKey: .before))
         case "switched": self = .switched(try c.decode(Provider.self, forKey: .provider), model: try c.decodeIfPresent(String.self, forKey: .model),
                                           effort: try c.decodeIfPresent(String.self, forKey: .effort))
-        case let other: throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "Unknown change \(other)")
+        case let other: self = .other(other)
         }
     }
 }

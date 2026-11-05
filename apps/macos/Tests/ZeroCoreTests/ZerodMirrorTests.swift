@@ -90,3 +90,17 @@ private func said(_ id: String) -> ConversationItem { ConversationItem(id: id, t
     mirror.receive(.session(c))
     #expect(mirror.later["s1"] == 0)
 }
+
+/// A change of a kind this app doesn't know (a newer zerod's): taken as one, its number counted, so the changes after
+/// it still apply. Dropped, every later change was out of step and the conversation stopped moving.
+@Test func aChangeOfAKindThisAppDoesntKnowStillCounts() throws {
+    let json = #"{"session":"s1","seq":6,"change":{"type":"somethingNew","issue":{"ticket":"ENG-1"}}}"#
+    let unknown = try JSONDecoder().decode(ZerodEvent.self, from: Data(json.utf8))
+    var mirror = ZerodMirror()
+    mirror.receive(.session(conversation("s1", seq: 5)))
+    let taken = mirror.receive(.change(unknown))
+    #expect(taken)
+    let after = mirror.receive(title("s1", 7, "after it"))
+    #expect(after)
+    #expect(mirror.conversations["s1"]?.title == "after it")
+}
