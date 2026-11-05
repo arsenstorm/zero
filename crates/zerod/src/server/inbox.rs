@@ -42,7 +42,10 @@ fn agent_ask(zerod: &Zerod, request: &Request) -> Result<Value, String> {
     let args = request.args.clone().unwrap_or(json!({}));
     let agent = crate::bridge::identity(&conversation, &crate::bridge::hostname());
     let ttl = Settings::load(daemon.home()).ttl.unwrap_or(3600);
-    let made = zerod.inbox.create(ask_of(&args, &conversation, agent, ttl)?, false);
+    let mut ask = ask_of(&args, &conversation, agent, ttl)?;
+    // A tool call returns at once, so nothing waits on the answer: it goes to the task as a message, as `--async`'s.
+    if ask.kind != crate::ask::AskKind::Note { ask.waits = Some(false) }
+    let made = zerod.inbox.create(ask, false);
     Ok(json!({"id": made.id}))
 }
 

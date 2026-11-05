@@ -544,6 +544,8 @@ async fn a_task_asks_runs_and_notes_through_zeros_tools_whatever_sandbox_its_age
     assert_eq!((question["kind"].as_str(), question["title"].as_str()), (Some("choice"), Some("Start the check, or wait for Dana?")));
     assert_eq!(question["agent"]["runtime"], "zerod", "the task's own ask, joining its approvals in the inbox");
     assert!(asks.iter().any(|a| a["kind"] == "run" && a["command"] == "bin/prod-check" && a["body"] == "the counts"));
+    // A tool call never waits for its answer: the answer goes to the task as a message, as for `zero ask --async`.
+    assert!(asks.iter().filter(|a| a["kind"] == "choice" || a["kind"] == "run").all(|a| a["waits"] == false), "{asks:?}");
     assert!(asks.iter().any(|a| a["kind"] == "note" && a["status"] == "waiting"));
 }
 
