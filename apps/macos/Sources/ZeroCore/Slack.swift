@@ -24,7 +24,6 @@ public final class Slack {
     /// Channel ids by name.
     public private(set) var channels: [String: String]
 
-    private static let legacyService = "Zero Slack"
     private static let teamKey = "slackTeamInfo"
     private static let channelsKey = "slackChannels"
 
@@ -54,11 +53,4 @@ public final class Slack {
         UserDefaults.standard.set(state.flatMap { try? JSONEncoder().encode($0.team) }, forKey: Self.teamKey)
         UserDefaults.standard.set(state?.channels, forKey: Self.channelsKey)
     }
-
-    /// The token the app itself kept before zerod held the connection (Zero before 2026-10-31): handed to zerod once,
-    /// then forgotten here.
-    #if os(macOS)
-    public func legacyToken() -> String? { Keychain.loadString(service: Self.legacyService, account: "token") }
-    public func forgetLegacyToken() { Keychain.saveString(nil, service: Self.legacyService, account: "token") }
-    #endif
 }

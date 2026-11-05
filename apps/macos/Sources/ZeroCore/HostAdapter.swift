@@ -41,8 +41,7 @@ public struct HostAdapter: TerminalAdapter {
         let now = await state(of: ref)
         if case .running = now { return agent }
         guard let cwd = agent.cwd else { throw AdapterError("\(agent.label ?? agent.name)'s session is gone") }
-        let (command, launch) = try AgentCommand.resume(agent)
-        defer { if let launch { AgentLaunch.scrub(launch) } }
+        let command = try AgentCommand.resume(agent)
         let terminal = try await start(command, in: cwd, label: agent.label ?? agent.name)
         if case .exited = now { _ = await HostLink.call(HostLink.Request(op: "close", id: ref)) }
         var resumed = agent
@@ -53,17 +52,15 @@ public struct HostAdapter: TerminalAdapter {
 
     public var canSpawn: Bool { !RexAdapter.enabled }
 
-    /// A terminal of its own with Claude Code (or Codex), started with the model, effort and account picked; once
+    /// A terminal of its own with Claude Code (or Codex), started with the model and effort picked; once
     /// it sits at its prompt, the first message.
     public func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String]) async throws -> AgentIdentity {
-        let (command, launch, account) = try AgentCommand.build(runtime: runtime, model: model, settings: settings)
-        defer { if let launch { AgentLaunch.scrub(launch) } }
+        let command = AgentCommand.build(runtime: runtime, model: model, settings: settings)
         let terminal = try await start(command, in: target.id, label: AgentCommand.label(for: prompt))
         var identity = AgentIdentity(name: "claude-" + String(terminal.suffix(6)), host: ProcessInfo.processInfo.hostName, cwd: target.id)
         identity.runtime = self.runtime
         identity.ref = terminal
         identity.launch = command
-        identity.account = account
         try await waitUntilReady(terminal, name: identity.name)
         try await send(prompt, to: identity)
         return identity

@@ -155,35 +155,23 @@ public enum Projects {
 
 /// The command line a terminal-hosted agent starts with.
 enum AgentCommand {
-    /// `claude` or `codex` with the model, effort and account picked. For an account of its own, the launch file
-    /// holding its token is returned too, to scrub once the agent is up.
-    static func build(runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String]) throws -> (argv: [String], launch: String?, account: String?) {
+    /// `claude` or `codex` with the model and effort picked.
+    static func build(runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String]) -> [String] {
         let claude = runtime.id.hasSuffix(":claude")
         var command = [claude ? "claude" : "codex"]
         if let model, !model.id.isEmpty { command += [claude ? "--model" : "-m", model.id] }
-        let account = settings["account"].flatMap { $0.isEmpty ? nil : $0 }
-        var launch: String?
-        if claude {
-            if let account {
-                guard let file = AgentLaunch.arm(account) else { throw AdapterError("\(account) isn't set up for single agents in Settings") }
-                launch = file
-                command += ["--settings", file]
-            } else {
-                command += ["--settings", #"{"env":{"ZERO_MANAGED":"1"}}"#]
-            }
-        }
+        if claude { command += ["--settings", #"{"env":{"ZERO_MANAGED":"1"}}"#] }
         if let level = settings["reasoning"], !level.isEmpty {
             command += claude ? ["--effort", level] : ["-c", "model_reasoning_effort=\"\(level)\""]
         }
-        return (command, launch, account)
+        return command
     }
 
-    /// The command to start the agent again, resuming its session; its account's token armed afresh.
-    static func resume(_ agent: AgentIdentity) throws -> (argv: [String], launch: String?) {
+    /// The command to start the agent again, resuming its session.
+    static func resume(_ agent: AgentIdentity) throws -> [String] {
         guard let session = agent.session, var command = agent.launch else { throw AdapterError("\(agent.label ?? agent.name)'s session is gone") }
         if let i = command.firstIndex(of: "--resume"), i + 1 < command.count { command.removeSubrange(i...(i + 1)) }
-        let launch = agent.account.flatMap { account in AgentLaunch.file(in: command).flatMap { AgentLaunch.arm(account, at: $0) } }
-        return (command + ["--resume", session], launch)
+        return command + ["--resume", session]
     }
 
     /// The session's name: the start of the task.

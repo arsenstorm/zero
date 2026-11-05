@@ -514,9 +514,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let id = response.notification.request.identifier
         await MainActor.run {
-            Self.model?.tab = .tasks
-            // An ask's (not a task's): it waits in the list's Waiting on you.
-            Self.model?.path = id.hasPrefix(TaskAlerts.askPrefix) ? [] : [id]
+            // An ask's (not a task's): its card is in the Inbox. A task's opens the task.
+            let ask = id.hasPrefix(TaskAlerts.askPrefix)
+            Self.model?.tab = ask ? .inbox : .tasks
+            Self.model?.path = ask ? [] : [id]
         }
     }
 }

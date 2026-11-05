@@ -94,21 +94,6 @@ public final class Workspace {
         (lives[id]?.conversation ?? roster[id])?.items.last { if case .agent(_, true) = $0.kind { true } else { false } }?.id
     }
 
-    /// What this Mac recorded as seen before zerod kept it, given to zerod once.
-    private func handOverSeen(_ link: ZerodLink) async {
-        let key = "seenAnswers"
-        guard let stored = UserDefaults.standard.dictionary(forKey: key) as? [String: [String: Any]] else { return }
-        do {
-            for (session, entry) in stored {
-                guard let answer = entry["answer"] as? String, let at = entry["at"] as? Double else { continue }
-                do { try await link.seen(session: session, answer: answer, at: Int(at)) }
-                catch let error as ZerodError where error.message.hasPrefix("No session") { continue } // archived since
-            }
-            // Kept until zerod has it all: a zerod from before "seen" refuses it, and the next connection tries again.
-            UserDefaults.standard.removeObject(forKey: key)
-        } catch {}
-    }
-
     public var conversations: [Conversation] { order.compactMap { roster[$0] } }
     /// A task as the roster has it: everything but its conversation.
     public func conversation(_ id: String) -> Conversation? { roster[id] }
@@ -201,7 +186,6 @@ public final class Workspace {
                 }
                 fresh.onClose = { [weak self] in Task { @MainActor in self?.link = nil; self?.connected = false; Log.write("zerod connection closed") } }
                 link = fresh
-                Task { await self.handOverSeen(fresh) }
                 if (try? await fresh.subscribe()) != nil {
                     connected = true
                     updating = nil
@@ -582,13 +566,7 @@ public final class Workspace {
     public func loadIntegrations() async {
         guard let state = try? await link?.integrations() else { return }
         if state != integrations { integrations = state }
-        // A Slack token the app kept itself (before zerod held the connection) goes to zerod once.
-        if state.slack == nil, !handedSlackOver, let token = Slack.shared.legacyToken() {
-            handedSlackOver = true
-            if await connectSlack(token: token) == nil { Slack.shared.forgetLegacyToken() }
-        }
     }
-    @ObservationIgnored private var handedSlackOver = false
 
     /// Connects Slack with a user token of Zero's app; the error to show, or nil.
     public func connectSlack(token: String) async -> String? {

@@ -48,7 +48,7 @@ func soloAdapterScreenAndKeys() async throws {
     let picker = try await adapter.press([27, 91, 66], on: agent) // down
     #expect(picker?.contains("Select model") == true)
     let after = try await adapter.press([27], on: agent) // esc
-    print("after esc has picker:", after?.contains("Select model") == true)
+    #expect(after?.contains("Select model") == false, "esc closes the picker")
 }
 
 @Test func draftsAreReadFromTheInputBoxOnly() {

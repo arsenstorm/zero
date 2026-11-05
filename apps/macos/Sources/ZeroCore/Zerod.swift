@@ -1122,12 +1122,12 @@ public final class ZerodLink: @unchecked Sendable {
     // Word from outside.
 
     /// Words for a session, given when it is between turns.
-    /// Words for a session between its turns, marked as Zero's, or as `from`'s (another task's).
-    /// The user saw a task's reply (its answer's item; now, unless `at` says when): zerod settles Replied for everyone.
-    public func seen(session: String, answer: String? = nil, at: Int? = nil) async throws {
-        _ = try await call("seen", ["session": session, "answer": answer, "at": at])
+    /// The user saw a task's reply (its answer's item): zerod settles Replied for everyone.
+    public func seen(session: String, answer: String? = nil) async throws {
+        _ = try await call("seen", ["session": session, "answer": answer])
     }
 
+    /// Words for a session between its turns, marked as Zero's, or as `from`'s (another task's).
     public func notify(session: String, text: String, from: String? = nil) async throws { _ = try await call("notify", ["session": session, "text": text, "from": from]) }
 
     /// What a task's agent may do without asking, changed between turns: its next message starts it with them.

@@ -78,8 +78,7 @@ public struct RexAdapter: TerminalAdapter {
         if case .running = now { return agent }
         if case .unknown = now { throw AdapterError("Rex isn't running") }
         guard let cwd = agent.cwd else { throw AdapterError("\(agent.label ?? agent.name)'s session is gone") }
-        let (command, launch) = try AgentCommand.resume(agent)
-        defer { if let launch { AgentLaunch.scrub(launch) } }
+        let command = try AgentCommand.resume(agent)
         var where_: [String] = ["run", "--json", "--keep-open", "--cwd", cwd]
         if let group = agent.refGroup { where_ += ["-s", group] }
         let created = await Self.rex(where_ + ["--"] + command)
@@ -98,10 +97,9 @@ public struct RexAdapter: TerminalAdapter {
     public var canSpawn: Bool { Self.enabled }
 
     /// A Rex session of its own, named after the task, with Claude Code (or Codex) in its one terminal, started with
-    /// the model, effort and account picked; once it sits at its prompt, the first message.
+    /// the model and effort picked; once it sits at its prompt, the first message.
     public func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String]) async throws -> AgentIdentity {
-        let (command, launch, account) = try AgentCommand.build(runtime: runtime, model: model, settings: settings)
-        defer { if let launch { AgentLaunch.scrub(launch) } }
+        let command = AgentCommand.build(runtime: runtime, model: model, settings: settings)
         let created = await Self.rex(["new", AgentCommand.label(for: prompt), "--json", "--keep-open", "--cwd", target.id, "--"] + command)
         guard created.status == 0, let json = try? JSONSerialization.jsonObject(with: Data(created.output.utf8)) as? [String: Any],
               let session = json["session_id"] as? String, let block = Self.blockID(in: created.output) else {
@@ -112,7 +110,6 @@ public struct RexAdapter: TerminalAdapter {
         identity.ref = block
         identity.refGroup = session
         identity.launch = command
-        identity.account = account
         try await waitUntilReady(block, name: identity.name)
         try await send(prompt, to: identity)
         return identity

@@ -12,7 +12,7 @@ import Testing
     var agent = AgentIdentity(name: "claude-abc123", host: "mac", cwd: "/tmp")
     agent.session = "new-session"
     agent.launch = ["claude", "--model", "haiku", "--resume", "old-session"]
-    #expect(try AgentCommand.resume(agent).argv == ["claude", "--model", "haiku", "--resume", "new-session"])
+    #expect(try AgentCommand.resume(agent) == ["claude", "--model", "haiku", "--resume", "new-session"])
 }
 
 /// Starts a real Claude agent in the folder named by ZERO_SPAWN (in Zero's own terminals; in Rex too when

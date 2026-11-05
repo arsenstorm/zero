@@ -346,18 +346,7 @@ public struct SoloAdapter: AgentAdapter {
         if let model, !model.id.isEmpty { extra += ["--model", model.id] }
         // Marks the session as Zero's, so the Zero plugin's hooks hold it to Zero's rules (no spaces: Solo
         // keeps the command as one string and resuming splits it on them).
-        // An agent on an account of its own starts from a launch file holding that account's token instead.
-        let account = settings["account"].flatMap { $0.isEmpty ? nil : $0 }
-        var launch: String?
-        if runtime.name.lowercased().contains("claude") {
-            if let account {
-                guard let file = AgentLaunch.arm(account) else { throw AdapterError("\(account) isn't set up for single agents in Settings") }
-                launch = file
-                extra += ["--settings", file]
-            } else {
-                extra += ["--settings", #"{"env":{"ZERO_MANAGED":"1"}}"#]
-            }
-        }
+        if runtime.name.lowercased().contains("claude") { extra += ["--settings", #"{"env":{"ZERO_MANAGED":"1"}}"#] }
         if let level = settings["reasoning"], !level.isEmpty {
             if model?.provider == "Anthropic" { extra += ["--effort", level] }
             else if runtime.name.lowercased().contains("codex") { extra += ["-c", "model_reasoning_effort=\"\(level)\""] }
@@ -367,7 +356,7 @@ public struct SoloAdapter: AgentAdapter {
         // ponytail: a restart reruns the command it was created with, its own model and effort, not the ones
         // picked now; send "/model" after start if that matters.
         let created: [String: Any]
-        if launch == nil, let exited = try await exitedAgent(in: projectID, running: runtime.detail), let id = exited["id"] as? Int {
+        if let exited = try await exitedAgent(in: projectID, running: runtime.detail), let id = exited["id"] as? Int {
             _ = try await resultText(of: call(tool: "start_process", arguments: ["process_id": id, "project_id": projectID]))
             created = ["process_id": id, "name": exited["name"] ?? "agent"]
         } else {
@@ -379,8 +368,6 @@ public struct SoloAdapter: AgentAdapter {
         let base = ((created["name"] as? String) ?? "agent").lowercased().replacingOccurrences(of: " ", with: "-")
         let name = "\(base)-\(processID)"
         var identity = AgentIdentity(name: name, host: ProcessInfo.processInfo.hostName, soloProcessID: processID, soloProjectID: projectID)
-        identity.account = account
-        defer { if let launch { AgentLaunch.scrub(launch) } }
         try await waitUntilReady(processID, in: projectID, name: name)
         try await send(prompt, to: identity)
         return identity
@@ -476,9 +463,6 @@ public struct SoloAdapter: AgentAdapter {
             let executable = words.first ?? "claude"
             words = Array(words.dropFirst())
             if let i = words.firstIndex(of: "--resume"), i + 1 < words.count { words.removeSubrange(i...(i + 1)) }
-            // An agent on its own account gets its token back for the start, and loses it again once up.
-            let launch = agent.account.flatMap { account in AgentLaunch.file(in: words).flatMap { AgentLaunch.arm(account, at: $0) } }
-            defer { if let launch { AgentLaunch.scrub(launch) } }
             let tools = (try? await resultJSON(of: call(tool: "list_agent_tools", arguments: [:])) as? [[String: Any]]) ?? []
             guard let toolID = tools.first(where: { (($0["command"] as? String) ?? "").split(separator: " ").first.map(String.init) == executable })?["id"] as? Int
             else { throw AdapterError("Solo has no \(executable) tool to resume the session with") }
@@ -494,8 +478,6 @@ public struct SoloAdapter: AgentAdapter {
             return resumed
         }
         guard let pid = agent.soloProcessID, known != nil else { throw AdapterError("\(agent.label ?? agent.name)'s session is gone") }
-        let launch = agent.account.flatMap { account in AgentLaunch.file(in: command.split(separator: " ").map(String.init)).flatMap { AgentLaunch.arm(account, at: $0) } }
-        defer { if let launch { AgentLaunch.scrub(launch) } }
         _ = try await resultText(of: call(tool: "start_process", arguments: ["process_id": pid, "project_id": projectID]))
         try await waitUntilReady(pid, in: projectID, name: agent.name)
         return agent
