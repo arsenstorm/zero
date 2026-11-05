@@ -134,8 +134,10 @@ impl Adapter for Claude {
         let mut effects = Effects::default();
         // A subagent left running in the background, speaking after the lead's turn has ended: its words are its own,
         // and no turn of the lead's (which nothing would ever end). The lead hears from it, and says so, in its next turn.
+        // Its results still end the steps they answer (calls it made while the turn ran, shown then): a result starts
+        // no turn.
         let between_turns = matches!(conversation.status, Status::Idle | Status::Offline);
-        if between_turns && message["parent_tool_use_id"].is_string() && matches!(message["type"].as_str(), Some("assistant" | "stream_event" | "user")) {
+        if between_turns && message["parent_tool_use_id"].is_string() && matches!(message["type"].as_str(), Some("assistant" | "stream_event")) {
             return effects;
         }
         match message["type"].as_str() {

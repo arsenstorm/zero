@@ -307,3 +307,19 @@ fn a_subagent_speaking_after_the_turn_ended_starts_no_turn() {
     let conversation = core.conversation();
     assert_eq!((conversation.status, conversation.turn.clone()), (Status::Idle, None));
 }
+
+#[test]
+fn a_subagents_result_after_the_turn_ended_still_ends_its_step() {
+    // Its call came while the lead's turn ran (a step in the chat); its result came after the turn ended: the step
+    // ends, though nothing of the subagent's starts a turn.
+    let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+    core.receive(&json!({"type": "assistant", "parent_tool_use_id": "toolu_bg", "message": {"id": "m1", "content": [
+        {"type": "tool_use", "id": "t1", "name": "mcp__zero__browser_navigate", "input": {"url": "https://example.test"}}]}}));
+    core.receive(&json!({"type": "result", "subtype": "success", "result": "Checking in the background.\n\n[zero: working]"}));
+    assert_eq!(core.conversation().status, Status::Idle);
+    core.receive(&json!({"type": "user", "parent_tool_use_id": "toolu_bg", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "t1", "content": [{"type": "text", "text": "Tab 5: loaded"}]}]}}));
+    let conversation = core.conversation();
+    assert_eq!(conversation.item("t1").unwrap().status, ItemStatus::Done, "its step ended");
+    assert_eq!((conversation.status, conversation.turn.clone()), (Status::Idle, None));
+}
