@@ -83,7 +83,6 @@ import UserNotifications
         status = .unpaired
     }
 
-    /// Connects, unless connected or connecting already: on launch, coming back to the foreground, after a drop.
     /// Connected to the Mac, waiting up to `seconds` for it (Siri may have woken the app for an action): whether it is.
     func ready(within seconds: Double = 12) async -> Bool {
         guard paired else { return false }
@@ -151,6 +150,7 @@ import UserNotifications
     }
     private final class Answered: @unchecked Sendable { var yes = false }
 
+    /// Connects, unless connected or connecting already: on launch, coming back to the foreground, after a drop.
     func connect() {
         guard let pairing, link == nil else { return }
         status = .connecting

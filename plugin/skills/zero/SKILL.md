@@ -1,6 +1,6 @@
 ---
 name: zero
-description: Reach the user through Zero, their Mac inbox for agents — ask a question, get a go, have them run a command on their Mac and receive its output, or post where you are. Use whenever you would otherwise write "pending the user" or "waiting for your go", print a command for them to paste into their terminal, or stop until they answer; when a decision changes scope or touches production; and to report that you are blocked or done. Triggers on: zero, /zero, ask the user, needs the user, pending the user, approval, production read, run this on your side.
+description: Reach the user through Zero, their Mac inbox for agents: ask a question, get a go, have them run a command on their Mac and receive its output, or post where you are. Use whenever you would otherwise write "pending the user" or "waiting for your go", print a command for them to paste into their terminal, or stop until they answer; when a decision changes scope or touches production; and to report that you are blocked or done. Triggers on: zero, /zero, ask the user, needs the user, pending the user, approval, production read, run this on your side.
 allowed-tools: Bash
 ---
 
@@ -14,7 +14,6 @@ Zero is the only way a need for the user reaches them. An ask written into a pla
 Something only the user can produce
 ├── A command you can't or mustn't run yourself: blocked or denied, needs their Mac, their credentials or
 │   production access (a production count, a console read, a tunnel) → zero run --why
-├── A fact behind their access (a production count, a console read, a tunnel) → zero run --why
 ├── A yes or no on a plan, a PR, a scope change → zero approve
 ├── A pick between concrete alternatives → zero ask --option A --option B
 └── Words: a decision you cannot frame as options → zero ask "question"

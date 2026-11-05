@@ -266,8 +266,8 @@ struct Splash: View {
     }
 }
 
-/// The asks waiting on you, then every task, most urgent first, as the Mac's board sorts them; as its sidebar has
-/// them, each lead's workers folded under it, a chevron opening them.
+/// Every task, most urgent first, as the Mac's board sorts them; as its sidebar has them, each lead's workers folded
+/// under it, a chevron opening them.
 struct TasksView: View {
     let model: PhoneModel
     @State private var open: Set<String> = []
@@ -324,7 +324,6 @@ struct TasksView: View {
 }
 
 extension TasksView {
-    /// A task's long press, as the Mac's row menu: pause or resume, rename, archive.
     /// Swiped left: archive (asking first, as from the menu), and pause or resume.
     @ViewBuilder func swipes(_ session: String, name: String, state: BoardRow.State, workers: Int) -> some View {
         Button { archiving = (session, name, workers) } label: { Label("Archive", image: "trash-outline") }.tint(.red)
@@ -340,6 +339,7 @@ extension TasksView {
         Button { newName = name; renaming = (session, name) } label: { Label("Rename", image: "pen-outline") }.tint(.indigo)
     }
 
+    /// A task's long press, as the Mac's row menu: pause or resume, rename, archive.
     @ViewBuilder func actions(_ session: String, name: String, state: BoardRow.State, workers: Int) -> some View {
         if state == .paused {
             Button { Task { _ = await model.unpause([session]) } } label: { Label("Resume", image: "arrow-rotate-clockwise-glyph") }

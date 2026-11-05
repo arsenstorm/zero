@@ -101,8 +101,6 @@ async function loaded(tabId, timeout = 30000) {
 
 function describeTab(tab) { return `${tab.title || "(untitled)"} (${tab.url})` }
 
-// --- Screenshots ---------------------------------------------------------------------------------------------------
-
 async function viewport(tabId) {
   const metrics = await send(tabId, "Page.getLayoutMetrics");
   const v = metrics.cssVisualViewport || metrics.visualViewport;
@@ -184,8 +182,6 @@ async function point(tabId, args, which = "coordinate") {
   return { x: (x * frame.viewWidth) / frame.width, y: (y * frame.viewHeight) / frame.height };
 }
 
-// --- Mouse and keys ------------------------------------------------------------------------------------------------
-
 function modifierBits(modifiers = "") {
   let bits = 0;
   for (const m of String(modifiers).toLowerCase().split("+").map((s) => s.trim())) {
@@ -266,8 +262,6 @@ async function type(tabId, words) {
     await send(tabId, "Input.dispatchKeyEvent", { type: "keyUp", key: ch });
   }
 }
-
-// --- The tools -----------------------------------------------------------------------------------------------------
 
 const TOOLS = {
   async browser_tabs({ createIfEmpty, window }, task) {
@@ -490,7 +484,7 @@ const TOOLS = {
       await chrome.runtime.sendMessage({ target: "zero-offscreen", type: "start", key: String(tab.id) });
       const stopAt = setTimeout(() => finish(tab.id), Math.min(600, Math.max(1, max_seconds)) * 1000);
       recordings.set(tab.id, { stopAt, started: Date.now() });
-      hold(tab.id, () => {});
+      hold(tab.id, true);
       chrome.tabs.sendMessage(tab.id, { type: "zero-recording", on: true }).catch(() => {});
       capture(tab.id, size);
       return text(`Recording tab ${tab.id}. Act in it, then browser_record stop. It stops by itself after ${max_seconds} s.`);
@@ -528,7 +522,7 @@ const TOOLS = {
   },
 };
 
-// Recordings: Chrome's screencast frames for the tab, drawn into a video in an offscreen page.
+// Recordings: the tab's screenshots, drawn into a video in an offscreen page.
 const recordings = new Map(); // tabId → { stopAt, started, capturing: Promise, finished?: Promise of the video }
 
 async function offscreen() {
@@ -560,7 +554,7 @@ function finish(tabId) {
     clearTimeout(recording.stopAt);
     recording.finished = (async () => {
       await recording.capturing;
-      hold(tabId, null);
+      hold(tabId, false);
       chrome.tabs.sendMessage(tabId, { type: "zero-recording", on: false }).catch(() => {});
       return chrome.runtime.sendMessage({ target: "zero-offscreen", type: "stop", key: String(tabId) });
     })();

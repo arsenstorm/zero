@@ -39,7 +39,7 @@ async function groupsOf(task, state) {
 /** The task's newest group, if it has one. */
 async function groupOf(task, state) { return (await groupsOf(task, state))[0] || null }
 
-/** A task's light, as zerod says it; a tab with an alert open makes its group red until it's answered. */
+/** A task's light, as zerod says it; a tab with an alert open shows its group's needs light until it's answered. */
 const lights = new Map();
 const alerting = new Set(); // tabs with a dialog open
 

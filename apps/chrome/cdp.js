@@ -41,11 +41,10 @@ function log(tabId) {
 }
 
 const held = new Set(); // tabs being recorded: never detached for being idle
-const frameListeners = new Map(); // tabId → (data, metadata) => void
 
-/** Keeps the debugger on a tab while it's recorded; its screencast frames to `listener`, or none to stop. */
-export function hold(tabId, listener) {
-  if (listener) { held.add(tabId); frameListeners.set(tabId, listener) } else { held.delete(tabId); frameListeners.delete(tabId) }
+/** Keeps the debugger on a tab while it's recorded (`on`), or lets it go idle again. */
+export function hold(tabId, on) {
+  if (on) held.add(tabId); else held.delete(tabId);
 }
 
 function idle(tabId) { return setTimeout(() => { if (!held.has(tabId)) detach(tabId); else attached.set(tabId, idle(tabId)) }, IDLE) }
@@ -119,10 +118,7 @@ if (!remote) chrome.debugger.onEvent.addListener(({ tabId }, method, params) => 
 /** One of the debugger's events on a tab: Chrome's own, or Firefox's as Zero passes them on. */
 export function event(tabId, method, params) {
   if (!tabId) return;
-  if (method === "Page.screencastFrame") {
-    command(tabId, "Page.screencastFrameAck", { sessionId: params.sessionId }).catch(() => {});
-    frameListeners.get(tabId)?.(params.data, params.metadata);
-  } else if (method === "Page.javascriptDialogOpening") { dialogs.set(tabId, { type: params.type, message: params.message }); alerted(tabId, true) }
+  if (method === "Page.javascriptDialogOpening") { dialogs.set(tabId, { type: params.type, message: params.message }); alerted(tabId, true) }
   else if (method === "Page.javascriptDialogClosed") { dialogs.delete(tabId); alerted(tabId, false) }
   else if (method === "Page.frameNavigated" && !params.frame.parentId) {
     // Logs are a site's (its subdomains alike: app.example.com and example.com): another site starts them afresh.

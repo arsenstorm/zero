@@ -89,7 +89,7 @@ struct CopyActions: View {
     var select: (() -> Void)?
     var body: some View {
         Button("Copy") { UIPasteboard.general.string = text }
-        if let select { Button("Select Text", action: select) }
+        if let select { Button("Select text", action: select) }
     }
 }
 
@@ -103,7 +103,7 @@ struct SelectText: View {
         NavigationStack {
             SelectableText(text: (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))).map { String($0.characters) } ?? text)
                 .padding(.horizontal, 12)
-                .navigationTitle("Select Text")
+                .navigationTitle("Select text")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
@@ -433,7 +433,6 @@ struct AskCard: View {
     @State private var typing: Int?
     @State private var words = ""
 
-    /// A command it can't run itself, for the user to run and say how it went.
     /// A command for you to run yourself (an agent's question with `--code`: another machine's shell, sudo), laid out as
     /// steps. An approval's command is the agent's own, to allow or not, so it's never this.
     private var manual: Bool { (ask.kind == .question || ask.kind == .choice) && ask.command != nil && ask.state == .waiting }

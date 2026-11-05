@@ -89,7 +89,6 @@ struct ZeroAgent {
 struct ZeroAgentQuery: EntityStringQuery {
     static let persistentIdentifier = "ZeroAgentQuery"
     @MainActor func entities(for identifiers: [String]) async throws -> [ZeroAgent] {
-        Log.write("siri: agents asked for \(identifiers)")
         _ = await PhoneModel.shared.ready()
         return identifiers.compactMap { id in
             id == "me" ? ZeroAgent(me: ()) : PhoneModel.shared.rows.first { $0.session == id }.map(ZeroAgent.init)
@@ -98,7 +97,6 @@ struct ZeroAgentQuery: EntityStringQuery {
 
     /// "Zero development", "SEC-TEAM": the task's agent, by the task's name.
     @MainActor func entities(matching string: String) async throws -> [ZeroAgent] {
-        Log.write("siri: agents matching \(string)")
         return try await ZeroTaskQuery().entities(matching: string).compactMap { task in PhoneModel.shared.rows.first { $0.session == task.id }.map(ZeroAgent.init) }
     }
 
@@ -162,9 +160,8 @@ struct ZeroMessageQuery: EntityQuery {
     /// "<session>/<item>": the task's loaded items; "<session>/latest": its latest word, as its notification shows it
     /// (what a notification's "reply…" is to).
     @MainActor func entities(for identifiers: [String]) async throws -> [ZeroMessage] {
-        Log.write("siri: messages asked for \(identifiers)")
         _ = await PhoneModel.shared.ready()
-        let found: [ZeroMessage] = identifiers.compactMap { id in
+        return identifiers.compactMap { id in
             let parts = id.split(separator: "/", maxSplits: 1).map(String.init)
             guard parts.count == 2, let row = PhoneModel.shared.rows.first(where: { $0.session == parts[0] }) else { return nil }
             if parts[1] == "latest" {
@@ -174,8 +171,6 @@ struct ZeroMessageQuery: EntityQuery {
             guard let item = PhoneModel.shared.conversation(parts[0])?.items.first(where: { $0.id == parts[1] }) else { return nil }
             return ZeroMessage(item, in: row)
         }
-        Log.write("siri: messages found \(found.map(\.id))")
-        return found
     }
 }
 
@@ -285,9 +280,8 @@ struct SendToTaskIntent {
     var scheduledDate: Date?
 
     @MainActor func perform() async throws -> some ReturnsValue<[ZeroMessage]> & ProvidesDialog {
-        Log.write("siri: send to \(destination) content \(content.map { String($0.characters) } ?? "nil")")
-        guard await PhoneModel.shared.ready() else { Log.write("siri: send, not connected"); throw ZeroSiriError.offline }
-        guard let session = destination.session, let row = PhoneModel.shared.rows.first(where: { $0.session == session }) else { Log.write("siri: send, no task for \(destination)"); throw ZeroSiriError.noTask }
+        guard await PhoneModel.shared.ready() else { throw ZeroSiriError.offline }
+        guard let session = destination.session, let row = PhoneModel.shared.rows.first(where: { $0.session == session }) else { throw ZeroSiriError.noTask }
         let words = [subject, content].compactMap { $0.map { String($0.characters) } }.joined(separator: "\n\n")
             + (links.isEmpty ? "" : "\n\n" + links.map(\.absoluteString).joined(separator: "\n"))
         let images = attachments.filter { $0.type?.conforms(to: .image) ?? false }.map(\.data)

@@ -1,4 +1,4 @@
-// Recordings: each tab's screencast frames drawn on a canvas as they come, the canvas recorded as a video (MP4 where
+// Recordings: each tab's screenshots drawn on a canvas as they come, the canvas recorded as a video (MP4 where
 // Chrome makes it, else WebM). Idle time is left out: the recorder runs while the page changes or an action is under
 // way, and pauses otherwise, so an agent's thinking between steps leaves no trace. The canvas takes the frames' own
 // size, at the screen's pixel density, so text stays sharp and nothing is stretched.

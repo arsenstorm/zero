@@ -85,7 +85,7 @@ What each one taught:
   Effort is set at start; the model can change mid-session (`set_model`).
 - **OpenCode** allows everything unless its config says `"permission": {"bash": "ask", "edit": "ask"}`; that config is
   read by its background service, so an environment variable set for `opencode acp` doesn't reach it. Zero leaves
-  OpenCode's permissions as Arsen set them. Free models from the `opencode` provider need free endpoints allowed
+  OpenCode's permissions as the user set them. Free models from the `opencode` provider need free endpoints allowed
   in the workspace's privacy settings; `opencode-go/beam-free` works as configured. Models and effort are session
   config options.
 

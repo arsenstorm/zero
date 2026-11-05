@@ -22,8 +22,9 @@ Swift is moving to UI only: zero-host's terminals and the asks store move into z
 make test     # cargo test --workspace, then swift test
 make zerod    # the daemon, at target/release/zerod
 make run      # build, sign, install /Applications/Zero.app and start it
-cargo test -p zerod --test e2e -- --ignored   # the daemon against the real Codex, Claude Code and OpenCode
-                                              # (two short turns on each one's own sign-in; add a name for one)
+cargo test -p zerod --test integration e2e -- --ignored   # the daemon against the real Codex, Claude Code and
+                                                         # OpenCode (two short turns on each one's own sign-in;
+                                                         # e2e::codex for one)
 ```
 
 Needs Rust (with the `x86_64-` and `aarch64-unknown-linux-musl` targets for the drop clients), Xcode, and Zig
@@ -31,7 +32,7 @@ for Ghostty's engine the first time (`brew install zig`).
 
 ## Working on the daemon
 
-Test first. A change to zerod starts with a failing test in `crates/zerod/tests/`:
+Test first. A change to zerod starts with a failing test in `crates/zerod/tests/integration/`:
 
 - `codex.rs`, `claude.rs`, `opencode.rs`: what each provider's messages become in Zero's model, on real sessions
   recorded in `tests/fixtures/` as zerod transcripts (paths and names scrubbed). New provider behaviour gets a new
