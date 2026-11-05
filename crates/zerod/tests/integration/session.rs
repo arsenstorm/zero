@@ -272,6 +272,24 @@ async fn a_question_is_answered_once_through_the_session() {
     assert!(session.snapshot().questions.is_empty());
 }
 
+#[tokio::test]
+async fn words_typed_while_claudes_question_waits_decline_it_and_go_after() {
+    // Claude reads nothing more until its question is answered: typing in the chat instead answers it for the user.
+    let (session, _) = session(Provider::Claude, None);
+    let request = json!({"in": {"type": "control_request", "request_id": "q1", "request": {"subtype": "can_use_tool", "tool_name": "AskUserQuestion",
+        "input": {"questions": [{"question": "Close it out?", "header": "Close", "multiSelect": false,
+                                 "options": [{"label": "Yes", "description": ""}, {"label": "No", "description": ""}]}]}}}});
+    let (transport, seen) = play(vec![request]);
+    session.start(transport, zerod::session::Message::text("where are we?"), Default::default()).await.unwrap();
+    until(&session, |c| !c.questions.is_empty()).await;
+    session.send(zerod::session::Message::text("cancel those, they were done"), Default::default()).await.unwrap();
+    let declined = seen.said("control_response", 1).await[0].clone();
+    assert_eq!((declined["response"]["request_id"].as_str(), declined["response"]["response"]["behavior"].as_str()), (Some("q1"), Some("deny")));
+    assert!(declined["response"]["response"]["message"].as_str().unwrap().contains("chat"), "{declined}");
+    assert_eq!(seen.said("user", 2).await[1]["message"]["content"], "cancel those, they were done");
+    assert!(session.snapshot().questions.is_empty());
+}
+
 // Every provider
 
 #[tokio::test]

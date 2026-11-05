@@ -132,6 +132,12 @@ impl Adapter for Claude {
 
     fn receive(&mut self, conversation: &Conversation, message: &Value) -> Effects {
         let mut effects = Effects::default();
+        // A subagent left running in the background, speaking after the lead's turn has ended: its words are its own,
+        // and no turn of the lead's (which nothing would ever end). The lead hears from it, and says so, in its next turn.
+        let between_turns = matches!(conversation.status, Status::Idle | Status::Offline);
+        if between_turns && message["parent_tool_use_id"].is_string() && matches!(message["type"].as_str(), Some("assistant" | "stream_event" | "user")) {
+            return effects;
+        }
         match message["type"].as_str() {
             // Auto mode's classifier refused a tool call: what the user would have to allow or do themselves.
             Some("system") if message["subtype"] == "permission_denied" => {
@@ -474,6 +480,11 @@ pub async fn resume(session: &Session, transport: Transport) -> Result<(), Strin
 /// is set at start (`--effort`) and stays.
 pub async fn send(session: &Session, text: &str, images: &[String], model: Option<&str>) -> Result<(), String> {
     if let Some(model) = model { set_model(session, model).await? }
+    // Claude reads nothing more until its own question is answered: the user writing in the chat instead answers it.
+    for question in session.snapshot().questions {
+        session.write(json!({"type": "control_response", "response": {"subtype": "success", "request_id": question.id,
+            "response": {"behavior": "deny", "message": "The user wrote in the chat instead of picking an answer: their message follows."}}}))?;
+    }
     session.write(user_message(text, images))
 }
 

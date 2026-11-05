@@ -294,3 +294,16 @@ fn a_server_of_zeros_that_needs_signing_in_gives_the_user_claudes_own_sign_in_li
     core.receive(&json!({"type": "control_response", "response": {"subtype": "error", "request_id": "mcp-auth-cve-lookup", "error": "no OAuth here"}}));
     assert!(matches!(&core.conversation().items.last().unwrap().kind, ItemKind::Notice { text, error: true } if text == "Couldn't sign in to CVE lookup: no OAuth here"));
 }
+
+#[test]
+fn a_subagent_speaking_after_the_turn_ended_starts_no_turn() {
+    // A background subagent (Claude's Agent tool, run on): its messages carry the tool's id, and go on after the
+    // lead's turn has ended. They are its, not a turn of the conversation's, which would never end.
+    let mut ended = Conversation::new("s1", Provider::Claude, "/work/project");
+    ended.status = Status::Idle;
+    let mut core = Core::new(ended);
+    core.receive(&json!({"type": "assistant", "parent_tool_use_id": "toolu_bg", "message": {"id": "m9", "content": [{"type": "text", "text": "Reading the docs page."}]}}));
+    core.receive(&json!({"type": "stream_event", "parent_tool_use_id": "toolu_bg", "event": {"type": "message_start", "message": {"id": "m10"}}}));
+    let conversation = core.conversation();
+    assert_eq!((conversation.status, conversation.turn.clone()), (Status::Idle, None));
+}
