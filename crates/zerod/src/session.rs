@@ -51,6 +51,8 @@ struct Inner {
     touched: Instant,
     events: broadcast::Sender<Event>,
     transcript: Option<File>,
+    /// Its transcript's last write failed (a full disk): said once, until a write works again.
+    unwritten: bool,
     /// Lines to the runtime; None while offline.
     out: Option<mpsc::UnboundedSender<Value>>,
     child: Option<Child>,
@@ -120,7 +122,7 @@ impl Session {
         let parked: Option<Parked> = std::fs::read(dir.join("parked.json")).ok().and_then(|data| serde_json::from_slice(&data).ok());
         if let Some(parked) = parked.filter(|p| p.lines == lines) {
             let session = Session(Arc::new(Mutex::new(Inner {
-                mcp: vec![], core: None, parked: Some(parked), summary: None, dir: Some(dir.into()), lines, touched: Instant::now(), events, transcript: Some(append(dir)?),
+                mcp: vec![], core: None, parked: Some(parked), summary: None, dir: Some(dir.into()), lines, touched: Instant::now(), events, transcript: Some(append(dir)?), unwritten: false,
                 out: None, child: None, waiting: HashMap::new(), answered: HashSet::new(), next: lines + 1, generation: 0,
                 heard: Instant::now(), running: HashMap::new(),
             })));
@@ -164,7 +166,7 @@ impl Session {
 
     fn with(core: Core, transcript: Option<File>, events: broadcast::Sender<Event>, next: u64) -> Session {
         Session(Arc::new(Mutex::new(Inner {
-            mcp: vec![], core: Some(core), parked: None, summary: None, dir: None, lines: 0, touched: Instant::now(), events, transcript, out: None, child: None, waiting: HashMap::new(), answered: HashSet::new(), next, generation: 0,
+            mcp: vec![], core: Some(core), parked: None, summary: None, dir: None, lines: 0, touched: Instant::now(), events, transcript, unwritten: false, out: None, child: None, waiting: HashMap::new(), answered: HashSet::new(), next, generation: 0,
             heard: Instant::now(), running: HashMap::new(),
         })))
     }
@@ -313,7 +315,8 @@ impl Inner {
         if let Some(file) = self.transcript.as_mut() {
             let mut line = serde_json::to_vec(&entry).unwrap_or_default();
             line.push(b'\n');
-            let _ = file.write_all(&line);
+            let id = self.core.as_ref().map(|c| c.conversation().id.clone()).or_else(|| self.parked.as_ref().map(|p| p.summary.id.clone())).unwrap_or_default();
+            if let Some(said) = unwritten(&mut self.unwritten, file.write_all(&line), &id) { eprintln!("{said}") }
         }
     }
 
@@ -344,6 +347,14 @@ fn summarize(conversation: &Conversation) -> Conversation {
         if !items.iter().any(|kept| kept.id == item.id) { items.push(item.clone()) }
     }
     conversation.with_items(items)
+}
+
+/// What to log of a transcript write, if anything: its failure, once, until a write works again. A session rebuilds
+/// from its transcript, so a line lost is lost on the next start.
+pub fn unwritten(failing: &mut bool, written: std::io::Result<()>, id: &str) -> Option<String> {
+    let said = match &written { Err(error) if !*failing => Some(format!("zerod: {id}'s transcript: {error}; lines are being lost")), _ => None };
+    *failing = written.is_err();
+    said
 }
 
 /// Newlines in a file, read a piece at a time: transcripts run to tens of megabytes.

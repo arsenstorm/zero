@@ -330,3 +330,14 @@ async fn lines_that_are_not_json_are_skipped() {
     session.attach(zerod::session::Transport::new(read, write));
     until(&session, |c| c.title.as_deref() == Some("Hi")).await;
 }
+
+#[test]
+fn a_transcript_that_cant_be_written_is_said_once_until_it_can_again() {
+    use zerod::session::unwritten;
+    let failed = || Err(std::io::Error::other("No space left on device"));
+    let mut failing = false;
+    assert!(unwritten(&mut failing, failed(), "s1").unwrap().contains("s1's transcript: No space left on device"));
+    assert_eq!(unwritten(&mut failing, failed(), "s1"), None, "said once, not once a line");
+    assert_eq!(unwritten(&mut failing, Ok(()), "s1"), None);
+    assert!(unwritten(&mut failing, failed(), "s1").is_some(), "failing again after it worked is news");
+}
