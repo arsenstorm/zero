@@ -188,21 +188,21 @@ fn message(zerod: &Zerod, request: &Request, needs: &'static str) -> Result<(Str
     let id = request.session()?;
     let role = if zerod.daemon.get(&id).is_some_and(|c| c.parent.is_some()) { "worker" } else { "lead" };
     for name in &loops { zerod.loops.record(name, &id, role) }
-    let text = answered_in_chat(zerod, &id, text);
+    let text = with_open_asks(zerod, &id, text);
     Ok((id, text, images))
 }
 
-/// The user writing to a task answers there: its open questions and choices in the inbox are withdrawn (stale, they
-/// would steer it later), and its agent is told which, under the user's words. A command or approval stays: the
-/// chat doesn't answer those. The provider's own questions are its adapter's (declined as the words go).
-fn answered_in_chat(zerod: &Zerod, id: &str, text: String) -> String {
+/// The user writing to a task may answer one of its open asks there, or write about something else and leave it open
+/// on purpose (a step they're still running): Zero can't tell which, so it withdraws none and tells the agent, under
+/// the user's words, what's still open, to withdraw what the words answered. The provider's own questions are its
+/// adapter's (declined as the words go).
+fn with_open_asks(zerod: &Zerod, id: &str, text: String) -> String {
     use crate::ask::AskKind;
     let open: Vec<_> = zerod.inbox.asks().into_iter().filter(|a| !a.state.is_final() && a.request.is_none()
-        && matches!(a.kind, AskKind::Question | AskKind::Choice) && a.agent.runtime.as_deref() == Some("zerod") && a.agent.reference.as_deref() == Some(id)).collect();
+        && !matches!(a.kind, AskKind::Note | AskKind::Message) && a.agent.runtime.as_deref() == Some("zerod") && a.agent.reference.as_deref() == Some(id)).collect();
     if open.is_empty() { return text }
-    for ask in &open { zerod.inbox.withdraw(&ask.id, Some("Answered in the chat")) }
     let which = open.iter().map(|a| format!("{} (\"{}\")", a.id, a.title)).collect::<Vec<_>>().join(", ");
-    format!("{text}\n\n{} {which}: the user is answering in the chat, so answer there and ask again only what's still open.", crate::daemon::WITHDRAWN_MARK)
+    format!("{text}\n\n{} {which}. If the user's words answer one, withdraw it with `zero withdraw <id>`; leave the rest for them.)", crate::daemon::OPEN_ASKS_MARK)
 }
 
 /// A new build is on disk: turns under way pause between steps, then zerod becomes the new one, which carries them on.

@@ -226,7 +226,7 @@ fn zeros_carry_on_is_never_shown_as_a_message_of_the_users() {
     assert_eq!(zerod::core::without_carry_on(&format!("{carry}\n\n{carry}")), None, "twice over is still only Zero's");
     assert_eq!(zerod::core::without_carry_on(&format!("{carry}\n\nWorker done.")).as_deref(), Some("Worker done."), "what came with it stays");
     assert_eq!(zerod::core::without_carry_on("Hello").as_deref(), Some("Hello"));
-    // The note under the user's words when writing withdrew the task's open asks: the agent's, not shown as theirs.
-    let withdrew = format!("let's talk\n\n{} k3x9qa (\"Which first?\"): the user is answering in the chat.", zerod::daemon::WITHDRAWN_MARK);
+    // The note under the user's words listing the task's open asks: the agent's, not shown as theirs.
+    let withdrew = format!("let's talk\n\n{} k3x9qa (\"Which first?\"). Withdraw what the user's words answered.", zerod::daemon::OPEN_ASKS_MARK);
     assert_eq!(zerod::core::without_carry_on(&withdrew).as_deref(), Some("let's talk"));
 }

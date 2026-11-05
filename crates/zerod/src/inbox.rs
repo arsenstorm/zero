@@ -520,7 +520,8 @@ impl Inbox {
 
     /// A prompt arrived in an agent's session (the plugin's prompt hook reports it): "zero" when Zero typed it;
     /// otherwise the user did, in the terminal, so the agent's open questions are answered there and withdrawn.
-    /// Runs stay open: only the user can run them, whatever they typed.
+    /// Runs, and steps for the user to run themselves (a question with its command), stay open: only the user can
+    /// run them, whatever they typed.
     pub fn prompted(&self, identity: &AgentIdentity, text: &str) -> &'static str {
         let name = resolve(&self.lock().asks, identity);
         if let Some(session) = &identity.session && let Some(mut known) = self.identity(&name) && known.session.as_ref() != Some(session) {
@@ -535,7 +536,7 @@ impl Inbox {
         }));
         if ours { return "zero" }
         let open: Vec<String> = self.lock().asks.iter()
-            .filter(|a| a.agent.name == name && a.kind != AskKind::Run && a.same_as.is_none() && matches!(a.state, AskState::Waiting | AskState::Pending))
+            .filter(|a| a.agent.name == name && a.kind != AskKind::Run && a.command.is_none() && a.same_as.is_none() && matches!(a.state, AskState::Waiting | AskState::Pending))
             .map(|a| a.id.clone()).collect();
         for id in open { self.withdraw(&id, Some("The user replied in the chat")) }
         "human"

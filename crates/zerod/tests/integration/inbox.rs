@@ -233,10 +233,15 @@ async fn words_typed_in_the_terminal_withdraw_open_questions_but_not_runs() {
     let mut run = ask(AskKind::Run, "Count", &[]);
     run.command = Some("sh c.sh".into());
     let run = s.create(run, false);
+    // Steps for the user to run themselves, then say how it went: open while they run it, whatever else they type.
+    let mut steps = ask(AskKind::Choice, "Run the query, then tell me", &["Ran it", "Not now"]);
+    steps.command = Some("SELECT 1".into());
+    let steps = s.create(steps, false);
     assert_eq!(s.prompted(&agent("test"), "go ahead and merge it"), "human");
     let withdrawn = s.ask(&question.id).unwrap();
     assert_eq!((withdrawn.state, withdrawn.status.as_deref()), (AskState::Expired, Some("withdrawn")));
     assert_eq!(s.ask(&run.id).unwrap().state, AskState::Waiting);
+    assert_eq!(s.ask(&steps.id).unwrap().state, AskState::Waiting);
 }
 
 #[tokio::test]

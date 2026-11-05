@@ -158,7 +158,7 @@ impl Core {
 /// A message's text without Zero's carry-on (delivered with what else was waiting, or more than once, it's still not
 /// the user's); none when nothing else is left.
 pub fn without_carry_on(text: &str) -> Option<String> {
-    let zeros = |part: &str| crate::daemon::CARRIES.contains(&part) || part.starts_with(crate::daemon::END_YOUR_TURN_MARK) || part.starts_with(crate::daemon::WITHDRAWN_MARK);
+    let zeros = |part: &str| crate::daemon::CARRIES.contains(&part) || part.starts_with(crate::daemon::END_YOUR_TURN_MARK) || part.starts_with(crate::daemon::OPEN_ASKS_MARK);
     if !text.split("\n\n").any(|part| zeros(part.trim())) { return Some(text.to_string()) }
     let rest = text.split("\n\n").filter(|part| !zeros(part.trim()))
         .collect::<Vec<_>>().join("\n\n");

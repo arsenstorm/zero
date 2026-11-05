@@ -570,8 +570,10 @@ async fn every_op_is_routed_to_its_handler() {
 }
 
 #[tokio::test]
-async fn writing_in_the_chat_withdraws_the_tasks_open_questions_and_says_so() {
-    // The user answers in the conversation: an open question in the inbox would only steer the task later, stale.
+async fn writing_in_the_chat_tells_the_agent_which_of_its_asks_are_still_open() {
+    // The user may answer one in the chat, or write about something else and leave it open on purpose (a step they're
+    // still running): Zero can't tell which, so none is withdrawn, and the agent is told what's open to withdraw what
+    // the words answered.
     let h = harness("server-chat-withdraws").await;
     let mut control = Client::connect(&h.socket).await;
     let started = control.call(json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": "ls"})).await;
@@ -583,11 +585,11 @@ async fn writing_in_the_chat_withdraws_the_tasks_open_questions_and_says_so() {
     control.call(json!({"op": "queue", "session": session, "text": "let's talk about the formatters"})).await;
     let asks = control.call(json!({"op": "asks"})).await["result"].as_array().unwrap().clone();
     let state = |id: &str| asks.iter().find(|a| a["id"] == id).map(|a| (a["status"].clone(), a["state"].clone())).unwrap();
-    assert_eq!(state(&question).0, "withdrawn", "the question: answered in the chat");
-    assert_ne!(state(&run).0, "withdrawn", "a command for the user to run isn't something the chat answers");
+    assert!(state(&question).0 != "withdrawn" && state(&run).0 != "withdrawn", "left for the user");
     // Waiting for the turn's end, or given to the agent already: either way the words carry the note.
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     let pending = std::fs::read_to_string(h.home.join("sessions").join(&session).join("pending.json")).unwrap_or_default();
     let given = format!("{pending}{}", h.seen.lock().unwrap().iter().flat_map(|s| s.all()).map(|m| m.to_string()).collect::<String>());
-    assert!(given.contains("let's talk about the formatters") && given.contains(&format!("{} {question}", zerod::daemon::WITHDRAWN_MARK)), "the agent is told which: {given}");
+    assert!(given.contains("let's talk about the formatters") && given.contains(zerod::daemon::OPEN_ASKS_MARK), "{given}");
+    assert!(given.contains(&question) && given.contains(&run) && given.contains("zero withdraw"), "the agent is told which: {given}");
 }

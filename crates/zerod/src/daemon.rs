@@ -112,8 +112,8 @@ goes through zero ask, zero run or zero approve with --async (or Zero's zero_ask
 your words reaches no one. Don't repeat your answer; do what's missing and end.";
 /// What a turn paused for a restart is told once the new zerod is up. Zero's own words, not the user's: never shown as
 /// a message (core.rs leaves its item out).
-/// Under the user's words when writing to a task withdrew its open asks: for the agent, never shown as the user's.
-pub const WITHDRAWN_MARK: &str = "(Zero withdrew your open asks";
+/// Under the user's words when the task has asks open: for the agent, never shown as the user's.
+pub const OPEN_ASKS_MARK: &str = "(Zero: your asks still open:";
 pub const CARRY_ON: &str = "Zero restarted while you were working: your turn was paused between steps, and what you had running in the background was stopped. Please carry on where you left off, starting again what you still need.";
 /// What a task waiting on the user's answer (the provider's own question or approval) is told: that went with the restart.
 pub const CARRY_ON_WAITING: &str = "Zero restarted while you were waiting on the user: your question to them (or the approval you wanted) went with it, unanswered. Please ask again if you still need it, and carry on.";
