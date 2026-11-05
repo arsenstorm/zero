@@ -74,6 +74,17 @@ public struct Ask: Codable, Identifiable, Sendable {
     public var request: String?
     /// For a note: what the agent hands to the user without waiting for it ("mark the PR ready and merge it").
     public var needs: String?
+    /// For a run: where it runs (zerod's runs.rs). "host:<terminal>" is a terminal of zero-host's the user can watch.
+    public var run: String?
+
+    /// A run Zero lost track of while it ran: it may or may not have finished.
+    public var lost: Bool { kind == .run && status == "lost" }
+
+    /// The zero-host terminal a run runs in, while it runs: one to watch, or type into if it asks something.
+    public var runTerminal: String? {
+        guard kind == .run, state == .running, let run, run.hasPrefix("host:") else { return nil }
+        return String(run.dropFirst(5))
+    }
 
     /// An ask for the user to answer: not a note or a message, not expired, and not a run sharing another's card.
     public var isForYou: Bool { kind != .note && kind != .message && state != .expired && sameAs == nil }

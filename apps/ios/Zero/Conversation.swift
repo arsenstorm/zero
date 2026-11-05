@@ -526,6 +526,8 @@ struct AskCard: View {
                 }
             } else if ask.state == .running {
                 Text("Running…").font(.footnote).foregroundStyle(.secondary)
+            } else if ask.lost {
+                Text("Lost: Zero can't tell whether it finished. Check what it did before running it again.").font(.footnote).foregroundStyle(.orange)
             }
         }
         .padding(flat ? 0 : 14)

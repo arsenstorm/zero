@@ -45,6 +45,8 @@ struct CardView: View {
     @State private var commandExpanded = false
     @State private var scriptExpanded = false
     @State private var detailExpanded = false
+    /// A running run's own terminal shown in place of its output (its Terminal button).
+    @State private var watching = false
     /// False until the entrance has played; cards already seen start true.
     @State private var entered = false
     /// Heights of the command box and the options while waiting; the terminal takes exactly their space.
@@ -91,6 +93,7 @@ struct CardView: View {
         case .run:
             switch ask.state {
             case .running: return "Running command…"
+            case .answered where ask.lost: return "Lost track of the command"
             case .answered: return (ask.exitCode ?? 0) == 0 ? "Ran command" : "Command failed (exit \(ask.exitCode ?? 0))"
             case .declined: return "Command rejected"
             default: return "Allow this command?"
@@ -195,6 +198,11 @@ struct CardView: View {
             Spacer(minLength: 8)
             // No time and no dismiss: a finished card folds into Earlier, or leaves the inbox when it next opens.
             if ask.state == .running {
+                // Its own terminal: watched in place of the output, or typed into if it asks something.
+                if ask.runTerminal != nil {
+                    Button(watching ? "Output" : "Terminal") { watching.toggle() }
+                        .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                }
                 Button("Stop") { controller.store.cancelRun(ask.id) }
                     .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.red)
             }
@@ -362,6 +370,8 @@ struct CardView: View {
             if ask.options.isEmpty { replyBox(placeholder: "Reply to \(controller.store.displayName(of: ask.agent.name))…") }
         case .pending:
             EmptyView()
+        case .answered where ask.lost:
+            statusRow("Lost: check what it did before running it again", color: .orange)
         case .running, .answered:
             EmptyView()
         case .declined:
@@ -373,7 +383,18 @@ struct CardView: View {
 
     /// Once a run starts, the command box takes exactly the space it and the options had, fixed, like a small
     /// terminal: the command on the first line, the output scrolling beneath it and following the newest line.
-    private var terminal: some View {
+    @ViewBuilder private var terminal: some View {
+        if watching, let id = ask.runTerminal {
+            HostTerminal(id: id).id(id)
+                .frame(maxWidth: .infinity)
+                .frame(height: commandHeight + 12 + optionsHeight)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+        } else {
+            output
+        }
+    }
+
+    private var output: some View {
         TerminalView(command: ask.command ?? "", output: ask.output)
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .topLeading)
