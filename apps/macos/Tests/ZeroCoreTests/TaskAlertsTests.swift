@@ -105,3 +105,16 @@ private func row(_ id: String, state: String, own: String? = nil, worker: String
     // Another question is news.
     #expect(TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "needsYou", asks: ["Merge it?", "Deploy it?"])], announced: &announced).alerts.count == 1)
 }
+
+@Test func anAlertSoundedAtTheMacGoesToThePhoneIfItStillStandsMinutesLater() {
+    let start = Date(timeIntervalSince1970: 1_000)
+    let replied = TaskAlert(session: "1", kind: .finished, state: .answered, title: "Task 1", body: "Replied: done")
+    let held = ["1": (alert: replied, at: start)]
+    let still = [row("1", state: "answered")]
+    #expect(TaskAlerts.due(held, rows: still, now: start + 299, front: nil, lastInput: start).isEmpty, "not yet")
+    #expect(TaskAlerts.due(held, rows: still, now: start + 300, front: nil, lastInput: start) == [replied], "unseen five minutes on: the phone")
+    #expect(TaskAlerts.due(held, rows: [row("1", state: "read")], now: start + 300, front: nil, lastInput: start).isEmpty, "seen meanwhile")
+    #expect(TaskAlerts.due(held, rows: [row("1", state: "working")], now: start + 300, front: nil, lastInput: start).isEmpty, "moved on")
+    #expect(TaskAlerts.due(held, rows: still, now: start + 300, front: "1", lastInput: start + 60).isEmpty, "open in front, and the user was there after it came")
+    #expect(TaskAlerts.due(held, rows: still, now: start + 300, front: "1", lastInput: start - 1) == [replied], "open in front, but nobody there since")
+}
