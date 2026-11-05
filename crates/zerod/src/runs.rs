@@ -71,8 +71,9 @@ impl Runs {
         }
     }
 
-    /// Its files gone, once its outcome is kept on its ask.
-    pub fn forget(&self, handle: &str) {
+    /// Let go of, once its outcome is kept on its ask: its terminal closed (it has ended) and its files gone.
+    pub async fn release(&self, handle: &str) {
+        if let (Some(("host", terminal)), Some(host)) = (handle.split_once(':'), &self.host) { host.shut(terminal).await }
         if let Some((out, exit)) = self.files(handle) {
             let _ = std::fs::remove_file(&out);
             let _ = std::fs::remove_file(&exit);

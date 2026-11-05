@@ -368,7 +368,8 @@ impl Inbox {
                 if ended {
                     let code = std::fs::read_to_string(&exit).ok().and_then(|c| c.trim().parse().ok());
                     inbox.finish(&id, AskState::Answered, Some(code.unwrap_or(-1)));
-                    runs.forget(&handle);
+                    drop(inbox);
+                    runs.release(&handle).await;
                     return;
                 }
                 if !runs.alive(&handle).await && !exit.exists() {
