@@ -11,8 +11,11 @@ impl Daemon {
         let mut pausing = tokio::task::JoinSet::new();
         for session in self.sessions() {
             let conversation = session.summary();
-            // Only a turn with a process behind it: an offline session's last status may still say it was working.
-            if !session.is_attached() || !matches!(conversation.status, Status::Working | Status::Waiting | Status::Starting) { continue }
+            // Only a turn with a process behind it: an offline session's last status may still say it was working. Or
+            // one between turns with a run still going in the background (to wake it when done): the restart ends its
+            // process and the run with it.
+            let under_way = matches!(conversation.status, Status::Working | Status::Waiting | Status::Starting) || session.running_command();
+            if !session.is_attached() || !under_way { continue }
             let me = self.me.clone();
             pausing.spawn(async move {
                 let deadline = tokio::time::Instant::now() + COMMAND_WAIT;

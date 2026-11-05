@@ -57,6 +57,27 @@ async fn a_restart_waits_for_a_running_command_then_pauses_the_turn_to_carry_on(
 }
 
 #[tokio::test]
+async fn a_task_between_turns_with_a_run_in_the_background_carries_on_too() {
+    // Its turn ended with a test run left going in the background, to wake it when done: a restart ends its process
+    // and the run with it, so it's paused and carried on like a turn, told to start again what it still needs.
+    let home = temp_dir("restart-background");
+    let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
+    let cwd = home.to_str().unwrap();
+    let waiting = daemon.start(Provider::Claude, "verify it", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let session = daemon.session(&waiting).unwrap();
+    session.change(command(ItemStatus::Running));
+    session.change(Change::Status { status: Status::Idle, turn: None, error: None });
+    let pausing = tokio::spawn({ let daemon = daemon.clone(); async move { daemon.pause_for_restart().await } });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    session.change(command(ItemStatus::Done)); // finished within the wait: the run isn't cut off when it needn't be
+    let paused = tokio::time::timeout(Duration::from_secs(10), pausing).await.unwrap().unwrap();
+    assert_eq!(paused, std::slice::from_ref(&waiting));
+    let words = std::fs::read_to_string(home.join("zerod/sessions").join(&waiting).join("pending.json")).unwrap();
+    assert!(words.contains("background"), "told what a restart stops: {words}");
+}
+
+#[tokio::test]
 async fn a_restart_doesnt_wait_on_a_session_closed_while_its_command_ran() {
     // Closed (archived) mid-command, the session's last item still says a command runs: the pause moves on at once
     // rather than waiting out the whole allowance with everything else already paused.

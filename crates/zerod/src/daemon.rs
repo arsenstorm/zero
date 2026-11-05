@@ -112,7 +112,7 @@ goes through zero ask, zero run or zero approve with --async (or Zero's zero_ask
 your words reaches no one. Don't repeat your answer; do what's missing and end.";
 /// What a turn paused for a restart is told once the new zerod is up. Zero's own words, not the user's: never shown as
 /// a message (core.rs leaves its item out).
-pub const CARRY_ON: &str = "Zero restarted while you were working: your turn was paused between steps. Please carry on where you left off.";
+pub const CARRY_ON: &str = "Zero restarted while you were working: your turn was paused between steps, and what you had running in the background was stopped. Please carry on where you left off, starting again what you still need.";
 /// What a working session is told when the user pauses it, steering its turn to an end it can be picked up from.
 pub const WRAP_UP: &str = "The user is pausing you (for the night, or while they're away): finish the step you're on, leave the work so it can \
 be picked up again, say where you are and what comes next, and end your turn. Don't start anything new.";
