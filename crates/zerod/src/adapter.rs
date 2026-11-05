@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::model::{Approval, Change, Conversation, Item, ItemKind, ItemStatus, Provider, Question, Status};
 
-/// Answers to a question, by field id: the options picked, or Arsen's own words.
+/// Answers to a question, by field id: the options picked, or the user's own words.
 pub type Answers = HashMap<String, Vec<String>>;
 use crate::{acp, claude, codex};
 
@@ -95,7 +95,7 @@ Chrome, through Zero for Chrome): your own browser tools are off in Zero.";
 /// Codex's own browser, its bundled chrome and browser plugins, off for this run only: the user's config is left as is.
 const CODEX_NO_BROWSER: &[&str] = &["-c", "plugins.chrome@openai-bundled.enabled=false", "-c", "plugins.browser@openai-bundled.enabled=false"];
 
-/// `args` run through Arsen's login shell, so his PATH (nvm, ~/.local/bin, Homebrew) finds the provider's CLI.
+/// `args` run through the user's login shell, so their PATH (nvm, ~/.local/bin, Homebrew) finds the provider's CLI.
 pub fn login_shell(args: &[&str]) -> Vec<String> {
     ["/bin/zsh", "-lic", "exec \"$@\"", "zsh"].iter().chain(args).map(|s| s.to_string()).collect()
 }
@@ -135,7 +135,7 @@ impl Provider {
         Ok(login_shell(&args))
     }
 
-    /// How the provider is named to Arsen.
+    /// How the provider is named to the user.
     pub fn title(self) -> &'static str {
         match self {
             Provider::Codex => "Codex",

@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::now;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -399,4 +399,3 @@ pub fn first_line(text: &str, limit: usize) -> String {
     if line.chars().count() <= limit { line.to_string() } else { format!("{}…", line.chars().take(limit - 1).collect::<String>()) }
 }
 
-fn now() -> i64 { SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0) }

@@ -1,6 +1,6 @@
 //! zero — file-drop client, placed in a drop folder by Zero.app. Same commands and exit codes as the `zero`
 //! CLI, over files: `asks/<id>.json` goes in, `answers/<id>.json` comes back. Anything that can write to a
-//! folder the Mac sees reaches Arsen with it.
+//! folder the Mac sees reaches the user with it.
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -10,11 +10,11 @@ use std::{env, fs, process, thread};
 
 const USAGE: &str = "usage:
   zero ask     \"short question?\" [--option A --option B ...] [--body \"details\"] [--title T] [--code 'snippet']
-               the question is one line (about 12 words); the details Arsen may need go in --body
+               the question is one line (about 12 words); the details the user may need go in --body
   zero approve \"what you want to do\" [--body B] [--code 'snippet']
   zero run     'command' --why \"what you need the output for\" [--cwd DIR] [--title T]
   zero note    \"where you are now\" [--blocked | --done]
-  zero withdraw <id> [--reason \"why\"]   (take back an open ask that no longer needs Arsen)
+  zero withdraw <id> [--reason \"why\"]   (take back an open ask that no longer needs the user)
   zero wait    <id>
   zero status  <id>
 common: --async --agent NAME ($ZERO_AGENT) --ticket ID (shown as the ask's context) --ttl MINUTES --help
@@ -60,7 +60,7 @@ struct Ask {
     /// A question's supporting text, shown under it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     detail: Option<String>,
-    /// A run's script file, shown to Arsen beside the command.
+    /// A run's script file, shown to the user beside the command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     script: Option<String>,
 }
@@ -162,7 +162,7 @@ impl Drop {
     fn asks(&self) -> PathBuf { self.root.join("asks") }
     fn answers(&self) -> PathBuf { self.root.join("answers") }
 
-    /// Without ZERO_AGENT, the folder's two parent names: on a bench that reads "<bench>/<app>".
+    /// Without ZERO_AGENT, the folder's two parent names: in a worktree that reads "<worktree>/<repo>".
     fn agent(&self, args: &Args) -> Agent {
         let name = args
             .flag("agent")
@@ -385,7 +385,7 @@ fn main() {
             submit(&drop, &args, ask)
         }
         "permission" => {
-            // Claude Code's PermissionRequest hook input on stdin; Arsen's answer goes back as the hook's decision.
+            // Claude Code's PermissionRequest hook input on stdin; the user's answer goes back as the hook's decision.
             // If the ask expires, nothing is printed and Claude Code's own permission flow carries on.
             let mut input = String::new();
             std::io::stdin().read_to_string(&mut input).ok();
@@ -410,7 +410,7 @@ fn main() {
                 "declined" => {
                     let reason = done.answer.unwrap_or_default();
                     let reason = reason.split_once(": ").map(|(_, r)| r.to_string()).unwrap_or_default();
-                    let message = if reason.is_empty() { "Arsen said no in Zero".to_string() } else { format!("Arsen said no in Zero: {reason}") };
+                    let message = if reason.is_empty() { "The user said no in Zero".to_string() } else { format!("The user said no in Zero: {reason}") };
                     serde_json::json!({"behavior": "deny", "message": message})
                 }
                 _ => process::exit(0),
@@ -464,7 +464,7 @@ fn main() {
             let command = first().unwrap_or_else(|| fail(USAGE, 1));
             short_detail(args.flag("why").or(args.flag("body")), "why");
             if args.flag("why").is_none() && args.flag("body").is_none() {
-                fail("zero run needs --why: say what you need the output for, so Arsen knows what he is running", 1)
+                fail("zero run needs --why: say what you need the output for, so the user knows what they are running", 1)
             }
             let options = vec!["Run".into(), "Reject".into(), "Suggest something else…".into()];
             let cwd = args.flag("cwd").cloned().or_else(|| env::current_dir().ok().map(|p| p.to_string_lossy().to_string()));

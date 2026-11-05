@@ -133,7 +133,7 @@ impl Adapter for Claude {
     fn receive(&mut self, conversation: &Conversation, message: &Value) -> Effects {
         let mut effects = Effects::default();
         match message["type"].as_str() {
-            // Auto mode's classifier refused a tool call: what Arsen would have to allow or do himself.
+            // Auto mode's classifier refused a tool call: what the user would have to allow or do themselves.
             Some("system") if message["subtype"] == "permission_denied" => {
                 if let Some(mut item) = message["tool_use_id"].as_str().and_then(|id| conversation.item(id)).cloned() {
                     item.status = ItemStatus::Declined;

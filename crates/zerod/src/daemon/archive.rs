@@ -123,7 +123,7 @@ impl Daemon {
 /// the order they went.
 fn archived_at() -> i64 {
     static LAST: AtomicI64 = AtomicI64::new(0);
-    let now = millis() as i64;
+    let now = now_ms();
     let mut last = LAST.load(Ordering::Relaxed);
     loop {
         let next = now.max(last + 1);

@@ -51,7 +51,7 @@ impl Session {
         Ok(())
     }
 
-    /// Arsen's words: steering or queued behind the turn in progress where the provider allows it, else a new turn.
+    /// The user's words: steering or queued behind the turn in progress where the provider allows it, else a new turn.
     /// Their images (files) are kept in the transcript first, so the message keeps them on replay.
     pub async fn send(&self, message: Message<'_>, choice: ModelChoice<'_>) -> Result<(), String> {
         let conversation = self.snapshot();

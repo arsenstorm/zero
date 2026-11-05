@@ -297,7 +297,7 @@
     },
     "action_summary": {
      "type": "string",
-     "description": "A few words saying what this form fill does on the page and to what, for example 'Opens the Filters menu'. State the effect only, accurately: no reasons, no passwords or other secrets."
+     "description": "A few words saying what this form fill does on the page and to what, for example 'Fills in the search field'. State the effect only, accurately: no reasons, no passwords or other secrets."
     },
     "tabId": {
      "type": "number",

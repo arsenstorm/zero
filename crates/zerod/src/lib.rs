@@ -41,3 +41,13 @@ pub mod solo;
 pub mod terminal;
 pub mod watches;
 pub mod workspaces;
+
+/// Now, in seconds since 1970.
+pub fn now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
+/// Now, in milliseconds since 1970.
+pub fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}

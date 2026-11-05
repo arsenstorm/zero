@@ -203,7 +203,7 @@ fn claude_runs_unmodified_in_auto_mode_with_zeros_rules_appended() {
     assert_eq!(at("--permission-prompt-tool"), Some("stdio"));
     // Claude in Chrome off, whatever the user's own default: agents in Zero use Zero for Chrome.
     assert!(args.contains(&"--no-chrome".to_string()) && !args.contains(&"--chrome".to_string()), "{args:?}");
-    assert_eq!(at("--permission-mode"), Some("auto"), "Arsen's own mode: Claude's classifier decides, Zero hears what it can't");
+    assert_eq!(at("--permission-mode"), Some("auto"), "The user's own mode: Claude's classifier decides, Zero hears what it can't");
     assert_eq!(at("--session-id"), Some("3f1c2b8a-0000-4000-8000-000000000001"));
     assert_eq!((at("--model"), at("--effort")), (Some("haiku"), Some("low")));
     assert_eq!(at("--append-system-prompt"), Some(zerod::adapter::INSTRUCTIONS));

@@ -112,7 +112,7 @@ fn signed_in(daemon: &Daemon, notices: &broadcast::Sender<&'static str>, id: &st
             signin.label = account.email.unwrap_or(label);
             signin.plan = account.plan;
             signin.pending = false;
-            let _ = daemon.signins.save(signin);
+            if let Err(error) = daemon.signins.save(signin) { eprintln!("zerod: sign-in: {error}") }
         }
         (Err(error), _) => { eprintln!("zerod: sign-in: {error}"); let _ = daemon.signins.delete(id); }
         (Ok(_), None) => {}

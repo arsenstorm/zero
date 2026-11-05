@@ -1,5 +1,6 @@
-//! Zero's MCP server (`zerod mcp`, which `zero mcp` runs): JSON-RPC on stdio giving any agent Zero's scratchpads as
-//! tools. It holds nothing itself; each call goes to the running zerod (started if it isn't), which owns the pads.
+//! Zero's MCP server (`zerod mcp`, which `zero mcp` runs): JSON-RPC on stdio giving any agent Zero's scratchpads, the
+//! browser and asks to the user as tools. It holds nothing itself; each call goes to the running zerod (started if it
+//! isn't), which owns them.
 
 use std::future::Future;
 use std::path::Path;
@@ -64,7 +65,7 @@ const TOOLS: &[(&str, &str, &[Arg])] = &[
     ("folder", "Makes a folder.", &[("folder", "Its path, like Work/2026.", true)]),
 ];
 
-/// The answer to one message, if it wants one. `call` runs a tool (its name without scratchpad_) with its arguments.
+/// The answer to one message, if it wants one. `call` runs a tool (a scratchpad's without scratchpad_) with its arguments.
 pub async fn respond<F, Fut>(message: &Value, call: F) -> Option<Value>
 where
     F: FnOnce(String, Value) -> Fut,
@@ -159,7 +160,8 @@ pub async fn connect(socket: &Path) -> Result<tokio::net::UnixStream, String> {
     Err("Zero isn't running".into())
 }
 
-/// One tool call to zerod: a scratchpad's (`pad`), or a browser's (`browserCall`, for the session this server runs in).
+/// One tool call to zerod: a scratchpad's (`pad`), a browser's (`browserCall`), or an ask's (`agentAsk`), the last two for
+/// the session this server runs in.
 async fn through(socket: &Path, tool: String, args: Value) -> Result<Value, String> {
     let mut stream = connect(socket).await?;
     let session = std::env::var("ZERO_SESSION").ok();

@@ -56,7 +56,7 @@ pub struct Conversation {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub attributes: std::collections::BTreeMap<String, String>,
     pub approvals: Vec<Approval>,
-    /// What the agent asked Arsen, waiting for his answer.
+    /// What the agent asked the user, waiting for their answer.
     #[serde(default)]
     pub questions: Vec<Question>,
     /// The usage limits the provider's CLI last reported for the account the session runs on.
@@ -96,7 +96,7 @@ pub enum Provider {
     Opencode,
 }
 
-/// How freely an agent acts. `Auto` is how Arsen works: the provider's own judgement decides what is safe (Claude's
+/// How freely an agent acts. `Auto` is how the user works: the provider's own judgement decides what is safe (Claude's
 /// auto-mode classifier; Codex's on-request approvals in a workspace-write sandbox; OpenCode's own rules), and Zero
 /// hears what it won't allow alone. `Unrestricted` lets the agent do anything without asking, sandbox off.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -218,7 +218,7 @@ pub enum ApprovalKind {
     Tool,
 }
 
-/// The agent asking Arsen something (Claude's AskUserQuestion, Codex's request for input): one or more fields answered
+/// The agent asking the user something (Claude's AskUserQuestion, Codex's request for input): one or more fields answered
 /// together.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -240,7 +240,7 @@ pub struct Field {
     pub options: Vec<QuestionOption>,
     /// More than one option may be picked.
     pub multiple: bool,
-    /// An answer of Arsen's own words is taken too.
+    /// An answer in the user's own words is taken too.
     pub other: bool,
     /// The answer is a secret: shown as dots, never logged by Zero.
     pub secret: bool,
@@ -280,7 +280,7 @@ pub struct Failure {
     pub message: String,
 }
 
-/// What went wrong, as far as what Arsen can do about it: wait for a reset, sign in with the CLI, check the
+/// What went wrong, as far as what the user can do about it: wait for a reset, sign in with the CLI, check the
 /// network, pick another model, or read the message.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -307,11 +307,11 @@ impl FailureKind {
     }
 }
 
-/// What a session needs from Arsen, most urgent first: the bar's dot.
+/// What a session needs from the user, most urgent first: the bar's dot.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum Attention {
-    /// A question or an approval waits for him.
+    /// A question or an approval waits for them.
     NeedsYou,
     /// A usage limit stopped it until it resets.
     Limited,
@@ -400,7 +400,7 @@ pub enum Change {
     Terminal { terminal: Option<Opened> },
     /// The task was put away (zerod's archive/): clients drop it. Never kept in a transcript.
     Archived,
-    /// Where the task runs, by name (a bench, a machine), when its folder doesn't say.
+    /// Where the task runs, by name (a worktree, a machine), when its folder doesn't say.
     Place { place: Option<String> },
     /// The task became a worker of another (a lead adopting it), or a lead of its own again.
     Parent { parent: Option<String> },

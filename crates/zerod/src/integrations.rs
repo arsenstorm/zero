@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::now;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -450,8 +450,6 @@ impl Integrations {
         self.keep(None)
     }
 
-    // Slack.
-
     /// The connected Slack workspace and its channels' ids by name, for the app: `{"team", "channels"}`.
     pub fn slack_state(&self) -> Option<Value> {
         self.slack.lock().unwrap().as_ref().map(|a| json!({"team": a.team, "channels": a.channels}))
@@ -622,7 +620,6 @@ pub fn curl_config(url: &str, token: Option<&str>, body: &str, content: &str) ->
 
 fn curl() -> Vec<String> { ["curl", "-sS", "--fail-with-body", "-K", "-"].map(String::from).to_vec() }
 
-fn now() -> i64 { SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0) }
 
 fn random() -> String {
     let mut bytes = [0u8; 32];

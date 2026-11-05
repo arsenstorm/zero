@@ -63,7 +63,7 @@ impl Daemon {
         }
     }
 
-    /// Arsen's words to a session, with images (their files), resuming it first if it is offline.
+    /// The user's words to a session, with images (their files), resuming it first if it is offline.
     pub async fn send(&self, id: &str, message: Message<'_>, choice: ModelChoice<'_>) -> Result<(), String> {
         let session = self.session(id)?;
         if let Some(conversation) = self.get(id) && conversation.terminal.is_some() {
@@ -91,7 +91,7 @@ impl Daemon {
 
     /// The task's folder kept as it is now (snapshots.rs), off the async threads: git reads the whole folder.
     async fn keep_folder(&self, session: &Session) -> Option<String> {
-        let (cwd, name) = (session.summary().cwd, format!("{}/{}", session.id(), millis()));
+        let (cwd, name) = (session.summary().cwd, format!("{}/{}", session.id(), now_ms()));
         tokio::task::spawn_blocking(move || crate::snapshots::take(Path::new(&cwd), &name)).await.ok().flatten()
     }
 

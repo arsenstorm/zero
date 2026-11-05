@@ -163,7 +163,7 @@ pub struct Time(pub i64);
 
 impl Time {
     pub fn now() -> Time {
-        Time(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0))
+        Time(crate::now())
     }
 
     pub fn iso(self) -> String {

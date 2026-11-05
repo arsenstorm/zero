@@ -239,7 +239,7 @@ async fn unrestricted_codex_runs_without_approvals_or_sandbox() {
 
 #[tokio::test]
 async fn an_unrestricted_session_has_zerod_allow_whatever_the_agent_still_asks() {
-    // OpenCode can't be told per session over ACP, so zerod answers for Arsen: once, never "always", so no rule is kept.
+    // OpenCode can't be told per session over ACP, so zerod answers for the user: once, never "always", so no rule is kept.
     let (events, _) = broadcast::channel(4096);
     let mut conversation = Conversation::new("s1", Provider::Opencode, "/work/project");
     conversation.permissions = Permissions::Unrestricted;

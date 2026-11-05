@@ -100,7 +100,7 @@ impl Loops {
 
     /// A session ran the loop, as its lead or as a worker.
     pub fn record(&self, name: &str, session: &str, role: &str) {
-        let line = serde_json::json!({"loop": name, "session": session, "role": role, "at": now()});
+        let line = serde_json::json!({"loop": name, "session": session, "role": role, "at": crate::now_ms()});
         if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(self.root.join("uses.jsonl")) {
             use std::io::Write;
             let _ = writeln!(file, "{line}");
@@ -179,8 +179,4 @@ pub fn collapse(text: &str) -> String {
     }
     out.push_str(rest);
     out
-}
-
-fn now() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }

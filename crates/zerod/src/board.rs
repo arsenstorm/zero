@@ -50,9 +50,9 @@ pub struct Row {
     pub workspace: String,
     pub ticket: Option<String>,
     /// Where it runs: the name the task was given, else the places command's for its ticket, else the shortest end of
-    /// its folder that tells it from the other rows' ("blue-fox/app").
+    /// its folder that tells it from the other rows' ("blue-fox/api").
     pub place: String,
-    /// Where that place is on disk, when the places command says (a bench's folder): what opening it opens.
+    /// Where that place is on disk, when the places command says (a worktree's folder): what opening it opens.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     /// Offline, `state` is the one it was last known in.
@@ -324,8 +324,8 @@ pub struct Places(Mutex<HashMap<String, Place>>);
 impl Places {
     pub fn get(&self) -> HashMap<String, Place> { self.0.lock().unwrap().clone() }
 
-    /// Runs the user's places command (zerod's settings.json `places`) every five minutes while zerod runs: a bench
-    /// moves rarely, and the command may be slow (bench ls asks GitHub for each bench's PR).
+    /// Runs the user's places command (zerod's settings.json `places`) every five minutes while zerod runs: a place
+    /// changes rarely, and the command may be slow (one may ask GitHub for each place's PR).
     pub async fn follow(self: std::sync::Arc<Self>, home: std::path::PathBuf) {
         use crate::integrations::Fetcher;
         loop {

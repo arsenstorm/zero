@@ -117,7 +117,7 @@ impl Daemon {
 /// back); a turn that couldn't start is reported on the task.
 fn start_first_turn(session: Session, transport: Transport, prompt: &str, options: &Options) {
     let (prompt, model, effort, images) = (prompt.to_string(), options.model.clone(), options.effort.clone(), options.images.clone());
-    let (cwd, name) = (session.summary().cwd, format!("{}/{}", session.id(), millis()));
+    let (cwd, name) = (session.summary().cwd, format!("{}/{}", session.id(), now_ms()));
     tokio::spawn(async move {
         let kept = tokio::task::spawn_blocking(move || crate::snapshots::take(Path::new(&cwd), &name)).await.ok().flatten();
         match session.start(transport, Message { text: &prompt, images: &images, context: None }, ModelChoice { model: model.as_deref(), effort: effort.as_deref() }).await {

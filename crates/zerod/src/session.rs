@@ -23,7 +23,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::core::Core;
 use crate::model::{Change, ChoiceKind, Conversation, Event, Item, ItemKind, ItemStatus, Permissions, Provider};
-use crate::{acp, claude, codex};
+use crate::{acp, claude, codex, now_ms};
 
 pub use process::Transport;
 pub use turns::{Message, ModelChoice};
@@ -356,11 +356,6 @@ fn count_lines(path: &Path) -> u64 {
 
 fn append(dir: &Path) -> io::Result<File> {
     OpenOptions::new().create(true).append(true).open(dir.join("transcript.jsonl"))
-}
-
-/// Now, in milliseconds since 1970: when a line arrived or a change was made.
-fn now_ms() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
 /// The session in `dir` replayed from its transcript, offline, with how many lines it read.

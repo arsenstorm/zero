@@ -3,7 +3,7 @@
 //! and versions/<n>.md (each earlier artifact). A link reaches it: zero://later/<id>.
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::now;
 
 use serde::{Deserialize, Serialize};
 
@@ -266,7 +266,6 @@ fn parse(item: &str) -> String {
 
 fn name_of(path: &str) -> String { Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default() }
 
-fn now() -> i64 { SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0) }
 
 /// One tool by its name, as the `later` op calls them.
 pub fn call(later: &Later, tool: &str, args: &serde_json::Value) -> Result<serde_json::Value, String> {

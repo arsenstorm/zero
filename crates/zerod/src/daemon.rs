@@ -18,11 +18,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 
 use tokio::sync::broadcast;
 
-use crate::claude;
+use crate::{claude, now, now_ms};
 use crate::model::{Attention, Change, Conversation, Event, ItemKind, Opened, Permissions, Provider, Queued, Status};
 use crate::process;
 use crate::session::{Message, ModelChoice, Session, Transport};
@@ -99,8 +99,6 @@ pub struct Daemon {
     me: Weak<Daemon>,
 }
 
-/// What a turn paused for a restart is told once the new zerod is up. Zero's own words, not yours: never shown as a
-/// message (core.rs leaves its item out).
 /// What a turn paused for an update says, as it's paused, and once it's carried on.
 pub const PAUSED_FOR_UPDATE: &str = "Paused for Zero's update: it carries on once Zero has restarted";
 pub const CARRIED: &str = "Zero updated: carrying on where it left off";
@@ -112,6 +110,8 @@ pub const END_YOUR_TURN: &str = "Zero can't tell where your turn left the task. 
 someone else's, not the user's), [zero: working] (pausing between steps), or [zero: asked <id>]. Anything you need from the user (a decision, a command for them to run, steps for them to take) \
 goes through zero ask, zero run or zero approve with --async (or Zero's zero_ask and zero_run tools), and the turn ends [zero: asked <id>]: a question left in \
 your words reaches no one. Don't repeat your answer; do what's missing and end.";
+/// What a turn paused for a restart is told once the new zerod is up. Zero's own words, not the user's: never shown as
+/// a message (core.rs leaves its item out).
 pub const CARRY_ON: &str = "Zero restarted while you were working: your turn was paused between steps. Please carry on where you left off.";
 /// What a working session is told when the user pauses it, steering its turn to an end it can be picked up from.
 pub const WRAP_UP: &str = "The user is pausing you (for the night, or while they're away): finish the step you're on, leave the work so it can \
@@ -353,10 +353,6 @@ fn user_places() -> (PathBuf, PathBuf) {
     (home, host)
 }
 
-fn now() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
-}
-
 /// The branch a folder's repository has checked out; none outside a repository.
 fn branch(folder: &Path) -> Option<String> {
     let output = std::process::Command::new("git").args(["symbolic-ref", "--short", "HEAD"]).current_dir(folder)
@@ -367,8 +363,7 @@ fn branch(folder: &Path) -> Option<String> {
 /// Sortable by creation: milliseconds since 1970, then a counter, in hex.
 fn new_id() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let millis = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
-    format!("{millis:012x}{:04x}", COUNTER.fetch_add(1, Ordering::Relaxed) & 0xffff)
+    format!("{:012x}{:04x}", now_ms(), COUNTER.fetch_add(1, Ordering::Relaxed) & 0xffff)
 }
 
 /// A snapshot taken as a message went, noted against that message: the latest of yours without one.
@@ -377,10 +372,6 @@ fn attach_snapshot(session: &Session, commit: String) {
     let Some(item) = conversation.items.iter().rev().find(|i| matches!(i.kind, ItemKind::User { .. })) else { return };
     if conversation.snapshots.contains_key(&item.id) { return }
     session.change(Change::Snapshot { item: item.id.clone(), commit });
-}
-
-fn millis() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
 }
 
 #[cfg(test)]

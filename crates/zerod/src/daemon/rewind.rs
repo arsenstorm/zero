@@ -6,7 +6,7 @@ impl Daemon {
     /// The folder kept now and noted as how it was when `item` went (what sending does before each message).
     pub fn snapshot_for(&self, id: &str, item: &str) -> Option<String> {
         let session = self.session(id).ok()?;
-        let commit = crate::snapshots::take(Path::new(&session.summary().cwd), &format!("{id}/{}", millis()))?;
+        let commit = crate::snapshots::take(Path::new(&session.summary().cwd), &format!("{id}/{}", now_ms()))?;
         session.change(Change::Snapshot { item: item.into(), commit: commit.clone() });
         Some(commit)
     }
@@ -33,7 +33,7 @@ impl Daemon {
         let mut restored = serde_json::Value::Null;
         if matches!(what, Rewind::Code | Rewind::Both) {
             let commit = current.snapshots.get(item).cloned().ok_or("Zero didn't keep the folder for that message, so its code can't be brought back")?;
-            let (cwd, point) = (current.cwd.clone(), format!("{id}/restore-{}", millis()));
+            let (cwd, point) = (current.cwd.clone(), format!("{id}/restore-{}", now_ms()));
             let diff = tokio::task::spawn_blocking(move || crate::snapshots::restore(Path::new(&cwd), &commit, &point)).await.map_err(|e| e.to_string())??;
             restored = serde_json::json!(diff);
         }
