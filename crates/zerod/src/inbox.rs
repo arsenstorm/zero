@@ -12,7 +12,6 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
-use tokio::io::AsyncReadExt;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
@@ -66,7 +65,6 @@ const OUTPUT_KEPT: usize = 256 * 1024;
 struct State {
     asks: Vec<Ask>,
     timers: HashMap<String, JoinHandle<()>>,
-    runs: HashMap<String, tokio::process::Child>,
     offline: HashSet<String>,
     /// What Zero typed into each agent lately, so a prompt it caused isn't taken for the user typing.
     sent: HashMap<String, Vec<(String, Time)>>,
@@ -83,22 +81,31 @@ pub struct Inbox {
     events: broadcast::Sender<InboxEvent>,
     log: Option<PathBuf>,
     runtimes: Vec<Arc<dyn Runtime>>,
+    /// Where the user's commands run, out of zerod's reach (runs.rs).
+    runs: Arc<crate::runs::Runs>,
     me: Weak<Inbox>,
 }
 
 impl Inbox {
-    pub fn open(log: Option<PathBuf>, runtimes: Vec<Arc<dyn Runtime>>) -> Arc<Inbox> {
+    pub fn open(log: Option<PathBuf>, runtimes: Vec<Arc<dyn Runtime>>) -> Arc<Inbox> { Self::open_with(log, runtimes, None) }
+
+    /// As `open`, runs in zero-host's terminals where it keeps them (a real terminal the user can attach to); given
+    /// here, so the runs under way it picks up are found where they run.
+    pub fn open_with(log: Option<PathBuf>, runtimes: Vec<Arc<dyn Runtime>>, host: Option<crate::host::Host>) -> Arc<Inbox> {
         let (events, _) = broadcast::channel(4096);
         let inbox = Arc::new_cyclic(|me| Inbox {
             state: Mutex::new(State {
-                asks: vec![], timers: HashMap::new(), runs: HashMap::new(), offline: HashSet::new(), sent: HashMap::new(),
+                asks: vec![], timers: HashMap::new(), offline: HashSet::new(), sent: HashMap::new(),
                 reported: HashMap::new(), agents: Default::default(), ticks: 0, take_back: Duration::from_secs(2), default_ttl: 3600,
             }),
+            runs: Arc::new(crate::runs::Runs::new(runs_dir(log.as_deref()), host)),
             events, log, runtimes, me: me.clone(),
         });
         inbox.load();
         inbox
     }
+
+    fn runs(&self) -> Arc<crate::runs::Runs> { self.runs.clone() }
 
     /// The take-back window, and how long an ask without its own expiry waits (seconds).
     pub fn configure(&self, take_back: Duration, default_ttl: i64) {
@@ -248,7 +255,9 @@ impl Inbox {
     }
 
     pub fn cancel_run(&self, id: &str) {
-        if let Some(child) = self.lock().runs.get_mut(id) { let _ = child.start_kill(); }
+        let Some(handle) = self.ask(id).and_then(|a| a.run) else { return };
+        let runs = self.runs();
+        tokio::spawn(async move { runs.stop(&handle).await });
     }
 
     /// Takes back an open ask: the agent withdrew it, or the user answered it some other way. Nobody is told.
@@ -322,46 +331,65 @@ impl Inbox {
         let _ = self.events.send(InboxEvent::Ask(Box::new(ask.clone())));
     }
 
-    /// Runs the command in the user's login shell (their PATH applies), in its folder, streaming its output.
-    /// ponytail: no pty, so a command that insists on a terminal fails; add one if a command needs it.
+    /// Runs the command where zerod's restart can't reach it (runs.rs), in its folder through the user's login shell,
+    /// and follows it to its end: its output into the ask as it comes, then its exit code.
     fn run(&self, ask: Ask) {
         let id = ask.id.clone();
         self.update(&id, |a| { a.state = AskState::Running; true });
-        let mut command = tokio::process::Command::new("/bin/zsh");
-        command.args(["-lic", ask.command.as_deref().unwrap_or("")]).env("TERM", "dumb").env("ZERO_ASK_ID", &id)
-            .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
-        if let Some(cwd) = ask.cwd.as_deref().filter(|c| Path::new(c).is_dir()) { command.current_dir(cwd); }
-        let mut child = match command.spawn() {
-            Ok(child) => child,
-            Err(error) => {
-                self.append_output(&id, &format!("zero: {error}\n"));
-                return self.finish(&id, AskState::Answered, Some(127));
-            }
-        };
-        let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else { return };
-        self.lock().runs.insert(id.clone(), child);
-        let (out, err) = (self.pump(stdout, &id), self.pump(stderr, &id));
-        let me = self.me.clone();
+        let (me, runs) = (self.me.clone(), self.runs());
         tokio::spawn(async move {
-            let _ = (out.await, err.await);
+            let started = runs.start(&id, ask.command.as_deref().unwrap_or(""), ask.cwd.as_deref(), &ask.title).await;
             let Some(inbox) = me.upgrade() else { return };
-            let child = inbox.lock().runs.remove(&id);
-            let code = match child { Some(mut child) => child.wait().await.ok().and_then(|s| s.code()).unwrap_or(-1), None => -1 };
-            inbox.finish(&id, AskState::Answered, Some(code));
+            match started {
+                Ok(handle) => {
+                    inbox.update(&id, |a| { a.run = Some(handle.clone()); true });
+                    inbox.follow(&id, handle);
+                }
+                Err(error) => {
+                    inbox.append_output(&id, &format!("zero: {error}\n"));
+                    inbox.finish(&id, AskState::Answered, Some(127));
+                }
+            }
         });
     }
 
-    /// Streams one of a run's outputs into its ask until it closes.
-    fn pump(&self, mut reader: impl tokio::io::AsyncRead + Unpin + Send + 'static, id: &str) -> JoinHandle<()> {
-        let (me, id) = (self.me.clone(), id.to_string());
+    /// Reads a run's files until it ends: what it printed into its ask, then its outcome. Nothing knows of it any more
+    /// and no exit code was kept: lost, said so (runs.rs).
+    fn follow(&self, id: &str, handle: String) {
+        let (me, id, runs) = (self.me.clone(), id.to_string(), self.runs());
         tokio::spawn(async move {
-            let mut buffer = [0u8; 16384];
-            while let Ok(count) = reader.read(&mut buffer).await {
-                if count == 0 { break }
+            let Some((out, exit)) = runs.files(&handle) else { if let Some(inbox) = me.upgrade() { inbox.lose(&id) } return };
+            let (mut offset, mut carry) = (0u64, vec![]);
+            loop {
+                let ended = exit.exists();
+                let printed = read_from(&out, &mut offset);
                 let Some(inbox) = me.upgrade() else { return };
-                inbox.append_output(&id, &String::from_utf8_lossy(&buffer[..count]));
+                if !printed.is_empty() { inbox.append_output(&id, &crate::runs::plain(&mut carry, &printed)) }
+                if ended {
+                    let code = std::fs::read_to_string(&exit).ok().and_then(|c| c.trim().parse().ok());
+                    inbox.finish(&id, AskState::Answered, Some(code.unwrap_or(-1)));
+                    runs.forget(&handle);
+                    return;
+                }
+                if !runs.alive(&handle).await && !exit.exists() {
+                    // Ended between the two looks: its exit code is there now.
+                    tokio::time::sleep(crate::runs::POLL).await;
+                    if exit.exists() { continue }
+                    inbox.lose(&id);
+                    return;
+                }
+                drop(inbox);
+                tokio::time::sleep(crate::runs::POLL).await;
             }
-        })
+        });
+    }
+
+    /// A run whose outcome nobody knows (cut off with nothing kept of how it ended): never a success or an expiry,
+    /// which read as "it never ran". Its agent is told to check before running it again.
+    fn lose(&self, id: &str) {
+        self.append_output(id, "\n(Zero lost track of this command: it may or may not have finished.)\n");
+        self.update(id, |a| { a.status = Some("lost".into()); true });
+        self.finish(id, AskState::Answered, None);
     }
 
     fn append_output(&self, id: &str, chunk: &str) {
@@ -415,6 +443,10 @@ impl Inbox {
         }
         let command = ask.command.as_deref().unwrap_or("");
         if ask.state != AskState::Answered { return format!("The user rejected your command {id} (`{command}`){reason}") }
+        if ask.status.as_deref() == Some("lost") {
+            return format!("The user ran your command {id} (`{command}`), but Zero lost track of it while it ran: it may or may not have \
+                finished. Check what it did before running it again.");
+        }
         let code = ask.exit_code.unwrap_or(0);
         let lines: Vec<&str> = ask.output.split('\n').collect();
         let tail = lines[lines.len().saturating_sub(40)..].join("\n");
@@ -665,9 +697,23 @@ impl Inbox {
         let latest: HashMap<String, String> = all.iter().map(|a| (a.agent.name.clone(), a.id.clone())).collect();
         let mut kept = vec![];
         let mut died = vec![];
+        let mut running = vec![];
         for mut ask in all {
             if ask.state == AskState::Pending { ask.state = AskState::Waiting; ask.answer = None; ask.choice = None; }
-            if ask.state == AskState::Running { ask.state = AskState::Expired; ask.answered_at = Some(Time::now()); died.push(ask.clone()); }
+            // A run under way: followed again from its files, its output read afresh from them. One from before runs
+            // were kept apart from zerod has nothing to follow: lost, said so.
+            if ask.state == AskState::Running {
+                match ask.run.clone() {
+                    Some(handle) => { ask.output.clear(); running.push((ask.id.clone(), handle)) }
+                    None => {
+                        ask.state = AskState::Answered;
+                        ask.status = Some("lost".into());
+                        ask.output.push_str("\n(Zero lost track of this command: it may or may not have finished.)\n");
+                        ask.answered_at = Some(Time::now());
+                        died.push(ask.clone());
+                    }
+                }
+            }
             let recent = ask.answered_at.unwrap_or(ask.created_at).0 > cutoff;
             if ask.state == AskState::Waiting || recent || latest.get(&ask.agent.name) == Some(&ask.id) { kept.push(ask) }
         }
@@ -677,6 +723,7 @@ impl Inbox {
         // Expiry timers need a runtime; an inbox opened outside one (a script) just doesn't expire.
         if tokio::runtime::Handle::try_current().is_ok() {
             for (id, seconds) in waiting { self.schedule_expiry(&id, seconds) }
+            for (id, handle) in running { self.follow(&id, handle) }
         }
     }
 }
@@ -709,4 +756,20 @@ fn is_slash_command(message: &str) -> bool {
     const BUILT_IN: [&str; 26] = ["add-dir", "agents", "clear", "compact", "config", "context", "cost", "doctor", "effort", "export", "help",
         "hooks", "init", "login", "logout", "mcp", "memory", "model", "permissions", "plugin", "resume", "review", "rewind", "status", "usage", "vim"];
     message.strip_prefix('/').and_then(|rest| rest.split_whitespace().next()).is_some_and(|word| BUILT_IN.contains(&word))
+}
+
+/// Where detached runs keep their files: beside the inbox's log, else (an inbox with none, a test's) a temporary folder.
+fn runs_dir(log: Option<&Path>) -> PathBuf {
+    log.and_then(Path::parent).map(|dir| dir.join("runs")).unwrap_or_else(|| std::env::temp_dir().join(format!("zero-runs-{}", std::process::id())))
+}
+
+/// What a file holds past `offset`, and the offset moved past it.
+fn read_from(path: &Path, offset: &mut u64) -> Vec<u8> {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(path) else { return vec![] };
+    if file.seek(SeekFrom::Start(*offset)).is_err() { return vec![] }
+    let mut bytes = vec![];
+    let _ = file.read_to_end(&mut bytes);
+    *offset += bytes.len() as u64;
+    bytes
 }

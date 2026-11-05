@@ -44,6 +44,25 @@ impl Host {
         let _ = self.call(json!({"op": "close", "id": id})).await;
     }
 
+    /// zero-host's version, started first if it isn't running: 2 on, it keeps runs' output and exit code (runs.rs).
+    pub async fn version(&self) -> Option<u64> {
+        self.ready().await.ok()?;
+        self.call(json!({"op": "hello"})).await?["version"].as_u64()
+    }
+
+    /// One request and its answer, as it is.
+    pub async fn request(&self, request: Value) -> Option<Value> { self.call(request).await }
+
+    /// Where it keeps runs' output and exit codes: `<terminal>.out`, `<terminal>.exit`.
+    pub fn runs_dir(&self) -> PathBuf { self.socket.with_file_name("host") }
+
+    /// Whether the terminal's program still runs; false once it has ended or zero-host has no such terminal, None when
+    /// zero-host can't be reached.
+    pub async fn running(&self, terminal: &str) -> Option<bool> {
+        let reply = self.call(json!({"op": "state", "id": terminal})).await?;
+        Some(reply["terminal"]["running"].as_bool() == Some(true))
+    }
+
     /// zero-host, started from beside zerod (Zero.app's MacOS folder) if it isn't running; it detaches itself.
     async fn ready(&self) -> Result<(), String> {
         if self.call(json!({"op": "hello"})).await.is_some() { return Ok(()) }

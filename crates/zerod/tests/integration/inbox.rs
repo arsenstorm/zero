@@ -205,7 +205,7 @@ fn agents_that_did_not_wait_are_told_what_happened() {
 }
 
 #[tokio::test]
-async fn open_asks_survive_a_relaunch_and_a_run_cut_off_by_one_expires() {
+async fn open_asks_survive_a_relaunch() {
     let log = std::env::temp_dir().join(format!("zerod-inbox-{}.jsonl", std::process::id()));
     let _ = std::fs::remove_file(&log);
     let first = Inbox::open(Some(log.clone()), vec![]);
@@ -315,4 +315,55 @@ fn the_log_reads_and_writes_as_the_app_wrote_it() {
             assert_eq!(serde_json::to_value(&ask).unwrap(), parsed);
         }
     }
+}
+
+#[tokio::test]
+async fn a_run_outlives_zerod_and_ends_with_its_real_outcome() {
+    // The user's command (a production deploy, say) runs where zerod's restart can't reach it: the zerod after picks
+    // up its output and its exit code, never a guess.
+    let log = std::env::temp_dir().join(format!("zerod-inbox-runs-{}.jsonl", std::process::id()));
+    let _ = std::fs::remove_file(&log);
+    let first = Inbox::open(Some(log.clone()), vec![]);
+    first.configure(Duration::from_millis(10), 3600);
+    let mut run = ask(AskKind::Run, "Deploy", &["Run", "Reject"]);
+    run.command = Some("echo started; sleep 1; echo finished; exit 3".into());
+    let a = first.create(run, false);
+    first.choose(&a.id, 0);
+    until(&first, &a.id, |a| a.state == AskState::Running && a.output.contains("started")).await;
+    drop(first); // zerod restarting mid-run
+    let again = Inbox::open(Some(log.clone()), vec![]);
+    assert_eq!(again.ask(&a.id).unwrap().state, AskState::Running, "still running, not expired");
+    let done = until(&again, &a.id, |a| a.state == AskState::Answered).await;
+    assert_eq!(done.exit_code, Some(3));
+    assert!(done.output.contains("started") && done.output.contains("finished"), "{}", done.output);
+    let _ = std::fs::remove_file(&log);
+}
+
+#[test]
+fn a_run_zero_lost_track_of_says_so_never_success_or_expiry() {
+    // Cut off with nothing to tell how it ended: the agent must check before running it again, not read "it never ran".
+    let log = std::env::temp_dir().join(format!("zerod-inbox-lost-{}.jsonl", std::process::id()));
+    let mut run = ask(AskKind::Run, "Deploy", &["Run", "Reject"]);
+    run.command = Some("bin/deploy production".into());
+    run.state = AskState::Running;
+    std::fs::write(&log, serde_json::to_string(&run).unwrap() + "\n").unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let lost = rt.block_on(async { Inbox::open(Some(log.clone()), vec![]).ask(&run.id).unwrap() });
+    assert_eq!((lost.state, lost.exit_code, lost.status.as_deref()), (AskState::Answered, None, Some("lost")));
+    let told = Inbox::delivery_text(&lost);
+    assert!(told.contains("lost track") && told.contains("before running it again"), "{told}");
+    assert!(!told.contains("succeeded") && !told.contains("expired"), "{told}");
+    let _ = std::fs::remove_file(&log);
+}
+
+#[test]
+fn a_terminals_output_reads_as_plain_text_even_cut_mid_sequence() {
+    use zerod::runs::plain;
+    let mut carry = vec![];
+    // Colours and a title go; CRLF is a newline; a sequence and a character cut at a read's end wait for the rest.
+    let first = plain(&mut carry, b"\x1b]0;deploy\x07\x1b[32mok\x1b[0m\r\nmigrating \xe2\x9c");
+    let second = plain(&mut carry, b"\x93 done\x1b[");
+    let third = plain(&mut carry, b"1mbold\x1b[0m\r\n");
+    assert_eq!(first + &second + &third, "ok\nmigrating \u{2713} donebold\n");
+    assert!(carry.is_empty());
 }

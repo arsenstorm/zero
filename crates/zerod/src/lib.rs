@@ -33,6 +33,7 @@ pub mod mcp_servers;
 pub mod pads;
 pub mod process;
 pub mod rex;
+pub mod runs;
 pub mod server;
 pub mod session;
 pub mod signins;

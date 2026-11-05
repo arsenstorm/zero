@@ -85,7 +85,7 @@ fn open_inbox(daemon: &Arc<zerod::daemon::Daemon>, args: &Args) -> (Arc<zerod::i
         Arc::new(zerod::daemon::Sessions::of(daemon)), Arc::new(zerod::solo::Solo::installed()),
         Arc::new(zerod::rex::Rex::installed()), Arc::new(zerod::host::Host::installed()),
     ];
-    let inbox = zerod::inbox::Inbox::open(Some(args.asks_log.clone()), runtimes);
+    let inbox = zerod::inbox::Inbox::open_with(Some(args.asks_log.clone()), runtimes, Some(zerod::host::Host::installed()));
     let drops = zerod::drops::Drops::new(inbox.clone(), args.resources.clone());
     zerod::server::Settings::load(&args.home).apply(&inbox, Some(&drops));
     drops.start();

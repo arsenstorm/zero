@@ -102,6 +102,10 @@ pub struct Ask {
     pub output: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
+    /// Where a run runs (runs.rs): "host:<terminal>" in zero-host, "file:<ask>" detached. Kept so a zerod started
+    /// again finds it and follows it to its end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answered_at: Option<Time>,
     /// For notes: "blocked", "done" or "closed"; none means working. "withdrawn" on a withdrawn ask.
@@ -138,7 +142,7 @@ impl Ask {
         Ask {
             id: new_id(), kind, title: title.into(), body: String::new(), options: vec![], command: None, cwd: None, agent,
             created_at: now, expires_at: Time(now.0 + ttl_seconds), state: AskState::Waiting, answer: None, output: String::new(),
-            exit_code: None, answered_at: None, status: None, choice: None, waits: None, delivery: None, detail: None, script: None,
+            exit_code: None, run: None, answered_at: None, status: None, choice: None, waits: None, delivery: None, detail: None, script: None,
             same_as: None, request: None, needs: None,
         }
     }

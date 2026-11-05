@@ -5,7 +5,8 @@ import Foundation
 public enum HostLink {
     public static let socket = Paths.dir.appendingPathComponent("host.sock").path
     /// Bumped when the requests change, so Zero can tell an older helper from a current one.
-    public static let version = 1
+    /// 2: a terminal spawned with `record` keeps its output and exit code in files, for a run zerod follows (runs.rs).
+    public static let version = 2
 
     public struct Request: Codable, Sendable {
         /// hello | spawn | write | screen | state | resize | close | list | attach
@@ -19,10 +20,12 @@ public enum HostLink {
         public var bytes: [UInt8]?
         public var columns: Int?
         public var rows: Int?
+        /// For spawn: keep the program's output in runs/<id>.out and its exit code in <id>.exit (Paths.dir/host).
+        public var record: Bool?
         public init(op: String, id: String? = nil, cwd: String? = nil, argv: [String]? = nil, label: String? = nil,
-                    text: String? = nil, bytes: [UInt8]? = nil, columns: Int? = nil, rows: Int? = nil) {
+                    text: String? = nil, bytes: [UInt8]? = nil, columns: Int? = nil, rows: Int? = nil, record: Bool? = nil) {
             self.op = op; self.id = id; self.cwd = cwd; self.argv = argv; self.label = label
-            self.text = text; self.bytes = bytes; self.columns = columns; self.rows = rows
+            self.text = text; self.bytes = bytes; self.columns = columns; self.rows = rows; self.record = record
         }
     }
 

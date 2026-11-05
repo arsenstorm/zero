@@ -32,6 +32,8 @@ final class Terminal {
     var viewers: [Int32: UnixSocket] = [:]
     private let columns: Int, rows: Int
     private var exitWatch: DispatchSourceProcess?
+    /// A run's output as it comes, and where its exit code goes when it ends: a zerod restarted mid-run reads them.
+    var record: (output: FileHandle, exit: URL)?
 
     init(id: String, label: String, cwd: String, argv: [String], columns: Int, rows: Int) {
         self.id = id; self.label = label; self.cwd = cwd; self.argv = argv; self.columns = columns; self.rows = rows
@@ -83,6 +85,7 @@ final class Terminal {
             let output = Data(buffer[0..<count])
             self.lastActivity = Date()
             self.screen.feed(output)
+            self.record?.output.write(output)
             // ponytail: written inline, so a stalled viewer stalls the host; a per-viewer queue if that ever bites
             for viewer in self.viewers.values { output.withUnsafeBytes { _ = Darwin.write(viewer.fd, $0.baseAddress!, $0.count) } }
         }
@@ -96,6 +99,15 @@ final class Terminal {
             let exited = status & 0x7f == 0
             self.exitCode = exited ? (status >> 8) & 0xff : -1
             self.exitWatch?.cancel()
+            if let record = self.record {
+                // What it printed last is read first: the exit code lands after, whole (written aside, then moved).
+                var rest = [UInt8](repeating: 0, count: 65536)
+                while true { let n = read(self.master, &rest, rest.count); if n <= 0 { break }; record.output.write(Data(rest[0..<n])) }
+                try? record.output.close()
+                let aside = record.exit.appendingPathExtension("part")
+                try? "\(self.exitCode ?? -1)\n".write(to: aside, atomically: false, encoding: .utf8)
+                try? FileManager.default.moveItem(at: aside, to: record.exit)
+            }
         }
         exitWatch.resume()
         self.exitWatch = exitWatch
@@ -175,6 +187,13 @@ func handle(_ request: HostLink.Request) -> HostLink.Response {
         let columns = request.columns ?? 120, rows = request.rows ?? 40
         let terminal = Terminal(id: "term-" + UUID().uuidString.prefix(8).lowercased(), label: request.label ?? argv[0],
                                 cwd: cwd, argv: argv, columns: columns, rows: rows)
+        if request.record == true {
+            let runs = Paths.dir.appendingPathComponent("host")
+            try? FileManager.default.createDirectory(at: runs, withIntermediateDirectories: true)
+            let output = runs.appendingPathComponent(terminal.id + ".out")
+            FileManager.default.createFile(atPath: output.path, contents: nil, attributes: [.posixPermissions: 0o600])
+            if let handle = try? FileHandle(forWritingTo: output) { terminal.record = (handle, runs.appendingPathComponent(terminal.id + ".exit")) }
+        }
         do { try terminal.start(columns: columns, rows: rows, queue: queue) } catch {
             return HostLink.Response(ok: false, error: error.localizedDescription)
         }
