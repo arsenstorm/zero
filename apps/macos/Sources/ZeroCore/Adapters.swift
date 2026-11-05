@@ -20,7 +20,7 @@ public struct SpawnChoice: Identifiable, Hashable, Sendable {
     }
 }
 
-/// A way to deliver Arsen's words into an agent's session, and optionally to start a new one. Solo is the
+/// A way to deliver the user's words into an agent's session, and optionally to start a new one. Solo is the
 /// first; a Hyperfocus or bench adapter would implement the same calls.
 public protocol AgentAdapter: Sendable {
     var name: String { get }
@@ -60,8 +60,20 @@ public protocol AgentAdapter: Sendable {
     func spawnNote(for runtime: SpawnChoice) -> String?
     /// Refreshes anything the model lists come from; returns true when a list changed.
     func refreshModels() async -> Bool
-    /// `settings`: per-model configuration Arsen picked, such as ["reasoning": "high"].
+    /// `settings`: per-model configuration the user picked, such as ["reasoning": "high"].
     func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String]) async throws -> AgentIdentity
+}
+
+extension AgentAdapter {
+    /// Typing into a half-written prompt would join the user's words and Zero's into one message: waits for an
+    /// empty input, for up to 45 s, then gives up so the delivery shows as failed and can be retried.
+    func waitForEmptyInput(of agent: AgentIdentity) async throws {
+        for attempt in 0..<23 {
+            guard let screen = await screen(of: agent), let draft = SoloAdapter.draft(in: screen), !draft.isEmpty else { break }
+            if attempt == 22 { throw AdapterError("\(agent.label ?? agent.name)'s terminal has a half-typed prompt") }
+            try await Task.sleep(for: .seconds(2))
+        }
+    }
 }
 
 public extension AgentAdapter {
@@ -107,13 +119,7 @@ public struct SoloAdapter: AgentAdapter {
 
     public func send(_ text: String, to agent: AgentIdentity) async throws {
         guard let processID = agent.soloProcessID else { throw AdapterError("\(agent.name) has no Solo process id") }
-        // Typing into a half-written prompt would join Arsen's words and Zero's into one message: wait for an
-        // empty input, for up to 45 s, then give up so the delivery shows as failed and can be retried.
-        for attempt in 0..<23 {
-            guard let screen = await screen(of: agent), let draft = Self.draft(in: screen), !draft.isEmpty else { break }
-            if attempt == 22 { throw AdapterError("Arsen is typing in \(agent.label ?? agent.name)'s terminal") }
-            try await Task.sleep(for: .seconds(2))
-        }
+        try await waitForEmptyInput(of: agent)
         var arguments: [String: Any] = ["process_id": processID, "input": text, "submit": true]
         if let project = agent.soloProjectID { arguments["project_id"] = project }
         _ = try await resultText(of: call(tool: "send_input", arguments: arguments))
@@ -215,7 +221,7 @@ public struct SoloAdapter: AgentAdapter {
     /// a block starts at a "⏺"/"●" line, tool calls (followed by "⎿", or named like `Bash(`) are skipped, and the
     /// turn ends at the "· done" line or the next prompt. ponytail: screen scraping; Solo has no message API.
     public static func lastReply(in screen: String, after prompt: String) -> String? {
-        // Zero's ending line ("[zero: done]") is for the stop check, not for Arsen.
+        // Zero's ending line ("[zero: done]") is for the stop check, not for the user.
         let lines = screen.components(separatedBy: "\n")
             .filter { $0.range(of: #"^\s*(⏺|●)?\s*\[zero: [a-z]+( [A-Za-z0-9]+)?\]\s*$"#, options: .regularExpression) == nil }
         let needle = String(prompt.prefix(40))

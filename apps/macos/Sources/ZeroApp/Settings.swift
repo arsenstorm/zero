@@ -12,7 +12,7 @@ final class Settings {
     /// The control bar in the workspace window: when the window fills its screen, always while it's open, or never.
     enum BarDock: String, CaseIterable { case auto, always, never }
     var barDock: BarDock { didSet { defaults.set(barDock.rawValue, forKey: "barDock"); onChange?() } }
-    /// Agent names in the order Arsen dragged them into; agents not listed follow in first-seen order.
+    /// Agent names in the order the user dragged them into; agents not listed follow in first-seen order.
     var agentOrder: [String] { didSet { defaults.set(agentOrder, forKey: "agentOrder") } }
     /// Minutes before an ask that arrives without its own expiry is marked expired.
     var defaultTTLMinutes: Int { didSet { defaults.set(defaultTTLMinutes, forKey: "defaultTTLMinutes"); onChange?() } }

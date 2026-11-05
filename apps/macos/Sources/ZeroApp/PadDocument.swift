@@ -503,9 +503,9 @@ private struct PadTextField: NSViewRepresentable {
             let line = parent.firstLine + (view.string as NSString).substring(to: min(charIndex, (view.string as NSString).length)).filter { $0 == "\n" }.count
             var items: [NSMenuItem] = []
             if let section = parent.sectionLink(line) {
-                items.append(MarkdownEditor.LinkItem(title: "Copy Link to “\(section.title)”", link: section.link, label: section.title))
+                items.append(MarkdownEditor.LinkItem(title: "Copy link to “\(section.title)”", link: section.link, label: section.title))
             }
-            items.append(MarkdownEditor.LinkItem(title: "Copy Link to Scratchpad", link: parent.padLink.link, label: parent.padLink.title))
+            items.append(MarkdownEditor.LinkItem(title: "Copy link to scratchpad", link: parent.padLink.link, label: parent.padLink.title))
             for (index, item) in items.enumerated() { menu.insertItem(item, at: index) }
             menu.insertItem(.separator(), at: items.count)
             return menu

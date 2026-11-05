@@ -138,7 +138,7 @@ struct TaskDetails: View {
                 Button { NSWorkspace.shared.open(URL(fileURLWithPath: folder)) } label: {
                     Self.linked(row?.place ?? (conversation.cwd as NSString).lastPathComponent).truncationMode(.middle)
                 }
-                .buttonStyle(.plain).tip((folder as NSString).abbreviatingWithTildeInPath + " — open in Finder")
+                .buttonStyle(.plain).tip("Show \((folder as NSString).abbreviatingWithTildeInPath) in Finder")
             }
             if let row {
                 property("Status") {

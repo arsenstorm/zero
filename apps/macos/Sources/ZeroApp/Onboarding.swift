@@ -329,7 +329,7 @@ struct ZeroMark: View {
     }
 }
 
-/// Finds a command the way Arsen's terminal would, and its version line.
+/// Finds a command the way the user's terminal would, and its version line.
 enum ShellTool {
     static func version(_ tool: String) async -> String? {
         await Task.detached { () -> String? in

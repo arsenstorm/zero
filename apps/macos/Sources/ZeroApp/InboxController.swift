@@ -11,7 +11,7 @@ final class InboxController {
     var selected: String?
     var drafts: [String: String] = [:]
     var focusedReply: String? { didSet { if (focusedReply != nil) != (oldValue != nil) { onTyping?(focusedReply != nil) } } }
-    /// Told when a text box in the inbox gains or loses focus, so Zero can be the active app while Arsen types.
+    /// Told when a text box in the inbox gains or loses focus, so Zero can be the active app while the user types.
     @ObservationIgnored var onTyping: ((Bool) -> Void)?
     var dictatingFor: String?
     var agentFilter: String?
@@ -39,7 +39,7 @@ final class InboxController {
 
     /// The new-agent view: just the composer, opened from the bar's + button.
     var newAgentOpen = false
-    /// Set while Arsen opens something in place (a card's text, an Earlier row): the view keeps its top where it
+    /// Set while the user opens something in place (a card's text, an Earlier row): the view keeps its top where it
     /// is, so the opening only grows downward. Cleared when the view or its cards change.
     var holdTop = false
 
@@ -62,7 +62,7 @@ final class InboxController {
     func show(agent: String?) {
         let wasNew = newAgentOpen
         cut { newAgentOpen = false }
-        // Hovering the control for the view already shown changes nothing: what Arsen opened stays open and
+        // Hovering the control for the view already shown changes nothing: what the user opened stays open and
         // where it is.
         guard agentFilter != agent || wasNew else { return }
         expandedEarlier = nil
@@ -105,7 +105,7 @@ final class InboxController {
     var selector: SelectorState?
     @ObservationIgnored var presentSelector: ((CGRect) -> Void)?
     @ObservationIgnored var dismissSelector: (() -> Void)?
-    /// Per-model configuration Arsen picked in the preview card, such as a reasoning level.
+    /// Per-model configuration the user picked in the preview card, such as a reasoning level.
     var spawnSettings: [String: [String: String]] = (UserDefaults.standard.dictionary(forKey: "spawnSettings") as? [String: [String: String]]) ?? [:]
 
     /// The model each running agent was switched to from Zero, by agent name; nothing recorded means whatever it started with.
@@ -269,7 +269,7 @@ final class InboxController {
         store.identity(of: agent).flatMap { identity in store.adapters.first { $0.canReach(identity) } }
     }
 
-    /// True while the last thing in an agent's timeline is a message of Arsen's still awaiting its answer.
+    /// True while the last thing in an agent's timeline is a message of the user's still awaiting its answer.
     func waitingOn(_ agent: String) -> Bool {
         let items = store.asks.filter { $0.agent.name == agent && $0.state != .expired }
         guard !items.contains(where: { !$0.state.isFinal }), let last = items.last, store.screens[agent] == nil else { return false }

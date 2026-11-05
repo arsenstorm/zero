@@ -75,7 +75,7 @@ extension AppDelegate {
     }
 
     /// The panel takes keys without making Zero the active app, but dictation and clipboard tools (Raycast,
-    /// macOS dictation) type or paste into the active app. While Arsen types in the inbox, Zero is that app.
+    /// macOS dictation) type or paste into the active app. While the user types in the inbox, Zero is that app.
     func activateForTyping() {
         guard !NSApp.isActive else { return }
         returnTo = NSWorkspace.shared.frontmostApplication

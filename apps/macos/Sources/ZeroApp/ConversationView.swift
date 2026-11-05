@@ -2,8 +2,6 @@ import AppKit
 import SwiftUI
 import ZeroCore
 
-// The conversation.
-
 struct ConversationView: View {
     let workspace: Workspace
     let inbox: InboxController

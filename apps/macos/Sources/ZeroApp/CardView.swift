@@ -111,7 +111,7 @@ struct CardView: View {
         if ask.kind == .message { messageBubble } else { card }
     }
 
-    /// Arsen's message to the agent: a bubble on the right with a small time beside it, no header and no
+    /// The user's message to the agent: a bubble on the right with a small time beside it, no header and no
     /// dismiss; delivery trouble shows underneath.
     private var messageBubble: some View {
         VStack(alignment: .trailing, spacing: 4) {
@@ -250,7 +250,7 @@ struct CardView: View {
             Text(command).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
                 .lineLimit(commandIsLong && !commandExpanded && !flat ? Self.collapsedLines : nil)
                 .fixedSize(horizontal: false, vertical: true)
-            // The script the command runs, so what Arsen approves is what he can read.
+            // The script the command runs, so what the user approves is what they can read.
             if let script = ask.script { scriptText(script) }
             if folder != nil || commandIsLong { commandFooter }
         }

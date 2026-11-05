@@ -17,7 +17,7 @@ public enum Provider: String, Codable, Sendable, CaseIterable {
 }
 
 /// How freely an agent acts: auto lets the provider's own judgement decide what is safe (Claude's classifier, Codex's
-/// sandbox) and brings Arsen the rest; unrestricted lets it do anything without asking.
+/// sandbox) and brings the user the rest; unrestricted lets it do anything without asking.
 public enum Permissions: String, Codable, Sendable, CaseIterable { case auto, unrestricted }
 
 public enum SessionStatus: String, Decodable, Sendable { case starting, idle, working, waiting, offline }
@@ -133,7 +133,7 @@ public struct Approval: Decodable, Equatable, Sendable, Identifiable {
     }
 }
 
-/// The agent asking Arsen something: one or more fields answered together.
+/// The agent asking the user something: one or more fields answered together.
 public struct Question: Decodable, Equatable, Sendable, Identifiable {
     public var id: String
     public var item: String?
@@ -147,7 +147,7 @@ public struct Field: Decodable, Equatable, Sendable, Identifiable {
     public var question: String
     public var options: [QuestionOption]
     public var multiple: Bool
-    /// Arsen's own words are taken too.
+    /// The user's own words are taken too.
     public var other: Bool
     /// Shown as dots, and never kept in Zero's log.
     public var secret: Bool
@@ -456,7 +456,7 @@ public struct Failure: Decodable, Equatable, Sendable {
     public var message: String
 }
 
-/// What a session needs from Arsen, most urgent first: the bar's dot (zerod's `Conversation::attention`).
+/// What a session needs from the user, most urgent first: the bar's dot (zerod's `Conversation::attention`).
 public enum Attention: String, Decodable, Sendable { case needsYou, limited, stuck, failed, blocked, working, done, answered, idle, offline, starting }
 
 public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
@@ -959,7 +959,7 @@ public final class ZerodLink: @unchecked Sendable {
         _ = try await call("decide", ["session": session, "approval": approval, "choice": choice])
     }
 
-    /// Answers an open question, every field at once: picked options, or Arsen's own words.
+    /// Answers an open question, every field at once: picked options, or the user's own words.
     public func answer(session: String, question: String, answers: [String: [String]]) async throws {
         _ = try await call("answer", ["session": session, "question": question, "answers": answers])
     }
@@ -1219,13 +1219,6 @@ public final class ZerodLink: @unchecked Sendable {
         return try decode(SignIn.self, from: await call("saveSignIn", ["signin": try JSONSerialization.jsonObject(with: data)]))
     }
     public func deleteSignIn(_ id: String) async throws { _ = try await call("deleteSignIn", ["signin": id]) }
-    public func defaultSignIn(_ cli: Provider, id: String) async throws { _ = try await call("defaultSignIn", ["signin": ["cli": cli.rawValue, "id": id]]) }
-    /// Claude Code signs an account in itself, in a folder of its own, opening its page in the browser: that page,
-    /// when it printed one, in case the browser didn't open.
-    public func claudeSignIn() async throws -> (id: String, page: URL?) {
-        let result = try await call("claudeSignIn") as? [String: Any]
-        return (result?["id"] as? String ?? "", (result?["page"] as? String).flatMap(URL.init(string:)))
-    }
     /// Codex signs an account in itself, in a home of its own: its ChatGPT page to open (none for an API key).
     public func codexSignIn(label: String?, apiKey: String?) async throws -> (id: String, page: URL?) {
         let result = try await call("codexSignIn", ["signin": ["label": label as Any, "apiKey": apiKey as Any]]) as? [String: Any]

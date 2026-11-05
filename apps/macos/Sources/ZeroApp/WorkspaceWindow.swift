@@ -49,7 +49,6 @@ extension AppDelegate {
             let saved = UserDefaults.standard.string(forKey: Self.frameKey).map(NSRectFromString)
             if let saved, !saved.isEmpty, NSScreen.screens.contains(where: { $0.frame.intersects(saved) }) { window.setFrame(saved, display: false) }
             else { window.center() }
-            Log.write("window: saved \(saved.map(NSStringFromRect) ?? "none"), opened at \(NSStringFromRect(window.frame)), screens \(NSScreen.screens.map { NSStringFromRect($0.frame) })")
             for name in [NSWindow.didMoveNotification, NSWindow.didEndLiveResizeNotification, NSWindow.didResizeNotification] {
                 NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak window] _ in
                     guard let window, !window.styleMask.contains(.fullScreen), !window.isMiniaturized else { return }

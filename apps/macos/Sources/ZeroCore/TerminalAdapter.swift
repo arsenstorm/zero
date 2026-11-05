@@ -24,12 +24,7 @@ extension TerminalAdapter {
 
     public func send(_ text: String, to agent: AgentIdentity) async throws {
         guard let ref = agent.ref else { throw AdapterError("\(agent.name) has no terminal") }
-        // Typing into a half-written prompt would join Arsen's words and Zero's: wait for an empty input first.
-        for attempt in 0..<23 {
-            guard let screen = await capture(ref), let draft = SoloAdapter.draft(in: screen), !draft.isEmpty else { break }
-            if attempt == 22 { throw AdapterError("Arsen is typing in \(agent.label ?? agent.name)'s terminal") }
-            try await Task.sleep(for: .seconds(2))
-        }
+        try await waitForEmptyInput(of: agent)
         guard await type(text, into: ref) else { throw AdapterError("\(name) couldn't type into \(agent.label ?? agent.name)") }
         try await Task.sleep(for: .milliseconds(150))
         await write(TerminalKey.enter, to: ref)
@@ -135,7 +130,7 @@ extension TerminalAdapter {
     public func spawnNote(for runtime: SpawnChoice) -> String? { SoloAdapter().spawnNote(for: runtime) }
 
     /// Claude Code's input box is drawn once it is ready. A folder it hasn't been trusted in asks first: these are
-    /// folders Arsen added to Zero himself, so "Yes, I trust this folder" is chosen (its cursor can start on
+    /// folders the user added to Zero themselves, so "Yes, I trust this folder" is chosen (its cursor can start on
     /// "No, exit"). Up to 90 s.
     func waitUntilReady(_ ref: String, name agent: String) async throws {
         for _ in 0..<90 {

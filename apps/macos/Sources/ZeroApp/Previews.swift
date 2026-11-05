@@ -82,7 +82,7 @@ enum Preview {
         write(CardStack(controller: InboxController(store: runs)).padding(12).background(Color(white: 0.5)), "runs.png")
         // The empty inbox: "All quiet." and the new-agent composer, with example choices.
         let empty = InboxController(store: Store())
-        empty.spawnTargets = [SpawnChoice(id: "10", name: "Acme"), SpawnChoice(id: "13", name: "zero")]
+        empty.spawnTargets = [SpawnChoice(id: "10", name: "acme"), SpawnChoice(id: "13", name: "zero")]
         empty.runtimesByAdapter = ["Solo": [SpawnChoice(id: "6", name: "Claude"), SpawnChoice(id: "7", name: "Codex")]]
         empty.spawnTarget = "10"; empty.spawnRuntime = "6"
         write(ComposerPreview(controller: empty).padding(12).background(Color(white: 0.5)), "composer.png")

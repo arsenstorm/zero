@@ -22,7 +22,7 @@ enum ClaudePlugin {
 
     static func uninstall() async { _ = await shell("claude plugin uninstall zero@zero 2>&1") }
 
-    /// A login shell, so the PATH that finds `claude` is the one in Arsen's terminal.
+    /// A login shell, so the PATH that finds `claude` is the one in the user's terminal.
     private static func shell(_ command: String) async -> String {
         await Task.detached {
             let process = Process()

@@ -102,7 +102,7 @@ private struct WorkspaceForm: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(workspace.id.isEmpty ? "New workspace" : "Edit workspace").font(.system(size: 15, weight: .semibold))
             if workspace.id != "zero" {
-                field("Name") { TextField("Acme", text: $workspace.name).textFieldStyle(.roundedBorder) }
+                field("Name") { TextField("Work", text: $workspace.name).textFieldStyle(.roundedBorder) }
             }
             field("Logo") {
                 VStack(alignment: .leading, spacing: 8) {

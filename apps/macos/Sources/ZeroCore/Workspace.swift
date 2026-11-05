@@ -253,11 +253,6 @@ public final class Workspace {
         return started
     }
 
-    /// A task's own pads (Tasks/<ticket>), which the scratchpads leave out.
-    public func taskPads(_ ticket: String) async -> [PadSummary] {
-        (try? await link?.pad("list", ["folder": "Tasks/\(ticket)"], as: PadList.self))?.pads ?? []
-    }
-
     /// Puts a task away with its workers (zerod takes them with it, so they come back with it); the board drops them
     /// at once, the mirror as zerod says each is gone.
     /// Everyone under a lead, however deep: what goes with it when it's archived.
@@ -852,21 +847,6 @@ public final class Workspace {
         _ = await attempt { try await $0.deleteSignIn(signin.id) }
         Keychain.saveString(nil, service: ZerodLink.signInKeychain, account: signin.id)
         await loadSignIns()
-    }
-
-    public func makeDefault(_ signin: ZerodLink.SignIn) async {
-        _ = await attempt { try await $0.defaultSignIn(signin.cli, id: signin.id) }
-        await loadSignIns()
-    }
-
-    /// A Claude account, signed in by Claude Code itself (it opens its page): that page in case it didn't, or why not.
-    public func signInClaude() async -> (page: URL?, error: String?) {
-        guard let link = await linked() else { return (nil, "Zero's daemon isn't running") }
-        do {
-            let (_, page) = try await link.claudeSignIn()
-            await loadSignIns()
-            return (page, nil)
-        } catch { return (nil, error.localizedDescription) }
     }
 
     /// A Codex account, signed in by Codex itself: its ChatGPT page to open (none for a key), or why not.

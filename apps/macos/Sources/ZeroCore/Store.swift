@@ -3,7 +3,7 @@ import Observation
 
 /// The app's copy of zerod's inbox (crates/zerod/src/inbox.rs): every ask, oldest first, kept current from zerod's
 /// events, and what the inbox window does to them sent back as requests. The state machine, the log, runs and delivery
-/// are zerod's; what Arsen picks shows at once and zerod's own account of it follows.
+/// are zerod's; what the user picks shows at once and zerod's own account of it follows.
 @MainActor @Observable
 public final class Store {
     public private(set) var asks: [Ask] = []
@@ -97,12 +97,12 @@ public final class Store {
 
     public func identity(of agent: String) -> AgentIdentity? { asks.last { $0.agent.name == agent }?.agent }
 
-    /// The name to show for an agent: Arsen's own name for it, else the runtime's label, else the key.
+    /// The name to show for an agent: the user's own name for it, else the runtime's label, else the key.
     public func displayName(of agent: String) -> String {
         if let name = names[agent] { return name }
         let identity = identity(of: agent)
         if let label = identity?.label { return label }
-        // A process number means nothing to Arsen; until the session's title is known, say where it works.
+        // A process number means nothing to the user; until the session's title is known, say where it works.
         if agent.range(of: #"^(solo|claude|shell)-\d+$"#, options: .regularExpression) != nil,
            let folder = identity?.cwd.map({ ($0 as NSString).lastPathComponent }), !folder.isEmpty {
             return "Claude in \(folder)"
@@ -110,10 +110,10 @@ public final class Store {
         return agent
     }
 
-    /// Names Arsen gave agents; they win over the runtime's labels, which change as a session's title does.
+    /// Names the user gave agents; they win over the runtime's labels, which change as a session's title does.
     public private(set) var names: [String: String] = UserDefaults.standard.dictionary(forKey: "agentNames") as? [String: String] ?? [:]
 
-    /// Gives the agent a name of Arsen's; an empty one goes back to the runtime's label.
+    /// Gives the agent a name of the user's; an empty one goes back to the runtime's label.
     public func rename(_ agent: String, to name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         names[agent] = trimmed.isEmpty ? nil : trimmed
@@ -126,12 +126,10 @@ public final class Store {
     /// True when removing the agent would also stop a process: Zero can reach it and it is running.
     public func canStop(_ name: String) -> Bool { reachable.contains(name) && !offline.contains(name) }
 
-    public func isClosed(_ name: String) -> Bool { asks.last { $0.agent.name == name && $0.kind != .message }?.status == "closed" }
-
     public var spawners: [AgentAdapter] { adapters.filter(\.canSpawn) }
 
     /// Starts a new agent through an adapter and puts the first prompt in its timeline, so it is in the bar at once
-    /// with what Arsen asked of it.
+    /// with what the user asked of it.
     public func spawn(prompt: String, adapter: AgentAdapter, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?,
                       settings: [String: String] = [:], started: (String) -> Void = { _ in }) async throws -> AgentIdentity {
         let link = try linked()
@@ -151,8 +149,8 @@ public final class Store {
         try await linked().switchModel(of: agent, model: model?.id, effort: level)
     }
 
-    /// Delivers Arsen's words to the agent's session, starting it again first when it is not running. The message joins
-    /// the timeline once it has arrived; a failure throws and leaves nothing behind.
+    /// Delivers the user's words to the agent's session, starting it again first when it is not running. The message
+    /// joins the timeline once it has arrived; a failure throws and leaves nothing behind.
     public func message(_ text: String, to agent: String) async throws {
         try await linked().message(text, to: agent)
         // A slash command opens something in the agent's terminal, so that screen comes to Zero.
@@ -240,7 +238,7 @@ public final class Store {
 
     public func cancelRun(_ id: String) { request { try await $0.cancelRun(id) } }
 
-    /// Takes back an open ask: Arsen answered it some other way. Nobody is told.
+    /// Takes back an open ask: the user answered it some other way. Nobody is told.
     public func withdraw(_ id: String, reason: String?) { request { try await $0.withdraw(id, reason: reason) } }
 
     /// Types an answer again into the session of an agent that asked with --async, after a failed delivery.

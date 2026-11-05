@@ -536,9 +536,9 @@ struct MarkdownEditor: NSViewRepresentable {
             let line = (view.string as NSString).substring(to: min(charIndex, (view.string as NSString).length)).filter { $0 == "\n" }.count + 1
             var items: [NSMenuItem] = []
             if let section = parent.sections.last(where: { $0.line <= line }), let found = parent.sectionLink(section.slug) {
-                items.append(LinkItem(title: "Copy Link to “\(section.title)”", link: found.link, label: found.title))
+                items.append(LinkItem(title: "Copy link to “\(section.title)”", link: found.link, label: found.title))
             }
-            items.append(LinkItem(title: "Copy Link to Scratchpad", link: parent.padLink.link, label: parent.padLink.title))
+            items.append(LinkItem(title: "Copy link to scratchpad", link: parent.padLink.link, label: parent.padLink.title))
             for (index, item) in items.enumerated() { menu.insertItem(item, at: index) }
             menu.insertItem(.separator(), at: items.count)
             return menu

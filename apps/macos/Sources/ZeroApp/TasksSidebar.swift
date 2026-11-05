@@ -73,8 +73,8 @@ struct TasksSidebar: View {
         })
     }
 
-    /// Leads that aren't on the board: finished and gone offline with nothing for him. One running isn't (a task just
-    /// started, before the board has it, is among the tasks: `starting`); one being archived isn't either.
+    /// Leads that aren't on the board: finished and gone offline with nothing for the user. One running isn't (a task
+    /// just started, before the board has it, is among the tasks: `starting`); one being archived isn't either.
     private func earlier(_ all: [Conversation]) -> [Conversation] {
         let ids = Set(all.map(\.id)), onBoard = Set(workspace.board.map(\.session))
         return all.filter { lead in (lead.parent.map { !ids.contains($0) } ?? true) && !onBoard.contains(lead.id) && !workspace.putAway.contains(lead.id)

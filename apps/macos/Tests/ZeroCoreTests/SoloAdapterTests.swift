@@ -30,10 +30,8 @@ func soloAdapterRevivesWithSession() async throws {
     let agent = AgentIdentity(name: "revive-test", host: "mac", soloProcessID: Int(parts[0]), soloProjectID: Int(parts[1]), session: parts[2])
     let adapter = SoloAdapter()
     let revived = try await adapter.connect(agent)
-    print("revived as process", revived.soloProcessID ?? -1)
     #expect(revived.soloProcessID != agent.soloProcessID)
     let screen = await adapter.screen(of: revived) ?? ""
-    print("screen has earlier answer:", screen.contains("ready"))
     #expect(screen.contains("ready"))
 }
 

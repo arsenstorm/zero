@@ -3,7 +3,7 @@ import Foundation
 import ZeroCore
 
 /// zero-host: keeps the terminals of the agents Zero starts itself. Each is a pseudo-terminal running the agent
-/// through Arsen's login shell, its output kept by Ghostty's engine (Screen), so Zero can read the screen, type
+/// through the user's login shell, its output kept by Ghostty's engine (Screen), so Zero can read the screen, type
 /// into it, and tell whether its program still runs. Zero talks to it over HostLink.socket. It runs on its own, in a
 /// session of its own, so its agents keep running when Zero quits or is rebuilt.
 
@@ -40,8 +40,8 @@ final class Terminal {
 
     var running: Bool { exitCode == nil && pid > 0 }
 
-    /// Starts the program through Arsen's shell (`zsh -lic 'exec "$@"'`, so his .zshrc's PATH applies), in `cwd`, on
-    /// a new pty. The environment starts clean: whoever started the helper (Zero, or an agent's `zero` call)
+    /// Starts the program through the user's shell (`zsh -lic 'exec "$@"'`, so their .zshrc's PATH applies), in `cwd`,
+    /// on a new pty. The environment starts clean: whoever started the helper (Zero, or an agent's `zero` call)
     /// mustn't hand the agent its own session's variables.
     func start(columns: Int, rows: Int, queue: DispatchQueue) throws {
         let own = ProcessInfo.processInfo.environment

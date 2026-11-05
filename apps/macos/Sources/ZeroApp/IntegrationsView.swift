@@ -342,7 +342,7 @@ private struct GitHubViewForm: View {
     var body: some View {
         FormSheet(title: view.id.isEmpty ? "New view" : "Edit view", canSave: !name.trimmingCharacters(in: .whitespaces).isEmpty && !query.isEmpty,
                   save: { save(GitHubView(id: view.id, name: name, query: query)) }) {
-            Field(label: "Name") { TextField("", text: $name, prompt: Text("Acme pull requests")) }
+            Field(label: "Name") { TextField("", text: $name, prompt: Text("My team's pull requests")) }
             Field(label: "Search", hint: "GitHub's search syntax, as on github.com.") {
                 TextField("", text: $query).font(.system(size: 12).monospaced())
                 FlowChips(items: Self.snippets) { snippet in query = (query.trimmingCharacters(in: .whitespaces) + " " + snippet).trimmingCharacters(in: .whitespaces) }

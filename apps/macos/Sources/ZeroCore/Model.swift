@@ -1,6 +1,6 @@
 import Foundation
 
-/// `note` needs no answer: it is an agent saying where it is. `message` goes the other way: Arsen to the agent.
+/// `note` needs no answer: it is an agent saying where it is. `message` goes the other way: the user to the agent.
 /// `permission` is Claude Code asking to use a tool in a session nobody watches: the plugin's hook brings it here.
 public enum AskKind: String, Codable, Sendable { case question, choice, approve, run, note, message, permission }
 
@@ -53,7 +53,7 @@ public struct Ask: Codable, Identifiable, Sendable {
     public var answeredAt: Date?
     /// For notes: "blocked" or "done"; nil means working.
     public var status: String?
-    /// Index of the option Arsen picked, when he picked one.
+    /// Index of the option the user picked, when they picked one.
     public var choice: Int?
     /// False when the agent asked with --async and ended its turn: nothing waits for the answer, so Zero types
     /// it into the agent's session instead.
@@ -62,9 +62,9 @@ public struct Ask: Codable, Identifiable, Sendable {
     public var delivery: Delivery?
 
     public enum Delivery: String, Codable, Sendable { case sending, delivered, failed }
-    /// For a question: what Arsen may want to know to answer it, shown in smaller text under the question.
+    /// For a question: what the user may want to know to answer it, shown in smaller text under the question.
     public var detail: String?
-    /// For a run of a script file (`sh path`, or the path itself): the script, so Arsen can read what will run.
+    /// For a run of a script file (`sh path`, or the path itself): the script, so the user can read what will run.
     public var script: String?
     /// A run asking for exactly the command another agent's open run already asks for: it shares that run's
     /// card and outcome instead of showing a second one.
@@ -72,7 +72,7 @@ public struct Ask: Codable, Identifiable, Sendable {
     /// For an approval of one of zerod's sessions (agent.runtime "zerod", agent.ref the session): the approval's id
     /// there, so the answer reaches zerod and the ask is found again after a relaunch.
     public var request: String?
-    /// For a note: what the agent hands to Arsen without waiting for it ("mark the PR ready and merge it").
+    /// For a note: what the agent hands to the user without waiting for it ("mark the PR ready and merge it").
     public var needs: String?
 
     /// An ask for the user to answer: not a note or a message, not expired, and not a run sharing another's card.

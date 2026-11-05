@@ -119,8 +119,6 @@ public enum PadBlocks {
     }
 
     /// A list's item: "- ", "* ", "1. " and the like.
-    public static func isItem(_ line: String) -> Bool { listItem(line) }
-
     static func listItem(_ line: String) -> Bool {
         line.range(of: #"^\s*([-*+]|\d+[.)])(\s|$)"#, options: .regularExpression) != nil
     }

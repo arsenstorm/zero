@@ -69,7 +69,7 @@ enum Theme {
     static let keycap = dynamic(dark: NSColor(white: 0.22, alpha: 1), light: NSColor(white: 0.88, alpha: 1))
     /// A fully solid knob; `.primary` is a translucent label colour.
     static let knob = dynamic(dark: .white, light: .black)
-    /// Text on a solid `knob` surface (Arsen's message bubbles).
+    /// Text on a solid `knob` surface (the user's message bubbles).
     static let onKnob = dynamic(dark: .black, light: .white)
     static let code = dynamic(dark: NSColor(white: 0, alpha: 0.35), light: NSColor(white: 0, alpha: 0.05))
     static let pill = dynamic(dark: NSColor(white: 0, alpha: 0.9), light: NSColor(white: 1, alpha: 0.96))
