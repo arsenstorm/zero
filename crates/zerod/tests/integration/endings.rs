@@ -37,6 +37,9 @@ async fn turn(session: &zerod::session::Session, n: usize, said: &str, answer: &
     tokio::time::sleep(Duration::from_millis(300)).await;
 }
 
+/// Words Zero gave the task (an event, a report): a turn the user isn't in.
+fn zeros(text: &str) -> String { zerod::model::from_line("zero", text) }
+
 /// How many times the agent has been sent back to end its turn properly.
 fn sent_back(sent: &Arc<std::sync::Mutex<String>>) -> usize { sent.lock().unwrap().matches(zerod::daemon::END_YOUR_TURN_MARK).count() }
 
@@ -54,7 +57,7 @@ async fn a_turn_without_an_ending_is_sent_back_once_whichever_agent_runs_it() {
     let home = temp_dir("endings-missing");
     let (daemon, id, sent) = task(&home, Provider::Claude).await;
     let session = daemon.session(&id).unwrap();
-    turn(&session, 1, "Is the PR merged?", "Yes, it's merged and deployed.").await;
+    turn(&session, 1, &zeros("1 new event on what you follow"), "Yes, it's merged and deployed.").await;
     assert_eq!(sent_back(&sent), 1, "sent back: {}", sent.lock().unwrap());
 }
 
@@ -63,7 +66,7 @@ async fn a_question_it_never_asked_is_sent_back_even_with_an_ending() {
     let home = temp_dir("endings-question");
     let (daemon, id, sent) = task(&home, Provider::Claude).await;
     let session = daemon.session(&id).unwrap();
-    turn(&session, 1, "Where are we?", "The deploy finished.\n\nShould I start the check, or wait for Dana?\n\n[zero: working]").await;
+    turn(&session, 1, &zeros("1 new event on what you follow"), "The deploy finished.\n\nShould I start the check, or wait for Dana?\n\n[zero: working]").await;
     assert_eq!(sent_back(&sent), 1);
 }
 
@@ -72,11 +75,11 @@ async fn a_proper_ending_passes_and_a_reply_to_being_sent_back_is_taken_as_it_is
     let home = temp_dir("endings-fine");
     let (daemon, id, sent) = task(&home, Provider::Claude).await;
     let session = daemon.session(&id).unwrap();
-    turn(&session, 1, "Ship it", "Merged and checked.\n\n[zero: completed]").await;
-    turn(&session, 2, "Anything for me?", "Should I?\n\n[zero: asked k3x9qa]").await;
+    turn(&session, 1, &zeros("1 new event on what you follow"), "Merged and checked.\n\n[zero: completed]").await;
+    turn(&session, 2, &zeros("A worker's report"), "Should I?\n\n[zero: asked k3x9qa]").await;
     assert_eq!(sent_back(&sent), 0, "endings that say it: nothing to send back");
     // Sent back, and its next turn still doesn't end properly: taken as it is, not sent back again.
-    turn(&session, 3, "Done?", "All done.").await;
+    turn(&session, 3, &zeros("1 new event on what you follow"), "All done.").await;
     turn(&session, 4, "(sent back)", "Sorry, all done.").await;
     assert_eq!(sent_back(&sent), 1);
 }
@@ -97,7 +100,7 @@ async fn a_turn_stopped_by_the_user_or_a_restart_isnt_sent_back() {
     let (daemon, id, sent) = task(&home, Provider::Claude).await;
     let session = daemon.session(&id).unwrap();
     // An answer without an ending, sent back, and taken as it was the second time.
-    turn(&session, 1, "Is it merged?", "Yes.").await;
+    turn(&session, 1, &zeros("1 new event on what you follow"), "Yes.").await;
     turn(&session, 2, "(sent back)", "Yes, merged.").await;
     // Then a turn stopped before it answered: the earlier answer isn't this turn's.
     session.change(Change::Status { status: Status::Working, turn: Some("t3".into()), error: None });
@@ -123,4 +126,15 @@ async fn a_turn_stopped_after_it_said_something_isnt_sent_back_either() {
     session.change(Change::Status { status: Status::Idle, turn: None, error: None });
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(sent_back(&sent), 0, "stopped mid-way, its words so far aren't its answer: {}", sent.lock().unwrap());
+}
+
+#[tokio::test]
+async fn a_turn_the_users_own_words_started_is_a_conversation_and_isnt_sent_back() {
+    // The user is in the chat: a question in the reply is how a conversation goes, not a need left in prose.
+    let home = temp_dir("endings-conversation");
+    let (daemon, id, sent) = task(&home, Provider::Claude).await;
+    let session = daemon.session(&id).unwrap();
+    turn(&session, 1, "What's left on the issue?", "Three things are left.\n\nWhich do you want to start with?\n\n[zero: done]").await;
+    turn(&session, 2, "The formatters", "Here's what they take.").await;
+    assert_eq!(sent_back(&sent), 0, "{}", sent.lock().unwrap());
 }

@@ -393,3 +393,16 @@ fn ending_on_an_ask_already_answered_doesnt_need_the_user() {
     ask.state = AskState::Answered;
     assert_eq!(ended(&[ask]), State::Answered, "answered already: the ending is stale, a reply like any other");
 }
+
+#[test]
+fn a_question_in_the_reply_needs_the_user_whatever_ending_follows() {
+    // In a conversation the agent asks in its reply: the row says it waits on the user, so the alert reaches them if
+    // they've left, though its ending says done.
+    let ended = |text: &str| {
+        let mut lead = session("a", "/work/app", Status::Idle);
+        lead.items.push(Item { id: "1".into(), turn: None, kind: ItemKind::Agent { text: text.into(), final_answer: true }, status: ItemStatus::Done, at: None });
+        board(&[lead], &[])[0].state
+    };
+    assert_eq!(ended("Three things are left.\n\nWhich do you want to start with?\n\n[zero: done]"), State::NeedsYou);
+    assert_eq!(ended("## What's next?\n\nThe docs PR, then QA.\n\n[zero: done]"), State::Done, "a heading that asks isn't a question to the user");
+}

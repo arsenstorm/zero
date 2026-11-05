@@ -482,6 +482,8 @@ impl Conversation {
         // Zero's own lines after it (paused for an update, carried on) are Zero's, not the agent's: looked past.
         match self.items.iter().rev().find(|i| !matches!(i.kind, ItemKind::Notice { .. })).map(|i| &i.kind) {
             Some(ItemKind::Agent { final_answer: true, .. }) if self.parent.is_some() => Attention::Done,
+            // A question in its reply waits on the user, whatever its ending says (a conversation's turn ends so).
+            Some(ItemKind::Agent { text, final_answer: true }) if crate::board::ending(text) != Some("asked") && crate::board::asks_in_prose(text) => Attention::NeedsYou,
             Some(ItemKind::Agent { text, final_answer: true }) => match crate::board::ending(text) {
                 Some("done") => Attention::Done,
                 Some("asked") => Attention::NeedsYou,

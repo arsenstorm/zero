@@ -273,6 +273,13 @@ fn unlisted(line: &str) -> &str {
     line
 }
 
+/// Whether an answer ends on a question to the user: one of its last few lines of prose (Zero's ending, headings and
+/// table rows aside) ends with "?".
+pub fn asks_in_prose(answer: &str) -> bool {
+    answer.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("[zero:") && !l.starts_with('#') && !l.starts_with('|')).rev().take(3)
+        .any(|l| l.trim_end_matches(['*', '_', ')', '"']).ends_with('?'))
+}
+
 /// The answer without Zero's ending line, for reading.
 pub fn without_ending(answer: &str) -> &str {
     let trimmed = answer.trim_end();

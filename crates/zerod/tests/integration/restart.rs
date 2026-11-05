@@ -78,6 +78,23 @@ async fn a_task_between_turns_with_a_run_in_the_background_carries_on_too() {
 }
 
 #[tokio::test]
+async fn a_task_waiting_on_the_user_is_told_its_question_went_with_the_restart() {
+    // Its question (the provider's own, open in the chat) doesn't outlive the process: the new one is told so, not
+    // that its turn was paused mid-step, which reads as nonsense to an agent that was only waiting.
+    let home = temp_dir("restart-waiting");
+    let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
+    let cwd = home.to_str().unwrap();
+    let waiting = daemon.start(Provider::Claude, "plan it", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    daemon.session(&waiting).unwrap().change(Change::Status { status: Status::Waiting, turn: Some("t1".into()), error: None });
+    let paused = tokio::time::timeout(Duration::from_secs(10), daemon.pause_for_restart()).await.unwrap();
+    assert_eq!(paused, std::slice::from_ref(&waiting));
+    let words = std::fs::read_to_string(home.join("zerod/sessions").join(&waiting).join("pending.json")).unwrap();
+    assert!(words.contains("waiting on the user") && words.contains("again"), "{words}");
+    assert!(!words.contains("paused between steps"), "{words}");
+}
+
+#[tokio::test]
 async fn a_restart_doesnt_wait_on_a_session_closed_while_its_command_ran() {
     // Closed (archived) mid-command, the session's last item still says a command runs: the pause moves on at once
     // rather than waiting out the whole allowance with everything else already paused.
@@ -209,4 +226,7 @@ fn zeros_carry_on_is_never_shown_as_a_message_of_the_users() {
     assert_eq!(zerod::core::without_carry_on(&format!("{carry}\n\n{carry}")), None, "twice over is still only Zero's");
     assert_eq!(zerod::core::without_carry_on(&format!("{carry}\n\nWorker done.")).as_deref(), Some("Worker done."), "what came with it stays");
     assert_eq!(zerod::core::without_carry_on("Hello").as_deref(), Some("Hello"));
+    // The note under the user's words when writing withdrew the task's open asks: the agent's, not shown as theirs.
+    let withdrew = format!("let's talk\n\n{} k3x9qa (\"Which first?\"): the user is answering in the chat.", zerod::daemon::WITHDRAWN_MARK);
+    assert_eq!(zerod::core::without_carry_on(&withdrew).as_deref(), Some("let's talk"));
 }

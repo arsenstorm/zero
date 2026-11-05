@@ -62,7 +62,9 @@ impl Daemon {
         let now = conversation.attention();
         let before = self.attention.lock().unwrap().insert(id.into(), now);
         let under_way = |a: Attention| matches!(a, Attention::Starting | Attention::Working | Attention::NeedsYou | Attention::Stuck);
-        let ended = matches!(now, Attention::Done | Attention::Answered | Attention::Blocked | Attention::Failed | Attention::Limited | Attention::Offline | Attention::Idle);
+        // Or between turns on a question in its reply (needs the user, with nothing of the provider's open).
+        let asking = now == Attention::NeedsYou && conversation.status == Status::Idle && conversation.questions.is_empty() && conversation.approvals.is_empty();
+        let ended = asking || matches!(now, Attention::Done | Attention::Answered | Attention::Blocked | Attention::Failed | Attention::Limited | Attention::Offline | Attention::Idle);
         let came_to_an_end = before.is_some_and(under_way) && ended;
         if came_to_an_end { self.carry_read(&conversation); self.check_ending(&conversation) }
         let got_stuck = now == Attention::Stuck && before != Some(Attention::Stuck);
@@ -106,9 +108,12 @@ impl Daemon {
         let turn = conversation.items.iter().rposition(|i| matches!(i.kind, ItemKind::User { .. })).map_or(&conversation.items[..], |at| &conversation.items[at..]);
         // Stopped (its "Interrupted", or a restart pausing it): what it said so far isn't how it ended.
         if self.restarting.load(Ordering::Relaxed) || turn.last().is_some_and(|i| matches!(i.kind, ItemKind::Notice { .. })) { return }
+        // Started by the user's own words: they're in the conversation, and a question in the reply is how one goes.
+        // The rule is for turns they aren't in (an event, a worker's report, a wake-up), where words reach no one.
+        if turn.first().is_some_and(|i| matches!(&i.kind, ItemKind::User { text, .. } if users_own(text))) { return }
         let Some(answer) = turn.iter().rev().find_map(|i| match &i.kind { ItemKind::Agent { text, final_answer: true } => Some(text.as_str()), _ => None }) else { return };
         let ending = crate::board::ending(answer);
-        if ending.is_some() && (ending == Some("asked") || !unasked_question(answer)) { return }
+        if ending.is_some() && (ending == Some("asked") || !crate::board::asks_in_prose(answer)) { return }
         self.sent_back.lock().unwrap().insert(conversation.id.clone());
         self.pending.lock().unwrap().entry(conversation.id.clone()).or_default().push(Queued { id: new_id(), text: END_YOUR_TURN.into(), images: vec![], report: true });
         self.keep_pending(&conversation.id);
@@ -168,8 +173,8 @@ pub fn report(worker: &Conversation, attention: Attention) -> String {
     format!("Worker {name} {what}\n\n(It is session {}: `zero send {} \"…\"` to reply to it, `zero wait {}` to wait on it.)", worker.id, worker.id, worker.id)
 }
 
-/// Whether an answer ends on a question to the user: one of its last few lines (Zero's ending aside) ends with "?".
-fn unasked_question(answer: &str) -> bool {
-    answer.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("[zero:")).rev().take(3)
-        .any(|l| l.trim_end_matches(['*', '_', ')', '"']).ends_with('?'))
+/// Words the user wrote themselves, not ones Zero gave the task (an event, a report, a send-back, a carry-on).
+fn users_own(text: &str) -> bool {
+    !text.starts_with(crate::model::FROM) && ![END_YOUR_TURN_MARK, WRAP_UP].iter().chain(CARRIES.iter()).any(|zeros| text.starts_with(zeros))
 }
+

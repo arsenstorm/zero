@@ -16,6 +16,12 @@ impl Daemon {
             // process and the run with it.
             let under_way = matches!(conversation.status, Status::Working | Status::Waiting | Status::Starting) || session.running_command();
             if !session.is_attached() || !under_way { continue }
+            // Told after, as what the restart cut short: a turn, a question to the user, or a run in the background.
+            let words = match conversation.status {
+                Status::Waiting => CARRY_ON_WAITING,
+                Status::Working | Status::Starting => CARRY_ON,
+                _ => CARRY_ON_BACKGROUND,
+            };
             let me = self.me.clone();
             pausing.spawn(async move {
                 let deadline = tokio::time::Instant::now() + COMMAND_WAIT;
@@ -39,17 +45,18 @@ impl Daemon {
                     daemon.updating.lock().unwrap().insert(conversation.id.clone());
                     let _ = daemon.queues.send(());
                 }
-                conversation.id
+                (conversation.id, words)
             });
         }
         let mut paused = vec![];
-        while let Some(done) = pausing.join_next().await { if let Ok(id) = done { paused.push(id) } }
-        for id in &paused {
+        let mut told = vec![];
+        while let Some(done) = pausing.join_next().await { if let Ok((id, words)) = done { paused.push(id.clone()); told.push((id, words)) } }
+        for (id, words) in &told {
             // Once, however many restarts paused it before it carried on.
             let mut pending = self.pending.lock().unwrap();
             let list = pending.entry(id.clone()).or_default();
-            if list.iter().any(|q| q.text == CARRY_ON) { continue }
-            list.push(Queued { id: new_id(), text: CARRY_ON.into(), images: vec![], report: true });
+            if list.iter().any(|q| CARRIES.contains(&q.text.as_str())) { continue }
+            list.push(Queued { id: new_id(), text: (*words).into(), images: vec![], report: true });
             drop(pending);
             self.keep_pending(id);
         }

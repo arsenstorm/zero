@@ -112,7 +112,15 @@ goes through zero ask, zero run or zero approve with --async (or Zero's zero_ask
 your words reaches no one. Don't repeat your answer; do what's missing and end.";
 /// What a turn paused for a restart is told once the new zerod is up. Zero's own words, not the user's: never shown as
 /// a message (core.rs leaves its item out).
+/// Under the user's words when writing to a task withdrew its open asks: for the agent, never shown as the user's.
+pub const WITHDRAWN_MARK: &str = "(Zero withdrew your open asks";
 pub const CARRY_ON: &str = "Zero restarted while you were working: your turn was paused between steps, and what you had running in the background was stopped. Please carry on where you left off, starting again what you still need.";
+/// What a task waiting on the user's answer (the provider's own question or approval) is told: that went with the restart.
+pub const CARRY_ON_WAITING: &str = "Zero restarted while you were waiting on the user: your question to them (or the approval you wanted) went with it, unanswered. Please ask again if you still need it, and carry on.";
+/// What a task between turns with a run in the background is told: the run went with the restart.
+pub const CARRY_ON_BACKGROUND: &str = "Zero restarted between your turns, which stopped what you had running in the background. Please start again what you still need, and carry on.";
+/// Every carry-on: Zero's words, never the user's.
+pub const CARRIES: [&str; 3] = [CARRY_ON, CARRY_ON_WAITING, CARRY_ON_BACKGROUND];
 /// What a working session is told when the user pauses it, steering its turn to an end it can be picked up from.
 pub const WRAP_UP: &str = "The user is pausing you (for the night, or while they're away): finish the step you're on, leave the work so it can \
 be picked up again, say where you are and what comes next, and end your turn. Don't start anything new.";
