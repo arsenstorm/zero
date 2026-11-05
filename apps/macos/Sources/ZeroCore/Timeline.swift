@@ -34,8 +34,15 @@ public enum TimelineBlock: Identifiable, Equatable, Sendable {
                 flush(end: nil, live: false)
                 blocks.append(.user(item))
                 start = item.date
-            case .agent(_, finalAnswer: true):
+            case let .agent(text, finalAnswer: true):
+                // Ending on an ask: the words before it are the reasoning behind the question, shown in full above it
+                // rather than folded with the commands.
+                var before: ConversationItem?
+                if case .asked? = ZeroEnding.split(text).1, let at = work.lastIndex(where: { if case .agent(_, false) = $0.kind { true } else { false } }) {
+                    before = work.remove(at: at)
+                }
                 flush(end: item.date, live: false)
+                if let before { blocks.append(.answer(before)) }
                 blocks.append(.answer(item))
             case .notice(_, error: true):
                 // A failure mid-turn reads like the agent's interim words: in the work, where it happened.
