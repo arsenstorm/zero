@@ -593,3 +593,23 @@ async fn writing_in_the_chat_tells_the_agent_which_of_its_asks_are_still_open() 
     assert!(given.contains("let's talk about the formatters") && given.contains(zerod::daemon::OPEN_ASKS_MARK), "{given}");
     assert!(given.contains(&question) && given.contains(&run) && given.contains("zero withdraw"), "the agent is told which: {given}");
 }
+
+#[tokio::test]
+async fn a_lead_sets_its_issues_rows_and_the_board_shows_them() {
+    let h = harness("server-issues").await;
+    let mut control = Client::connect(&h.socket).await;
+    let started = control.call(json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": "lead these"})).await;
+    let session = started["result"]["session"].as_str().unwrap().to_string();
+    let set = |ticket: &str, state: &str, text: &str| json!({"op": "issue", "session": session, "ticket": ticket, "state": state, "text": text});
+    assert_eq!(control.call(set("ENG-1", "you", "merge decision")).await["ok"], true);
+    assert_eq!(control.call(set("ENG-2", "waiting", "CI on app#12")).await["ok"], true);
+    let refused = control.call(set("ENG-3", "dancing", "")).await;
+    assert!(refused["error"].as_str().unwrap().contains("you, working, waiting, parked or done"), "{refused}");
+    let board = control.call(json!({"op": "board"})).await;
+    let row = board["result"]["rows"].as_array().or(board["result"].as_array()).unwrap().iter().find(|r| r["session"] == session.as_str()).unwrap().clone();
+    let issues: Vec<(String, String)> = row["issues"].as_array().unwrap().iter().map(|i| (i["ticket"].as_str().unwrap().into(), i["state"].as_str().unwrap().into())).collect();
+    assert_eq!(issues, [("ENG-1".to_string(), "you".to_string()), ("ENG-2".into(), "waiting".into())]);
+    assert_eq!(row["state"], "needsYou");
+    // Kept: another zerod, rebuilt from the transcript, has the rows.
+    assert!(std::fs::read_to_string(h.home.join("sessions").join(&session).join("transcript.jsonl")).unwrap().contains("merge decision"));
+}

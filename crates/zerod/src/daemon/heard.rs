@@ -66,7 +66,7 @@ impl Daemon {
         let asking = now == Attention::NeedsYou && conversation.status == Status::Idle && conversation.questions.is_empty() && conversation.approvals.is_empty();
         let ended = asking || matches!(now, Attention::Done | Attention::Answered | Attention::Blocked | Attention::Failed | Attention::Limited | Attention::Offline | Attention::Idle);
         let came_to_an_end = before.is_some_and(under_way) && ended;
-        if came_to_an_end { self.carry_read(&conversation); self.check_ending(&conversation) }
+        if came_to_an_end { self.carry_read(&conversation); self.check_ending(&conversation); self.check_issue_row(&conversation) }
         let got_stuck = now == Attention::Stuck && before != Some(Attention::Stuck);
         // While zerod restarts, a turn ending is the pause for it: the new zerod carries it on, so its lead hears nothing.
         let restarting = self.restarting.load(Ordering::Relaxed);
@@ -171,6 +171,23 @@ pub fn report(worker: &Conversation, attention: Attention) -> String {
         _ => "stopped without an answer".into(),
     };
     format!("Worker {name} {what}\n\n(It is session {}: `zero send {} \"…\"` to reply to it, `zero wait {}` to wait on it.)", worker.id, worker.id, worker.id)
+}
+
+impl Daemon {
+    /// A lead's turn started by its worker's report on a ticket: the issue's row is what the user reads coming back,
+    /// so a turn that heard of it and left the row alone is told, once (the reminder's own turn is Zero's, not a report).
+    fn check_issue_row(&self, conversation: &Conversation) {
+        if !self.endings.load(Ordering::Relaxed) || conversation.parent.is_some() || self.restarting.load(Ordering::Relaxed) { return }
+        let Some(first) = conversation.items.iter().rev().find(|i| matches!(i.kind, ItemKind::User { .. })) else { return };
+        let ItemKind::User { text, .. } = &first.kind else { return };
+        let Some(worker) = text.strip_prefix(crate::model::FROM).and_then(|rest| rest.split_once(" -->")).map(|(id, _)| id) else { return };
+        let Some(ticket) = self.get(worker).filter(|w| w.parent.as_deref() == Some(conversation.id.as_str())).and_then(|w| w.ticket) else { return };
+        let started = first.at.unwrap_or(0);
+        if conversation.issues.iter().any(|i| i.ticket == ticket && i.updated >= started) { return }
+        self.tell(&conversation.id, crate::model::from_line("zero", &format!("{ISSUE_ROW_MARK} after {ticket}'s report: it's what the user reads \
+            coming back. Set it with `zero issue {ticket} you|working|waiting|parked|done \"…\"` (on the user: what it needs from them; \
+            waiting: on whom; parked: why), then end your turn.")));
+    }
 }
 
 /// Words the user wrote themselves, not ones Zero gave the task (an event, a report, a send-back, a carry-on).

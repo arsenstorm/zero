@@ -33,6 +33,10 @@ fn zero_tools() -> Vec<Value> {
         json!({"name": "zero_run", "description": "Asks the user to run a command on their Mac (their credentials, their access); its output comes back to you as a message. End your turn with [zero: asked <id>].",
                "inputSchema": {"type": "object", "required": ["command", "why"], "properties": {
                    "command": string("The command."), "why": string("What you need its output for."), "cwd": string("Where to run it; left out, the task's folder.")}}}),
+        json!({"name": "zero_issue", "description": "Sets the row of one of the issues you lead, which the user reads coming back: who has it now, and what it needs. Set it whenever the issue's state changes.",
+               "inputSchema": {"type": "object", "required": ["ticket", "state"], "properties": {
+                   "ticket": string("The issue's ticket."), "state": string("you (on the user), working, waiting (on someone else), parked or done."),
+                   "text": string("On the user: what you need from them. Waiting: on whom. Parked: why. Else where it stands.")}}}),
         json!({"name": "zero_note", "description": "Says where the task stands, on its row in Zero.",
                "inputSchema": {"type": "object", "required": ["text"], "properties": {
                    "text": string("Where it stands, one line."), "state": string("done (nothing left that you can do) or waiting (on someone else); left out, working."), "needs": string("What it needs from the user, if anything.")}}}),
@@ -99,7 +103,7 @@ where
         }
         "tools/call" if params["name"].as_str().is_some_and(|n| n.starts_with("zero_")) => {
             let name = params["name"].as_str().unwrap_or_default().to_string();
-            let note = name == "zero_note";
+            let note = name == "zero_note" || name == "zero_issue";
             match call(name, params["arguments"].clone()).await {
                 Ok(_) if note => json!({"content": [{"type": "text", "text": "Noted."}], "isError": false}),
                 Ok(made) => {

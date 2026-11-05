@@ -406,3 +406,26 @@ fn a_question_in_the_reply_needs_the_user_whatever_ending_follows() {
     assert_eq!(ended("Three things are left.\n\nWhich do you want to start with?\n\n[zero: done]"), State::NeedsYou);
     assert_eq!(ended("## What's next?\n\nThe docs PR, then QA.\n\n[zero: done]"), State::Done, "a heading that asks isn't a question to the user");
 }
+
+#[test]
+fn a_lead_keeps_a_row_per_issue_and_the_one_on_the_user_comes_first() {
+    // The lead runs several issues at once: each keeps its own row, set by the lead as it changes (`zero issue`), so
+    // coming back reads the rows instead of asking it where everything is. Zero keeps when a row turned to the user.
+    use zerod::model::{Issue, IssueState};
+    let mut lead = session("a", "/work/app", Status::Idle);
+    let at = |s: i64| s * 1000;
+    lead.apply(Change::Issue { issue: Issue::set(None, "ENG-2", IssueState::Waiting, "CI on app#12", at(100)) });
+    lead.apply(Change::Issue { issue: Issue::set(None, "ENG-1", IssueState::You, "merge decision", at(200)) });
+    lead.apply(Change::Issue { issue: Issue::set(None, "ENG-3", IssueState::Parked, "waiting on the PM", at(210)) });
+    let row = &board(std::slice::from_ref(&lead), &[])[0];
+    assert_eq!(row.issues.iter().map(|i| i.ticket.as_str()).collect::<Vec<_>>(), ["ENG-1", "ENG-2", "ENG-3"], "on the user first, parked last");
+    assert_eq!(row.state, State::NeedsYou, "an issue on the user is the lead needing them");
+    // Moved on: how long it sat on the user is kept, and a row changed only in its words keeps its time.
+    let was = lead.issues.iter().find(|i| i.ticket == "ENG-1").cloned();
+    let reworded = Issue::set(was.as_ref(), "ENG-1", IssueState::You, "merge decision, CI green now", at(250));
+    assert_eq!(reworded.since, at(200), "still on the user since it first was");
+    let done = Issue::set(Some(&reworded), "ENG-1", IssueState::Done, "merged", at(500));
+    assert_eq!((done.since, done.on_you_ms), (at(500), at(300)), "five minutes on the user, kept");
+    lead.apply(Change::Issue { issue: done });
+    assert_ne!(board(&[lead], &[])[0].state, State::NeedsYou);
+}

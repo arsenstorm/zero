@@ -94,6 +94,8 @@ struct Request {
     /// `attr`: an attribute's name and value (none takes it back).
     name: Option<String>,
     value: Option<String>,
+    /// issue: who has it now (you, working, waiting, parked, done).
+    state: Option<String>,
     conversation: Option<bool>,
     code: Option<bool>,
     /// adopt: the provider's own session id, to take in as a task.
@@ -242,7 +244,7 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "release" | "resume" | "openTerminal" | "closeTerminal" | "rewindPreview" | "rewind" | "branch" | "switch" | "interrupt" | "stop"
         | "pause" | "unpause" => sessions::control(zerod, request).await,
         "send" | "queue" | "unqueue" | "notify" | "decide" | "answer" | "seen" => sessions::messages(zerod, request).await,
-        "label" | "setPermissions" | "placeInWorkspace" | "attr" | "table" | "place" => sessions::properties(zerod, request).await,
+        "label" | "setPermissions" | "placeInWorkspace" | "attr" | "issue" | "table" | "place" => sessions::properties(zerod, request).await,
         "hello" | "list" | "get" | "workers" | "result" | "wait" | "usage" | "board" | "recent" | "items" | "window" | "outline" => {
             sessions::reads(zerod, request).await
         }

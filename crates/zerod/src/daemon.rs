@@ -112,6 +112,8 @@ goes through zero ask, zero run or zero approve with --async (or Zero's zero_ask
 your words reaches no one. Don't repeat your answer; do what's missing and end.";
 /// What a turn paused for a restart is told once the new zerod is up. Zero's own words, not the user's: never shown as
 /// a message (core.rs leaves its item out).
+/// What a lead is told when a worker's report reached it and the issue's row wasn't set in that turn (`zero issue`).
+pub const ISSUE_ROW_MARK: &str = "The issue's row wasn't set";
 /// Under the user's words when the task has asks open: for the agent, never shown as the user's.
 pub const OPEN_ASKS_MARK: &str = "(Zero: your asks still open:";
 pub const CARRY_ON: &str = "Zero restarted while you were working: your turn was paused between steps, and what you had running in the background was stopped. Please carry on where you left off, starting again what you still need.";
@@ -300,6 +302,19 @@ impl Daemon {
         if name.is_empty() { return Err("An attribute needs a name".into()) }
         let value = value.map(str::trim).filter(|v| !v.is_empty()).map(String::from);
         self.session(id)?.change(Change::Attribute { name: name.into(), value });
+        Ok(())
+    }
+
+    /// One of the issues the task drives, its row set (`zero issue`): its time in a state carries on while the state
+    /// doesn't change, and its time on the user is kept as it moves on.
+    pub fn set_issue(&self, id: &str, ticket: &str, state: crate::model::IssueState, text: &str) -> Result<(), String> {
+        let ticket = ticket.trim();
+        if ticket.is_empty() { return Err("An issue needs its ticket".into()) }
+        let session = self.session(id)?;
+        let previous = session.summary().issues.into_iter().find(|i| i.ticket == ticket);
+        let issue = crate::model::Issue::set(previous.as_ref(), ticket, state, text.trim(), crate::now_ms());
+        session.change(Change::Issue { issue });
+        let _ = self.queues.send(()); // the board, at once
         Ok(())
     }
 

@@ -109,6 +109,12 @@ pub(super) async fn properties(zerod: &Zerod, request: Request) -> Result<Value,
         "label" => daemon.label(&request.session()?, request.label.as_deref(), request.ticket.as_deref()).map(|_| Value::Null),
         "setPermissions" => daemon.set_permissions(&request.session()?, request.permissions.ok_or("Which permissions: auto or unrestricted?")?).await.map(|_| Value::Null),
         "placeInWorkspace" => daemon.place_in_workspace(&request.session()?, request.workspace_id().as_deref()).map(|_| Value::Null),
+        // One of the issues the task drives, its row set: who has it, and what it needs, where it stands or why parked.
+        "issue" => {
+            let state = request.state.as_deref().and_then(crate::model::IssueState::named)
+                .ok_or("An issue's state is one of you, working, waiting, parked or done")?;
+            daemon.set_issue(&request.session()?, request.ticket.as_deref().ok_or("Which issue? Its ticket")?, state, request.text.as_deref().unwrap_or("")).map(|_| Value::Null)
+        }
         "attr" => daemon.set_attribute(&request.session()?, request.name.as_deref().ok_or("Which attribute?")?, request.value.as_deref()).map(|_| Value::Null),
         "table" => daemon.table(&request.session()?, request.title.as_deref().unwrap_or(""), request.columns.clone().unwrap_or_default(), request.rows.clone().unwrap_or_default()).map(|_| Value::Null),
         "place" => daemon.set_place(&request.session()?, request.place.as_deref()).map(|_| Value::Null),

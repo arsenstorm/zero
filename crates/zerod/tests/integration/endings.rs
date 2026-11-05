@@ -138,3 +138,26 @@ async fn a_turn_the_users_own_words_started_is_a_conversation_and_isnt_sent_back
     turn(&session, 2, "The formatters", "Here's what they take.").await;
     assert_eq!(sent_back(&sent), 0, "{}", sent.lock().unwrap());
 }
+
+#[tokio::test]
+async fn a_lead_told_of_an_issue_that_leaves_its_row_alone_is_reminded_once() {
+    // A worker's report changes where its issue stands: the lead's row for it is what the user reads coming back, so
+    // a turn that heard the report and didn't set the row is told, once.
+    let home = temp_dir("issue-rows");
+    let (daemon, lead, sent) = task(&home, Provider::Claude).await;
+    let worker = daemon.spawn(&lead, Provider::Claude, "fix ENG-7", zerod::daemon::Options { ticket: Some("ENG-7".into()), ..Default::default() }).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let reminded = |sent: &Arc<std::sync::Mutex<String>>| sent.lock().unwrap().matches(zerod::daemon::ISSUE_ROW_MARK).count();
+    let session = daemon.session(&lead).unwrap();
+    turn(&session, 1, &zerod::model::from_line(&worker, "Worker ENG-7 finished: CI green, ready to merge."), "ENG-7 is ready to merge.\n\n[zero: done]").await;
+    assert_eq!(reminded(&sent), 1, "{}", sent.lock().unwrap());
+    // Set during the turn: nothing to remind.
+    session.change(Change::Status { status: Status::Working, turn: Some("t2".into()), error: None });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    session.change(item("u2", ItemKind::User { text: zerod::model::from_line(&worker, "Worker ENG-7 finished: merged."), images: vec![] }));
+    daemon.set_issue(&lead, "ENG-7", zerod::model::IssueState::Done, "merged").unwrap();
+    session.change(item("a2", ItemKind::Agent { text: "ENG-7 is merged.\n\n[zero: done]".into(), final_answer: true }));
+    session.change(Change::Status { status: Status::Idle, turn: None, error: None });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(reminded(&sent), 1);
+}

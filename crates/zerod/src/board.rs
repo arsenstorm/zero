@@ -83,6 +83,9 @@ pub struct Row {
     /// shown (unread, if it is) but not announced.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub quiet: bool,
+    /// The issues it drives, a row each (`zero issue`): those on the user first, then by who has them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub issues: Vec<crate::model::Issue>,
 }
 
 /// A worker on a lead's row: its own state, where it runs, where it is and what it needs.
@@ -168,6 +171,7 @@ pub fn board_in(conversations: &[Conversation], asks: &[Ask], places: &HashMap<S
             session: lead.id.clone(), task: crate::bridge::label(lead), workspace: workspace_of(lead), ticket: lead.ticket.clone(), place, path, online: its.online,
             state: its.state, own, now: its.now, needs: its.needs, asks: its.asks, workers: team.len() - 1, team: members, queued, held, wakes: None,
             quiet: lead.items.iter().rev().find_map(|i| match &i.kind { ItemKind::User { text, .. } => Some(text.starts_with(crate::model::FROM)), _ => None }).unwrap_or(false),
+            issues: { let mut issues = lead.issues.clone(); issues.sort_by_key(|i| (i.state, i.since)); issues },
         }
     }).collect();
     rows.sort_by_key(|row| row.state);
@@ -224,6 +228,8 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
     // the lead.
     let mut state = team.iter().skip(1).map(|c| attention(c)).filter(|s| *s <= State::Working).min().unwrap_or(State::Idle).min(attention(session));
     if !open.is_empty() { state = State::NeedsYou }
+    // An issue its agent says is on the user (`zero issue … you`): the task needs them, as an ask would.
+    if session.issues.iter().any(|i| i.state == crate::model::IssueState::You) { state = state.min(State::NeedsYou) }
     // Ended on an ask that's no longer open (answered, withdrawn, expired), its question no longer anyone's: what it
     // said is a reply to read. Agents repeat the ending through later turns, long after the answer came.
     if state == State::NeedsYou && open.is_empty() && session.questions.is_empty() && session.approvals.is_empty()

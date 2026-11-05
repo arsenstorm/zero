@@ -4,6 +4,56 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Who has an issue now: the user (what it needs from them), its agents, someone else, nobody for now, or no one ever.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase")]
+pub enum IssueState { You, Working, Waiting, Parked, Done }
+
+impl IssueState {
+    pub fn named(word: &str) -> Option<IssueState> {
+        Some(match word {
+            "you" | "user" | "needs-you" => IssueState::You,
+            "working" => IssueState::Working,
+            "waiting" | "blocked" => IssueState::Waiting,
+            "parked" | "later" => IssueState::Parked,
+            "done" | "completed" | "merged" => IssueState::Done,
+            _ => return None,
+        })
+    }
+}
+
+/// One issue a lead drives, by its ticket, as the lead keeps it: who has it, and in words what it needs from the user
+/// (on them), where it stands, or why it's parked. Zero keeps when it came to that state and its time on the user.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Issue {
+    pub ticket: String,
+    pub state: IssueState,
+    pub text: String,
+    /// When it came to its state, in milliseconds since 1970: on the user since then, say.
+    pub since: i64,
+    /// Its time on the user before now (the stretch it's in, if it is on them, aside), in milliseconds.
+    #[serde(default)]
+    pub on_you_ms: i64,
+    /// When its agent last set it, whatever changed (ms): a turn that heard of the issue and left its row alone shows.
+    #[serde(default)]
+    pub updated: i64,
+}
+
+impl Issue {
+    /// The row set at `now` (ms), after `previous`: its time in a state carries on while the state doesn't change.
+    pub fn set(previous: Option<&Issue>, ticket: &str, state: IssueState, text: &str, now: i64) -> Issue {
+        let same = previous.is_some_and(|p| p.state == state);
+        let left_you = previous.filter(|p| p.state == IssueState::You && state != IssueState::You).map_or(0, |p| now - p.since);
+        Issue {
+            ticket: ticket.into(), state, text: text.into(),
+            since: if same { previous.map_or(now, |p| p.since) } else { now },
+            on_you_ms: previous.map_or(0, |p| p.on_you_ms) + left_you,
+            updated: now,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Conversation {
@@ -52,6 +102,9 @@ pub struct Conversation {
     /// The folder as it was when each message of yours went, by the message's id: a git commit (snapshots.rs).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub snapshots: std::collections::BTreeMap<String, String>,
+    /// The issues it drives, a row each, as its agent keeps them (`zero issue`): a lead running several at once.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub issues: Vec<Issue>,
     /// What its agent says about it beyond its name and ticket, by name ("PR": a link): `zero attr`.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub attributes: std::collections::BTreeMap<String, String>,
@@ -406,6 +459,8 @@ pub enum Change {
     Parent { parent: Option<String> },
     /// Its agent said something about the task (`zero attr`); no value takes it back.
     Attribute { name: String, value: Option<String> },
+    /// An issue's row set (`zero issue`): replaces the row for its ticket.
+    Issue { issue: Issue },
     /// The folder was kept (snapshots.rs) as it was when this message of yours went.
     Snapshot { item: String, commit: String },
     /// Back to just before this message of yours: it and everything after it go, and so does the provider's thread,
@@ -425,7 +480,7 @@ impl Conversation {
     pub fn new(id: &str, provider: Provider, cwd: &str) -> Self {
         Conversation {
             id: id.into(), provider, cwd: cwd.into(), permissions: Permissions::Auto, label: None, ticket: None, place: None, branch: None, parent: None, workspace: None, signin: None, thread: None, title: None, model: None, effort: None,
-            status: Status::Starting, turn: None, error: None, items: vec![], snapshots: Default::default(), attributes: Default::default(), approvals: vec![], questions: vec![], usage: None,
+            status: Status::Starting, turn: None, error: None, items: vec![], snapshots: Default::default(), issues: vec![], attributes: Default::default(), approvals: vec![], questions: vec![], usage: None,
             failure: None, stalled: None, diff: None, terminal: None, seq: 0, mcp: vec![],
         }
     }
@@ -441,7 +496,7 @@ impl Conversation {
             id: self.id.clone(), provider: self.provider, cwd: self.cwd.clone(), permissions: self.permissions, label: self.label.clone(),
             ticket: self.ticket.clone(), place: self.place.clone(), branch: self.branch.clone(), parent: self.parent.clone(), workspace: self.workspace.clone(), signin: self.signin.clone(), thread: self.thread.clone(),
             title: self.title.clone(), model: self.model.clone(), effort: self.effort.clone(), status: self.status, turn: self.turn.clone(),
-            error: self.error.clone(), items, snapshots: self.snapshots.clone(), attributes: self.attributes.clone(), approvals: self.approvals.clone(), questions: self.questions.clone(), usage: self.usage.clone(),
+            error: self.error.clone(), items, snapshots: self.snapshots.clone(), issues: self.issues.clone(), attributes: self.attributes.clone(), approvals: self.approvals.clone(), questions: self.questions.clone(), usage: self.usage.clone(),
             failure: self.failure.clone(), stalled: self.stalled.clone(), diff: self.diff.clone(), terminal: self.terminal.clone(), seq: self.seq,
             mcp: self.mcp.clone(),
         }
@@ -522,6 +577,10 @@ impl Conversation {
             Change::Parent { parent } => self.parent = parent,
             Change::Snapshot { item, commit } => { self.snapshots.insert(item, commit); }
             Change::Attribute { name, value } => self.set_attribute(name, value),
+            Change::Issue { issue } => match self.issues.iter_mut().find(|i| i.ticket == issue.ticket) {
+                Some(row) => *row = issue,
+                None => self.issues.push(issue),
+            },
             Change::Rewound { before } => self.rewind_to(&before),
             Change::Switched { provider, model, effort } => self.switch_to(provider, model, effort),
         }

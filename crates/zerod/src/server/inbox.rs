@@ -40,6 +40,11 @@ fn agent_ask(zerod: &Zerod, request: &Request) -> Result<Value, String> {
     let id = request.session()?;
     let conversation = daemon.get(&id).ok_or_else(|| format!("No session {id}"))?;
     let args = request.args.clone().unwrap_or(json!({}));
+    if args["tool"] == "issue" {
+        let state = args["state"].as_str().and_then(crate::model::IssueState::named).ok_or("An issue's state is one of you, working, waiting, parked or done")?;
+        daemon.set_issue(&id, args["ticket"].as_str().ok_or("Which issue? Its ticket")?, state, args["text"].as_str().unwrap_or(""))?;
+        return Ok(json!({}));
+    }
     let agent = crate::bridge::identity(&conversation, &crate::bridge::hostname());
     let ttl = Settings::load(daemon.home()).ttl.unwrap_or(3600);
     let mut ask = ask_of(&args, &conversation, agent, ttl)?;
