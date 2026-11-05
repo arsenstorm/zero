@@ -4,13 +4,14 @@ import Testing
 
 /// A lead's row as zerod's board sends it: its team's state, its own, and a worker's when it has one.
 private func row(_ id: String, state: String, own: String? = nil, worker: String? = nil, now: String? = nil, needs: String? = nil,
-                 asks: [String] = [], quiet: Bool = false) -> BoardRow {
+                 asks: [String] = [], quiet: Bool = false, onYou: [(String, String)] = []) -> BoardRow {
     let team = worker.map { #"[{"session":"w-\#(id)","state":"\#($0)","place":"w","asks":[]}]"# } ?? "[]"
     let json = """
     {"session":"\(id)","task":"Task \(id)","workspace":"zero","place":"p","online":true,"state":"\(state)","own":"\(own ?? state)",
      "now":\(now.map { "\"\($0)\"" } ?? "null"),"needs":\(needs.map { "\"\($0)\"" } ?? "null"),
      "asks":[\(asks.enumerated().map { #"{"id":"a\#($0.offset)","title":"\#($0.element)"}"# }.joined(separator: ","))],
-     "workers":\(worker == nil ? 0 : 1),"team":\(team),"quiet":\(quiet)}
+     "workers":\(worker == nil ? 0 : 1),"team":\(team),"quiet":\(quiet),
+     "issues":[\(onYou.map { #"{"ticket":"\#($0.0)","state":"you","text":"\#($0.1)","since":0}"# }.joined(separator: ","))]}
     """
     return try! JSONDecoder().decode(BoardRow.self, from: Data(json.utf8))
 }
@@ -117,4 +118,15 @@ private func row(_ id: String, state: String, own: String? = nil, worker: String
     #expect(TaskAlerts.due(held, rows: [row("1", state: "working")], now: start + 300, front: nil, lastInput: start).isEmpty, "moved on")
     #expect(TaskAlerts.due(held, rows: still, now: start + 300, front: "1", lastInput: start + 60).isEmpty, "open in front, and the user was there after it came")
     #expect(TaskAlerts.due(held, rows: still, now: start + 300, front: "1", lastInput: start - 1) == [replied], "open in front, but nobody there since")
+}
+
+@Test func anIssueThatTurnsToTheUserSaysWhichAndWhatItNeeds() {
+    // A lead driving several issues: the one now on the user is the news, by its ticket, however the lead's row reads.
+    var announced: [String: String] = [:]
+    let first = TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "needsYou", now: "Two PRs are green.", onYou: [("ENG-1", "merge decision")])], announced: &announced)
+    #expect(first.alerts.first?.body == "ENG-1: merge decision")
+    // Another issue on the user, the lead still Needs you: news too.
+    let second = TaskAlerts.changes(from: [row("1", state: "needsYou", onYou: [("ENG-1", "merge decision")])],
+                                    to: [row("1", state: "needsYou", onYou: [("ENG-1", "merge decision"), ("ENG-2", "the OCI Apply")])], announced: &announced)
+    #expect(second.alerts.first?.body == "ENG-2: the OCI Apply")
 }

@@ -16,6 +16,8 @@ struct TaskRow: View {
     var fold: Bool? = nil
     /// A worker: its place on its lead's branch.
     var branch: Branch? = nil
+    /// Beside the icon, small: how long an issue has been on the user.
+    var detail: String? = nil
     let action: () -> Void
     var toggle: () -> Void = {}
     /// A lead that can be dragged into place: told how far the pointer moved, and when it let go (false: a click).
@@ -33,6 +35,7 @@ struct TaskRow: View {
                 Marquee(text: title, moving: hovering).font(.system(size: 13))
                 // A lead with workers: room for its chevron (drawn in the overlay below, so its click is its own).
                 if fold != nil { Color.clear.frame(width: 16, height: 1) }
+                if let detail { Text(detail).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary).fixedSize() }
                 // The icon keeps its place however long the title: the title gives way, not the state.
                 TaskStateIcon(state: state).font(.system(size: 12)).fixedSize().layoutPriority(1)
             }

@@ -392,7 +392,38 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     public var wakes: Int?
     /// Its last turn was Zero's (an event it follows, a worker's report), not the user's: a reply to it isn't announced.
     public var quiet: Bool?
+    /// The issues it drives, a row each, as its agent keeps them (`zero issue`): those on the user first.
+    public var issues: [Issue]?
     public var id: String { session }
+
+    /// One issue a lead drives (board.rs, model.rs Issue): who has it, in words what it needs or where it stands.
+    public struct Issue: Decodable, Equatable, Sendable, Identifiable {
+        public var ticket: String
+        /// you, working, waiting, parked or done.
+        public var state: String
+        public var text: String
+        /// When it came to its state, in milliseconds since 1970.
+        public var since: Int
+        public var id: String { ticket }
+
+        /// In the sidebar's states: on the user is Needs you, parked is Paused.
+        public var boardState: BoardRow.State {
+            switch state {
+            case "you": .needsYou
+            case "working": .working
+            case "waiting": .waiting
+            case "parked": .paused
+            default: .done
+            }
+        }
+
+        /// How long it has been on the user ("12m", "3h", "2d"), while it is.
+        public func waiting(at now: Date = Date()) -> String? {
+            guard state == "you" else { return nil }
+            let minutes = max(0, Int(now.timeIntervalSince1970 - Double(since) / 1000) / 60)
+            return minutes < 60 ? "\(minutes)m" : minutes < 48 * 60 ? "\(minutes / 60)h" : "\(minutes / 1440)d"
+        }
+    }
     public struct Waiting: Decodable, Equatable, Sendable { public var id: String; public var title: String }
 
     public struct Member: Decodable, Equatable, Sendable {
@@ -997,6 +1028,12 @@ public final class ZerodLink: @unchecked Sendable {
     }
 
     /// Something an agent says about its task (`zero attr`); nil takes it back.
+    /// One of the issues a task drives, its row set: who has it (you, working, waiting, parked, done) and in words
+    /// what it needs from the user, where it stands, or why it's parked.
+    public func issue(session: String, ticket: String, state: String, text: String) async throws {
+        _ = try await call("issue", ["session": session, "ticket": ticket, "state": state, "text": text])
+    }
+
     public func attribute(session: String, name: String, value: String?) async throws {
         _ = try await call("attr", ["session": session, "name": name, "value": value])
     }

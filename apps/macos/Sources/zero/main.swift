@@ -56,6 +56,9 @@ func usage(help: Bool = false) -> Never {
                    (a table for the user, drawn by Zero in your conversation: a cell that is a state (working, blocked,
                    done, completed, waiting) shows as its pill, and in a column named for a risk, a cell opening with low, medium
                    or high shows that as a pill, the rest on hover; tickets and PRs as links; or JSON on stdin: {"title","columns","rows"})
+      zero issue   TICKET you|working|waiting|parked|done ["text"] [--session ID]   (a row for one of the issues you lead,
+                   which the user reads coming back: you, with what you need from them; waiting, on whom; parked, why.
+                   Set it whenever the issue's state changes)
       zero attr    NAME [VALUE] [--session ID]   (something about this task for the user to see on it, such as
                    zero attr PR https://github.com/org/repo/pull/12; a link opens. No value takes it back)
       zero label   "name" [--ticket REF] [--where PLACE] [--session ID]   (names this session, or another; --where says where it runs,
@@ -177,6 +180,7 @@ case "loop": await loopCommand()
 case "result": await resultCommand()
 case "label": await labelCommand()
 case "table": await tableCommand()
+case "issue": await issueCommand()
 case "attr": await attrCommand()
 case "follow": await followCommand()
 case "unfollow": await unfollowCommand()

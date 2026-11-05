@@ -44,21 +44,28 @@ public enum TaskAlerts {
     /// Back at the same after a turn Zero started, it has nothing new to say; a question it hadn't asked is news.
     static func announcement(_ row: BoardRow, _ state: BoardRow.State) -> String {
         guard state == .needsYou else { return state.rawValue }
-        return state.rawValue + ":" + (row.asks.isEmpty ? row.now ?? "" : row.asks.map { $0.id + " " + $0.title }.joined(separator: "|"))
+        let issues = onYou(row).map { $0.ticket + " " + $0.text }.joined(separator: "|")
+        return state.rawValue + ":" + (row.asks.isEmpty ? row.now ?? "" : row.asks.map { $0.id + " " + $0.title }.joined(separator: "|")) + "#" + issues
     }
 
     /// As above, `announced` keeping what each task was last announced as (the notifier's, across boards).
     public static func changes(from old: [BoardRow], to new: [BoardRow], announced: inout [String: String]) -> (alerts: [TaskAlert], cleared: [String]) {
         var alerts: [TaskAlert] = [], cleared: [String] = []
         for row in new {
-            let now = standing(row), before = old.first { $0.session == row.session }.flatMap(standing)
-            if now?.state == before?.state && now?.worker == before?.worker { continue }
+            let previous = old.first { $0.session == row.session }
+            let now = standing(row), before = previous.flatMap(standing)
+            // An issue of a lead's newly on the user is news, though the lead was on them already.
+            let newIssue = onYou(row).contains { mine in !(previous.map(onYou) ?? []).contains { $0.ticket == mine.ticket } }
+            if now?.state == before?.state && now?.worker == before?.worker && !newIssue { continue }
             if before != nil { cleared.append(row.session) }
             guard let now else { continue }
             let said = announcement(row, now.state)
             if !now.worker && (settled.contains(now.state) || now.state == .needsYou) && announced[row.session] == said { continue }
             announced[row.session] = said
-            alerts.append(TaskAlert(session: row.session, kind: now.kind, state: now.state, title: plain(row.task), body: plain(body(row, now.state, worker: now.worker))))
+            // An issue that has just turned to the user is the news, by its ticket.
+            let issue = onYou(row).first { mine in !(previous.map(onYou) ?? []).contains { $0.ticket == mine.ticket } } ?? onYou(row).first
+            let news = now.state == .needsYou && !now.worker ? issue.map { "\($0.ticket): \($0.text)" } : nil
+            alerts.append(TaskAlert(session: row.session, kind: now.kind, state: now.state, title: plain(row.task), body: plain(news ?? body(row, now.state, worker: now.worker))))
         }
         for row in old where !new.contains(where: { $0.session == row.session }) && standing(row) != nil { cleared.append(row.session) }
         return (alerts, cleared)
@@ -75,6 +82,9 @@ public enum TaskAlerts {
             return standing(row)?.state == alert.state && !read
         }.map(\.alert).sorted { $0.session < $1.session }
     }
+
+    /// A lead's issues on the user, by its rows (`zero issue`).
+    static func onYou(_ row: BoardRow) -> [BoardRow.Issue] { (row.issues ?? []).filter { $0.state == "you" } }
 
     /// An agent's ask that isn't a Zero task's (a terminal's `zero ask`, a permission it wants): its own notification,
     /// cleared once it's answered or the user has looked at the inbox.

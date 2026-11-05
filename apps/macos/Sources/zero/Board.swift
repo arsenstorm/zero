@@ -24,6 +24,14 @@ import ZeroCore
     await zerod { try await $0.table(session: session, title: title, columns: columns, rows: rows) }
 }
 
+@MainActor func issueCommand() async {
+    guard positional.count >= 2, let session = targetSession() else {
+        fail("zero: which issue, and who has it? (zero issue TICKET you|working|waiting|parked|done [\"what it needs, where it stands, or why\"] [--session ID])")
+    }
+    let text = positional.dropFirst(2).joined(separator: " ")
+    await zerod { try await $0.issue(session: session, ticket: positional[0], state: positional[1], text: text) }
+}
+
 @MainActor func attrCommand() async {
     guard let name = positional.first, let session = targetSession() else {
         fail("zero: which attribute, of which session? (zero attr NAME [VALUE] [--session ID])")
