@@ -355,7 +355,7 @@ impl FailureKind {
         if any(&["overloaded", "529"]) || (text.contains("model") && any(&["not available", "unavailable", "not found", "does not exist"])) {
             return FailureKind::Model;
         }
-        if any(&["enotfound", "network", "dns", "econnreset", "econnrefused", "timed out", "connection", "stream disconnected"]) { return FailureKind::Network }
+        if any(&["enotfound", "network", "dns", "econnreset", "econnrefused", "timed out", "connection", "stream disconnected", "server error", "api error: 5"]) { return FailureKind::Network }
         FailureKind::Other
     }
 }

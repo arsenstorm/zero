@@ -323,3 +323,28 @@ fn a_subagents_result_after_the_turn_ended_still_ends_its_step() {
     assert_eq!(conversation.item("t1").unwrap().status, ItemStatus::Done, "its step ended");
     assert_eq!((conversation.status, conversation.turn.clone()), (Status::Idle, None));
 }
+
+fn api_error(error: &str, text: &str) -> serde_json::Value {
+    json!({"type": "assistant", "error": error, "is_api_error_message": true,
+           "message": {"id": "e1", "model": "<synthetic>", "role": "assistant", "content": [{"type": "text", "text": text}]}})
+}
+
+#[test]
+fn claudes_api_errors_are_not_its_words() {
+    // Recorded from Claude Code 2.1.319: an expired sign-in comes as a made-up assistant message, then an error result.
+    // The failure is the result's to report, once; the made-up message is no answer of the agent's.
+    let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+    core.sent(&json!({"type": "user", "message": {"role": "user", "content": "hi"}}));
+    let expired = "Failed to authenticate: OAuth session expired and could not be refreshed";
+    core.receive(&api_error("authentication_failed", expired));
+    core.receive(&json!({"type": "result", "subtype": "success", "is_error": true, "api_error_status": null, "result": expired}));
+    assert!(!core.conversation().items.iter().any(|i| matches!(i.kind, ItemKind::Agent { .. })), "no answer");
+    assert_eq!(core.conversation().failure.as_ref().map(|f| f.kind), Some(zerod::model::FailureKind::SignIn));
+    // A server error mid-response Claude Code retries by itself, in the same turn: nothing to show.
+    core.sent(&json!({"type": "user", "message": {"role": "user", "content": "again"}}));
+    core.receive(&api_error("server_error", "API Error: Server error mid-response. The response above may be incomplete."));
+    core.receive(&json!({"type": "assistant", "message": {"id": "m2", "content": [{"type": "text", "text": "Done."}]}}));
+    core.receive(&json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."}));
+    let said: Vec<&str> = core.conversation().items.iter().filter_map(|i| match &i.kind { ItemKind::Agent { text, .. } => Some(text.as_str()), _ => None }).collect();
+    assert_eq!(said, ["Done."]);
+}

@@ -37,6 +37,19 @@ impl Daemon {
         true
     }
 
+    /// A turn its CLI ended on a server or network error, past its own retries: carried on, three turns in a row at
+    /// most (then it's the user's to see). A turn that ends otherwise starts the count again.
+    fn carry_on_after_error(&self, conversation: &Conversation) {
+        if self.restarting.load(Ordering::Relaxed) { return }
+        let mut carried = self.carried_on.lock().unwrap();
+        if conversation.failure.as_ref().is_none_or(|f| f.kind != crate::model::FailureKind::Network) { carried.remove(&conversation.id); return }
+        let times = carried.entry(conversation.id.clone()).or_insert(0);
+        if *times >= 3 { return }
+        *times += 1;
+        drop(carried);
+        self.tell(&conversation.id, crate::model::from_line("zero", CARRY_ON_AFTER_ERROR));
+    }
+
     fn after_reset(&self, conversation: &Conversation) {
         let Some(usage) = conversation.usage.clone().filter(|u| u.limited) else { return };
         let Some(at) = usage.resets_at else { return };
@@ -66,7 +79,9 @@ impl Daemon {
         let asking = now == Attention::NeedsYou && conversation.status == Status::Idle && conversation.questions.is_empty() && conversation.approvals.is_empty();
         let ended = asking || matches!(now, Attention::Done | Attention::Answered | Attention::Blocked | Attention::Failed | Attention::Limited | Attention::Offline | Attention::Idle);
         let came_to_an_end = before.is_some_and(under_way) && ended;
-        if came_to_an_end { self.carry_read(&conversation); self.check_ending(&conversation); self.check_issue_row(&conversation) }
+        // Before its lead hears of it: a lead on the same account holds the report rather than failing on it.
+        self.sign_in_heard(&conversation, came_to_an_end && conversation.failure.is_none());
+        if came_to_an_end { self.carry_read(&conversation); self.check_ending(&conversation); self.check_issue_row(&conversation); self.carry_on_after_error(&conversation) }
         let got_stuck = now == Attention::Stuck && before != Some(Attention::Stuck);
         // While zerod restarts, a turn ending is the pause for it: the new zerod carries it on, so its lead hears nothing.
         let restarting = self.restarting.load(Ordering::Relaxed);
@@ -177,7 +192,8 @@ impl Daemon {
     /// A lead's turn started by its worker's report on a ticket: the issue's row is what the user reads coming back,
     /// so a turn that heard of it and left the row alone is told, once (the reminder's own turn is Zero's, not a report).
     fn check_issue_row(&self, conversation: &Conversation) {
-        if !self.endings.load(Ordering::Relaxed) || conversation.parent.is_some() || self.restarting.load(Ordering::Relaxed) { return }
+        // A turn that failed had no chance to set it.
+        if !self.endings.load(Ordering::Relaxed) || conversation.parent.is_some() || self.restarting.load(Ordering::Relaxed) || conversation.failure.is_some() { return }
         let Some(first) = conversation.items.iter().rev().find(|i| matches!(i.kind, ItemKind::User { .. })) else { return };
         let ItemKind::User { text, .. } = &first.kind else { return };
         let Some(worker) = text.strip_prefix(crate::model::FROM).and_then(|rest| rest.split_once(" -->")).map(|(id, _)| id) else { return };

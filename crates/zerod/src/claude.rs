@@ -179,6 +179,9 @@ impl Adapter for Claude {
                 }
             }
             Some("stream_event") => self.stream(conversation, message, &mut effects),
+            // Claude Code's own word of an API error, made up as the agent's: one it retries is nothing to show, one
+            // that ends the turn its result reports.
+            Some("assistant") if message["is_api_error_message"] == true => {}
             Some("assistant") => self.assistant(conversation, message, &mut effects),
             Some("user") => results(conversation, message, &mut effects, &self.background),
             Some("control_request") => self.request(conversation, message, &mut effects),

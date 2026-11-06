@@ -222,6 +222,7 @@ impl Daemon {
         self.keep_pending(id);
         if self.is_paused(id) { return }
         let Ok(session) = self.session(id) else { return };
+        if self.held_signed_out(&session.summary()) { return }
         if !session.is_attached() && session.summary().terminal.is_none() {
             let (Some(daemon), id) = (self.me.upgrade(), id.to_string()) else { return };
             tokio::spawn(async move { if let Err(error) = daemon.resume(&id).await { eprintln!("zerod: couldn't resume {id} for its words: {error}") } });
@@ -241,7 +242,11 @@ impl Daemon {
         let (text, images) = {
             let mut pending = self.pending.lock().unwrap();
             let Some(list) = pending.get_mut(id).filter(|l| !l.is_empty()) else { self.delivering.lock().unwrap().remove(id); return };
-            if list[0].report {
+            if self.held_signed_out(&session.summary()) {
+                let Some(at) = list.iter().position(|q| !q.report) else { self.delivering.lock().unwrap().remove(id); return };
+                let next = list.remove(at);
+                (next.text, next.images)
+            } else if list[0].report {
                 let reports = list.iter().take_while(|q| q.report).count();
                 (list.drain(..reports).map(|q| q.text).collect::<Vec<_>>().join("\n\n"), vec![])
             } else {
@@ -256,6 +261,22 @@ impl Daemon {
             if let Err(error) = session.send(Message { text: &text, images: &images, context: None }, ModelChoice::default()).await { session.report(&format!("Couldn't pass on: {error}")) }
             if let Some(daemon) = me.upgrade() { daemon.delivering.lock().unwrap().remove(&id); }
         });
+    }
+
+    /// Signed out, it or another task on its account: a turn of Zero's (an event, a watch, a schedule, a report) would
+    /// fail the same way, so only the user's words go (signed in again, say) until a turn works.
+    pub(super) fn held_signed_out(&self, conversation: &Conversation) -> bool {
+        signed_out(conversation) || self.signed_out.lock().unwrap().contains(&account(conversation))
+    }
+
+    /// An account found signed out, or working again: what was held for its tasks goes.
+    pub(super) fn sign_in_heard(&self, conversation: &Conversation, turn_worked: bool) {
+        let key = account(conversation);
+        if signed_out(conversation) { self.signed_out.lock().unwrap().insert(key); return }
+        if !turn_worked || !self.signed_out.lock().unwrap().remove(&key) { return }
+        for other in self.sessions().iter().map(|s| s.summary()) {
+            if account(&other) == key && between_turns(&other) { self.deliver(&other.id) }
+        }
     }
 
     /// Holds a session's queue for the user, or lets it go; kept in its folder, so zerod started again still holds it.

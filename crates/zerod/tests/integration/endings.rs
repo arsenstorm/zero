@@ -10,7 +10,7 @@ use zerod::daemon::{Daemon, Runtime};
 use zerod::model::*;
 
 /// An agent that stays connected and keeps what it's sent, to read back.
-fn listening(sent: Arc<std::sync::Mutex<String>>) -> Runtime {
+pub fn listening(sent: Arc<std::sync::Mutex<String>>) -> Runtime {
     Arc::new(move |_, _, _| {
         let (ours, theirs) = tokio::io::duplex(1 << 16);
         std::mem::forget(theirs);
@@ -158,6 +158,14 @@ async fn a_lead_told_of_an_issue_that_leaves_its_row_alone_is_reminded_once() {
     daemon.set_issue(&lead, "ENG-7", zerod::model::IssueState::Done, "merged").unwrap();
     session.change(item("a2", ItemKind::Agent { text: "ENG-7 is merged.\n\n[zero: done]".into(), final_answer: true }));
     session.change(Change::Status { status: Status::Idle, turn: None, error: None });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(reminded(&sent), 1);
+    // A turn that failed (out of usage, say) had no chance to set it: nothing to remind.
+    session.change(Change::Status { status: Status::Working, turn: Some("t3".into()), error: None });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    session.change(item("u3", ItemKind::User { text: zerod::model::from_line(&worker, "Worker ENG-7 failed: API Error: 500"), images: vec![] }));
+    session.change(Change::Failed { failure: Some(Failure { kind: FailureKind::Other, message: "Something odd".into() }) });
+    session.change(Change::Status { status: Status::Idle, turn: None, error: Some("Something odd".into()) });
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(reminded(&sent), 1);
 }

@@ -54,6 +54,8 @@ fn failures_are_told_apart_by_kind() {
         ("API Error: 529 Overloaded", FailureKind::Model),
         ("The model claude-x is not available", FailureKind::Model),
         ("getaddrinfo ENOTFOUND api.anthropic.com", FailureKind::Network),
+        ("API Error: Server error mid-response. The response above may be incomplete.", FailureKind::Network),
+        ("Failed to authenticate: OAuth session expired and could not be refreshed", FailureKind::SignIn),
         ("Something odd", FailureKind::Other),
     ];
     for (text, kind) in cases {
@@ -172,4 +174,77 @@ async fn the_same_command_five_times_in_a_row_is_stuck() {
     seen.say(command(7));
     wait_minutes(1).await;
     assert_eq!(session.snapshot().stalled, None);
+}
+
+/// A turn of the agent's ending on `error`, as its adapter reports one: the error, and its failure worked out from it.
+async fn fails(session: &Session, n: usize, error: &str) {
+    session.change(zerod::model::Change::Status { status: Status::Working, turn: Some(format!("t{n}")), error: None });
+    session.change(zerod::model::Change::Failed { failure: None });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    session.change(zerod::model::Change::Failed { failure: Some(zerod::model::Failure { kind: FailureKind::of(error), message: error.into() }) });
+    session.change(zerod::model::Change::Status { status: Status::Idle, turn: None, error: Some(error.into()) });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+}
+
+/// A task whose turn ended on `error`, its agent keeping what Zero sends it.
+async fn failed_task(name: &str, error: &str) -> (std::sync::Arc<zerod::daemon::Daemon>, String, std::sync::Arc<std::sync::Mutex<String>>) {
+    let home = crate::common::temp_dir(name);
+    let sent = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let daemon = zerod::daemon::Daemon::open(&home.join("zerod"), crate::endings::listening(sent.clone())).unwrap();
+    let id = daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    fails(&daemon.session(&id).unwrap(), 1, error).await;
+    (daemon, id, sent)
+}
+
+#[tokio::test]
+async fn signed_out_zeros_words_wait_and_the_users_go() {
+    // Every event it follows would start a turn that fails the same way: they wait for a turn that works.
+    let (daemon, id, sent) = failed_task("health-signed-out", "Failed to authenticate: OAuth session expired and could not be refreshed").await;
+    daemon.notify(&id, "1 new event on what you follow").unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!sent.lock().unwrap().contains("1 new event"), "nothing for Zero's words while signed out");
+    // The user's own (signed in again, say so): they go.
+    daemon.queue(&id, "Signed in again, carry on", &[]).unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(sent.lock().unwrap().contains("Signed in again"));
+    assert!(!sent.lock().unwrap().contains("1 new event"), "still waiting for a turn that works");
+}
+
+#[tokio::test]
+async fn a_turn_ended_by_a_server_error_is_carried_on_three_times_at_most() {
+    let error = "API Error: Server error mid-response. The response above may be incomplete.";
+    let (daemon, id, sent) = failed_task("health-server-error", error).await;
+    let carried = || sent.lock().unwrap().matches(zerod::daemon::CARRY_ON_AFTER_ERROR).count();
+    assert_eq!(carried(), 1);
+    let session = daemon.session(&id).unwrap();
+    for n in 2..6 { fails(&session, n, error).await }
+    assert_eq!(carried(), 3, "then it's the user's to see");
+}
+
+#[tokio::test]
+async fn signed_out_holds_zeros_words_for_every_task_on_that_account_until_a_turn_works() {
+    // One task finding the sign-in expired is enough: the others on the same account wait too, rather than each
+    // failing on its next event (a lead on a worker's report of it, say).
+    let expired = "Failed to authenticate: OAuth session expired and could not be refreshed";
+    let home = crate::common::temp_dir("health-account-out");
+    let sent = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let daemon = zerod::daemon::Daemon::open(&home.join("zerod"), crate::endings::listening(sent.clone())).unwrap();
+    let start = || daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    let (failed, other) = (start(), start());
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    for id in [&failed, &other] { daemon.session(id).unwrap().change(zerod::model::Change::Status { status: Status::Idle, turn: None, error: None }) }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    fails(&daemon.session(&failed).unwrap(), 1, expired).await;
+    daemon.notify(&other, "A schedule came due").unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!sent.lock().unwrap().contains("A schedule came due"), "held on the account, not tried");
+    // Signed in again, the user's own turn works: what was held goes.
+    let session = daemon.session(&failed).unwrap();
+    session.change(zerod::model::Change::Status { status: Status::Working, turn: Some("t2".into()), error: None });
+    session.change(zerod::model::Change::Failed { failure: None });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    session.change(zerod::model::Change::Status { status: Status::Idle, turn: None, error: None });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(sent.lock().unwrap().contains("A schedule came due"));
 }

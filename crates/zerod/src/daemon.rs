@@ -77,6 +77,10 @@ pub struct Daemon {
     held_up: Mutex<HashMap<String, String>>,
     /// Tasks sent back to end their turn properly: their next ending is taken as it is, so it can't go round.
     sent_back: Mutex<std::collections::HashSet<String>>,
+    /// Turns in a row each task's CLI ended on a server or network error, that Zero carried on.
+    carried_on: Mutex<HashMap<String, u32>>,
+    /// Accounts a task's CLI found signed out (`account`): Zero's words to any task on one wait for a turn that works.
+    signed_out: Mutex<HashSet<String>>,
     /// Whether turns must end on Zero's ending (zerod turns it on; tests of other things run agents without one).
     endings: std::sync::atomic::AtomicBool,
     /// The turns a restart has paused, shown as paused until the new zerod carries them on.
@@ -122,6 +126,8 @@ pub const CARRY_ON_WAITING: &str = "Zero restarted while you were waiting on the
 /// What a task between turns with a run in the background is told: the run went with the restart.
 pub const CARRY_ON_BACKGROUND: &str = "Zero restarted between your turns, which stopped what you had running in the background. Please start again what you still need, and carry on.";
 /// Every carry-on: Zero's words, never the user's.
+/// A turn its CLI gave up on, at a server or network error, past its own retries.
+pub const CARRY_ON_AFTER_ERROR: &str = "Your last turn ended on a server error from your provider. Please carry on where you left off.";
 pub const CARRIES: [&str; 3] = [CARRY_ON, CARRY_ON_WAITING, CARRY_ON_BACKGROUND];
 /// What a working session is told when the user pauses it, steering its turn to an end it can be picked up from.
 pub const WRAP_UP: &str = "The user is pausing you (for the night, or while they're away): finish the step you're on, leave the work so it can \
@@ -196,6 +202,16 @@ fn between_turns(conversation: &Conversation) -> bool {
         && conversation.attention() != Attention::Limited
 }
 
+/// Its CLI says it isn't signed in.
+fn signed_out(conversation: &Conversation) -> bool {
+    conversation.failure.as_ref().is_some_and(|f| f.kind == crate::model::FailureKind::SignIn)
+}
+
+/// The account a task's CLI runs as: one of Zero's sign-ins, or the CLI's own (none).
+fn account(conversation: &Conversation) -> String {
+    format!("{:?}:{}", conversation.provider, conversation.signin.as_deref().unwrap_or(""))
+}
+
 fn busy(attention: Attention) -> bool {
     matches!(attention, Attention::Working | Attention::Starting)
 }
@@ -225,7 +241,7 @@ impl Daemon {
         let daemon = Arc::new_cyclic(|me| Daemon {
             home: home.into(), sessions: Mutex::new(sessions), events, runtime, attention: Mutex::new(attention), pending: Mutex::new(pending),
             held: Mutex::new(held), delivering: Mutex::new(HashSet::new()), queues: broadcast::channel(64).0,
-            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(), held_up: Mutex::default(), updating: Mutex::default(), sent_back: Mutex::default(), endings: Default::default(),
+            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(), held_up: Mutex::default(), updating: Mutex::default(), sent_back: Mutex::default(), carried_on: Mutex::default(), signed_out: Mutex::default(), endings: Default::default(),
             workspaces: crate::workspaces::Workspaces::open(home),
             mcp_servers: crate::mcp_servers::McpServers::open(home),
             signins: crate::signins::SignIns::open(home),
