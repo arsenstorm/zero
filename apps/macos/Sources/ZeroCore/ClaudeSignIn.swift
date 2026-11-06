@@ -25,6 +25,9 @@ import Observation
             for _ in 0..<600 {
                 try? await Task.sleep(for: .seconds(1))
                 guard self.setup === setup else { return }
+                // Claude Code exits as soon as it has printed the token: what it printed is read once more after.
+                let ended = !setup.running
+                if ended { try? await Task.sleep(for: .milliseconds(500)) }
                 if let token = setup.token() {
                     status = .checking
                     setup.stop()
@@ -37,7 +40,7 @@ import Observation
                     status = error.map(Status.failed) ?? .done
                     return
                 }
-                if !setup.running { break }
+                if ended { break }
             }
             guard self.setup === setup else { return }
             setup.stop()

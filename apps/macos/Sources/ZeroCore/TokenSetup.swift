@@ -39,7 +39,7 @@ public final class TokenSetup: @unchecked Sendable {
             .replacingOccurrences(of: #"\u{1B}\][^\u{07}\u{1B}]*(\u{07}|\u{1B}\\)"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"\u{1B}\[[0-9;?<>=]*[ -/]*[@-~]"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"\u{1B}[()][A-Za-z0-9]"#, with: "", options: .regularExpression)
-        return plain.range(of: #"sk-ant-oat01-[A-Za-z0-9_-]{40,}"#, options: .regularExpression).map { String(plain[$0]) }
+        return plain.range(of: #"sk-ant-oat[0-9]{2}-[A-Za-z0-9_-]{40,}"#, options: .regularExpression).map { String(plain[$0]) }
     }
 
     func stop() {
