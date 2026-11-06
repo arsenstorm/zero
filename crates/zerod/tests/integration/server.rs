@@ -148,6 +148,8 @@ async fn requests_are_answered_by_id_and_a_bad_one_does_not_end_the_connection()
     let garbled = client.next_line().await;
     assert_eq!(garbled["ok"], false);
     assert_eq!(client.call(json!({"op": "list"})).await["result"], json!([]));
+    // Every account's usage is read in the background: asked, it says so at once.
+    assert_eq!(client.call(json!({"op": "readUsage"})).await["ok"], true);
 }
 
 #[tokio::test]

@@ -54,6 +54,15 @@ where R: AsyncRead + Unpin, W: AsyncWrite + Unpin {
     read(&mut lines, &mut writer).await
 }
 
+/// How much of its plan's windows the home's account has used, as Codex reads it: no task needed.
+pub async fn rate_limits<R, W>(reader: R, mut writer: W) -> Result<crate::model::Usage, String>
+where R: AsyncRead + Unpin, W: AsyncWrite + Unpin {
+    let mut lines = BufReader::new(reader).lines();
+    greet(&mut lines, &mut writer).await?;
+    write(&mut writer, json!({"id": 4, "method": "account/rateLimits/read"})).await?;
+    Ok(crate::codex::usage(&answer(&mut lines, 4).await?["rateLimits"]))
+}
+
 async fn greet<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(lines: &mut tokio::io::Lines<BufReader<R>>, writer: &mut W) -> Result<(), String> {
     write(writer, json!({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "zero", "title": "Zero", "version": env!("CARGO_PKG_VERSION")},
                                                                      "capabilities": {"experimentalApi": false, "requestAttestation": false}}})).await?;

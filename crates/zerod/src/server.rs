@@ -250,7 +250,7 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         }
         "browserCall" | "browsers" | "browserState" | "checkSafari" | "openFirefox" | "firefox" | "browserSettings" | "saveBrowserSettings"
         | "browserSetup" => browser::handle(zerod, request).await,
-        "signIns" | "saveSignIn" | "codexSignIn" | "claudeSignIn" | "deleteSignIn" | "defaultSignIn" => signins::handle(zerod, request).await,
+        "signIns" | "saveSignIn" | "codexSignIn" | "claudeSignIn" | "deleteSignIn" | "defaultSignIn" | "readUsage" => signins::handle(zerod, request).await,
         "agentAsk" | "create" | "asks" | "choose" | "answerAsk" | "reply" | "takeBack" | "withdraw" | "dismiss" | "cancelRun" | "deliver"
         | "message" | "close" | "screen" | "press" | "switchModel" => inbox::handle(zerod, request).await,
         "mcpServers" | "saveMcpServer" | "deleteMcpServer" | "workspaces" | "saveWorkspace" | "deleteWorkspace" | "settings" | "configure" => {

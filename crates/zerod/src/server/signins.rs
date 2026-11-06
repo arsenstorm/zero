@@ -35,8 +35,53 @@ pub(super) async fn handle(zerod: &Zerod, request: Request) -> Result<Value, Str
             let _ = zerod.notices.send("signins");
             Ok(Value::Null)
         }
+        // Each account's usage asked of its CLI now (the Accounts page is open), not only as its tasks last heard it.
+        "readUsage" => {
+            let (daemon, notices) = (zerod.daemon.clone(), zerod.notices.clone());
+            tokio::spawn(async move { read_usage(&daemon, &notices).await });
+            Ok(Value::Null)
+        }
         other => unknown(other),
     }
+}
+
+/// Every subscription's usage, asked of its CLI as that account, all at once: what's kept for choosing accounts by
+/// too. Keys have no plan windows to read; an account whose CLI doesn't answer in time keeps what it had.
+async fn read_usage(daemon: &std::sync::Arc<Daemon>, notices: &broadcast::Sender<&'static str>) {
+    let mut reads = tokio::task::JoinSet::new();
+    for signin in daemon.signins.list().into_iter().filter(|s| !s.pending) {
+        let daemon = daemon.clone();
+        reads.spawn(async move {
+            let read = tokio::time::timeout(std::time::Duration::from_secs(30), usage_of(&daemon, &signin)).await;
+            (signin.id, read.unwrap_or_else(|_| Some(Err("its CLI didn't answer in time".into()))))
+        });
+    }
+    let mut read_any = false;
+    while let Some(Ok((id, read))) = reads.join_next().await {
+        match read {
+            Some(Ok(usage)) => { daemon.signins.record_usage(&id, &usage); read_any = true }
+            Some(Err(error)) => eprintln!("zerod: couldn't read {id}'s usage: {error}"),
+            None => {}
+        }
+    }
+    if read_any { let _ = notices.send("signins"); }
+}
+
+/// One sign-in's usage, asked of its CLI; none for a key.
+async fn usage_of(daemon: &Daemon, signin: &crate::signins::SignIn) -> Option<Result<crate::model::Usage, String>> {
+    use crate::signins::Kind;
+    Some(match signin.kind {
+        Kind::Token | Kind::ClaudeHome => match daemon.signins.environment(signin) {
+            Ok(env) => crate::claude_login::usage(&crate::claude_login::usage_command(), &env).await,
+            Err(error) => Err(error),
+        },
+        Kind::CodexHome => {
+            let home = daemon.signins.folder(Provider::Codex, &signin.id).ok()?;
+            let (_child, input, output) = codex_in(&home).ok()?;
+            crate::codex_login::rate_limits(output, input).await
+        }
+        Kind::ApiKey => return None,
+    })
 }
 
 /// Every sign-in, each CLI's default and each sign-in's usage.

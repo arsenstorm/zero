@@ -219,18 +219,7 @@ fn notification(conversation: &Conversation, method: &str, params: &Value, effec
             let text = if retrying { format!("{message} (retrying)") } else { message.to_string() };
             effects.notice(conversation, &text, !retrying);
         }
-        "account/rateLimits/updated" => {
-            let limits = &params["rateLimits"];
-            let windows: Vec<crate::model::UsageWindow> = ["primary", "secondary"].iter().filter_map(|key| {
-                let window = limits.get(*key).filter(|w| w.is_object())?;
-                let minutes = window["windowDurationMins"].as_i64().unwrap_or(0);
-                let name = match minutes { 300 => "5 hours".into(), 10080 => "7 days".into(), m if m % 1440 == 0 => format!("{} days", m / 1440), m => format!("{} hours", m / 60) };
-                Some(crate::model::UsageWindow { name, used: window["usedPercent"].as_f64().unwrap_or(0.0) / 100.0, resets_at: window["resetsAt"].as_i64() })
-            }).collect();
-            let full = windows.iter().find(|w| w.used >= 1.0);
-            let usage = crate::model::Usage { limited: full.is_some(), resets_at: full.and_then(|w| w.resets_at), windows };
-            effects.changes.push(Change::Usage { usage });
-        }
+        "account/rateLimits/updated" => effects.changes.push(Change::Usage { usage: usage(&params["rateLimits"]) }),
         "serverRequest/resolved" => {
             let settled = key(&params["requestId"]);
             if conversation.approvals.iter().any(|a| a.id == settled) { effects.changes.push(Change::Resolved { approval: settled }) }
@@ -239,6 +228,18 @@ fn notification(conversation: &Conversation, method: &str, params: &Value, effec
         // Hooks, MCP start-up, token use, rate limits and the rest: kept in the transcript, not shown.
         _ => {}
     }
+}
+
+/// Codex's rate limits (`account/rateLimits/*`): its primary and secondary windows, by their length.
+pub fn usage(limits: &Value) -> crate::model::Usage {
+    let windows: Vec<crate::model::UsageWindow> = ["primary", "secondary"].iter().filter_map(|key| {
+        let window = limits.get(*key).filter(|w| w.is_object())?;
+        let minutes = window["windowDurationMins"].as_i64().unwrap_or(0);
+        let name = match minutes { 300 => "5 hours".into(), 10080 => "7 days".into(), m if m % 1440 == 0 => format!("{} days", m / 1440), m => format!("{} hours", m / 60) };
+        Some(crate::model::UsageWindow { name, used: window["usedPercent"].as_f64().unwrap_or(0.0) / 100.0, resets_at: window["resetsAt"].as_i64() })
+    }).collect();
+    let full = windows.iter().find(|w| w.used >= 1.0);
+    crate::model::Usage { limited: full.is_some(), resets_at: full.and_then(|w| w.resets_at), windows }
 }
 
 /// The items of the turns Zero doesn't know yet (those run in Codex's own terminal), from `thread/read`'s turns.

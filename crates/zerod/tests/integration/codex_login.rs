@@ -3,7 +3,7 @@
 
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use zerod::codex_login::{Method, account, sign_in};
+use zerod::codex_login::{Method, account, rate_limits, sign_in};
 
 /// A stand-in app-server: answers each request as Codex's schema has it; `finish` is how the browser part ends.
 fn codex(finish: Option<Value>) -> (tokio::io::DuplexStream, tokio::task::JoinHandle<Vec<Value>>) {
@@ -21,13 +21,16 @@ fn codex(finish: Option<Value>) -> (tokio::io::DuplexStream, tokio::task::JoinHa
                     Some(json!({"id": message["id"], "result": {"type": "chatgpt", "loginId": "l1", "authUrl": "https://auth.openai.com/authorize?x=1"}})),
                 Some("account/login/start") => Some(json!({"id": message["id"], "result": {"type": "apiKey"}})),
                 Some("account/read") => Some(json!({"id": message["id"], "result": {"account": {"type": "chatgpt", "email": "c@example.com", "planType": "pro"}}})),
+                Some("account/rateLimits/read") => Some(json!({"id": message["id"], "result": {"rateLimits": {
+                    "primary": {"usedPercent": 12.0, "windowDurationMins": 300, "resetsAt": 1793970000},
+                    "secondary": {"usedPercent": 64.0, "windowDurationMins": 10080, "resetsAt": 1794400000}}}})),
                 _ => None,
             };
             if let Some(reply) = reply { write.write_all(format!("{reply}\n").as_bytes()).await.unwrap() }
             if message["method"] == "account/login/start" && let Some(finish) = &finish {
                 write.write_all(format!("{finish}\n").as_bytes()).await.unwrap();
             }
-            if message["method"] == "account/read" { break }
+            if message["method"] == "account/read" || message["method"] == "account/rateLimits/read" { break }
         }
         heard
     });
@@ -73,4 +76,16 @@ async fn whose_home_it_is_is_read_back_without_signing_in() {
     assert_eq!((account.email.as_deref(), account.plan.as_deref()), (Some("c@example.com"), Some("pro")));
     let heard = server.await.unwrap();
     assert_eq!(heard.iter().filter_map(|m| m["method"].as_str()).collect::<Vec<_>>(), ["initialize", "initialized", "account/read"]);
+}
+
+#[tokio::test]
+async fn an_accounts_usage_is_read_without_a_task() {
+    let (zero, server) = codex(None);
+    let (read, write) = tokio::io::split(zero);
+    let usage = rate_limits(read, write).await.unwrap();
+    let windows: Vec<_> = usage.windows.iter().map(|w| (w.name.as_str(), w.used, w.resets_at)).collect();
+    assert_eq!(windows, [("5 hours", 0.12, Some(1793970000)), ("7 days", 0.64, Some(1794400000))]);
+    assert!(!usage.limited);
+    let heard = server.await.unwrap();
+    assert_eq!(heard.iter().filter_map(|m| m["method"].as_str()).collect::<Vec<_>>(), ["initialize", "initialized", "account/rateLimits/read"]);
 }
