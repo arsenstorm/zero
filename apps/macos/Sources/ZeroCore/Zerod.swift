@@ -1261,6 +1261,8 @@ public final class ZerodLink: @unchecked Sendable {
         return try decode(SignIn.self, from: await call("saveSignIn", ["signin": try JSONSerialization.jsonObject(with: data)]))
     }
     public func deleteSignIn(_ id: String) async throws { _ = try await call("deleteSignIn", ["signin": id]) }
+    /// Each account's usage asked of its CLI now; the sign-ins notice says when it's in.
+    public func readUsage() async throws { _ = try await call("readUsage") }
     /// Codex signs an account in itself, in a home of its own: its ChatGPT page to open (none for an API key).
     public func codexSignIn(label: String?, apiKey: String?) async throws -> (id: String, page: URL?) {
         let result = try await call("codexSignIn", ["signin": ["label": label as Any, "apiKey": apiKey as Any]]) as? [String: Any]

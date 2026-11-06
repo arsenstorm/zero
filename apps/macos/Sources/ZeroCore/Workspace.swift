@@ -796,6 +796,9 @@ public final class Workspace {
         if usage != signinUsage { signinUsage = usage }
     }
 
+    /// Each account's usage asked of its CLI, rather than as its tasks last heard it.
+    public func readUsage() async { try? await link?.readUsage() }
+
     /// A token or key kept: zerod gives it an id, its value goes in the Keychain under it. An error to show, or nil.
     public func addSignIn(_ signin: ZerodLink.SignIn, secret: String) async -> String? {
         guard let link = await linked() else { return "Zero's daemon isn't running" }
