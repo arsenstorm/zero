@@ -16,6 +16,7 @@ struct WorkspaceView: View {
         ZStack {
             window.opacity(navigation.ready ? 1 : 0)
             if !navigation.ready { ZeroMark().frame(width: 64, height: 64).foregroundStyle(.secondary).transition(.opacity) }
+            DialogHost()
         }
         .frame(minWidth: 980, minHeight: 600)
         // Loops named in messages read as pills: the names, for the renderer.
@@ -247,7 +248,12 @@ private struct Rail: View {
         VStack(spacing: 6) {
             item("house-4", selected: home, help: "Home") { if !home { place = homePlace } }
             // What agents are waiting on you for, and how many.
-            item("inbox", selected: place == .inbox, help: "Inbox") { place = .inbox }
+            // Always to what's waiting on you, whichever of the inbox's lists was open last.
+            item("inbox", selected: place == .inbox, help: "Inbox") {
+                UserDefaults.standard.set(InboxFilter.waiting, forKey: InboxFilter.key)
+                UserDefaults.standard.set("", forKey: InboxFilter.titleKey)
+                place = .inbox
+            }
                 .overlay(alignment: .topTrailing) {
                     let waiting = AsksPage.waiting(inbox).count
                     if waiting > 0 {

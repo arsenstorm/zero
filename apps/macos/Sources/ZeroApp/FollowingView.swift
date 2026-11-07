@@ -9,19 +9,13 @@ struct EventsPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
-            Text("What agents follow; Zero tells them what changed, every minute.")
-                .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let workspace {
                 let sources = Integration.allCases.filter { source in workspace.followed.contains { $0.source == source.rawValue } }
                 if sources.isEmpty {
-                    FollowRows(workspace: workspace, source: nil)
+                    SettingsSection(title: "Followed") { FollowRows(workspace: workspace, source: nil) }
                 } else {
                     ForEach(sources) { source in
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack(spacing: 6) {
-                                source.icon(size: 14).foregroundStyle(.secondary)
-                                Text(source.title).font(.system(size: 13, weight: .semibold))
-                            }
+                        SettingsSection(title: source.title, icon: AnyView(source.icon(size: 14).foregroundStyle(.secondary))) {
                             FollowRows(workspace: workspace, source: source)
                         }
                     }
@@ -45,16 +39,16 @@ struct FollowRows: View {
         VStack(spacing: 0) {
             if rows.isEmpty {
                 Text(source == nil ? "No agent follows anything yet." : "No agent follows anything through \(source!.title) yet.")
-                    .font(.system(size: 12.5)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).frame(height: 44)
+                    .font(.system(size: 12.5)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).frame(height: 44)
             }
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                if index > 0 { Divider().padding(.leading, 16) }
+                if index > 0 { Divider().padding(.leading, 18) }
                 FollowRow(row: row, task: workspace.roster[row.session].map(Workspace.label(of:)) ?? "a task that is gone") {
                     Task { await workspace.unfollow(session: row.session, topic: row.topic) }
                 }
             }
         }
-        .settingsCard()
+        .bleedingCard()
         .task(id: workspace.followingVersion) { await workspace.loadFollowing() }
     }
 }
@@ -97,7 +91,7 @@ private struct FollowRow: View {
             Button(action: unfollow) { NucleoIcon("xmark", size: 13).foregroundStyle(.secondary).frame(width: 28, height: 28) }
                 .buttonStyle(Hovering(radius: 7)).tip("Unfollow").opacity(hovered ? 1 : 0)
         }
-        .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 11)
+        .padding(.leading, 18).padding(.trailing, 10).padding(.vertical, 11)
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture(count: 2) { if let url { NSWorkspace.shared.open(url) } }

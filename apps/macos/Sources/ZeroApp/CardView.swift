@@ -156,7 +156,7 @@ struct CardView: View {
     }
 
     private var cardContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: docked ? 10 : 12) {
             if ask.kind == .note { noteText } else { header }
             // Why the agent wants it, or what it found, in its own words: six lines, the rest a click away.
             if let supporting, !supporting.isEmpty { supportingText(supporting) }
@@ -318,7 +318,7 @@ struct CardView: View {
     }
 
     private var options: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: docked ? 6 : 12) {
             ForEach(Array(ask.options.enumerated()), id: \.offset) { index, option in
                 if !decided, controller.textOption[ask.id] == index {
                     replyBox(placeholder: option)
@@ -444,6 +444,7 @@ struct CardView: View {
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.askDocked) private var docked
 
     /// Same height as the reply box, so the footer swaps text without moving anything.
     private func statusRow(_ text: String, color: Color) -> some View {

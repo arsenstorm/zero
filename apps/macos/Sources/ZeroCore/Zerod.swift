@@ -170,7 +170,8 @@ public struct IntegrationState: Decodable, Equatable, Sendable {
     /// Who the GitHub CLI is signed in as; nil when it isn't (or isn't installed).
     public var github: String?
     /// The Slack workspace connected and its channels' ids; nil when none is.
-    public var slack: Slack.State?
+    /// Each Slack workspace connected.
+    public var slack: [Slack.State]?
 }
 
 public struct IntegrationSettings: Decodable, Equatable, Sendable {
@@ -390,6 +391,14 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     public var held: Bool?
     /// When it next wakes itself (`zero schedule`), in seconds since 1970.
     public var wakes: Int?
+    /// A change picked while a turn ran, applied as it ends: the provider, model, effort or permissions.
+    public var next: Next?
+    public struct Next: Decodable, Equatable, Sendable {
+        public var provider: Provider?
+        public var model: String?
+        public var effort: String?
+        public var permissions: Permissions?
+    }
     /// Its last turn was Zero's (an event it follows, a worker's report), not the user's: a reply to it isn't announced.
     public var quiet: Bool?
     /// The issues it drives, a row each, as its agent keeps them (`zero issue`): those on the user first.
@@ -937,6 +946,8 @@ public final class ZerodLink: @unchecked Sendable {
     public func unqueue(session: String, item: String) async throws { _ = try await call("unqueue", ["session": session, "item": item]) }
     /// Lets a queue held since a stop go on.
     public func release(session: String) async throws { _ = try await call("release", ["session": session]) }
+    /// The user asks two tasks to work together: each is told about the other and how to reach it.
+    public func introduce(session: String, to other: String) async throws { _ = try await call("introduce", ["session": session, "args": ["other": other]]) }
 
     public func interrupt(session: String) async throws { _ = try await call("interrupt", ["session": session]) }
     public func stop(session: String) async throws { _ = try await call("stop", ["session": session]) }
@@ -1060,7 +1071,35 @@ public final class ZerodLink: @unchecked Sendable {
         ((try await call("settings")) as? [String: Any])?["places"] as? String ?? ""
     }
     public func setPlacesCommand(_ command: String) async throws { _ = try await call("configure", ["places": command]) }
-    /// Seconds a completed task stays before zerod archives it; 0 never. Unset, a day.
+
+    /// Settings › Git: the identity agents' Git commits and signs as, and the public half of their signing key.
+    public func agentGit() async throws -> (AgentGit, String?) {
+        let settings = try await call("settings") as? [String: Any] ?? [:]
+        var git = AgentGit()
+        if let raw = settings["git"], let data = try? JSONSerialization.data(withJSONObject: raw), let kept = try? JSONDecoder().decode(AgentGit.self, from: data) { git = kept }
+        return (git, settings["gitPublicKey"] as? String)
+    }
+
+    public func setAgentGit(_ git: AgentGit) async throws {
+        _ = try await call("configure", ["git": try JSONSerialization.jsonObject(with: JSONEncoder().encode(git))])
+    }
+
+    /// The committer for GitHub account `login`: its name and noreply email, as GitHub has them.
+    public func gitAccount(_ login: String) async throws -> (login: String, name: String, email: String) {
+        let found = try await call("gitAccount", ["args": ["login": login]]) as? [String: Any] ?? [:]
+        return (found["login"] as? String ?? login, found["name"] as? String ?? "", found["email"] as? String ?? "")
+    }
+
+    /// The agents' signing key's title among `login`'s signing keys on GitHub; nil when it isn't one of them.
+    public func gitCheck(_ login: String) async throws -> String? {
+        (try await call("gitCheck", ["args": ["login": login]]) as? [String: Any])?["title"] as? String
+    }
+
+    /// The private key at `path` as the agents' signing key: zerod keeps its own copy. Gives its public half.
+    public func takeGitKey(path: String) async throws -> String {
+        ((try await call("gitKey", ["args": ["path": path]])) as? [String: Any])?["publicKey"] as? String ?? ""
+    }
+    /// Seconds a done task stays before zerod archives it; 0 never, -1 once read. Unset, a day.
     public func archiveCompleted() async throws -> Int {
         ((try await call("settings")) as? [String: Any])?["archiveCompleted"] as? Int ?? 24 * 3600
     }
@@ -1436,7 +1475,7 @@ public final class ZerodLink: @unchecked Sendable {
     }
     public func disconnectLinear() async throws -> IntegrationState { try decode(IntegrationState.self, from: await call("disconnectLinear")) }
     public func connectSlack(token: String) async throws -> IntegrationState { try decode(IntegrationState.self, from: await call("connectSlack", ["token": token])) }
-    public func disconnectSlack() async throws -> IntegrationState { try decode(IntegrationState.self, from: await call("disconnectSlack")) }
+    public func disconnectSlack(team: String) async throws -> IntegrationState { try decode(IntegrationState.self, from: await call("disconnectSlack", ["team": team])) }
     /// Slack's channels again: new ones get ids too.
     public func refreshSlack() async throws -> IntegrationState { try decode(IntegrationState.self, from: await call("refreshSlack")) }
 
@@ -1632,4 +1671,18 @@ public struct Rewound: Decodable, Sendable {
     public let text: String
     public let images: [String]
     public let session: String?
+}
+
+/// The identity agents' Git commits and signs as (zerod git.rs): the user stays the author; this commits and signs.
+public struct AgentGit: Codable, Equatable, Sendable {
+    public var enabled = false
+    /// The GitHub account that commits and signs; its name and noreply email are GitHub's.
+    public var login = ""
+    public var name = ""
+    public var email = ""
+    /// GitHub over HTTPS with the GitHub CLI's sign-in, not SSH.
+    public var https = true
+    /// Only agents in these folders; none, every folder.
+    public var folders: [String] = []
+    public init() {}
 }

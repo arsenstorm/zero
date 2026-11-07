@@ -32,7 +32,7 @@ public final class Workspace {
     public var archiving: String?
 
     /// GitHub and Linear: their settings and views, and what each view showed last ("github/<view>"), or why not.
-    public private(set) var integrations: IntegrationState? { didSet { if integrations?.slack != oldValue?.slack { Slack.shared.apply(integrations?.slack) } } }
+    public private(set) var integrations: IntegrationState? { didSet { if integrations?.slack != oldValue?.slack { Slack.shared.apply(integrations?.slack ?? []) } } }
     public private(set) var items: [String: [IntegrationItem]] = [:]
     public private(set) var itemErrors: [String: String] = [:]
     /// Bumped whenever zerod says a scratchpad changed: what shows pads reads them again.
@@ -577,13 +577,13 @@ public final class Workspace {
         } catch { return error.localizedDescription }
     }
 
-    public func disconnectSlack() async {
-        if let state = await attempt({ try await $0.disconnectSlack() }) { integrations = state }
+    public func disconnectSlack(team: String) async {
+        if let state = await attempt({ try await $0.disconnectSlack(team: team) }) { integrations = state }
     }
 
     /// Slack's channels again, hourly while Zero runs.
     public func keepSlackFresh() {
-        Task { while true { try? await Task.sleep(for: .seconds(3600)); if integrations?.slack != nil, let state = try? await link?.refreshSlack() { integrations = state } } }
+        Task { while true { try? await Task.sleep(for: .seconds(3600)); if !(integrations?.slack ?? []).isEmpty, let state = try? await link?.refreshSlack() { integrations = state } } }
     }
 
     public func setIntegration(_ integration: String, enabled: Bool) async {
@@ -651,9 +651,42 @@ public final class Workspace {
         let echo = Sending(text: text, images: images)
         sending[session, default: []].append(echo)
         let sent = await attempt { try await $0.send(session: session, text: text, images: images, model: model, effort: effort) } != nil
-        sending[session]?.removeAll { $0.id == echo.id }
+        settle(echo, in: session, sent: sent)
         return sent
     }
+
+    /// A queued message sent now, into the turn under way: in the conversation and out of the queue at once, then taken
+    /// off zerod's queue and sent. Back in the queue, and out of the conversation, if it can't be.
+    @discardableResult
+    public func steer(_ session: String, item: Queued) async -> Bool {
+        let echo = Sending(text: item.text, images: item.images ?? [])
+        sending[session, default: []].append(echo)
+        steering.insert(item.id)
+        guard await unqueue(session, item: item.id) else {
+            steering.remove(item.id)
+            settle(echo, in: session, sent: false)
+            return false
+        }
+        let sent = await attempt { try await $0.send(session: session, text: item.text, images: item.images ?? [], model: nil, effort: nil) } != nil
+        settle(echo, in: session, sent: sent)
+        // Out of the queue once zerod's board has had a moment to drop it too.
+        Task { [weak self] in try? await Task.sleep(for: .seconds(3)); self?.steering.remove(item.id) }
+        return sent
+    }
+
+    /// A message's echo once it's sent: kept until the conversation has its own (Sending.merge stops showing it then),
+    /// which comes a moment after the send's answer; removing it with the answer showed neither for a few frames. Gone
+    /// at once when it wasn't sent.
+    private func settle(_ echo: Sending, in session: String, sent: Bool) {
+        guard sent else { sending[session]?.removeAll { $0.id == echo.id }; return }
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(30))
+            self?.sending[session]?.removeAll { $0.id == echo.id }
+        }
+    }
+
+    /// Queued messages being steered into the turn: out of the strip from the click.
+    private var steering: Set<String> = []
 
     /// Messages sent from here that their conversation doesn't have yet, by session.
     public private(set) var sending: [String: [Sending]] = [:]
@@ -665,7 +698,7 @@ public final class Workspace {
     /// A task's queue as the strip shows it: zerod's, then what was queued here since.
     public func queued(_ session: String, board: [Queued]) -> [Queued] {
         let echoes = (queuing[session] ?? []).filter { echo in !board.contains { $0.text == echo.text } }
-        return board + echoes
+        return (board + echoes).filter { !steering.contains($0.id) }
     }
 
     public func queue(_ session: String, text: String, images: [String] = []) async {
@@ -688,6 +721,7 @@ public final class Workspace {
     }
     public func unqueue(_ session: String, item: String) async -> Bool { await attempt { try await $0.unqueue(session: session, item: item) } != nil }
     public func release(_ session: String) async { _ = await attempt { try await $0.release(session: session) } }
+    public func introduce(_ session: String, to other: String) async { _ = await attempt { try await $0.introduce(session: session, to: other) } }
     public func interrupt(_ session: String) async { _ = await attempt { try await $0.interrupt(session: session) } }
     public func stop(_ session: String) async { _ = await attempt { try await $0.stop(session: session) } }
     public func resume(_ session: String) async { _ = await attempt { try await $0.resume(session: session) } }

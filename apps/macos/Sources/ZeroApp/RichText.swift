@@ -313,6 +313,8 @@ final class RichLayoutManager: NSLayoutManager {
 
 /// The text view: selectable, not editable, as tall as its text at the width it's given.
 final class RichTextView: NSTextView {
+    /// Its layout manager's delegate, kept here (a layout manager doesn't keep its delegate).
+    private var breaks: TokenBreaks?
     convenience init() {
         let storage = NSTextStorage()
         let layout = RichLayoutManager()
@@ -324,6 +326,12 @@ final class RichTextView: NSTextView {
         container.widthTracksTextView = false
         layout.addTextContainer(container)
         self.init(frame: .zero, textContainer: container)
+        // A token of yours ("/skill") on one line, whole, as the composer keeps it.
+        breaks = TokenBreaks { [weak storage] index in
+            guard let storage, index > 0, index < storage.length else { return false }
+            return storage.attribute(.zeroToken, at: index - 1, effectiveRange: nil) != nil && storage.attribute(.zeroToken, at: index, effectiveRange: nil) != nil
+        }
+        layout.delegate = breaks
         isEditable = false
         isSelectable = true
         drawsBackground = false
@@ -442,10 +450,26 @@ final class RichTextView: NSTextView {
         if container.size.width != width { container.size = NSSize(width: width, height: .greatestFiniteMagnitude) }
         layout.ensureLayout(for: container)
         let used = layout.usedRect(for: container)
+        // As wide as its widest line of text: the used rect as a whole can come to the container's whole width once
+        // the view has been laid out (its extra line, for an insertion point), which made a short message's bubble
+        // stretch across the page.
+        var widest: CGFloat = 0
+        layout.enumerateLineFragments(forGlyphRange: layout.glyphRange(for: container)) { _, line, _, _, _ in widest = max(widest, line.maxX) }
         // A code block last: its panel reaches 8 pt under the text (RichLayoutManager), so the view does too.
         let below: CGFloat = (textStorage.map { $0.length > 0 && $0.attribute(.zeroCodeBlock, at: $0.length - 1, effectiveRange: nil) != nil } ?? false) ? 8 : 0
-        measured = (width, ceil(used.height) + below, min(width, ceil(used.width)))
-        return CGSize(width: min(width, ceil(used.width)), height: ceil(used.height) + below)
+        measured = (width, ceil(used.height) + above + below, min(width, ceil(widest)))
+        return CGSize(width: min(width, ceil(widest)), height: ceil(used.height) + above + below)
+    }
+
+    /// A code block first: its panel reaches 8 pt above the text (RichLayoutManager), and a view draws nothing above
+    /// its top, so the text starts 8 pt down and the panel has its top.
+    private var above: CGFloat {
+        (textStorage.map { $0.length > 0 && $0.attribute(.zeroCodeBlock, at: 0, effectiveRange: nil) != nil } ?? false) ? 8 : 0
+    }
+
+    override var textContainerOrigin: NSPoint {
+        let origin = super.textContainerOrigin
+        return NSPoint(x: origin.x, y: origin.y + above)
     }
 
     override func draw(_ dirtyRect: NSRect) {

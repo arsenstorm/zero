@@ -138,14 +138,22 @@ struct StepOrAsk: View {
 
     var body: some View {
         if let inbox, let session, let ask = AgentAskCard.made(by: item, in: inbox.store.asks, session: session) {
-            AgentAskCard(ask: ask, inbox: inbox)
+            // A line: its card, to answer it by, is above the composer.
+            AgentAskCard(ask: ask, inbox: inbox, compact: true)
         } else {
             ItemView(item: item, cwd: cwd, until: until)
         }
     }
 }
 
+/// Other tasks by their ids: a message from one names it, and opens it.
+struct TaskLink {
+    let name: (String) -> String?
+    let open: (String) -> Void
+}
+
 extension EnvironmentValues {
+    @Entry var taskLink: TaskLink? = nil
     /// The inbox, and the session whose chat this is: what a step that asked shows its card from.
     @Entry var askInbox: InboxController? = nil
     @Entry var askSession: String? = nil
@@ -206,25 +214,64 @@ final class PulseView: NSView {
 /// Words Zero gave the session, not yours: a worker's report to its lead ("Worker ENG-9790 finished: …"), or a watched
 /// command's end. One quiet line, as a step is drawn: the icon and the report's first line; a click opens the whole
 /// of it under, and closes it again. The report's closing note on how to reply (zerod's, for the agent) stays folded.
+/// Turns Zero started that changed nothing for the user (TimelineRow.quiet): one row, opened in place to read them.
+struct QuietTurns<Content: View>: View {
+    let turns: Int
+    @Binding var open: Bool
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Button { open.toggle() } label: {
+                HStack(spacing: 8) {
+                    NucleoIcon("stack", size: 14).foregroundStyle(.secondary).frame(width: 14, height: 16)
+                    Text(turns == 1 ? "An update that needed nothing from you" : "\(turns) updates that needed nothing from you").foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary)
+                }
+                .frame(height: 20)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .font(.callout)
+            if open { content() }
+        }
+    }
+}
+
 struct GivenMessage: View {
     let from: String
     let text: String
     let cwd: String
     @State private var open = false
+    @Environment(\.taskLink) private var link
+
+    /// Another task's message, not a worker's report (which says whose it is): the task's name, opening it.
+    private var sender: String? {
+        guard from != "zero", !text.hasPrefix("Worker "), let link else { return nil }
+        return link.name(from)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Button { open.toggle() } label: {
-                HStack(alignment: .top, spacing: 8) {
-                    NucleoIcon(from == "zero" ? "circle-info" : "robot", size: 14).foregroundStyle(.secondary).frame(width: 14, height: 16)
-                    Text(first).foregroundStyle(.secondary).lineLimit(open ? nil : 1).truncationMode(.tail)
-                    Spacer(minLength: 0)
-                    NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary)
+            HStack(alignment: .top, spacing: 8) {
+                NucleoIcon(from == "zero" ? "circle-info" : "robot", size: 14).foregroundStyle(.secondary).frame(width: 14, height: 16)
+                if let sender, let link {
+                    Button(sender) { link.open(from) }.buttonStyle(.plain).fontWeight(.medium).lineLimit(1).fixedSize()
+                        .tip("Open \(sender)")
                 }
-                .contentShape(Rectangle())
+                Button { open.toggle() } label: {
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(first).foregroundStyle(.secondary).lineLimit(open ? nil : 1).truncationMode(.tail)
+                        Spacer(minLength: 0)
+                        if !rest.isEmpty { NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary) }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
-            if open { MarkdownText(report, cwd: cwd, size: 13.5, compact: true).padding(.leading, 22) }
+            // Opened, what follows its heading: the heading itself is the row above, said once.
+            if open, !rest.isEmpty { MarkdownText(rest, cwd: cwd, size: 13.5, compact: true).padding(.leading, 22) }
         }
         .font(.callout)
     }
@@ -233,6 +280,12 @@ struct GivenMessage: View {
     private var first: String {
         let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
         return line.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
+    }
+
+    /// The report after its first line, which heads the folded row.
+    private var rest: String {
+        guard let end = report.firstIndex(where: \.isNewline) else { return "" }
+        return report[end...].trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// The report without its closing note to the agent on how to reply.
@@ -591,6 +644,21 @@ final class ThinScroller: NSScroller {
 }
 
 /// Rows standing in for older messages while they're fetched: a message of yours and an answer, as bars.
+/// The top of a conversation with more above it: nothing while idle, "Loading earlier…" while a page comes in. One
+/// height either way, so nothing moves.
+struct LoadingEarlier: View {
+    let loading: Bool
+    var body: some View {
+        HStack(spacing: 8) {
+            if loading {
+                Spinner().frame(width: 12, height: 12)
+                Text("Loading earlier…").font(.callout).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24)
+    }
+}
+
 struct SkeletonTurns: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {

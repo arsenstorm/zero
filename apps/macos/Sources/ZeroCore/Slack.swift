@@ -1,10 +1,10 @@
 import Foundation
 
-/// The Slack workspace Zero is connected to, as zerod keeps it (integrations.rs: a user token of Zero's own Slack app,
-/// made from the manifest below, in zerod's slack.json). Zero knows the team's id and its channels' ids, which is what
-/// Slack's app opens by: "#channel" and Slack's own links in messages then open in Slack itself; and agents follow its
-/// threads and channels (following.rs). This is the app's copy, kept in UserDefaults so links resolve before zerod
-/// has answered.
+/// The Slack workspaces Zero is connected to, as zerod keeps them (integrations.rs: a user token of Zero's own Slack app
+/// each, made from the manifest below, in zerod's slack.json). Zero knows each team's id and its channels' ids, which is
+/// what Slack's app opens by: "#channel" and Slack's own links in messages then open in Slack itself; and agents follow
+/// their threads and channels (following.rs). This is the app's copy, kept in UserDefaults so links resolve before
+/// zerod has answered.
 @MainActor @Observable
 public final class Slack {
     public struct Team: Codable, Sendable, Equatable {
@@ -13,23 +13,20 @@ public final class Slack {
         public var domain: String
     }
 
-    /// As zerod sends it in the integrations' state.
+    /// One workspace, as zerod sends it in the integrations' state: its team, and its channels' ids by name.
     public struct State: Codable, Sendable, Equatable {
         public var team: Team
         public var channels: [String: String]
     }
 
     public static let shared = Slack()
-    public private(set) var team: Team?
-    /// Channel ids by name.
-    public private(set) var channels: [String: String]
+    /// Every workspace connected, in the order connected.
+    public private(set) var teams: [State]
 
-    private static let teamKey = "slackTeamInfo"
-    private static let channelsKey = "slackChannels"
+    private static let key = "slackTeams"
 
     init() {
-        team = UserDefaults.standard.data(forKey: Self.teamKey).flatMap { try? JSONDecoder().decode(Team.self, from: $0) }
-        channels = UserDefaults.standard.dictionary(forKey: Self.channelsKey) as? [String: String] ?? [:]
+        teams = UserDefaults.standard.data(forKey: Self.key).flatMap { try? JSONDecoder().decode([State].self, from: $0) } ?? []
     }
 
     /// Slack's page for creating Zero's app, its manifest filled in: a name and read-only scopes (channels and their
@@ -47,10 +44,8 @@ public final class Slack {
     }
 
     /// What zerod says now.
-    public func apply(_ state: State?) {
-        team = state?.team
-        channels = state?.channels ?? [:]
-        UserDefaults.standard.set(state.flatMap { try? JSONEncoder().encode($0.team) }, forKey: Self.teamKey)
-        UserDefaults.standard.set(state?.channels, forKey: Self.channelsKey)
+    public func apply(_ teams: [State]) {
+        self.teams = teams
+        UserDefaults.standard.set(try? JSONEncoder().encode(teams), forKey: Self.key)
     }
 }

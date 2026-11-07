@@ -345,8 +345,7 @@ struct DevicesPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Relay").font(.system(size: 13, weight: .semibold))
+            SettingsSection(title: "Relay") {
                 Rows {
                     SettingRow(title: "Address", detail: "Passes your phone's encrypted messages; it can't read them.") {
                         TextField("", text: $relay, prompt: Text("wss://zero-relay.you.workers.dev"))
@@ -356,8 +355,7 @@ struct DevicesPage: View {
                     SettingRow(title: "Status", detail: statusDetail) { EmptyView() }
                 }
             }
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Phones").font(.system(size: 13, weight: .semibold))
+            SettingsSection(title: "Phones") {
                 Rows {
                     ForEach(phones.devices) { device in
                         SettingRow(title: device.name, detail: "Paired \(device.added.formatted(date: .abbreviated, time: .omitted))") {

@@ -66,6 +66,29 @@ public enum TimelineBlock: Identifiable, Equatable, Sendable {
         return blocks
     }
 
+    /// The agent's asks shown after each block: those a finished turn's steps made, under the turn's last block (its
+    /// answer), where they stay once answered, so answering moves nothing. A turn under way shows them in its steps.
+    public static func asks(after blocks: [TimelineBlock], in asks: [Ask], session: String) -> [String: [Ask]] {
+        // This task's own, once: an inbox holds every task's asks, and each step is matched against them.
+        let asks = asks.filter { $0.isAgents(in: session) }
+        if asks.isEmpty { return [:] }
+        var after: [String: [Ask]] = [:]
+        var made: [Ask] = []
+        // Each placed once, under the first turn that made it: the same ask twice in the column is the same view twice.
+        var placed: Set<String> = []
+        var last: String?
+        func place() { if let last, !made.isEmpty { after[last, default: []] += made }; made = [] }
+        for block in blocks {
+            if case .user = block { place() }
+            if case let .work(_, items, _, _, live) = block, !live {
+                for ask in items.compactMap({ $0.ask(in: asks, session: session) }) where placed.insert(ask.id).inserted { made.append(ask) }
+            }
+            last = block.id
+        }
+        place()
+        return after
+    }
+
     /// The message of yours each block answers to, for the rail.
     public static func turns(_ blocks: [TimelineBlock]) -> [String: String] {
         var owner: [String: String] = [:]
@@ -75,6 +98,66 @@ public enum TimelineBlock: Identifiable, Equatable, Sendable {
             if let current { owner[block.id] = current }
         }
         return owner
+    }
+}
+
+/// A row of the conversation as the Mac lays it out: a block, or turns Zero started that changed nothing for the user,
+/// folded into one.
+public enum TimelineRow: Identifiable, Equatable, Sendable {
+    case block(TimelineBlock)
+    case quiet(id: String, blocks: [TimelineBlock], turns: Int)
+
+    public var id: String {
+        switch self {
+        case let .block(block): block.id
+        case let .quiet(id, _, _): id
+        }
+    }
+
+    /// Turns a worker's report or an event started that asked the user nothing and set no issue row: folded,
+    /// consecutive ones together, so what changed for the user stands out. The last turn, being read, never folds.
+    public static func of(_ blocks: [TimelineBlock]) -> [TimelineRow] {
+        var turns: [[TimelineBlock]] = [[]]
+        for block in blocks {
+            if case .user = block, !turns[turns.count - 1].isEmpty { turns.append([]) }
+            turns[turns.count - 1].append(block)
+        }
+        var rows: [TimelineRow] = []
+        var folded: [[TimelineBlock]] = []
+        func fold() {
+            // Named by its last turn: older pages coming in above add turns at its start, and it stays the same row.
+            if let last = folded.last?.first { rows.append(.quiet(id: "quiet-" + last.id, blocks: folded.flatMap { $0 }, turns: folded.count)) }
+            folded = []
+        }
+        for (index, turn) in turns.enumerated() {
+            if index < turns.count - 1, quiet(turn) { folded.append(turn); continue }
+            fold()
+            rows += turn.map(TimelineRow.block)
+        }
+        fold()
+        return rows
+    }
+
+    nonisolated(unsafe) private static let changes = #/\bzero (run|ask|approve|issue)\b|\bzero_(run|ask|approve|issue)\b|\[zero: asked/#
+
+    private static func quiet(_ turn: [TimelineBlock]) -> Bool {
+        guard case let .user(first)? = turn.first, case let .user(text, _) = first.kind, ConversationItem.from(text) != nil else { return false }
+        let items = turn.dropFirst().flatMap { block -> [ConversationItem] in
+            switch block {
+            case let .work(_, items, _, _, live): live ? [] : items
+            case let .answer(item), let .step(item), let .user(item): [item]
+            }
+        }
+        if turn.contains(where: { if case let .work(_, _, _, _, live) = $0 { live } else { false } }) { return false }
+        return !items.contains { item in
+            switch item.kind {
+            case let .command(command, _, _, _, _): command.contains(changes)
+            case let .tool(name, _): name.contains(changes)
+            case let .agent(text, _): text.contains(changes)
+            case .table: true
+            default: false
+            }
+        }
     }
 }
 
@@ -217,7 +300,7 @@ public enum TaskName {
         for item in conversation.items {
             if case let .user(text, _) = item.kind, let gist = gist(of: text) { return gist }
         }
-        return "\(conversation.provider.title) in \((conversation.cwd as NSString).lastPathComponent)"
+        return "\(conversation.provider.title) in \(Projects.name(of: conversation.cwd))"
     }
 
     /// A prompt's first line as a name: its first five words, when it has at least three.

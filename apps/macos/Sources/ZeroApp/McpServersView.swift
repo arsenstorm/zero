@@ -11,26 +11,26 @@ struct McpServersPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
-            Text("Servers every task gets, whichever its agent; or only a workspace's.")
-                .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let workspace {
+                SettingsSection(title: "Servers") {
                 VStack(spacing: 0) {
                     ForEach(Array(workspace.mcpServers.enumerated()), id: \.element.id) { index, server in
-                        if index > 0 { Divider().padding(.leading, 16) }
+                        if index > 0 { Divider().padding(.leading, 18) }
                         row(server, in: workspace)
                     }
                     if !workspace.mcpServers.isEmpty { Divider() }
                     Button { editing = ZerodLink.McpServer() } label: {
                         NucleoLabel("Add a server", icon: "plus", size: 13).font(.system(size: 13)).foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).frame(height: 40).contentShape(Rectangle())
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).frame(height: 40).contentShape(Rectangle())
                     }
                     .buttonStyle(Hovering(radius: 0))
                     .clipShape(UnevenRoundedRectangle(topLeadingRadius: workspace.mcpServers.isEmpty ? 14 : 0, bottomLeadingRadius: 14,
                                                       bottomTrailingRadius: 14, topTrailingRadius: workspace.mcpServers.isEmpty ? 14 : 0))
                 }
-                .settingsCard()
+                .bleedingCard()
+                }
                 .task { await workspace.loadMcpServers(); await workspace.loadWorkspaces() }
-                .sheet(item: $editing) { server in McpServerForm(server: server, workspace: workspace) }
+                .zeroDialog(item: $editing) { server in McpServerForm(server: server, workspace: workspace) }
             }
         }
     }
@@ -55,7 +55,7 @@ struct McpServersPage: View {
             })).toggleStyle(.switch).controlSize(.mini).labelsHidden().tip(server.enabled ? "On: given to tasks as they start" : "Off")
             Button("Edit") { editing = server }
         }
-        .padding(.horizontal, 16).padding(.vertical, 10)
+        .padding(.horizontal, 18).padding(.vertical, 10)
     }
 
     private func pill(_ text: String) -> some View {
@@ -68,7 +68,7 @@ struct McpServersPage: View {
 private struct McpServerForm: View {
     @State var server: ZerodLink.McpServer
     let workspace: Workspace
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.closeDialog) private var dismiss
     @State private var remote = false
     @State private var arguments = ""
     /// Keychain values typed here, by name: saved to the Keychain, never to zerod.
@@ -78,46 +78,42 @@ private struct McpServerForm: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(server.id.isEmpty ? "Add an MCP server" : "Edit \(server.name)").font(.system(size: 15, weight: .semibold))
-            TextField("Name (CVE lookup)", text: $server.name).textFieldStyle(.roundedBorder)
-            Picker("", selection: $remote) {
-                Text("Runs a command").tag(false)
-                Text("At a URL").tag(true)
-            }
-            .pickerStyle(.segmented).labelsHidden()
+            DialogTitle(text: server.id.isEmpty ? "Add an MCP server" : "Edit \(server.name)")
+            TextField("Name (CVE lookup)", text: $server.name).textFieldStyle(.dialog)
+            DialogChoice(options: [("Runs a command", false), ("At a URL", true)], selection: $remote)
             if remote {
-                TextField("https://…/mcp", text: Binding(get: { server.url ?? "" }, set: { server.url = $0 })).textFieldStyle(.roundedBorder)
+                TextField("https://…/mcp", text: Binding(get: { server.url ?? "" }, set: { server.url = $0 })).textFieldStyle(.dialog)
                 Text("One that signs in with OAuth needs no headers: its first task shows a sign-in link.")
                     .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             } else {
-                TextField("Command (npx, uvx, a path)", text: Binding(get: { server.command ?? "" }, set: { server.command = $0 })).textFieldStyle(.roundedBorder)
-                TextField("Arguments, separated by spaces", text: $arguments).textFieldStyle(.roundedBorder)
+                TextField("Command (npx, uvx, a path)", text: Binding(get: { server.command ?? "" }, set: { server.command = $0 })).textFieldStyle(.dialog)
+                TextField("Arguments, separated by spaces", text: $arguments).textFieldStyle(.dialog)
             }
             values(remote ? "Headers" : "Environment", list: remote ? $server.headers : $server.env)
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Workspaces").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
-                Toggle("Every workspace", isOn: $everywhere)
+            DialogPart(title: "Workspaces") {
+                Toggle("Every workspace", isOn: $everywhere).toggleStyle(.dialogCheckbox)
                 if !everywhere {
                     ForEach(workspace.workspaces) { w in
                         Toggle(w.name, isOn: Binding(get: { server.workspaces.contains(w.id) }, set: { on in
                             server.workspaces.removeAll { $0 == w.id }
                             if on { server.workspaces.append(w.id) }
                         }))
-                        .padding(.leading, 16)
+                        .toggleStyle(.dialogCheckbox)
+                        .padding(.leading, 24)
                     }
                 }
             }
             if let problem { Text(problem).font(.system(size: 12)).foregroundStyle(.red) }
             HStack {
                 if !server.id.isEmpty {
-                    Button("Delete", role: .destructive) { Task { await workspace.deleteMcpServer(server); dismiss() } }
+                    DialogButton(title: "Delete", kind: .destructive) { Task { await workspace.deleteMcpServer(server); dismiss() } }
                 }
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save") { save() }.keyboardShortcut(.defaultAction).disabled(server.name.trimmingCharacters(in: .whitespaces).isEmpty)
+                DialogButton(title: "Cancel") { dismiss() }
+                DialogButton(title: "Save", kind: .primary, enabled: !server.name.trimmingCharacters(in: .whitespaces).isEmpty) { save() }
             }
         }
-        .padding(20).frame(width: 520)
+        .frame(width: 520)
         .onAppear {
             remote = server.url != nil && server.command == nil
             arguments = server.args.joined(separator: " ")
@@ -128,24 +124,19 @@ private struct McpServerForm: View {
     /// Each value: its name, where it's kept (the Keychain unless chosen otherwise) and, unless the server's command
     /// gets it itself, the value: masked for the Keychain (left empty, the kept one stays).
     private func values(_ title: String, list: Binding<[ZerodLink.McpServer.Value]>) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+        DialogPart(title: title) {
             ForEach(list.wrappedValue.indices, id: \.self) { i in
                 HStack(spacing: 6) {
-                    TextField("NAME", text: list[i].name).textFieldStyle(.roundedBorder).frame(width: 150)
-                    Picker("", selection: list[i].from) {
-                        Text("Keychain").tag(ZerodLink.McpServer.Source.keychain)
-                        Text("Zero's file").tag(ZerodLink.McpServer.Source.file)
-                        Text("Its command").tag(ZerodLink.McpServer.Source.command)
-                    }
-                    .labelsHidden().frame(width: 120)
+                    TextField("NAME", text: list[i].name).textFieldStyle(.dialog).frame(width: 150)
+                    SettingChoice(id: "mcp-value-\(i)", choices: [[("Keychain", ZerodLink.McpServer.Source.keychain), ("Zero's file", .file), ("Its command", .command)]],
+                                  selection: list[i].from)
                     switch list.wrappedValue[i].from {
                     case .keychain:
                         SecureField(server.id.isEmpty ? "Value" : "Kept (type to change)", text: Binding(get: { secrets[list.wrappedValue[i].name] ?? "" },
                                                                                                   set: { secrets[list.wrappedValue[i].name] = $0 }))
-                            .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(.dialog)
                     case .file:
-                        TextField("Value", text: Binding(get: { list.wrappedValue[i].value ?? "" }, set: { list.wrappedValue[i].value = $0 })).textFieldStyle(.roundedBorder)
+                        TextField("Value", text: Binding(get: { list.wrappedValue[i].value ?? "" }, set: { list.wrappedValue[i].value = $0 })).textFieldStyle(.dialog)
                     case .command:
                         Text("Fetched by the server itself").font(.system(size: 12)).foregroundStyle(.tertiary).frame(maxWidth: .infinity, alignment: .leading)
                     }

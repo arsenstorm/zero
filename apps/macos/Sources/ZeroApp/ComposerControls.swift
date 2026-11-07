@@ -225,6 +225,8 @@ struct ComposerChip: View {
     var prominent = false
     /// A colour for its icon and words, for a choice that should stand out (Unrestricted, orange as in the details).
     var tint: Color? = nil
+    /// Picked while a turn runs: kept for the next turn, a clock after its words says so.
+    var pending = false
     let rows: () -> [SelectorSection]
     var level: (String) -> String? = { _ in nil }
     var setLevel: (String, String) -> Void = { _, _ in }
@@ -244,6 +246,7 @@ struct ComposerChip: View {
                 }
                 Text(label).font(.system(size: 13)).lineLimit(1)
                     .foregroundStyle(tint.map(AnyShapeStyle.init) ?? (prominent ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)))
+                if pending { NucleoIcon("clock", size: 11).foregroundStyle(.secondary) }
                 NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0))
             }
             // As tall as the + and Send beside it (28), so the row's pills are one size.

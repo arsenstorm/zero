@@ -24,12 +24,8 @@ struct TaskDetails: View {
     @State private var held = false
     @State private var cardFrame = CGRect.zero
     @State private var monitor: Any?
-    /// The Agent row's selector: where it opens from, and the row under the pointer.
-    @State private var agentAnchor = CGRect.zero
     /// Every worker listed, not only the ones that need attention.
     @State private var allWorkers = false
-    @State private var overAgent = false
-    private var agentChip: String { "details.\(conversation.id).agent" }
 
     var body: some View {
         // Its properties, then its workers.
@@ -92,35 +88,16 @@ struct TaskDetails: View {
     private var properties: some View {
         Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 9) {
             property("Agent") {
-                VStack(alignment: .leading, spacing: 2) {
-                    // The provider's mark and the model by its name ("Opus 5.5"), not its id: a click picks another
-                    // model, or another provider to take the task over.
-                    let open = WorkspaceSelector.shared.open == agentChip
-                    HStack(spacing: 6) {
-                    Button {
-                        WorkspaceSelector.shared.toggle(agentChip, kind: .runtime, anchor: agentAnchor, rows: {
-                            ComposerRows.taskModels(conversation, chosen: (conversation.provider, conversation.model)) { picked, choice in
-                                Task { await workspace.switchProvider(conversation.id, to: picked, model: choice.id.isEmpty ? nil : choice.id) }
-                            }
-                        }, level: { id in id == "\(conversation.provider.rawValue)/\(conversation.model ?? "")" ? conversation.effort : nil },
-                           setLevel: { _, level in Task { await workspace.switchProvider(conversation.id, to: conversation.provider, model: conversation.model, effort: level) } })
-                    } label: {
-                        HStack(spacing: 5) {
-                            if let mark = conversation.provider.mark {
-                                mark.resizable().aspectRatio(contentMode: .fit).frame(width: 13, height: 13).clipShape(RoundedRectangle(cornerRadius: 3))
-                            }
-                            Text([modelName ?? conversation.provider.title, conversation.effort.map { effortLabel($0, short: true) }].compactMap { $0 }.joined(separator: " · "))
-                                .lineLimit(1).truncationMode(.tail).tip([conversation.provider.title, conversation.model].compactMap { $0 }.joined(separator: " · "))
-                            NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0))
+                // What it runs on, to read: the provider's mark and the model by its name ("Opus 5.5"). It's changed
+                // in the composer, not here.
+                HStack(spacing: 6) {
+                    HStack(spacing: 5) {
+                        if let mark = conversation.provider.mark {
+                            mark.resizable().aspectRatio(contentMode: .fit).frame(width: 13, height: 13).clipShape(RoundedRectangle(cornerRadius: 3))
                         }
-                        .padding(.horizontal, 6).padding(.vertical, 3).padding(.leading, -6)
-                        .background(open || overAgent ? Theme.row : .clear, in: Capsule())
-                        .contentShape(Capsule())
+                        Text([modelName ?? conversation.provider.title, conversation.effort.map { effortLabel($0, short: true) }].compactMap { $0 }.joined(separator: " · "))
+                            .lineLimit(1).truncationMode(.tail).tip([conversation.provider.title, conversation.model].compactMap { $0 }.joined(separator: " · "))
                     }
-                    .buttonStyle(.plain).fixedSize()
-                    .onHover { overAgent = $0 }
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { agentAnchor = $0 }
-                    .disabled(conversation.status == .working || conversation.status == .waiting)
                     // Unrestricted: a bolt beside the agent, as the composer's permissions chip shows it.
                     if conversation.permissions == .unrestricted {
                         // A square to hover, so the tip shows: a bare icon gives macOS nothing to track.
@@ -128,15 +105,13 @@ struct TaskDetails: View {
                             .frame(width: 18, height: 18).contentShape(Rectangle())
                             .tip("Unrestricted: it acts without asking")
                     }
-                    }
-                    if let usage { Text(usage).font(.system(size: 11.5)).foregroundStyle(.tertiary) }
                 }
             }
             property("Where") {
                 // The place's own folder when the places command says (a bench's), else the task's.
                 let folder = row?.path ?? conversation.cwd
                 Button { NSWorkspace.shared.open(URL(fileURLWithPath: folder)) } label: {
-                    Self.linked(row?.place ?? (conversation.cwd as NSString).lastPathComponent).truncationMode(.middle)
+                    Self.linked(row?.place ?? Projects.name(of: conversation.cwd)).truncationMode(.middle)
                 }
                 .buttonStyle(.plain).tip("Show \((folder as NSString).abbreviatingWithTildeInPath) in Finder")
             }
@@ -297,11 +272,5 @@ struct TaskDetails: View {
     private var modelName: String? {
         guard let model = conversation.model else { return nil }
         return ComposerRows.catalogue(conversation.provider).first { $0.id == model }?.name ?? model
-    }
-
-    /// "5 hours 18% · 7 days 5%": what the provider last reported for the account.
-    private var usage: String? {
-        guard let windows = conversation.usage?.windows, !windows.isEmpty else { return nil }
-        return windows.map { "\($0.name) \(Int(($0.used * 100).rounded()))%" }.joined(separator: " · ")
     }
 }

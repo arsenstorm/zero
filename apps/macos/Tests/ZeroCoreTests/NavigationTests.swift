@@ -50,3 +50,20 @@ import Testing
     navigation.arrive(in: "work") { _ in true }
     #expect(navigation.place == .settings, "away from tasks: left where it is")
 }
+
+/// Settings' pages are steps too: back from Git is the page before it, then the task Settings was opened from.
+@MainActor @Test func backGoesThroughSettingsPagesBeforeLeavingSettings() {
+    let navigation = Navigation()
+    navigation.place = .task("t1")
+    navigation.place = .settings
+    navigation.settingsPage = "Folders"
+    navigation.settingsPage = "Git"
+    navigation.goBack()
+    #expect(navigation.place == .settings && navigation.settingsPage == "Folders")
+    navigation.goForward()
+    #expect(navigation.place == .settings && navigation.settingsPage == "Git")
+    navigation.goBack(); navigation.goBack()
+    #expect(navigation.place == .settings, "the page Settings opened on")
+    navigation.goBack()
+    #expect(navigation.place == .task("t1"))
+}

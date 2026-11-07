@@ -112,7 +112,7 @@ extension TerminalAdapter {
     public func spawnTargets() async throws -> [SpawnChoice] {
         let home = NSHomeDirectory()
         return Projects.folders.map { path in
-            SpawnChoice(id: path, name: (path as NSString).lastPathComponent, detail: path.replacingOccurrences(of: home, with: "~"),
+            SpawnChoice(id: path, name: Projects.name(of: path), detail: path.replacingOccurrences(of: home, with: "~"),
                         icon: "folder", provider: name)
         }
     }
@@ -150,7 +150,21 @@ extension TerminalAdapter {
 /// The folders Zero's own agents may start in, from Settings → Projects.
 public enum Projects {
     public static let key = "zeroProjects"
+    public static let namesKey = "zeroProjectNames"
     public static var folders: [String] { UserDefaults.standard.stringArray(forKey: key) ?? [] }
+
+    /// What a folder is called: the name the user gave it, else its own.
+    public static func name(of path: String) -> String {
+        (UserDefaults.standard.dictionary(forKey: namesKey) as? [String: String])?[path] ?? (path as NSString).lastPathComponent
+    }
+
+    /// The user's name for a folder; its own name (or none) takes the given one away.
+    public static func setName(_ name: String, for path: String) {
+        var names = UserDefaults.standard.dictionary(forKey: namesKey) as? [String: String] ?? [:]
+        let name = name.trimmingCharacters(in: .whitespaces)
+        names[path] = name.isEmpty || name == (path as NSString).lastPathComponent ? nil : name
+        UserDefaults.standard.set(names, forKey: namesKey)
+    }
 }
 
 /// The command line a terminal-hosted agent starts with.

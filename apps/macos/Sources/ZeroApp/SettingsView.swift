@@ -11,12 +11,14 @@ struct SettingsView: View {
     let store: Store
     let inbox: InboxController
     var workspace: Workspace? = nil
+    /// Where the window has been: each page opened here is a step back and forward retrace.
+    var navigation: Navigation? = nil
     var showOnboarding: () -> Void = {}
 
     enum Page: String, CaseIterable, Identifiable {
         case general = "General", controlBar = "Control bar", composer = "Composer and inbox", devices = "Phone"
         case agents = "Agents", signins = "Accounts", mcp = "MCP servers", chrome = "Browsers"
-        case workspaces = "Workspaces", projects = "Folders", links = "Links", events = "Following"
+        case workspaces = "Workspaces", projects = "Folders", git = "Git", links = "Links", events = "Following"
         var id: String { rawValue }
         /// One each, none shared: the sidebar is scanned by its icons.
         var icon: String {
@@ -31,6 +33,7 @@ struct SettingsView: View {
             case .chrome: "globe"
             case .workspaces: "suitcase"
             case .projects: "folder"
+            case .git: "code-branch"
             case .links: "link"
             case .events: "eye"
             }
@@ -38,9 +41,15 @@ struct SettingsView: View {
         /// General leads on its own, where Home's New task is, so switching between the two moves no row. Then the
         /// app itself, what agents run with, and how the work is laid out.
         static let groups: [(String, [Page])] = [("App", [.controlBar, .composer, .devices]), ("Agents", [.agents, .signins, .mcp, .chrome]),
-                                                 ("Work", [.workspaces, .projects, .links, .events])]
+                                                 ("Work", [.workspaces, .projects, .git, .links, .events])]
     }
-    @State private var page = Page.general
+    /// The page open, kept in the window's history (Navigation) so back and forward go between pages; on its own
+    /// where there's no history (the settings window of its own).
+    @State private var ownPage = Page.general
+    private var page: Page {
+        get { navigation.map { Page(rawValue: $0.settingsPage ?? "") ?? .general } ?? ownPage }
+        nonmutating set { if let navigation { navigation.settingsPage = newValue.rawValue } else { ownPage = newValue } }
+    }
     /// A page asked for from elsewhere (the sidebar's Workspace settings…), taken when the view appears.
     @MainActor static var requested: Page?
 
@@ -78,7 +87,8 @@ struct SettingsView: View {
         case .devices: DevicesPage()
         case .agents: AgentsPage(store: store, inbox: inbox, workspace: workspace)
         case .projects: FoldersPage(settings: settings, inbox: inbox)
-        case .links: LinksPage()
+        case .git: GitPage()
+        case .links: LinksPage(workspace: workspace)
         case .events: EventsPage(workspace: workspace)
         case .workspaces: WorkspacesPage(workspace: workspace)
         case .mcp: McpServersPage(workspace: workspace)
@@ -286,7 +296,6 @@ struct Rows<Content: View>: View {
         _VariadicView.Tree(Divided()) { content() }
     }
     private struct Divided: _VariadicView_MultiViewRoot {
-        @Environment(\.cardBleed) private var bleed
         func body(children: _VariadicView.Children) -> some View {
             VStack(spacing: 0) {
                 ForEach(Array(children.enumerated()), id: \.offset) { index, child in
@@ -295,9 +304,7 @@ struct Rows<Content: View>: View {
                 }
             }
             .padding(.horizontal, 18)
-            .settingsCard()
-            // In Settings the card bleeds past the column by its own inset, so its text lines up with the headings.
-            .padding(.horizontal, -bleed)
+            .bleedingCard()
         }
     }
 }
@@ -305,6 +312,54 @@ struct Rows<Content: View>: View {
 struct Switch: View {
     @Binding var isOn: Bool
     var body: some View { Toggle("", isOn: $isOn).labelsHidden().toggleStyle(.switch) }
+}
+
+/// A card's row that is its own menu: a soft fill under the pointer (or while it's open), and a click opens Zero's
+/// menu under the row's trailing end. Nothing kept beside the row's own content for its actions.
+private struct RowMenu: ViewModifier {
+    let id: String
+    let enabled: Bool
+    let rows: () -> [SelectorSection]
+    @State private var frame = CGRect.zero
+    @State private var hovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(enabled && (hovered || WorkspaceSelector.shared.open == id) ? Theme.row : .clear)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard enabled else { return }
+                let width = SelectorView.width(.menu)
+                WorkspaceSelector.shared.toggle(id, kind: .menu, anchor: CGRect(x: frame.maxX - width - 8, y: frame.minY, width: width, height: frame.height), rows: rows)
+            }
+            .onHover { hovered = $0 }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
+    }
+}
+
+extension View {
+    func rowMenu(_ id: String, enabled: Bool = true, rows: @escaping () -> [SelectorSection]) -> some View { modifier(RowMenu(id: id, enabled: enabled, rows: rows)) }
+}
+
+/// A heading's quiet button (Add workspace, Add account): an icon and words, a soft fill under the pointer or while
+/// what it opened is open.
+struct GhostButton: View {
+    let title: String
+    let icon: String
+    var open = false
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            NucleoLabel(title, icon: icon, size: 12).font(.system(size: 12.5, weight: .medium)).foregroundStyle(.secondary)
+                .padding(.horizontal, 9).frame(height: 26)
+                .background(open || hovered ? Theme.row : .clear, in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain).fixedSize()
+        .onHover { hovered = $0 }
+    }
 }
 
 /// A setting's choice: what's chosen and a chevron, on a chip that opens Zero's selector as a plain menu, as a
@@ -347,17 +402,34 @@ struct SettingChoice<Value: Hashable>: View {
 /// How far a card reaches past its column, so its rows' text starts where the text around it does.
 extension EnvironmentValues { @Entry var cardBleed: CGFloat = 0 }
 
-/// A heading over a card: what the rows under it are about.
-private struct SettingsSection<Content: View>: View {
+/// A heading over a card: what the rows under it are about, with a mark before it and a button at its end if it has
+/// them. Its cards bleed past the column (bleedingCard).
+struct SettingsSection<Content: View>: View {
     let title: String
+    var icon: AnyView? = nil
+    var accessory: AnyView? = nil
     @ViewBuilder let content: () -> Content
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.system(size: 13, weight: .semibold))
+            HStack(spacing: 7) {
+                if let icon { icon }
+                Text(title).font(.system(size: 13, weight: .semibold))
+                if let accessory { Spacer(); accessory }
+            }
             content()
         }
         .environment(\.cardBleed, 18)
     }
+}
+
+/// A card that bleeds past its column by its own inset, so its rows' text (18 in) lines up with the headings.
+private struct BleedingCard: ViewModifier {
+    @Environment(\.cardBleed) private var bleed
+    func body(content: Content) -> some View { content.settingsCard().padding(.horizontal, -bleed) }
+}
+
+extension View {
+    func bleedingCard() -> some View { modifier(BleedingCard()) }
 }
 
 /// One setting: what it is, a line or two on what it does, its control on the right. A logo when the row is a tool's.
@@ -592,7 +664,7 @@ private struct AgentsPage: View {
             SettingsSection(title: "Runtimes") { RuntimesRows(store: store, inbox: inbox) }
             SettingsSection(title: "Tasks") {
                 Rows {
-                    SettingRow(title: "Archive done tasks", detail: "Put away after this; back when something they follow changes.") {
+                    SettingRow(title: "Archive done tasks", detail: "Done means finished end to end. Put away then; back when something they follow changes.") {
                         ArchiveCompletedPicker()
                     }
                     SettingRow(title: "Where tasks run", detail: "A command printing [{\"ticket\": \"ENG-1\", \"place\": \"my-bench\"}], run in your login shell every five minutes. Each task's Where is its place, by ticket, in place of its folder.") {
@@ -640,11 +712,12 @@ private struct RuntimesRows: View {
     }
 }
 
-/// How long a completed task stays before zerod archives it: zerod's setting, so it holds while the app is closed.
+/// When a done task is put away: once you've read it (as a done worker leaves once its lead has its report), after a
+/// while, or never. zerod's setting, so it holds while the app is closed.
 private struct ArchiveCompletedPicker: View {
     @State private var seconds = 24 * 3600
     @State private var link = try? ZerodLink()
-    static let choices: [(String, Int)] = [("After an hour", 3600), ("After a day", 24 * 3600), ("After a week", 7 * 24 * 3600), ("Never", 0)]
+    static let choices: [(String, Int)] = [("Once you've read it", -1), ("After an hour", 3600), ("After a day", 24 * 3600), ("After a week", 7 * 24 * 3600), ("Never", 0)]
 
     var body: some View {
         SettingChoice(id: "archiveCompleted", choices: [Self.choices.map { (title: $0.0, value: $0.1) }], selection: Binding(get: { seconds }, set: { chosen in
@@ -757,12 +830,10 @@ private struct BrowserRows: View {
     /// The sites no task may use, in every browser: one a row, removed from its row, added from the last.
     private var sites: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("No task may open these sites or their subdomains.")
-                .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             VStack(spacing: 0) {
                 ForEach(blocked, id: \.self) { site in
                     BlockedSiteRow(site: site) { saveSites(blocked.filter { $0 != site }) }
-                    Divider().padding(.leading, 16)
+                    Divider().padding(.leading, 18)
                 }
                 HStack(spacing: 10) {
                     NucleoIcon("plus", size: 13).foregroundStyle(.secondary)
@@ -774,10 +845,9 @@ private struct BrowserRows: View {
                             adding = ""
                         }
                 }
-                .padding(.horizontal, 16).frame(height: 40)
+                .padding(.horizontal, 18).frame(height: 40)
             }
-            .settingsCard()
-            .padding(.horizontal, -18)
+            .bleedingCard()
         }
     }
 
@@ -818,7 +888,7 @@ private struct BlockedSiteRow: View {
             Button(action: remove) { NucleoIcon("trash", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28) }
                 .buttonStyle(Hovering(radius: 7)).tip("Unblock it").opacity(hovered ? 1 : 0)
         }
-        .padding(.leading, 16).padding(.trailing, 8).frame(height: 40)
+        .padding(.leading, 18).padding(.trailing, 8).frame(height: 40)
         .contentShape(Rectangle()).onHover { hovered = $0 }
     }
 }
@@ -897,43 +967,83 @@ private struct IconButton: View {
 
 /// The folders Zero's own agents start in. Each runs in a terminal of its own (Zero's, or Rex's when Rex is on),
 /// so it keeps running whether or not Zero is open.
-private struct ProjectsPage: View {
+/// Projects and drop folders: where agents start, and where asks arrive as files. Each folder a row with a name of
+/// the user's choosing (its own until then); what's done to one, in its menu.
+private struct FoldersPage: View {
+    @Bindable var settings: Settings
     let inbox: InboxController
     @State private var folders = Projects.folders
+    @State private var renaming: Folder?
+    @State private var addingDrop = false
+    /// Bumped when a name changes: the rows read names from UserDefaults.
+    @State private var named = 0
+
+    private struct Folder: Identifiable { let path: String; var id: String { path } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Where new tasks can start.")
-                .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            if !folders.isEmpty {
-                Rows {
-                    ForEach(folders, id: \.self) { folder in
+        Sections {
+            SettingsSection(title: "Projects", accessory: AnyView(GhostButton(title: "Add folder", icon: "plus", action: addFolders))) {
+                card(empty: folders.isEmpty) {
+                    ForEach(Array(folders.enumerated()), id: \.element) { index, folder in
+                        if index > 0 { Divider().padding(.leading, 18) }
                         HStack(spacing: 10) {
                             NucleoIcon("folder", size: 15).foregroundStyle(.secondary).frame(width: 18)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text((folder as NSString).lastPathComponent).font(.system(size: 13, weight: .medium))
-                                Text(folder.replacingOccurrences(of: NSHomeDirectory(), with: "~")).font(.system(size: 11))
-                                    .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                            }
+                            Text(Projects.name(of: folder)).font(.system(size: 13, weight: .medium)).lineLimit(1)
                             Spacer()
-                            RowButton(title: "Remove") { save(folders.filter { $0 != folder }) }
                         }
-                        .padding(.vertical, 10)
+                        .padding(.horizontal, 18).frame(height: 44)
+                        .tip((folder as NSString).abbreviatingWithTildeInPath)
+                        .rowMenu("folder-\(folder)") {
+                            ComposerRows.menu([
+                                [("rename", "Rename…", "pen", false, { renaming = Folder(path: folder) }),
+                                 ("finder", "Show in Finder", "folder", false, { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: folder)]) })],
+                                [("remove", "Remove", "trash", false, { save(folders.filter { $0 != folder }) })],
+                            ])
+                        }
                     }
                 }
+                .id(named)
             }
-            HStack {
-                RowButton(title: "Add folder…") {
-                    let panel = NSOpenPanel()
-                    panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
-                    panel.allowsMultipleSelection = true
-                    if panel.runModal() == .OK {
-                        save(folders + panel.urls.map(\.path).filter { !folders.contains($0) })
+            SettingsSection(title: "Drop folders", accessory: AnyView(GhostButton(title: "Add drop folder", icon: "plus") { addingDrop = true })) {
+                card(empty: settings.dropPatterns.isEmpty) {
+                    ForEach(Array(settings.dropPatterns.enumerated()), id: \.element) { index, pattern in
+                        if index > 0 { Divider().padding(.leading, 18) }
+                        HStack {
+                            Text(pattern).font(.system(size: 12, design: .monospaced)).lineLimit(1).truncationMode(.middle)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 18).frame(height: 44)
+                        .rowMenu("drop-\(pattern)") {
+                            ComposerRows.menu([[("remove", "Remove", "trash", false, { settings.dropPatterns.removeAll { $0 == pattern } })]])
+                        }
                     }
                 }
-                Spacer()
             }
         }
+        .zeroDialog(item: $renaming) { folder in
+            NameSheet(title: "Rename \(Projects.name(of: folder.path))", name: Projects.name(of: folder.path), action: "Rename") { name in
+                Projects.setName(name, for: folder.path)
+                named += 1
+                inbox.loadSpawnChoices(force: true)
+            }
+        }
+        .zeroDialog(isPresented: $addingDrop) { DropFolderForm(settings: settings) }
+    }
+
+    private func card<Content: View>(empty: Bool, @ViewBuilder rows: () -> Content) -> some View {
+        VStack(spacing: 0) {
+            if empty { Text("None yet").font(.system(size: 13)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).frame(height: 44) }
+            rows()
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .bleedingCard()
+    }
+
+    private func addFolders() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = true
+        if panel.runModal() == .OK { save(folders + panel.urls.map(\.path).filter { !folders.contains($0) }) }
     }
 
     private func save(_ list: [String]) {
@@ -943,78 +1053,128 @@ private struct ProjectsPage: View {
     }
 }
 
-private struct DropFoldersPage: View {
+/// A drop folder added: a pattern of synced folders (~/remotes/*/.zero), typed or chosen.
+private struct DropFolderForm: View {
     @Bindable var settings: Settings
-    @State private var newPattern = ""
+    @Environment(\.closeDialog) private var dismiss
+    @State private var pattern = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Agents on another machine reach you through files in these synced folders.")
-                .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Rows {
-                ForEach(settings.dropPatterns, id: \.self) { pattern in
-                    HStack {
-                        Text(pattern).font(.system(size: 12, design: .monospaced)).lineLimit(1).truncationMode(.middle)
-                        Spacer()
-                        RowButton(title: "Remove") { settings.dropPatterns.removeAll { $0 == pattern } }
-                    }
-                    .padding(.vertical, 10)
-                }
+            VStack(alignment: .leading, spacing: 4) {
+                DialogTitle(text: "Add a drop folder")
+                Text("Agents on another machine reach you through files in synced folders that match it.")
+                    .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 8) {
-                TextField("Example: ~/remotes/*/.zero", text: $newPattern).textFieldStyle(.roundedBorder).onSubmit(add)
-                RowButton(title: "Add", enabled: !newPattern.trimmingCharacters(in: .whitespaces).isEmpty, action: add)
-                RowButton(title: "Choose…") {
+                TextField("", text: $pattern, prompt: Text("~/remotes/*/.zero")).textFieldStyle(.dialog).font(.system(size: 13, design: .monospaced)).onSubmit(add)
+                DialogButton(title: "Choose…") {
                     let panel = NSOpenPanel()
                     panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
-                    if panel.runModal() == .OK, let url = panel.url {
-                        settings.dropPatterns.append(url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-                    }
+                    if panel.runModal() == .OK, let url = panel.url { pattern = url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~") }
                 }
             }
+            HStack {
+                Spacer()
+                DialogButton(title: "Cancel") { dismiss() }
+                DialogButton(title: "Add", kind: .primary, enabled: !pattern.trimmingCharacters(in: .whitespaces).isEmpty, action: add)
+            }
         }
+        .frame(width: 440)
     }
 
     private func add() {
-        let pattern = newPattern.trimmingCharacters(in: .whitespaces)
+        let pattern = pattern.trimmingCharacters(in: .whitespaces)
         guard !pattern.isEmpty else { return }
-        settings.dropPatterns.append(pattern)
-        newPattern = ""
-    }
-}
-
-/// Projects and drop folders: where agents start, and where asks arrive as files.
-private struct FoldersPage: View {
-    @Bindable var settings: Settings
-    let inbox: InboxController
-    var body: some View {
-        Sections {
-            SettingsSection(title: "Projects") { ProjectsPage(inbox: inbox) }
-            SettingsSection(title: "Drop folders") { DropFoldersPage(settings: settings) }
-        }
+        if !settings.dropPatterns.contains(pattern) { settings.dropPatterns.append(pattern) }
+        dismiss()
     }
 }
 
 /// Where references in messages open: issues in Linear's app, channels and threads in Slack.
 private struct LinksPage: View {
+    @AppStorage(GitHubLinks.key) private var github = true
+    @AppStorage(LinearLinks.enabledKey) private var linear = true
     @AppStorage(LinearLinks.key) private var linearInApp = true
-    @AppStorage(GitHubLinks.key) private var githubOwner = ""
+    let workspace: Workspace?
+    @State private var connecting = false
+
     var body: some View {
         Sections {
-            SettingsSection(title: "Where links open") {
+            SettingsSection(title: "GitHub", icon: AnyView(Integration.github.icon(size: 14).foregroundStyle(.secondary))) {
                 Rows {
-                    SettingRow(title: "GitHub pull requests", detail: "Where repo#123 opens: this owner's, or the agent's folder's if empty.") {
-                        TextField("", text: $githubOwner, prompt: Text("Owner"))
-                            .textFieldStyle(.roundedBorder).font(.system(size: 12).monospaced()).frame(width: 140)
-                    }
-                    SettingRow(title: "Linear issues in the app", detail: LinearLinks.installed ? "Rather than the browser, here and in messages." : "Linear's app isn't installed; issues open in the browser.") {
-                        if LinearLinks.installed { Switch(isOn: $linearInApp) } else { Text("Not installed").font(.system(size: 12)).foregroundStyle(.secondary) }
-                    }
-                    SettingRow(title: "Slack", detail: "Channels and message links open in Slack once it's connected.") {
-                        Text(Slack.shared.team.map { "Connected to \($0.name)" } ?? "Not connected").font(.system(size: 12)).foregroundStyle(.secondary)
+                    SettingRow(title: "Link pull requests and commits", detail: "repo#123, #123 and commit hashes in messages open on GitHub.") { Switch(isOn: $github) }
+                }
+            }
+            SettingsSection(title: "Linear", icon: AnyView(Integration.linear.icon(size: 14).foregroundStyle(.secondary))) {
+                Rows {
+                    SettingRow(title: "Link issues", detail: "ABC-123 in messages opens the issue.") { Switch(isOn: $linear) }
+                    SettingRow(title: "Open issues in the Linear app", detail: LinearLinks.installed ? "Rather than the browser." : "Linear's app isn't installed.") {
+                        Switch(isOn: Binding(get: { linear && LinearLinks.installed && linearInApp }, set: { linearInApp = $0 })).disabled(!linear || !LinearLinks.installed)
                     }
                 }
             }
+            SettingsSection(title: "Slack", icon: AnyView(Integration.slack.icon(size: 14).foregroundStyle(.secondary)),
+                            accessory: workspace == nil ? nil : AnyView(GhostButton(title: "Connect Slack", icon: "plus") { connecting = true })) {
+                Rows {
+                    if Slack.shared.teams.isEmpty {
+                        SettingRow(title: "No workspace connected", detail: "Once one is, its #channels and message links open in Slack.") { EmptyView() }
+                    }
+                    ForEach(Slack.shared.teams, id: \.team.id) { connected in
+                        SettingRow(title: connected.team.name, detail: "\(connected.team.domain).slack.com: its #channels and message links open in Slack.") {
+                            if let workspace { DialogButton(title: "Disconnect") { Task { await workspace.disconnectSlack(team: connected.team.id) } } }
+                        }
+                    }
+                }
+            }
+        }
+        .zeroDialog(isPresented: $connecting) { if let workspace { SlackConnect(workspace: workspace) } }
+    }
+}
+
+/// Connecting a Slack workspace: Zero's Slack app made in it from the manifest, then the user token Slack shows.
+private struct SlackConnect: View {
+    let workspace: Workspace
+    @Environment(\.closeDialog) private var dismiss
+    @State private var token = ""
+    @State private var waiting = false
+    @State private var problem: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                DialogTitle(text: "Connect Slack")
+                Text("Zero reads channels, messages and names; it posts nothing. Each workspace gets Zero's own Slack app.")
+                    .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            DialogPart(title: "1. Make Zero's app in the workspace") {
+                HStack {
+                    Text("Slack opens with it filled in: Create, then Install to Workspace.").font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    DialogButton(title: "Open Slack") { NSWorkspace.shared.open(Slack.createAppURL) }
+                }
+            }
+            DialogPart(title: "2. Paste its User OAuth Token") {
+                SecureField("", text: $token, prompt: Text("xoxp-…")).textFieldStyle(.dialog).onSubmit(connect)
+            }
+            if let problem { Text(problem).font(.system(size: 12)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
+            HStack {
+                Spacer()
+                DialogButton(title: "Cancel") { dismiss() }
+                DialogButton(title: waiting ? "Connecting…" : "Connect", kind: .primary, enabled: !waiting && !token.trimmingCharacters(in: .whitespaces).isEmpty, action: connect)
+            }
+        }
+        .frame(width: 440)
+    }
+
+    private func connect() {
+        guard !token.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        waiting = true
+        problem = nil
+        Task {
+            problem = await workspace.connectSlack(token: token)
+            waiting = false
+            if problem == nil { dismiss() }
         }
     }
 }

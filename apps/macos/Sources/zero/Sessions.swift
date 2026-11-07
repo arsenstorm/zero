@@ -107,7 +107,9 @@ func describe(_ session: [String: Any]) -> String {
 
 @MainActor func tasksCommand() async {
     for task in await zerod({ try await $0.list() }) {
-        let columns = [task.id, task.status.rawValue, task.parent.map { "under \($0)" } ?? "lead", task.ticket ?? "-", task.thread ?? "-", Workspace.label(of: task)]
+        // Its folder last: what another task needs to tell whether this one works on what it touches.
+        let columns = [task.id, task.status.rawValue, task.parent.map { "under \($0)" } ?? "lead", task.ticket ?? "-", task.thread ?? "-", Workspace.label(of: task),
+                       (task.cwd as NSString).abbreviatingWithTildeInPath]
         print(columns.joined(separator: "  "))
     }
 }

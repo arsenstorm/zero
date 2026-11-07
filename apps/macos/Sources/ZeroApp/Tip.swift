@@ -39,6 +39,9 @@ final class TipView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         guard !text.isEmpty else { return }
+        // Under Zero's dialog, a tip behind it stays hidden: a tracking area sees the pointer through what's over it.
+        if let height = window?.contentView?.bounds.height,
+           !Dialogs.shared.allowsTip(at: CGPoint(x: event.locationInWindow.x, y: height - event.locationInWindow.y)) { return }
         pending?.cancel()
         let wait = TipPanel.shared.recently ? 0 : 600
         pending = Task { @MainActor [weak self] in

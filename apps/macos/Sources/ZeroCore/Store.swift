@@ -97,9 +97,15 @@ public final class Store {
 
     public func identity(of agent: String) -> AgentIdentity? { asks.last { $0.agent.name == agent }?.agent }
 
-    /// The name to show for an agent: the user's own name for it, else the runtime's label, else the key.
+    /// Zero's own tasks as the workspace knows them now, by their agent name ("zerod-<id>"): the task's name, and what
+    /// it runs on ("Opus 5.5"). The inbox's own record of them is only the label they asked under.
+    @ObservationIgnored public var zeroTask: ((String) -> (name: String, runs: String)?)?
+
+    /// The name to show for an agent: the user's own name for it, else the task's name (Zero's own), else the
+    /// runtime's label, else the key.
     public func displayName(of agent: String) -> String {
         if let name = names[agent] { return name }
+        if let task = zeroTask?(agent) { return task.name }
         let identity = identity(of: agent)
         if let label = identity?.label { return label }
         // A process number means nothing to the user; until the session's title is known, say where it works.
@@ -270,7 +276,7 @@ public struct ZerodSpawner: AgentAdapter {
     public func spawnTargets() async throws -> [SpawnChoice] {
         let home = NSHomeDirectory()
         return Projects.folders.map { path in
-            SpawnChoice(id: path, name: (path as NSString).lastPathComponent, detail: path.replacingOccurrences(of: home, with: "~"), icon: "folder", provider: name)
+            SpawnChoice(id: path, name: Projects.name(of: path), detail: path.replacingOccurrences(of: home, with: "~"), icon: "folder", provider: name)
         }
     }
 

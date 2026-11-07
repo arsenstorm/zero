@@ -78,7 +78,7 @@ struct ScratchpadsPage: View {
                 try? await Task.sleep(for: .seconds(30))
             }
         }
-        .sheet(item: $naming) { naming in
+        .zeroDialog(item: $naming) { naming in
             switch naming {
             case .folder(let parent):
                 NameSheet(title: parent.isEmpty ? "New folder" : "New folder in \(parent)", name: "", action: "Create") { name in
@@ -230,25 +230,25 @@ struct ScratchpadsPage: View {
     private func name(of folder: String) -> String { folder.split(separator: "/").last.map(String.init) ?? folder }
 }
 
-/// A name asked for in a sheet: a new folder's, or a pad's new title.
+/// A name asked for in Zero's dialog: a new folder's, a pad's new title, a task's.
 struct NameSheet: View {
     let title: String
     @State var name: String
     let action: String
     let done: (String) -> Void
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.closeDialog) private var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(title).font(.system(size: 15, weight: .semibold))
-            TextField("Name", text: $name).textFieldStyle(.roundedBorder).onSubmit(submit)
+            DialogTitle(text: title)
+            TextField("Name", text: $name).textFieldStyle(.dialog).onSubmit(submit)
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button(action, action: submit).keyboardShortcut(.defaultAction).disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                DialogButton(title: "Cancel") { dismiss() }
+                DialogButton(title: action, kind: .primary, enabled: !name.trimmingCharacters(in: .whitespaces).isEmpty, action: submit)
             }
         }
-        .padding(18).frame(width: 340)
+        .frame(width: 340)
     }
 
     private func submit() {

@@ -56,7 +56,11 @@ struct ItemView: View {
             } else {
                 // The icon on the first line, centred on its letters, however many lines the notice runs to.
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    NucleoIcon("circle-info", size: 14).alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4.5 }
+                    Group {
+                        // Running: something under way the agent is silent through, as compacting the conversation.
+                        if item.status == .running { StatusIcon(status: item.status) } else { NucleoIcon("circle-info", size: 14) }
+                    }
+                    .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4.5 }
                     Text(NoticeText.attributed(text))
                 }
                     .font(.callout).foregroundStyle(.secondary).tint(.primary)

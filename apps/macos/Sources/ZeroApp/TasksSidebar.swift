@@ -113,19 +113,22 @@ struct TasksSidebar: View {
             ScrollView { taskList(all: all, workersOf: workersOf, earlier: earlier) }
             .thinScrollbar(outset: 10, remember: "sidebar.tasks") // in the sidebar's padding: at its edge, clear of the rows
             .scrollIndicators(.never)
-            .sheet(isPresented: $namingWorkspace) {
+            .zeroDialog(isPresented: $namingWorkspace) {
                 NameSheet(title: "New workspace", name: "", action: "Create") { name in
                     Task { if let error = await workspace.saveWorkspace(ZerodLink.Workspace(name: name)) { NSSound.beep(); Log.write("workspace: \(error)") } }
                 }
             }
-            .sheet(item: $renaming) { task in
+            .zeroDialog(item: $renaming) { task in
                 NameSheet(title: "Rename", name: task.name, action: "Rename") { name in Task { await workspace.rename(task.id, to: name, ticket: task.ticket) } }
+            }
+            .zeroDialog(item: $pairing) { task in
+                PairSheet(task: task, others: workspace.board.filter { $0.session != task.id }) { other in Task { await workspace.introduce(task.id, to: other) } }
             }
             .background { taskShortcuts }
             // Soft edges, as the conversation has: more above, more below.
             .softEdges(top: 20, bottom: 28)
-            // The list has the sidebar's whole height: what's said about the daemon and usage lies over its foot, on a
-            // fade, and the last task scrolls clear of it.
+            // The list has the sidebar's whole height: what's said about the daemon lies over its foot, on a fade, and
+            // the last task scrolls clear of it.
             .safeAreaInset(edge: .bottom, spacing: 0) { footer }
         }
     }
@@ -168,7 +171,7 @@ struct TasksSidebar: View {
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { sortAnchor = $0 }
             // A row's state icon is 14 pt, 10 pt in from the edge: its centre is 17 pt in, as this 24 pt button's.
             .padding(.trailing, 5).tip("Sort, pause or unarchive tasks")
-            .sheet(isPresented: $showingArchive) { ArchiveSheet(workspace: workspace) }
+            .zeroDialog(isPresented: $showingArchive) { ArchiveSheet(workspace: workspace) }
         }
         // A 16 pt heading line with 18 above and 6 below, as SidebarHeading has, now 24 pt for the button.
         .padding(.top, 14).padding(.bottom, 2)
@@ -224,8 +227,12 @@ struct TasksSidebar: View {
                 let issues = row.issues ?? []
                 let loose = workers.filter { worker in !issues.contains { $0.ticket == worker.ticket } }
                 TimelineView(.everyMinute) { now in
-                    ForEach(Array(issues.enumerated()), id: \.element.id) { index, issue in
-                        issueRow(issue, of: row, workers: workers, branch: index == issues.count - 1 && loose.isEmpty ? .last : .middle, now: now.date)
+                    // Stacked tight, as the rows around them: several views in a TimelineView get the default 8 pt
+                    // between them, gaps in the tree's line.
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(issues.enumerated()), id: \.element.id) { index, issue in
+                            issueRow(issue, of: row, workers: workers, branch: index == issues.count - 1 && loose.isEmpty ? .last : .middle, now: now.date)
+                        }
                     }
                 }
                 ForEach(Array(loose.enumerated()), id: \.element.id) { index, worker in
@@ -252,11 +259,16 @@ struct TasksSidebar: View {
     /// Opens the issue's own worker (the one started for it), else the lead.
     private func issueRow(_ issue: BoardRow.Issue, of row: BoardRow, workers: [Conversation], branch: TaskRow.Branch, now: Date) -> some View {
         let own = workers.first { $0.ticket == issue.ticket }
+        // Hovered, the status card of the agent on it: its own worker, else the lead.
+        let peeked = own?.id ?? row.session
+        let key = "issue-" + issue.id
         return TaskRow(title: issue.text.isEmpty ? issue.ticket : "\(issue.ticket) · \(issue.text)", state: issue.boardState,
                        selected: own.map { navigation.worker == $0.id } ?? false, branch: branch, detail: issue.waiting(at: now), action: {
             place = .task(row.session)
             navigation.worker = own?.id
         })
+        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named("tasks")).minY } action: { tops[key] = $0 }
+        .onHover { inside in TaskPeek.shared.hover(peeked, top: tops[key] ?? 0, inside: inside && drag == nil) }
     }
 
     private func workerRow(_ worker: Conversation, of row: BoardRow, branch: TaskRow.Branch) -> some View {
@@ -289,6 +301,8 @@ struct TasksSidebar: View {
     /// A task's name is the user's to change; the sheet asks for it.
     struct Renaming: Identifiable { let id: String; let name: String; let ticket: String? }
     @State private var renaming: Renaming?
+    /// Asked to work with another task: the one the menu was opened on.
+    @State private var pairing: Renaming?
 
     @ViewBuilder private func menu(_ id: String, name: String, ticket: String?) -> some View {
         Button("Rename…") { renaming = Renaming(id: id, name: name, ticket: ticket) }
@@ -304,33 +318,68 @@ struct TasksSidebar: View {
             }
         }
         pausing(id, in: workspace)
+        Button("Work with another task…") { pairing = Renaming(id: id, name: name, ticket: ticket) }
         Button("Save for later") { Task { await workspace.askToSaveForLater(id) } }
         Button("Archive…") { workspace.archiving = id }
     }
 
+    /// Only while Zero can't reach its daemon: otherwise the list runs to the sidebar's foot, under its fade. Usage is
+    /// in Settings › Accounts.
     @ViewBuilder private var footer: some View {
-        let usage = workspace.usage.filter { !$0.1.windows.isEmpty }
-        if !workspace.connected || !usage.isEmpty {
-            footerLines(usage)
+        if !workspace.connected {
+            NucleoLabel("Connecting to Zero's daemon…", icon: "plug-off", size: 12)
+                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10).padding(.vertical, 10)
                 .padding(.horizontal, 10).padding(.top, 22)
                 .background(LinearGradient(stops: [.init(color: Theme.composer.opacity(0), location: 0), .init(color: Theme.composer, location: 0.5)],
                                            startPoint: .top, endPoint: .bottom))
                 .padding(.horizontal, -10)
         }
     }
+}
 
-    private func footerLines(_ usage: [(Provider, Usage)]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if !workspace.connected {
-                NucleoLabel("Connecting to Zero's daemon…", icon: "plug-off", size: 12)
+/// Two tasks to work together: the other picked from the board's, and both told about each other and how to reach it.
+private struct PairSheet: View {
+    let task: TasksSidebar.Renaming
+    let others: [BoardRow]
+    let pick: (String) -> Void
+    @Environment(\.closeDialog) private var dismiss
+    @State private var chosen: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            DialogTitle(text: "Work with another task")
+            Text("\(task.name) and the task you pick each hear about the other and how to reach it, and settle between them what they can.")
+                .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(others, id: \.session) { row in
+                        Button { chosen = row.session } label: {
+                            HStack {
+                                Text(row.task).font(.system(size: 13)).lineLimit(1)
+                                Spacer()
+                                if chosen == row.session { NucleoIcon("check", size: 12) }
+                            }
+                            .padding(.horizontal, 10).frame(height: 30)
+                            .background(chosen == row.session ? Theme.row : .clear, in: RoundedRectangle(cornerRadius: 8))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
             }
-            // What each provider last said about its limits.
-            ForEach(usage, id: \.0) { provider, usage in
-                Text("\(provider.title)  " + usage.windows.map { "\($0.name) \(Int(($0.used * 100).rounded()))%" }.joined(separator: " · "))
-                    .foregroundStyle(usage.limited ? Color.orange : .secondary)
+            .thinScrollbar()
+            .frame(maxHeight: 260)
+            HStack {
+                Spacer()
+                DialogButton(title: "Cancel") { dismiss() }
+                DialogButton(title: "Work together", kind: .primary, enabled: chosen != nil) {
+                    if let chosen { pick(chosen) }
+                    dismiss()
+                }
             }
         }
-        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-        .padding(.horizontal, 10).padding(.vertical, 10)
+        .frame(width: 380)
     }
 }

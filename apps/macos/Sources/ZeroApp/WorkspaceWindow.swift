@@ -22,7 +22,7 @@ extension AppDelegate {
     @objc func openWorkspace() {
         if workspaceWindow == nil {
             let view = WorkspaceView(workspace: workspace, navigation: navigation, inbox: inbox) { [unowned self] in
-                SettingsView(settings: settings, store: store, inbox: inbox, workspace: workspace, showOnboarding: { [weak self] in self?.openOnboarding() })
+                SettingsView(settings: settings, store: store, inbox: inbox, workspace: workspace, navigation: navigation, showOnboarding: { [weak self] in self?.openOnboarding() })
             }
             let host = NSHostingController(rootView: view)
             host.sizingOptions = []

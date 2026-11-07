@@ -65,7 +65,7 @@ struct LoopsPage: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.card)
         }
         .task(id: workspace.loopsVersion) { await workspace.loadLoops() }
-        .sheet(isPresented: $naming) {
+        .zeroDialog(isPresented: $naming) {
             NameSheet(title: "New loop", name: "", action: "Create") { name in
                 let slug = name.lowercased().replacingOccurrences(of: " ", with: "-")
                 Task {

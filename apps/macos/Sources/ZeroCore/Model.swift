@@ -35,7 +35,7 @@ public struct AgentIdentity: Codable, Hashable, Sendable {
     }
 }
 
-public struct Ask: Codable, Identifiable, Sendable {
+public struct Ask: Codable, Identifiable, Equatable, Sendable {
     public var id: String
     public var kind: AskKind
     public var title: String

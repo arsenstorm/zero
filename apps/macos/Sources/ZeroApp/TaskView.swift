@@ -43,6 +43,16 @@ private struct TaskView: View {
     let inbox: InboxController
     let lead: String
     @Bindable var navigation: Navigation
+
+    /// Other tasks by id, for a message from one: its name, and opening it (a worker on its lead's page).
+    private var taskLink: TaskLink {
+        TaskLink(name: { [workspace] id in workspace.roster[id].map(Workspace.label(of:)) },
+                 open: { [workspace, navigation] id in
+                     let lead = workspace.roster[id]?.parent
+                     navigation.place = .task(lead ?? id)
+                     navigation.worker = lead == nil ? nil : id
+                 })
+    }
     /// The page shown, as against one kept behind it.
     var active = true
 
@@ -75,7 +85,7 @@ private struct TaskView: View {
         if let conversation, conversation.terminal != nil {
             // A terminal runs edge to edge; the pane sits beside it as a column of its own.
             HStack(spacing: 0) {
-                if let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, inbox: inbox, active: active, queued: workspace.queued(conversation.id, board: row?.queued ?? []), held: row?.held ?? false, live: live, open: open).id(conversation.id) }
+                if let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, inbox: inbox, active: active, queued: workspace.queued(conversation.id, board: row?.queued ?? []), held: row?.held ?? false, next: row?.next, live: live, open: open).id(conversation.id).environment(\.taskLink, taskLink) }
                 if navigation.pane {
                     Rectangle().fill(Theme.stroke).frame(width: 1)
                     TaskDetails(workspace: workspace, inbox: inbox, navigation: navigation, row: row, conversation: conversation, docked: true)
@@ -83,7 +93,7 @@ private struct TaskView: View {
             }
         } else {
             ZStack(alignment: .topTrailing) {
-                if let conversation, let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, inbox: inbox, active: active, queued: workspace.queued(conversation.id, board: row?.queued ?? []), held: row?.held ?? false, live: live, open: open).id(conversation.id) }
+                if let conversation, let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, inbox: inbox, active: active, queued: workspace.queued(conversation.id, board: row?.queued ?? []), held: row?.held ?? false, next: row?.next, live: live, open: open).id(conversation.id).environment(\.taskLink, taskLink) }
                 if navigation.pane, let conversation {
                     TaskDetails(workspace: workspace, inbox: inbox, navigation: navigation, row: row, conversation: conversation).padding(TaskDetails.inset)
                 }

@@ -14,7 +14,7 @@ func usage(help: Bool = false) -> Never {
                    runs on the user's Mac after they press Run; a script file's contents are shown to them
       zero note    "where you are now" [--done | --waiting] [--needs "what the user should do, when they can"]
                    (no answer; sets your agent's dot and its row on Zero's board: working, waiting on something
-                   other than the user, or done: nothing left you can do)
+                   other than the user, or done: finished end to end, with good reason to say so)
       zero withdraw <id> [--reason "why"]   (take back an open ask that no longer needs the user)
       zero wait    <id>
       zero status  <id>
@@ -28,7 +28,7 @@ func usage(help: Bool = false) -> Never {
                    when it finishes, fails or gets stuck, this session is told. Outside a session: a new session here.
                    --workspace puts it in another workspace (zero workspaces lists them); otherwise it is in yours.
       zero workspaces   (the user's workspaces: id, name, and the folders that belong to each)
-      zero send    <session> "text"   (a message to a session, resumed first if it is offline; from inside a task, marked
+      zero send    <session or name> "text"   (a message to a session, resumed first if it is offline; from inside a task, marked
                    as that task's and given between the other's turns, as a worker's report is)
       zero wait    <session>... [--any] [--timeout MINUTES]   (until they stop working: finished, failed, stuck, or waiting on the user)
       zero workers   (the sessions this one started, or adopted)
@@ -37,7 +37,9 @@ func usage(help: Bool = false) -> Never {
       zero detach  <task | session id>   (a worker let go of its lead: a task of its own; its lead hears no more of it)
       zero migrate <session id> [--label L] [--workspace ID]   (a Claude Code, Codex or OpenCode session from outside Zero
                    becomes a task where it ran, with its history; not opened: a message resumes it on its own thread)
-      zero tasks   (every task Zero has: id, state, lead, ticket, Claude Code session and name)
+      zero tasks   (every task Zero has: id, state, lead, ticket, Claude Code session, name and folder)
+      zero board   [--watch]   (the board as JSON: each task's row, its state, name, issue rows, open asks and workers, as the
+                   sidebar shows them; --watch prints it again, a line of JSON, each time it changes)
       zero result  <session>   (its last answer)
       zero loops   (the loops Zero keeps: named instructions, used as @name in a message or a brief, or with spawn --loop)
       zero loop    <name>   (a loop's words; an @name inside it is a child loop: start workers on it with spawn --loop)
@@ -53,8 +55,8 @@ func usage(help: Bool = false) -> Never {
       zero unpause [session...]   (takes them off hold: those with words waiting resume for them)
       zero close   <session>...   (a worker you've read: it leaves the board; its record is kept in zerod's archive)
       zero table   "Title" --column NAME... --row "cell | cell | …"...   [--session ID]
-                   (a table for the user, drawn by Zero in your conversation: a cell that is a state (working, blocked,
-                   done, completed, waiting) shows as its pill, and in a column named for a risk, a cell opening with low, medium
+                   (a table for the user, drawn by Zero in your conversation: a cell that is a state (working, waiting,
+                   done) shows as its pill, and in a column named for a risk, a cell opening with low, medium
                    or high shows that as a pill, the rest on hover; tickets and PRs as links; or JSON on stdin: {"title","columns","rows"})
       zero issue   TICKET you|working|waiting|parked|done ["text"] [--session ID]   (a row for one of the issues you lead,
                    which the user reads coming back: you, with what you need from them; waiting, on whom; parked, why.
@@ -120,7 +122,7 @@ while i < args.count {
     if arg == "--" { positional.append(contentsOf: args[(i + 1)...]); break }
     if arg.hasPrefix("--") {
         let key = String(arg.dropFirst(2))
-        if ["async", "blocked", "done", "merged", "completed", "waiting", "any", "mine", "all", "asked"].contains(key) {
+        if ["async", "blocked", "done", "merged", "completed", "waiting", "any", "mine", "all", "asked", "watch"].contains(key) {
             flags[key, default: []].append("1")
         } else {
             i += 1
@@ -174,6 +176,7 @@ case "adopt": await adoptCommand()
 case "detach": await detachCommand()
 case "migrate": await migrateCommand()
 case "tasks": await tasksCommand()
+case "board": await boardCommand()
 case "workspaces": await workspacesCommand()
 case "loops": await loopsCommand()
 case "loop": await loopCommand()

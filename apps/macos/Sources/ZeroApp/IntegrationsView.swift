@@ -63,7 +63,7 @@ enum Integration: String, CaseIterable, Identifiable {
         switch self {
         case .github: state?.github
         case .linear: state?.linear
-        case .slack: state?.slack?.team.name
+        case .slack: state?.slack.flatMap { $0.isEmpty ? nil : $0.map(\.team.name).joined(separator: ", ") }
         }
     }
 
@@ -154,7 +154,9 @@ struct IntegrationsPane: View {
                 OnboardingRow(icon: "", picture: nil, title: shown == .github ? "Connected as \(account)" : "Connected to \(account)",
                               detail: connectedDetail) {
                     if shown == .linear { Button("Disconnect") { Task { await workspace.disconnectLinear() } } }
-                    if shown == .slack { Button("Disconnect") { Task { await workspace.disconnectSlack() } } }
+                    if shown == .slack, let team = workspace.integrations?.slack?.first?.team, workspace.integrations?.slack?.count == 1 {
+                        Button("Disconnect") { Task { await workspace.disconnectSlack(team: team.id) } }
+                    }
                 }
                 .overlay(alignment: .leading) { shown.icon(size: 17).foregroundStyle(.secondary).frame(width: 22) }
                 if shown != .slack {
@@ -1166,8 +1168,11 @@ struct BalancedText: View {
 /// Linear links open in Linear's app when it's installed, unless you'd rather the browser.
 enum LinearLinks {
     static let key = "linearOpensInApp"
+    /// Issues (ABC-123) in messages as links; on unless turned off. Opening them in the app needs this on.
+    static let enabledKey = "linearLinks"
+    static var enabled: Bool { UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true }
     static let installed = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "linear://")!) != nil
-    static var inApp: Bool { installed && UserDefaults.standard.object(forKey: key) as? Bool ?? true }
+    static var inApp: Bool { enabled && installed && UserDefaults.standard.object(forKey: key) as? Bool ?? true }
 
     /// The link to open: Linear's web link as the app's (linear://acme/issue/ENG-1), when the app opens it.
     static func url(_ link: String) -> URL? {

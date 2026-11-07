@@ -39,3 +39,22 @@ import ZeroCore
     let value = positional.dropFirst().joined(separator: " ")
     await zerod { try await $0.attribute(session: session, name: name, value: value.isEmpty ? nil : value) }
 }
+
+/// The board as zerod has it, as JSON: each task's row (its state, name, issue rows, open asks, workers). With
+/// --watch, the board again as a line of JSON each time it changes, until stopped: for a script that shows it elsewhere.
+@MainActor func boardCommand() async {
+    guard flag("watch") != nil else {
+        let rows = await zerod { try await $0.call("board") }
+        print(String(decoding: (try? JSONSerialization.data(withJSONObject: rows, options: [.withoutEscapingSlashes])) ?? Data("[]".utf8), as: UTF8.self))
+        return
+    }
+    guard let socket = try? UnixSocket.connect(path: ZerodLink.socket) else { fail("zero: zerod isn't running") }
+    // Lazy: the board's changes alone, not every session's.
+    try? socket.write(line: #"{"id":1,"op":"subscribe","lazy":true}"#)
+    while let line = socket.readLine() {
+        guard let message = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any], message["event"] as? String == "board",
+              let rows = message["rows"], let data = try? JSONSerialization.data(withJSONObject: rows, options: [.withoutEscapingSlashes]) else { continue }
+        print(String(decoding: data, as: UTF8.self))
+        fflush(stdout)
+    }
+}

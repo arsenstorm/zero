@@ -86,6 +86,7 @@ struct ComposeField: NSViewRepresentable {
         scroll.hasVerticalScroller = false
         scroll.borderType = .noBorder
         let view = TokenTextView()
+        view.keepTokensWhole()
         view.coordinator = context.coordinator
         view.delegate = context.coordinator
         view.drawsBackground = false
@@ -316,6 +317,14 @@ final class TokenTextView: NSTextView {
     var highlightFiles = false
     var tokenRanges: [NSRange] = []
 
+    /// A token moves to the next line whole rather than breaking after its "/" (a place text may wrap): a pill split
+    /// over two lines read as two.
+    private var breaks: TokenBreaks?
+    func keepTokensWhole() {
+        breaks = TokenBreaks { [weak self] index in self?.tokenRanges.contains { $0.location < index && index < NSMaxRange($0) } ?? false }
+        layoutManager?.delegate = breaks
+    }
+
     static let inset = NSSize(width: 3, height: 1)
     static let tokenFont = NSFont.systemFont(ofSize: 14.5, weight: .semibold)
     private static func dynamic(dark: NSColor, light: NSColor) -> NSColor {
@@ -344,9 +353,17 @@ final class TokenTextView: NSTextView {
         Self.tokenFill.setFill()
         for range in tokenRanges {
             let glyphs = manager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-            manager.enumerateEnclosingRects(forGlyphRange: glyphs, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0), in: container) { box, _ in
-                let pill = box.offsetBy(dx: self.textContainerOrigin.x, dy: self.textContainerOrigin.y).insetBy(dx: -2, dy: -0.5)
+            // A pill per line it's on, hugging its own letters there: a line's enclosing rect runs on to the line's end.
+            var glyph = glyphs.location
+            while glyph < NSMaxRange(glyphs) {
+                var line = NSRange()
+                manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: &line)
+                let segment = NSIntersectionRange(glyphs, line)
+                guard segment.length > 0 else { break }
+                let box = manager.boundingRect(forGlyphRange: segment, in: container)
+                let pill = box.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y).insetBy(dx: -2, dy: -0.5)
                 NSBezierPath(roundedRect: pill, xRadius: 4, yRadius: 4).fill()
+                glyph = NSMaxRange(segment)
             }
         }
     }
@@ -405,4 +422,12 @@ final class TokenTextView: NSTextView {
         (placeholder as NSString).draw(at: NSPoint(x: textContainerOrigin.x, y: textContainerOrigin.y),
                                        withAttributes: [.font: ComposeField.font, .foregroundColor: NSColor.placeholderTextColor])
     }
+}
+
+/// Keeps a token ("/skill", "@loop") on one line: no line break inside one, so it moves to the next line whole.
+final class TokenBreaks: NSObject, NSLayoutManagerDelegate {
+    private let inside: (Int) -> Bool
+    init(inside: @escaping (Int) -> Bool) { self.inside = inside }
+
+    func layoutManager(_ layoutManager: NSLayoutManager, shouldBreakLineByWordBeforeCharacterAt charIndex: Int) -> Bool { !inside(charIndex) }
 }

@@ -11,6 +11,8 @@ struct ConversationView: View {
     /// Your messages waiting for after the agent's turn, and whether they're held since you stopped it.
     var queued: [Queued] = []
     var held = false
+    /// A change of model or permissions picked while a turn ran, applied as it ends (zerod's).
+    var next: BoardRow.Next?
     /// The task's whole conversation, observed on its own: its words redraw this view, not the window.
     let live: LiveConversation
     /// Opens another task: a branch made from this one.
@@ -29,6 +31,10 @@ struct ConversationView: View {
     @State private var userScrolling = false
     /// The message of yours being gone back to.
     @State private var rewinding: ConversationItem?
+    /// The conversation's blocks, rows and asks, kept between redraws.
+    @State private var shape = TimelineShape()
+    /// Folds of quiet turns (TimelineRow) the user opened.
+    @State private var openQuiet: Set<String> = []
     /// Esc twice in quick succession: pick a message to rewind to, then how (RewindCard).
     @State private var pickingRewind = false
     @State private var lastEscape: Date?
@@ -88,21 +94,30 @@ struct ConversationView: View {
 
     /// The next older page, with what's read kept where it is: the offset moves by exactly what was added above once
     /// the new rows have measured (the scroll view's own anchoring isn't to be relied on through that).
+    /// A page that adds nothing to see (its turns all folded into the quiet ones already there) leaves the top on
+    /// screen, and no scroll can take it off: the next comes straight on, in the same go, until something shows or
+    /// there's nothing older. A page that shows something is one per scroll, as ever.
     private func loadOlder() async {
         guard olderShown, olderArmed else { return }
         olderArmed = false
         loadingAbove = true
-        let before = tracker.geometry
-        await workspace.loadEarlier(conversation.id)
-        for _ in 0..<20 {
-            try? await Task.sleep(for: .milliseconds(50))
-            if let before, let now = tracker.geometry, now.contentSize.height > before.contentSize.height + 1 {
-                position.scrollTo(y: before.contentOffset.y + (now.contentSize.height - before.contentSize.height))
-                break
+        defer { loadingAbove = false }
+        while live.earlier > 0, !Task.isCancelled {
+            let (before, left) = (tracker.geometry, live.earlier)
+            await workspace.loadEarlier(conversation.id)
+            // Nothing came (zerod didn't answer): no going round.
+            guard live.earlier < left else { return }
+            var grew = false
+            for _ in 0..<20 {
+                try? await Task.sleep(for: .milliseconds(50))
+                if let before, let now = tracker.geometry, now.contentSize.height > before.contentSize.height + 1 {
+                    position.scrollTo(y: before.contentOffset.y + (now.contentSize.height - before.contentSize.height))
+                    grew = true
+                    break
+                }
             }
+            if grew || !olderShown { return }
         }
-        try? await Task.sleep(for: .milliseconds(200))
-        loadingAbove = false
     }
 
     /// One block as a row: compared before it's drawn (a word streamed into the last answer redraws only that one),
@@ -113,28 +128,22 @@ struct ConversationView: View {
 
     /// What waits on you in the chat, by id: a card leaving this is one answered.
     private func waitingIds(_ conversation: Conversation) -> [String] {
-        conversation.questions.map(\.id) + inbox.store.asks.filter { AgentAskCard.open($0, in: conversation) }.map(\.id) + conversation.approvals.map(\.id)
+        conversation.questions.map(\.id) + loose(conversation).map(\.id) + conversation.approvals.map(\.id)
     }
 
-    /// The provider's questions and approvals, and what the agent asked through Zero.
-    @ViewBuilder private func waiting(_ conversation: Conversation) -> some View {
-        ForEach(conversation.questions) { question in
-            QuestionCard(question: question, session: conversation.id, inbox: inbox) { answers in
-                Task { await workspace.answer(conversation.id, question: question.id, answers: answers) }
-            }
-            .id("question-" + question.id)
-            .transition(Self.fade)
-        }
-        // What the agent asked through Zero (zero ask, approve, run): the inbox's own card, here too.
-        ForEach(inbox.store.asks.filter { AgentAskCard.open($0, in: conversation) }) { ask in
-            AgentAskCard(ask: ask, inbox: inbox).id("ask-" + ask.id).transition(Self.fade)
-        }
-        ForEach(conversation.approvals) { approval in
-            ApprovalCard(approval: approval, cwd: conversation.cwd) { choice in
-                Task { await workspace.decide(conversation.id, approval: approval.id, choice: choice.id) }
-            }
-            .id("approval-" + approval.id)
-            .transition(Self.fade)
+    /// The agent's asks still open: answered above the composer, whichever way it asked.
+    private func loose(_ conversation: Conversation) -> [Ask] {
+        inbox.store.asks.filter { $0.isAgents(in: conversation.id) && !$0.state.isFinal }
+    }
+
+    /// A block, then the asks its turn made, a line each: the question and its answer, or that it waits on you. The
+    /// card to answer it is above the composer (waiting), so answering changes nothing in the conversation but a word.
+    /// One view, whatever it holds: a row that put a varying number of children straight into the column's stack is
+    /// what SwiftUI's stack layout crashed on.
+    private func row(_ block: TimelineBlock, turns: [String: String], asks: [String: [Ask]]) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            blockRow(block, turns: turns)
+            ForEach(asks[block.id] ?? []) { ask in AgentAskCard(ask: ask, inbox: inbox, compact: true) }
         }
     }
 
@@ -243,19 +252,24 @@ struct ConversationView: View {
     /// screen, so its end could sit below its last row and the page open blank. The page loaded is a
     /// few dozen rows; older pages come in on demand above.
     private var timelineColumn: some View {
-        // A step waiting on an approval shows once, in the approval.
-        // What's just been sent shows at once, before its agent has it (Sending).
-        let blocks = TimelineBlock.of(Sending.merge(conversation.items, workspace.sending[conversation.id] ?? []).filter { item in !conversation.approvals.contains { $0.item == item.id } },
-                                      working: conversation.status == .working || conversation.status == .waiting)
-        let turns = TimelineBlock.turns(blocks)
+        shape.update(items: conversation.items, sending: workspace.sending[conversation.id] ?? [],
+                     working: conversation.status == .working || conversation.status == .waiting, asks: inbox.store.asks, session: conversation.id)
+        let (blocks, turns, asks) = (shape.blocks, shape.turns, shape.asks)
         let (head, tail) = split(blocks)
         return VStack(alignment: .leading, spacing: 18) {
             olderRows
-            ForEach(head) { block in blockRow(block, turns: turns) }
+            ForEach(shape.rows(head)) { line in
+                switch line {
+                case let .block(block): row(block, turns: turns, asks: asks)
+                case let .quiet(id, blocks, count):
+                    QuietTurns(turns: count, open: Binding(get: { openQuiet.contains(id) }, set: { if $0 { openQuiet.insert(id) } else { openQuiet.remove(id) } })) {
+                        ForEach(blocks) { block in row(block, turns: turns, asks: asks) }
+                    }
+                    .id(id)
+                }
+            }
             if !tail.isEmpty {
-                liftedTail(tail, turns: turns)
-            } else {
-                waiting(conversation)
+                liftedTail(tail, turns: turns, asks: asks)
             }
             // Its provider still getting ready (signing in, say): say so, rather than an empty page.
             // Or woken by a message just sent: its agent is starting, the message waiting for it above.
@@ -283,26 +297,23 @@ struct ConversationView: View {
     @ViewBuilder private var olderRows: some View {
         let more = live.earlier
         if more > 0 {
-            // While it's on screen, page after page (a long turn can leave it there); kept alive just
-            // off screen by the list, it fetches nothing. Anchored at the bottom, the view stays on
-            // what's read as each page goes in above.
-            SkeletonTurns().id("earlier")
+            // On screen, older pages come in (as many as it takes to show something); kept alive just off screen by
+            // the list, it fetches nothing. Anchored at the bottom, the view stays on what's read as each page goes in
+            // above. A slim row, not stand-in turns: the chat opens on itself, and says it's loading only while it is.
+            LoadingEarlier(loading: loadingAbove).id("earlier")
                 .onScrollVisibilityChange(threshold: 0.01) { shown in
                     olderShown = shown
                     if !shown { olderArmed = true }
                 }
-                .task(id: olderShown ? more : -1) { await loadOlder() }
+                .task(id: olderShown) { await loadOlder() }
         }
     }
 
     /// Lifted: from the message just sent down, at least a page tall, so what the agent adds
     /// under it fills room that is already there and the page's size doesn't change.
-    private func liftedTail(_ tail: [TimelineBlock], turns: [String: String]) -> some View {
+    private func liftedTail(_ tail: [TimelineBlock], turns: [String: String], asks: [String: [Ask]]) -> some View {
         VStack(alignment: .leading, spacing: 18) {
-            ForEach(tail) { block in blockRow(block, turns: turns) }
-            // What waits on you, right under the step that asked: in the room kept for the turn,
-            // not after it.
-            waiting(conversation)
+            ForEach(tail) { block in row(block, turns: turns, asks: asks) }
         }
         .frame(minHeight: liftMin, alignment: .top)
     }
@@ -434,12 +445,19 @@ struct ConversationView: View {
         g.contentSize.height + g.contentInsets.bottom - g.contentInsets.top - g.containerSize.height
     }
 
-    /// What waits for after this turn sits above the composer, part of its height for the fade above.
+    /// What waits for after this turn sits above the composer, part of its height for the fade above: what waits on
+    /// you first (questions, approvals, the agent's asks), so answering never moves the conversation.
     private var composerOverlay: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 8) {
+            AskDock(session: conversation.id, cwd: conversation.cwd, questions: conversation.questions, approvals: conversation.approvals,
+                    asks: loose(conversation), inbox: inbox, page: pageHeight,
+                    answer: { [workspace, id = conversation.id] question, answers in Task { await workspace.answer(id, question: question, answers: answers) } },
+                    decide: { [workspace, id = conversation.id] approval, choice in Task { await workspace.decide(id, approval: approval, choice: choice) } })
+                .equatable()
+                .frame(maxWidth: 680)
             if !queued.isEmpty || held {
                 QueueStrip(queued: queued, held: held,
-                           steer: { item in Task { if await workspace.unqueue(conversation.id, item: item.id) { send(item.text, images: item.images ?? [], with: conversation.provider) } } },
+                           steer: { item in Task { await workspace.steer(conversation.id, item: item) } },
                            edit: { item in Task { if await workspace.unqueue(conversation.id, item: item.id) { draft = item.text; images = (item.images ?? []).map { URL(fileURLWithPath: $0) } } } },
                            remove: { item in Task { _ = await workspace.unqueue(conversation.id, item: item.id) } },
                            release: { Task { await workspace.release(conversation.id) } })
@@ -558,34 +576,44 @@ struct ConversationView: View {
         } controls: {
             // The model for the next message: one of this provider's, or another provider's, which takes the task
             // over, conversation and all.
-            let current = provider ?? conversation.provider
-            let chosen = provider == nil ? (model ?? conversation.model) : model
-            let level = effort ?? (provider == nil && model == nil ? conversation.effort : nil)
+            // Mid-turn, what's kept for the next turn shows, marked so; a pick then is kept for it too.
+            let kept = busy && (next?.provider != nil || next?.model != nil || next?.effort != nil)
+            let current = kept ? (next?.provider ?? conversation.provider) : provider ?? conversation.provider
+            let chosen = kept ? (next?.model ?? (next?.provider == nil ? conversation.model : nil)) : provider == nil ? (model ?? conversation.model) : model
+            let level = kept ? (next?.effort ?? (next?.provider == nil && next?.model == nil ? conversation.effort : nil)) : effort ?? (provider == nil && model == nil ? conversation.effort : nil)
             // The model is the subject, its provider the icon: "Opus 5.5 · High". No model picked, the provider's first;
             // a provider with no catalogue (OpenCode) by its name.
             let catalogue = ComposerRows.catalogue(current)
             let name = catalogue.first { $0.id == chosen }?.name ?? chosen ?? catalogue.first?.name ?? current.title
             ComposerChip(id: "task.\(conversation.id).agent", label: [name, level.map { effortLabel($0, short: true) }].compactMap { $0 }.joined(separator: " · "),
-                         symbol: "terminal", icon: current.mark, kind: .runtime, prominent: true, rows: {
+                         symbol: "terminal", icon: current.mark, kind: .runtime, prominent: true, pending: kept, rows: {
                 ComposerRows.taskModels(conversation, chosen: (current, chosen)) { picked, choice in
+                    if busy {
+                        Task { await workspace.switchProvider(conversation.id, to: picked, model: choice.id.isEmpty ? nil : choice.id, effort: choice.levels.contains { $0.id == level } ? level : nil) }
+                        return
+                    }
                     provider = picked == conversation.provider ? nil : picked
                     model = choice.id.isEmpty ? nil : choice.id
                     if let effort, !choice.levels.contains(where: { $0.id == effort }) { self.effort = nil }
                 }
-            }, level: { id in id == "\(current.rawValue)/\(chosen ?? "")" ? level : nil }, setLevel: { _, picked in effort = picked })
-            .disabled(busy)
-            // Between turns only: the agent is started again with them, and carries on its thread.
-            ComposerChip(id: "task.\(conversation.id).permissions", label: conversation.permissions == .auto ? "Auto" : "Unrestricted",
-                         symbol: conversation.permissions == .auto ? "wand-sparkle" : "bolt-lightning:glyph", tint: conversation.permissions == .auto ? nil : .orange) {
+            }, level: { id in id == "\(current.rawValue)/\(chosen ?? "")" ? level : nil }, setLevel: { _, picked in
+                if busy { Task { await workspace.switchProvider(conversation.id, to: current, model: chosen, effort: picked) }; return }
+                effort = picked
+            })
+            .tip(kept ? "From the next turn" : "")
+            // Mid-turn, a pick is kept for the next turn (the agent starts again with it then), marked so.
+            let permissions = busy ? (next?.permissions ?? conversation.permissions) : conversation.permissions
+            ComposerChip(id: "task.\(conversation.id).permissions", label: permissions == .auto ? "Auto" : "Unrestricted",
+                         symbol: permissions == .auto ? "wand-sparkle" : "bolt-lightning:glyph", tint: permissions == .auto ? nil : .orange,
+                         pending: busy && next?.permissions != nil) {
                 ComposerRows.list("Permissions", [
-                    ("auto", "Auto", "\(conversation.provider.title) decides what's safe, and asks you the rest", conversation.permissions == .auto,
+                    ("auto", "Auto", "\(conversation.provider.title) decides what's safe, and asks you the rest", permissions == .auto,
                      { Task { await workspace.setPermissions(conversation.id, .auto) } }),
-                    ("unrestricted", "Unrestricted", "Anything, without asking", conversation.permissions == .unrestricted,
+                    ("unrestricted", "Unrestricted", "Anything, without asking", permissions == .unrestricted,
                      { Task { await workspace.setPermissions(conversation.id, .unrestricted) } }),
                 ])
             }
-            .disabled(busy)
-            .tip(busy ? "Change permissions once this turn ends" : "What the agent may do without asking")
+            .tip(busy && next?.permissions != nil ? "From the next turn" : busy ? "Picked now, it applies from the next turn" : "What the agent may do without asking")
         }
         // A little narrower than the conversation.
         .centredColumn(680)
@@ -636,5 +664,32 @@ struct ConversationView: View {
         case .working, .waiting: conversation.provider == .opencode ? "OpenCode answers one message at a time" : "Steer it while it works"
         default: "Reply"
         }
+    }
+}
+
+/// The conversation's blocks, the message each answers, the asks under them and the folded rows, worked out again only
+/// when what they're made of changes: the column is asked for on every frame of a scroll, and working them out reads
+/// every item. Arrays left as they were compare at once (they share their storage).
+final class TimelineShape {
+    private var made: (items: [ConversationItem], sending: [Sending], working: Bool, asks: [Ask], session: String)?
+    private(set) var blocks: [TimelineBlock] = []
+    private(set) var turns: [String: String] = [:]
+    private(set) var asks: [String: [Ask]] = [:]
+    private var folded: (head: [TimelineBlock], rows: [TimelineRow])?
+
+    func update(items: [ConversationItem], sending: [Sending], working: Bool, asks all: [Ask], session: String) {
+        if let made, made.working == working, made.session == session, made.items == items, made.sending == sending, made.asks == all { return }
+        made = (items, sending, working, all, session)
+        // What's just been sent shows at once, before its agent has it (Sending).
+        blocks = TimelineBlock.of(Sending.merge(items, sending), working: working)
+        turns = TimelineBlock.turns(blocks)
+        asks = TimelineBlock.asks(after: blocks, in: all, session: session)
+    }
+
+    func rows(_ head: [TimelineBlock]) -> [TimelineRow] {
+        if let folded, folded.head == head { return folded.rows }
+        let rows = TimelineRow.of(head)
+        folded = (head, rows)
+        return rows
     }
 }

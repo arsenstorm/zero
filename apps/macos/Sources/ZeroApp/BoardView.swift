@@ -161,16 +161,31 @@ struct ArticlePanel<Strip: View, Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             strip()
-            content()
-                .background(Theme.composer)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+            Group {
+                // Docked above the composer at the height of the tallest card waiting: a shorter one's body fills it,
+                // and only one taller than the dock allows scrolls. Nothing folds.
+                if dockHeight != nil {
+                    ScrollView { content().frame(maxWidth: .infinity, alignment: .leading) }
+                        .scrollBounceBehavior(.basedOnSize)
+                        .thinScrollbar()
+                        .frame(maxHeight: .infinity, alignment: .top)
+                } else {
+                    content()
+                }
+            }
+            .background(Theme.composer)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
         }
         .padding(2)
+        .frame(height: dockHeight)
         .background(Theme.rail, in: RoundedRectangle(cornerRadius: 12))
         // Bled out by its inner padding (the shell's 2 pt and a cell's 16), so its text lines up with the page's, as
-        // the site's panels do with its prose.
-        .padding(.horizontal, -18)
+        // the site's panels do with its prose. Docked above the composer, as wide as the composer instead.
+        .padding(.horizontal, docked ? 0 : -18)
     }
+
+    @Environment(\.askDocked) private var docked
+    @Environment(\.askDockHeight) private var dockHeight
 }
 
 /// A task's Pause, or its Resume when it's paused: it and its workers, on hold and off it.
@@ -203,13 +218,36 @@ struct Marquee: View {
                     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { full = $0 }
             }
             .overlay(alignment: .leading) {
-                if scrolling { Text(text).lineLimit(1).fixedSize().offset(x: offset) }
+                if scrolling { Sliding(text: text, offset: offset) }
             }
             .clipped()
             // Moving from the start (a card's title) glides once it's measured.
             .onChange(of: moving) { glide() }
             .onChange(of: full) { glide() }
             .onChange(of: shown) { glide() }
+    }
+
+    /// The title as it slides: fading out into the end of its room rather than cut off there, and into its start
+    /// once it leaves it, the fade whole within its first few points (worked out each frame of the slide), so a title
+    /// that moves only a little still fades rather than being cut.
+    private struct Sliding: View, Animatable {
+        let text: String
+        var offset: CGFloat
+        var animatableData: CGFloat { get { offset } set { offset = newValue } }
+
+        var body: some View {
+            Color.clear
+                .overlay(alignment: .leading) { Text(text).lineLimit(1).fixedSize().offset(x: offset) }
+                .mask {
+                    HStack(spacing: 0) {
+                        LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing).frame(width: min(Self.fade, max(0, -offset * 4)))
+                        Color.black
+                        LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: Self.fade)
+                    }
+                }
+        }
+
+        static let fade: CGFloat = 14
     }
 
     private func glide() {

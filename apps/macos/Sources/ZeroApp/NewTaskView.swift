@@ -80,9 +80,9 @@ struct NewTaskView: View {
                 NucleoLabel("Add a project in Settings → Projects", icon: "folder", size: 13).foregroundStyle(.secondary)
                     .padding(.horizontal, 6).padding(.vertical, 3)
             } else {
-                ComposerChip(id: "new.project", label: folders.contains(project) ? (project as NSString).lastPathComponent : "Choose project", symbol: "folder") {
+                ComposerChip(id: "new.project", label: folders.contains(project) ? Projects.name(of: project) : "Choose project", symbol: "folder") {
                     ComposerRows.list("Projects", icon: choiceIcon("zero"), folders.map { folder in
-                        (folder, (folder as NSString).lastPathComponent, (folder as NSString).abbreviatingWithTildeInPath, folder == project, { project = folder })
+                        (folder, Projects.name(of: folder), (folder as NSString).abbreviatingWithTildeInPath, folder == project, { project = folder })
                     })
                 }
                 // Started from one workspace into another: the lead is there, and so are the workers it starts.

@@ -11,27 +11,21 @@ struct WorkspacesPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
-            Text("Views of your tasks, each with its own folders; switch in the sidebar's heading.")
-                .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let workspace {
+                SettingsSection(title: "Workspaces", accessory: AnyView(GhostButton(title: "Add workspace", icon: "plus") { adding = true })) {
                 VStack(spacing: 0) {
                     ForEach(Array(workspace.workspaces.enumerated()), id: \.element.id) { index, w in
-                        if index > 0 { Divider().padding(.leading, 16) }
+                        if index > 0 { Divider().padding(.leading, 18) }
                         WorkspaceRow(workspace: w, current: w.id == workspace.current, edit: { editing = w },
                                      delete: w.id == "zero" ? nil : { Task { await workspace.deleteWorkspace(w.id) } })
                     }
-                    Divider()
-                    Button { adding = true } label: {
-                        NucleoLabel("Add a workspace", icon: "plus", size: 13).font(.system(size: 13)).foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).frame(height: 40).contentShape(Rectangle())
-                    }
-                    .buttonStyle(Hovering(radius: 0))
-                    .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: 14, bottomTrailingRadius: 14))
                 }
-                .settingsCard()
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .bleedingCard()
+                }
                 .task(id: workspace.workspacesVersion) { await workspace.loadWorkspaces() }
-                .sheet(item: $editing) { w in WorkspaceForm(workspace: w, model: workspace) { edited in Task { await workspace.saveWorkspace(edited) } } }
-                .sheet(isPresented: $adding) { WorkspaceForm(workspace: ZerodLink.Workspace(name: ""), model: workspace) { made in Task { await workspace.saveWorkspace(made) } } }
+                .zeroDialog(item: $editing) { w in WorkspaceForm(workspace: w, model: workspace) { edited in Task { await workspace.saveWorkspace(edited) } } }
+                .zeroDialog(isPresented: $adding) { WorkspaceForm(workspace: ZerodLink.Workspace(name: ""), model: workspace) { made in Task { await workspace.saveWorkspace(made) } } }
             }
         }
     }
@@ -44,20 +38,12 @@ private struct WorkspaceRow: View {
     let delete: (() -> Void)?
     @State private var hovered = false
 
-    private var detail: String {
-        workspace.id == "zero" ? "Always there: tasks in no other workspace's folders"
-            : workspace.folders.isEmpty ? "No folders of its own: only tasks started into it" : workspace.folders.map { ($0 as NSString).abbreviatingWithTildeInPath }.joined(separator: ", ")
-    }
-
     var body: some View {
         HStack(spacing: 12) {
             WorkspaceGlyph(glyph: workspace.glyph, size: 17).foregroundStyle(.secondary).frame(width: 22)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text(workspace.name).font(.system(size: 13, weight: .semibold))
-                    if current { Text("Shown").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).padding(.horizontal, 7).frame(height: 20).background(Theme.chip, in: Capsule()) }
-                }
-                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            HStack(spacing: 8) {
+                Text(workspace.name).font(.system(size: 13, weight: .medium))
+                if current { Text("Shown").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).padding(.horizontal, 7).frame(height: 20).background(Theme.chip, in: Capsule()) }
             }
             Spacer(minLength: 8)
             HStack(spacing: 2) {
@@ -68,7 +54,7 @@ private struct WorkspaceRow: View {
             }
             .opacity(hovered ? 1 : 0)
         }
-        .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 11)
+        .padding(.leading, 18).padding(.trailing, 10).frame(height: 48)
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture(count: 2, perform: edit)
@@ -86,13 +72,12 @@ struct WorkspaceGlyph: View {
     }
 }
 
-/// Name, glyph, folders and the MCP servers its tasks get; Save, or Cancel.
+/// Name, icon and the MCP servers its tasks get; Save, or Cancel.
 private struct WorkspaceForm: View {
     @State var workspace: ZerodLink.Workspace
     let model: Workspace
     let save: (ZerodLink.Workspace) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var folder = ""
+    @Environment(\.closeDialog) private var dismiss
     /// The servers put in this workspace, as edited here: saved with the workspace.
     @State private var servers: Set<String>?
 
@@ -100,47 +85,29 @@ private struct WorkspaceForm: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(workspace.id.isEmpty ? "New workspace" : "Edit workspace").font(.system(size: 15, weight: .semibold))
+            DialogTitle(text: workspace.id.isEmpty ? "New workspace" : "Edit \(workspace.name)")
             if workspace.id != "zero" {
-                field("Name") { TextField("Work", text: $workspace.name).textFieldStyle(.roundedBorder) }
-            }
-            field("Logo") {
-                VStack(alignment: .leading, spacing: 8) {
-                    // Logos to pick from, Zero's mark first; or an emoji, typed. As many as fit the sheet's width, a few short rows: no scroll box, nothing pushed past the edge.
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 30, maximum: 30), spacing: 4)], alignment: .leading, spacing: 4) {
-                            ForEach([""] + Self.icons, id: \.self) { name in
-                                Button { workspace.glyph = name } label: {
-                                    WorkspaceGlyph(glyph: name, size: 16).foregroundStyle(workspace.glyph == name ? .primary : .secondary)
-                                        .frame(width: 30, height: 30)
-                                        .background(workspace.glyph == name ? Theme.chip : .clear, in: RoundedRectangle(cornerRadius: 7))
-                                        .contentShape(Rectangle())
-                                }
-                                .buttonStyle(Hovering(radius: 7)).tip(name.isEmpty ? "Zero's mark" : name)
-                            }
-                    }
-                    HStack(spacing: 8) {
-                        TextField("Or an emoji", text: $workspace.glyph).textFieldStyle(.roundedBorder)
-                        WorkspaceGlyph(glyph: workspace.glyph, size: 16).foregroundStyle(.secondary).frame(width: 22)
-                    }
+                HStack(spacing: 8) {
+                    WorkspaceGlyph(glyph: workspace.glyph, size: 16).frame(width: 30, height: 30).background(Theme.row, in: RoundedRectangle(cornerRadius: 8))
+                    TextField("Name", text: $workspace.name).textFieldStyle(.dialog)
                 }
             }
-            if workspace.id != "zero" {
-                field("Folders") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Tasks started in these folders (or under them) are this workspace's.").font(.system(size: 11.5)).foregroundStyle(.secondary)
-                        ForEach(Projects.folders.filter { !workspace.folders.contains($0) } + workspace.folders, id: \.self) { path in
-                            Toggle(isOn: Binding(get: { workspace.folders.contains(path) }, set: { on in
-                                if on { workspace.folders.append(path) } else { workspace.folders.removeAll { $0 == path } }
-                            })) { Text((path as NSString).abbreviatingWithTildeInPath).font(.system(size: 12.5)).lineLimit(1).truncationMode(.middle) }
-                            .toggleStyle(.checkbox)
+            field("Icon") {
+                // Nucleo's, as many as fit the dialog's width in a few short rows: no scroll box, nothing past the edge.
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 32, maximum: 32), spacing: 2)], alignment: .leading, spacing: 2) {
+                    ForEach(Self.icons, id: \.self) { name in
+                        let on = workspace.glyph == name
+                        Button { workspace.glyph = name } label: {
+                            NucleoIcon(name, size: 16).foregroundStyle(on ? .primary : .secondary)
+                                .frame(width: 32, height: 32)
+                                .background(on ? Theme.card : .clear, in: RoundedRectangle(cornerRadius: 7))
+                                .shadow(color: .black.opacity(on ? 0.08 : 0), radius: 1, y: 0.5)
+                                .contentShape(Rectangle())
                         }
-                        HStack(spacing: 8) {
-                            TextField("Another folder, such as ~/Documents/work", text: $folder).textFieldStyle(.roundedBorder).font(.system(size: 12))
-                                .onSubmit(addFolder)
-                            Button("Add", action: addFolder).disabled(folder.trimmingCharacters(in: .whitespaces).isEmpty)
-                        }
+                        .buttonStyle(Hovering(radius: 7)).tip(name)
                     }
                 }
+                .padding(4).background(Theme.row, in: RoundedRectangle(cornerRadius: 10))
             }
             if !workspace.id.isEmpty, !model.mcpServers.isEmpty {
                 field("MCP servers") {
@@ -149,12 +116,12 @@ private struct WorkspaceForm: View {
                         ForEach(model.mcpServers) { server in
                             if server.workspaces.isEmpty {
                                 Toggle(isOn: .constant(true)) { Text(server.name + " (every workspace)").font(.system(size: 12.5)) }
-                                    .toggleStyle(.checkbox).disabled(true)
+                                    .toggleStyle(.dialogCheckbox).disabled(true)
                             } else {
                                 Toggle(isOn: Binding(get: { servers?.contains(server.id) ?? false }, set: { on in
                                     if on { servers?.insert(server.id) } else { servers?.remove(server.id) }
                                 })) { Text(server.name).font(.system(size: 12.5)) }
-                                .toggleStyle(.checkbox)
+                                .toggleStyle(.dialogCheckbox)
                             }
                         }
                     }
@@ -162,11 +129,13 @@ private struct WorkspaceForm: View {
             }
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save") { save(workspace); saveServers(); dismiss() }.keyboardShortcut(.defaultAction).disabled(!canSave)
+                DialogButton(title: "Cancel") { dismiss() }
+                DialogButton(title: "Save", kind: .primary, enabled: canSave) { save(workspace); saveServers(); dismiss() }
             }
         }
-        .padding(20).frame(width: 440)
+        .frame(width: 400)
+        // A new one (or one with an emoji or Zero's mark from before) starts on the first of Nucleo's.
+        .onAppear { if workspace.id != "zero" && !Self.icons.contains(workspace.glyph) { workspace.glyph = Self.icons[0] } }
         .task {
             await model.loadMcpServers()
             servers = Set(model.mcpServers.filter { $0.workspaces.contains(workspace.id) }.map(\.id))
@@ -195,17 +164,8 @@ private struct WorkspaceForm: View {
         "gamepad", "graduation-cap", "wallet", "calendar", "megaphone", "folder",
     ]
 
-    private func addFolder() {
-        let path = ((folder.trimmingCharacters(in: .whitespaces)) as NSString).expandingTildeInPath
-        guard !path.isEmpty else { return }
-        if !workspace.folders.contains(path) { workspace.folders.append(path) }
-        folder = ""
-    }
 
-    private func field(_ label: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
-            content()
-        }
+    private func field(_ label: String, @ViewBuilder content: @escaping () -> some View) -> some View {
+        DialogPart(title: label, content: content)
     }
 }

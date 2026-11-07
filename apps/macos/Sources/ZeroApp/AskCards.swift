@@ -31,6 +31,7 @@ struct QuestionCard: View {
             }
             .foregroundStyle(.secondary)
             .padding(.horizontal, 14).padding(.vertical, 7)
+            .modifier(PagedStrip())
         } content: {
             Group {
                 if asks.isEmpty {
@@ -52,6 +53,9 @@ struct QuestionCard: View {
 struct AgentAskCard: View {
     let ask: Ask
     let inbox: InboxController
+    /// In the conversation: the question and its answer (or that it waits on you) on one line of fixed height; the
+    /// full card is above the composer while it waits.
+    var compact = false
     @FocusState private var focus: String?
 
     /// The agent's own asks (not the provider's questions and approvals, which have cards of their own above).
@@ -73,10 +77,33 @@ struct AgentAskCard: View {
             }
             .foregroundStyle(.secondary)
             .padding(.horizontal, 14).padding(.vertical, 7)
+            .modifier(PagedStrip())
         } content: {
-            CardView(ask: ask, controller: inbox, focus: $focus, flat: true, showsByline: false)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 2)
+            if compact {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(ask.kind == .run ? (ask.command ?? ask.title) : ask.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text(answered).font(.system(size: 13)).foregroundStyle(ask.state.isFinal ? AnyShapeStyle(.secondary) : AnyShapeStyle(.orange)).lineLimit(1)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                .tip(ask.title)
+            } else {
+                CardView(ask: ask, controller: inbox, focus: $focus, flat: true, showsByline: false)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 2)
+            }
+        }
+    }
+
+    /// What became of it, in a few words.
+    private var answered: String {
+        switch ask.state {
+        case .waiting, .pending: "Waiting on you"
+        case .running: "Running"
+        case .declined: "Declined"
+        case .expired: "Expired"
+        case .answered where ask.kind == .run: (ask.exitCode ?? 0) == 0 ? "Ran" : "Failed (exit \(ask.exitCode ?? 0))"
+        default: ask.choice.flatMap { ask.options.indices.contains($0) ? ask.options[$0] : nil } ?? ask.answer ?? "Answered"
         }
     }
 }
@@ -190,6 +217,7 @@ struct ApprovalCard: View {
             }
             .foregroundStyle(.secondary)
             .padding(.horizontal, 14).padding(.vertical, 7)
+            .modifier(PagedStrip())
         } content: {
             VStack(alignment: .leading, spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -233,5 +261,113 @@ struct ApprovalCard: View {
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+
+extension EnvironmentValues {
+    /// Above the composer (ConversationView's dock): as wide as the composer, and denser.
+    @Entry var askDocked = false
+    /// The height of a docked card, the same for every card waiting; nil, its own.
+    @Entry var askDockHeight: CGFloat? = nil
+    /// The dock's place among what waits: "1 of 3", and a step either way.
+    @Entry var askPager: AskPager? = nil
+}
+
+/// Where the dock is among the asks waiting, and how to move.
+struct AskPager {
+    let index: Int
+    let count: Int
+    let move: (Int) -> Void
+}
+
+/// A card's strip, with the dock's pager at its end when several wait.
+private struct PagedStrip: ViewModifier {
+    @Environment(\.askPager) private var pager
+
+    func body(content: Content) -> some View {
+        HStack(spacing: 0) {
+            content
+            Spacer(minLength: 8)
+            if let pager, pager.count > 1 {
+                HStack(spacing: 2) {
+                    Button { pager.move(-1) } label: { NucleoIcon("chevron-right", size: 11).rotationEffect(.degrees(180)).frame(width: 22, height: 22).contentShape(Rectangle()) }
+                        .disabled(pager.index == 0)
+                    Text("\(pager.index + 1) of \(pager.count)").font(.system(size: 12, weight: .medium)).monospacedDigit()
+                    Button { pager.move(1) } label: { NucleoIcon("chevron-right", size: 11).frame(width: 22, height: 22).contentShape(Rectangle()) }
+                        .disabled(pager.index == pager.count - 1)
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .padding(.trailing, 8)
+            }
+        }
+    }
+}
+
+/// What waits on you, above the composer: one at a time (the provider's questions and approvals, then what the agent
+/// asked through Zero), the rest a step away in its strip. As tall as the tallest of them, so stepping between them
+/// moves nothing, and a step is instant. A view of its own: paging and measuring redraw the dock, not the conversation.
+struct AskDock: View, Equatable {
+    /// Drawn again only when what waits changes, not with each redraw of the conversation (a keystroke, a send): it
+    /// lays out every card waiting to measure them.
+    static func == (a: AskDock, b: AskDock) -> Bool {
+        a.session == b.session && a.cwd == b.cwd && a.questions == b.questions && a.approvals == b.approvals && a.asks == b.asks && a.page == b.page
+    }
+
+    let session: String
+    let cwd: String
+    let questions: [Question]
+    let approvals: [Approval]
+    let asks: [Ask]
+    let inbox: InboxController
+    let page: CGFloat
+    let answer: (String, [String: [String]]) -> Void
+    let decide: (String, String) -> Void
+    @State private var index = 0
+    @State private var heights: [String: CGFloat] = [:]
+
+    private var ids: [String] { questions.map(\.id) + asks.map(\.id) + approvals.map(\.id) }
+
+    var body: some View {
+        let ids = ids
+        if !ids.isEmpty {
+            let shown = min(index, ids.count - 1)
+            let tallest = ids.compactMap { heights[$0] }.max()
+            card(ids[shown])
+                .environment(\.askDockHeight, tallest.map { min($0, max(160, page * 0.45)) })
+                .environment(\.askPager, AskPager(index: shown, count: ids.count) { step in index = max(0, min(ids.count - 1, shown + step)) })
+                // Each one laid out unseen at its own height, so the dock is as tall as the tallest. Only with
+                // several: one alone is its own height.
+                .background(alignment: .top) {
+                    if ids.count > 1 {
+                        ZStack(alignment: .top) {
+                            ForEach(ids, id: \.self) { id in
+                                card(id)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                                        // Only a change: each write redraws the dock and every card in it.
+                                        if abs((heights[id] ?? 0) - height) > 0.5 { heights[id] = height }
+                                    }
+                            }
+                        }
+                        .environment(\.askPager, AskPager(index: 0, count: ids.count) { _ in })
+                        .hidden().allowsHitTesting(false).accessibilityHidden(true)
+                    }
+                }
+                .onChange(of: ids.count) { if ids.count <= 1 { heights = [:] } }
+        }
+    }
+
+    @ViewBuilder private func card(_ id: String) -> some View {
+        Group {
+            if let question = questions.first(where: { $0.id == id }) {
+                QuestionCard(question: question, session: session, inbox: inbox) { answers in answer(question.id, answers) }
+            } else if let approval = approvals.first(where: { $0.id == id }) {
+                ApprovalCard(approval: approval, cwd: cwd) { choice in decide(approval.id, choice.id) }
+            } else if let ask = asks.first(where: { $0.id == id }) {
+                AgentAskCard(ask: ask, inbox: inbox)
+            }
+        }
+        .id(id)
+        .environment(\.askDocked, true)
     }
 }

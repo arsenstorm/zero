@@ -64,7 +64,7 @@ struct LaterPage: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.card)
         }
         .task { await workspace.loadLater() }
-        .sheet(isPresented: $writing) {
+        .zeroDialog(isPresented: $writing) {
             LaterWriter { note, artifact in
                 Task { if let id = await workspace.saveLater(note: note, artifact: artifact) { navigation.place = .laterItem(id) } }
             }
@@ -205,7 +205,7 @@ private struct LaterDetail: View {
 }
 
 /// A pill for a state, as the board's: its word on a wash of its colour.
-private struct StatePill: View {
+struct StatePill: View {
     let text: String
     let color: Color
     var body: some View {
@@ -217,27 +217,26 @@ private struct StatePill: View {
 /// Writing one yourself: the note, and anything behind it.
 private struct LaterWriter: View {
     let save: (String, String) -> Void
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.closeDialog) private var dismiss
     @State private var note = ""
     @State private var artifact = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Save for later").font(.system(size: 15, weight: .semibold))
-            TextField("What's to be done, in a sentence", text: $note, axis: .vertical).textFieldStyle(.roundedBorder).lineLimit(1...3)
-            TextEditor(text: $artifact).font(.system(size: 13)).frame(minHeight: 160)
+            DialogTitle(text: "Save for later")
+            TextField("What's to be done, in a sentence", text: $note, axis: .vertical).textFieldStyle(.dialog).lineLimit(1...3)
+            TextEditor(text: $artifact).font(.system(size: 13)).scrollContentBackground(.hidden).padding(6).frame(minHeight: 160)
                 .overlay(alignment: .topLeading) {
-                    if artifact.isEmpty { Text("Anything behind it, in Markdown (optional)").foregroundStyle(.tertiary).padding(.leading, 5).allowsHitTesting(false) }
+                    if artifact.isEmpty { Text("Anything behind it, in Markdown (optional)").font(.system(size: 13)).foregroundStyle(.tertiary).padding(.leading, 11).padding(.top, 6).allowsHitTesting(false) }
                 }
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.stroke))
+                .background(Theme.row, in: RoundedRectangle(cornerRadius: 8))
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save") { save(note, artifact); dismiss() }.keyboardShortcut(.defaultAction)
-                    .disabled(note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                DialogButton(title: "Cancel") { dismiss() }
+                DialogButton(title: "Save", kind: .primary, enabled: !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) { save(note, artifact); dismiss() }
             }
         }
-        .padding(20).frame(width: 480)
+        .frame(width: 480)
     }
 }
 

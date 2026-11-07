@@ -6,7 +6,7 @@ import ZeroCore
 /// archived on its own is folded under its lead when that's archived too, or with the others whose lead is still here.
 struct ArchiveSheet: View {
     let workspace: Workspace
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.closeDialog) private var dismiss
     @State private var archived: [ZerodLink.Archived]?
     @State private var search = ""
     @State private var restoring: String?
@@ -15,11 +15,11 @@ struct ArchiveSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Archived tasks").font(.system(size: 15, weight: .semibold))
+                DialogTitle(text: "Archived tasks")
                 Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+                DialogButton(title: "Done") { dismiss() }.keyboardShortcut(.cancelAction)
             }
-            TextField("Search", text: $search).textFieldStyle(.roundedBorder)
+            TextField("Search", text: $search).textFieldStyle(.dialog)
             ScrollView {
                 VStack(spacing: 1) {
                     if let archived {
@@ -46,7 +46,6 @@ struct ArchiveSheet: View {
             }
             .thinScrollbar()
         }
-        .padding(20)
         .frame(width: 520, height: 460)
         .task { archived = await workspace.archived() }
     }

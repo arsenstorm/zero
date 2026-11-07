@@ -9,7 +9,7 @@ public final class Navigation {
 
     public var place = Place.home {
         didSet {
-            if place != oldValue && !travelling { behind.append((oldValue, worker)); ahead.removeAll() }
+            if place != oldValue && !travelling { behind.append((oldValue, worker, settingsPage)); ahead.removeAll() }
             if place != oldValue && !travelling { changingPlace = true; worker = nil; changingPlace = false }
             UserDefaults.standard.set(place.key, forKey: "place")
             switch place { case .home, .board, .task, .agent: homePlace = place; default: break }
@@ -22,7 +22,14 @@ public final class Navigation {
     public var worker: String? {
         didSet {
             UserDefaults.standard.set(worker, forKey: "placeWorker")
-            if worker != oldValue && !travelling && !changingPlace { behind.append((place, oldValue)); ahead.removeAll() }
+            if worker != oldValue && !travelling && !changingPlace { behind.append((place, oldValue, settingsPage)); ahead.removeAll() }
+        }
+    }
+    /// In Settings: the page open. Each page is a step in the history too, so back goes to the page before it, then
+    /// out of Settings.
+    public var settingsPage: String? {
+        didSet {
+            if settingsPage != oldValue && !travelling && place == .settings { behind.append((place, worker, oldValue)); ahead.removeAll() }
         }
     }
 
@@ -56,8 +63,9 @@ public final class Navigation {
         worker = last.count > 1 && keeps(last[1]) ? last[1] : nil
     }
 
-    @ObservationIgnored private var behind: [(Place, String?)] = []
-    @ObservationIgnored private var ahead: [(Place, String?)] = []
+    /// Each step: the place, the worker shown there, and the settings page open.
+    @ObservationIgnored private var behind: [(Place, String?, String?)] = []
+    @ObservationIgnored private var ahead: [(Place, String?, String?)] = []
     /// A place change is clearing the worker: not a step of its own.
     @ObservationIgnored private var changingPlace = false
     public var canGoBack: Bool { !behind.isEmpty }
@@ -74,20 +82,21 @@ public final class Navigation {
 
     public func goBack() {
         guard let last = behind.popLast() else { return }
-        ahead.append((place, worker))
+        ahead.append((place, worker, settingsPage))
         travel(to: last)
     }
 
     public func goForward() {
         guard let next = ahead.popLast() else { return }
-        behind.append((place, worker))
+        behind.append((place, worker, settingsPage))
         travel(to: next)
     }
 
-    private func travel(to step: (Place, String?)) {
+    private func travel(to step: (Place, String?, String?)) {
         travelling = true
         self.place = step.0
         worker = step.1
+        settingsPage = step.2
         travelling = false
     }
 }

@@ -27,7 +27,7 @@ struct MarkdownText: View {
     init(_ text: String, cwd: String? = nil, size: CGFloat = 13, compact: Bool = false, hugs: Bool = false, yours: Bool = false, onClick: (() -> Void)? = nil) {
         self.text = text
         repo = cwd.flatMap(References.repo(of:))
-        owner = GitHubLinks.owner ?? cwd.flatMap(References.owner(of:))
+        owner = cwd.flatMap(References.owner(of:))
         self.size = size
         self.compact = compact
         self.hugs = hugs
@@ -94,14 +94,15 @@ struct MarkdownText: View {
     private var links: Links { Self.links(repo: repo, owner: owner, yours: yours) }
 
     static func links(repo: String?, owner: String?, yours: Bool) -> Links {
-        Links(repo: repo, owner: owner, slack: SlackLinks.team, channels: SlackLinks.channels, teams: Linear.shared.teams, app: LinearLinks.inApp, loops: LoopNames.known, skills: yours)
+        Links(repo: repo, owner: owner, github: GitHubLinks.enabled, slack: SlackLinks.teams, teams: LinearLinks.enabled ? Linear.shared.teams : [:],
+              app: LinearLinks.inApp, loops: LoopNames.known, skills: yours)
     }
 
     /// Styles a conversation's messages ahead of their first drawing (the window opening on it), off the main thread,
     /// so the page paints at once instead of parsing as it scrolls into view.
     static func warm(_ conversation: Conversation) async {
         let repo = References.repo(of: conversation.cwd)
-        let owner = GitHubLinks.owner ?? References.owner(of: conversation.cwd)
+        let owner = References.owner(of: conversation.cwd)
         let (theirs, yours) = (links(repo: repo, owner: owner, yours: false), links(repo: repo, owner: owner, yours: true))
         let texts: [(String, Bool)] = conversation.items.compactMap { item in
             switch item.kind {
@@ -118,10 +119,10 @@ struct MarkdownText: View {
     struct Links: Sendable {
         let repo: String?
         let owner: String?
-        /// The Slack workspace's team id: "#channel" and Slack's own links open in Slack.
-        let slack: String?
-        /// Channel ids by name: those open in Slack directly.
-        var channels: [String: String] = [:]
+        /// Pull requests and commits as links.
+        var github = true
+        /// The Slack workspaces connected: "#channel" and Slack's own links open in Slack.
+        var slack: [Slack.State] = []
         let teams: [String: String]
         let app: Bool
         /// The loops' names: "@name" in a message is one of them, drawn as a pill that opens it.
@@ -153,9 +154,9 @@ struct MarkdownText: View {
     nonisolated static func inline(_ prose: String, links: Links) -> AttributedString {
         var result = (try? AttributedString(markdown: prose, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(prose)
         for run in result.runs where run.link != nil {
-            if let link = run.link, let app = SlackLinks.url(link, team: links.slack) { result[run.range].link = app }
+            if let link = run.link, let app = SlackLinks.url(link, in: links.slack) { result[run.range].link = app }
         }
-        for (range, url) in References.find(in: String(result.characters), repo: links.repo, linear: links.teams, linearApp: links.app, owner: links.owner, slack: links.slack, channels: links.channels) {
+        for (range, url) in References.find(in: String(result.characters), repo: links.repo, linear: links.teams, linearApp: links.app, owner: links.owner, github: links.github, slack: links.slack) {
             guard let span = Range(range, in: result) else { continue }
             let plain = result[span].runs.allSatisfy { $0.link == nil && !($0.inlinePresentationIntent?.contains(.code) ?? false) }
             if plain { result[span].link = url }

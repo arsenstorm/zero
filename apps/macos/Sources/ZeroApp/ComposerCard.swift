@@ -205,7 +205,7 @@ struct ComposerCard: View {
                 // With what: the runtime's icon and the model's name (an agent's own runtime name until a model is picked for it).
                 chip(icon: choiceIcon(runtime?.icon) ?? Image(nsImage: Nucleo.image("terminal", size: 14) ?? NSImage()),
                      title: model.map { $0.id.isEmpty ? (runtime?.name ?? "Default") : $0.name + (effort.map { " · " + $0 } ?? "") + (account.map { " · " + $0 } ?? "") }
-                        ?? agentName.map(speaker) ?? runtime?.name ?? "Runtime",
+                        ?? agentName.map { controller.store.zeroTask?($0)?.runs ?? speaker($0) } ?? runtime?.name ?? "Runtime",
                      open: controller.selector?.kind == .runtime) { controller.selectorAgent = agentName; controller.openSelector(.runtime, anchor: runtimeAnchor) }
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { runtimeAnchor = $0 }
                 Spacer(minLength: 8)

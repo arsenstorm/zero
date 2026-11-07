@@ -8,24 +8,20 @@ import ZeroCore
 
 struct SignInsPage: View {
     let workspace: Workspace?
-    @State private var adding: Provider?
-    /// A Claude account with a folder of its own, being switched to a token.
-    @State private var switching: ZerodLink.SignIn?
+    /// The account being added (or switched to a token), in its dialog.
+    @State private var adding: Adding?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
-            Text("Tasks use up one account's week before the next, and carry on as another at a limit.")
-                .font(.system(size: 13)).foregroundStyle(.secondary)
             if let workspace {
                 ForEach([Provider.claude, .codex, .opencode], id: \.self) { cli in
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(spacing: 7) {
-                            if let mark = cli.mark { mark.resizable().aspectRatio(contentMode: .fit).frame(width: 16, height: 16).clipShape(RoundedRectangle(cornerRadius: 4)) }
-                            Text(cli.title).font(.system(size: 13, weight: .semibold))
-                        }
+                    SettingsSection(title: cli.title,
+                                    icon: cli.mark.map { AnyView($0.resizable().aspectRatio(contentMode: .fit).frame(width: 16, height: 16).clipShape(RoundedRectangle(cornerRadius: 4))) },
+                                    accessory: AnyView(AddAccountButton(cli: cli) { way in adding = Adding(cli: cli, way: way) })) {
                         section(cli, in: workspace)
                     }
                 }
+                .zeroDialog(item: $adding) { adding in AddAccount(cli: adding.cli, way: adding.way, replacing: adding.replacing, workspace: workspace) }
             }
         }
         // Open, the page asks each account's CLI for its usage, every two minutes: not only as its tasks last heard it.
@@ -43,23 +39,58 @@ struct SignInsPage: View {
         let mine = workspace.signins.filter { $0.cli == cli }
         return VStack(spacing: 0) {
             ForEach(Array(mine.enumerated()), id: \.element.id) { index, signin in
-                if index > 0 { Divider().padding(.leading, 16) }
-                SignInRow(signin: signin, workspace: workspace) { switching = signin; adding = nil }
+                if index > 0 { Divider().padding(.leading, 18) }
+                SignInRow(signin: signin, workspace: workspace) { adding = Adding(cli: cli, way: .signIn, replacing: signin) }
             }
-            if !mine.isEmpty { Divider() }
-            if adding == cli || switching?.cli == cli {
-                AddAccount(cli: cli, replacing: switching, workspace: workspace) { adding = nil; switching = nil }
-            } else {
-            Button { adding = cli; switching = nil } label: {
-                NucleoLabel(mine.isEmpty ? "Sign in" : "Add another", icon: "plus", size: 13).font(.system(size: 13)).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).frame(height: 40).contentShape(Rectangle())
-            }
-            .buttonStyle(Hovering(radius: 0))
-            .clipShape(UnevenRoundedRectangle(topLeadingRadius: mine.isEmpty ? 14 : 0, bottomLeadingRadius: 14,
-                                              bottomTrailingRadius: 14, topTrailingRadius: mine.isEmpty ? 14 : 0))
+            if mine.isEmpty {
+                Text("None yet").font(.system(size: 13)).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).frame(height: 44)
             }
         }
-        .settingsCard()
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .bleedingCard()
+    }
+}
+
+/// An account being added, in its dialog: for which CLI, how, and the account it signs in again (as a token), if any.
+private struct Adding: Identifiable {
+    let cli: Provider
+    let way: AddWay
+    var replacing: ZerodLink.SignIn? = nil
+    var id: String { "\(cli.rawValue)-\(way)-\(replacing?.id ?? "")" }
+}
+
+/// How an account is added: its CLI's own sign-in in the browser, or a key (OpenCode's: for which provider).
+private enum AddWay: Equatable, CustomStringConvertible {
+    case signIn, key(AddAccount.OpenCodeProvider?)
+    var description: String { switch self { case .signIn: "signIn"; case .key(let provider): "key-\(provider?.rawValue ?? "")" } }
+}
+
+/// The heading's ghost button: Zero's menu of the ways to add one of this CLI's accounts.
+private struct AddAccountButton: View {
+    let cli: Provider
+    let pick: (AddWay) -> Void
+    @State private var anchor = CGRect.zero
+
+    private var id: String { "add-\(cli.rawValue)" }
+
+    var body: some View {
+        GhostButton(title: "Add account", icon: "plus", open: WorkspaceSelector.shared.open == id) {
+            WorkspaceSelector.shared.toggle(id, kind: .menu, anchor: anchor, rows: { rows })
+        }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { anchor = $0 }
+    }
+
+    private var rows: [SelectorSection] {
+        if cli == .opencode {
+            return ComposerRows.menu([AddAccount.OpenCodeProvider.allCases.map { option in
+                (option.rawValue, "\(option.rawValue) key", "key", false, { pick(.key(option)) })
+            }])
+        }
+        return ComposerRows.menu([[
+            ("signIn", cli == .claude ? "Sign in with Claude" : "Sign in with ChatGPT", "circle-user", false, { pick(.signIn) }),
+            ("key", cli == .claude ? "Anthropic API key" : "OpenAI API key", "key", false, { pick(.key(nil)) }),
+        ]])
     }
 }
 
@@ -73,7 +104,7 @@ private struct SignInRow: View {
     @State private var hovered = false
     /// Its name being edited: what's typed so far.
     @State private var naming: String?
-    /// Remove clicked once: a second click removes it.
+    /// Remove picked: confirmed in the row, where its usage was.
     @State private var removing = false
     @FocusState private var focused: Bool
 
@@ -106,33 +137,25 @@ private struct SignInRow: View {
                 }
             }
             Spacer(minLength: 8)
-            if let usage = workspace.signinUsage[signin.id], !usage.windows.isEmpty { UsageColumns(usage: usage) }
-            if signin.kind == .claudeHome {
-                Button("Switch to a token", action: switchToToken).font(.system(size: 12, weight: .medium))
-                    .tip("Signs it in again as a year-long token: its tasks then use your own Claude Code folder, MCP sign-ins and all")
-            }
-            if signin.pending != true && naming == nil {
-                Button { naming = signin.label; focused = true } label: {
-                    NucleoIcon("pen", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28)
-                }
-                .buttonStyle(Hovering(radius: 7)).tip("Rename")
-                .opacity(hovered ? 1 : 0)
-            }
             if removing {
+                Button("Cancel") { removing = false }.buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                 Button("Remove") { Task { await workspace.removeSignIn(signin) } }
                     .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.red)
-                    .frame(height: 28).tip("Its tasks can't restart as it, and it has to be signed in again to come back")
-            } else {
-                Button { removing = true } label: {
-                    NucleoIcon("trash", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28)
-                }
-                .buttonStyle(Hovering(radius: 7)).tip("Remove")
-                .opacity(hovered ? 1 : 0)
+                    .tip("Its tasks can't restart as it, and it has to be signed in again to come back")
+            } else if let usage = workspace.signinUsage[signin.id], !usage.windows.isEmpty {
+                UsageColumns(usage: usage)
             }
         }
-        .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 10)
-        .contentShape(Rectangle())
-        .onHover { hovered = $0; if !$0 { removing = false } }
+        .padding(.horizontal, 18).padding(.vertical, 10)
+        .frame(minHeight: 56)
+        // The row is its own menu: rename, switch, remove. Nothing kept beside the usage for them.
+        .rowMenu("signin-\(signin.id)", enabled: naming == nil && !removing && signin.pending != true) {
+            var rows: [(id: String, title: String, glyph: String, selected: Bool, pick: () -> Void)] = [
+                ("rename", "Rename", "pen", false, { naming = signin.label; focused = true }),
+            ]
+            if signin.kind == .claudeHome { rows.append(("token", "Switch to a token", "key", false, switchToToken)) }
+            return ComposerRows.menu([rows, [("remove", "Remove…", "trash", false, { removing = true })]])
+        }
         // Claude doesn't say whose a token is: a new one asks, in its own row.
         .onAppear { if signin.kind == .token && signin.label == "Claude account" && naming == nil { naming = ""; focused = true } }
     }
@@ -184,14 +207,15 @@ private struct UsageColumns: View {
     }
 }
 
-/// Adding one, in place in its card: how (its CLI's own sign-in in the browser, or an API key), then only what that
-/// step needs. Closes itself once the account is added (or its sign-in is under way in the browser).
+/// Adding one, in a dialog: its CLI's own sign-in in the browser (under way as it opens), or a key. Closes itself once
+/// the account is added (or its sign-in is under way in the browser).
 private struct AddAccount: View {
     let cli: Provider
+    let way: AddWay
     /// Signing this one in again (as a token), its id kept.
     var replacing: ZerodLink.SignIn? = nil
     let workspace: Workspace
-    let done: () -> Void
+    @Environment(\.closeDialog) private var dismiss
     @State private var label = ""
     @State private var key = ""
     @State private var provider = OpenCodeProvider.go
@@ -214,82 +238,63 @@ private struct AddAccount: View {
         }
     }
 
-    /// The way chosen: none yet (each way is a row), the CLI's own sign-in, or a key (OpenCode's: for which provider).
-    private enum Way: Equatable { case signIn, key(OpenCodeProvider?) }
-    @State private var way: Way?
+    private var keyed: Bool { if case .key = way { true } else { false } }
+
+    private var title: String {
+        if let replacing { return "Sign \(replacing.label) in again as a token" }
+        if case .key(let option) = way { return option.map { "\($0.rawValue) key" } ?? (cli == .claude ? "Anthropic API key" : "OpenAI API key") }
+        return cli == .claude ? "Sign in with Claude" : "Sign in with ChatGPT"
+    }
+
+    private var explanation: String {
+        switch (cli, keyed) {
+        case (.claude, false): "Claude's sign-in page opens in your browser. Its tasks get a year-long token, kept in your Keychain."
+        case (.codex, false): "ChatGPT's sign-in page opens in your browser; the account shows here once you're in."
+        case (.claude, true): "Billed per use, and kept in your Keychain."
+        case (.codex, true): "Billed per use. Codex keeps it, in a home of this account's own."
+        case (.opencode, _): "Given to OpenCode as \(provider.variable), and kept in your Keychain."
+        }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if replacing != nil {
-                step("Sign \(replacing!.label) in again as a token", cancel: true) { claudeSteps }
-            } else if let way {
-                switch way {
-                case .signIn: step(signInTitle, cancel: true) { if cli == .claude { claudeSteps } else { codexStep } }
-                case .key(let provider): step(provider?.rawValue ?? "API key", cancel: true) { keyForm }
-                }
-            } else if cli == .opencode {
-                ForEach(Array(OpenCodeProvider.allCases.enumerated()), id: \.element) { index, option in
-                    if index > 0 { Divider() }
-                    wayRow(option.rawValue, detail: "Its key, as \(option.variable)", button: "Add key", cancel: index == 0) { provider = option; way = .key(option) }
-                }
-            } else {
-                wayRow(signInTitle, detail: cli == .claude ? "Opens Claude's sign-in page; its tasks get a year-long token." : "Opens ChatGPT's sign-in page; the account shows here once you're in.",
-                       button: "Sign in", cancel: true) {
-                    way = .signIn
-                    if cli == .claude { claude.start(in: workspace) } else { Task { await codex(apiKey: nil) } }
-                }
-                Divider()
-                wayRow("API key", detail: cli == .claude ? "An Anthropic key, billed per use." : "An OpenAI key, billed per use.", button: "Add key", cancel: false) { way = .key(nil) }
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                DialogTitle(text: title)
+                Text(explanation).font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            if let problem { Text(problem).font(.system(size: 12)).foregroundStyle(.red).lineLimit(2).padding(.horizontal, 16).padding(.bottom, 12) }
+            if keyed { keyForm } else if cli == .claude { claudeSteps } else { codexStep }
+            if let problem { Text(problem).font(.system(size: 12)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
+            HStack {
+                Spacer()
+                DialogButton(title: "Cancel", action: cancel)
+                if keyed {
+                    DialogButton(title: "Save", kind: .primary, enabled: !key.trimmed.isEmpty && !working, action: save)
+                } else if case .failed = claude.status {
+                    DialogButton(title: "Try again", kind: .primary) { claude.start(replacing: replacing, in: workspace) }
+                } else if cli == .codex && problem != nil {
+                    DialogButton(title: "Try again", kind: .primary) { problem = nil; Task { await codex(apiKey: nil) } }
+                }
+            }
+        }
+        .frame(width: 440)
+        // Opened from the menu: the sign-in starts at once.
+        .onAppear {
+            if case .key(let option?) = way { provider = option }
+            guard way == .signIn else { return }
+            if cli == .claude { claude.start(replacing: replacing, in: workspace) } else { Task { await codex(apiKey: nil) } }
         }
         // Closed mid-way: Claude Code's sign-in stops with it.
         .onDisappear { claude.cancel() }
-        .onExitCommand(perform: cancel)
     }
 
-    private var signInTitle: String { cli == .claude ? "Sign in with Claude" : "Sign in with ChatGPT" }
-
-    private func cancel() { claude.cancel(); done() }
-
-    private var cancelButton: some View {
-        Button(action: cancel) { NucleoIcon("xmark", size: 12).foregroundStyle(.secondary).frame(width: 26, height: 26) }
-            .buttonStyle(Hovering(radius: 7)).tip("Cancel")
-    }
-
-    /// One way to add it: what it is, what it does, and its button. The first row carries the cancel.
-    private func wayRow(_ title: String, detail: String, button: String, cancel: Bool, start: @escaping () -> Void) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 13, weight: .medium))
-                Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 8)
-            RowButton(title: button, action: start)
-            if cancel { cancelButton } else { Color.clear.frame(width: 26, height: 26) }
-        }
-        .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 10)
-    }
-
-    /// The way chosen, under way: its title and cancel, then what it needs.
-    private func step<Content: View>(_ title: String, cancel: Bool, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(title).font(.system(size: 13, weight: .medium))
-                Spacer()
-                if cancel { cancelButton }
-            }
-            content()
-        }
-        .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 10)
-    }
+    private func cancel() { claude.cancel(); dismiss() }
+    private func done() { dismiss() }
 
     private func field(_ prompt: String, text: Binding<String>, secret: Bool = false) -> some View {
         Group {
             if secret { SecureField("", text: text, prompt: Text(prompt)) } else { TextField("", text: text, prompt: Text(prompt)) }
         }
-        .textFieldStyle(.plain).font(.system(size: 13)).padding(.horizontal, 10).frame(height: 30)
-        .background(Theme.row, in: RoundedRectangle(cornerRadius: 7))
+        .textFieldStyle(.dialog)
     }
 
     @ViewBuilder private var claudeSteps: some View {
@@ -306,17 +311,9 @@ private struct AddAccount: View {
         case .done:
             Color.clear.frame(height: 0).onAppear(perform: done)
         case .failed(let why):
-            HStack {
-                Text(why).font(.system(size: 12)).foregroundStyle(.red).lineLimit(1)
-                Spacer()
-                RowButton(title: "Try again") { claude.start(replacing: replacing, in: workspace) }
-            }
+            Text(why).font(.system(size: 12)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
         case nil:
-            HStack {
-                Text("Opens Claude's sign-in page; its tasks get a year-long token.").font(.system(size: 12)).foregroundStyle(.secondary)
-                Spacer()
-                RowButton(title: "Sign in") { claude.start(replacing: replacing, in: workspace) }
-            }
+            EmptyView()
         }
     }
 
@@ -326,19 +323,13 @@ private struct AddAccount: View {
                 Spinner().frame(width: 12, height: 12)
                 Text("Opening ChatGPT's sign-in page…").font(.system(size: 12)).foregroundStyle(.secondary)
             }
-        } else {
-            HStack {
-                Spacer()
-                RowButton(title: "Try again") { problem = nil; Task { await codex(apiKey: nil) } }
-            }
         }
     }
 
     private var keyForm: some View {
-        HStack(spacing: 8) {
-            field(cli == .opencode ? provider.rawValue : "A name for it", text: $label).frame(width: 170)
+        VStack(spacing: 8) {
+            field(cli == .opencode ? "A name for it (\(provider.rawValue))" : "A name for it", text: $label)
             field("Its API key", text: $key, secret: true).onSubmit(save)
-            RowButton(title: "Save", enabled: !key.trimmed.isEmpty && !working, action: save)
         }
     }
 
