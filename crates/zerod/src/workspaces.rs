@@ -1,6 +1,6 @@
-//! Workspaces: the user's work split by who it's for (personal projects, a company). Each is a name, a glyph for the
-//! sidebar, and the folders that belong to it; a task belongs to the workspace it was started in, else to the one its
-//! folder belongs to, else to Zero, the workspace that is always there. A worker is its lead's. Switching workspaces
+//! Workspaces: the user's work split by who it's for (personal projects, a company). Each is a name and a glyph for the
+//! sidebar; a task belongs to the workspace it was started in (or moved to), else to Zero, the workspace that is always
+//! there. A worker is its lead's. Switching workspaces
 //! in the app changes what is shown, nothing about what runs: zerod runs every workspace's sessions alike.
 //! Kept in workspaces.json in zerod's home.
 
@@ -20,13 +20,10 @@ pub struct Workspace {
     /// A Nucleo icon's name, or an emoji.
     #[serde(default)]
     pub glyph: String,
-    /// Folders whose tasks are this workspace's unless started in another.
-    #[serde(default)]
-    pub folders: Vec<String>,
 }
 
 impl Workspace {
-    fn zero() -> Workspace { Workspace { id: DEFAULT.into(), name: "Zero".into(), glyph: String::new(), folders: vec![] } }
+    fn zero() -> Workspace { Workspace { id: DEFAULT.into(), name: "Zero".into(), glyph: String::new() } }
 }
 
 pub struct Workspaces { file: PathBuf, list: Mutex<Vec<Workspace>> }
@@ -46,7 +43,6 @@ impl Workspaces {
     pub fn save(&self, mut workspace: Workspace) -> Result<Workspace, String> {
         workspace.name = workspace.name.trim().to_string();
         if workspace.name.is_empty() { return Err("A workspace needs a name".into()) }
-        workspace.folders = workspace.folders.into_iter().map(|f| f.trim_end_matches('/').to_string()).filter(|f| !f.is_empty()).collect();
         let mut list = self.list.lock().unwrap();
         if workspace.id.is_empty() {
             let base: String = workspace.name.to_lowercase().chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect::<String>().trim_matches('-').to_string();
@@ -74,15 +70,12 @@ impl Workspaces {
 
     pub fn exists(&self, id: &str) -> bool { self.list.lock().unwrap().iter().any(|w| w.id == id) }
 
-    /// Which workspace a task is in: the one it was put in, if that still exists; else its folder's (the longest
-    /// folder that contains it); else Zero.
-    pub fn of(&self, placed: Option<&str>, cwd: &str) -> String {
-        let list = self.list.lock().unwrap();
-        if let Some(id) = placed && list.iter().any(|w| w.id == id) { return id.to_string() }
-        let cwd = cwd.trim_end_matches('/');
-        list.iter().flat_map(|w| w.folders.iter().map(move |f| (f, &w.id)))
-            .filter(|(folder, _)| cwd == folder.as_str() || cwd.strip_prefix(folder.as_str()).is_some_and(|rest| rest.starts_with('/')))
-            .max_by_key(|(folder, _)| folder.len()).map(|(_, id)| id.clone()).unwrap_or_else(|| DEFAULT.into())
+    /// Which workspace a task is in: the one it was put in, if that still exists; else Zero.
+    pub fn of(&self, placed: Option<&str>) -> String {
+        match placed {
+            Some(id) if self.list.lock().unwrap().iter().any(|w| w.id == id) => id.to_string(),
+            _ => DEFAULT.into(),
+        }
     }
 
     fn keep(&self, list: &[Workspace]) -> Result<(), String> {

@@ -28,7 +28,7 @@ func usage(help: Bool = false) -> Never {
                    starts a worker of this session (its folder and permissions unless given others) and prints its id;
                    when it finishes, fails or gets stuck, this session is told. Outside a session: a new session here.
                    --workspace puts it in another workspace (zero workspaces lists them); otherwise it is in yours.
-      zero workspaces   (the user's workspaces: id, name, and the folders that belong to each)
+      zero workspaces   (the user's workspaces: id and name)
       zero send    <session or name> "text"   (a message to a session, resumed first if it is offline; from inside a task, marked
                    as that task's and given between the other's turns, as a worker's report is)
       zero wait    <session>... [--any] [--timeout MINUTES]   (until they stop working: finished, failed, stuck, or waiting on the user)

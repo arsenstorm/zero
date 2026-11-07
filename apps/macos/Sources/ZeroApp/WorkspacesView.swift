@@ -2,7 +2,8 @@ import SwiftUI
 import ZeroCore
 
 // Workspaces: the user's work split by who it's for (zerod's workspaces.rs). Settings › Workspaces lists them; each
-// has a name, a glyph for the sidebar's heading, and the folders whose tasks are its. Zero is always there.
+// has a name and a glyph for the sidebar's heading; a task is in the one it was started in or moved to. Zero is always
+// there.
 
 struct WorkspacesPage: View {
     let workspace: Workspace?

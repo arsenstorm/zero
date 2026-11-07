@@ -355,7 +355,7 @@ impl Daemon {
     }
 
     /// Which workspace a conversation is in: the one it was put in, else its folder's, else Zero.
-    pub fn workspace_of(&self, conversation: &Conversation) -> String { self.workspaces.of(conversation.workspace.as_deref(), &conversation.cwd) }
+    pub fn workspace_of(&self, conversation: &Conversation) -> String { self.workspaces.of(conversation.workspace.as_deref()) }
 
     /// Puts a session in a workspace (none: back to its folder's).
     pub fn place_in_workspace(&self, id: &str, workspace: Option<&str>) -> Result<(), String> {

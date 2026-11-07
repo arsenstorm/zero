@@ -1263,9 +1263,7 @@ public final class ZerodLink: @unchecked Sendable {
         public var name: String
         /// A Nucleo icon's name, or an emoji.
         public var glyph: String
-        /// Folders whose tasks are this workspace's unless started in another.
-        public var folders: [String]
-        public init(id: String = "", name: String, glyph: String = "", folders: [String] = []) { self.id = id; self.name = name; self.glyph = glyph; self.folders = folders }
+        public init(id: String = "", name: String, glyph: String = "") { self.id = id; self.name = name; self.glyph = glyph }
     }
 
     public func workspaces() async throws -> [Workspace] { try decode([Workspace].self, from: await call("workspaces")) }

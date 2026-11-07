@@ -116,7 +116,7 @@ func describe(_ session: [String: Any]) -> String {
 
 @MainActor func workspacesCommand() async {
     for w in await zerod({ try await $0.workspaces() }) {
-        print("\(w.id)  \(w.name)" + (w.folders.isEmpty ? "" : "  " + w.folders.map { ($0 as NSString).abbreviatingWithTildeInPath }.joined(separator: " ")))
+        print("\(w.id)  \(w.name)")
     }
 }
 

@@ -20,12 +20,8 @@ struct NewTaskView: View {
     private var chosen: Provider { Provider(rawValue: provider) ?? .codex }
     /// The workspace the task starts in: the one shown, unless picked.
     @State private var into = ""
-    /// The workspace's own folders first, then the rest (Zero's are those no other claims).
-    private var folders: [String] {
-        let owned = workspace.workspaces.first { $0.id == (into.isEmpty ? workspace.current : into) }?.folders ?? []
-        let all = Projects.folders
-        return owned.filter(all.contains) + all.filter { !owned.contains($0) }
-    }
+    /// The project folders, to start in.
+    private var folders: [String] { Projects.folders }
 
     var body: some View {
         VStack(spacing: 0) {

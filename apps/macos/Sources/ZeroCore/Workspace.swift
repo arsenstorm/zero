@@ -444,15 +444,10 @@ public final class Workspace {
         _ = await attempt { try await $0.placeInWorkspace(session: session, workspace: workspace) }
     }
 
-    /// Which workspace a conversation is in, as zerod works it out: put somewhere, that; else the longest of a
-    /// workspace's folders that contains its folder; else Zero.
+    /// Which workspace a conversation is in, as zerod works it out: put somewhere, that; else Zero.
     public func workspace(of conversation: Conversation) -> String {
         if let placed = conversation.workspace, workspaces.contains(where: { $0.id == placed }) { return placed }
-        let cwd = conversation.cwd.hasSuffix("/") ? String(conversation.cwd.dropLast()) : conversation.cwd
-        let owning = workspaces.flatMap { w in w.folders.map { ($0, w.id) } }
-            .filter { folder, _ in cwd == folder || cwd.hasPrefix(folder + "/") }
-            .max { $0.0.count < $1.0.count }
-        return owning?.1 ?? "zero"
+        return "zero"
     }
 
     // Zero for Chrome.
