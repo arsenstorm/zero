@@ -137,6 +137,8 @@ async fn a_turn_the_users_own_words_started_is_a_conversation_and_isnt_sent_back
     turn(&session, 1, "What's left on the issue?", "Three things are left.\n\nWhich do you want to start with?\n\n[zero: done]").await;
     turn(&session, 2, "The formatters", "Here's what they take.").await;
     assert_eq!(sent_back(&sent), 0, "{}", sent.lock().unwrap());
+    // Answered, no ending line: Replied, not Done (which is for work finished end to end).
+    assert_eq!(daemon.get(&id).unwrap().attention(), zerod::model::Attention::Answered);
 }
 
 #[tokio::test]

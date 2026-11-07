@@ -204,7 +204,7 @@ Zero names you by `ZERO_AGENT`, or by your Solo process id. If neither is set, e
 
 ## Ending a turn
 
-When Zero runs your session, every turn ends with exactly one of these as its last line, after you have done what it says. Zero's stop check reads it; a turn without one is sent back to you.
+When Zero runs your session, every turn Zero started (an event, a worker's report, a reminder) ends with exactly one of these as its last line, after you have done what it says. Zero's stop check reads it; such a turn without one is sent back to you. A turn the user's own message started is a conversation: your answer ends it with no ending line, and it shows as Replied, unless the work has come to done, waiting or asked.
 
 ```
 [zero: done]            the work is finished end to end, with good reason to say so (merged and deployed, verified, its ticket closed, or the user said it's done); Zero puts it away, and what you follow changing brings it back
