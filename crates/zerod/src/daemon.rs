@@ -43,6 +43,9 @@ pub fn real_runtime() -> Runtime {
 }
 
 const PAUSED: &str = "paused-by-user.json";
+/// Whether a task has a blocking ask open (the inbox knows).
+pub type Blocked = Box<dyn Fn(&str) -> bool + Send + Sync>;
+
 /// Messages two tasks may send each other without the user before Zero holds them for the user's word.
 const BETWEEN_TASKS: u32 = 10;
 /// The agents' processes one zerod hands the next across a restart (Daemon::hand_off, take_over).
@@ -87,6 +90,8 @@ pub struct Daemon {
     naming: std::sync::atomic::AtomicBool,
     /// Messages between two tasks (neither the other's lead) since the user last wrote to either, by the pair.
     crossed: Mutex<HashMap<(String, String), u32>>,
+    /// Whether a task has a blocking ask open (Ask::blocks), as the inbox says: its events and reports wait then.
+    blocked: std::sync::OnceLock<Blocked>,
     /// Tasks whose messages from other tasks wait for the user: too many between them without the user.
     crossing: Mutex<HashSet<String>>,
     /// Workers that ended done: each leaves its lead's tree (archived) once its report has been handed to the lead.
@@ -255,7 +260,7 @@ impl Daemon {
         let daemon = Arc::new_cyclic(|me| Daemon {
             home: home.into(), sessions: Mutex::new(sessions), events, runtime, attention: Mutex::new(attention), pending: Mutex::new(pending),
             held: Mutex::new(held), delivering: Mutex::new(HashSet::new()), queues: broadcast::channel(64).0,
-            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(), held_up: Mutex::default(), updating: Mutex::default(), sent_back: Mutex::default(), carried_on: Mutex::default(), reminded_rows: Mutex::default(), leaving: Mutex::default(), crossed: Mutex::default(), crossing: Mutex::default(), naming: Default::default(), signed_out: Mutex::default(), endings: Default::default(),
+            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(), held_up: Mutex::default(), updating: Mutex::default(), sent_back: Mutex::default(), carried_on: Mutex::default(), reminded_rows: Mutex::default(), leaving: Mutex::default(), blocked: Default::default(), crossed: Mutex::default(), crossing: Mutex::default(), naming: Default::default(), signed_out: Mutex::default(), endings: Default::default(),
             workspaces: crate::workspaces::Workspaces::open(home),
             mcp_servers: crate::mcp_servers::McpServers::open(home),
             signins: crate::signins::SignIns::open(home),
@@ -359,6 +364,11 @@ impl Daemon {
     }
 
     /// Names a session and says what it's for.
+    /// How to tell a task has a blocking ask open: the inbox's, given once (server::hold_while_blocked).
+    pub fn hold_while(&self, blocked: Blocked) { let _ = self.blocked.set(blocked); }
+
+    pub(crate) fn blocked_by_ask(&self, id: &str) -> bool { self.blocked.get().is_some_and(|blocked| blocked(id)) }
+
     /// A task by its id, or by its name (as the sidebar shows it, whatever the case) when only one task has it.
     pub fn resolve(&self, reference: &str) -> Result<String, String> {
         let reference = reference.trim();

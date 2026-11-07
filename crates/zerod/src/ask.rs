@@ -117,6 +117,10 @@ pub struct Ask {
     /// False when the agent asked with --async: nothing waits for the answer, so it is typed into its session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waits: Option<bool>,
+    /// The agent can't go on without the answer (--block): until it's answered, Zero holds what else comes for the
+    /// task (its events, its workers' reports); the user's own words still go.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub blocks: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivery: Option<Delivery>,
     /// For a question: what the user may want to know to answer it.
@@ -143,7 +147,7 @@ impl Ask {
             id: new_id(), kind, title: title.into(), body: String::new(), options: vec![], command: None, cwd: None, agent,
             created_at: now, expires_at: Time(now.0 + ttl_seconds), state: AskState::Waiting, answer: None, output: String::new(),
             exit_code: None, run: None, answered_at: None, status: None, choice: None, waits: None, delivery: None, detail: None, script: None,
-            same_as: None, request: None, needs: None,
+            same_as: None, request: None, needs: None, blocks: false,
         }
     }
 

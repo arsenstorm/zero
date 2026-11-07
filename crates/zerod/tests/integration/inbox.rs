@@ -367,3 +367,19 @@ fn a_terminals_output_reads_as_plain_text_even_cut_mid_sequence() {
     assert_eq!(first + &second + &third, "ok\nmigrating \u{2713} donebold\n");
     assert!(carry.is_empty());
 }
+
+#[tokio::test]
+async fn every_ask_with_options_lets_the_user_answer_in_their_own_words() {
+    // The options are the agent's guesses: "Something else…" is always there, so the user is never boxed in. One the
+    // agent already gave words to isn't doubled, and asks that aren't choices are left alone.
+    let inbox = zerod::inbox::Inbox::open(None, vec![]);
+    let agent = zerod::ask::AgentIdentity { name: "zerod-s1".into(), host: "mac".into(), ..Default::default() };
+    let mut choice = zerod::ask::Ask::new(zerod::ask::AskKind::Choice, "Ship it?", agent.clone(), 3600);
+    choice.options = vec!["Yes".into(), "No".into()];
+    assert_eq!(inbox.create(choice, false).options, ["Yes", "No", "Something else…"]);
+    let mut worded = zerod::ask::Ask::new(zerod::ask::AskKind::Choice, "Which?", agent.clone(), 3600);
+    worded.options = vec!["A".into(), "Other…".into()];
+    assert_eq!(inbox.create(worded, false).options, ["A", "Other…"]);
+    let question = zerod::ask::Ask::new(zerod::ask::AskKind::Question, "Why?", agent, 3600);
+    assert!(inbox.create(question, false).options.is_empty(), "a question is answered in words already");
+}

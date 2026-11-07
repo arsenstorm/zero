@@ -145,7 +145,7 @@ async fn each_field_of_a_question_is_an_ask_and_the_session_hears_once_all_are_a
     asks.sort_by(|a, b| a.title.cmp(&b.title));
     assert_eq!(asks.iter().map(|a| a.title.as_str()).collect::<Vec<_>>(), ["Redis or Postgres?", "Which checks?"]);
     assert_eq!(asks[0].options, ["Redis", "Postgres", "Something else…"], "free text where the agent takes it");
-    assert_eq!(asks[1].options, ["Lint", "Tests"]);
+    assert_eq!(asks[1].options, ["Lint", "Tests", "Something else…"], "the user's own words, whatever the field says");
     assert_eq!(asks[0].detail.as_deref(), Some("Redis: in the stack"));
     inbox.answer(&asks[0].id, 2, "SQLite, it's a prototype");
     assert_eq!(bridge.heard(&settled(&inbox, &asks[0].id).await, Some(&conversation)), None, "one field still open");

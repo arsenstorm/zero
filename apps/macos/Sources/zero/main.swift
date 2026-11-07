@@ -6,8 +6,9 @@ func fail(_ message: String, _ code: Int32 = 1) -> Never { stderr(message); exit
 func usage(help: Bool = false) -> Never {
     let text = """
     usage:
-      zero ask     "short question?" [--option A --option B ...] [--body "details"] [--title T] [--code 'command or snippet']
+      zero ask     "short question?" [--option A --option B ...] [--body "details"] [--title T] [--code 'command or snippet'] [--block]
                    the question is one line (about 12 words); the details the user may need go in --body
+                   --block: you can't go on without the answer; Zero holds your other events until it's answered
                    an option ending with "…" asks the user for text; the answer is then "label: text"
       zero approve "what you want to do" [--body "details"] [--code 'command or snippet']   (Yes / No / Suggest something else…)
       zero run     'command' --why "what you need the output for" [--cwd DIR] [--title T]
@@ -122,7 +123,7 @@ while i < args.count {
     if arg == "--" { positional.append(contentsOf: args[(i + 1)...]); break }
     if arg.hasPrefix("--") {
         let key = String(arg.dropFirst(2))
-        if ["async", "blocked", "done", "merged", "completed", "waiting", "any", "mine", "all", "asked", "watch"].contains(key) {
+        if ["async", "blocked", "done", "merged", "completed", "waiting", "any", "mine", "all", "asked", "watch", "block"].contains(key) {
             flags[key, default: []].append("1")
         } else {
             i += 1

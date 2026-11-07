@@ -289,7 +289,7 @@ impl Daemon {
             let mut pending = self.pending.lock().unwrap();
             let Some(list) = pending.get_mut(id).filter(|l| !l.is_empty()) else { self.delivering.lock().unwrap().remove(id); return };
             // Signed out, or holding other tasks' messages for the user: only the user's words go.
-            if self.held_signed_out(&session.summary()) || self.holding_crossed(id) {
+            if self.held_signed_out(&session.summary()) || self.holding_crossed(id) || self.blocked_by_ask(id) {
                 let Some(at) = list.iter().position(|q| !q.report) else { self.delivering.lock().unwrap().remove(id); return };
                 let next = list.remove(at);
                 (next.text, next.images)

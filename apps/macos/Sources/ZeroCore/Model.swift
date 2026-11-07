@@ -58,6 +58,8 @@ public struct Ask: Codable, Identifiable, Equatable, Sendable {
     /// False when the agent asked with --async and ended its turn: nothing waits for the answer, so Zero types
     /// it into the agent's session instead.
     public var waits: Bool?
+    /// It can't go on without the answer: Zero holds its other events until it's answered.
+    public var blocks: Bool?
     /// How that typed answer is getting on; nil when the agent reads the answer itself.
     public var delivery: Delivery?
 

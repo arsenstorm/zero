@@ -112,6 +112,8 @@ func reason(_ ask: Ask) -> String? {
     var ask = Ask(kind: options.isEmpty ? .question : .choice, title: title, body: title == question ? "" : question, options: options,
                   command: flag("code"), agent: agentIdentity(), ttl: ttl)
     ask.detail = flag("body")
+    // --block: it can't go on without the answer; Zero holds its other events until it's answered.
+    ask.blocks = flag("block") != nil ? true : nil
     create(ask)
 }
 

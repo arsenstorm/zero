@@ -65,6 +65,7 @@ fn ask_of(args: &Value, conversation: &Conversation, agent: AgentIdentity, ttl: 
             ask.options = options;
             ask.detail = text("body");
             ask.command = text("code");
+            ask.blocks = args["block"].as_bool().unwrap_or(false);
             ask
         }
         Some("run") => {

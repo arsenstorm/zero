@@ -182,3 +182,26 @@ async fn after_compacting_the_agent_hears_zeros_record_word_for_word_not_only_it
     assert!(words.contains("WEB-42") && words.contains("Reviewing the fix"), "{words}");
     assert!(words.contains(&ask.id) && words.contains("Ship it?"), "{words}");
 }
+
+#[tokio::test]
+async fn a_blocking_ask_holds_what_else_comes_for_the_task_until_the_user_answers() {
+    // Asked with --block: the agent can't go on without the answer, so Zero holds its events and reports meanwhile.
+    // The answer itself, and the user's own words, go.
+    let w = world("events-blocking");
+    let (id, seen) = idle_claude(&w).await;
+    let inbox = zerod::inbox::Inbox::open(None, vec![std::sync::Arc::new(zerod::daemon::Sessions::of(&w.daemon))]);
+    inbox.configure(Duration::from_millis(20), 3600);
+    zerod::server::hold_while_blocked(&w.daemon, &inbox);
+    let agent = zerod::ask::AgentIdentity { name: format!("zerod-{id}"), host: "mac".into(), runtime: Some("zerod".into()), reference: Some(id.clone()), ..Default::default() };
+    let mut ask = zerod::ask::Ask::new(zerod::ask::AskKind::Choice, "Merge it?", agent, 3600);
+    ask.options = vec!["Yes".into(), "No".into()];
+    ask.waits = Some(false);
+    ask.blocks = true;
+    let ask = inbox.create(ask, false);
+    w.daemon.notify(&id, "1 new event on what you follow").unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!told(&seen).iter().any(|t| t.contains("1 new event")), "held while the ask blocks: {:?}", told(&seen));
+    inbox.choose(&ask.id, 0);
+    let words = seen.said("user", 2).await[1]["message"]["content"].as_str().unwrap().to_string();
+    assert!(words.contains("The user answered your ask") && words.contains("1 new event"), "the answer, then what was held: {words}");
+}

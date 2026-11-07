@@ -224,6 +224,14 @@ impl Zerod {
     }
 }
 
+/// A task with a blocking ask open (`zero ask --block`) hears nothing else until it's answered: the inbox tells the
+/// daemon which tasks those are.
+pub fn hold_while_blocked(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
+    let inbox = Arc::downgrade(inbox);
+    daemon.hold_while(Box::new(move |session| inbox.upgrade().is_some_and(|inbox| inbox.open_asks().iter()
+        .any(|a| a.blocks && (a.agent.reference.as_deref() == Some(session) || a.agent.name == format!("zerod-{session}"))))));
+}
+
 /// Archives each task done for as long as the settings say (a day, unless the user changed it), or once the user has
 /// read it, looked at every minute. ponytail: when it was first seen done is kept in memory, so a restart starts the
 /// clock again.

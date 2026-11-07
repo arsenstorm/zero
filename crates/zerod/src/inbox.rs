@@ -148,6 +148,10 @@ impl Inbox {
         let mut state = self.lock();
         let mut ask = incoming.clone();
         if !keep_id || incoming.id.is_empty() || state.asks.iter().any(|a| a.id == incoming.id) { ask.id = crate::ask::new_id() }
+        // The options are the agent's guesses: the user can always answer in their own words instead.
+        if ask.kind == AskKind::Choice && !ask.options.is_empty() && !ask.options.iter().any(|o| Ask::expects_text(o)) {
+            ask.options.push("Something else…".into());
+        }
         ask.state = AskState::Waiting;
         let requested = incoming.expires_at.0 - incoming.created_at.0;
         let ttl = if requested > 0 { requested } else { state.default_ttl };
