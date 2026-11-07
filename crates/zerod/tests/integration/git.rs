@@ -80,3 +80,19 @@ fn the_key_is_found_among_the_accounts_signing_keys_by_its_body() {
     assert_eq!(zerod::git::listed_as(listed, "ssh-ed25519 AAAAmine arsen@mac").as_deref(), Some("Signing-only Key"), "its comment aside");
     assert_eq!(zerod::git::listed_as(listed, "ssh-ed25519 AAAAnone"), None);
 }
+
+#[test]
+fn a_tasks_own_terminal_commits_as_the_agents_too() {
+    // Opened in Zero's terminal (zero-host, which starts it with an environment of its own), the task's agent still
+    // gets the agents' identity: `env` hands it over in front of the command.
+    let home = temp_dir("git-terminal");
+    std::fs::write(home.join("git-signing-key"), "key").unwrap();
+    let mut conversation = zerod::model::Conversation::new("s1", zerod::model::Provider::Claude, home.to_str().unwrap());
+    conversation.thread = Some("3f1c".into());
+    let argv = zerod::daemon::terminal_command(&conversation, &zerod::git::variables_for(&agents(vec![]), &home.join("git-signing-key"), &home)).unwrap();
+    let at = argv.iter().position(|a| a == "env").expect("env in front");
+    assert!(argv[at..].iter().any(|a| a == "GIT_COMMITTER_EMAIL=117126823+arsenstorm2@users.noreply.github.com"), "{argv:?}");
+    assert!(argv[at..].iter().position(|a| a == "claude").is_some_and(|c| c > 1), "then the command: {argv:?}");
+    let plain = zerod::daemon::terminal_command(&conversation, &[]).unwrap();
+    assert!(!plain.iter().any(|a| a == "env"), "nothing to hand over, nothing added");
+}

@@ -30,6 +30,7 @@ use crate::session::{Message, ModelChoice, Session, Transport};
 pub use heard::report;
 pub use inbox::Sessions;
 pub use rewind::Rewind;
+pub use terminals::terminal_command;
 use archive::archived_with;
 use send::kept_pending;
 
@@ -363,7 +364,6 @@ impl Daemon {
         Ok(())
     }
 
-    /// Names a session and says what it's for.
     /// How to tell a task has a blocking ask open: the inbox's, given once (server::hold_while_blocked).
     pub fn hold_while(&self, blocked: Blocked) { let _ = self.blocked.set(blocked); }
 
@@ -392,6 +392,7 @@ impl Daemon {
         Ok(())
     }
 
+    /// Names a session and says what it's for.
     pub fn label(&self, id: &str, label: Option<&str>, ticket: Option<&str>) -> Result<(), String> {
         self.session(id)?.change(Change::Named { label: label.map(Into::into), ticket: ticket.map(Into::into) });
         Ok(())

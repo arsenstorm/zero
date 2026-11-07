@@ -12,7 +12,7 @@ impl Daemon {
         if matches!(conversation.status, Status::Working | Status::Waiting) {
             return Err(format!("{} is working; stop its turn first", conversation.provider.title()));
         }
-        let argv = conversation.provider.terminal(&conversation)?;
+        let argv = terminal_command(&conversation, &crate::git::variables(Path::new(&conversation.cwd)))?;
         self.take_offline(&session).await;
         let mark = match conversation.provider {
             Provider::Claude => std::fs::read_to_string(self.claude_file(&conversation)).map(|text| text.lines().count()).unwrap_or(0),
@@ -67,4 +67,16 @@ impl Daemon {
         }
         Ok(())
     }
+}
+
+/// The task's terminal command, with `vars` (Settings › Git's) handed over by `env` in front of it: zero-host starts
+/// a terminal with an environment of its own, so nothing of zerod's reaches the agent otherwise.
+pub fn terminal_command(conversation: &crate::model::Conversation, vars: &[(String, String)]) -> Result<Vec<String>, String> {
+    let mut argv = conversation.provider.terminal(conversation)?;
+    if !vars.is_empty() {
+        // After the login shell's own words ("/bin/zsh -lic 'exec "$@"' zsh"), before the program.
+        let at = argv.iter().position(|a| a == "zsh").map_or(0, |i| i + 1);
+        argv.splice(at..at, std::iter::once("env".to_string()).chain(vars.iter().map(|(k, v)| format!("{k}={v}"))));
+    }
+    Ok(argv)
 }
