@@ -87,12 +87,32 @@ impl Daemon {
         let restarting = self.restarting.load(Ordering::Relaxed);
         // Nor while it's paused by the user: its turn ending is the pause.
         if let Some(lead) = &conversation.parent && (came_to_an_end || got_stuck) && !restarting && !self.is_paused(id) {
+            // Done is done-done: once the lead has this report, the worker leaves its tree (deliver).
+            // Only said so: a report without an ending is a turn finished, which may not be the work.
+            let said_done = conversation.answer().is_some_and(|answer| crate::board::ending(answer) == Some("done"));
+            if now == Attention::Done && said_done { self.leaving.lock().unwrap().insert(conversation.id.clone()); } else { self.leaving.lock().unwrap().remove(&conversation.id); }
             self.tell(lead, crate::model::from_line(&conversation.id, &report(&conversation, now)));
         }
         // What its CLI says of its account's usage is the account's, for choosing accounts by.
         if let (Some(signin), Some(usage)) = (&conversation.signin, &conversation.usage) { self.signins.record_usage(signin, usage) }
         if now == Attention::Limited && !self.switch_account(&conversation) { self.after_reset(&conversation) }
-        if between_turns(&conversation) { self.deliver(id) }
+        if between_turns(&conversation) {
+            // A change kept for this moment first (a model, permissions picked mid-turn), then what's queued, on it.
+            match (self.next(id).is_some() && !self.restarting.load(Ordering::Relaxed), self.me.upgrade()) {
+                (true, Some(daemon)) => {
+                    let id = id.to_string();
+                    tokio::spawn(async move {
+                        daemon.apply_next(&id).await;
+                        // Stopped to start again with new permissions: started again for what's queued.
+                        let waiting = daemon.pending.lock().unwrap().get(&id).is_some_and(|words| !words.is_empty());
+                        let attached = daemon.session(&id).is_ok_and(|s| s.is_attached());
+                        if waiting && !attached { if let Err(error) = daemon.resume(&id).await { eprintln!("zerod: couldn't resume {id} after its change: {error}") } }
+                        else { daemon.deliver(&id) }
+                    });
+                }
+                _ => self.deliver(id),
+            }
+        }
     }
 
     /// The user saw a task's reply: its latest answer unless one is named, now unless a time is given (a client
@@ -188,9 +208,13 @@ pub fn report(worker: &Conversation, attention: Attention) -> String {
     format!("Worker {name} {what}\n\n(It is session {}: `zero send {} \"…\"` to reply to it, `zero wait {}` to wait on it.)", worker.id, worker.id, worker.id)
 }
 
+/// How long a row set by its lead still stands for the issue, whatever reports come.
+const ROW_FRESH_MS: i64 = 10 * 60 * 1000;
+
 impl Daemon {
     /// A lead's turn started by its worker's report on a ticket: the issue's row is what the user reads coming back,
-    /// so a turn that heard of it and left the row alone is told, once (the reminder's own turn is Zero's, not a report).
+    /// so a turn that heard of it and left a stale row alone is told, once until the row is set (the reminder's own turn
+    /// is Zero's, not a report). A row set in the last ten minutes still says it: most reports change nothing.
     fn check_issue_row(&self, conversation: &Conversation) {
         // A turn that failed had no chance to set it.
         if !self.endings.load(Ordering::Relaxed) || conversation.parent.is_some() || self.restarting.load(Ordering::Relaxed) || conversation.failure.is_some() { return }
@@ -199,7 +223,13 @@ impl Daemon {
         let Some(worker) = text.strip_prefix(crate::model::FROM).and_then(|rest| rest.split_once(" -->")).map(|(id, _)| id) else { return };
         let Some(ticket) = self.get(worker).filter(|w| w.parent.as_deref() == Some(conversation.id.as_str())).and_then(|w| w.ticket) else { return };
         let started = first.at.unwrap_or(0);
-        if conversation.issues.iter().any(|i| i.ticket == ticket && i.updated >= started) { return }
+        let set = conversation.issues.iter().find(|i| i.ticket == ticket).map_or(0, |i| i.updated);
+        if set >= started || crate::now_ms() - set < ROW_FRESH_MS { return }
+        let key = (conversation.id.clone(), ticket.clone());
+        let mut reminded = self.reminded_rows.lock().unwrap();
+        if reminded.get(&key).is_some_and(|&at| set < at) { return }
+        reminded.insert(key, crate::now_ms());
+        drop(reminded);
         self.tell(&conversation.id, crate::model::from_line("zero", &format!("{ISSUE_ROW_MARK} after {ticket}'s report: it's what the user reads \
             coming back. Set it with `zero issue {ticket} you|working|waiting|parked|done \"…\"` (on the user: what it needs from them; \
             waiting: on whom; parked: why), then end your turn.")));

@@ -15,7 +15,8 @@ use zerod::model::*;
 fn quiet() -> Runtime { Arc::new(|_, _, _| Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink()))) }
 
 fn git(dir: &Path, args: &[&str]) {
-    assert!(Command::new("git").args(args).current_dir(dir).output().unwrap().status.success(), "git {args:?}");
+    // The fixture's own commits unsigned: the user's global config may sign through an agent that's locked.
+    assert!(Command::new("git").args(["-c", "commit.gpgsign=false"]).args(args).current_dir(dir).output().unwrap().status.success(), "git {args:?}");
 }
 
 /// A Claude Code session of two turns, taken in from a git folder.

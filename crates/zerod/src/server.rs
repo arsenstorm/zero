@@ -106,6 +106,8 @@ struct Request {
     place: Option<String>,
     /// connectSlack: the user token.
     token: Option<String>,
+    /// A Slack workspace's team id: the one to disconnect.
+    team: Option<String>,
     /// browserAttach: what the extension says of itself; browserAnswer: its answer to a call; saveBrowserSettings: them.
     browser: Option<Value>,
     /// subscribe: no snapshots up front (a phone, on a slow link): each session's comes once it changes, or `recent`.
@@ -162,20 +164,29 @@ pub struct Settings {
     /// A command printing where tasks run by ticket, `[{"ticket", "place"}]`, rerun every minute (board.rs); empty for none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub places: Option<String>,
-    /// Seconds a completed task stays before it's archived; 0 never. Unset, a day.
+    /// Seconds a done task stays before it's archived; 0 never, -1 once the user has read it. Unset, a day.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archive_completed: Option<i64>,
+    /// The identity agents' Git commits and signs as (git.rs); unset, the user's own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git: Option<crate::git::AgentGit>,
 }
 
 impl Settings {
-    /// How long a completed task stays before it's archived; none, never.
+    /// How long a done task stays before it's archived; none, never. Once read, at once (archive_once_read).
     pub fn archive_after(&self) -> Option<i64> {
-        match self.archive_completed { None => Some(24 * 3600), Some(0) => None, Some(seconds) => Some(seconds.max(60)) }
+        match self.archive_completed { None => Some(24 * 3600), Some(0) => None, Some(-1) => Some(0), Some(seconds) => Some(seconds.max(60)) }
     }
+
+    /// A done task leaves once the user has read its last answer, as a done worker does once its lead has its report.
+    pub fn archive_once_read(&self) -> bool { self.archive_completed == Some(-1) }
 
     pub fn load(home: &std::path::Path) -> Settings {
         std::fs::read(home.join("settings.json")).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default()
     }
+
+    /// Agents' processes started from here on commit and sign as the settings say.
+    pub fn apply_git(&self, home: &std::path::Path) { crate::git::set(self.git.clone(), crate::git::key_path(home)) }
 
     pub fn apply(&self, inbox: &Inbox, drops: Option<&Drops>) {
         inbox.configure(std::time::Duration::from_secs_f64(self.take_back.unwrap_or(2.0).max(0.0)), self.ttl.unwrap_or(3600));
@@ -208,20 +219,22 @@ impl Zerod {
         let mut rows = crate::board::board_in(&daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(), &self.inbox.asks(), &self.places.get(), &daemon.queues(), &|c| daemon.workspace_of(c));
         crate::board::mark_read(&mut rows, &|id| daemon.has_read(id));
         crate::board::mark_paused(&mut rows, &|id| daemon.is_paused(id) || daemon.is_paused_for_update(id));
-        for row in rows.iter_mut() { row.wakes = daemon.next_wake(&row.session) }
+        for row in rows.iter_mut() { row.wakes = daemon.next_wake(&row.session); row.next = daemon.next(&row.session) }
         rows
     }
 }
 
-/// Archives each task completed for as long as the settings say (a day, unless the user changed it), looked at every
-/// few minutes. ponytail: when it was first seen completed is kept in memory, so a restart starts the clock again.
+/// Archives each task done for as long as the settings say (a day, unless the user changed it), or once the user has
+/// read it, looked at every minute. ponytail: when it was first seen done is kept in memory, so a restart starts the
+/// clock again.
 pub async fn archive_completed(zerod: Zerod) {
     let mut since = HashMap::new();
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(5 * 60)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-        let after = Settings::load(zerod.daemon.home()).archive_after();
-        for id in crate::board::due_to_archive(&zerod.board(), &mut since, now, after) {
+        let settings = Settings::load(zerod.daemon.home());
+        let due = crate::board::due_to_archive(&zerod.board(), &mut since, now, settings.archive_after());
+        for id in due.into_iter().filter(|id| !settings.archive_once_read() || zerod.daemon.has_read(id)) {
             match zerod.daemon.archive(&id).await {
                 Ok(()) => { since.remove(&id); }
                 Err(error) => eprintln!("zerod: couldn't archive completed {id}: {error}"),
@@ -243,7 +256,7 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         }
         "release" | "resume" | "openTerminal" | "closeTerminal" | "rewindPreview" | "rewind" | "branch" | "switch" | "interrupt" | "stop"
         | "pause" | "unpause" => sessions::control(zerod, request).await,
-        "send" | "queue" | "unqueue" | "notify" | "decide" | "answer" | "seen" => sessions::messages(zerod, request).await,
+        "send" | "queue" | "unqueue" | "notify" | "decide" | "answer" | "seen" | "introduce" => sessions::messages(zerod, request).await,
         "label" | "setPermissions" | "placeInWorkspace" | "attr" | "issue" | "table" | "place" => sessions::properties(zerod, request).await,
         "hello" | "list" | "get" | "workers" | "result" | "wait" | "usage" | "board" | "recent" | "items" | "window" | "outline" => {
             sessions::reads(zerod, request).await
@@ -253,9 +266,21 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "signIns" | "saveSignIn" | "codexSignIn" | "claudeSignIn" | "deleteSignIn" | "defaultSignIn" | "readUsage" => signins::handle(zerod, request).await,
         "agentAsk" | "create" | "asks" | "choose" | "answerAsk" | "reply" | "takeBack" | "withdraw" | "dismiss" | "cancelRun" | "deliver"
         | "message" | "close" | "screen" | "press" | "switchModel" => inbox::handle(zerod, request).await,
-        "mcpServers" | "saveMcpServer" | "deleteMcpServer" | "workspaces" | "saveWorkspace" | "deleteWorkspace" | "settings" | "configure" => {
+        "gitAccount" | "gitCheck" => git(zerod, request).await,
+        "mcpServers" | "saveMcpServer" | "deleteMcpServer" | "workspaces" | "saveWorkspace" | "deleteWorkspace" | "settings" | "configure" | "gitKey" => {
             setup(zerod, request)
         }
+        other => unknown(other),
+    }
+}
+
+/// Settings › Git's lookups on GitHub, with the user's GitHub CLI: an account's committer, and whether the agents' key is
+/// one of its signing keys.
+async fn git(zerod: &Zerod, request: Request) -> Result<Value, String> {
+    let login = request.args.as_ref().and_then(|a| a["login"].as_str()).unwrap_or("").to_string();
+    match request.op.as_str() {
+        "gitAccount" => crate::git::account(&login).await.map(|(name, email)| json!({"login": login.trim().trim_start_matches('@'), "name": name, "email": email})),
+        "gitCheck" => Ok(json!({"title": crate::git::on_github(&login, zerod.daemon.home()).await})),
         other => unknown(other),
     }
 }
@@ -293,7 +318,16 @@ fn setup(zerod: &Zerod, request: Request) -> Result<Value, String> {
             Ok(Value::Null)
         }
         "workspaces" => Ok(json!(daemon.workspaces.list())),
-        "settings" => Ok(json!(Settings::load(daemon.home()))),
+        "settings" => {
+            let mut settings = json!(Settings::load(daemon.home()));
+            if let Some(key) = crate::git::public_key(daemon.home()) { settings["gitPublicKey"] = json!(key) }
+            Ok(settings)
+        }
+        // The agents' signing key, taken from a file the user chose: its public half back, for GitHub.
+        "gitKey" => {
+            let from = request.args.as_ref().and_then(|a| a["path"].as_str()).ok_or("Which key file?")?;
+            crate::git::take_key(std::path::Path::new(from), daemon.home()).map(|key| json!({"publicKey": key}))
+        }
         "configure" => configure(zerod, request.settings),
         other => unknown(other),
     }
@@ -308,6 +342,8 @@ fn configure(zerod: &Zerod, given: Settings) -> Result<Value, String> {
         settings.patterns = given.patterns.or(settings.patterns);
         settings.places = given.places.or(settings.places);
         settings.archive_completed = given.archive_completed.or(settings.archive_completed);
+        settings.git = given.git.or(settings.git);
+        settings.apply_git(daemon.home());
         settings.apply(&zerod.inbox, zerod.drops.as_deref());
         let _ = std::fs::write(daemon.home().join("settings.json"), serde_json::to_vec_pretty(&settings).unwrap_or_default());
         Ok(Value::Null)

@@ -208,7 +208,7 @@ pub fn thread_events(old: &Value, messages: &[Value], who: &dyn Fn(&Value) -> St
 async fn poll_thread(integrations: &Integrations, channel: &str, thread: &str, state: Option<&Value>) -> Result<Poll, String> {
     let messages = replies(integrations, channel, thread, None).await?;
     if messages.is_empty() { return Err(format!("Slack thread {channel}/{thread} not found")) }
-    let (team, me) = integrations.slack_team().ok_or("Slack isn't connected")?;
+    let (team, me) = integrations.slack_team(channel).ok_or("Slack isn't connected")?;
     // Names and texts first (they ask Slack), so the diff itself needs nothing.
     let mut whos = HashMap::new();
     let mut texts = HashMap::new();
@@ -224,7 +224,7 @@ async fn poll_thread(integrations: &Integrations, channel: &str, thread: &str, s
 
 async fn poll_channel(integrations: &Integrations, channel: &str, state: Option<&Value>) -> Result<Poll, String> {
     let history = integrations.slack("conversations.history", &[("channel", channel), ("limit", "100")]).await?;
-    let (team, me) = integrations.slack_team().ok_or("Slack isn't connected")?;
+    let (team, me) = integrations.slack_team(channel).ok_or("Slack isn't connected")?;
     let messages = history["messages"].as_array().cloned().unwrap_or_default();
     let mut top: Vec<&Value> = messages.iter().filter(|m| m["thread_ts"].is_null() || m["thread_ts"] == m["ts"]).collect();
     top.sort_by(|a, b| ts_of(a).total_cmp(&ts_of(b)));

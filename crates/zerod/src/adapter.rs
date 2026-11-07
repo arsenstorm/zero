@@ -25,6 +25,10 @@ pub trait Adapter: Send {
     fn reply(&self, question: &Question, answers: &Answers) -> Result<Value, String>;
     /// The runtime's process ended: whatever it was waiting on is gone.
     fn ended(&mut self);
+
+    /// Lines that stop what runs in the background (a subagent, a long command) apart from the turn: what Stop sends
+    /// besides interrupting the turn. None where the provider has no such thing.
+    fn stops(&self) -> Vec<Value> { vec![] }
 }
 
 /// What one line from the runtime leads to: changes to the conversation, and lines to send back at once.
@@ -72,7 +76,9 @@ pub fn json_rpc_answer(message: &Value) -> Option<(String, Result<Value, String>
 /// The status a session returns to once an approval or question is settled: still waiting if others are open.
 pub fn after_approval(conversation: &Conversation, settled: &str) -> Change {
     let others = conversation.approvals.iter().any(|a| a.id != settled) || conversation.questions.iter().any(|q| q.id != settled);
-    let status = if others { Status::Waiting } else if conversation.turn.is_some() { Status::Working } else { conversation.status };
+    // No turn under way (a background subagent's request, between turns): no turn to go back to, so not left waiting.
+    let status = if others { Status::Waiting } else if conversation.turn.is_some() { Status::Working }
+                 else if conversation.status == Status::Waiting { Status::Idle } else { conversation.status };
     Change::Status { status, turn: conversation.turn.clone(), error: conversation.error.clone() }
 }
 
@@ -90,12 +96,22 @@ report, a wake-up) with `zero ask \"…\" --option … --async`; where the `zero
 Zero's zero_ask, zero_run, zero_note and zero_issue tools do the same. Never print a command for them to paste. \
 Leading several issues at once (a worker each), keep a row per issue, which the user reads coming back instead of \
 asking you where everything is: `zero issue TICKET you|working|waiting|parked|done \"…\"` whenever one's state \
-changes (you: what you need from them; waiting: on whom; parked: why). End every turn with exactly one of these as its last line: [zero: done] (nothing is left \
-that you can do, even if others still have steps, such as a review or QA: what you follow brings you back), \
-[zero: waiting] (the next move is someone else's, not the user's: CI, a deploy, a review), [zero: working] (pausing \
+changes (you: what you need from them; waiting: on whom; parked: why). Other tasks in Zero may \
+work on what yours touches (`zero tasks` lists them, with their folders): coordinate with one directly by \
+`zero send <its id or name> \"…\"`, its replies coming to you as messages from it, and keep the user out of what you \
+can settle between you. Leading, keep your own context for steering: \
+hand reading that fills it (long logs, many files, a whole transcript, a review) to a worker with `zero spawn` and \
+take back its conclusion, so your conversation stays short of compacting; your issue rows and workers keep the state, \
+not your memory. End every turn with exactly one of these as its last line: [zero: done] (the work is \
+finished end to end, with good reason to say so: merged and deployed, verified, its ticket closed, or the user said it's \
+done; Zero then puts it away, and what you follow brings it back if something comes up), [zero: waiting] (the next move \
+is someone else's, not the user's: a review, CI, a deploy, QA), [zero: working] (pausing \
 between steps), or [zero: asked <id>] (waiting on the user's answer to what you asked, only while it's unanswered). Don't take actions other people will see, such as merging, marking a pull request ready, requesting reviews or \
 posting messages, unless the user asked you to. For anything in a web browser, use Zero's browser_ tools (the user's \
 Chrome, through Zero for Chrome): your own browser tools are off in Zero.";
+
+/// The start of a compaction row's id, whichever CLI compacted: once it's done, Zero gives the agent its record (recap.rs).
+pub const COMPACTED: &str = "compaction-";
 
 /// Codex's own browser, its bundled chrome and browser plugins, off for this run only: the user's config is left as is.
 const CODEX_NO_BROWSER: &[&str] = &["-c", "plugins.chrome@openai-bundled.enabled=false", "-c", "plugins.browser@openai-bundled.enabled=false"];
@@ -130,7 +146,8 @@ impl Provider {
         let thread = conversation.thread.as_deref().ok_or_else(|| format!("{} hasn't started this task's thread yet", self.title()))?;
         let unrestricted = conversation.permissions == crate::model::Permissions::Unrestricted;
         let mut args: Vec<&str> = match self {
-            Provider::Claude => vec!["claude", "--resume", thread, "--permission-mode", if unrestricted { "bypassPermissions" } else { "auto" }, "--no-chrome"],
+            Provider::Claude => vec!["claude", "--resume", thread, "--permission-mode", if unrestricted { "bypassPermissions" } else { "auto" }, "--no-chrome",
+                                    "--settings", claude::NO_IDLE_COMPACTION],
             // Its own app-server, as Zero runs Codex headless: the shared one may run with other settings, and Codex asks
             // before using it.
             Provider::Codex => [&["codex", "resume", thread, "--no-daemon", if unrestricted { "--dangerously-bypass-approvals-and-sandbox" } else { "--sandbox=workspace-write" }][..], CODEX_NO_BROWSER].concat(),

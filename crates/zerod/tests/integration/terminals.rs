@@ -19,7 +19,8 @@ fn each_provider_opens_its_own_terminal_on_the_tasks_thread() {
     claude.thread = Some("3f1c".into());
     claude.model = Some("opus".into());
     // The providers' own browsers are off in Zero, whatever the user's own settings: agents use Zero for Chrome.
-    assert_eq!(Provider::Claude.terminal(&claude).unwrap()[4..], ["claude", "--resume", "3f1c", "--permission-mode", "auto", "--no-chrome", "--model", "opus"]);
+    assert_eq!(Provider::Claude.terminal(&claude).unwrap()[4..], ["claude", "--resume", "3f1c", "--permission-mode", "auto", "--no-chrome",
+        "--settings", r#"{"idleCompaction":false}"#, "--model", "opus"]);
     let mut codex = Conversation::new("s", Provider::Codex, "/w");
     codex.thread = Some("01a1".into());
     codex.permissions = Permissions::Unrestricted;

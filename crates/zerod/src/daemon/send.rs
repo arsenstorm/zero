@@ -9,6 +9,7 @@ impl Daemon {
     pub fn queue(&self, id: &str, text: &str, images: &[String]) -> Result<Queued, String> {
         let session = self.session(id)?;
         if text.trim().is_empty() && images.is_empty() { return Err("A message needs words or an image".into()) }
+        self.heard_from_user(id);
         let queued = Queued { id: new_id(), text: text.into(), images: images.to_vec(), report: false };
         self.pending.lock().unwrap().entry(id.into()).or_default().push(queued.clone());
         self.hold(id, false);
@@ -33,6 +34,7 @@ impl Daemon {
     pub fn release(&self, id: &str) -> Result<(), String> {
         self.session(id)?;
         self.hold(id, false);
+        self.heard_from_user(id);
         let _ = self.queues.send(());
         self.deliver(id);
         Ok(())
@@ -66,6 +68,7 @@ impl Daemon {
     /// The user's words to a session, with images (their files), resuming it first if it is offline.
     pub async fn send(&self, id: &str, message: Message<'_>, choice: ModelChoice<'_>) -> Result<(), String> {
         let session = self.session(id)?;
+        self.heard_from_user(id);
         if let Some(conversation) = self.get(id) && conversation.terminal.is_some() {
             return Err(format!("{} is open in its terminal; type there, or go back to Zero", conversation.provider.title()));
         }
@@ -139,6 +142,15 @@ impl Daemon {
     pub async fn switch(&self, id: &str, provider: Provider, choice: ModelChoice<'_>) -> Result<(), String> {
         let session = self.session(id)?;
         let conversation = session.snapshot();
+        // Mid-turn: kept for the next turn (what it has already, dropped from it), applied as this one ends.
+        if busy_turn(&conversation) {
+            let mut next = self.next(id).unwrap_or_default();
+            next.provider = (provider != conversation.provider).then_some(provider);
+            if let Some(model) = choice.model { next.model = (Some(model) != conversation.model.as_deref() || next.provider.is_some()).then(|| model.to_string()) }
+            if let Some(effort) = choice.effort { next.effort = (Some(effort) != conversation.effort.as_deref() || next.provider.is_some()).then(|| effort.to_string()) }
+            self.keep_next(id, next);
+            return Ok(());
+        }
         if provider == conversation.provider { return session.set_model(choice).await }
         if provider == Provider::Opencode { return Err(format!("Zero can't hand a task to {} yet", provider.title())) }
         if matches!(conversation.status, Status::Working | Status::Waiting) {
@@ -155,10 +167,14 @@ impl Daemon {
     pub async fn set_permissions(&self, id: &str, permissions: crate::model::Permissions) -> Result<(), String> {
         let session = self.session(id)?;
         let conversation = session.snapshot();
-        if conversation.permissions == permissions { return Ok(()) }
-        if matches!(conversation.status, Status::Working | Status::Waiting | Status::Starting) {
-            return Err(format!("{} is working; change its permissions once its turn ends", conversation.provider.title()));
+        // Mid-turn: kept for the next turn, applied as this one ends (the agent starts again with them then).
+        if busy_turn(&conversation) {
+            let mut next = self.next(id).unwrap_or_default();
+            next.permissions = (permissions != conversation.permissions).then_some(permissions);
+            self.keep_next(id, next);
+            return Ok(());
         }
+        if conversation.permissions == permissions { return Ok(()) }
         if conversation.terminal.is_some() { return Err(format!("{} is open in its terminal; go back to Zero first", conversation.provider.title())) }
         self.take_offline(&session).await;
         session.change(Change::Permitted { permissions });
@@ -183,7 +199,14 @@ impl Daemon {
     pub async fn interrupt(&self, id: &str) -> Result<(), String> {
         let session = self.session(id)?;
         if !self.queued(id).0.is_empty() { self.hold(id, true); let _ = self.queues.send(()); }
-        session.interrupt().await
+        let before = session.snapshot();
+        let stopped = session.interrupt().await;
+        // Reading busy with no turn behind it: nothing the provider could stop, so the task is set right, not refused.
+        if before.turn.is_none() && busy_turn(&before) {
+            session.change(Change::Status { status: Status::Idle, turn: None, error: before.error.clone() });
+            return Ok(());
+        }
+        stopped
     }
 
     pub async fn decide(&self, id: &str, approval: &str, choice: &str) -> Result<(), String> {
@@ -206,8 +229,30 @@ impl Daemon {
             self.unarchive(&root)?;
         }
         self.session(id)?;
+        self.count_crossing(id, from);
         self.tell(id, crate::model::from_line(from, text));
         Ok(())
+    }
+
+    /// One more message between two tasks (neither the other's lead) without the user: past BETWEEN_TASKS, the
+    /// receiver's messages from other tasks wait for the user's word, and it says so.
+    fn count_crossing(&self, to: &str, from: &str) {
+        let (Some(receiver), Some(sender)) = (self.get(to), self.get(from)) else { return };
+        if receiver.parent.as_deref() == Some(from) || sender.parent.as_deref() == Some(to) { return }
+        let pair = if to < from { (to.to_string(), from.to_string()) } else { (from.to_string(), to.to_string()) };
+        let count = { let mut crossed = self.crossed.lock().unwrap(); let n = crossed.entry(pair).or_insert(0); *n += 1; *n };
+        if count > BETWEEN_TASKS && self.crossing.lock().unwrap().insert(to.to_string()) && let Ok(session) = self.session(to) {
+            session.report(&format!("Zero is holding messages from \"{}\": the two tasks have written to each other {BETWEEN_TASKS} times without you. Write to this task to let them carry on.", crate::bridge::label(&sender)));
+        }
+    }
+
+    /// Holding messages from other tasks for the user's word (count_crossing).
+    pub fn holding_crossed(&self, id: &str) -> bool { self.crossing.lock().unwrap().contains(id) }
+
+    /// The user wrote to a task: its exchanges with other tasks start counting again, and what was held goes.
+    fn heard_from_user(&self, id: &str) {
+        self.crossing.lock().unwrap().remove(id);
+        self.crossed.lock().unwrap().retain(|(a, b), _| a != id && b != id);
     }
 
     /// Zero's word for a session, between its turns (a parked one resumed for it), shown as Zero's, not the user's.
@@ -239,16 +284,20 @@ impl Daemon {
         let Ok(session) = self.session(id) else { return };
         if !session.is_attached() { return }
         if !self.delivering.lock().unwrap().insert(id.into()) { return }
+        let mut reporters: Vec<String> = vec![];
         let (text, images) = {
             let mut pending = self.pending.lock().unwrap();
             let Some(list) = pending.get_mut(id).filter(|l| !l.is_empty()) else { self.delivering.lock().unwrap().remove(id); return };
-            if self.held_signed_out(&session.summary()) {
+            // Signed out, or holding other tasks' messages for the user: only the user's words go.
+            if self.held_signed_out(&session.summary()) || self.holding_crossed(id) {
                 let Some(at) = list.iter().position(|q| !q.report) else { self.delivering.lock().unwrap().remove(id); return };
                 let next = list.remove(at);
                 (next.text, next.images)
             } else if list[0].report {
                 let reports = list.iter().take_while(|q| q.report).count();
-                (list.drain(..reports).map(|q| q.text).collect::<Vec<_>>().join("\n\n"), vec![])
+                let given: Vec<Queued> = list.drain(..reports).collect();
+                reporters = given.iter().filter_map(|q| crate::model::from(&q.text)).filter(|who| *who != "zero").map(String::from).collect();
+                (given.into_iter().map(|q| q.text).collect::<Vec<_>>().join("\n\n"), vec![])
             } else {
                 let next = list.remove(0);
                 (next.text, next.images)
@@ -258,8 +307,19 @@ impl Daemon {
         let (me, id) = (self.me.clone(), id.to_string());
         tokio::spawn(async move {
             // ponytail: word that fails to go through is dropped with a notice; keep it if sends start failing in practice.
-            if let Err(error) = session.send(Message { text: &text, images: &images, context: None }, ModelChoice::default()).await { session.report(&format!("Couldn't pass on: {error}")) }
-            if let Some(daemon) = me.upgrade() { daemon.delivering.lock().unwrap().remove(&id); }
+            let sent = session.send(Message { text: &text, images: &images, context: None }, ModelChoice::default()).await;
+            if let Err(error) = &sent { session.report(&format!("Couldn't pass on: {error}")) }
+            let Some(daemon) = me.upgrade() else { return };
+            daemon.delivering.lock().unwrap().remove(&id);
+            // Its lead has the report of a worker that ended done: the worker leaves the tree, kept in the archive.
+            if sent.is_ok() {
+                for worker in reporters {
+                    let done = daemon.get(&worker).is_some_and(|w| w.attention() == crate::model::Attention::Done);
+                    if daemon.leaving.lock().unwrap().remove(&worker) && done && let Err(error) = daemon.archive(&worker).await {
+                        eprintln!("zerod: couldn't put away done worker {worker}: {error}");
+                    }
+                }
+            }
         });
     }
 
@@ -307,3 +367,40 @@ pub(super) fn kept_pending(dir: &Path) -> Vec<Queued> {
     serde_json::from_slice(&data).unwrap_or_else(|_| serde_json::from_slice::<Vec<String>>(&data).unwrap_or_default()
         .into_iter().map(|text| Queued { id: new_id(), text, images: vec![], report: true }).collect())
 }
+
+/// A turn under way: a change of model or permissions waits for it to end.
+fn busy_turn(conversation: &Conversation) -> bool { matches!(conversation.status, Status::Working | Status::Waiting | Status::Starting) }
+
+impl Daemon {
+    /// What's kept for a task's next turn (switch, set_permissions mid-turn); none when nothing is.
+    pub fn next(&self, id: &str) -> Option<crate::model::Next> {
+        std::fs::read(self.home.join("sessions").join(id).join(NEXT)).ok().and_then(|data| serde_json::from_slice(&data).ok())
+    }
+
+    fn keep_next(&self, id: &str, next: crate::model::Next) {
+        let file = self.home.join("sessions").join(id).join(NEXT);
+        let _ = if next.is_empty() { std::fs::remove_file(file) } else { std::fs::write(file, serde_json::to_vec(&next).unwrap_or_default()) };
+        let _ = self.queues.send(()); // the board, at once
+    }
+
+    /// The turn ended: what was kept for the next one applied (the provider, the model and effort, the permissions),
+    /// then what's queued goes, on it.
+    pub(super) async fn apply_next(&self, id: &str) {
+        let Some(next) = self.next(id) else { return };
+        self.keep_next(id, crate::model::Next::default());
+        let Ok(session) = self.session(id) else { return };
+        // Permissions first: the agent starts again with them, so the model is then only kept for that start, not
+        // asked of an agent about to stop.
+        if let Some(permissions) = next.permissions && let Err(error) = self.set_permissions(id, permissions).await {
+            session.report(&format!("Couldn't change its permissions: {error}"));
+        }
+        let provider = next.provider.unwrap_or(session.summary().provider);
+        if next.provider.is_some() || next.model.is_some() || next.effort.is_some() {
+            let choice = ModelChoice { model: next.model.as_deref(), effort: next.effort.as_deref() };
+            if let Err(error) = self.switch(id, provider, choice).await { session.report(&format!("Couldn't change its model: {error}")) }
+        }
+    }
+}
+
+/// A task's change kept for its next turn, in its folder.
+const NEXT: &str = "next.json";

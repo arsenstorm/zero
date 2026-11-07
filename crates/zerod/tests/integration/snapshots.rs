@@ -9,7 +9,8 @@ use crate::common::temp_dir;
 use zerod::snapshots;
 
 fn git(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git").args(args).current_dir(dir).output().unwrap();
+    // The fixture's own commits unsigned: the user's global config may sign through an agent that's locked.
+    let output = Command::new("git").args(["-c", "commit.gpgsign=false"]).args(args).current_dir(dir).output().unwrap();
     assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }

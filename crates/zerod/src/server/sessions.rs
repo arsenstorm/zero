@@ -85,7 +85,9 @@ pub(super) async fn messages(zerod: &Zerod, request: Request) -> Result<Value, S
         }
         "unqueue" => daemon.unqueue(&request.session()?, request.item.as_ref().and_then(Value::as_str).ok_or("Which queued message?")?).map(|queued| json!(queued)),
         // From another task when `from` says which: marked as its words.
-        "notify" => daemon.notify_from(&request.session()?, request.from.as_deref().unwrap_or("zero"), request.text.as_deref().ok_or("Notify with text")?).map(|_| Value::Null),
+        "notify" => daemon.notify_from(&daemon.resolve(&request.session()?)?, request.from.as_deref().unwrap_or("zero"), request.text.as_deref().ok_or("Notify with text")?).map(|_| Value::Null),
+        // The user asks two tasks to work together.
+        "introduce" => daemon.introduce(&request.session()?, request.args.as_ref().and_then(|a| a["other"].as_str()).ok_or("Introduce to which task?")?).map(|_| Value::Null),
         "decide" => {
             let approval = request.approval.as_deref().ok_or("Which approval?")?;
             let choice = request.choice.as_deref().ok_or("Which choice?")?;
@@ -191,7 +193,8 @@ fn message(zerod: &Zerod, request: &Request, needs: &'static str) -> Result<(Str
     let images = request.images.clone().unwrap_or_default();
     let text = request.text.as_deref().filter(|t| !t.trim().is_empty() || !images.is_empty()).ok_or(needs)?;
     let (text, loops) = zerod.loops.expand(text);
-    let id = request.session()?;
+    // By its name too, when one task has it.
+    let id = zerod.daemon.resolve(&request.session()?)?;
     let role = if zerod.daemon.get(&id).is_some_and(|c| c.parent.is_some()) { "worker" } else { "lead" };
     for name in &loops { zerod.loops.record(name, &id, role) }
     let text = with_open_asks(zerod, &id, text);
@@ -218,8 +221,9 @@ fn restart(zerod: &Zerod) -> Value {
     // The app hears a restart is under way, and asks what it waits for.
     let _ = zerod.notices.send("restarting");
     tokio::spawn(async move {
+        let handed = daemon.hand_off().await;
         let paused = daemon.pause_for_restart().await;
-        eprintln!("zerod: restarting as the new build; {} turn(s) paused to carry on", paused.len());
+        eprintln!("zerod: restarting as the new build; {} process(es) handed over, {} turn(s) paused to carry on", handed.len(), paused.len());
         crate::process::replace_self();
     });
     json!({"restarting": true})

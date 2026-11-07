@@ -165,3 +165,18 @@ fn a_server_of_zeros_that_needs_signing_in_gives_the_user_codexs_own_sign_in_lin
     core.receive(&json!({"method": "mcpServer/oauthLogin/completed", "params": {"name": "cve-lookup", "success": true, "threadId": "t1"}}));
     assert!(matches!(&core.conversation().items.last().unwrap().kind, ItemKind::Notice { text, error: false } if text == "Signed in to CVE lookup"));
 }
+
+#[test]
+fn codex_compacting_shows_while_it_runs_and_ends_as_compacted() {
+    let mut core = Core::new(Conversation::new("s1", Provider::Codex, "/work/project"));
+    core.receive(&json!({"method": "item/started", "params": {"turnId": "u", "item": {"type": "contextCompaction", "id": "c1"}}}));
+    let item = core.conversation().items.last().unwrap().clone();
+    assert_eq!(item.id, format!("{}c1", zerod::adapter::COMPACTED));
+    assert!(matches!(&item.kind, ItemKind::Notice { text, .. } if text == "Compacting the conversation…"), "{item:?}");
+    assert_eq!(item.status, ItemStatus::Running);
+    core.receive(&json!({"method": "item/completed", "params": {"turnId": "u", "item": {"type": "contextCompaction", "id": "c1"}}}));
+    let items = &core.conversation().items;
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert!(matches!(&items[0].kind, ItemKind::Notice { text, .. } if text == "Conversation compacted"));
+    assert_eq!(items[0].status, ItemStatus::Done);
+}

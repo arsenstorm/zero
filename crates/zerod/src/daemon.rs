@@ -43,6 +43,10 @@ pub fn real_runtime() -> Runtime {
 }
 
 const PAUSED: &str = "paused-by-user.json";
+/// Messages two tasks may send each other without the user before Zero holds them for the user's word.
+const BETWEEN_TASKS: u32 = 10;
+/// The agents' processes one zerod hands the next across a restart (Daemon::hand_off, take_over).
+const HANDOFF: &str = "handoff.json";
 /// Each task's reply the user has seen (its answer's item, and when), on any client: seen.json.
 const SEEN: &str = "seen.json";
 /// In an archived task's folder: when it went, and with whom (the lead it went with; none, it went on its own).
@@ -79,6 +83,16 @@ pub struct Daemon {
     sent_back: Mutex<std::collections::HashSet<String>>,
     /// Turns in a row each task's CLI ended on a server or network error, that Zero carried on.
     carried_on: Mutex<HashMap<String, u32>>,
+    /// New Claude tasks without a name get one from a small model (naming.rs): zerod's, not the tests', which would spend.
+    naming: std::sync::atomic::AtomicBool,
+    /// Messages between two tasks (neither the other's lead) since the user last wrote to either, by the pair.
+    crossed: Mutex<HashMap<(String, String), u32>>,
+    /// Tasks whose messages from other tasks wait for the user: too many between them without the user.
+    crossing: Mutex<HashSet<String>>,
+    /// Workers that ended done: each leaves its lead's tree (archived) once its report has been handed to the lead.
+    leaving: Mutex<HashSet<String>>,
+    /// (lead, ticket) → when Zero last reminded the lead to set that row: once, until the row is set again.
+    reminded_rows: Mutex<HashMap<(String, String), i64>>,
     /// Accounts a task's CLI found signed out (`account`): Zero's words to any task on one wait for a turn that works.
     signed_out: Mutex<HashSet<String>>,
     /// Whether turns must end on Zero's ending (zerod turns it on; tests of other things run agents without one).
@@ -110,8 +124,8 @@ pub const CARRIED: &str = "Zero updated: carrying on where it left off";
 /// the user it never asked: sent once, unseen in the conversation. Every agent gets it, whichever runs the task.
 pub const END_YOUR_TURN_MARK: &str = "Zero can't tell where your turn left the task";
 pub const END_YOUR_TURN: &str = "Zero can't tell where your turn left the task. End it with exactly one of these as its last line: \
-[zero: done] (nothing is left that you can do, even if others still have steps), [zero: waiting] (the next move is \
-someone else's, not the user's), [zero: working] (pausing between steps), or [zero: asked <id>]. Anything you need from the user (a decision, a command for them to run, steps for them to take) \
+[zero: done] (the work is finished end to end: merged and deployed, verified, or the user said so), [zero: waiting] \
+(the next move is someone else's, not the user's: a review, CI, a deploy, QA), [zero: working] (pausing between steps), or [zero: asked <id>]. Anything you need from the user (a decision, a command for them to run, steps for them to take) \
 goes through zero ask, zero run or zero approve with --async (or Zero's zero_ask and zero_run tools), and the turn ends [zero: asked <id>]: a question left in \
 your words reaches no one. Don't repeat your answer; do what's missing and end.";
 /// What a turn paused for a restart is told once the new zerod is up. Zero's own words, not the user's: never shown as
@@ -241,7 +255,7 @@ impl Daemon {
         let daemon = Arc::new_cyclic(|me| Daemon {
             home: home.into(), sessions: Mutex::new(sessions), events, runtime, attention: Mutex::new(attention), pending: Mutex::new(pending),
             held: Mutex::new(held), delivering: Mutex::new(HashSet::new()), queues: broadcast::channel(64).0,
-            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(), held_up: Mutex::default(), updating: Mutex::default(), sent_back: Mutex::default(), carried_on: Mutex::default(), signed_out: Mutex::default(), endings: Default::default(),
+            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(), held_up: Mutex::default(), updating: Mutex::default(), sent_back: Mutex::default(), carried_on: Mutex::default(), reminded_rows: Mutex::default(), leaving: Mutex::default(), crossed: Mutex::default(), crossing: Mutex::default(), naming: Default::default(), signed_out: Mutex::default(), endings: Default::default(),
             workspaces: crate::workspaces::Workspaces::open(home),
             mcp_servers: crate::mcp_servers::McpServers::open(home),
             signins: crate::signins::SignIns::open(home),
@@ -345,6 +359,29 @@ impl Daemon {
     }
 
     /// Names a session and says what it's for.
+    /// A task by its id, or by its name (as the sidebar shows it, whatever the case) when only one task has it.
+    pub fn resolve(&self, reference: &str) -> Result<String, String> {
+        let reference = reference.trim();
+        if self.session(reference).is_ok() { return Ok(reference.to_string()) }
+        let named: Vec<Conversation> = self.list().into_iter().filter(|c| crate::bridge::label(c).eq_ignore_ascii_case(reference)).collect();
+        match named.as_slice() {
+            [one] => Ok(one.id.clone()),
+            [] => Err(format!("No task {reference}")),
+            several => Err(format!("{} tasks are called {reference}: say which by its id ({})", several.len(),
+                                   several.iter().map(|c| c.id.as_str()).collect::<Vec<_>>().join(", "))),
+        }
+    }
+
+    /// The user asks two tasks to work together: each is told about the other (its name, folder and what it's on)
+    /// and how to reach it.
+    pub fn introduce(&self, a: &str, b: &str) -> Result<(), String> {
+        if a == b { return Err("A task can't be introduced to itself".into()) }
+        let (first, second) = (self.get(a).ok_or_else(|| format!("No task {a}"))?, self.get(b).ok_or_else(|| format!("No task {b}"))?);
+        self.tell(a, crate::model::from_line("zero", &introduction(&second)));
+        self.tell(b, crate::model::from_line("zero", &introduction(&first)));
+        Ok(())
+    }
+
     pub fn label(&self, id: &str, label: Option<&str>, ticket: Option<&str>) -> Result<(), String> {
         self.session(id)?.change(Change::Named { label: label.map(Into::into), ticket: ticket.map(Into::into) });
         Ok(())
@@ -412,6 +449,17 @@ fn attach_snapshot(session: &Session, commit: String) {
     if conversation.snapshots.contains_key(&item.id) { return }
     session.change(Change::Snapshot { item: item.id.clone(), commit });
 }
+
+/// What a task is told of another it should work with: who it is, where, what it's on, and how to reach it.
+fn introduction(other: &Conversation) -> String {
+    let doing = other.answer().or_else(|| other.items.iter().find_map(|i| match &i.kind { ItemKind::User { text, .. } => Some(text.as_str()), _ => None }))
+        .and_then(|text| text.lines().map(str::trim).find(|l| !l.is_empty()))
+        .map(|line| format!(" Its latest: \"{}\".", line.chars().take(200).collect::<String>())).unwrap_or_default();
+    format!("The user wants you to work with another task: \"{}\" ({}), in {}.{doing} When your work touches its area, \
+coordinate with it directly: `zero send {} \"…\"` (its name works too). Its replies come to you as messages from it. \
+Keep the user out of what you two can settle; ask them only for what's theirs to decide.", crate::bridge::label(other), other.id, other.cwd, other.id)
+}
+
 
 #[cfg(test)]
 mod tests {

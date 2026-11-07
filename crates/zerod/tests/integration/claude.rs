@@ -207,6 +207,8 @@ fn claude_runs_unmodified_in_auto_mode_with_zeros_rules_appended() {
     assert_eq!(at("--session-id"), Some("3f1c2b8a-0000-4000-8000-000000000001"));
     assert_eq!((at("--model"), at("--effort")), (Some("haiku"), Some("low")));
     assert_eq!(at("--append-system-prompt"), Some(zerod::adapter::INSTRUCTIONS));
+    // Compacting while idle saves a cache write and costs the conversation: off, for this run only.
+    assert_eq!(at("--settings"), Some(r#"{"idleCompaction":false}"#));
     let resumed = Provider::Claude.command(&conversation, true, None, None);
     assert!(resumed.windows(2).any(|w| w[0] == "--resume" && w[1] == "3f1c2b8a-0000-4000-8000-000000000001"));
     conversation.permissions = Permissions::Unrestricted;
@@ -347,4 +349,52 @@ fn claudes_api_errors_are_not_its_words() {
     core.receive(&json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."}));
     let said: Vec<&str> = core.conversation().items.iter().filter_map(|i| match &i.kind { ItemKind::Agent { text, .. } => Some(text.as_str()), _ => None }).collect();
     assert_eq!(said, ["Done."]);
+}
+
+#[test]
+fn compacting_shows_while_claude_compacts_and_ends_when_it_has() {
+    let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+    core.receive(&json!({"type": "system", "subtype": "status", "status": "compacting"}));
+    let item = core.conversation().items.last().unwrap().clone();
+    assert!(item.id.starts_with(zerod::adapter::COMPACTED), "Zero's recap follows it: {item:?}");
+    assert!(matches!(&item.kind, ItemKind::Notice { text, error: false } if text == "Compacting the conversation…"), "{item:?}");
+    assert_eq!(item.status, ItemStatus::Running);
+    core.receive(&json!({"type": "system", "subtype": "status", "status": null, "compact_result": "success"}));
+    let items = &core.conversation().items;
+    assert_eq!(items.len(), 1, "the same row, ended: {items:?}");
+    assert!(matches!(&items[0].kind, ItemKind::Notice { text, error: false } if text == "Conversation compacted"));
+    assert_eq!(items[0].status, ItemStatus::Done);
+}
+
+#[test]
+fn a_background_subagents_request_between_turns_needs_the_user_but_starts_no_turn() {
+    // Its lead's turn has ended; a subagent left running in the background asks to run a command. The task needs the
+    // user (the approval), but no turn of the lead's is under way: nothing for Stop to find, and what the subagent says
+    // after stays its own, out of the lead's conversation.
+    let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+    core.receive(&json!({"type": "result", "subtype": "success", "is_error": false, "result": "Started it.\n\n[zero: working]"}));
+    core.receive(&json!({"type": "control_request", "request_id": "r1", "request": {"subtype": "can_use_tool", "tool_name": "Bash", "tool_use_id": "t9",
+        "input": {"command": "curl -X POST https://example.com"}}}));
+    assert_eq!(core.conversation().status, Status::Idle, "no turn of the lead's");
+    assert_eq!(core.conversation().attention(), zerod::model::Attention::NeedsYou, "the approval waits on the user");
+    let line = core.answer("r1", "allow").unwrap();
+    core.sent(&line);
+    assert_eq!(core.conversation().status, Status::Idle);
+    let items = core.conversation().items.len();
+    core.receive(&json!({"type": "assistant", "parent_tool_use_id": "toolu_agent", "agent_id": "a1",
+        "message": {"id": "m9", "content": [{"type": "tool_use", "id": "t10", "name": "Bash", "input": {"command": "ls"}}]}}));
+    assert_eq!(core.conversation().items.len(), items, "the subagent's words stay its own");
+}
+
+#[test]
+fn what_runs_in_the_background_is_known_so_stop_can_stop_it() {
+    let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+    core.receive(&json!({"type": "system", "subtype": "task_started", "task_id": "a1", "tool_use_id": "toolu_agent", "is_backgrounded": true, "task_type": "local_agent"}));
+    core.receive(&json!({"type": "system", "subtype": "task_progress", "task_id": "b2"}));
+    let stops: Vec<String> = core.stops().iter().map(|s| s["request"]["task_id"].as_str().unwrap().to_string()).collect();
+    assert_eq!(stops.len(), 2, "{stops:?}");
+    assert!(core.stops().iter().all(|s| s["type"] == "control_request" && s["request"]["subtype"] == "stop_task"));
+    core.receive(&json!({"type": "system", "subtype": "task_notification", "task_id": "a1", "tool_use_id": "toolu_agent", "status": "completed"}));
+    core.receive(&json!({"type": "system", "subtype": "task_notification", "task_id": "b2", "status": "stopped"}));
+    assert!(core.stops().is_empty(), "ended: nothing to stop");
 }

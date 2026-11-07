@@ -39,7 +39,15 @@ pub fn claude_session(conversation: &Conversation, session: &str) -> String {
                     chain.text(&format!("Changed {} ({}):\n```diff\n{}```", change.path, change.kind, change.diff));
                 }
             }
-            ItemKind::Tool { name, detail } => chain.text(&format!("Used {name}: {detail}")),
+            // As a call, never as words: an agent reading "Used zero_ask: {…}" in its own past replies writes its
+            // next calls that way too, and nothing runs. Zero keeps a call's input, not its result.
+            ItemKind::Tool { name, detail } => {
+                chain.calls += 1;
+                let call = format!("toolu_zero_{}", chain.calls);
+                let input = serde_json::from_str::<Value>(detail).ok().filter(Value::is_object).unwrap_or_else(|| json!({"detail": detail}));
+                chain.add("assistant", json!([{"type": "tool_use", "id": call, "name": name, "input": input}]));
+                chain.add("user", json!([{"type": "tool_result", "tool_use_id": call, "content": "Its result isn't in Zero's record.", "is_error": false}]));
+            }
             ItemKind::Agent { .. } | ItemKind::Reasoning { .. } | ItemKind::Notice { .. } | ItemKind::Table { .. } => {}
         }
     }

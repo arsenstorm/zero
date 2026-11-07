@@ -230,3 +230,63 @@ fn zeros_carry_on_is_never_shown_as_a_message_of_the_users() {
     let withdrew = format!("let's talk\n\n{} k3x9qa (\"Which first?\"). Withdraw what the user's words answered.", zerod::daemon::OPEN_ASKS_MARK);
     assert_eq!(zerod::core::without_carry_on(&withdrew).as_deref(), Some("let's talk"));
 }
+
+/// A real agent process: answers each line it reads with "echo N"; after the first, a line written in two halves a
+/// second apart, so a restart can fall in the middle of it.
+fn echoing(home: &std::path::Path, started: Arc<std::sync::atomic::AtomicUsize>) -> Runtime {
+    let script = home.join("agent.sh");
+    std::fs::write(&script, r#"n=0
+while IFS= read -r line; do
+  n=$((n+1))
+  printf '{"type":"assistant","message":{"id":"m%s","content":[{"type":"text","text":"echo %s"}]}}\n' $n $n
+  if [ $n = 1 ]; then printf '{"type":"assistant","message":{"id":"half","content":[{"type":"text","te'; sleep 1; printf 'xt":"split"}]}}\n'; fi
+done
+"#).unwrap();
+    Arc::new(move |conversation: &Conversation, _: &std::path::Path, _: &[String]| {
+        started.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        zerod::process::spawn(&["/bin/sh".into(), script.to_str().unwrap().into()], std::path::Path::new(&conversation.cwd), &conversation.id, None)
+    })
+}
+
+async fn says(daemon: &Daemon, id: &str, words: &str) {
+    for _ in 0..500 {
+        if daemon.get(id).is_some_and(|c| c.items.iter().any(|i| matches!(&i.kind, ItemKind::Agent { text, .. } if text == words))) { return }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("never said {words}: {:?}", daemon.get(id).map(|c| c.items));
+}
+
+#[tokio::test]
+async fn a_restart_hands_the_agents_running_process_to_the_new_zerod_mid_turn() {
+    // The new build takes over the very process: its turn, its background commands and its subagents carry on, and
+    // nothing it said across the restart (half a line included) is lost.
+    let home = temp_dir("restart-handoff");
+    let started = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let old = Daemon::open(&home.join("zerod"), echoing(&home, started.clone())).unwrap();
+    let id = old.start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    says(&old, &id, "echo 1").await;
+    assert_eq!(old.hand_off().await, vec![id.clone()]);
+    assert!(home.join("zerod/handoff.json").exists(), "kept for the new zerod");
+
+    let new = Daemon::open(&home.join("zerod"), echoing(&home, started.clone())).unwrap();
+    assert_eq!(new.take_over(), vec![id.clone()]);
+    assert!(!home.join("zerod/handoff.json").exists(), "taken once");
+    assert_eq!(new.get(&id).unwrap().status, Status::Working, "mid-turn, as it was");
+    says(&new, &id, "split").await;
+    new.session(&id).unwrap().send(zerod::session::Message::text("again"), zerod::session::ModelChoice::default()).await.unwrap();
+    says(&new, &id, "echo 2").await;
+    assert_eq!(started.load(std::sync::atomic::Ordering::SeqCst), 1, "never started again");
+}
+
+#[tokio::test]
+async fn stop_on_a_task_that_reads_busy_with_nothing_running_puts_it_back_to_idle() {
+    // A task left reading as working with no turn behind it (a provider that went quiet): Stop doesn't refuse with
+    // "nothing is running", it sets the task right.
+    let home = temp_dir("stop-nothing");
+    let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
+    let id = daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    daemon.session(&id).unwrap().change(Change::Status { status: Status::Working, turn: None, error: None });
+    tokio::time::timeout(Duration::from_secs(5), daemon.interrupt(&id)).await.unwrap().expect("not refused");
+    assert_eq!(daemon.get(&id).unwrap().status, Status::Idle);
+}

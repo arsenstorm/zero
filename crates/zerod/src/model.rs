@@ -530,13 +530,19 @@ impl Conversation {
     }
 
     /// How its last turn left it, between turns (or parked since, its process stopped while it waited). A worker's
-    /// answer is its report to its lead: done. A lead's answer says whether the task is done or waits on the user:
+    /// answer is its report to its lead: done, unless its ending says it waits on someone, asked the user, or is only
+    /// between steps. A lead's answer says whether the task is done or waits on the user:
     /// Zero's ending, or a question put to them in prose (any line ending in one: "Could you reopen OrbStack?" comes
     /// mid-answer as often as last). An answer with neither is a turn finished, not a task.
     pub fn ended(&self) -> Attention {
         // Zero's own lines after it (paused for an update, carried on) are Zero's, not the agent's: looked past.
         match self.items.iter().rev().find(|i| !matches!(i.kind, ItemKind::Notice { .. })).map(|i| &i.kind) {
-            Some(ItemKind::Agent { final_answer: true, .. }) if self.parent.is_some() => Attention::Done,
+            Some(ItemKind::Agent { text, final_answer: true }) if self.parent.is_some() => match crate::board::ending(text) {
+                Some("waiting") => Attention::Blocked,
+                Some("asked") => Attention::NeedsYou,
+                Some("working") => Attention::Idle,
+                _ => Attention::Done,
+            },
             // A question in its reply waits on the user, whatever its ending says (a conversation's turn ends so).
             Some(ItemKind::Agent { text, final_answer: true }) if crate::board::ending(text) != Some("asked") && crate::board::asks_in_prose(text) => Attention::NeedsYou,
             Some(ItemKind::Agent { text, final_answer: true }) => match crate::board::ending(text) {
@@ -706,4 +712,23 @@ mod tests {
         assert_eq!(json["kind"]["type"], "command");
         assert_eq!(json["kind"]["exitCode"], 0);
     }
+}
+
+/// A change picked while a turn runs, for the turns after it: another provider, model or effort, other permissions.
+/// Kept with the task (next.json) and applied as the turn ends, before what's queued goes.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Next {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<Provider>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<Permissions>,
+}
+
+impl Next {
+    pub fn is_empty(&self) -> bool { *self == Next::default() }
 }

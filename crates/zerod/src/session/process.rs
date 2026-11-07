@@ -5,6 +5,20 @@ use super::*;
 
 unsafe extern "C" {
     safe fn kill(pid: i32, signal: i32) -> i32;
+    safe fn dup(fd: i32) -> i32;
+    safe fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
+}
+
+/// A runtime's process as one zerod hands it to the next across a restart (handoff.json): its pid, its pipes as file
+/// descriptors that stay open through exec, and what the old zerod had read of its output but not yet taken in.
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+pub struct Handoff {
+    pub session: String,
+    pub pid: i32,
+    pub stdin: i32,
+    pub stdout: i32,
+    #[serde(default)]
+    pub leftover: Vec<u8>,
 }
 
 impl Session {
@@ -12,6 +26,8 @@ impl Session {
     pub fn stop(&self) {
         let generation = {
             let mut inner = self.lock();
+            // Taken over from the zerod before: no handle on it, its group by pid.
+            if inner.child.is_none() && inner.out.is_some() && let Some(pid) = inner.pid { kill(-pid, SIGKILL); return }
             match inner.child.as_mut() {
                 // Its output ends when it and everything it started (its process group) are gone, and that takes the
                 // session offline.
@@ -29,13 +45,25 @@ impl Session {
 
     /// Connects a runtime's stdio to the session and starts reading it.
     pub fn attach(&self, transport: Transport) {
-        let Transport { reader, mut writer, child } = transport;
+        let Transport { mut reader, mut writer, child, pid, fds, leftover } = transport;
         let (out, mut lines_out) = mpsc::unbounded_channel::<Value>();
+        let (stop, mut stopped) = oneshot::channel::<oneshot::Sender<Vec<u8>>>();
+        let writing = tokio::spawn(async move {
+            while let Some(message) = lines_out.recv().await {
+                let mut line = serde_json::to_vec(&message).unwrap_or_default();
+                line.push(b'\n');
+                if writer.write_all(&line).await.is_err() || writer.flush().await.is_err() { break }
+            }
+        });
         let generation = {
             let mut inner = self.lock();
             inner.generation += 1;
             inner.out = Some(out);
             inner.child = child;
+            inner.pid = pid;
+            inner.fds = fds;
+            inner.stop_reading = Some(stop);
+            inner.writing = Some(writing);
             inner.answered.clear();
             inner.heard = Instant::now();
             inner.generation
@@ -47,22 +75,50 @@ impl Session {
                 if !watched.watch(generation) { break }
             }
         });
-        tokio::spawn(async move {
-            while let Some(message) = lines_out.recv().await {
-                let mut line = serde_json::to_vec(&message).unwrap_or_default();
-                line.push(b'\n');
-                if writer.write_all(&line).await.is_err() || writer.flush().await.is_err() { break }
-            }
-        });
         let session = self.clone();
         tokio::spawn(async move {
-            let mut lines = BufReader::new(reader).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                // Anything that isn't JSON (a shell's greeting before the runtime starts) is not the runtime speaking.
-                if let Ok(message) = serde_json::from_str::<Value>(&line) { session.receive(message) }
+            // Its own lines, not a buffered reader's: stopped for a restart, what's read and not yet a whole line goes
+            // to the next zerod (hand_off), so nothing the runtime said is lost between the two.
+            let (mut pending, mut chunk) = (leftover, vec![0u8; 64 * 1024]);
+            loop {
+                while let Some(end) = pending.iter().position(|b| *b == b'\n') {
+                    let line: Vec<u8> = pending.drain(..=end).collect();
+                    // Anything that isn't JSON (a shell's greeting before the runtime starts) is not the runtime speaking.
+                    if let Ok(message) = serde_json::from_slice::<Value>(&line) { session.receive(message) }
+                }
+                tokio::select! {
+                    read = reader.read(&mut chunk) => match read {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => pending.extend_from_slice(&chunk[..n]),
+                    },
+                    Ok(give) = &mut stopped => { let _ = give.send(pending); return }
+                }
             }
             session.ended(generation);
         });
+    }
+
+    /// For zerod's restart: stops reading and writing the runtime's process, leaving it running, and gives it over:
+    /// its pipes duplicated to outlive this zerod's exec, and what was read but not yet taken in. None when the session
+    /// has no process of its own to give (offline, or a runtime that isn't a process).
+    pub async fn hand_off(&self) -> Option<Handoff> {
+        let (stop, writing, pid, (stdin, stdout), session) = {
+            let mut inner = self.lock();
+            let (Some(pid), Some((stdin, stdout)), true) = (inner.pid, inner.fds, inner.out.is_some()) else { return None };
+            // Duplicated first: the writer and reader close their own as they finish.
+            let fds = (dup(stdin), dup(stdout));
+            if fds.0 < 0 || fds.1 < 0 { return None }
+            // Nothing more goes to it from here, and the end of this attach is no longer its end.
+            inner.out = None;
+            inner.generation += 1;
+            (inner.stop_reading.take()?, inner.writing.take(), pid, fds, inner.core().conversation().id.clone())
+        };
+        // What was on its way to it goes first: the channel closed, the writer finishes the lines in it.
+        if let Some(writing) = writing { let _ = writing.await; }
+        let (give, given) = oneshot::channel();
+        stop.send(give).ok()?;
+        let leftover = given.await.ok()?;
+        Some(Handoff { session, pid, stdin, stdout, leftover })
     }
 
     fn receive(&self, message: Value) {
@@ -97,6 +153,17 @@ impl Session {
         let mut inner = self.lock();
         if inner.generation != generation { return }
         inner.out = None;
+        // Taken over from the zerod before, it's this zerod's child with no handle to reap it by: reaped by pid.
+        if inner.child.is_none() && let Some(pid) = inner.pid.take() {
+            tokio::spawn(async move {
+                for _ in 0..120 {
+                    if waitpid(pid, std::ptr::null_mut(), WNOHANG) != 0 { return }
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            });
+        }
+        inner.pid = None;
+        inner.fds = None;
         inner.child = None;
         let provider = inner.core().conversation().provider.title();
         for (_, waiter) in inner.waiting.drain() { let _ = waiter.send(Err(format!("{provider} stopped"))); }
@@ -178,6 +245,7 @@ impl Session {
 }
 
 const SIGKILL: i32 = 9;
+const WNOHANG: i32 = 1;
 
 /// How long a request waits for its answer. Turns run long, but the requests that wait answer at once.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(60);
@@ -192,21 +260,43 @@ const REPEATS: usize = 5;
 
 const WATCH_EVERY: Duration = Duration::from_secs(15);
 
-/// The two ends of a runtime's stdio, and its process when there is one.
+/// The two ends of a runtime's stdio, and its process when there is one: its handle, or (taken over from the zerod
+/// before) its pid; with the pipes' descriptors, so it can be handed to the next zerod in turn.
 pub struct Transport {
     reader: Box<dyn AsyncRead + Send + Unpin>,
     writer: Box<dyn AsyncWrite + Send + Unpin>,
     child: Option<Child>,
+    pid: Option<i32>,
+    fds: Option<(i32, i32)>,
+    leftover: Vec<u8>,
 }
 
 impl Transport {
     pub fn new(reader: impl AsyncRead + Send + Unpin + 'static, writer: impl AsyncWrite + Send + Unpin + 'static) -> Self {
-        Transport { reader: Box::new(reader), writer: Box::new(writer), child: None }
+        Transport { reader: Box::new(reader), writer: Box::new(writer), child: None, pid: None, fds: None, leftover: vec![] }
     }
 
     pub fn with_child(mut self, child: Child) -> Self {
+        self.pid = child.id().and_then(|pid| i32::try_from(pid).ok());
         self.child = Some(child);
         self
+    }
+
+    /// The descriptors of its stdin and stdout, which a restart hands over.
+    pub fn with_pipes(mut self, stdin: i32, stdout: i32) -> Self {
+        self.fds = Some((stdin, stdout));
+        self
+    }
+
+    /// The process the zerod before handed over: its pipes from their descriptors, what it had read first.
+    pub fn adopt(handoff: Handoff) -> std::io::Result<Transport> {
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        use tokio::net::unix::pipe;
+        // Safety: the descriptors were duplicated for this process by the one before it, and nothing else owns them.
+        let writer = pipe::Sender::from_owned_fd(unsafe { OwnedFd::from_raw_fd(handoff.stdin) })?;
+        let reader = pipe::Receiver::from_owned_fd(unsafe { OwnedFd::from_raw_fd(handoff.stdout) })?;
+        let fds = (writer.as_raw_fd(), reader.as_raw_fd());
+        Ok(Transport { reader: Box::new(reader), writer: Box::new(writer), child: None, pid: Some(handoff.pid), fds: Some(fds), leftover: handoff.leftover })
     }
 }
 

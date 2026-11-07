@@ -73,9 +73,11 @@ fn open_daemon(home: &Path) -> Arc<zerod::daemon::Daemon> {
         }
     };
     // After a restart: the turns it paused carry on.
+    daemon.take_over();
     daemon.carry_on();
     // Every task's turns end on Zero's ending, whichever agent runs it: one that doesn't is sent back once.
     daemon.require_endings();
+    daemon.name_tasks();
     daemon
 }
 
@@ -87,9 +89,12 @@ fn open_inbox(daemon: &Arc<zerod::daemon::Daemon>, args: &Args) -> (Arc<zerod::i
     ];
     let inbox = zerod::inbox::Inbox::open_with(Some(args.asks_log.clone()), runtimes, Some(zerod::host::Host::installed()));
     let drops = zerod::drops::Drops::new(inbox.clone(), args.resources.clone());
-    zerod::server::Settings::load(&args.home).apply(&inbox, Some(&drops));
+    let settings = zerod::server::Settings::load(&args.home);
+    settings.apply(&inbox, Some(&drops));
+    settings.apply_git(&args.home);
     drops.start();
     zerod::bridge::Bridge::start(daemon.clone(), inbox.clone());
+    zerod::recap::start(daemon.clone(), inbox.clone());
     (inbox, drops)
 }
 

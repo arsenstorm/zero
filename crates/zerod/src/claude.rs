@@ -33,9 +33,17 @@ pub struct Claude {
     background: std::collections::HashSet<String>,
     /// Zero asked Claude to stop the turn: the error result that follows is the stop, not a failure.
     interrupting: bool,
+    /// Claude's background tasks still running (a subagent, a shell), by task id: what Stop stops besides the turn.
+    tasks: std::collections::HashSet<String>,
     /// Servers this process was asked to sign in to, so a later turn's init doesn't ask again.
     signing_in: std::collections::HashSet<String>,
+    /// The row saying Claude is compacting the conversation, while it does: a turn can go quiet for minutes then.
+    compacting: Option<String>,
 }
+
+/// Claude compacts an idle conversation before its prompt cache expires: a cache write saved, the conversation lost to a
+/// summary. Off for Zero's runs only, on top of the user's own settings.
+pub const NO_IDLE_COMPACTION: &str = r#"{"idleCompaction":false}"#;
 
 pub fn command(conversation: &Conversation, resume: bool, model: Option<&str>, effort: Option<&str>) -> Vec<String> {
     let mut args = vec!["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
@@ -43,7 +51,7 @@ pub fn command(conversation: &Conversation, resume: bool, model: Option<&str>, e
                         // applies to terminal sessions alone); Claude connects to the extension if Chrome has it.
                         "--include-partial-messages", "--no-chrome", "--permission-prompt-tool", "stdio", "--permission-mode",
                         match conversation.permissions { Permissions::Auto => "auto", Permissions::Unrestricted => "bypassPermissions" },
-                        "--append-system-prompt", INSTRUCTIONS];
+                        "--append-system-prompt", INSTRUCTIONS, "--settings", NO_IDLE_COMPACTION];
     if let Some(thread) = conversation.thread.as_deref() { args.extend([if resume { "--resume" } else { "--session-id" }, thread]) }
     if let Some(model) = model { args.extend(["--model", model]) }
     if let Some(effort) = effort { args.extend(["--effort", effort]) }
@@ -168,11 +176,33 @@ impl Adapter for Claude {
                 let error = (response["subtype"] != "success").then(|| response["error"].as_str().unwrap_or("Claude refused"));
                 crate::mcp_servers::signing_in(conversation, name, url, error, &mut effects);
             }
+            Some("system") if message["subtype"] == "status" && message["status"] == "compacting" => {
+                if self.compacting.is_none() {
+                    let id = format!("{}{}", crate::adapter::COMPACTED, conversation.seq + 1 + effects.changes.len() as u64);
+                    self.compacting = Some(id.clone());
+                    let item = Item { at: None, id, turn: conversation.turn.clone(), kind: ItemKind::Notice { text: "Compacting the conversation…".into(), error: false },
+                                      status: ItemStatus::Running };
+                    effects.changes.push(Change::Item { item });
+                }
+            }
+            Some("system") if message["subtype"] == "status" && let Some(id) = self.compacting.take() => {
+                let failed = message["compact_result"] == "failed";
+                let text = if failed { "Couldn't compact the conversation" } else { "Conversation compacted" };
+                let item = Item { at: None, id, turn: conversation.turn.clone(), kind: ItemKind::Notice { text: text.into(), error: false },
+                                  status: if failed { ItemStatus::Failed } else { ItemStatus::Done } };
+                effects.changes.push(Change::Item { item });
+            }
             Some("system") if message["subtype"] == "task_started" && message["is_backgrounded"] == true => {
                 if let Some(id) = message["tool_use_id"].as_str() { self.background.insert(id.into()); }
+                if let Some(task) = message["task_id"].as_str() { self.tasks.insert(task.into()); }
+            }
+            // A task at work, backgrounded or not: running until its notification.
+            Some("system") if message["subtype"] == "task_progress" => {
+                if let Some(task) = message["task_id"].as_str() { self.tasks.insert(task.into()); }
             }
             // A background task's end: its tool's step ends now, as the task did (not when it was started).
             Some("system") if message["subtype"] == "task_notification" => {
+                if let Some(task) = message["task_id"].as_str() { self.tasks.remove(task); }
                 if let Some(id) = message["tool_use_id"].as_str() && self.background.remove(id) && let Some(mut item) = conversation.item(id).cloned() {
                     item.status = if message["status"] == "completed" { ItemStatus::Done } else { ItemStatus::Failed };
                     effects.changes.push(Change::Item { item });
@@ -231,11 +261,18 @@ impl Adapter for Claude {
         Ok(json!({"type": "control_response", "response": {"subtype": "success", "request_id": question.id, "response": {"behavior": "allow", "updatedInput": input}}}))
     }
 
+    fn stops(&self) -> Vec<Value> {
+        let mut tasks: Vec<&String> = self.tasks.iter().collect();
+        tasks.sort();
+        tasks.into_iter().map(|task| json!({"type": "control_request", "request_id": format!("stop-{task}"), "request": {"subtype": "stop_task", "task_id": task}})).collect()
+    }
+
     fn ended(&mut self) {
         self.requests.clear();
         self.queued = 0;
         self.said = None;
         self.background.clear();
+        self.tasks.clear();
         // A new process listens afresh: its sign-in is a new link.
         self.signing_in.clear();
     }
@@ -347,7 +384,11 @@ impl Claude {
         self.requests.insert(id.clone(), (input.clone(), suggestions));
         let approval = Approval { id, item: request["tool_use_id"].as_str().map(Into::into), kind, title, command, cwd, reason, changes, choices };
         effects.changes.push(Change::Approval { approval });
-        effects.changes.push(Change::Status { status: Status::Waiting, turn: conversation.turn.clone(), error: conversation.error.clone() });
+        // Within a turn, the turn waits on it. Between turns (a background subagent asking), no turn of the lead's
+        // starts: the approval alone makes it need the user, and the subagent's words stay its own.
+        if conversation.turn.is_some() {
+            effects.changes.push(Change::Status { status: Status::Waiting, turn: conversation.turn.clone(), error: conversation.error.clone() });
+        }
     }
 
     /// The end of a turn: its last words become its answer, and the session is idle. Messages sent during the turn
@@ -502,8 +543,11 @@ pub async fn set_model(session: &Session, model: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Stops what runs: the turn, and every task in the background (a subagent left running, a long command), which an
+/// interrupt of the turn alone leaves going.
 pub async fn interrupt(session: &Session) -> Result<(), String> {
-    if session.snapshot().turn.is_none() { return Err("Nothing is running to interrupt".into()) }
+    for stop in session.stops() { let _ = session.write(stop); }
+    if session.snapshot().turn.is_none() { return Ok(()) }
     session.request(|id| json!({"type": "control_request", "request_id": id, "request": {"subtype": "interrupt"}})).await.map(|_| ())
 }
 

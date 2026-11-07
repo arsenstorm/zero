@@ -69,7 +69,7 @@ install: bundle
 	mkdir -p $(HOME)/.local/bin && ln -sf /Applications/Zero.app/Contents/MacOS/zero-cli $(HOME)/.local/bin/zero; \
 	cp target/release/zerod build/zerod.installed; \
 	if [ $$changed = yes ] && printf '{"op":"restart"}\n' | nc -U $(HOME)/.zero/zerod.sock 2>/dev/null | grep -q restarting; then \
-		echo "zerod: restarting as the new build once turns under way have paused"; \
+		echo "zerod: restarting as the new build, the agents running on through it"; \
 	fi; \
 	open -g /Applications/Zero.app
 

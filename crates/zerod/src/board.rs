@@ -31,9 +31,9 @@ pub enum State {
     Paused,
     /// It answered the user, who has seen the answer: Replied still, but nothing waits on them.
     Read,
-    /// Nothing left that the agent can do, by its ending or note (`--done`; `--completed` and `--merged` as it was),
-    /// whatever others (a review, QA) still have to. Last of all, and archived after a while (Settings ›
-    /// archiveCompleted); something it follows changing brings it back.
+    /// Finished end to end, by its ending or note (`--done`; `--completed` and `--merged` as it was): merged and
+    /// deployed, verified, or the user said so; a review, CI or QA still to come is Waiting. Last of all, and put
+    /// away (Settings › archiveCompleted; a worker once its lead has its report); something it follows brings it back.
     Done,
     Idle,
     Offline,
@@ -79,6 +79,9 @@ pub struct Row {
     /// When it next wakes itself (`zero schedule`), in seconds since 1970.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wakes: Option<i64>,
+    /// A change picked mid-turn, for its next turn (model, permissions).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<crate::model::Next>,
     /// Its last turn was Zero's (an event it follows, a worker's report, a wake-up), not the user's: a reply to it is
     /// shown (unread, if it is) but not announced.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -169,7 +172,7 @@ pub fn board_in(conversations: &[Conversation], asks: &[Ask], places: &HashMap<S
         let (queued, held) = queue(&lead.id);
         Row {
             session: lead.id.clone(), task: crate::bridge::label(lead), workspace: workspace_of(lead), ticket: lead.ticket.clone(), place, path, online: its.online,
-            state: its.state, own, now: its.now, needs: its.needs, asks: its.asks, workers: team.len() - 1, team: members, queued, held, wakes: None,
+            state: its.state, own, now: its.now, needs: its.needs, asks: its.asks, workers: team.len() - 1, team: members, queued, held, wakes: None, next: None,
             quiet: lead.items.iter().rev().find_map(|i| match &i.kind { ItemKind::User { text, .. } => Some(text.starts_with(crate::model::FROM)), _ => None }).unwrap_or(false),
             issues: { let mut issues = lead.issues.clone(); issues.sort_by_key(|i| (i.state, i.since)); issues },
         }

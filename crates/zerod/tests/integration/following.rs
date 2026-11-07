@@ -10,11 +10,12 @@ use zerod::following::*;
 use zerod::integrations::{Fetcher, Integrations};
 
 #[derive(Default)]
-struct Canned { answers: Mutex<Vec<Result<String, String>>>, asked: Mutex<Vec<Vec<String>>> }
+struct Canned { answers: Mutex<Vec<Result<String, String>>>, asked: Mutex<Vec<Vec<String>>>, fed: Mutex<Vec<String>> }
 
 impl Fetcher for Canned {
-    fn run(&self, argv: Vec<String>, _stdin: Option<String>) -> zerod::inbox::Fut<'_, Result<String, String>> {
+    fn run(&self, argv: Vec<String>, stdin: Option<String>) -> zerod::inbox::Fut<'_, Result<String, String>> {
         self.asked.lock().unwrap().push(argv);
+        self.fed.lock().unwrap().push(stdin.unwrap_or_default());
         let answer = { let mut answers = self.answers.lock().unwrap(); if answers.is_empty() { Err("nothing canned".to_string()) } else { answers.remove(0) } };
         Box::pin(async move { answer })
     }
@@ -271,4 +272,39 @@ async fn a_deploy_bots_message_naming_nothing_continues_its_last_that_did() {
     assert!(words.contains("  message by Deploy: app (production) in #deploys\n    Deploy complete\n    (continues their earlier message: Deploying commit abc Fix vitals (#42))"), "{words}");
     drop((following, follow));
     assert!(slack::cites("see ENG-9429") && slack::cites("fixed in #12") && slack::cites("https://x") && !slack::cites("Deploy complete") && !slack::cites("Extracting assets to 2 node(s)"));
+}
+
+#[tokio::test]
+async fn several_slack_workspaces_each_read_with_their_own_connection() {
+    let workspace = |team: &str, name: &str, domain: &str, user: &str| Ok(json!({"ok": true, "team_id": team, "team": name, "url": format!("https://{domain}.slack.com/"), "user_id": user}));
+    let channels = |id: &str, name: &str| Ok(json!({"ok": true, "channels": [{"id": id, "name": name}], "response_metadata": {"next_cursor": ""}}));
+    let fetcher = canned(vec![
+        workspace("T0AB", "Acme", "acme", "U2"), channels("C0D", "deploys"),
+        workspace("T0BE", "Beta", "beta", "U7"), channels("C9Z", "general"),
+        Ok(json!({"ok": true, "messages": [{"ts": "1700000000.000100", "user": "U7", "text": "hi"}]})),
+    ]);
+    let home = temp_dir("following-slack-workspaces");
+    let integrations = Integrations::open(&home, fetcher.clone());
+    integrations.connect_slack("xoxp-acme").await.unwrap();
+    integrations.connect_slack("xoxp-beta").await.unwrap();
+    let teams: Vec<Value> = integrations.slack_state().as_array().unwrap().iter().map(|s| s["team"]["name"].clone()).collect();
+    assert_eq!(teams, [json!("Acme"), json!("Beta")], "both kept, in the order connected");
+    // Beta's channel: read with Beta's token, linked on Beta's domain.
+    let polled = slack::poll(&integrations, &["C9Z"], None).await.unwrap();
+    assert_eq!(polled.summary, "#general https://beta.slack.com/archives/C9Z/p1700000000000100");
+    let fed = fetcher.fed.lock().unwrap().last().cloned().unwrap();
+    assert!(fed.contains("xoxp-beta") && !fed.contains("xoxp-acme"));
+    // One goes; the other stays, as zerod started again finds it.
+    integrations.disconnect_slack("T0AB").unwrap();
+    let again = Integrations::open(&home, fetcher.clone());
+    let teams: Vec<Value> = again.slack_state().as_array().unwrap().iter().map(|s| s["team"]["id"].clone()).collect();
+    assert_eq!(teams, [json!("T0BE")]);
+}
+
+#[test]
+fn a_slack_connection_kept_before_there_could_be_several_still_loads() {
+    let home = temp_dir("following-slack-one");
+    std::fs::write(home.join("slack.json"), r#"{"token":"xoxp-1","team":{"id":"T0AB","name":"Acme","domain":"acme"},"userId":"U2","channels":{"deploys":"C0D"}}"#).unwrap();
+    let integrations = Integrations::open(&home, canned(vec![]));
+    assert_eq!(integrations.slack_state(), json!([{"team": {"id": "T0AB", "name": "Acme", "domain": "acme"}, "channels": {"deploys": "C0D"}}]));
 }

@@ -28,7 +28,7 @@ pub(super) async fn handle(zerod: &Zerod, request: Request) -> Result<Value, Str
         "connectLinear" => integrations.connect_linear().await.map(|url| json!({"url": url})),
         "disconnectLinear" => integrations.disconnect_linear().map(|_| state(integrations.settings())),
         "connectSlack" => { integrations.connect_slack(request.token.as_deref().ok_or("Slack's user token (xoxp-…)")?).await?; Ok(state(integrations.settings())) }
-        "disconnectSlack" => integrations.disconnect_slack().map(|_| state(integrations.settings())),
+        "disconnectSlack" => integrations.disconnect_slack(request.team.as_deref().ok_or("Which Slack workspace?")?).map(|_| state(integrations.settings())),
         "refreshSlack" => { integrations.refresh_slack().await?; Ok(state(integrations.settings())) }
         other => unknown(other),
     }

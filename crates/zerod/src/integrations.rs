@@ -209,7 +209,7 @@ const LINEAR_ISSUES: &str = "query($filter:IssueFilter){issues(filter:$filter,fi
 #[derive(Serialize, Deserialize, Clone)]
 struct Account { name: String, url_key: String, access: String, refresh: Option<String>, expires: i64 }
 
-/// The Slack workspace connected: a user token of Zero's own Slack app (made from the app's manifest, read-only scopes),
+/// A Slack workspace connected: a user token of Zero's own Slack app (made from the app's manifest, read-only scopes),
 /// the team it is for, and the channels' ids by name (what Slack's app opens by). In slack.json, the user's alone.
 #[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -224,7 +224,10 @@ pub struct Integrations {
     fetcher: Arc<dyn Fetcher>,
     settings: Mutex<Settings>,
     linear: Mutex<Option<Account>>,
-    slack: Mutex<Option<SlackAccount>>,
+    /// Every Slack workspace connected, in the order connected.
+    slack: Mutex<Vec<SlackAccount>>,
+    /// Which workspace a channel or person (an id the connections don't list) turned out to be in.
+    slack_homes: Mutex<std::collections::HashMap<String, String>>,
     port: Mutex<u16>,
     /// The Linear sign-in the listener waits for (its state and verifier), and whether one is listening.
     signing_in: Mutex<(Option<(String, String)>, bool)>,
@@ -239,10 +242,12 @@ impl Integrations {
     pub fn open(home: &Path, fetcher: Arc<dyn Fetcher>) -> Arc<Integrations> {
         let settings = std::fs::read(home.join("integrations.json")).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default();
         let linear = std::fs::read(home.join("linear.json")).ok().and_then(|data| serde_json::from_slice(&data).ok());
-        let slack = std::fs::read(home.join("slack.json")).ok().and_then(|data| serde_json::from_slice(&data).ok());
+        // One workspace, as slack.json kept it before there could be several, or a list.
+        let slack = std::fs::read(home.join("slack.json")).ok().and_then(|data| serde_json::from_slice::<Vec<SlackAccount>>(&data).ok()
+            .or_else(|| serde_json::from_slice::<SlackAccount>(&data).ok().map(|one| vec![one]))).unwrap_or_default();
         let cache = std::fs::read(home.join("integrations-cache.json")).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default();
         Arc::new(Integrations {
-            home: home.into(), fetcher, settings: Mutex::new(settings), linear: Mutex::new(linear), slack: Mutex::new(slack), port: Mutex::new(47615),
+            home: home.into(), fetcher, settings: Mutex::new(settings), linear: Mutex::new(linear), slack: Mutex::new(slack), slack_homes: Mutex::default(), port: Mutex::new(47615),
             signing_in: Mutex::new((None, false)), github: Mutex::new(None), cache: Mutex::new(cache),
         })
     }
@@ -450,20 +455,29 @@ impl Integrations {
         self.keep(None)
     }
 
-    /// The connected Slack workspace and its channels' ids by name, for the app: `{"team", "channels"}`.
-    pub fn slack_state(&self) -> Option<Value> {
-        self.slack.lock().unwrap().as_ref().map(|a| json!({"team": a.team, "channels": a.channels}))
+    /// Each connected Slack workspace and its channels' ids by name, for the app: `[{"team", "channels"}]`.
+    pub fn slack_state(&self) -> Value {
+        json!(self.slack.lock().unwrap().iter().map(|a| json!({"team": a.team, "channels": a.channels})).collect::<Vec<_>>())
     }
 
-    /// The team connected and the user the token is for.
-    pub(crate) fn slack_team(&self) -> Option<(SlackTeam, String)> { self.slack.lock().unwrap().as_ref().map(|a| (a.team.clone(), a.user_id.clone())) }
+    /// The team a channel is in, and the user its token is for: the workspace listing it, or that it was found in.
+    pub(crate) fn slack_team(&self, channel: &str) -> Option<(SlackTeam, String)> {
+        let accounts = self.slack.lock().unwrap();
+        self.slack_home(&accounts, channel).map(|a| (a.team.clone(), a.user_id.clone()))
+    }
 
-    /// A channel's name by its id, when it is one the connection listed.
+    fn slack_home<'a>(&self, accounts: &'a [SlackAccount], id: &str) -> Option<&'a SlackAccount> {
+        let found = self.slack_homes.lock().unwrap().get(id).cloned();
+        accounts.iter().find(|a| a.channels.values().any(|c| c == id) || found.as_deref() == Some(a.team.id.as_str()))
+    }
+
+    /// A channel's name by its id, when it is one a connection listed.
     pub(crate) fn slack_channel_name(&self, id: &str) -> Option<String> {
-        self.slack.lock().unwrap().as_ref().and_then(|a| a.channels.iter().find(|(_, i)| *i == id).map(|(name, _)| name.clone()))
+        self.slack.lock().unwrap().iter().find_map(|a| a.channels.iter().find(|(_, i)| *i == id).map(|(name, _)| name.clone()))
     }
 
-    /// Checks `token` with Slack, reads the workspace's channels, and keeps the connection. The state, as the app shows it.
+    /// Checks `token` with Slack, reads the workspace's channels, and keeps the connection beside the others (in place
+    /// of the one it is for, connected again). The state, as the app shows it.
     pub async fn connect_slack(&self, token: &str) -> Result<Value, String> {
         let token = token.trim();
         if !token.starts_with("xoxp-") { return Err("That isn't a user token: Slack's start with xoxp-.".into()) }
@@ -472,32 +486,52 @@ impl Integrations {
         let domain = identity["url"].as_str().and_then(|u| u.strip_prefix("https://")).and_then(|u| u.split('.').next()).unwrap_or("").to_string();
         let channels = slack_channels(&*self.fetcher, token).await?;
         let account = SlackAccount { token: token.into(), team: SlackTeam { id: id.into(), name: name.into(), domain }, user_id: identity["user_id"].as_str().unwrap_or("").into(), channels };
-        self.keep_slack(Some(account))?;
-        Ok(self.slack_state().unwrap_or(Value::Null))
+        let mut accounts = self.slack.lock().unwrap().clone();
+        match accounts.iter_mut().find(|a| a.team.id == account.team.id) { Some(kept) => *kept = account, None => accounts.push(account) }
+        self.keep_slack(accounts)?;
+        Ok(self.slack_state())
     }
 
-    pub fn disconnect_slack(&self) -> Result<(), String> { self.keep_slack(None) }
+    /// The workspace `team` let go of; the others stay.
+    pub fn disconnect_slack(&self, team: &str) -> Result<(), String> {
+        let accounts = self.slack.lock().unwrap().iter().filter(|a| a.team.id != team).cloned().collect();
+        self.keep_slack(accounts)
+    }
 
-    /// The channels again: new ones get ids too.
+    /// Every workspace's channels again: new ones get ids too.
     pub async fn refresh_slack(&self) -> Result<(), String> {
-        let Some(mut account) = self.slack.lock().unwrap().clone() else { return Ok(()) };
-        account.channels = slack_channels(&*self.fetcher, &account.token).await?;
-        self.keep_slack(Some(account))
+        let mut accounts = self.slack.lock().unwrap().clone();
+        for account in &mut accounts { account.channels = slack_channels(&*self.fetcher, &account.token).await?; }
+        self.keep_slack(accounts)
     }
 
-    /// One call to Slack's Web API on the connection; the answer when Slack says ok.
+    /// One call to Slack's Web API; the answer when Slack says ok. It goes to the workspace of the channel or person it
+    /// names, when that's known; else to each in turn, the first to answer being theirs from then on.
     pub(crate) async fn slack(&self, method: &str, params: &[(&str, &str)]) -> Result<Value, String> {
-        let token = self.slack.lock().unwrap().as_ref().map(|a| a.token.clone()).ok_or("Slack isn't connected")?;
-        slack_call(&*self.fetcher, &token, method, params).await
+        let about = params.iter().find(|(k, _)| matches!(*k, "channel" | "user")).map(|(_, v)| v.to_string());
+        let mut accounts = self.slack.lock().unwrap().clone();
+        if accounts.is_empty() { return Err("Slack isn't connected".into()) }
+        if let Some(home) = about.as_deref().and_then(|id| self.slack_home(&accounts, id)).map(|a| a.team.id.clone()) {
+            accounts.sort_by_key(|a| a.team.id != home);
+        }
+        let mut failed = String::new();
+        for account in &accounts {
+            match slack_call(&*self.fetcher, &account.token, method, params).await {
+                Ok(reply) => {
+                    if let Some(id) = &about { self.slack_homes.lock().unwrap().insert(id.clone(), account.team.id.clone()); }
+                    return Ok(reply)
+                }
+                Err(error) => failed = error,
+            }
+        }
+        Err(failed)
     }
 
-    fn keep_slack(&self, account: Option<SlackAccount>) -> Result<(), String> {
+    fn keep_slack(&self, accounts: Vec<SlackAccount>) -> Result<(), String> {
         let file = self.home.join("slack.json");
-        match &account {
-            Some(account) => write_private(&file, &serde_json::to_vec(account).map_err(|e| e.to_string())?)?,
-            None => { let _ = std::fs::remove_file(&file); }
-        }
-        *self.slack.lock().unwrap() = account;
+        if accounts.is_empty() { let _ = std::fs::remove_file(&file); }
+        else { write_private(&file, &serde_json::to_vec(&accounts).map_err(|e| e.to_string())?)? }
+        *self.slack.lock().unwrap() = accounts;
         Ok(())
     }
 

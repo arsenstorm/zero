@@ -44,7 +44,7 @@ pub fn environment(login: impl Iterator<Item = (String, String)>, id: &str) -> V
 /// code (None if it was killed) and the end of what it printed, stdout and stderr together.
 pub async fn run(command: &str, cwd: &Path, id: &str) -> (Option<i32>, String) {
     let mut shell = Command::new("/bin/zsh");
-    shell.args(["-lic", command]).current_dir(cwd).env_clear().envs(environment(std::env::vars(), id)).stdin(Stdio::null());
+    shell.args(["-lic", command]).current_dir(cwd).env_clear().envs(environment(std::env::vars(), id)).envs(crate::git::variables(cwd)).stdin(Stdio::null());
     match shell.output().await {
         Ok(output) => {
             let printed = String::from_utf8_lossy(&output.stdout).to_string() + &String::from_utf8_lossy(&output.stderr);
@@ -61,7 +61,8 @@ pub fn spawn(argv: &[String], cwd: &Path, id: &str, stderr: Option<&Path>) -> st
     let mut command = Command::new(program);
     // A group of its own, so stopping it stops what it started too (session.rs): the login shell may run the CLI as a
     // child rather than become it, and the CLI runs MCP servers, all holding its output open.
-    command.args(arguments).current_dir(cwd).env_clear().envs(environment(std::env::vars(), id)).process_group(0)
+    // Settings › Git: the agents' own committer and signing key, where the user set them up.
+    command.args(arguments).current_dir(cwd).env_clear().envs(environment(std::env::vars(), id)).envs(crate::git::variables(cwd)).process_group(0)
         .stdin(Stdio::piped()).stdout(Stdio::piped());
     match stderr {
         Some(path) => { command.stderr(std::fs::OpenOptions::new().create(true).append(true).open(path)?); }
@@ -69,11 +70,14 @@ pub fn spawn(argv: &[String], cwd: &Path, id: &str, stderr: Option<&Path>) -> st
     }
     let mut child = command.spawn()?;
     let (Some(input), Some(output)) = (child.stdin.take(), child.stdout.take()) else { return Err(std::io::Error::other("no stdio")) };
-    Ok(Transport::new(output, input).with_child(child))
+    use std::os::fd::AsRawFd;
+    let fds = (input.as_raw_fd(), output.as_raw_fd());
+    Ok(Transport::new(output, input).with_child(child).with_pipes(fds.0, fds.1))
 }
 
-/// This process becomes the zerod now on disk (a new build), with the same arguments. Its files close as it does,
-/// which ends the agents' processes: their turns are paused first (Daemon::pause_for_restart).
+/// This process becomes the zerod now on disk (a new build), with the same arguments. Its files close as it does, but
+/// for the agents' pipes handed over (Daemon::hand_off), which the new zerod takes over; any it couldn't hand over had
+/// their turns paused first (Daemon::pause_for_restart).
 pub fn replace_self() -> ! {
     use std::os::unix::process::CommandExt;
     let exe = std::env::current_exe().unwrap_or_else(|_| "zerod".into());

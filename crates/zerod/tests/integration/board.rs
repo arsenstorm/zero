@@ -429,3 +429,13 @@ fn a_lead_keeps_a_row_per_issue_and_the_one_on_the_user_comes_first() {
     lead.apply(Change::Issue { issue: done });
     assert_ne!(board(&[lead], &[])[0].state, State::NeedsYou);
 }
+
+#[test]
+fn a_done_lead_can_be_put_away_once_the_user_has_read_it() {
+    // Settings › Archive done tasks: once read (-1), after a while (seconds), or never (0). Unset, a day.
+    let settings = |value| zerod::server::Settings { archive_completed: value, ..Default::default() };
+    assert_eq!(settings(None).archive_after(), Some(24 * 3600));
+    assert_eq!(settings(Some(0)).archive_after(), None);
+    assert!(settings(Some(-1)).archive_once_read() && settings(Some(-1)).archive_after() == Some(0), "at once, once read");
+    assert!(!settings(Some(3600)).archive_once_read());
+}

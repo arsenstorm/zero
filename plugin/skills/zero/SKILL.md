@@ -32,12 +32,12 @@ zero run 'bin/production console <<< "puts Source.count"' --cwd "$APP_PATH" --ti
 zero note "Specs green; sizing the fix"            # working (blue)
 zero note --waiting "Deploying; QA checks after"    # grey: the next move is someone else's, not theirs
 zero note --done "PR #4821 open, CI green" --needs "mark it ready and merge"   # teal, over to them: a step only they can take
-zero note --done "PR #4821 merged, QA passed; the PM moves the ticket"   # purple: nothing left you can do; archived after a while
+zero note --done "PR #4821 merged, deployed, QA passed"   # purple: finished end to end; put away
 zero withdraw k3x9qa --reason "Answered in the chat" # take back an ask that no longer needs them
 zero close 01a1886cb3e40000                          # a worker you started, once you've read its result: off their board
 ```
 
-Workers you start with `zero spawn` stay on their board until closed. Close each one with `zero close` once you have read its result (`zero result`) and need nothing more from it; a worker you may send back to stays. Why: their sidebar lists every open session under you, and finished reviewers and runners left open bury the ones that matter.
+A worker you start with `zero spawn` that ends `[zero: done]` leaves the board on its own once you have its report. Close any other you need nothing more from with `zero close` once you have read its result (`zero result`); a worker you may send back to stays. Why: their sidebar lists every open session under you, and finished reviewers and runners left open bury the ones that matter.
 
 Every call blocks until they answer and prints the answer on stdout. Exit 0 answered, 2 declined (the reason, if any, on stderr), 3 expired. For `run`, stdout is the command's output and the exit code is the command's own.
 
@@ -207,8 +207,8 @@ Zero names you by `ZERO_AGENT`, or by your Solo process id. If neither is set, e
 When Zero runs your session, every turn ends with exactly one of these as its last line, after you have done what it says. Zero's stop check reads it; a turn without one is sent back to you.
 
 ```
-[zero: done]            nothing is left that you can do, even if others still have steps (a PM, QA you follow); Zero archives it after a while, and what you follow changing brings it back
-[zero: waiting]         the next move is someone else's, not theirs (CI, a deploy, a review, QA); what you follow wakes you
+[zero: done]            the work is finished end to end, with good reason to say so (merged and deployed, verified, its ticket closed, or the user said it's done); Zero puts it away, and what you follow changing brings it back
+[zero: waiting]         the next move is someone else's, not theirs (a review, CI, a deploy, QA); what you follow wakes you
 [zero: asked k3x9qa]    you asked with --async and wait for that answer (the id it printed); once it's answered, end with what's true now
 [zero: working]         you are pausing between steps and posted a note on where you are
 ```

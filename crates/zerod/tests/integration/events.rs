@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::common::{Seen, fixture, play, temp_dir};
 use serde_json::json;
 use zerod::daemon::{Daemon, Options, Runtime};
-use zerod::model::{Attention, Conversation, Provider};
+use zerod::model::{Attention, Change, Conversation, Item, ItemKind, ItemStatus, Provider};
 
 struct World {
     daemon: Arc<Daemon>,
@@ -154,4 +154,31 @@ async fn an_async_ask_from_a_zerod_session_is_answered_into_that_session() {
     inbox.choose(&ask.id, 0);
     let words = seen.said("user", 2).await[1]["message"]["content"].as_str().unwrap().to_string();
     assert_eq!(words, zerod::model::from_line("zero", &format!("The user answered your ask {} (\"Ship it?\"): Yes", ask.id)));
+}
+
+#[tokio::test]
+async fn after_compacting_the_agent_hears_zeros_record_word_for_word_not_only_its_summary() {
+    let w = world("events-recap");
+    let (id, seen) = idle_claude(&w).await;
+    let inbox = zerod::inbox::Inbox::open(None, vec![]);
+    zerod::recap::start(w.daemon.clone(), inbox.clone());
+    let agent = zerod::ask::AgentIdentity { name: format!("zerod-{id}"), host: "mac".into(), ..Default::default() };
+    let mut ask = zerod::ask::Ask::new(zerod::ask::AskKind::Choice, "Ship it?", agent, 3600);
+    ask.waits = Some(false);
+    let ask = inbox.create(ask, false);
+    let session = w.daemon.session(&id).unwrap();
+    let user = |id: &str, text: &str| Change::Item { item: Item { at: None, id: id.into(), turn: None, kind: ItemKind::User { text: text.into(), images: vec![] }, status: ItemStatus::Done } };
+    session.change(user("u2", "Fix the login bug, and keep the old cookie name"));
+    session.change(user("u3", &zerod::model::from_line("zero", "A schedule came due")));
+    let state = zerod::model::IssueState::named("working").unwrap();
+    session.change(Change::Issue { issue: zerod::model::Issue::set(None, "WEB-42", state, "Reviewing the fix", 0) });
+    session.change(Change::Status { status: zerod::model::Status::Working, turn: Some("t2".into()), error: None });
+    seen.say(json!({"type": "system", "subtype": "status", "status": "compacting"}));
+    seen.say(json!({"type": "system", "subtype": "status", "status": null, "compact_result": "success"}));
+    let words = seen.said("user", 2).await[1]["message"]["content"].as_str().unwrap().to_string();
+    assert!(words.starts_with(&zerod::model::from_line("zero", "")), "Zero's, not the user's: {words}");
+    assert!(words.contains("Fix the login bug, and keep the old cookie name"), "{words}");
+    assert!(!words.contains("A schedule came due"), "the user's words, not Zero's: {words}");
+    assert!(words.contains("WEB-42") && words.contains("Reviewing the fix"), "{words}");
+    assert!(words.contains(&ask.id) && words.contains("Ship it?"), "{words}");
 }

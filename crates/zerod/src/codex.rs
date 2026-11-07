@@ -192,7 +192,13 @@ fn notification(conversation: &Conversation, method: &str, params: &Value, effec
             effects.changes.push(Change::Status { status: Status::Idle, turn: None, error });
         }
         "item/started" | "item/completed" => {
-            if let Some(item) = item(&params["item"], turn) { effects.changes.push(Change::Item { item }) }
+            if let Some(mut item) = item(&params["item"], turn) {
+                if method == "item/started" && item.id.starts_with(crate::adapter::COMPACTED) {
+                    item.kind = ItemKind::Notice { text: "Compacting the conversation…".into(), error: false };
+                    item.status = ItemStatus::Running;
+                }
+                effects.changes.push(Change::Item { item })
+            }
         }
         "item/agentMessage/delta" | "item/plan/delta" | "item/commandExecution/outputDelta" | "item/reasoning/summaryTextDelta" => {
             let (Some(item), Some(text)) = (params["itemId"].as_str(), params["delta"].as_str()) else { return };
@@ -310,7 +316,10 @@ fn item(value: &Value, turn: Option<&str>) -> Option<Item> {
         "dynamicToolCall" => (ItemKind::Tool { name: text("tool"), detail: value["arguments"].to_string() }, status("status")),
         "webSearch" => (ItemKind::Tool { name: "Web search".into(), detail: text("query") }, ItemStatus::Done),
         "imageView" => (ItemKind::Tool { name: "View image".into(), detail: text("path") }, ItemStatus::Done),
-        "contextCompaction" => (ItemKind::Notice { text: "Context compacted".into(), error: false }, ItemStatus::Done),
+        "contextCompaction" => {
+            let kind = ItemKind::Notice { text: "Conversation compacted".into(), error: false };
+            return Some(Item { at: None, id: format!("{}{id}", crate::adapter::COMPACTED), turn: turn.map(Into::into), kind, status: ItemStatus::Done });
+        }
         // Codex's own bookkeeping: in the transcript, nothing to read.
         "hookPrompt" | "functionCallOutput" => return None,
         other => (ItemKind::Notice { text: format!("Codex {other} (not shown in Zero yet)"), error: false }, ItemStatus::Done),

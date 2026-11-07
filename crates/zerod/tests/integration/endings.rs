@@ -151,6 +151,9 @@ async fn a_lead_told_of_an_issue_that_leaves_its_row_alone_is_reminded_once() {
     let session = daemon.session(&lead).unwrap();
     turn(&session, 1, &zerod::model::from_line(&worker, "Worker ENG-7 finished: CI green, ready to merge."), "ENG-7 is ready to merge.\n\n[zero: done]").await;
     assert_eq!(reminded(&sent), 1, "{}", sent.lock().unwrap());
+    // Reminded already, and the row still not set: not again, however many reports come.
+    turn(&session, 9, &zerod::model::from_line(&worker, "Worker ENG-7 is waiting: CI is still running."), "Nothing new on ENG-7.\n\n[zero: waiting]").await;
+    assert_eq!(reminded(&sent), 1, "once per ticket until it's set");
     // Set during the turn: nothing to remind.
     session.change(Change::Status { status: Status::Working, turn: Some("t2".into()), error: None });
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -168,4 +171,37 @@ async fn a_lead_told_of_an_issue_that_leaves_its_row_alone_is_reminded_once() {
     session.change(Change::Status { status: Status::Idle, turn: None, error: Some("Something odd".into()) });
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(reminded(&sent), 1);
+}
+
+#[tokio::test]
+async fn a_report_that_changes_nothing_needs_no_new_row_while_the_row_is_fresh() {
+    // A worker saying it still waits on CI changes nothing for the user: a row set minutes ago still says it all.
+    let home = temp_dir("issue-rows-fresh");
+    let (daemon, lead, sent) = task(&home, Provider::Claude).await;
+    let worker = daemon.spawn(&lead, Provider::Claude, "fix ENG-8", zerod::daemon::Options { ticket: Some("ENG-8".into()), ..Default::default() }).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    daemon.set_issue(&lead, "ENG-8", zerod::model::IssueState::Working, "CI running").unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let session = daemon.session(&lead).unwrap();
+    turn(&session, 1, &zerod::model::from_line(&worker, "Worker ENG-8 is waiting: CI is still running."), "Nothing new on ENG-8.\n\n[zero: waiting]").await;
+    let told = sent.lock().unwrap().clone();
+    assert_eq!(told.matches(zerod::daemon::ISSUE_ROW_MARK).count(), 0, "{told}");
+}
+
+#[tokio::test]
+async fn a_done_worker_leaves_once_its_lead_has_its_report() {
+    // Done is done-done: the lead has heard all of it, so the worker leaves its tree (kept in the archive, back if
+    // something reaches it). One waiting on someone else stays.
+    let home = temp_dir("endings-worker-leaves");
+    let (daemon, lead, sent) = task(&home, Provider::Claude).await;
+    daemon.session(&lead).unwrap().change(Change::Status { status: Status::Idle, turn: None, error: None });
+    let done = daemon.spawn(&lead, Provider::Claude, "check it", Default::default()).unwrap();
+    let waiting = daemon.spawn(&lead, Provider::Claude, "watch CI", Default::default()).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    turn(&daemon.session(&waiting).unwrap(), 1, "watch CI", "CI is still running.\n\n[zero: waiting]").await;
+    turn(&daemon.session(&done).unwrap(), 1, "check it", "Checked: merged, deployed, all green.\n\n[zero: done]").await;
+    for _ in 0..50 { if daemon.session(&done).is_err() { break } tokio::time::sleep(Duration::from_millis(100)).await }
+    assert!(sent.lock().unwrap().contains("merged, deployed, all green"), "the lead had its report first");
+    assert!(daemon.session(&done).is_err(), "done: it left the lead's tree");
+    assert!(daemon.session(&waiting).is_ok(), "waiting on CI: it stays");
 }

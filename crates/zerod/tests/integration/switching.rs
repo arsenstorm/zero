@@ -54,7 +54,10 @@ fn the_record_becomes_a_claude_code_session_with_every_message_and_command() {
         item("4", ItemKind::Command { command: "uname -n".into(), cwd: "/work/project".into(), output: "frostbite-7\n".into(), exit_code: Some(0), duration_ms: None }),
         item("5", ItemKind::Command { command: "false".into(), cwd: "/work/project".into(), output: String::new(), exit_code: Some(1), duration_ms: None }),
         item("6", ItemKind::FileChange { changes: vec![FileChange { path: "/work/project/a.txt".into(), kind: "add".into(), move_path: None, diff: "+hello\n".into() }] }),
-        item("7", ItemKind::Agent { text: "Done: PERIWINKLE-42, frostbite-7.".into(), final_answer: true }),
+        // A tool call goes as one (any tool, MCP's too), never as words: words would be copied as a way to call it.
+        item("7", ItemKind::Tool { name: "mcp__zero__zero_issue".into(), detail: r#"{"ticket":"ENG-7","state":"working"}"#.into() }),
+        item("8", ItemKind::Tool { name: "Read".into(), detail: "/work/project/a.txt".into() }),
+        item("9", ItemKind::Agent { text: "Done: PERIWINKLE-42, frostbite-7.".into(), final_answer: true }),
     ];
     let file = handoff::claude_session(&conversation, "11111111-2222-4333-8444-555555555555");
     let records: Vec<Value> = file.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
@@ -68,7 +71,8 @@ fn the_record_becomes_a_claude_code_session_with_every_message_and_command() {
             Value::String(text) => vec![(role, format!("text:{text}"))],
             Value::Array(blocks) => blocks.iter().map(|b| (role.clone(), match b["type"].as_str().unwrap() {
                 "text" => format!("text:{}", b["text"].as_str().unwrap()),
-                "tool_use" => format!("bash:{}", b["input"]["command"].as_str().unwrap()),
+                "tool_use" if b["name"] == "Bash" => format!("bash:{}", b["input"]["command"].as_str().unwrap()),
+                "tool_use" => format!("tool:{}:{}", b["name"].as_str().unwrap(), b["input"]),
                 "tool_result" => format!("result:{}:{}", b["content"].as_str().unwrap(), b["is_error"]),
                 other => other.to_string(),
             })).collect(),
@@ -84,6 +88,10 @@ fn the_record_becomes_a_claude_code_session_with_every_message_and_command() {
         ("assistant", "bash:false"),
         ("user", "result:Exit code 1:true"),
         ("assistant", "text:Changed /work/project/a.txt (add):\n```diff\n+hello\n```"),
+        ("assistant", r#"tool:mcp__zero__zero_issue:{"state":"working","ticket":"ENG-7"}"#),
+        ("user", "result:Its result isn't in Zero's record.:false"),
+        ("assistant", r#"tool:Read:{"detail":"/work/project/a.txt"}"#),
+        ("user", "result:Its result isn't in Zero's record.:false"),
         ("assistant", "text:Done: PERIWINKLE-42, frostbite-7."),
     ], "reasoning stays with the provider that had it; everything said and done comes along");
     let uses: Vec<&Value> = records.iter().flat_map(|r| r["message"]["content"].as_array().into_iter().flatten()).filter(|b| b["type"] == "tool_use").collect();
@@ -197,4 +205,34 @@ async fn a_task_keeps_the_model_it_started_on_and_its_workers_take_it() {
     let worker = daemon.spawn(&lead, Provider::Claude, "work", zerod::daemon::Options::default()).unwrap();
     assert!(started.lock().unwrap().last().unwrap().contains("--model claude-opus-5-5"), "{:?}", started.lock().unwrap());
     assert_eq!(daemon.get(&worker).unwrap().model.as_deref(), Some("claude-opus-5-5"));
+}
+
+#[tokio::test]
+async fn a_model_or_permissions_picked_mid_turn_is_kept_for_the_next_and_applied_as_the_turn_ends() {
+    let home = crate::common::temp_dir("switching-next");
+    let sent = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let daemon = zerod::daemon::Daemon::open(&home.join("zerod"), crate::endings::listening(sent)).unwrap();
+    let id = daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let session = daemon.session(&id).unwrap();
+    session.change(Change::Status { status: Status::Working, turn: Some("t1".into()), error: None });
+    daemon.set_permissions(&id, Permissions::Unrestricted).await.expect("kept, not refused");
+    daemon.switch(&id, Provider::Claude, zerod::session::ModelChoice { model: Some("haiku"), effort: Some("low") }).await.unwrap();
+    let next = daemon.next(&id).expect("kept for the next turn");
+    assert_eq!((next.permissions, next.model.as_deref(), next.effort.as_deref()), (Some(Permissions::Unrestricted), Some("haiku"), Some("low")));
+    let now = daemon.get(&id).unwrap();
+    assert_eq!(now.permissions, Permissions::Auto, "not mid-turn");
+    assert_ne!(now.model.as_deref(), Some("haiku"));
+    // Choosing what it has again drops that part.
+    daemon.set_permissions(&id, Permissions::Auto).await.unwrap();
+    assert_eq!(daemon.next(&id).unwrap().permissions, None);
+    daemon.set_permissions(&id, Permissions::Unrestricted).await.unwrap();
+    session.change(Change::Status { status: Status::Idle, turn: None, error: None });
+    for _ in 0..50 {
+        if daemon.next(&id).is_none() { break }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let after = daemon.get(&id).unwrap();
+    assert_eq!((after.permissions, after.model.as_deref(), after.effort.as_deref()), (Permissions::Unrestricted, Some("haiku"), Some("low")), "applied as the turn ended");
+    assert!(daemon.next(&id).is_none());
 }

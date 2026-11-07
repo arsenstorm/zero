@@ -3,6 +3,43 @@
 use super::*;
 
 impl Daemon {
+    /// Before zerod becomes a new build: every session's running process is handed over (Session::hand_off), kept in
+    /// handoff.json for the new zerod to take over, so turns, background commands and subagents run on through the
+    /// restart. Gives the sessions handed over; what couldn't be is paused (pause_for_restart).
+    pub async fn hand_off(&self) -> Vec<String> {
+        self.restarting.store(true, Ordering::Relaxed);
+        let mut handed = vec![];
+        for session in self.sessions() {
+            if let Some(handoff) = session.hand_off().await { handed.push(handoff) }
+        }
+        let _ = std::fs::write(self.home.join(HANDOFF), serde_json::to_vec(&handed).unwrap_or_default());
+        handed.into_iter().map(|h| h.session).collect()
+    }
+
+    /// Once zerod is up after a restart: the processes the zerod before handed over, each attached to its session as it
+    /// was. Gives the sessions taken over; a process that can't be is stopped, and its task resumed and told to carry
+    /// on, as a restart that pauses tells it.
+    pub fn take_over(&self) -> Vec<String> {
+        let file = self.home.join(HANDOFF);
+        let handed: Vec<crate::session::Handoff> = std::fs::read(&file).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default();
+        let _ = std::fs::remove_file(&file);
+        let mut taken = vec![];
+        for handoff in handed {
+            let (id, pid) = (handoff.session.clone(), handoff.pid);
+            let Ok(session) = self.session(&id) else { stop_group(pid); continue };
+            if let Ok(conversation) = self.get(&id).ok_or(()) && let Ok(servers) = self.mcp_for(&conversation) { session.set_mcp(servers) }
+            match session.adopt(handoff) {
+                Ok(()) => taken.push(id),
+                Err(error) => {
+                    eprintln!("zerod: couldn't take over {id}'s process: {error}");
+                    stop_group(pid);
+                    self.tell(&id, CARRY_ON.into());
+                }
+            }
+        }
+        taken
+    }
+
     /// Before zerod becomes a new build: every turn under way is paused between steps (a command running is left to
     /// finish, up to COMMAND_WAIT), its session told to carry on once the new zerod is up. All at once, so one long
     /// command holds up only its own turn. Gives the sessions paused.
@@ -195,3 +232,10 @@ fn note_pause(session: &Session, words: &str) {
     };
     session.change(Change::Item { item });
 }
+
+unsafe extern "C" {
+    safe fn kill(pid: i32, signal: i32) -> i32;
+}
+
+/// A handed-over process nothing takes over: stopped, with what it started, so it doesn't run on unseen.
+fn stop_group(pid: i32) { kill(-pid, 9); }

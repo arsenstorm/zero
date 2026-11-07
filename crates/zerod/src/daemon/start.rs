@@ -51,9 +51,22 @@ impl Daemon {
         self.attention.lock().unwrap().insert(id.clone(), Attention::Starting);
         session.announce();
         if options.label.is_some() || options.ticket.is_some() { session.change(Change::Named { label: options.label.clone(), ticket: options.ticket.clone() }) }
-        start_first_turn(session, transport, prompt, &options);
+        start_first_turn(session.clone(), transport, prompt, &options);
+        // A task started without a name gets a short one from its first message: its title, which a name given to it
+        // (by the user or its lead) goes before.
+        if self.naming.load(Ordering::Relaxed) && provider == Provider::Claude && options.label.is_none() && options.parent.is_none() {
+            let (prompt, cwd, id) = (prompt.to_string(), conversation.cwd.clone(), id.clone());
+            tokio::spawn(async move {
+                if let Some(name) = crate::naming::name(&prompt, &cwd, &id).await && session.summary().title.is_none() {
+                    session.change(Change::Title { title: Some(name) });
+                }
+            });
+        }
         Ok(id)
     }
+
+    /// New tasks get names from a small model from here on (zerod's own start; tests don't, so spend nothing).
+    pub fn name_tasks(&self) { self.naming.store(true, Ordering::Relaxed) }
 
     /// Why a task can't start as asked: not in a folder, its provider at its usage limit (unless forced), nothing to
     /// do, or a workspace or sign-in that isn't there.

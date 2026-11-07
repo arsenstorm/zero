@@ -73,6 +73,9 @@ impl Core {
     }
 
     /// The line that answers an open approval with one of the choices it offers.
+    /// What Stop sends to stop the provider's background work (Adapter::stops).
+    pub fn stops(&self) -> Vec<Value> { self.adapter.stops() }
+
     pub fn answer(&self, approval: &str, choice: &str) -> Result<Value, String> {
         let open = self.conversation.approvals.iter().find(|a| a.id == approval).ok_or_else(|| format!("No open approval {approval}"))?;
         if !open.choices.iter().any(|c| c.id == choice) {

@@ -275,7 +275,7 @@ async fn slack_is_connected_with_a_user_token_and_its_channels_read() {
     let integrations = Integrations::open(&home, fetcher.clone());
     assert_eq!(integrations.connect_slack("xoxb-not-a-user-token").await.unwrap_err(), "That isn't a user token: Slack's start with xoxp-.");
     let state = integrations.connect_slack(" xoxp-123 ").await.unwrap();
-    assert_eq!(state, json!({"team": {"id": "T0AB", "name": "Acme", "domain": "acme"}, "channels": {"docs": "C0D", "eng": "C0E"}}));
+    assert_eq!(state, json!([{"team": {"id": "T0AB", "name": "Acme", "domain": "acme"}, "channels": {"docs": "C0D", "eng": "C0E"}}]), "one of the workspaces connected");
     let asked = fetcher.asked.lock().unwrap().clone();
     assert_eq!(asked[0].0[0], "curl");
     assert_eq!(asked[0].1.as_deref(), Some("url = \"https://slack.com/api/auth.test\"\nheader = \"Authorization: Bearer xoxp-123\"\n"), "the token on curl's stdin, never its command line");
@@ -283,7 +283,7 @@ async fn slack_is_connected_with_a_user_token_and_its_channels_read() {
     // Kept, the user's alone; gone when disconnected.
     use std::os::unix::fs::PermissionsExt;
     assert_eq!(std::fs::metadata(home.join("slack.json")).unwrap().permissions().mode() & 0o777, 0o600);
-    assert_eq!(Integrations::open(&home, canned(vec![])).slack_state(), Some(state));
-    integrations.disconnect_slack().unwrap();
-    assert!(integrations.slack_state().is_none() && !home.join("slack.json").exists());
+    assert_eq!(Integrations::open(&home, canned(vec![])).slack_state(), state);
+    integrations.disconnect_slack("T0AB").unwrap();
+    assert!(integrations.slack_state() == json!([]) && !home.join("slack.json").exists());
 }

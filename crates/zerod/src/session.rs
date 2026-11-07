@@ -17,7 +17,7 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::process::Child;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
@@ -25,7 +25,7 @@ use crate::core::Core;
 use crate::model::{Change, ChoiceKind, Conversation, Event, Item, ItemKind, ItemStatus, Permissions, Provider};
 use crate::{acp, claude, codex, now_ms};
 
-pub use process::Transport;
+pub use process::{Handoff, Transport};
 pub use turns::{Message, ModelChoice};
 use pages::turn_start;
 
@@ -56,6 +56,12 @@ struct Inner {
     /// Lines to the runtime; None while offline.
     out: Option<mpsc::UnboundedSender<Value>>,
     child: Option<Child>,
+    /// Its process's pid and pipes (stdin, stdout), which a restart hands to the next zerod; how to stop its reading for
+    /// that, and its writer, to let finish first.
+    pid: Option<i32>,
+    fds: Option<(i32, i32)>,
+    stop_reading: Option<oneshot::Sender<oneshot::Sender<Vec<u8>>>>,
+    writing: Option<tokio::task::JoinHandle<()>>,
     /// Zero's requests waiting for an answer, by id.
     waiting: HashMap<String, oneshot::Sender<Result<Value, String>>>,
     /// Approvals already answered, so a second answer (from another client, say) is refused.
@@ -123,12 +129,12 @@ impl Session {
         if let Some(parked) = parked.filter(|p| p.lines == lines) {
             let session = Session(Arc::new(Mutex::new(Inner {
                 mcp: vec![], core: None, parked: Some(parked), summary: None, dir: Some(dir.into()), lines, touched: Instant::now(), events, transcript: Some(append(dir)?), unwritten: false,
-                out: None, child: None, waiting: HashMap::new(), answered: HashSet::new(), next: lines + 1, generation: 0,
+                out: None, child: None, pid: None, fds: None, stop_reading: None, writing: None, waiting: HashMap::new(), answered: HashSet::new(), next: lines + 1, generation: 0,
                 heard: Instant::now(), running: HashMap::new(),
             })));
             return Ok(session);
         }
-        let (core, lines) = replay(dir)?;
+        let (core, lines) = replay(dir, false)?;
         let session = Session::with(core, Some(append(dir)?), events, lines + 1);
         {
             let mut inner = session.lock();
@@ -137,6 +143,24 @@ impl Session {
         }
         session.unload();
         Ok(session)
+    }
+
+    /// Takes over the process the zerod before handed over (Daemon::hand_off): the conversation replayed as it stood,
+    /// mid-turn and all (not offline, as a load leaves it), and the process attached where the other zerod left off.
+    pub fn adopt(&self, handoff: Handoff) -> io::Result<()> {
+        let dir = self.lock().dir.clone().ok_or_else(|| io::Error::other("a session kept nowhere has nothing to take over"))?;
+        let (core, lines) = replay(&dir, true)?;
+        let transport = Transport::adopt(handoff)?;
+        {
+            let mut inner = self.lock();
+            inner.core = Some(core);
+            inner.parked = None;
+            inner.summary = None;
+            inner.lines = lines;
+            inner.next = inner.next.max(lines + 1);
+        }
+        self.attach(transport);
+        Ok(())
     }
 
     /// Whether its conversation is in memory.
@@ -166,7 +190,7 @@ impl Session {
 
     fn with(core: Core, transcript: Option<File>, events: broadcast::Sender<Event>, next: u64) -> Session {
         Session(Arc::new(Mutex::new(Inner {
-            mcp: vec![], core: Some(core), parked: None, summary: None, dir: None, lines: 0, touched: Instant::now(), events, transcript, unwritten: false, out: None, child: None, waiting: HashMap::new(), answered: HashSet::new(), next, generation: 0,
+            mcp: vec![], core: Some(core), parked: None, summary: None, dir: None, lines: 0, touched: Instant::now(), events, transcript, unwritten: false, out: None, child: None, pid: None, fds: None, stop_reading: None, writing: None, waiting: HashMap::new(), answered: HashSet::new(), next, generation: 0,
             heard: Instant::now(), running: HashMap::new(),
         })))
     }
@@ -227,6 +251,9 @@ impl Session {
         !inner.running.is_empty() || inner.core.as_ref().is_some_and(|core| core.conversation().items.iter().rev().take(50)
             .any(|i| matches!(i.kind, ItemKind::Command { .. }) && i.status == ItemStatus::Running))
     }
+
+    /// What Stop sends to stop the provider's background work.
+    pub fn stops(&self) -> Vec<Value> { self.lock().core.as_ref().map(|c| c.stops()).unwrap_or_default() }
 
     /// True while a runtime process is connected.
     pub fn is_attached(&self) -> bool {
@@ -301,7 +328,7 @@ impl Inner {
     fn core(&mut self) -> &mut Core {
         self.touched = Instant::now();
         if self.core.is_none() {
-            let loaded = self.dir.as_deref().and_then(|dir| replay(dir).ok()).map(|(core, _)| core);
+            let loaded = self.dir.as_deref().and_then(|dir| replay(dir, false).ok()).map(|(core, _)| core);
             let mut core = loaded.unwrap_or_else(|| Core::new(self.parked.as_ref().map(|p| p.summary.clone()).unwrap_or_else(|| Conversation::new("", Provider::Claude, ""))));
             core.set_mcp(self.mcp.clone());
             self.core = Some(core);
@@ -369,8 +396,9 @@ fn append(dir: &Path) -> io::Result<File> {
     OpenOptions::new().create(true).append(true).open(dir.join("transcript.jsonl"))
 }
 
-/// The session in `dir` replayed from its transcript, offline, with how many lines it read.
-fn replay(dir: &Path) -> io::Result<(Core, u64)> {
+/// The session in `dir` replayed from its transcript, with how many lines it read: offline, unless its process is
+/// still `running` (taken over across a restart).
+fn replay(dir: &Path, running: bool) -> io::Result<(Core, u64)> {
     let meta: Meta = serde_json::from_slice(&std::fs::read(dir.join("meta.json"))?)?;
     let mut conversation = Conversation::new(&meta.id, meta.provider, &meta.cwd);
     conversation.thread = meta.thread;
@@ -392,6 +420,6 @@ fn replay(dir: &Path) -> io::Result<(Core, u64)> {
             if let Some(change) = entry.get("change").and_then(|c| serde_json::from_value(c.clone()).ok()) { core.change(change); }
         }
     }
-    core.offline();
+    if !running { core.offline(); }
     Ok((core, lines))
 }
