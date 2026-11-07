@@ -10,12 +10,18 @@ async function kept() {
   return { groups, windows, titles, shared };
 }
 
-/** A task's group title: Zero, with the work's reference when it has one ("Zero: ENG-9686"). */
-const title = (task) => {
+/** A task's group title: Zero, with the task's own name ("Zero: WEB-22340 verify"), else its work's reference, so two
+ * tasks on one ticket (a worker and its verify) don't share a title. One another task has already gets a number. */
+const title = (task, taken = []) => {
   const ticket = String(task.ticket || "").trim();
-  if (!ticket) return "Zero";
-  const named = `Zero: ${ticket}`;
-  return named.length > 26 ? named.slice(0, 25) + "…" : named;
+  const name = String(task.name || "").trim();
+  const words = name && name !== "Zero" ? name : ticket;
+  if (!words) return "Zero";
+  const named = `Zero: ${words}`;
+  const base = named.length > 26 ? named.slice(0, 25) + "…" : named;
+  let unique = base;
+  for (let n = 2; taken.includes(unique); n++) unique = `${base} ${n}`;
+  return unique;
 };
 
 // The task's state, first in its group's title, Chrome's own four: working, needs (the user: a question, an approval,
@@ -28,8 +34,11 @@ const lit = (name, light) => (LIGHTS[light] ? `${LIGHTS[light]} ` : "") + name;
 /** The task's groups that still exist as its (one per window it has tabs in), the newest first. */
 async function groupsOf(task, state) {
   const ids = [].concat(state.groups[task.group] ?? []);
+  // An id another task lists too is no one's for sure (Chrome reuses ids after it restarts): never taken as this one's.
+  const others = new Set(Object.entries(state.groups).filter(([key]) => key !== task.group).flatMap(([, list]) => [].concat(list)));
   const found = [];
   for (const id of ids) {
+    if (others.has(id)) continue;
     const group = await exists((i) => chrome.tabGroups.get(i), id);
     if (group && bare(group.title) === state.titles[task.group]) found.push(group);
   }
@@ -127,7 +136,7 @@ async function grouped(task, state, tab, group) {
     const groupId = await chrome.tabs.group({ tabIds: [tab.id], createProperties: { windowId: tab.windowId } });
     if (task.state) lights.set(task.group, task.state);
     // Named as the task's other groups are, so they're all known as its.
-    state.titles[task.group] ??= title(task);
+    state.titles[task.group] ??= title(task, Object.entries(state.titles).filter(([key]) => key !== task.group).map(([, shown]) => shown));
     // Grey: Chrome's neutral colour, white on grey in a dark window. The light says the rest.
     await chrome.tabGroups.update(groupId, { title: lit(state.titles[task.group], lights.get(task.group)), color: "grey" });
     state.groups[task.group] = [].concat(state.groups[task.group] ?? []).slice(-8).concat(groupId);
