@@ -53,6 +53,33 @@ async fn an_idle_agent_is_parked_and_woken_by_words_for_it() {
     assert_eq!(started.lock().unwrap().len(), 2);
 }
 
+#[tokio::test(start_paused = true)]
+async fn an_agent_waiting_on_someone_is_parked_too_unless_work_runs_in_its_background() {
+    // Waiting on CI or a review, what it follows wakes it: no need to keep its process (and the settings it started
+    // with) for days. Not while something of its own still runs in the background, which stopping it would end.
+    use tokio::io::AsyncWriteExt;
+    let home = temp_dir("parking-waiting");
+    let started = Arc::new(Mutex::new(vec![]));
+    let daemon = Daemon::open(&home.join("zerod"), silent(started.clone())).unwrap();
+    let cwd = home.to_str().unwrap();
+    let start = || daemon.start(Provider::Claude, "watch CI", Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
+    let (waiting, busy) = (start(), start());
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    for id in [&waiting, &busy] {
+        let session = daemon.session(id).unwrap();
+        session.change(Change::Item { item: Item { at: None, id: "a1".into(), turn: None, kind: ItemKind::Agent { text: "CI is running.\n\n[zero: waiting]".into(), final_answer: true }, status: ItemStatus::Done } });
+        session.change(Change::Status { status: Status::Idle, turn: None, error: None });
+    }
+    // The second has a subagent running on in the background.
+    let line = json!({"type": "system", "subtype": "task_started", "task_id": "b1", "tool_use_id": "t9", "is_backgrounded": true}).to_string() + "\n";
+    let mut runtime = started.lock().unwrap().remove(1);
+    runtime.write_all(line.as_bytes()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    minutes(PARK_AFTER.as_secs() / 60 + 1).await;
+    assert!(!daemon.session(&waiting).unwrap().is_attached(), "waiting on someone, idle: parked");
+    assert!(daemon.session(&busy).unwrap().is_attached(), "its background work runs on");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_resumes_at_once_start_one_agent() {
     let home = temp_dir("parking-race");

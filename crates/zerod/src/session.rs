@@ -266,9 +266,11 @@ impl Session {
         let inner = self.lock();
         // Parked, it has no process.
         let conversation = inner.core.as_ref()?.conversation();
-        // Idle or done, not limited: a limited one is waiting to carry on its turn once the limit resets.
-        let idle = inner.out.is_some() && matches!(conversation.attention(), crate::model::Attention::Idle | crate::model::Attention::Answered | crate::model::Attention::Done)
-            && conversation.turn.is_none() && inner.running.is_empty();
+        // Idle, done, or waiting on someone (what it follows wakes it), not limited: a limited one is waiting to carry on
+        // its turn once the limit resets. Nothing of its own running in the background either, which stopping it ends.
+        let idle = inner.out.is_some()
+            && matches!(conversation.attention(), crate::model::Attention::Idle | crate::model::Attention::Answered | crate::model::Attention::Done | crate::model::Attention::Blocked)
+            && conversation.turn.is_none() && inner.running.is_empty() && inner.core.as_ref().is_some_and(|core| core.stops().is_empty());
         idle.then(|| inner.heard.elapsed())
     }
 
