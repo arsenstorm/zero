@@ -22,6 +22,7 @@ import ZeroCore
     var notifier: Notifier?
     /// Waiting to reopen the window until you come to Zero (another app was full screen when it started).
     private var restoreWatch: NSObjectProtocol?
+    private var spaceWatch: NSObjectProtocol?
     let navigation = Navigation(restoring: true)
     let settings = Settings()
     var pinnedDisplay: CGDirectDisplayID?
@@ -143,19 +144,30 @@ import ZeroCore
 
     /// Back where you were: the window, if it was open when Zero last quit. Not over someone's full-screen app (a film,
     /// while Zero updates): a window made then opens in that app's Space, on top of it. It waits for you to come
-    /// to Zero instead.
+    /// to Zero, or to go to a Space no full-screen app fills (your desktop, say), and opens there.
     private func restoreWorkspace() {
         guard UserDefaults.standard.bool(forKey: "workspaceOpen") else { return }
         guard Self.anotherAppFillsTheScreen() else { openWorkspace(); return }
         restoreWatch = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.restoreOnceActive() }
         }
+        spaceWatch = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                // A moment for the Space's windows to be on screen before looking at them.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    guard let self, !Self.anotherAppFillsTheScreen() else { return }
+                    self.restoreOnceActive(activating: false)
+                }
+            }
+        }
     }
 
-    /// Once: the first time you come to Zero, it opens where you were; after that, as you leave it.
-    private func restoreOnceActive() {
+    /// Once: the first time you come to Zero, or to a Space it can open in, it opens where you were; after that, as
+    /// you leave it. From a Space change, without taking the keyboard from what you went there for.
+    private func restoreOnceActive(activating: Bool = true) {
         if let watch = restoreWatch { NotificationCenter.default.removeObserver(watch); restoreWatch = nil }
-        if workspaceWindow == nil { openWorkspace() }
+        if let watch = spaceWatch { NSWorkspace.shared.notificationCenter.removeObserver(watch); spaceWatch = nil }
+        if workspaceWindow == nil { showWorkspace(activating: activating) }
     }
 
     /// Whatever put it there (a click, picking "Something else…", a key), a text box in the inbox holding the

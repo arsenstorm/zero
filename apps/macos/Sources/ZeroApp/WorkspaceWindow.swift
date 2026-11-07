@@ -19,7 +19,10 @@ extension AppDelegate {
         }
     }
 
-    @objc func openWorkspace() {
+    @objc func openWorkspace() { showWorkspace(activating: true) }
+
+    /// Shown without `activating`: in front where you are, not taking the keyboard from what you're in.
+    func showWorkspace(activating: Bool) {
         if workspaceWindow == nil {
             let view = WorkspaceView(workspace: workspace, navigation: navigation, inbox: inbox) { [unowned self] in
                 SettingsView(settings: settings, store: store, inbox: inbox, workspace: workspace, navigation: navigation, showOnboarding: { [weak self] in self?.openOnboarding() })
@@ -73,8 +76,12 @@ extension AppDelegate {
             }
         }
         NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        workspaceWindow?.makeKeyAndOrderFront(nil)
+        if activating {
+            NSApp.activate(ignoringOtherApps: true)
+            workspaceWindow?.makeKeyAndOrderFront(nil)
+        } else {
+            workspaceWindow?.orderFront(nil)
+        }
         UserDefaults.standard.set(true, forKey: "workspaceOpen")
         placeBar()
     }
