@@ -197,14 +197,13 @@ pub fn mark_read(rows: &mut [Row], read: &dyn Fn(&str) -> bool) {
     rows.sort_by_key(|row| row.state);
 }
 
-/// The done tasks due to be archived: those done for `after` seconds (never, with none). `since` keeps when each was
-/// first seen done, across boards; a task taken up again starts over.
-pub fn due_to_archive(rows: &[Row], since: &mut HashMap<String, i64>, now: i64, after: Option<i64>) -> Vec<String> {
-    let completed: Vec<&str> = rows.iter().filter(|r| r.state == State::Done && r.own == State::Done).map(|r| r.session.as_str()).collect();
-    since.retain(|id, _| completed.contains(&id.as_str()));
-    for id in &completed { since.entry(id.to_string()).or_insert(now); }
+/// The done tasks due to be archived: those done for `after` seconds (never, with none), counted from when each said so
+/// (`said`, in seconds: its last answer or note), so no restart starts the clock again. One not known to have said so
+/// isn't due.
+pub fn due_to_archive(rows: &[Row], now: i64, after: Option<i64>, said: &dyn Fn(&str) -> Option<i64>) -> Vec<String> {
     let Some(after) = after else { return vec![] };
-    let mut due: Vec<String> = since.iter().filter(|(_, at)| now - **at >= after).map(|(id, _)| id.clone()).collect();
+    let mut due: Vec<String> = rows.iter().filter(|r| r.state == State::Done && r.own == State::Done)
+        .filter(|r| said(&r.session).is_some_and(|at| now - at >= after)).map(|r| r.session.clone()).collect();
     due.sort();
     due
 }

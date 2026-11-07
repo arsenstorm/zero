@@ -326,22 +326,22 @@ fn a_reply_the_user_has_seen_is_read_for_every_client() {
 }
 
 #[test]
-fn a_done_task_is_archived_once_its_been_done_a_while() {
-    use std::collections::HashMap;
+fn a_done_task_is_archived_once_its_been_done_a_while_counted_from_when_it_said_so() {
+    // From when it said it was done (its answer, its note), not from when zerod first saw it: a restart, as an update
+    // brings, doesn't start the clock again.
     use zerod::board::due_to_archive;
     let mut lead = session("a", "/work/app", Status::Idle);
     lead.label = Some("Ship it".into());
     let rows = board(&[lead.clone(), session("b", "/work/api", Status::Idle)], &[note("a", "Shipped", Some("completed"), None)]);
-    let mut since = HashMap::new();
+    let said = |id: &str| (id == "a").then_some(1_000);
     let day = 24 * 3600;
-    assert!(due_to_archive(&rows, &mut since, 1_000, Some(day)).is_empty(), "completed from now");
-    assert!(due_to_archive(&rows, &mut since, 1_000 + day - 1, Some(day)).is_empty());
-    assert_eq!(due_to_archive(&rows, &mut since, 1_000 + day, Some(day)), ["a"], "a day on");
-    assert!(due_to_archive(&rows, &mut since, 1_000 + 9 * day, None).is_empty(), "never, if the user says so");
-    // Taken up again (not completed any more): its clock starts over when it's completed again.
+    assert!(due_to_archive(&rows, 1_000, Some(day), &said).is_empty(), "done just now");
+    assert!(due_to_archive(&rows, 1_000 + day - 1, Some(day), &said).is_empty());
+    assert_eq!(due_to_archive(&rows, 1_000 + day, Some(day), &said), ["a"], "a day on");
+    assert!(due_to_archive(&rows, 1_000 + 9 * day, None, &said).is_empty(), "never, if the user says so");
+    // Taken up again (not done any more): not due, however long ago it last said done.
     let again = board(&[lead], &[]);
-    due_to_archive(&again, &mut since, 5_000, Some(day));
-    assert!(since.is_empty());
+    assert!(due_to_archive(&again, 1_000 + 9 * day, Some(day), &said).is_empty());
 }
 
 #[test]

@@ -14,7 +14,6 @@ mod sessions;
 mod signins;
 mod watches;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::Deserialize;
@@ -233,20 +232,23 @@ pub fn hold_while_blocked(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
 }
 
 /// Archives each task done for as long as the settings say (a day, unless the user changed it), or once the user has
-/// read it, looked at every minute. ponytail: when it was first seen done is kept in memory, so a restart starts the
-/// clock again.
+/// read it, looked at every minute. Counted from when it said it was done, so a restart doesn't start it again.
 pub async fn archive_completed(zerod: Zerod) {
-    let mut since = HashMap::new();
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
         let settings = Settings::load(zerod.daemon.home());
-        let due = crate::board::due_to_archive(&zerod.board(), &mut since, now, settings.archive_after());
+        let asks = zerod.inbox.asks();
+        // Its last answer, or its last note (`zero note --done`), whichever came later: when it said it was done.
+        let said = |id: &str| -> Option<i64> {
+            let answered = zerod.daemon.get(id).and_then(|c| c.items.iter().rev().find(|i| matches!(i.kind, crate::model::ItemKind::Agent { final_answer: true, .. })).and_then(|i| i.at));
+            let noted = asks.iter().filter(|a| a.kind == crate::ask::AskKind::Note && a.agent.reference.as_deref() == Some(id)).map(|a| a.created_at.0).max();
+            // Items are stamped in milliseconds, asks in seconds.
+            answered.map(|ms| ms / 1000).max(noted)
+        };
+        let due = crate::board::due_to_archive(&zerod.board(), now, settings.archive_after(), &said);
         for id in due.into_iter().filter(|id| !settings.archive_once_read() || zerod.daemon.has_read(id)) {
-            match zerod.daemon.archive(&id).await {
-                Ok(()) => { since.remove(&id); }
-                Err(error) => eprintln!("zerod: couldn't archive completed {id}: {error}"),
-            }
+            if let Err(error) = zerod.daemon.archive(&id).await { eprintln!("zerod: couldn't archive completed {id}: {error}") }
         }
     }
 }
