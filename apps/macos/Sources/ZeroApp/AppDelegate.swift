@@ -266,7 +266,8 @@ import ZeroCore
         menu.addItem(withTitle: "Workspace", action: #selector(openWorkspace), keyEquivalent: "0")
         menu.addItem(withTitle: "Open Log", action: #selector(openLog), keyEquivalent: "")
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        // Not "Settings…": macOS gives an item of that name a gear, which none of the menu's other items have.
+        menu.addItem(withTitle: "Configure Zero", action: #selector(openSettings), keyEquivalent: ",")
         menu.addItem(withTitle: "Show onboarding", action: #selector(openOnboarding), keyEquivalent: "")
         menu.addItem(withTitle: "Quit Zero", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         for item in menu.items where item.action != #selector(NSApplication.terminate(_:)) { item.target = self }
