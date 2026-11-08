@@ -332,6 +332,8 @@ struct MarkdownView: View {
                 .overlay(alignment: .leading) { Rectangle().fill(.tertiary).frame(width: 3) }
         case let .table(rows):
             if let head = rows.first { TableView(title: "", columns: head, rows: Array(rows.dropFirst())) }
+        case let .image(path, alt):
+            AnswerImage(path: path, alt: alt)
         case .rule:
             Divider()
         }
@@ -722,6 +724,29 @@ struct ImageTile: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
         .task(id: path) { image = await PhoneModel.shared.image(path, side: Int(side * 3)) }
+    }
+}
+
+/// An image an agent shows (a screenshot, a render), from the Mac: the answer's width, its own proportions once it
+/// comes, a tap from its full size.
+struct AnswerImage: View {
+    let path: String
+    let alt: String
+    @State private var image: UIImage?
+    @State private var open = false
+
+    var body: some View {
+        Group {
+            if let image { Image(uiImage: image).resizable().aspectRatio(image.size, contentMode: .fit) }
+            else { Color.primary.opacity(0.08).aspectRatio(16 / 10, contentMode: .fit) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+        .accessibilityLabel(alt)
+        .onTapGesture { open = true }
+        .sheet(isPresented: $open) { ImageViewer(path: path) }
+        .task(id: path) { image = await PhoneModel.shared.image(path, side: 1600) }
     }
 }
 

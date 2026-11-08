@@ -112,7 +112,9 @@ comes up), [zero: waiting] (the next move is someone else's, not the user's: a r
 [zero: working] (pausing between steps), or [zero: asked <id>] (waiting on the user's answer to what you asked, only \
 while it's unanswered). Don't take actions other people will see, such as merging, marking a pull request ready, requesting reviews or \
 posting messages, unless the user asked you to. For anything in a web browser, use Zero's browser_ tools (the user's \
-Chrome, through Zero for Chrome): your own browser tools are off in Zero.";
+Chrome, through Zero for Chrome): your own browser tools are off in Zero. To show the user an image (a screenshot, a \
+render), save it as a file and put `![what it shows](/its/absolute/path.png)` on a line of its own in your message: \
+Zero shows it there, on their Mac and their phone.";
 
 /// The start of a compaction row's id, whichever CLI compacted: once it's done, Zero gives the agent its record (recap.rs).
 pub const COMPACTED: &str = "compaction-";

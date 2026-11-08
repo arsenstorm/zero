@@ -10,6 +10,8 @@ public indirect enum MarkdownBlock: Equatable, Sendable {
     case quote(String)
     case table([[String]])
     case rule
+    /// An image file on the Mac, shown as itself: `![what it shows](/its/path.png)` on a line of its own.
+    case image(path: String, alt: String)
 
     /// A list item: its first line, and what's indented under it (more text, a list of its own).
     public struct Item: Equatable, Sendable {
@@ -54,13 +56,16 @@ public indirect enum MarkdownBlock: Equatable, Sendable {
                     i += 1
                 }
                 blocks.append(.table(rows))
+            } else if let image = image(trimmed) {
+                blocks.append(image)
+                i += 1
             } else if marker(lines[i]) != nil {
                 blocks.append(list(lines, from: &i))
             } else {
                 var paragraph: [String] = []
                 while i < lines.count {
                     let line = lines[i].trimmingCharacters(in: .whitespaces)
-                    if line.isEmpty || fence(line) || heading(line) != nil || line.hasPrefix(">") || line.hasPrefix("|") || marker(lines[i]) != nil || (rule(line) && !paragraph.isEmpty) { break }
+                    if line.isEmpty || fence(line) || heading(line) != nil || line.hasPrefix(">") || line.hasPrefix("|") || marker(lines[i]) != nil || image(line) != nil || (rule(line) && !paragraph.isEmpty) { break }
                     paragraph.append(line)
                     i += 1
                 }
@@ -68,6 +73,14 @@ public indirect enum MarkdownBlock: Equatable, Sendable {
             }
         }
         return blocks
+    }
+
+    /// An image on a line of its own, when it's a file on the Mac (an absolute path, or a file:// link).
+    private static func image(_ line: String) -> MarkdownBlock? {
+        guard let match = line.wholeMatch(of: #/!\[([^\]]*)\]\(<?([^)>]+)>?\)/#) else { return nil }
+        let target = String(match.2)
+        let path = target.hasPrefix("file://") ? URL(string: target)?.path : target.hasPrefix("/") ? target : nil
+        return path.map { .image(path: $0, alt: String(match.1)) }
     }
 
     /// The list starting at line `i`: its items at that indent and kind, each with what's indented under it.

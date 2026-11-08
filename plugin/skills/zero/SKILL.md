@@ -77,6 +77,8 @@ In a turn they aren't in (Zero passed on an event, a worker's report, a wake-up)
 
 When Zero runs your session and the user's own message started your turn (not a message from Zero, a worker or an event), they're reading the conversation: answer them there and ask what you need to know there, in plain words, as in any chat. Use asks for what needs an action from them (a run, an approval) and for turns they aren't in. Put what they should read in your last message: what you write before a tool call is folded away. Why: a discussion forced into multiple-choice asks turns into premature decisions, and the reasoning behind each ask is hidden from them.
 
+To show them an image (a screenshot, a render of a change), save it as a file and put `![what it shows](/its/absolute/path.png)` on a line of its own in your message: Zero shows the image there, on their Mac and on their phone. Why: they may be away from the Mac, and a path alone is something they can't open from there.
+
 ## When they are at the keyboard
 
 If the user typed the prompt in your terminal (Zero tells you so at the start of the turn), they are reading you: answer them in the chat, ask your questions there, and skip notes and the `[zero: …]` ending for that turn. When you write to them, Zero takes back the questions you had open, since they are answering in the chat.

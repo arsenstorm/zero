@@ -161,12 +161,31 @@ enum RichMarkdown {
                 out.append(quoted)
             case let .table(rows):
                 out.append(table(rows, size: size, indent: indent, after: gap, inline: inline))
+            case let .image(path, alt):
+                out.append(picture(path, alt: alt, size: size, indent: indent, after: gap))
             case .rule:
                 let rule = NSMutableAttributedString(string: " \n", attributes: [.font: NSFont.systemFont(ofSize: size), .paragraphStyle: style(size: size, indent: indent, after: gap)])
                 rule.addAttribute(.zeroRule, value: true, range: NSRange(location: 0, length: 1))
                 out.append(rule)
             }
         }
+    }
+
+    /// An image an agent shows: the file itself, no wider than an answer's column reads, kept to its proportions; its
+    /// words when it can't be read.
+    private static func picture(_ path: String, alt: String, size: CGFloat, indent: CGFloat, after: CGFloat) -> NSAttributedString {
+        let paragraph = style(size: size, indent: indent, after: after)
+        guard let image = NSImage(contentsOfFile: path), image.size.width > 0, image.size.height > 0 else {
+            return line(AttributedString(alt.isEmpty ? path : alt), font: .systemFont(ofSize: size), style: paragraph, color: .secondaryLabelColor)
+        }
+        let scale = min(1, 560 / image.size.width, 420 / image.size.height)
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = CGRect(x: 0, y: 0, width: round(image.size.width * scale), height: round(image.size.height * scale))
+        let out = NSMutableAttributedString(attachment: attachment)
+        out.append(NSAttributedString(string: "\n"))
+        out.addAttributes([.paragraphStyle: paragraph, .toolTip: alt], range: NSRange(location: 0, length: out.length))
+        return out
     }
 
     private static func line(_ text: AttributedString, font: NSFont, style: NSParagraphStyle, color: NSColor = .labelColor) -> NSMutableAttributedString {
