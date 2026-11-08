@@ -49,6 +49,11 @@ pub struct Row {
     #[serde(default = "default_workspace")]
     pub workspace: String,
     pub ticket: Option<String>,
+    /// The agent the lead runs on.
+    pub provider: crate::model::Provider,
+    /// When the lead last moved: its latest item's time (ms), none before it has said anything.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at: Option<i64>,
     /// Where it runs: the name the task was given, else the places command's for its ticket, else the shortest end of
     /// its folder that tells it from the other rows' ("blue-fox/api").
     pub place: String,
@@ -171,7 +176,8 @@ pub fn board_in(conversations: &[Conversation], asks: &[Ask], places: &HashMap<S
         }).collect();
         let (queued, held) = queue(&lead.id);
         Row {
-            session: lead.id.clone(), task: crate::bridge::label(lead), workspace: workspace_of(lead), ticket: lead.ticket.clone(), place, path, online: its.online,
+            session: lead.id.clone(), task: crate::bridge::label(lead), workspace: workspace_of(lead), ticket: lead.ticket.clone(),
+            provider: lead.provider, at: lead.items.iter().filter_map(|i| i.at).max(), place, path, online: its.online,
             state: its.state, own, now: its.now, needs: its.needs, asks: its.asks, workers: team.len() - 1, team: members, queued, held, wakes: None, next: None,
             quiet: lead.items.iter().rev().find_map(|i| match &i.kind { ItemKind::User { text, .. } => Some(text.starts_with(crate::model::FROM)), _ => None }).unwrap_or(false),
             issues: { let mut issues = lead.issues.clone(); issues.sort_by_key(|i| (i.state, i.since)); issues },
@@ -291,10 +297,12 @@ pub fn asks_in_prose(answer: &str) -> bool {
 /// The answer without Zero's ending line, for reading.
 pub fn without_ending(answer: &str) -> &str {
     let trimmed = answer.trim_end();
-    match (ending(trimmed), trimmed.rsplit_once('\n')) {
-        (Some(_), Some((before, _))) => before.trim_end(),
-        (Some(_), None) => "",
-        (None, _) => answer,
+    // "[zero: asked]" with no ask's id is no ending, but not words to read either.
+    let bare = trimmed.lines().last().is_some_and(|l| l.trim() == "[zero: asked]");
+    match (ending(trimmed).is_some() || bare, trimmed.rsplit_once('\n')) {
+        (true, Some((before, _))) => before.trim_end(),
+        (true, None) => "",
+        (false, _) => answer,
     }
 }
 
@@ -305,7 +313,8 @@ pub fn ending(answer: &str) -> Option<&'static str> {
         "done" | "completed" => Some("done"),
         "waiting" | "blocked" => Some("waiting"),
         "working" => Some("working"),
-        "asked" => Some("asked"),
+        // Only with its ask's id: without one there's no ask to wait on, and nothing that could clear it.
+        "asked" if inner.split_whitespace().nth(1).is_some() => Some("asked"),
         _ => None,
     }
 }

@@ -439,3 +439,30 @@ fn a_done_lead_can_be_put_away_once_the_user_has_read_it() {
     assert!(settings(Some(-1)).archive_once_read() && settings(Some(-1)).archive_after() == Some(0), "at once, once read");
     assert!(!settings(Some(3600)).archive_once_read());
 }
+
+#[test]
+fn a_row_says_which_agent_runs_it_and_when_it_last_moved() {
+    // The phone shows each task as Linear shows an issue: its agent's mark, and how long ago it last moved.
+    let mut lead = Conversation::new("lead", Provider::Codex, "/work/app");
+    let said = |id: &str, at: Option<i64>| Item { at, id: id.into(), turn: None, kind: ItemKind::Agent { text: "ok".into(), final_answer: true }, status: ItemStatus::Done };
+    lead.items = vec![said("a1", Some(1_000)), said("a2", Some(5_000)), said("a3", None)];
+    let quiet = session("quiet", "/work/other", Status::Idle);
+    let rows = board(&[lead, quiet], &[]);
+    let row = |id: &str| rows.iter().find(|r| r.session == id).unwrap();
+    assert_eq!((row("lead").provider, row("lead").at), (Provider::Codex, Some(5_000)), "its agent, and its latest item's time");
+    assert_eq!((row("quiet").provider, row("quiet").at), (Provider::Claude, None), "nothing said yet: no time");
+}
+
+#[test]
+fn an_asked_ending_without_its_ask_is_no_ending() {
+    // "[zero: asked]" names no ask: nothing to wait on, and nothing that could ever clear it. A reply, then; one that
+    // asks a question in its words waits on the user, as any.
+    let reply = |text: &str| {
+        let mut lead = session("lead", "/work/app", Status::Idle);
+        lead.items = vec![Item { at: None, id: "a1".into(), turn: None, kind: ItemKind::Agent { text: text.into(), final_answer: true }, status: ItemStatus::Done }];
+        board(&[lead], &[])[0].state
+    };
+    assert_eq!(reply("I'd keep the name for now.\n\n[zero: asked]"), State::Answered);
+    assert_eq!(reply("Which do you mostly use?\n\n[zero: asked]"), State::NeedsYou);
+    assert_eq!(zerod::board::without_ending("Done for now.\n[zero: asked]"), "Done for now.", "not words to read either");
+}
