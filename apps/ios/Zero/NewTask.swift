@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// A new task from the phone, as the Mac's New task: what to do, the folder it works in, the agent and its model; it
-/// starts in the workspace shown, and opens.
+/// A new task from the phone, after Linear's new issue: close on the left, the folder it works in as a pill in the
+/// middle, start on the right; the words filling the page; the agent, its model and the permissions as chips riding
+/// above the keyboard. It starts in the workspace shown, and opens.
 struct NewTaskSheet: View {
     let model: PhoneModel
     @Environment(\.dismiss) private var dismiss
@@ -9,71 +10,42 @@ struct NewTaskSheet: View {
     @AppStorage("newTaskProvider") private var provider = Provider.claude.rawValue
     @State private var prompt = ""
     @State private var folders: [String] = []
-    @State private var models: [PhoneModel.ModelChoice] = []
     @State private var chosen: (model: String, effort: String?)?
+    @State private var choosing: Choice?
     @State private var selecting = false
     @State private var starting = false
     @State private var permissions = Permissions.auto
     @State private var problem: String?
     @FocusState private var writing: Bool
 
+    private enum Choice: Hashable { case folder, permissions }
     private var agent: Provider { Provider(rawValue: provider) ?? .claude }
+    private static let agents: [Provider] = [.claude, .codex, .opencode]
+    @State private var catalogue: [Provider: [PhoneModel.ModelChoice]] = [:]
+    /// The chosen agent's models.
+    private var models: [PhoneModel.ModelChoice] { catalogue[agent] ?? [] }
+    private var canStart: Bool { !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !folder.isEmpty && !starting }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField("What should it do?", text: $prompt, axis: .vertical).lineLimit(4...12).focused($writing)
+        VStack(alignment: .leading, spacing: 0) {
+            top
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    TextField("What should it do?", text: $prompt, axis: .vertical)
+                        .font(.title3).focused($writing)
+                    if let problem { Text(problem).font(.footnote).foregroundStyle(.red) }
                 }
-                Section("Folder") {
-                    if folders.isEmpty {
-                        Spinner().frame(width: 16, height: 16)
-                    } else {
-                        Picker("Folder", selection: $folder) {
-                            ForEach(folders, id: \.self) { path in Text((path as NSString).lastPathComponent).tag(path) }
-                        }
-                        .pickerStyle(.navigationLink)
-                    }
-                }
-                Section("Agent") {
-                    Picker("Agent", selection: $provider) {
-                        ForEach([Provider.claude, .codex, .opencode], id: \.self) { p in Text(p.title).tag(p.rawValue) }
-                    }
-                    .pickerStyle(.segmented)
-                    if !models.isEmpty {
-                        Button { selecting = true } label: {
-                            HStack {
-                                Text("Model")
-                                Spacer()
-                                Text(modelName).foregroundStyle(.secondary)
-                            }
-                        }
-                        .foregroundStyle(.primary)
-                    }
-                }
-                // A list, not the system menu: the tick on the right, as everywhere else here.
-                Section("Permissions") {
-                    Picker("Permissions", selection: $permissions) {
-                        Text("Auto").tag(Permissions.auto)
-                        Text("Unrestricted").tag(Permissions.unrestricted)
-                    }
-                    .pickerStyle(.inline).labelsHidden()
-                }
-                if let problem { Text(problem).font(.footnote).foregroundStyle(.red) }
+                .padding(.horizontal, 20).padding(.top, 8)
             }
-            .navigationTitle("New task")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    if starting { Spinner().frame(width: 18, height: 18) } else {
-                        Button("Start") { Task { await start() } }
-                            .disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || folder.isEmpty)
-                    }
-                }
-            }
-            .sheet(isPresented: $selecting) {
-                ModelSelector(provider: agent, models: models, current: (chosen?.model ?? models.first?.id, chosen?.effort)) { m, e in chosen = (m, e) }
+            .scrollDismissesKeyboard(.never)
+        }
+        // Above the keyboard, as Linear's properties: what the task starts with.
+        .safeAreaInset(edge: .bottom) { chips }
+        .sheet(isPresented: $selecting) {
+            ModelSelector(agents: Self.agents.map { .init(provider: $0, models: catalogue[$0] ?? []) },
+                          current: (agent, chosen?.model ?? models.first?.id, chosen?.effort)) { picked, m, e in
+                provider = picked.rawValue
+                chosen = m.map { ($0, e) }
             }
         }
         .task {
@@ -81,20 +53,113 @@ struct NewTaskSheet: View {
             folders = await model.projects()
             if !folders.contains(folder) { folder = folders.first ?? "" }
         }
-        .task(id: provider) {
-            chosen = nil
-            models = await model.models(agent)
+        // Every agent's models, for the one picker: each as it comes.
+        .task {
+            for agent in Self.agents { catalogue[agent] = await model.models(agent) }
         }
+    }
+
+    private var top: some View {
+        HStack {
+            Button { dismiss() } label: { glyph("xmark-outline") }
+                .buttonStyle(.plain).glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("Close")
+            Spacer(minLength: 12)
+            Button { choosing = .folder } label: {
+                HStack(spacing: 8) {
+                    Image("folder-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(.blue)
+                    Text(folder.isEmpty ? "Folder" : (folder as NSString).lastPathComponent).font(.body.weight(.medium)).lineLimit(1)
+                }
+                .padding(.horizontal, 16).frame(height: 44).contentShape(Capsule())
+            }
+            .buttonStyle(.plain).glassEffect(.regular.interactive(), in: Capsule())
+            .popover(isPresented: Binding(get: { choosing == .folder }, set: { if !$0 { choosing = nil } })) {
+                list(folders.map { ($0, ($0 as NSString).lastPathComponent) }, selected: folder) { folder = $0 }
+            }
+            Spacer(minLength: 12)
+            Button { Task { await start() } } label: {
+                Group {
+                    if starting { Spinner().frame(width: 18, height: 18) } else { glyph("arrow-up-outline").foregroundStyle(canStart ? .white : .secondary) }
+                }
+                .frame(width: 44, height: 44)
+                .background { if canStart { Circle().fill(Color.accentColor) } }
+            }
+            .buttonStyle(.plain).glassEffect(.regular.interactive(), in: Circle())
+            .disabled(!canStart)
+            .accessibilityLabel("Start")
+        }
+        .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 8)
+    }
+
+    private var chips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                // The agent and its model, one choice: its mark, its model's name.
+                chip(modelName, icon: providerIcon) { selecting = true }
+                chip(permissions == .auto ? "Auto" : "Unrestricted", icon: permissions == .auto ? "wand-sparkle-outline" : "bolt-lightning-glyph",
+                     tint: permissions == .auto ? nil : .orange) { choosing = .permissions }
+                    .popover(isPresented: Binding(get: { choosing == .permissions }, set: { if !$0 { choosing = nil } })) {
+                        list([("auto", "Auto"), ("unrestricted", "Unrestricted")], selected: permissions == .auto ? "auto" : "unrestricted") {
+                            permissions = $0 == "auto" ? .auto : .unrestricted
+                        }
+                    }
+            }
+            .padding(.horizontal, 16).padding(.vertical, 10)
+        }
+    }
+
+    private var providerIcon: String? {
+        switch agent {
+        case .claude: "provider-claude"
+        case .codex: "provider-openai"
+        default: "terminal-outline"
+        }
+    }
+
+    private func glyph(_ name: String) -> some View {
+        Image(name).resizable().frame(width: 20, height: 20).frame(width: 44, height: 44).contentShape(Circle())
+    }
+
+    private func chip(_ title: String, icon: String?, tint: Color? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                if let icon { Image(icon).resizable().frame(width: 16, height: 16) }
+                Text(title).font(.subheadline.weight(.medium)).lineLimit(1)
+            }
+            .foregroundStyle(tint ?? .primary)
+            .padding(.horizontal, 14).frame(height: 38).contentShape(Capsule())
+        }
+        .buttonStyle(.plain).glassEffect(.regular.interactive(), in: Capsule())
+    }
+
+    /// Zero's own list, not the system menu: the tick at the right edge, where it's read last.
+    private func list(_ rows: [(String, String)], selected: String, pick: @escaping (String) -> Void) -> some View {
+        VStack(spacing: 2) {
+            ForEach(rows, id: \.0) { id, title in
+                Button { pick(id); choosing = nil } label: {
+                    HStack {
+                        Text(title).lineLimit(1)
+                        Spacer(minLength: 16)
+                        Image("circle-check-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(Color.accentColor).opacity(id == selected ? 1 : 0)
+                    }
+                    .padding(.horizontal, 14).frame(height: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(6)
+        .frame(width: 260)
+        .presentationCompactAdaptation(.popover)
     }
 
     private var modelName: String {
         let id = chosen?.model ?? models.first?.id
         let current = models.first { $0.id == id }
         let level = chosen?.effort.flatMap { effort in current?.levels.first { $0.id == effort }?.name }
-        return (current?.name ?? "Default") + (level.map { " " + $0 } ?? "")
+        return (current?.name ?? (models.isEmpty ? agent.title : "Default")) + (level.map { " · " + $0 } ?? "")
     }
 
     private func start() async {
+        guard canStart else { return }
         starting = true
         defer { starting = false }
         do {

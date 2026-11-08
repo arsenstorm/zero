@@ -20,67 +20,68 @@ struct RecordView: View {
     @State private var sending = false
     @State private var problem: String?
 
-    var body: some View {
-        List {
-            Section {
-                PhotosPicker(selection: $picked, maxSelectionCount: 10, matching: .images) {
-                    Label(images.isEmpty ? "Choose screenshots or photos" : images.count == 1 ? "1 image" : "\(images.count) images",
-                          image: "images-glyph")
+    /// Recording the screen, the page's one big action, as the camera's shutter: a red disc in a ring that turns to a
+    /// stop square while it records, its time over it. The system's sheet picks the screen and the microphone; it stops
+    /// here or with the red pill at the top; then the recording is read.
+    private var shutter: some View {
+        VStack(spacing: 14) {
+            Button { recorder.recording ? recorder.stop() : recorder.start() } label: {
+                ZStack {
+                    Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 4).frame(width: 84, height: 84)
+                    RoundedRectangle(cornerRadius: recorder.recording ? 8 : 32, style: .continuous).fill(.red)
+                        .frame(width: recorder.recording ? 30 : 64, height: recorder.recording ? 30 : 64)
                 }
-                if !images.isEmpty {
-                    TextField("What should it look at?", text: $words, axis: .vertical).lineLimit(2...6)
-                }
-            } header: {
-                Text("Record")
+                .animation(.snappy(duration: 0.25), value: recorder.recording)
+                .contentShape(Circle())
             }
-            Section {
-                // The system's picker (the screen, the microphone's switch), then everything on it until it's stopped,
-                // here or with the red pill at the top; then the recording is read.
-                if recorder.recording {
-                    Button { recorder.stop() } label: {
-                        HStack(spacing: 10) {
-                            Image("media-stop-glyph").resizable().frame(width: 14, height: 14).foregroundStyle(.red)
-                            Text("Stop recording").foregroundStyle(.red)
-                            Spacer()
-                            Text(recorder.started, style: .timer).monospacedDigit().foregroundStyle(.secondary)
-                        }
-                    }
-                } else {
-                    Button { recorder.start() } label: { Label("Record the screen", image: "record-glyph") }
-                        .disabled(reading || !recorder.available)
-                }
-                PhotosPicker(selection: $video, matching: .videos) {
-                    if reading {
-                        HStack(spacing: 10) { Spinner().frame(width: 16, height: 16); Text("Reading the recording…").foregroundStyle(.secondary) }
-                    } else {
-                        Label(recording.map { "\($0.length) · \($0.frames.count) frames" + ($0.said == nil ? "" : " · what you said") } ?? "Choose a recording from Photos",
-                              image: "images-glyph")
-                    }
-                }
-                .disabled(reading)
-                if recording != nil, images.isEmpty {
-                    TextField("What should it look at?", text: $words, axis: .vertical).lineLimit(2...6)
-                }
-            } footer: {
-                Text("Turn the microphone on in the sheet to talk it through, and stop with the red pill at the top of the screen. The task gets frames through the recording and what you said.")
+            .buttonStyle(.plain)
+            .disabled(reading || !recorder.available)
+            .accessibilityLabel(recorder.recording ? "Stop recording" : "Record the screen")
+            if recorder.recording {
+                Text(recorder.started, style: .timer).font(.headline).monospacedDigit()
+            } else {
+                Text("Record your screen").font(.headline)
             }
-            if !images.isEmpty || recording != nil {
-                Section("Send to") {
-                    Picker("Task", selection: $task) {
-                        ForEach(model.tasks) { row in Text(row.task).lineLimit(1).tag(Optional(row.session)) }
-                    }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
-                }
-                if let problem { Text(problem).font(.footnote).foregroundStyle(.red) }
-                Button { Task { await send() } } label: {
-                    if sending { Spinner(color: .white).frame(width: 16, height: 16).frame(maxWidth: .infinity) } else { Text("Send").frame(maxWidth: .infinity) }
-                }
-                .buttonStyle(.glassProminent)
-                .disabled(task == nil || sending)
-                .listRowBackground(Color.clear)
-            }
+            Text(recorder.recording ? "Stop here, or with the red pill at the top of the screen."
+                                    : "Turn the microphone on to talk it through.")
+                .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 32).padding(.vertical, 20)
+    }
+
+    /// A small glass button under the record button: the library, for what's already captured.
+    private func chip(_ title: String, icon: String) -> some View {
+        HStack(spacing: 8) {
+            Image(icon).resizable().frame(width: 16, height: 16)
+            Text(title).font(.subheadline.weight(.medium))
+        }
+        .padding(.horizontal, 14).frame(height: 38)
+        .glassEffect(.regular.interactive(), in: Capsule())
+    }
+
+    /// What the task should look at, with what's attached.
+    private var wordsField: some View {
+        TextField("What should it look at?", text: $words, axis: .vertical).lineLimit(2...6).padding(.vertical, 10)
+    }
+
+    var body: some View {
+        // The record button, and the library a button away for what's already captured: one group, centred on the
+        // page. (iOS's own inline picker as a strip of recent captures showed each one huge and cropped, under its own
+        // notice; thumbnails of our own would need the whole library.)
+        VStack(spacing: 28) {
+            shutter
+            HStack(spacing: 8) {
+                PhotosPicker(selection: $picked, maxSelectionCount: 10, matching: .images) { chip("Photos", icon: "images-glyph") }
+                PhotosPicker(selection: $video, matching: .videos) { chip(reading ? "Reading…" : "Recordings", icon: "record-glyph") }
+                    .disabled(reading)
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.bottom, NavBar.height)
+        // Something chosen or recorded: where it goes, in a sheet over the page rather than the page growing.
+        .sheet(isPresented: Binding(get: { !images.isEmpty || recording != nil }, set: { if !$0 { clear() } })) { sendSheet }
         // A recording finished: read as a chosen one is.
         .onChange(of: recorder.finished) { _, file in
             guard let file else { return }
@@ -110,6 +111,76 @@ struct RecordView: View {
         }
     }
 
+    /// What was chosen, its words and the task to send it to, as New task's sheet is laid out: close, its name, send.
+    private var sendSheet: some View {
+        let canSend = task != nil && !sending
+        return VStack(spacing: 0) {
+            HStack {
+                Button { clear() } label: {
+                    Image("xmark-outline").resizable().frame(width: 20, height: 20).frame(width: 44, height: 44).contentShape(Circle())
+                }
+                .buttonStyle(.plain).glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("Close")
+                Spacer()
+                Text("Send to a task").font(.headline)
+                Spacer()
+                Button { Task { await send() } } label: {
+                    Group {
+                        if sending { Spinner(color: .white).frame(width: 18, height: 18) }
+                        else { Image("arrow-up-outline").resizable().frame(width: 20, height: 20).foregroundStyle(canSend ? .white : .secondary) }
+                    }
+                    .frame(width: 44, height: 44)
+                    .background { if canSend || sending { Circle().fill(Color.accentColor) } }
+                    .contentShape(Circle())
+                }
+                .buttonStyle(.plain).glassEffect(.regular.interactive(), in: Circle())
+                .disabled(!canSend).accessibilityLabel("Send")
+            }
+            .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 8)
+            PageScroll {
+                VStack(alignment: .leading, spacing: 10) {
+                    if !images.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(images.indices, id: \.self) { i in
+                                    if let image = UIImage(data: images[i]) {
+                                        Image(uiImage: image).resizable().scaledToFill().frame(width: 72, height: 72)
+                                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                    }
+                                }
+                            }
+                        }
+                    } else if let recording {
+                        PageRow(title: "\(recording.length) · \(recording.frames.count) frames" + (recording.said == nil ? "" : " · what you said"), icon: "record-glyph")
+                    }
+                    wordsField
+                    if let problem { Text(problem).font(.footnote).foregroundStyle(.red) }
+                }
+                .padding(.horizontal, 20)
+                PageGroup(title: "Send to") {
+                    // Zero's own list, the tick on the right, as everywhere else here.
+                    ForEach(model.tasks) { row in
+                        Button { task = row.session } label: {
+                            HStack {
+                                Text(row.task).lineLimit(1)
+                                Spacer(minLength: 12)
+                                Image("circle-check-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(Color.accentColor)
+                                    .opacity(task == row.session ? 1 : 0)
+                            }
+                            .frame(minHeight: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    /// Nothing chosen any more: the sheet closes, the page is as it was.
+    private func clear() {
+        picked = []; images = []; words = ""; problem = nil; video = nil; recording = nil
+    }
+
     private func send() async {
         guard let task else { return }
         sending = true
@@ -117,7 +188,7 @@ struct RecordView: View {
         do {
             try await model.send([words, recording?.text].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n"),
                                  images: images + (recording?.frames ?? []), to: task)
-            picked = []; images = []; words = ""; problem = nil; video = nil; recording = nil
+            clear()
             model.tab = .tasks
             model.path = [task]
         } catch {
@@ -137,64 +208,6 @@ private struct Movie: Transferable {
         }
     }
 }
-
-/// A screen recording as an agent can take it: frames evenly through it (one every few seconds, twelve at most), and
-/// its sound as words, recognised on the phone when it can be.
-struct Recording {
-    var duration: Double
-    var times: [Double]
-    var frames: [Data]
-    var said: String?
-
-    var length: String { Duration.seconds(duration).formatted(.time(pattern: .minuteSecond)) }
-
-    /// What the message says of it, so the agent knows what the images are.
-    var text: String {
-        let at = times.map { Duration.seconds($0).formatted(.time(pattern: .minuteSecond)) }.joined(separator: ", ")
-        return "A screen recording from my phone, \(length) long: the images are frames from it at \(at)."
-            + (said.map { "\nWhat I said over it: \u{201C}\($0)\u{201D}" } ?? "")
-    }
-
-    static func read(_ url: URL) async -> Recording? {
-        defer { try? FileManager.default.removeItem(at: url) }
-        let asset = AVURLAsset(url: url)
-        guard let duration = try? await asset.load(.duration).seconds, duration > 0 else { return nil }
-        let count = min(12, max(1, Int(duration / 3) + 1))
-        let times = (0..<count).map { duration * (Double($0) + 0.5) / Double(count) }
-        let generator = AVAssetImageGenerator(asset: asset)
-        generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 1600, height: 1600)
-        var frames: [Data] = []
-        for time in times {
-            if let image = try? await generator.image(at: CMTime(seconds: time, preferredTimescale: 600)).image,
-               let jpeg = UIImage(cgImage: image).jpegData(compressionQuality: 0.7) { frames.append(jpeg) }
-        }
-        return Recording(duration: duration, times: times, frames: frames, said: await transcript(of: url))
-    }
-
-    /// Its sound as words; nothing when it has none, or speech isn't allowed.
-    private static func transcript(of url: URL) async -> String? {
-        let allowed = await withCheckedContinuation { done in SFSpeechRecognizer.requestAuthorization { done.resume(returning: $0 == .authorized) } }
-        guard allowed, let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else { return nil }
-        let request = SFSpeechURLRecognitionRequest(url: url)
-        request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
-        request.addsPunctuation = true
-        let words: String? = await withCheckedContinuation { done in
-            var finished = false
-            recognizer.recognitionTask(with: request) { result, error in
-                guard !finished else { return }
-                if let result, result.isFinal { finished = true; done.resume(returning: result.bestTranscription.formattedString) }
-                else if error != nil { finished = true; done.resume(returning: nil) }
-            }
-        }
-        return words?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-    }
-}
-
-private extension String {
-    var nilIfEmpty: String? { isEmpty ? nil : self }
-}
-
 
 /// The screen recorded from the app, as iOS 27's ScreenCaptureKit has it: the system's picker chooses the screen (and
 /// whether the microphone is on), a stream records it into a file of the app's, until it's stopped here or from the

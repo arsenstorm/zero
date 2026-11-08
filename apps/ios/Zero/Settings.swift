@@ -3,73 +3,44 @@ import Speech
 import SwiftUI
 import UserNotifications
 
-/// The phone's own settings: the Mac it's paired with, what iOS lets it do, and unpairing.
+/// The phone's own settings, a page of its own (the menu's Settings): the Mac it's paired with, what iOS lets it do,
+/// and unpairing.
 struct SettingsView: View {
     let model: PhoneModel
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var phase
     @State private var notifications: UNAuthorizationStatus?
     @State private var unpairing = false
-    @State private var servers: [[String: Any]]?
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("Your Mac") {
-                    LabeledContent("Connection", value: connection)
-                    Button("Reconnect") { model.connect() }.disabled(model.status == .connected || model.status == .connecting)
-                }
-                Section {
-                    LabeledContent("Notifications", value: notificationsText)
-                    LabeledContent("Microphone", value: AVAudioApplication.shared.recordPermission == .granted ? "Allowed" : "Not allowed")
-                    LabeledContent("Speech", value: SFSpeechRecognizer.authorizationStatus() == .authorized ? "Allowed" : "Not allowed")
-                    Button("Open iOS Settings") { openURL(URL(string: UIApplication.openSettingsURLString)!) }
-                } header: { Text("Permissions") } footer: {
-                    Text("Notifications tell you when a task needs you. The microphone and speech let you dictate a message.")
-                }
-                if let servers, !servers.isEmpty {
-                    Section {
-                        ForEach(servers.indices, id: \.self) { i in server(servers[i]) }
-                    } header: { Text("MCP servers") } footer: {
-                        Text("Given to tasks as their agent starts. Set them up on your Mac, in Settings › MCP servers.")
+            PageScroll {
+                PageGroup(title: "Your Mac") {
+                    PageRow(title: "Connection", value: connection, icon: "laptop-outline")
+                    // Only while it can't be reached: greyed out the rest of the time, it read as broken.
+                    if model.status != .connected && model.status != .connecting {
+                        PageAction(title: "Reconnect", icon: "arrow-rotate-clockwise-outline") { model.connect() }
                     }
                 }
-                Section("About") {
-                    LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "–")
-                    LabeledContent("Build", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "–")
+                PageGroup(title: "Permissions") {
+                    PageRow(title: "Notifications", value: notificationsText, icon: "bell-outline")
+                    PageRow(title: "Microphone", value: AVAudioApplication.shared.recordPermission == .granted ? "Allowed" : "Not allowed", icon: "microphone-outline")
+                    PageRow(title: "Speech", value: SFSpeechRecognizer.authorizationStatus() == .authorized ? "Allowed" : "Not allowed", icon: "waveform-lines-outline")
+                    PageAction(title: "Open iOS Settings", icon: "gear-outline", trailing: "arrow-up-right-outline") { openURL(URL(string: UIApplication.openSettingsURLString)!) }
                 }
-                Section {
-                    Button("Unpair this phone", role: .destructive) { unpairing = true }
-                } footer: {
-                    Text("To pair again, open Zero's Settings › Devices on your Mac and scan its code.")
+                PageGroup(title: "About") {
+                    PageRow(title: "Version", value: "\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "–") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "–"))",
+                            icon: "circle-info-outline")
+                    // Last, under the version: in a group of its own it had a heading's gap above it and nothing to head.
+                    PageAction(title: "Unpair this phone", icon: "link-slash-outline", destructive: true) { unpairing = true }
                 }
             }
-            .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .confirmationDialog("Unpair this phone?", isPresented: $unpairing, titleVisibility: .visible) {
-                Button("Unpair", role: .destructive) { dismiss(); model.unpair() }
+                Button("Unpair", role: .destructive) { model.unpair() }
             } message: {
                 Text("It stops reaching your Mac until you pair it again.")
             }
             // Back from iOS Settings: what was allowed there, read again.
-            .task { servers = await model.mcpServers() }
             .task(id: phase) { notifications = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus }
-        }
-    }
-
-    private func server(_ server: [String: Any]) -> some View {
-        let workspaces = server["workspaces"] as? [String] ?? []
-        return VStack(alignment: .leading, spacing: 3) {
-            HStack {
-                Text(server["name"] as? String ?? "").font(.body.weight(.medium))
-                Spacer()
-                if server["enabled"] as? Bool == false { Text("Off").font(.footnote).foregroundStyle(.secondary) }
-            }
-            Text(server["runs"] as? String ?? "").font(.footnote.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-            Text(workspaces.isEmpty ? "Every workspace" : workspaces.joined(separator: ", ")).font(.footnote).foregroundStyle(.secondary)
-        }
     }
 
     private var connection: String {

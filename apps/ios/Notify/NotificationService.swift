@@ -14,6 +14,9 @@ final class NotificationService: UNNotificationServiceExtension {
             content.title = note["title"] ?? content.title
             content.body = note["body"] ?? content.body
         }
+        // A task's (not an ask's, whose card is answered in the inbox): Reply, a text field on the notification itself,
+        // going to the task (the app's AppDelegate). An ask's identifier starts "ask-" (TaskAlerts.askPrefix).
+        if !request.identifier.hasPrefix("ask-") { content.categoryIdentifier = "task" }
         // The task's latest word, as the message this notification is (its identifier is the task's session): "reply…"
         // to it with Siri, from AirPods or the lock screen, goes to the task. The app resolves it (Siri.swift).
         content.appEntityIdentifiers = [EntityIdentifier(for: ZeroMessage.self, identifier: request.identifier + "/latest")]

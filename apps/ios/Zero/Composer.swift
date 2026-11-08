@@ -27,6 +27,7 @@ struct Composer: View {
     /// shows as its first line and sends from there; a tap opens it again, all of it there.
     private var compact: Bool { !focused && !dictation.listening }
 
+
     /// Asks for the picker, which hangs off the composer itself: the button moves as the composer folds and opens
     /// (opening the picker takes the keyboard, which folds it), and a sheet on the button went with it, closing at once.
     private var photos: some View {
@@ -41,8 +42,9 @@ struct Composer: View {
         Button { dictation.listening ? dictation.stop() : dictation.start(after: draft) { draft = $0 } } label: {
             Image("microphone-outline").resizable().frame(width: 20, height: 20)
                 .foregroundStyle(dictation.listening ? Color.white : Color.primary)
-                .frame(width: 40, height: 40)
+                .frame(width: 34, height: 40)
                 .background(dictation.listening ? Color.red : .clear, in: Circle())
+                .contentShape(Rectangle())
         }
     }
 
@@ -155,19 +157,32 @@ struct Composer: View {
                 TextField(dictation.listening ? "Listening…" : "Write to this task", text: $draft, axis: .vertical)
                     .lineLimit(compact ? 1...1 : 1...8)
                     .focused($focused)
+                    // Folded: the field's text clear and the draft drawn in its place, one line, centred, fading if
+                    // there's more. The field still scrolls at one line high, so it showed its text scrolled off-centre,
+                    // and jumped as it folded; plain text moves with the fold. Taps go through to the field: its text
+                    // clear, not the field itself (UIKit gives a see-through view no taps, so it couldn't be opened).
+                    .foregroundStyle(compact && !draft.isEmpty ? Color.clear : Color.primary)
+                    .overlay(alignment: .leading) {
+                        if compact && !draft.isEmpty {
+                            FadingLine(text: draft.split(whereSeparator: \.isNewline).joined(separator: " "), font: .body)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .allowsHitTesting(false)
+                        }
+                    }
                     .padding(.leading, compact ? 4 : 18).padding(.trailing, compact ? 4 : 18)
                     .padding(.top, compact ? 0 : 16).padding(.bottom, compact ? 0 : 6)
-                if compact { microphone; sendButton }
+                if compact { microphone; sendButton.padding(.leading, 7) }
             }
             .padding(.horizontal, compact ? 4 : 0)
             if !compact {
-                HStack(spacing: 4) {
+                // 7 pt either side of each control's icon or words: 14 between any two, the send button too.
+                HStack(spacing: 0) {
                     photos
                     Spacer()
                     modelMenu
                     permissionsMenu
                     microphone
-                    sendButton
+                    sendButton.padding(.leading, 7)
                 }
                 .padding(.horizontal, 8).padding(.bottom, 8)
                 .transition(.opacity)
@@ -178,11 +193,8 @@ struct Composer: View {
         // Concentric: the 40 pt buttons sit 4 pt in a 48 pt capsule (20 + 4), 8 pt in the open box (20 + 8). Closed, it
         // also sits further in from the screen's edges, so its round ends follow the screen's corners.
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: compact ? 24 : 28))
-        // Open, a grabber on its top edge, as a sheet has: swiped down, the keyboard goes and it folds to its capsule,
-        // what's written kept. Only a mostly downward swipe: selecting text and scrolling a long draft still work.
-        .overlay(alignment: .top) {
-            if !compact { Capsule().fill(.tertiary).frame(width: 36, height: 5).padding(.top, 6).allowsHitTesting(false).transition(.opacity) }
-        }
+        // Open, swiped down: the keyboard goes and it folds to its capsule, what's written kept. Only a mostly downward
+        // swipe: selecting text and scrolling a long draft still work. (No grabber drawn for it: it looked out of place.)
         .simultaneousGesture(DragGesture(minimumDistance: 14).onEnded { drag in
             guard !compact, drag.translation.height > 30, drag.translation.height > abs(drag.translation.width) * 1.5 else { return }
             dictation.stop()
@@ -199,8 +211,14 @@ struct Composer: View {
                 images = loaded
             }
         }
+        // Tried again for a while when it comes back empty (the Mac out of reach a moment), not left empty.
         .task(id: conversation?.provider) {
-            if let provider = conversation?.provider { models = await model.models(provider) }
+            guard let provider = conversation?.provider else { return }
+            for _ in 0..<5 {
+                models = await model.models(provider)
+                if !models.isEmpty { return }
+                try? await Task.sleep(for: .seconds(2))
+            }
         }
         .onDisappear { dictation.stop() }
         // Words drafted elsewhere (Siri's "draft a message to …"): into the box, to look over and send.
@@ -212,14 +230,21 @@ struct Composer: View {
     }
 
     // What the agent may do without asking, as the Mac's chip: changed between turns (the agent starts again with it).
+    // Mid-turn, as on the Mac: zerod keeps the change for the next turn, shown with a clock until then.
     private var permissionsMenu: some View {
-        let unrestricted = conversation?.permissions == .unrestricted
+        let pending = model.row(session)?.next?.permissions
+        let shown = pending ?? conversation?.permissions ?? .auto
+        let unrestricted = shown == .unrestricted
         return Button { permitting = true } label: {
             Image(unrestricted ? "bolt-lightning-glyph" : "wand-sparkle-outline").resizable().frame(width: 18, height: 18)
-                .foregroundStyle(unrestricted ? Color.orange : Color.primary).frame(width: 40, height: 40)
+                .foregroundStyle(unrestricted ? Color.orange : Color.primary)
+                .overlay(alignment: .topTrailing) {
+                    if pending != nil { Image("clock-glyph").resizable().frame(width: 9, height: 9).foregroundStyle(.secondary).offset(x: 6, y: -5) }
+                }
+                .frame(width: 32, height: 40).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(busy || conversation == nil)
+        .disabled(conversation == nil)
         .popover(isPresented: $permitting) {
             VStack(spacing: 2) {
                 ForEach([Permissions.auto, .unrestricted], id: \.self) { choice in
@@ -231,7 +256,7 @@ struct Composer: View {
                             Text(choice == .auto ? "Auto" : "Unrestricted")
                             Spacer(minLength: 16)
                             Image("circle-check-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(Color.accentColor)
-                                .opacity((conversation?.permissions ?? .auto) == choice ? 1 : 0)
+                                .opacity(shown == choice ? 1 : 0)
                         }
                         .padding(.horizontal, 14).frame(height: 44).contentShape(Rectangle())
                     }
@@ -246,21 +271,43 @@ struct Composer: View {
     }
 
     // The model and its effort, as "Opus 5.5 High": opens the Mac's selector, as a sheet.
+    /// A model's id as people read it, for one not in the list: "claude-opus-5-5" is "Opus 5.5".
+    static func readable(_ id: String) -> String {
+        guard id.hasPrefix("claude-") else { return id }
+        var words: [String] = []
+        for part in id.dropFirst(7).split(separator: "-").map(String.init) {
+            if let last = words.last, Int(part) != nil, last.last?.isNumber == true { words[words.count - 1] = last + "." + part }
+            else { words.append(Int(part) != nil ? part : part.prefix(1).uppercased() + part.dropFirst()) }
+        }
+        return words.joined(separator: " ")
+    }
+
     private var modelMenu: some View {
         let id = chosen?.model ?? conversation?.model
         let effort = chosen?.effort ?? conversation?.effort
         let current = models.first { $0.id == id }
-        let name = current?.name ?? id ?? conversation?.provider.title ?? ""
+        let name = current?.name ?? id.map(Self.readable) ?? conversation?.provider.title ?? ""
         let level = current?.levels.first { $0.id == effort }?.name ?? effort?.capitalized
-        return Button { selecting = true } label: {
+        // Its list fetched again if it isn't in yet (a moment the Mac couldn't be reached): never stuck disabled.
+        return Button {
+            Task {
+                if models.isEmpty, let provider = conversation?.provider { models = await model.models(provider) }
+                if !models.isEmpty { selecting = true }
+            }
+        } label: {
             (Text(name).fontWeight(.medium) + Text(level.map { " " + $0 } ?? "").foregroundStyle(.secondary))
-                .font(.subheadline).lineLimit(1).padding(.horizontal, 6).frame(height: 40)
+                .font(.subheadline).lineLimit(1).padding(.horizontal, 7).frame(height: 40)
         }
         .buttonStyle(.plain)
-        .disabled(models.isEmpty)
         .sheet(isPresented: $selecting) {
             if let provider = conversation?.provider {
-                ModelSelector(provider: provider, models: models, current: (id, effort)) { model, level in chosen = (model, level) }
+                ModelSelector(agents: [.init(provider: provider, models: models)], current: (provider, id, effort)) { _, picked, level in
+                    guard let picked else { return }
+                    chosen = (picked, level)
+                    // Mid-turn, as the Mac's chip: zerod keeps it for the next turn now, not with a message (which
+                    // would have to go at once, steering the turn, to carry it).
+                    if busy { Task { await model.switchModel(session, provider: provider, model: picked, effort: level) } }
+                }
             }
         }
     }
@@ -275,8 +322,9 @@ struct Composer: View {
         Task {
             defer { sending = false }
             do {
-                // While it works, Return's place: after this turn (a model chosen here waits for a message sent now).
-                if busy && choice == nil { try await model.queue(text, images: photos, to: session) }
+                // While it works, always after this turn: never steering it (a model picked mid-turn is zerod's
+                // already, for the next turn). Sent with one that was, it interrupted the turn.
+                if busy { try await model.queue(text, images: photos, to: session) }
                 else { try await model.send(text, images: photos, to: session, model: choice?.model, effort: choice?.effort) }
             }
             catch { draft = text } // Back in the box, to send again.

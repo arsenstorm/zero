@@ -36,8 +36,11 @@ import UserNotifications
     /// The tasks open, as the navigation stack shows them: a tapped notification puts its task here.
     var path: [String] = []
     /// The tabs: Inbox, Tasks and Later, then ⋯ for the rest (recording). The app opens on the inbox.
-    enum Place: Hashable { case tasks, inbox, later, more }
+    enum Place: Hashable { case tasks, inbox, later, record, settings }
     var tab = Place.inbox
+    /// The empty inbox's arrival, owed once each time the inbox empties (and as the app opens): EmptyInbox plays it
+    /// as it comes into view, then not again until the inbox fills and empties once more.
+    var arrivalPending = true
 
     init() {
         #if DEBUG
@@ -99,8 +102,6 @@ import UserNotifications
     /// Words put in a task's composer from elsewhere (Siri's draft): taken by the composer when it shows.
     var drafts: [String: String] = [:]
 
-    /// The MCP servers tasks are given, as the Mac lists them for a phone: name, how it runs, where; no values.
-    func mcpServers() async -> [[String: Any]] { (try? await link?.call("mcpServers")) as? [[String: Any]] ?? [] }
 
     /// The Mac's project folders, as New task offers them.
     func projects() async -> [String] { (try? await link?.call("projects")) as? [String] ?? [] }
@@ -112,7 +113,11 @@ import UserNotifications
     }
 
     /// What the agent may do without asking; between turns, as the agent starts again with it.
-    func setPermissions(_ session: String, _ permissions: Permissions) async { try? await link?.setPermissions(session: session, permissions) }
+    /// A model for the task: mid-turn, zerod keeps it for the next turn (as the Mac's chip does); between turns, now.
+    func switchModel(_ session: String, provider: Provider, model: String, effort: String?) async {
+        try? await link?.switchProvider(session: session, to: provider, model: model, effort: effort)
+    }
+        func setPermissions(_ session: String, _ permissions: Permissions) async { try? await link?.setPermissions(session: session, permissions) }
 
     func pause(_ sessions: [String] = []) async -> [String] { (try? await link?.pause(sessions: sessions)) ?? [] }
     func unpause(_ sessions: [String] = []) async -> [String] { (try? await link?.unpause(sessions: sessions)) ?? [] }

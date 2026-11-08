@@ -1,32 +1,49 @@
 import SwiftUI
 
-/// The Mac's model selector for the phone, as two steps: the model, with a tick on the one in effect; then that model,
-/// its logo, purpose and context, and its effort levels. Nothing changes until a level is picked (or a model without
-/// levels is), so going back leaves things as they were.
+/// The Mac's model selector for the phone, as two steps: the model, under its agent (Claude Code, Codex, OpenCode),
+/// with a tick on the one in effect; then that model, its logo, purpose and context, and its effort levels. Nothing
+/// changes until a level is picked (or a model without levels is), so going back leaves things as they were. A task's
+/// composer gives its own agent alone; New task, every agent, so the agent and its model are one choice.
 struct ModelSelector: View {
-    let provider: Provider
-    let models: [PhoneModel.ModelChoice]
-    /// The model and effort in effect: the task's, or what was picked here.
-    let current: (model: String?, effort: String?)
-    let pick: (String, String?) -> Void
+    struct Agent { let provider: Provider; let models: [PhoneModel.ModelChoice] }
+    let agents: [Agent]
+    /// The agent, model and effort in effect: the task's, or what was picked here.
+    let current: (provider: Provider?, model: String?, effort: String?)
+    /// The agent, its model (none: an agent without a list, as OpenCode, on its own default) and effort.
+    let pick: (Provider, String?, String?) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var path: [String] = []
 
     var body: some View {
         NavigationStack(path: $path) {
-            List(models) { model in
-                Button {
-                    if model.levels.isEmpty { pick(model.id, nil); dismiss() } else { path = [model.id] }
-                } label: {
-                    row(model.name, detail: model.context, chosen: model.id == current.model, more: !model.levels.isEmpty)
+            List {
+                ForEach(agents, id: \.provider) { agent in
+                    Section {
+                        if agent.models.isEmpty {
+                            Button { pick(agent.provider, nil, nil); dismiss() } label: {
+                                row(agent.provider.title, detail: "Its own default", chosen: current.provider == agent.provider, more: false)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        ForEach(agent.models) { model in
+                            Button {
+                                if model.levels.isEmpty { pick(agent.provider, model.id, nil); dismiss() } else { path = [Self.key(agent.provider, model.id)] }
+                            } label: {
+                                row(model.name, detail: model.context, chosen: current.provider == agent.provider && model.id == current.model, more: !model.levels.isEmpty)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    } header: {
+                        if agents.count > 1 { Text(agent.provider.title) }
+                    }
                 }
-                .buttonStyle(.plain)
             }
-            .navigationTitle(provider.title)
+            .navigationTitle(agents.count == 1 ? agents[0].provider.title : "Model")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .navigationDestination(for: String.self) { id in
-                if let model = models.first(where: { $0.id == id }) { levels(of: model) }
+            .navigationDestination(for: String.self) { key in
+                if let agent = agents.first(where: { key.hasPrefix($0.provider.rawValue + "/") }),
+                   let model = agent.models.first(where: { Self.key(agent.provider, $0.id) == key }) { levels(of: model, agent: agent.provider) }
             }
         }
         .presentationDetents([.medium, .large])
@@ -34,7 +51,9 @@ struct ModelSelector: View {
     }
 
     /// The second step: what the model is, then how hard it thinks.
-    private func levels(of model: PhoneModel.ModelChoice) -> some View {
+    private static func key(_ provider: Provider, _ model: String) -> String { provider.rawValue + "/" + model }
+
+    private func levels(of model: PhoneModel.ModelChoice, agent: Provider) -> some View {
         // The level in effect, if this is the model in effect; else the model's own default.
         let effort = model.id == current.model ? current.effort ?? model.defaultLevel : model.defaultLevel
         return List {
@@ -49,7 +68,7 @@ struct ModelSelector: View {
             }
             Section("Effort") {
                 ForEach(model.levels, id: \.id) { level in
-                    Button { pick(model.id, level.id); dismiss() } label: {
+                    Button { pick(agent, model.id, level.id); dismiss() } label: {
                         row(level.name, detail: "", chosen: level.id == effort, more: false)
                     }
                     .buttonStyle(.plain)

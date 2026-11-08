@@ -62,10 +62,11 @@ struct Root: View {
 /// A task's state, as the Mac's sidebar shows it: the same icons and colours.
 struct StateGlyph: View {
     let state: BoardRow.State
+    var size: CGFloat = 16
     var body: some View {
         let look = Self.look(state)
-        if state == .working { Spinner().frame(width: 14, height: 14).frame(width: 16, height: 16) }
-        else { Image(look.icon).resizable().frame(width: 16, height: 16).foregroundStyle(look.color) }
+        if state == .working { Spinner().frame(width: size - 2, height: size - 2).frame(width: size, height: size) }
+        else { Image(look.icon).resizable().frame(width: size, height: size).foregroundStyle(look.color) }
     }
 
     static func look(_ state: BoardRow.State) -> (icon: String, color: Color, name: String) {
@@ -81,6 +82,111 @@ struct StateGlyph: View {
         case .read: ("message-check-glyph", .secondary, "Replied")
         case .idle: ("moon-glyph", .secondary, "Idle")
         case .offline: ("power-off-glyph", .secondary, "Offline")
+        }
+    }
+}
+
+/// What a task says under its name, as Linear's inbox: up to two lines, the end of the last fading out under how long
+/// ago it moved.
+struct Described: View {
+    let text: String?
+    let at: Int?
+    var font: Font = .subheadline
+    /// In the primary colour (a note saved for later is the row itself), not the secondary of what a task says.
+    var primary = false
+    @State private var timeWidth: CGFloat = 0
+    @State private var lineHeight: CGFloat = 18
+
+    var body: some View {
+        let ago = at.map { Ago.short($0) }
+        if let text, !text.isEmpty {
+            // Left-aligned: inside a button (a task's row), lines are centred otherwise.
+            Text(text).font(font).foregroundStyle(primary ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)).lineLimit(2).multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .mask {
+                    // Whole, but the last line's end: fading out, then nothing where the time is.
+                    VStack(spacing: 0) {
+                        Color.black
+                        HStack(spacing: 0) {
+                            Color.black
+                            if ago != nil {
+                                LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 28)
+                                Color.clear.frame(width: timeWidth + 4)
+                            }
+                        }
+                        .frame(height: lineHeight)
+                    }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if let ago {
+                        Text(ago).font(font).foregroundStyle(.secondary).monospacedDigit()
+                            .onGeometryChange(for: CGSize.self) { $0.size } action: { timeWidth = $0.width; lineHeight = $0.height }
+                    }
+                }
+        }
+    }
+
+    /// Nothing to say: the row has a single line, the time beside its name (TimeBeside), centred on its icon.
+    static func says(_ text: String?) -> Bool { !(text ?? "").isEmpty }
+}
+
+/// One line of text at its own width when it fits; when it doesn't, as wide as there's room for, fading out at its end
+/// rather than ending in "…". It takes its room as any one-line label does (the hidden text, which the row lays out),
+/// and draws the whole line over it, clipped: the line itself never makes the row wider.
+struct FadingLine: View {
+    let text: String
+    let font: Font
+    @State private var whole: CGFloat = 0
+    @State private var room: CGFloat = 0
+
+    var body: some View {
+        Text(text).font(font).lineLimit(1).hidden()
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { room = $0 }
+            .overlay(alignment: .leading) {
+                Text(text).font(font).lineLimit(1).fixedSize()
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { whole = $0 }
+            }
+            .clipped()
+            .mask {
+                HStack(spacing: 0) {
+                    Color.black
+                    if whole > room + 0.5 { LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 28) }
+                }
+            }
+    }
+}
+
+/// How long ago a row moved, beside its name: for a row with nothing under its name.
+struct TimeBeside: View {
+    let at: Int?
+    var body: some View {
+        if let at { Text(Ago.short(at)).font(.subheadline).foregroundStyle(.secondary).monospacedDigit() }
+    }
+}
+
+/// A task's agent as an avatar, Linear's way: its mark in a circle, its state at the corner.
+struct AgentAvatar: View {
+    let provider: Provider?
+    let state: BoardRow.State
+
+    var body: some View {
+        Image(Self.mark(provider)).resizable().frame(width: 22, height: 22)
+            .frame(width: 44, height: 44)
+            .background(Color(.secondarySystemFill), in: Circle())
+            .overlay(alignment: .bottomTrailing) {
+                StateGlyph(state: state).scaleEffect(0.8)
+                    .frame(width: 20, height: 20)
+                    .background(Color(.systemBackground), in: Circle())
+                    .offset(x: 3, y: 3)
+                    .accessibilityLabel(StateGlyph.look(state).name)
+            }
+    }
+
+    static func mark(_ provider: Provider?) -> String {
+        switch provider {
+        case .claude: "provider-claude"
+        case .codex: "provider-openai"
+        default: "terminal-outline"
         }
     }
 }
@@ -144,71 +250,55 @@ struct Scanner: UIViewControllerRepresentable {
     }
 }
 
-/// Paired: the tasks and recording, under the glass tab bar.
+/// Paired: the places, under Zero's own bar (NavBar): the system's tab bar hidden, the tabs kept alive by it.
 struct Home: View {
     @Bindable var model: PhoneModel
-    @State private var settings = false
-    @State private var choosing = false
     @State private var newTask = false
+    @State private var menu = false
 
-    // The stack holds the tabs, not the other way round: a task slides in over the tab bar and back out with it there
-    // all along (hidden from inside a tab, it came back only once the way back had finished).
+    // The stack holds the tabs, not the other way round: a task slides in over the bar and back out with it there
+    // all along.
     var body: some View {
         NavigationStack(path: $model.path) {
-            // Four tabs at most: a fourth, when one is needed, is a ⋯ menu of the rest.
-        TabView(selection: $model.tab) {
-                // What waits on the user first: its count, as the Mac's inbox has one.
-                Tab("Inbox", image: "inbox-glyph", value: PhoneModel.Place.inbox) { InboxView(model: model) }
-                    .badge(model.waiting.count)
-                Tab("Tasks", image: "list-checkbox-glyph", value: PhoneModel.Place.tasks) { TasksView(model: model) }
-                Tab("Later", image: "bookmark-glyph", value: PhoneModel.Place.later) { LaterView(model: model) }
-                Tab("More", image: "dots-glyph", value: PhoneModel.Place.more) { MoreView(model: model) }
+            TabView(selection: $model.tab) {
+                Tab(value: PhoneModel.Place.inbox) { InboxView(model: model).modifier(UnderBar()) }
+                Tab(value: PhoneModel.Place.tasks) { TasksView(model: model).modifier(UnderBar()) }
+                Tab(value: PhoneModel.Place.later) { LaterView(model: model).modifier(UnderBar()) }
+                Tab(value: PhoneModel.Place.record) { RecordView(model: model).modifier(UnderBar()) }
+                Tab(value: PhoneModel.Place.settings) { SettingsView(model: model).modifier(UnderBar()) }
             }
-            .tabBarMinimizeBehavior(.onScrollDown)
-            .sheet(isPresented: $settings) { SettingsView(model: model) }
+            // The keyboard is a task's (or a sheet's): the places and their bar stay where they are under it. Without
+            // this, swiping back from a task with its keyboard up showed the bar raised over where the keyboard was.
+            .ignoresSafeArea(.keyboard)
+            .overlay(alignment: .bottom) {
+                ZStack(alignment: .bottom) {
+                    if menu {
+                        Color.black.opacity(0.25).ignoresSafeArea()
+                            .onTapGesture { withAnimation(.bouncy(duration: 0.35)) { menu = false } }
+                            .transition(.opacity)
+                    }
+                    NavBar(model: model, open: $menu, newTask: { newTask = true })
+                }
+                // The whole screen, the bar on its foot, keyboard or not. As tall as the bar alone, ignoring the
+                // keyboard only stretched it down into the keyboard's room with the bar centred in it: raised by half
+                // the keyboard on the way back from a task with it up.
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .ignoresSafeArea(.keyboard)
+            }
             .sheet(isPresented: $newTask) { NewTaskSheet(model: model) }
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: String.self) { id in TaskView(model: model, session: id) }
+            // The page's name where Zero's mark was, as Linear titles its pages.
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Logo() }.sharedBackgroundVisibility(.hidden)
-                // The workspace shown, as the Mac's sidebar heading has it: the phone's own choice.
-                if model.workspaces.count > 1 {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button { choosing = true } label: {
-                            HStack(spacing: 5) {
-                                Text(model.currentWorkspace.map(Self.title) ?? "Zero").font(.subheadline.weight(.semibold)).lineLimit(1)
-                                Image("chevron-down-outline").resizable().frame(width: 10, height: 10).foregroundStyle(.secondary)
-                            }
-                            .padding(.horizontal, 4)
-                        }
-                        // Zero's own list, not the system menu: the tick at the right edge, where it's read last.
-                        .popover(isPresented: $choosing) {
-                            VStack(spacing: 2) {
-                                ForEach(model.workspaces) { space in
-                                    Button { model.switchWorkspace(space.id); choosing = false } label: {
-                                        HStack {
-                                            Text(Self.title(space)).lineLimit(1)
-                                            Spacer(minLength: 16)
-                                            Image("circle-check-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(Color.accentColor)
-                                                .opacity(space.id == model.currentWorkspace?.id ? 1 : 0)
-                                        }
-                                        .padding(.horizontal, 14).frame(height: 44).contentShape(Rectangle())
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                            .padding(6)
-                            .frame(width: 260)
-                            .presentationCompactAdaptation(.popover)
-                        }
-                    }
+                // A slot as wide as any page's name, its name at the start: the bar sized the item to each name and
+                // moved it as the pages changed. The name changes without an animation of its own.
+                ToolbarItem(placement: .topBarLeading) {
+                    Text(Self.names[model.tab] ?? "").font(.title.bold()).lineLimit(1)
+                        .frame(width: 220, alignment: .leading)
+                        .transaction { $0.animation = nil }
                 }
-                // A new task, beside the settings, as the Mac's New task.
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button { newTask = true } label: { Image("plus-outline") }
-                    Button { settings = true } label: { Image("gear-outline") }
-                }
+                .sharedBackgroundVisibility(.hidden)
             }
         }
         .overlay(alignment: .top) {
@@ -225,7 +315,20 @@ struct Home: View {
     }
 }
 
+/// A place under Zero's bar: the system's tab bar hidden, and room at the foot of what it scrolls so its last row
+/// scrolls clear of the bar. (Room given to the TabView didn't reach the lists inside it.) Fixed, so the menu opening
+/// over the page moves nothing.
+struct UnderBar: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .toolbar(.hidden, for: .tabBar)
+            .contentMargins(.bottom, NavBar.height + 16, for: .scrollContent)
+    }
+}
+
 extension Home {
+    static let names: [PhoneModel.Place: String] = [.inbox: "Inbox", .tasks: "Tasks", .later: "Later", .record: "Record", .settings: "Settings"]
+
     /// A workspace's name, its emoji first when it has one (a Nucleo icon's name isn't shown here).
     static func title(_ space: ZerodLink.Workspace) -> String {
         let emoji = space.glyph.unicodeScalars.first.map { $0.properties.isEmojiPresentation } ?? false
@@ -270,38 +373,24 @@ struct Splash: View {
 /// under it, a chevron opening them.
 struct TasksView: View {
     let model: PhoneModel
-    @State private var open: Set<String> = []
     @State private var renaming: (session: String, name: String)?
     @State private var newName = ""
     @State private var archiving: (session: String, name: String, workers: Int)?
 
     var body: some View {
         List {
-            Section("Tasks") {
+            Section {
+                // A row a lead: its workers are in the task, not folded out here.
                 ForEach(model.tasks) { row in
-                    let members = (row.team ?? []).filter { $0.session != row.session }.sorted { $0.state.urgency < $1.state.urgency }
-                    let unfolded = open.contains(row.session)
-                    TaskRow(name: row.task, state: row.ownState, folded: members.isEmpty ? nil : !unfolded,
-                            fold: { withAnimation(.snappy(duration: 0.2)) { if unfolded { open.remove(row.session) } else { open.insert(row.session) } } },
-                            show: { model.path.append(row.session) })
-                    .contextMenu { actions(row.session, name: row.task, state: row.ownState, workers: members.count) } preview: { TaskPeek(row: row, name: row.task) }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) { swipes(row.session, name: row.task, state: row.ownState, workers: members.count) }
-                    .swipeActions(edge: .leading) { renameSwipe(row.session, name: row.task) }
-                    if unfolded {
-                        ForEach(members, id: \.session) { member in
-                            let name = model.names[member.session] ?? member.place
-                            TaskRow(name: name, state: member.state, worker: true, show: { model.path.append(member.session) })
-                                .opacity([.done, .idle, .offline].contains(member.state) ? 0.6 : 1)
-                                .swipeActions(edge: .trailing, allowsFullSwipe: false) { swipes(member.session, name: name, state: member.state, workers: 0) }
-                                .swipeActions(edge: .leading) { renameSwipe(member.session, name: name) }
-                                .contextMenu { actions(member.session, name: name, state: member.state, workers: 0) } preview: {
-                                    if let worker = row.member(member.session) { TaskPeek(row: worker, name: name) }
-                                }
-                        }
-                    }
+                    let workers = (row.team ?? []).filter { $0.session != row.session }.count
+                    TaskRow(row: row, said: row.needs ?? row.now) { model.path.append(row.session) }
+                        .contextMenu { actions(row.session, name: row.task, state: row.ownState, workers: workers) } preview: { TaskPeek(row: row, name: row.task) }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) { swipes(row.session, name: row.task, state: row.ownState, workers: workers) }
+                        .swipeActions(edge: .leading) { renameSwipe(row.session, name: row.task) }
                 }
             }
         }
+        .listStyle(.plain)
         .environment(\.defaultMinListRowHeight, 36)
         .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $newName)
@@ -377,34 +466,42 @@ struct TaskPeek: View {
 
 /// A task as the Mac's sidebar lists it: its name, then (a lead with workers) the chevron that folds them, then its
 /// state. A worker's is a step in and smaller.
+/// A task's row, the same in the inbox and the task list, as Linear shows an issue in its inbox: its agent's mark with
+/// its state at the corner, its name (a dot before it while its reply is unread) and how long ago it moved, then what
+/// it says in up to two lines.
 struct TaskRow: View {
-    let name: String
-    let state: BoardRow.State
-    var worker = false
-    var folded: Bool?
-    var fold: () -> Void = {}
+    let row: BoardRow
+    /// What it says under its name: its reply, or the step that's the user's.
+    let said: String?
     let show: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            Button(action: show) {
-                Text(name).font(worker ? .subheadline : .body).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            }
-            .buttonStyle(.borderless).foregroundStyle(.primary)
-            if let folded {
-                Button(action: fold) {
-                    Image("chevron-down-outline").resizable().frame(width: 12, height: 12).foregroundStyle(.secondary)
-                        // As tall as the name's line, so a lead's row is as tall as any other's; wide enough to tap.
-                        .rotationEffect(.degrees(folded ? -90 : 0)).frame(width: 28, height: 22).contentShape(Rectangle())
+        Button(action: show) {
+            HStack(alignment: .center, spacing: 12) {
+                AgentAvatar(provider: row.provider, state: row.ownState)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        // Its name, then the unread dot right after it; a name too long for the line fades out at its
+                        // end before the dot, as what it says fades before the time.
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            FadingLine(text: row.task, font: .body.weight(.semibold))
+                            // Centred on the name's capitals (about 12 pt tall at this size), not sat on its baseline
+                            // like a full stop.
+                            if row.ownState == .answered { Circle().fill(.blue).frame(width: 8, height: 8).alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 6 } }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        if !Described.says(said) { TimeBeside(at: row.at) }
+                    }
+                    if Described.says(said) { Described(text: said, at: row.at) }
                 }
-                // Plain: the Mac's grey, not the tint a borderless button takes.
-                .buttonStyle(.plain)
-                .accessibilityLabel(folded ? "Show its workers" : "Hide its workers")
             }
-            StateGlyph(state: state).accessibilityLabel(StateGlyph.look(state).name)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
         }
-        .padding(.leading, worker ? 18 : 0)
-        .padding(.vertical, worker ? -2 : 0)
+        .buttonStyle(.plain)
+        // Its avatar's edge under the page title's T (20.7 pt in): the circle fills its frame, unlike a padded icon.
+        .listRowInsets(EdgeInsets(top: 6, leading: 20.5, bottom: 6, trailing: 16))
+        .listRowSeparator(.hidden)
     }
 }
 
@@ -418,11 +515,34 @@ struct TaskView: View {
     @State private var details = false
     /// The room an answered card left (ConversationView's), given back once you scroll.
     @State private var room: CGFloat = 0
+    @State private var couldNotLoad = false
+
+    /// Its history, asked for again a few times when the Mac doesn't answer, rather than once and then a blank page.
+    private func loadUntilLoaded() async {
+        couldNotLoad = false
+        for attempt in 0..<5 {
+            await model.load(session, again: attempt > 0 && model.conversation(session) == nil)
+            if model.conversation(session) != nil { return }
+            try? await Task.sleep(for: .seconds(2))
+        }
+        couldNotLoad = model.conversation(session) == nil
+    }
 
     var body: some View {
         let conversation = model.conversation(session)
         ScrollView {
             if let conversation { ConversationView(model: model, conversation: conversation, room: $room).padding() }
+            // Not loaded: a moment the Mac couldn't be reached left the page blank, with nothing to say so.
+            else if couldNotLoad {
+                VStack(spacing: 10) {
+                    Text("Couldn't load this task").font(.headline)
+                    Text("Your Mac didn't answer in time.").font(.subheadline).foregroundStyle(.secondary)
+                    Button("Try again") { Task { await loadUntilLoaded() } }.buttonStyle(.bordered)
+                }
+                .frame(maxWidth: .infinity).padding(.top, 120)
+            } else {
+                Spinner().frame(width: 20, height: 20).frame(maxWidth: .infinity).padding(.top, 120)
+            }
         }
         .onScrollPhaseChange { _, phase in if phase == .interacting, room > 0 { room = 0 } }
         .scrollPosition($position)
@@ -470,7 +590,7 @@ struct TaskView: View {
         // reading it.
         .simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { _ in model.markSeen(session) })
         .simultaneousGesture(TapGesture().onEnded { model.markSeen(session) })
-        .task { await model.load(session) }
+        .task { await loadUntilLoaded() }
         .navigationBarTitleDisplayMode(.inline)
     }
 
@@ -492,8 +612,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        // A task's notification (the Notify extension marks them "task"): Reply, written on the notification itself.
+        let reply = UNTextInputNotificationAction(identifier: Self.reply, title: "Reply", options: [], textInputButtonTitle: "Send", textInputPlaceholder: "Reply to this task")
+        UNUserNotificationCenter.current().setNotificationCategories([UNNotificationCategory(identifier: "task", actions: [reply], intentIdentifiers: [], options: [])])
         return true
     }
+    static let reply = "reply"
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken token: Data) {
         let hex = token.map { String(format: "%02x", $0) }.joined()
@@ -513,6 +637,15 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let id = response.notification.request.identifier
+        // Replied to from the notification: to the task, through a link of its own, as the share sheet sends (iOS may
+        // have started the app in the background just for this, before any page). Queued: between turns it goes at
+        // once; while the task works, after its turn, never cutting into it.
+        if let reply = response as? UNTextInputNotificationResponse, reply.actionIdentifier == Self.reply {
+            let text = reply.userText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty, let pairing = Pairing.load(), let lines = try? TunnelLines(pairing: pairing) else { return }
+            try? await ZerodLink(connection: lines).queue(session: id, text: text)
+            return
+        }
         await MainActor.run {
             // An ask's (not a task's): its card is in the Inbox. A task's opens the task.
             let ask = id.hasPrefix(TaskAlerts.askPrefix)
@@ -576,68 +709,34 @@ struct TaskDetails: View {
 /// rows. Asks to answer (in place), tasks over to them with a step only they can take, and replies not read yet; a
 /// row opens its task.
 struct InboxView: View {
-    let model: PhoneModel
+    @Bindable var model: PhoneModel
 
     var body: some View {
         let handed = model.tasks.filter { $0.ownState == .handed }
         let unread = model.tasks.filter { $0.ownState == .answered }
         List {
-            if !model.waiting.isEmpty {
-                Section { ForEach(model.waiting) { ask in AskCard(model: model, ask: ask, flat: true) } } header: { heading("Needs you") }
-            }
-            if !handed.isEmpty {
-                Section { ForEach(handed) { row in item(row, row.needs ?? row.now) } } header: { heading("Over to you") }
-            }
-            if !unread.isEmpty {
-                Section { ForEach(unread) { row in item(row, row.now) } } header: { heading("Unread replies") }
-            }
+            // Asks first, answered in place; then the tasks over to the user, then unread replies. No headings: each row's
+            // badge says which it is, and the page's title says where you are.
+            ForEach(model.waiting) { ask in AskCard(model: model, ask: ask, flat: true).listRowSeparator(.hidden) }
+            ForEach(handed) { row in item(row, row.needs ?? row.now) }
+            ForEach(unread) { row in item(row, row.now) }
         }
+        .listStyle(.plain)
         .overlay {
+            // Shown: the inbox's page, nothing open over it. Emptied behind an open task (its reply read there), the
+            // arrival waits until you're back, rather than playing unseen.
             if model.waiting.isEmpty && handed.isEmpty && unread.isEmpty {
-                ContentUnavailableView { Label { Text("Nothing for you") } icon: { Image("inbox-glyph") } } description: {
-                    Text("Asks, steps for you and unread replies show here.")
-                }
+                EmptyInbox(shown: model.tab == .inbox && model.path.isEmpty, pending: $model.arrivalPending)
             }
         }
+        // Emptied: its arrival is owed, once.
+        .onChange(of: model.waiting.isEmpty && handed.isEmpty && unread.isEmpty) { _, empty in if empty { model.arrivalPending = true } }
         .refreshable { model.connect() }
     }
 
-    private func heading(_ title: String) -> some View {
-        Text(title).font(.headline).foregroundStyle(.primary).textCase(nil).padding(.bottom, 2)
-    }
 
-    /// A task's row: its name and state, then what it says (its reply, or the step that's the user's).
     private func item(_ row: BoardRow, _ said: String?) -> some View {
-        Button { model.path.append(row.session) } label: {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(row.task).lineLimit(1)
-                    if let said, !said.isEmpty { Text(said).font(.subheadline).foregroundStyle(.secondary).lineLimit(2) }
-                }
-                Spacer(minLength: 8)
-                StateGlyph(state: row.ownState)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+        TaskRow(row: row, said: said) { model.path.append(row.session) }
     }
 }
 
-/// ⋯: what doesn't need a tab of its own.
-struct MoreView: View {
-    let model: PhoneModel
-    @State private var recording = false
-
-    var body: some View {
-        List {
-            Button { recording = true } label: { Label { Text("Record your screen") } icon: { Image("record-glyph") } }
-                .foregroundStyle(.primary)
-        }
-        .fullScreenCover(isPresented: $recording) {
-            NavigationStack {
-                RecordView(model: model)
-                    .toolbar { ToolbarItem(placement: .topBarLeading) { Button("Done") { recording = false } } }
-            }
-        }
-    }
-}
