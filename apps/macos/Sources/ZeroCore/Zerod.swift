@@ -359,6 +359,9 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     /// The workspace it is in; "zero" when none was made.
     public var workspace: String = "zero"
     public var ticket: String?
+    /// The agent the lead runs on, and when it last moved (ms since 1970); none from an older zerod.
+    public var provider: Provider?
+    public var at: Int?
     /// The shortest end of its folder that tells it from the other rows'.
     public var place: String
     /// Where that place is on disk, when the places command says (a bench's folder).

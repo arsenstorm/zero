@@ -13,3 +13,9 @@ import Testing
     #expect(ZeroEnding.split("It says [zero: done] in the middle") == ("It says [zero: done] in the middle", nil), "only as the last line")
     #expect(ZeroEnding.split("[zero: done]") == ("", .done))
 }
+
+/// "[zero: asked]" with no ask's id names no ask to wait on: no state of its own (zerod reads the answer as a reply),
+/// but not words for the user to read either.
+@Test func anAskedEndingWithoutItsAskIsTakenOffAndSaysNothing() {
+    #expect(ZeroEnding.split("Which do you mostly use?\n\n[zero: asked]") == ("Which do you mostly use?", nil))
+}

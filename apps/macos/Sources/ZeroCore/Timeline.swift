@@ -300,7 +300,13 @@ public enum TaskName {
         for item in conversation.items {
             if case let .user(text, _) = item.kind, let gist = gist(of: text) { return gist }
         }
-        return "\(conversation.provider.title) in \(Projects.name(of: conversation.cwd))"
+        #if os(macOS)
+        let folder = Projects.name(of: conversation.cwd)
+        #else
+        // The phone has no names of its own for folders (Projects isn't part of its build).
+        let folder = (conversation.cwd as NSString).lastPathComponent
+        #endif
+        return "\(conversation.provider.title) in \(folder)"
     }
 
     /// A prompt's first line as a name: its first five words, when it has at least three.
