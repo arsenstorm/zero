@@ -1,4 +1,10 @@
-SIGN  ?= locus-dev
+# Signed as a Developer ID when there is one (what other Macs need), else as Apple Development. Updates install only
+# when signed as the running build is, so keep to one.
+identity = $(shell security find-identity -v -p codesigning | grep -m1 -o '"$(1)[^"]*"' | tr -d '"')
+ifndef SIGN
+SIGN := $(or $(call identity,Developer ID Application),$(call identity,Apple Development))
+endif
+VERSION = $(shell /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' $(MACOS)/Resources/Info.plist)
 MACOS  = apps/macos
 APP    = build/Zero.app
 BIN    = $(MACOS)/.build/release
@@ -41,6 +47,7 @@ bundle: build
 	cp $(BIN)/zero-host $(APP)/Contents/MacOS/zero-host
 	cp target/release/zerod $(APP)/Contents/MacOS/zerod
 	cp $(MACOS)/Resources/Info.plist $(APP)/Contents/Info.plist
+	cp $(MACOS)/Resources/install.sh $(APP)/Contents/Resources/install.sh
 	cp $(MACOS)/Resources/icons/*.png $(APP)/Contents/Resources/
 	cd $(MACOS)/Resources && cp AppIcon.icns logo/menubar.png logo/menubar@2x.png logo/mark.svg logo/mark-small.svg $(CURDIR)/$(APP)/Contents/Resources/
 	cp -R $(MACOS)/Resources/nucleo $(APP)/Contents/Resources/nucleo
@@ -57,21 +64,16 @@ bundle: build
 	codesign --force --sign "$(SIGN)" $(APP)/Contents/MacOS/zerod
 	codesign --force --sign "$(SIGN)" $(APP)
 
-# The app quits and opens again straight away, where you were. zerod, only when it changed, restarts gracefully: turns
-# under way pause between steps (a running command finishes first), the new zerod takes over and they carry on.
+# The app quits and opens again where you were; zerod, only when it changed, restarts gracefully (install.sh).
 install: bundle
-	@changed=$$(cmp -s target/release/zerod build/zerod.installed && echo no || echo yes); \
-	pid=$$(ps -axo pid=,comm= | awk '$$2 == "/Applications/Zero.app/Contents/MacOS/Zero" {print $$1}'); \
-	[ -z "$$pid" ] || kill $$pid; \
-	for i in $$(seq 1 50); do [ -n "$$pid" ] && ps -p $$pid >/dev/null 2>&1 || break; sleep 0.1; done; \
-	rm -rf /Applications/Zero.app; \
-	cp -R $(APP) /Applications/Zero.app; \
-	mkdir -p $(HOME)/.local/bin && ln -sf /Applications/Zero.app/Contents/MacOS/zero-cli $(HOME)/.local/bin/zero; \
-	cp target/release/zerod build/zerod.installed; \
-	if [ $$changed = yes ] && printf '{"op":"restart"}\n' | nc -U $(HOME)/.zero/zerod.sock 2>/dev/null | grep -q restarting; then \
-		echo "zerod: restarting as the new build, the agents running on through it"; \
-	fi; \
-	open -g /Applications/Zero.app
+	@sh $(MACOS)/Resources/install.sh $(APP) $$(cmp -s target/release/zerod build/zerod.installed && echo keep || echo restart)
+	@cp target/release/zerod build/zerod.installed
+
+# A GitHub release of the version in Info.plist (raise it first), from HEAD as pushed: Zero's updater offers it.
+release: bundle
+	git merge-base --is-ancestor HEAD origin/main || { echo "Push HEAD first"; exit 1; }
+	ditto -c -k --keepParent $(APP) build/Zero.zip
+	gh release create v$(VERSION) build/Zero.zip --target $$(git rev-parse HEAD) --title "Zero $(VERSION)" --generate-notes
 
 run: install
 
@@ -79,4 +81,4 @@ test:
 	cargo test --workspace
 	swift test --package-path $(MACOS)
 
-.PHONY: build zerod ghostty drop bundle install run test
+.PHONY: build zerod ghostty drop bundle install release run test

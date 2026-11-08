@@ -10,6 +10,7 @@ import ZeroCore
     var inboxPanel: Panel!
     private var hotKey: EventHotKeyRef?
     private var statusItem: NSStatusItem!
+    private var updateItem: NSMenuItem?
     var selectorPanel: Panel?
     /// The chip's point in the selector view, bottom-left origin: the card scales out of it and back into it.
     var selectorAnchor = CGPoint.zero
@@ -75,6 +76,7 @@ import ZeroCore
         restoreWorkspace()
         activateForTypingInInbox()
         makeStatusItem()
+        Updater.shared.watch()
         applySettings()
         settings.onChange = { [weak self] in self?.applySettings() }
         registerHotKey()
@@ -263,18 +265,28 @@ import ZeroCore
         mark?.size = NSSize(width: 18, height: 18)
         statusItem.button?.image = mark
         let menu = NSMenu()
-        menu.addItem(withTitle: "Workspace", action: #selector(openWorkspace), keyEquivalent: "0")
-        menu.addItem(withTitle: "Open Log", action: #selector(openLog), keyEquivalent: "")
+        menu.addItem(withTitle: "Show Zero", action: #selector(openWorkspace), keyEquivalent: "0")
         menu.addItem(.separator())
-        // Not "Settings…": macOS gives an item of that name a gear, which none of the menu's other items have.
-        menu.addItem(withTitle: "Configure Zero", action: #selector(openSettings), keyEquivalent: ",")
-        menu.addItem(withTitle: "Show onboarding", action: #selector(openOnboarding), keyEquivalent: "")
+        updateItem = menu.addItem(withTitle: "Check for Updates…", action: #selector(showUpdates), keyEquivalent: "")
+        menu.addItem(.separator())
+        // Not #selector(openSettings): macOS gives an item with a settings action a gear, which none of the menu's
+        // other items have.
+        menu.addItem(withTitle: "Settings…", action: #selector(showConfiguration), keyEquivalent: ",")
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Zero", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         for item in menu.items where item.action != #selector(NSApplication.terminate(_:)) { item.target = self }
+        menu.delegate = self
         statusItem.menu = menu
     }
 
-    @objc private func openLog() { NSWorkspace.shared.open(Log.file) }
+    /// Settings › General, where an update is checked for and installed.
+    @objc private func showUpdates() {
+        navigation.settingsPage = SettingsView.Page.general.rawValue
+        openSettings()
+        if Updater.shared.available == nil { Task { await Updater.shared.check() } }
+    }
+
+    @objc private func showConfiguration() { openSettings() }
 
     @objc func goBack() { navigation.goBack() }
 
@@ -349,5 +361,12 @@ import ZeroCore
         }
         let id = EventHotKeyID(signature: 0x5A45524F, id: 1) // "ZERO"
         RegisterEventHotKey(UInt32(settings.hotKeyCode), UInt32(settings.hotKeyModifiers), id, GetApplicationEventTarget(), 0, &hotKey)
+    }
+}
+
+extension AppDelegate: NSMenuDelegate {
+    /// The menu bar's menu names an update once there is one.
+    func menuWillOpen(_ menu: NSMenu) {
+        updateItem?.title = Updater.shared.available.map { "Update to Zero \($0.version)…" } ?? "Check for Updates…"
     }
 }

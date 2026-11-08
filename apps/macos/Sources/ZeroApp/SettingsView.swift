@@ -459,6 +459,28 @@ private struct Sections<Content: View>: View {
     var body: some View { VStack(alignment: .leading, spacing: 32) { content() } }
 }
 
+/// The version, and an update when there is one: installed only on the user's click, saying what it does to agents.
+private struct UpdateRow: View {
+    var body: some View {
+        let updater = Updater.shared
+        switch updater.state {
+        case .unchecked, .checking:
+            SettingRow(title: "Zero \(updater.current)", detail: "Checking for updates…") { EmptyView() }
+        case .upToDate:
+            SettingRow(title: "Zero \(updater.current)", detail: "Up to date.") { Button("Check now") { Task { await updater.check() } } }
+        case .failed(let problem):
+            SettingRow(title: "Zero \(updater.current)", detail: problem) { Button("Check again") { Task { await updater.check() } } }
+        case .available(let release):
+            SettingRow(title: "Zero \(release.version) is available",
+                       detail: "Updating restarts Zero: running agents pause between steps for a few seconds, then carry on.") {
+                Button("Update and restart") { Task { await updater.install(release) } }
+            }
+        case .installing(let release):
+            SettingRow(title: "Updating to Zero \(release.version)…", detail: "Zero quits and opens again as the new version.") { EmptyView() }
+        }
+    }
+}
+
 private struct GeneralPage: View {
     @Bindable var settings: Settings
     let showOnboarding: () -> Void
@@ -476,6 +498,7 @@ private struct GeneralPage: View {
         Sections {
             SettingsSection(title: "Zero") {
                 Rows {
+                    UpdateRow()
                     SettingRow(title: "Launch Zero at login", detail: "So agents can always reach you.") {
                         Switch(isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
                     }
