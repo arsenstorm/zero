@@ -227,11 +227,14 @@ struct ComposerChip: View {
     var tint: Color? = nil
     /// Picked while a turn runs: kept for the next turn, a clock after its words says so.
     var pending = false
+    /// Its icon alone, `label` on hover (the new task page's permissions).
+    var iconOnly = false
     let rows: () -> [SelectorSection]
     var level: (String) -> String? = { _ in nil }
     var setLevel: (String, String) -> Void = { _, _ in }
     @State private var anchor = CGRect.zero
     @State private var hovered = false
+    @Environment(\.roomyComposer) private var roomy
 
     var body: some View {
         let open = WorkspaceSelector.shared.open == id
@@ -240,28 +243,39 @@ struct ComposerChip: View {
         } label: {
             HStack(spacing: 5) {
                 if let icon {
-                    icon.resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14).clipShape(RoundedRectangle(cornerRadius: 3))
+                    icon.resizable().aspectRatio(contentMode: .fit).frame(width: roomy ? 16 : 14, height: roomy ? 16 : 14).clipShape(RoundedRectangle(cornerRadius: 3))
                 } else if let symbol {
-                    NucleoIcon(symbol, size: 13).foregroundStyle(tint.map(AnyShapeStyle.init) ?? AnyShapeStyle(.secondary))
+                    NucleoIcon(symbol, size: roomy ? 15 : 13).foregroundStyle(tint.map(AnyShapeStyle.init) ?? (roomy ? AnyShapeStyle(.primary.opacity(0.7)) : AnyShapeStyle(.secondary)))
                 }
-                Text(label).font(.system(size: 13)).lineLimit(1)
-                    .foregroundStyle(tint.map(AnyShapeStyle.init) ?? (prominent ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)))
+                if !iconOnly {
+                    Text(label).font(.system(size: roomy ? 14.5 : 13)).lineLimit(1)
+                        .foregroundStyle(tint.map(AnyShapeStyle.init) ?? (prominent || roomy ? AnyShapeStyle(.primary.opacity(roomy ? 0.8 : 1)) : AnyShapeStyle(.secondary)))
+                }
                 if pending { NucleoIcon("clock", size: 11).foregroundStyle(.secondary) }
-                NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0))
+                // Roomy, as Devin's: plain words, no chevron.
+                if !roomy && !iconOnly { NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0)) }
             }
-            // As tall as the + and Send beside it (28), so the row's pills are one size.
-            .padding(.horizontal, 8).frame(height: 28)
+            // As tall as the + and Send beside it, so the row's pills are one size; an icon alone, as wide as tall.
+            .padding(.horizontal, iconOnly ? 0 : roomy ? 6 : 8).frame(minWidth: iconOnly ? (roomy ? 32 : 28) : nil).frame(height: roomy ? 32 : 28)
             // Plain words, as Codex's controls are; a soft fill under the pointer, and while its selector is open.
-            .background(open || hovered ? Theme.row : .clear, in: Capsule())
+            // On frost, a see-through darkening, which takes the tint under it: an opaque grey read pale blue beside the
+            // glow showing through.
+            .background(open || hovered ? (roomy ? Theme.frostFill : Theme.row) : .clear, in: Capsule())
             .contentShape(Capsule())
         }
         .buttonStyle(.plain).fixedSize()
+        .tip(iconOnly ? label : "")
         .onHover { hovered = $0 }
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { anchor = $0 }
     }
 }
 
 /// The selector's rows for what a workspace composer chooses.
+extension EnvironmentValues {
+    /// The new task page's composer: bigger, quieter controls, as Devin's.
+    @Entry var roomyComposer = false
+}
+
 @MainActor enum ComposerRows {
     /// Each provider's models from its own catalogue, as the control bar's model selector has them; a provider
     /// without one is a single row. `selected` says which (provider, model id) is chosen; `pick` takes one.

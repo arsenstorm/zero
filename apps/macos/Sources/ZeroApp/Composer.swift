@@ -27,6 +27,9 @@ struct Composer<Controls: View>: View {
     /// While the agent works: what Return does (the message waits for after this turn); ⌘⏎ still sends to steer.
     var queue: (() -> Void)?
     let send: () -> Void
+    /// See-through, over the new task page's backdrop, which frosts what's under it (and a little way out, fading):
+    /// the card itself draws nothing, no edge and no shadow.
+    var translucent = false
     @ViewBuilder var controls: Controls
     @State private var focused = false
     /// Edits to the field from here (an image's token, a thumbnail's ×), undoable as typing is.
@@ -94,14 +97,16 @@ struct Composer<Controls: View>: View {
                         LinearGradient(colors: [.black, fades.bottom ? .clear : .black], startPoint: .top, endPoint: .bottom).frame(height: 14)
                     }
                 }
-            HStack(spacing: 6) {
+            HStack(spacing: translucent ? 2 : 6) {
                 Button { adding = adding == nil ? .add : nil } label: {
-                    NucleoIcon("plus", size: 15).foregroundStyle(.primary).frame(width: 28, height: 28)
-                        .background(adding == nil ? .clear : Theme.row, in: Circle())
+                    NucleoIcon("plus", size: translucent ? 17 : 15).foregroundStyle(.primary).frame(width: translucent ? 32 : 28, height: translucent ? 32 : 28)
+                        .background(adding == nil ? .clear : translucent ? Theme.frostFill : Theme.row, in: Circle())
                 }
-                .buttonStyle(Hovering(radius: 14, fill: Theme.row, hover: Theme.row)).tip("Add files, folders or a scratchpad")
+                .buttonStyle(Hovering(radius: translucent ? 16 : 14, fill: translucent ? Theme.frostFill : Theme.row, hover: translucent ? Theme.frostFill : Theme.row))
+                .tip("Add files, folders or a scratchpad")
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { plusFrame = $0 }
-                HStack(spacing: 6) { controls }.frame(maxWidth: .infinity, alignment: .leading)
+                // Roomy: 14 pt between one chip's words and the next (6 + 2 + 6); 24 read as gaps.
+                HStack(spacing: translucent ? 2 : 6) { controls }.frame(maxWidth: .infinity, alignment: .leading).environment(\.roomyComposer, translucent)
                 if let stop {
                     Button(action: stop) {
                         NucleoIcon("media-stop", fill: "glyph", size: 12).foregroundStyle(Theme.onKnob).frame(width: 28, height: 28).background(Theme.knob, in: Circle())
@@ -109,8 +114,9 @@ struct Composer<Controls: View>: View {
                     .buttonStyle(.plain).keyboardShortcut(".", modifiers: .command).tip("Stop", shortcut: "⌘.")
                 } else {
                     Button(action: send) {
-                        NucleoIcon("arrow-up", size: 14).foregroundStyle(ready ? Theme.onKnob : .white)
-                            .frame(width: 28, height: 28).background(ready ? Theme.knob : Theme.sendIdle, in: Circle())
+                        // A solid paper plane: the thin arrow rendered soft. Nudged off-centre, as its point is up and right.
+                        NucleoIcon("paper-plane", fill: "glyph", size: translucent ? 15 : 13).foregroundStyle(ready ? Theme.onKnob : .white).offset(x: -0.5, y: 0.5)
+                            .frame(width: translucent ? 32 : 28, height: translucent ? 32 : 28).background(ready ? Theme.knob : Theme.sendIdle, in: Circle())
                     }
                     .buttonStyle(.plain).keyboardShortcut(.return, modifiers: .command).disabled(!ready).tip("Send", shortcut: "⌘↩")
                 }
@@ -125,11 +131,14 @@ struct Composer<Controls: View>: View {
         }
         // Codex's card: white on a hairline, lifted by a wide, soft shadow (and a close one that firms its edge), which
         // also falls on the folder tab behind its top.
-        .background(Theme.field, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(dropping ? Color.accentColor : Theme.fieldEdge, lineWidth: dropping ? 2 : 1))
+        // Translucent, nothing of its own: the backdrop draws the frost under it (Dither's frost).
+        .background(translucent ? .clear : Theme.field, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous)
+            .strokeBorder(dropping ? Color.accentColor : translucent ? .clear : Theme.fieldEdge, lineWidth: dropping ? 2 : 1))
         .compositingGroup()
-        .shadow(color: .black.opacity(0.06), radius: 14, y: 5)
-        .shadow(color: .black.opacity(0.03), radius: 1.5, y: 1)
+        // No card to lift when translucent: its words and chips would cast it.
+        .shadow(color: .black.opacity(translucent ? 0 : 0.06), radius: 14, y: 5)
+        .shadow(color: .black.opacity(translucent ? 0 : 0.03), radius: 1.5, y: 1)
         .overlay(alignment: .top) {
             if let mention {
                 MentionList(state: mention, pick: accept, hover: { self.mention?.selected = $0 })

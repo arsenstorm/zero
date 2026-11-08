@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 import ZeroCore
 
-// A new task: its lead session. Home, as ChatGPT's: a greeting in the middle, the composer at the foot with the
-// project above it and the agent, model, effort and permissions in its row.
+// A new task: its lead session. Home, as Devin's: Zero's mark and name over a frosted composer, the project, workspace,
+// agent, model, effort and permissions as chips in its row.
 
 struct NewTaskView: View {
     let workspace: Workspace
@@ -16,6 +16,9 @@ struct NewTaskView: View {
     @State private var prompt = ""
     @State private var images: [URL] = []
     @State private var starting = false
+    /// Where the composer is in the window: the backdrop frosts that place, found in its own view by AppKit.
+    @State private var composer = CGRect.zero
+    @Environment(\.colorScheme) private var scheme
 
     private var chosen: Provider { Provider(rawValue: provider) ?? .codex }
     /// The workspace the task starts in: the one shown, unless picked.
@@ -24,17 +27,31 @@ struct NewTaskView: View {
     private var folders: [String] { Projects.folders }
 
     var body: some View {
+        // Devin's: the mark and name just above the composer, over the backdrop. The composer is what's centred; the
+        // name hangs above it, out of the layout.
         VStack(spacing: 0) {
             Spacer()
-            VStack(spacing: 14) {
-                ZeroMark(small: true).frame(width: 34, height: 33).foregroundStyle(.secondary)
-                Text("What should we work on?").font(.system(size: 26))
-            }
-            Spacer()
-            VStack(spacing: 0) {
-                projectTab
+            VStack(alignment: .leading, spacing: 0) {
                 Composer(draft: $prompt, placeholder: "Do anything", canSend: !starting && folders.contains(project), folder: folders.contains(project) ? project : nil,
-                         workspace: workspace, images: $images) { start() } controls: {
+                         workspace: workspace, images: $images, send: { start() }, translucent: true) {
+                    // Where it starts, as chips in the row: the folder tab that sat above the card is gone.
+                    if folders.isEmpty {
+                        NucleoLabel("Add a project in Settings → Projects", icon: "folder", size: 13).font(.system(size: 12)).foregroundStyle(.secondary)
+                    } else {
+                        ComposerChip(id: "new.project", label: folders.contains(project) ? Projects.name(of: project) : "Choose project", symbol: "folder") {
+                            ComposerRows.list("Projects", icon: choiceIcon("zero"), folders.map { folder in
+                                (folder, Projects.name(of: folder), (folder as NSString).abbreviatingWithTildeInPath, folder == project, { project = folder })
+                            })
+                        }
+                        // Started from one workspace into another: the lead is there, and so are the workers it starts.
+                        if workspace.workspaces.count > 1 {
+                            ComposerChip(id: "new.workspace", label: workspace.workspaces.first { $0.id == into }?.name ?? workspace.currentWorkspace.name, symbol: "layers") {
+                                ComposerRows.list("Workspace", workspace.workspaces.map { w in (w.id, w.name, nil, w.id == into, { into = w.id }) })
+                            }
+                        }
+                    }
+                    // What runs it on the right, beside Send, as Devin's mode; where it runs on the left.
+                    Spacer(minLength: 8)
                     ComposerChip(id: "new.agent", label: agentLabel, symbol: "terminal", icon: chosen.mark, kind: .runtime, prominent: true, rows: {
                         ComposerRows.models(Provider.allCases, selected: { provider, id in
                             // Nothing picked: the provider's first, except OpenCode's, whose default is its own config's.
@@ -45,8 +62,8 @@ struct NewTaskView: View {
                             if !choice.levels.contains(where: { $0.id == effort }) { effort = "" }
                         })
                     }, level: { id in id == "\(chosen.rawValue)/\(model)" && !effort.isEmpty ? effort : nil }, setLevel: { _, level in effort = level })
-                    ComposerChip(id: "new.permissions", label: permissions == .auto ? "Auto" : "Unrestricted",
-                                 symbol: permissions == .auto ? "wand-sparkle" : "bolt-lightning:glyph", tint: permissions == .auto ? nil : .orange) {
+                    ComposerChip(id: "new.permissions", label: permissions == .auto ? "Permissions: Auto" : "Permissions: Unrestricted",
+                                 symbol: permissions == .auto ? "wand-sparkle" : "bolt-lightning:glyph", tint: permissions == .auto ? nil : .orange, iconOnly: true) {
                         ComposerRows.list("Permissions", [
                             ("auto", "Auto", "\(chosen.title) decides what's safe, and asks you the rest", permissions == .auto, { permissions = .auto }),
                             ("unrestricted", "Unrestricted", "Anything, without asking", permissions == .unrestricted, { permissions = .unrestricted }),
@@ -54,11 +71,27 @@ struct NewTaskView: View {
                     }
                 }
             }
-            // A task's composer's column and place: the same width, as far from the window's foot.
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { composer = $0 }
+            .overlay(alignment: .topLeading) {
+                // The mark centred on the name's capitals (about 20 pt tall at this size), not on its whole line.
+                HStack(alignment: .firstTextBaseline, spacing: 9) {
+                    ZeroMark(small: true).frame(width: 31, height: 30).alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 10 }
+                    Text("Zero").font(.system(size: 28, weight: .semibold))
+                }
+                // Lifted off the dots: a halo of the page's own colour, close and then wide.
+                .shadow(color: scheme == .dark ? .black.opacity(0.85) : .white, radius: 4)
+                .shadow(color: scheme == .dark ? .black.opacity(0.6) : .white.opacity(0.9), radius: 14)
+                .padding(.leading, 8)
+                .alignmentGuide(.top) { $0[.bottom] + 14 }
+            }
             .centredColumn(680)
-            .padding(.bottom, 16)
+            Spacer()
         }
         .frame(maxWidth: .infinity)
+        .background {
+            DitherBackground(frostInWindow: composer)
+                .ignoresSafeArea()
+        }
         .onAppear {
             if !folders.contains(project) { project = folders.first ?? "" }
             if let kept = Drafts.load("new") { prompt = kept.text; images = kept.images }
@@ -67,34 +100,6 @@ struct NewTaskView: View {
         }
         .onChange(of: prompt) { Drafts.save("new", text: prompt, images: images) }
         .onChange(of: images) { Drafts.save("new", text: prompt, images: images) }
-    }
-
-    /// The folder it starts in, as a tab behind the composer's top edge.
-    @ViewBuilder private var projectTab: some View {
-        HStack {
-            if folders.isEmpty {
-                NucleoLabel("Add a project in Settings → Projects", icon: "folder", size: 13).foregroundStyle(.secondary)
-                    .padding(.horizontal, 6).padding(.vertical, 3)
-            } else {
-                ComposerChip(id: "new.project", label: folders.contains(project) ? Projects.name(of: project) : "Choose project", symbol: "folder") {
-                    ComposerRows.list("Projects", icon: choiceIcon("zero"), folders.map { folder in
-                        (folder, Projects.name(of: folder), (folder as NSString).abbreviatingWithTildeInPath, folder == project, { project = folder })
-                    })
-                }
-                // Started from one workspace into another: the lead is there, and so are the workers it starts.
-                if workspace.workspaces.count > 1 {
-                    ComposerChip(id: "new.workspace", label: workspace.workspaces.first { $0.id == into }?.name ?? workspace.currentWorkspace.name, symbol: "layers") {
-                        ComposerRows.list("Workspace", workspace.workspaces.map { w in (w.id, w.name, nil, w.id == into, { into = w.id }) })
-                    }
-                }
-            }
-            Spacer()
-        }
-        .font(.system(size: 12))
-        // Codex's tab: flat grey, no edge, a little in from the card's sides; the card's shadow gives it depth.
-        .padding(.horizontal, 7).padding(.top, 8).padding(.bottom, 16)
-        .background(Theme.fieldTab, in: UnevenRoundedRectangle(topLeadingRadius: 20, topTrailingRadius: 20, style: .continuous))
-        .padding(.horizontal, 13).padding(.bottom, -12)
     }
 
     /// "Opus 5.5 · High": the model, its provider as the chip's icon. None picked, the provider's first; a provider with

@@ -47,6 +47,8 @@ enum Theme {
     static let onBlueprint = dynamic(dark: hex(0xfafafa), light: hex(0x0a0a0a))
     /// The workspace window's own grey, under its panel: the outer rail.
     static let rail = dynamic(dark: NSColor(white: 0.07, alpha: 1), light: NSColor(white: 0.925, alpha: 1))
+    /// A row's fill on frosted glass (the new task page's composer): see-through, so it takes the tint under it.
+    static let frostFill = Color.primary.opacity(0.07)
     static let row = dynamic(dark: NSColor(white: 0.16, alpha: 1), light: NSColor(white: 0.94, alpha: 1))
     /// The rail's grey as a tint over the window's blur: the desktop shows through, softly.
     static let railTint = dynamic(dark: NSColor(white: 0.07, alpha: 0.55), light: NSColor(white: 0.925, alpha: 0.6))
