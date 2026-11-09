@@ -209,3 +209,29 @@ func attach(_ which: String?) -> Never {
         _ = Darwin.write(STDOUT_FILENO, buffer, count)
     }
 }
+
+/// `zero video`: a video as frames an agent can read, at the times asked for.
+@MainActor func videoCommand() async {
+    guard let path = positional.first else { usage() }
+    let video = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+    guard FileManager.default.fileExists(atPath: video.path) else { fail("zero: no video at \(video.path)") }
+    let info: VideoFrames.Info
+    do { info = try await VideoFrames.info(of: video) } catch { fail("zero: \(error.localizedDescription)") }
+    let seconds = info.seconds
+    let number = { (key: String) in flag(key).flatMap { Double($0) } }
+    let times: [Double]
+    if let at = flag("at") {
+        times = at.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }.filter { $0 >= 0 && $0 <= seconds }
+    } else if let step = number("every") {
+        times = VideoFrames.every(step, from: number("from") ?? 0, to: number("to") ?? seconds, seconds: seconds)
+        guard times.count <= 600 else { fail("zero: that's \(times.count) frames; take a shorter stretch, or a larger --every") }
+    } else {
+        times = VideoFrames.spread(Int(number("frames") ?? 12), over: seconds)
+    }
+    let out = flag("out").map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
+        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".zero/video/\(video.deletingPathExtension().lastPathComponent)-\(Int(Date().timeIntervalSince1970))")
+    print("\(video.lastPathComponent): \(VideoFrames.stamp(seconds)) long, \(info.width)×\(info.height), \(String(format: "%.0f", info.fps)) fps")
+    do {
+        for frame in try await VideoFrames.frames(of: video, at: times, into: out) { print("\(VideoFrames.stamp(frame.at))  \(frame.path)") }
+    } catch { fail("zero: \(error.localizedDescription)") }
+}

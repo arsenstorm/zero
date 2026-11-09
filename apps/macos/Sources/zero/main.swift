@@ -28,6 +28,12 @@ func usage(help: Bool = false) -> Never {
       zero list
       zero attach  [agent]   (shows one of Zero's own agents' terminal here to watch or type in; ⌃] lets go. No agent: lists them)
       zero say     <agent> "text"   (sends the user's words to the agent through Zero, as the inbox's message box does)
+      zero video   <file> [--frames N] [--at T,T…] [--from T --to T --every S] [--out DIR]
+                   a video you were given, as frames you can read (your CLI takes images, not video): alone, its length,
+                   size and frame rate and 12 frames spread over it; --frames N spread instead; --at those times; --from,
+                   --to and --every a stretch frame by frame (S as small as 1/fps). Prints each frame's time and path.
+                   Look at the overview first, then closer where it matters; a long frame-by-frame pass is a worker's
+                   job (zero spawn), with what to look for.
     sessions Zero runs (from inside one, the session you are in is the lead):
       zero spawn   "task" [--brief FILE] [--loop NAME] [--provider codex|claude|opencode] [--model M] [--effort E] [--cwd DIR]
                    [--label NAME] [--ticket REF] [--permissions auto|unrestricted] [--workspace ID]
@@ -209,5 +215,6 @@ case "remind": await remindCommand()
 case "usage": await usageCommand()
 case "attach": attach(positional.first)
 case "list": listCommand()
+case "video": await videoCommand()
 default: usage()
 }
