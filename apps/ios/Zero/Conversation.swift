@@ -29,7 +29,11 @@ struct ConversationView: View {
                 switch block {
                 case let .user(item): UserMessage(item: item)
                 case let .work(_, items, start, end, live): WorkBlock(model: model, session: conversation.id, items: items, start: start, end: end, live: live)
-                case let .answer(item): if case let .agent(text, _) = item.kind { Answer(text: ZeroEnding.split(text).0) }
+                // An answer that was only its ending (an event or a worker's report taken in, "[zero: waiting]") has
+                // no words to show: nothing, not its copy and menu under an empty reply.
+                case let .answer(item):
+                    if case let .agent(text, _) = item.kind, case let words = ZeroEnding.split(text).0,
+                       !words.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { Answer(text: words) }
                 case let .step(item): StepView(model: model, session: conversation.id, item: item)
                 }
             }

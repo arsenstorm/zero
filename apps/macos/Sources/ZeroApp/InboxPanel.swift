@@ -63,6 +63,7 @@ extension AppDelegate {
 
     /// Instant on purpose: the inbox is the most-used surface, and motion there would only slow it down.
     func open(byIntent: Bool) {
+        if WorkspaceSelector.shared.open == "bar-workspace" { WorkspaceSelector.shared.close() }
         layout()
         notifier?.lookedAtAsks()
         inbox.ensureSelection()
@@ -118,6 +119,8 @@ extension AppDelegate {
             .min { abs($0.value.midY - point.y) < abs($1.value.midY - point.y) }?.key
         guard let under, under != inbox.barHover else { if under == nil { inbox.barHover = nil }; return }
         inbox.barHover = under
+        // On to another of the bar's controls: the workspaces' selector goes, not left over what that opens.
+        if WorkspaceSelector.shared.open == "bar-workspace" { WorkspaceSelector.shared.close() }
         switch under {
         case InboxController.inboxSlot: peek(nil)
         case InboxController.newSlot: peekNewAgent()

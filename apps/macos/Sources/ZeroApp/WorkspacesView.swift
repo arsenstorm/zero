@@ -67,7 +67,9 @@ struct WorkspaceGlyph: View {
     let glyph: String
     let size: CGFloat
     var body: some View {
-        if glyph.isEmpty { ZeroMark(small: true).frame(width: size + 2, height: size + 1) }
+        // Zero's mark in the box the icons beside it get, its own shape kept (a hexagon, narrower than it is tall):
+        // never stretched to fill it.
+        if glyph.isEmpty { ZeroMark(small: true).frame(width: size, height: size) }
         else if glyph.unicodeScalars.first?.properties.isEmoji == true, glyph.count <= 2 { Text(glyph).font(.system(size: size - 1)) }
         else { NucleoIcon(glyph, size: size) }
     }
