@@ -398,3 +398,25 @@ fn what_runs_in_the_background_is_known_so_stop_can_stop_it() {
     core.receive(&json!({"type": "system", "subtype": "task_notification", "task_id": "b2", "status": "stopped"}));
     assert!(core.stops().is_empty(), "ended: nothing to stop");
 }
+
+/// Work handed to another agent goes to a Zero worker, which the user sees, steers and stops in Zero: the CLIs' own
+/// subagents (Claude's Agent tool, Codex's multi-agent tools) are off in Zero's runs unless the user turns them on.
+#[test]
+fn the_clis_own_subagents_are_off_unless_the_user_allows_them() {
+    let mut claude = Conversation::new("s", Provider::Claude, "/w");
+    claude.thread = Some("3f1c".into());
+    let off = Provider::Claude.command_with(&claude, false, None, None, false);
+    assert!(off.iter().any(|a| a == "--disallowed-tools=Agent"), "{off:?}");
+    let on = Provider::Claude.command_with(&claude, false, None, None, true);
+    assert!(!on.iter().any(|a| a.starts_with("--disallowed-tools")), "{on:?}");
+    let codex = Conversation::new("s", Provider::Codex, "/w");
+    let off = Provider::Codex.command_with(&codex, false, None, None, false);
+    assert!(off.windows(2).any(|w| w == ["-c", "features.multi_agent=false"]), "{off:?}");
+    assert!(!Provider::Codex.command_with(&codex, false, None, None, true).iter().any(|a| a.contains("multi_agent")));
+    // The user's setting: off unless they turn it on.
+    assert!(!zerod::server::Settings::default().allows_subagents());
+    let allowed: zerod::server::Settings = serde_json::from_value(json!({"subagents": true})).unwrap();
+    assert!(allowed.allows_subagents());
+    // Told where such work goes instead.
+    assert!(zerod::adapter::INSTRUCTIONS.contains("zero spawn") && zerod::adapter::INSTRUCTIONS.contains("own subagents"));
+}

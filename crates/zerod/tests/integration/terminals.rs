@@ -19,15 +19,16 @@ fn each_provider_opens_its_own_terminal_on_the_tasks_thread() {
     claude.thread = Some("3f1c".into());
     claude.model = Some("opus".into());
     // The providers' own browsers are off in Zero, whatever the user's own settings: agents use Zero for Chrome.
+    // Their own subagents too, unless the user allows them: work for another agent goes to a Zero worker.
     assert_eq!(Provider::Claude.terminal(&claude).unwrap()[4..], ["claude", "--resume", "3f1c", "--permission-mode", "auto", "--no-chrome",
-        "--settings", r#"{"idleCompaction":false}"#, "--model", "opus"]);
+        "--settings", r#"{"idleCompaction":false}"#, "--disallowed-tools=Agent", "--model", "opus"]);
     let mut codex = Conversation::new("s", Provider::Codex, "/w");
     codex.thread = Some("01a1".into());
     codex.permissions = Permissions::Unrestricted;
     assert_eq!(Provider::Codex.terminal(&codex).unwrap()[4..], ["codex", "resume", "01a1", "--no-daemon", "--dangerously-bypass-approvals-and-sandbox",
-        "-c", "plugins.chrome@openai-bundled.enabled=false", "-c", "plugins.browser@openai-bundled.enabled=false"]);
+        "-c", "plugins.chrome@openai-bundled.enabled=false", "-c", "plugins.browser@openai-bundled.enabled=false", "-c", "features.multi_agent=false"]);
     assert_eq!(Provider::Codex.command(&codex, true, None, None)[4..], ["codex", "app-server",
-        "-c", "plugins.chrome@openai-bundled.enabled=false", "-c", "plugins.browser@openai-bundled.enabled=false"]);
+        "-c", "plugins.chrome@openai-bundled.enabled=false", "-c", "plugins.browser@openai-bundled.enabled=false", "-c", "features.multi_agent=false"]);
     let mut opencode = Conversation::new("s", Provider::Opencode, "/w");
     opencode.thread = Some("ses_9".into());
     assert_eq!(Provider::Opencode.terminal(&opencode).unwrap()[4..], ["opencode", "--session", "ses_9"]);

@@ -45,13 +45,17 @@ pub struct Claude {
 /// summary. Off for Zero's runs only, on top of the user's own settings.
 pub const NO_IDLE_COMPACTION: &str = r#"{"idleCompaction":false}"#;
 
-pub fn command(conversation: &Conversation, resume: bool, model: Option<&str>, effort: Option<&str>) -> Vec<String> {
+/// Claude's own subagents (its Agent tool), off for this run only.
+pub const NO_SUBAGENTS: &[&str] = &["--disallowed-tools=Agent"];
+
+pub fn command(conversation: &Conversation, resume: bool, model: Option<&str>, effort: Option<&str>, subagents: bool) -> Vec<String> {
     let mut args = vec!["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                         // Claude in Chrome's tools: in print mode they come only with the flag (the user's own default
                         // applies to terminal sessions alone); Claude connects to the extension if Chrome has it.
                         "--include-partial-messages", "--no-chrome", "--permission-prompt-tool", "stdio", "--permission-mode",
                         match conversation.permissions { Permissions::Auto => "auto", Permissions::Unrestricted => "bypassPermissions" },
                         "--append-system-prompt", INSTRUCTIONS, "--settings", NO_IDLE_COMPACTION];
+    if !subagents { args.extend(NO_SUBAGENTS) }
     if let Some(thread) = conversation.thread.as_deref() { args.extend([if resume { "--resume" } else { "--session-id" }, thread]) }
     if let Some(model) = model { args.extend(["--model", model]) }
     if let Some(effort) = effort { args.extend(["--effort", effort]) }

@@ -91,7 +91,7 @@ If a lead agent started you from a BRIEF, FIX, REVIEW or TEST file, report to th
 
 ## Leading workers
 
-When a task is more than one agent's work, start workers, not subagents. A worker is a Zero session of its own: it survives Zero's restarts (a subagent dies with your turn), it shows on the user's board under you, and it reports to you.
+When work goes to another agent (a task that's more than one agent's work, reading that would fill your context, parts of a job that can run side by side), start a worker, not a subagent: in Zero your CLI's own subagents are off unless the user has turned them on in Zero's settings. A worker is a Zero session of its own: it survives Zero's restarts (a subagent dies with your turn), it shows on the user's board under you, and it reports to you.
 
 ```bash
 zero spawn "ENG-9790: clamp the live timer" --brief briefs/ENG-9790.md --cwd /work/eng-9790 --model opus --effort medium   # prints its id

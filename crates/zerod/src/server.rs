@@ -169,6 +169,9 @@ pub struct Settings {
     /// The identity agents' Git commits and signs as (git.rs); unset, the user's own.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git: Option<crate::git::AgentGit>,
+    /// Agents may use their CLI's own subagents; unset, they can't (adapter::subagents).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagents: Option<bool>,
 }
 
 impl Settings {
@@ -176,6 +179,8 @@ impl Settings {
     pub fn archive_after(&self) -> Option<i64> {
         match self.archive_completed { None => Some(24 * 3600), Some(0) => None, Some(-1) => Some(0), Some(seconds) => Some(seconds.max(60)) }
     }
+
+    pub fn allows_subagents(&self) -> bool { self.subagents.unwrap_or(false) }
 
     /// A done task leaves once the user has read its last answer, as a done worker does once its lead has its report.
     pub fn archive_once_read(&self) -> bool { self.archive_completed == Some(-1) }
@@ -189,6 +194,7 @@ impl Settings {
 
     pub fn apply(&self, inbox: &Inbox, drops: Option<&Drops>) {
         inbox.configure(std::time::Duration::from_secs_f64(self.take_back.unwrap_or(2.0).max(0.0)), self.ttl.unwrap_or(3600));
+        crate::adapter::allow_subagents(self.allows_subagents());
         if let (Some(drops), Some(patterns)) = (drops, &self.patterns) { drops.set_patterns(patterns.clone()) }
     }
 }
@@ -353,6 +359,7 @@ fn configure(zerod: &Zerod, given: Settings) -> Result<Value, String> {
         settings.places = given.places.or(settings.places);
         settings.archive_completed = given.archive_completed.or(settings.archive_completed);
         settings.git = given.git.or(settings.git);
+        settings.subagents = given.subagents.or(settings.subagents);
         settings.apply_git(daemon.home());
         settings.apply(&zerod.inbox, zerod.drops.as_deref());
         let _ = std::fs::write(daemon.home().join("settings.json"), serde_json::to_vec_pretty(&settings).unwrap_or_default());

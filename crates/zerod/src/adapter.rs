@@ -100,10 +100,13 @@ asking you where everything is: `zero issue TICKET you|working|waiting|parked|do
 changes (you: what you need from them; waiting: on whom; parked: why). Other tasks in Zero may \
 work on what yours touches (`zero tasks` lists them, with their folders): coordinate with one directly by \
 `zero send <its id or name> \"…\"`, its replies coming to you as messages from it, and keep the user out of what you \
-can settle between you. Leading, keep your own context for steering: \
-hand reading that fills it (long logs, many files, a whole transcript, a review) to a worker with `zero spawn` and \
-take back its conclusion, so your conversation stays short of compacting; your issue rows and workers keep the state, \
-not your memory. A turn the user's own message started is a conversation: end it with your answer, no ending line \
+can settle between you. Work for another agent goes to a Zero worker: \
+`zero spawn \"task\" --label NAME` starts one under you, which the user sees in Zero and can watch, steer or stop, and \
+which reports back to you when it finishes, fails or gets stuck. Your CLI's own subagents are off in Zero unless the \
+user has turned them on, and even then workers come first: the user can't see a subagent. Hand a worker reading that \
+would fill your context (long logs, many files, a whole transcript, a review) and the parts of a job that can run side \
+by side, and take back its conclusion, so your conversation stays short of compacting; leading, your issue rows and \
+workers keep the state, not your memory. A turn the user's own message started is a conversation: end it with your answer, no ending line \
 (it shows as Replied), unless the work has come to [zero: done], [zero: waiting] or [zero: asked <id>] below. End \
 every other turn (one Zero started: an event, a worker's report, a reminder) with exactly one of these as its last \
 line: [zero: done] (the work is finished end to end, with good reason to say so: merged and deployed, verified, its \
@@ -120,6 +123,16 @@ Zero shows it there, on their Mac and their phone.";
 
 /// The start of a compaction row's id, whichever CLI compacted: once it's done, Zero gives the agent its record (recap.rs).
 pub const COMPACTED: &str = "compaction-";
+
+/// Whether agents may use their CLI's own subagents (Settings › subagents): off unless the user turns them on, so work
+/// handed to another agent goes to a Zero worker, which the user sees, steers and stops in Zero. Read as each process
+/// starts.
+static SUBAGENTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub fn allow_subagents(on: bool) { SUBAGENTS.store(on, std::sync::atomic::Ordering::Relaxed) }
+pub fn subagents() -> bool { SUBAGENTS.load(std::sync::atomic::Ordering::Relaxed) }
+
+/// Codex's own subagents (its multi-agent tools), off for this run only.
+const CODEX_NO_SUBAGENTS: &[&str] = &["-c", "features.multi_agent=false"];
 
 /// Codex's own browser, its bundled chrome and browser plugins, off for this run only: the user's config is left as is.
 const CODEX_NO_BROWSER: &[&str] = &["-c", "plugins.chrome@openai-bundled.enabled=false", "-c", "plugins.browser@openai-bundled.enabled=false"];
@@ -142,9 +155,16 @@ impl Provider {
     /// providers' own browsers are off (Claude Code's `--no-chrome`, Codex's chrome and browser plugins): agents in Zero
     /// use Zero for Chrome, and two drivers in one Chrome would fight over its tabs.
     pub fn command(self, conversation: &Conversation, resume: bool, model: Option<&str>, effort: Option<&str>) -> Vec<String> {
+        self.command_with(conversation, resume, model, effort, subagents())
+    }
+
+    /// As `command`, with the CLI's own subagents on or off (`subagents`): off, Claude's Agent tool and Codex's
+    /// multi-agent tools are left out. OpenCode's can't be, for a run alone: its background service reads the user's
+    /// own config.
+    pub fn command_with(self, conversation: &Conversation, resume: bool, model: Option<&str>, effort: Option<&str>, subagents: bool) -> Vec<String> {
         match self {
-            Provider::Codex => login_shell(&[&["codex", "app-server"][..], CODEX_NO_BROWSER].concat()),
-            Provider::Claude => claude::command(conversation, resume, model, effort),
+            Provider::Codex => login_shell(&[&["codex", "app-server"][..], CODEX_NO_BROWSER, if subagents { &[] } else { CODEX_NO_SUBAGENTS }].concat()),
+            Provider::Claude => claude::command(conversation, resume, model, effort, subagents),
             Provider::Opencode => login_shell(&["opencode", "acp"]),
         }
     }
@@ -154,11 +174,12 @@ impl Provider {
         let thread = conversation.thread.as_deref().ok_or_else(|| format!("{} hasn't started this task's thread yet", self.title()))?;
         let unrestricted = conversation.permissions == crate::model::Permissions::Unrestricted;
         let mut args: Vec<&str> = match self {
-            Provider::Claude => vec!["claude", "--resume", thread, "--permission-mode", if unrestricted { "bypassPermissions" } else { "auto" }, "--no-chrome",
-                                    "--settings", claude::NO_IDLE_COMPACTION],
+            Provider::Claude => [&["claude", "--resume", thread, "--permission-mode", if unrestricted { "bypassPermissions" } else { "auto" }, "--no-chrome",
+                                    "--settings", claude::NO_IDLE_COMPACTION][..], if subagents() { &[] } else { claude::NO_SUBAGENTS }].concat(),
             // Its own app-server, as Zero runs Codex headless: the shared one may run with other settings, and Codex asks
             // before using it.
-            Provider::Codex => [&["codex", "resume", thread, "--no-daemon", if unrestricted { "--dangerously-bypass-approvals-and-sandbox" } else { "--sandbox=workspace-write" }][..], CODEX_NO_BROWSER].concat(),
+            Provider::Codex => [&["codex", "resume", thread, "--no-daemon", if unrestricted { "--dangerously-bypass-approvals-and-sandbox" } else { "--sandbox=workspace-write" }][..], CODEX_NO_BROWSER,
+                                 if subagents() { &[] } else { CODEX_NO_SUBAGENTS }].concat(),
             Provider::Opencode => vec!["opencode", "--session", thread],
         };
         if self != Provider::Opencode && let Some(model) = conversation.model.as_deref() { args.extend(["--model", model]) }
