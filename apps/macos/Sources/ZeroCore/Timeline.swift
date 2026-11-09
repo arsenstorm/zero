@@ -118,7 +118,9 @@ public enum TimelineRow: Identifiable, Equatable, Sendable {
     nonisolated(unsafe) private static let changes = #/\bzero (run|ask|approve|issue)\b|\bzero_(run|ask|approve|issue)\b|\[zero: asked/#
 
     private static func quiet(_ turn: [TimelineBlock]) -> Bool {
-        guard case let .user(first)? = turn.first, case let .user(text, _) = first.kind, ConversationItem.from(text) != nil else { return false }
+        guard case let .user(first)? = turn.first, case let .user(text, _) = first.kind, let given = ConversationItem.from(text) else { return false }
+        // The user's own answer to an ask, passed on by Zero: theirs, not an update that needed nothing from them.
+        if NoticeText.headline(given.text) != nil { return false }
         let items = turn.dropFirst().flatMap { block -> [ConversationItem] in
             switch block {
             case let .work(_, items, _, _, live): live ? [] : items

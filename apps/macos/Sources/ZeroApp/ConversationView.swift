@@ -58,6 +58,12 @@ struct ConversationView: View {
     @State private var foot = Foot()
     /// A question card sliding in or out, and the conversation with it.
     static let slideDuration = 0.25
+    /// When the user last clicked in the app (anywhere: what's opened by a click isn't the conversation's end growing).
+    @MainActor static var clicked = Date.distantPast
+    @MainActor static let clickWatch: Any? = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+        MainActor.assumeIsolated { clicked = Date() }
+        return event
+    }
     static let slide = Animation.smooth(duration: slideDuration)
     /// The card's rise: ease-out cubic, the curve the room at the end grows on, step for step.
     static let rise = Animation.timingCurve(0.33, 1, 0.68, 1, duration: slideDuration)
@@ -257,6 +263,7 @@ struct ConversationView: View {
         // Following, the end isn't held by the anchor (which moved the page the whole way in a frame) but scrolled to
         // as the page grows (scrollGeometryChanged): slid, a step at a time.
         .defaultScrollAnchor(loadingAbove && !lifted && !settling ? .bottom : .top, for: .sizeChanges)
+        .onAppear { _ = Self.clickWatch }
         .scrollPosition($position)
         .onScrollGeometryChange(for: CGFloat.self, of: { $0.containerSize.height }) { _, height in pageHeight = height }
         // The message just sent goes to the top of the page once it's in the conversation.
@@ -433,7 +440,10 @@ struct ConversationView: View {
         // slides to its new end on the card's curve, not moved there in a frame. More than a page (a task opened, a
         // window jumped to) goes at once: sliding a whole screen would only slow it.
         let grew = now.contentSize.height - before.contentSize.height
-        if following, !lifted, !loadingAbove, !userScrolling, grew > 0.5, Self.end(of: before) - before.contentOffset.y < 2 {
+        // Just after a click, it grew because something was opened (a step, a notice): it opens down from where it is,
+        // the page not following the end (which pushed all above it up, as if it shifted).
+        if following, !lifted, !loadingAbove, !userScrolling, grew > 0.5, Self.end(of: before) - before.contentOffset.y < 2,
+           Date().timeIntervalSince(Self.clicked) > 0.6 {
             if grew < now.containerSize.height { withAnimation(Self.rise) { position.scrollTo(edge: .bottom) } }
             else { position.scrollTo(edge: .bottom) }
         }

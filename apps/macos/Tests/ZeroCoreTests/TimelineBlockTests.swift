@@ -39,3 +39,18 @@ private func item(_ id: String, _ kind: ConversationItem.Kind) -> ConversationIt
     #expect(rows.map(\.id) == ["u", "a0", "quiet-r2", "r3", "work-c3", "a3", "r4", "a4"], "\(rows.map(\.id))")
     if case let .quiet(_, blocks, turns) = rows[2] { #expect(turns == 2 && blocks.map(\.id) == ["r1", "a1", "r2", "a2"]) } else { Issue.record("not folded") }
 }
+
+/// A turn started by the user's own answer to an ask (Zero passes it on, so it reads as Zero's) is the user's: it
+/// stays out, not folded as an update that needed nothing from them.
+@Test func aTurnTheUsersAnswerStartedDoesNotFold() {
+    let items = [
+        item("u", .user(text: "go")),
+        item("a0", .agent(text: "Asked.\n\n[zero: asked k3x9qa]", finalAnswer: true)),
+        item("r1", .user(text: "<!-- from: zero -->\nThe user answered your ask k3x9qa (\"Ship it?\"): Clears")),
+        item("a1", .agent(text: "Committed.\n\n[zero: done]", finalAnswer: true)),
+        item("u2", .user(text: "next thing")),
+        item("a2", .agent(text: "On it.\n\n[zero: done]", finalAnswer: true)),
+    ]
+    let rows = TimelineRow.of(TimelineBlock.of(items, working: false))
+    #expect(!rows.contains { if case .quiet = $0 { true } else { false } }, "\(rows.map(\.id))")
+}
