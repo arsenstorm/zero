@@ -266,6 +266,8 @@ impl Inbox {
 
     /// Takes back an open ask: the agent withdrew it, or the user answered it some other way. Nobody is told.
     pub fn withdraw(&self, id: &str, reason: Option<&str>) {
+        // A command under way stops with it: nothing else would stop it, and with its ask closed the user had no way to.
+        let running = self.ask(id).filter(|a| a.state == AskState::Running).and_then(|a| a.run);
         let updated = self.update(id, |a| {
             if a.state.is_final() { return false }
             a.status = Some("withdrawn".into());
@@ -275,6 +277,11 @@ impl Inbox {
         });
         if updated {
             if let Some(timer) = self.lock().timers.remove(id) { timer.abort() }
+            if let Some(handle) = running {
+                self.append_output(id, "\n(Stopped: the agent withdrew it.)\n");
+                let runs = self.runs();
+                tokio::spawn(async move { runs.stop(&handle).await });
+            }
             self.finish(id, AskState::Expired, None);
         }
     }
@@ -371,7 +378,12 @@ impl Inbox {
                 if !printed.is_empty() { inbox.append_output(&id, &crate::runs::plain(&mut carry, &printed)) }
                 if ended {
                     let code = std::fs::read_to_string(&exit).ok().and_then(|c| c.trim().parse().ok());
-                    inbox.finish(&id, AskState::Answered, Some(code.unwrap_or(-1)));
+                    // Withdrawn while it ran (and stopped): its outcome kept, its ask left withdrawn, not answered.
+                    if inbox.ask(&id).is_some_and(|a| a.status.as_deref() == Some("withdrawn")) {
+                        inbox.update(&id, |a| { a.exit_code = Some(code.unwrap_or(-1)); true });
+                    } else {
+                        inbox.finish(&id, AskState::Answered, Some(code.unwrap_or(-1)));
+                    }
                     drop(inbox);
                     runs.release(&handle).await;
                     return;
@@ -380,7 +392,10 @@ impl Inbox {
                     // Ended between the two looks: its exit code is there now.
                     tokio::time::sleep(crate::runs::POLL).await;
                     if exit.exists() { continue }
+                    let withdrawn = inbox.ask(&id).is_some_and(|a| a.status.as_deref() == Some("withdrawn"));
                     inbox.lose(&id);
+                    // Stopped on purpose: nothing to keep of it.
+                    if withdrawn { drop(inbox); runs.release(&handle).await }
                     return;
                 }
                 drop(inbox);
@@ -392,6 +407,8 @@ impl Inbox {
     /// A run whose outcome nobody knows (cut off with nothing kept of how it ended): never a success or an expiry,
     /// which read as "it never ran". Its agent is told to check before running it again.
     fn lose(&self, id: &str) {
+        // Withdrawn and stopped: gone as it was meant to, nothing lost (and it stays withdrawn).
+        if self.ask(id).is_some_and(|a| a.status.as_deref() == Some("withdrawn")) { return }
         self.append_output(id, "\n(Zero lost track of this command: it may or may not have finished.)\n");
         self.update(id, |a| { a.status = Some("lost".into()); true });
         self.finish(id, AskState::Answered, None);

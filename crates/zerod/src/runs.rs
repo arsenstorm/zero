@@ -63,9 +63,14 @@ impl Runs {
         match handle.split_once(':') {
             Some(("host", terminal)) => if let Some(host) = &self.host { host.shut(terminal).await },
             Some(("file", id)) => if let Some(pid) = self.pid(id) {
-                // Its shell's children first (the command), then the shell.
-                let _ = std::process::Command::new("/usr/bin/pkill").args(["-TERM", "-P", &pid.to_string()]).status();
-                signal(pid, "-TERM");
+                // Everything under it, held still so none goes on to what's next, asked to stop, then made to: its
+                // shell is an interactive one (`zsh -lic`), which ignores a polite stop, and signalled only it and its
+                // own children, the command's went on.
+                let tree = tree(pid);
+                for &p in &tree { signal(p, "-STOP"); }
+                for &p in &tree { signal(p, "-TERM"); signal(p, "-CONT"); }
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                for &p in &tree { if signal(p, "-0") { signal(p, "-KILL"); } }
             },
             _ => {}
         }
@@ -82,6 +87,19 @@ impl Runs {
     }
 
     fn pid(&self, id: &str) -> Option<u32> { std::fs::read_to_string(self.dir.join(format!("{id}.pid"))).ok()?.trim().parse().ok() }
+}
+
+/// A process and all under it.
+fn tree(pid: u32) -> Vec<u32> {
+    let mut all = vec![pid];
+    let mut next = 0;
+    while next < all.len() {
+        let parent = all[next].to_string();
+        next += 1;
+        let Ok(found) = std::process::Command::new("/usr/bin/pgrep").args(["-P", &parent]).output() else { continue };
+        all.extend(String::from_utf8_lossy(&found.stdout).lines().filter_map(|l| l.trim().parse::<u32>().ok()));
+    }
+    all
 }
 
 fn signal(pid: u32, which: &str) -> bool {

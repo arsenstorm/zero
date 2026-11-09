@@ -125,6 +125,27 @@ async fn a_run_streams_its_output_and_ends_with_its_exit_code() {
 }
 
 #[tokio::test]
+async fn a_run_withdrawn_while_it_runs_is_stopped() {
+    // The agent took it back (it was taking too long): nothing else would stop it, and with its ask closed the user
+    // had no way to. It stops, and its ask stays withdrawn when it ends, not answered.
+    let s = inbox();
+    let marker = std::env::temp_dir().join(format!("zero-withdrawn-run-{}", std::process::id()));
+    let _ = std::fs::remove_file(&marker);
+    let mut run = ask(AskKind::Run, "Slow", &["Run", "Decline"]);
+    run.command = Some(format!("sleep 1; touch {}", marker.display()));
+    run.cwd = Some("/tmp".into());
+    let a = s.create(run, false);
+    s.choose(&a.id, 0);
+    until(&s, &a.id, |a| a.state == AskState::Running && a.run.is_some()).await;
+    s.withdraw(&a.id, Some("taking too long"));
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert!(!marker.exists(), "the command was stopped before it got further");
+    let after = s.ask(&a.id).unwrap();
+    assert!(after.state == AskState::Expired && after.status.as_deref() == Some("withdrawn"), "{:?} {:?}", after.state, after.status);
+    assert!(after.output.contains("Stopped"), "the card says so: {}", after.output);
+}
+
+#[tokio::test]
 async fn a_run_that_prints_megabytes_keeps_only_its_end() {
     let s = inbox();
     let mut run = ask(AskKind::Run, "Big", &["Run", "Decline"]);
