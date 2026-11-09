@@ -60,6 +60,8 @@ public struct Ask: Codable, Identifiable, Equatable, Sendable {
     public var waits: Bool?
     /// It can't go on without the answer: Zero holds its other events until it's answered.
     public var blocks: Bool?
+    /// The question whether a task is done (`zero done --ask`): a question, in the Done state's colour.
+    public var doneCheck: Bool? = nil
     /// How that typed answer is getting on; nil when the agent reads the answer itself.
     public var delivery: Delivery?
 

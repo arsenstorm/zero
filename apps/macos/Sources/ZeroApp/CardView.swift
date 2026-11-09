@@ -135,7 +135,8 @@ struct CardView: View {
 
     private var card: some View {
         Group {
-            if flat { cardContent.clipped() } else { cardContent.card() }
+            // Whether the task is done: the whole card in the done question's shades, a question still.
+            if flat { cardContent.clipped() } else { cardContent.background(done ? Theme.doneSurface : .clear).card() }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
@@ -357,7 +358,7 @@ struct CardView: View {
                  text: Binding(get: { controller.drafts[ask.id, default: ""] }, set: { controller.drafts[ask.id] = $0 }),
                  key: ask.id, focus: focus, dictating: dictating,
                  onMic: { controller.select(ask.id); controller.toggleDictation() }, onSend: { controller.send(ask.id) }, autofocus: autofocus)
-            .background(Theme.choice).clipShape(RoundedRectangle(cornerRadius: 10))
+            .background(done ? Theme.doneRow : Theme.choice).clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     /// Same language as the pill: orange needs you, red blocked, green done, blue working.
@@ -410,12 +411,16 @@ struct CardView: View {
             .background(Theme.code).clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
+    /// Whether the task is done: its rows, key caps and box in the done question's shades, not the grey a question's
+    /// options have (grey on its surface looked muddy).
+    private var done: Bool { ask.doneCheck == true }
+
     private func optionRow(_ text: String, key: String?, chosen: Bool, decided: Bool, boxLike: Bool = false) -> some View {
         // An answer Zero types into an agent that isn't waiting stays orange until it lands, and goes red if it can't.
         let failed = ask.delivery == .failed
         let settled = ask.state.isFinal && ask.delivery != .sending && !failed
-        let surface: Color = chosen ? (failed ? Theme.redRow : settled ? Theme.greenRow : Theme.orangeRow) : Theme.choice
-        let cap: Color = chosen ? (failed ? Theme.redCap : settled ? Theme.greenCap : Theme.orangeCap) : Theme.choiceCap
+        let surface: Color = chosen ? (failed ? Theme.redRow : settled ? Theme.greenRow : Theme.orangeRow) : done ? Theme.doneRow : Theme.choice
+        let cap: Color = chosen ? (failed ? Theme.redCap : settled ? Theme.greenCap : Theme.orangeCap) : done ? Theme.doneCap : Theme.choiceCap
         // Answered from the box: its state where the box's send button was, at its foot, not centred on the row.
         return HStack(alignment: boxLike ? .bottom : .center, spacing: 10) {
             if let key {
@@ -425,7 +430,7 @@ struct CardView: View {
             }
             // A text option reads like a placeholder: pick it and the input appears with the same wording.
             Text(text).font(.system(size: 13))
-                .foregroundStyle(!chosen && Ask.expectsText(text) ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                .foregroundStyle(!chosen && Ask.expectsText(text) ? (done ? AnyShapeStyle(Theme.doneMuted) : AnyShapeStyle(.secondary)) : AnyShapeStyle(.primary))
                 // The reply box's room at the end (its 56 pt, less the state icon and the gap before it).
                 .padding(.trailing, boxLike ? 56 - 15 - 10 : 0)
                 .frame(maxWidth: .infinity, alignment: .leading)

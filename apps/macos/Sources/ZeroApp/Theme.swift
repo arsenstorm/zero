@@ -88,6 +88,20 @@ enum Theme {
     /// not delivered (rose).
     static let greenRow = dynamic(dark: NSColor(red: 0.13, green: 0.25, blue: 0.16, alpha: 1), light: NSColor(red: 0.87, green: 0.96, blue: 0.89, alpha: 1))
     static let orangeRow = dynamic(dark: NSColor(red: 0.30, green: 0.22, blue: 0.12, alpha: 1), light: NSColor(red: 0.99, green: 0.93, blue: 0.85, alpha: 1))
+    /// A done question's own shades, one hue (the Done state's purple, 292°) from its surface to its ink, picked as
+    /// Refactoring UI builds an alert's: the purple faded over grey instead went muddy, a lavender-grey.
+    private static func hsl(_ h: CGFloat, _ s: CGFloat, _ l: CGFloat) -> NSColor {
+        let v = l + s * min(l, 1 - l)
+        return NSColor(colorSpace: .sRGB, hue: h / 360, saturation: v == 0 ? 0 : 2 * (1 - l / v), brightness: v, alpha: 1)
+    }
+    static let doneSurface = dynamic(dark: hsl(292, 0.45, 0.14), light: hsl(292, 1, 0.985))
+    static let doneShell = dynamic(dark: hsl(292, 0.55, 0.11), light: hsl(292, 0.70, 0.95))
+    static let doneRow = dynamic(dark: hsl(292, 0.50, 0.21), light: hsl(292, 0.85, 0.945))
+    static let doneCap = dynamic(dark: hsl(292, 0.55, 0.32), light: hsl(292, 0.75, 0.89))
+    /// Its ink: the Done state's own purple, its icon's.
+    static let doneInk = Color(nsColor: .systemPurple)
+    /// Quiet words on its surface: its hue, not grey (grey on a colour reads dull).
+    static let doneMuted = dynamic(dark: hsl(292, 0.55, 0.75), light: hsl(292, 0.30, 0.48))
     static let redRow = dynamic(dark: NSColor(red: 0.32, green: 0.14, blue: 0.14, alpha: 1), light: NSColor(red: 0.99, green: 0.89, blue: 0.89, alpha: 1))
 }
 

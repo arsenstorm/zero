@@ -177,7 +177,7 @@ struct ArticlePanel<Strip: View, Content: View>: View {
             }
             // Docked, its surface runs on under what's in front of it (the composer, or the queue's tab).
             .padding(.bottom, docked ? AskDock.tuck : 0)
-            .background(Theme.composer)
+            .background(doneCard ? Theme.doneSurface : Theme.composer)
             .clipShape(docked ? AnyShape(UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16, style: .continuous))
                               : AnyShape(RoundedRectangle(cornerRadius: 10)))
         }
@@ -185,7 +185,7 @@ struct ArticlePanel<Strip: View, Content: View>: View {
         .frame(height: dockHeight)
         // Docked, a tab behind the composer as the queue's is (its grey, its top corners, concentric with the surface's
         // 16 at 2 in); otherwise a panel in the page.
-        .background(docked ? Theme.fieldTab : Theme.rail,
+        .background(doneCard ? Theme.doneShell : docked ? Theme.fieldTab : Theme.rail,
                     in: docked ? AnyShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18, style: .continuous))
                                : AnyShape(RoundedRectangle(cornerRadius: 12)))
         // Bled out by its inner padding (the shell's 2 pt and a cell's 16), so its text lines up with the page's, as
@@ -194,6 +194,7 @@ struct ArticlePanel<Strip: View, Content: View>: View {
     }
 
     @Environment(\.askDocked) private var docked
+    @Environment(\.doneCard) private var doneCard
     @Environment(\.askDockHeight) private var dockHeight
     @Environment(\.askDockMax) private var dockMax
 

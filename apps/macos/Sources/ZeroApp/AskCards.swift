@@ -29,7 +29,8 @@ struct QuestionCard: View {
                 NucleoIcon("circle-question", fill: "glyph", size: 13)
                 Text(question.fields.count == 1 ? (question.fields.first?.header ?? "Question") : "Questions").font(.system(size: 12, weight: .medium)).tracking(-0.2)
             }
-            .foregroundStyle(.secondary)
+            // Whether the task is done: a question still, in the Done state's colour, so it reads as the one it is.
+            .foregroundStyle(ask.doneCheck == true ? AnyShapeStyle(Theme.doneInk) : AnyShapeStyle(.secondary))
             .padding(.horizontal, 14).padding(.vertical, 7)
             .modifier(PagedStrip())
         } content: {
@@ -88,6 +89,7 @@ struct AgentAskCard: View {
 
     private var card: some View {
         cardBody
+            .environment(\.doneCard, ask.doneCheck == true)
     }
 
     private var cardBody: some View {
@@ -292,6 +294,8 @@ extension EnvironmentValues {
     @Entry var askDockMax: CGFloat? = nil
     /// Told when a text box in a docked card gains or loses focus.
     @Entry var dockFocus: ((Bool) -> Void)? = nil
+    /// A panel in a done question's shades (ArticlePanel).
+    @Entry var doneCard = false
     /// The dock's place among what waits: "1 of 3", and a step either way.
     @Entry var askPager: AskPager? = nil
 }

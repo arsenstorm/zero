@@ -479,7 +479,9 @@ struct AskCard: View {
                 Text("·")
                 Text(ask.agent.label ?? ask.agent.name).lineLimit(1)
             }
-            .font(.footnote.weight(.medium)).foregroundStyle(.secondary)
+            .font(.footnote.weight(.medium))
+            // Whether the task is done: a question still, in the Done state's colour (the Mac's purple).
+            .foregroundStyle(ask.doneCheck == true ? AnyShapeStyle(DoneShades.ink) : AnyShapeStyle(.secondary))
             Text(headline).font(.body.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
             if let supporting { MarkdownView(text: supporting).font(.subheadline).foregroundStyle(.secondary) }
             if let command = ask.command {
@@ -508,9 +510,9 @@ struct AskCard: View {
                             if Ask.expectsText(option) { typing = index } else { Task { await model.choose(ask, option: index) } }
                         } label: {
                             Text(option).font(.subheadline.weight(.medium))
-                                .foregroundStyle(Ask.expectsText(option) ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                                .foregroundStyle(Ask.expectsText(option) ? (ask.doneCheck == true ? AnyShapeStyle(DoneShades.muted) : AnyShapeStyle(.secondary)) : AnyShapeStyle(.primary))
                                 .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 14).padding(.vertical, 12)
-                                .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                                .background(ask.doneCheck == true ? DoneShades.row : Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
                                 .contentShape(RoundedRectangle(cornerRadius: 12))
                         }
                         .buttonStyle(.plain)
@@ -538,7 +540,8 @@ struct AskCard: View {
         }
         .padding(flat ? 0 : 14)
         .padding(.vertical, flat ? 6 : 0)
-        .background(flat ? AnyShapeStyle(.clear) : AnyShapeStyle(.background.secondary), in: RoundedRectangle(cornerRadius: 16))
+        // Whether the task is done: the whole card in the done question's shades, a question still.
+        .background(ask.doneCheck == true ? AnyShapeStyle(DoneShades.surface) : flat ? AnyShapeStyle(.clear) : AnyShapeStyle(.background.secondary), in: RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(flat ? AnyShapeStyle(.clear) : AnyShapeStyle(.quaternary)))
     }
 
@@ -772,4 +775,20 @@ struct ImageViewer: View {
         }
         .task { image = await PhoneModel.shared.image(path, side: 2400) }
     }
+}
+
+/// A done question's own shades, one hue (the Done state's purple) from its surface to its ink, as the Mac's: the
+/// purple faded over grey went muddy.
+enum DoneShades {
+    private static func hsl(_ h: CGFloat, _ s: CGFloat, _ l: CGFloat) -> UIColor {
+        let v = l + s * min(l, 1 - l)
+        return UIColor(hue: h / 360, saturation: v == 0 ? 0 : 2 * (1 - l / v), brightness: v, alpha: 1)
+    }
+    private static func dynamic(dark: UIColor, light: UIColor) -> Color {
+        Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? dark : light })
+    }
+    static let surface = dynamic(dark: hsl(292, 0.45, 0.14), light: hsl(292, 1, 0.985))
+    static let row = dynamic(dark: hsl(292, 0.50, 0.21), light: hsl(292, 0.85, 0.945))
+    static let ink = Color.purple
+    static let muted = dynamic(dark: hsl(292, 0.55, 0.75), light: hsl(292, 0.30, 0.48))
 }
