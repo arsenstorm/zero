@@ -433,7 +433,7 @@ private struct AddModel: View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
                 DialogTitle(text: "Add a \(cli.title) model")
-                Text("One \(cli.title)'s own list doesn't have yet. Every \(cli.title) account offers it; one its provider refuses it to is left out.")
+                Text("For a model \(cli.title) doesn't list yet. It's offered on every \(cli.title) account; an account that turns out not to have it is left out.")
                     .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             VStack(spacing: 8) {
@@ -446,6 +446,8 @@ private struct AddModel: View {
                 DialogButton(title: "Add", kind: .primary, enabled: !id.trimmed.isEmpty, action: save)
             }
         }
+        // The dialog's own width, as Add account's: unset, it took the window's.
+        .frame(width: 440)
     }
 
     private func save() {
