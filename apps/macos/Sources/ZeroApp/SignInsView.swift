@@ -10,6 +10,8 @@ struct SignInsPage: View {
     let workspace: Workspace?
     /// The account being added (or switched to a token), in its dialog.
     @State private var adding: Adding?
+    /// The CLI a model is being added for: its row open in the models card.
+    @State private var addingModel: Provider?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
@@ -17,7 +19,10 @@ struct SignInsPage: View {
                 ForEach([Provider.claude, .codex, .opencode], id: \.self) { cli in
                     SettingsSection(title: cli.title,
                                     icon: cli.mark.map { AnyView($0.resizable().aspectRatio(contentMode: .fit).frame(width: 16, height: 16).clipShape(RoundedRectangle(cornerRadius: 4))) },
-                                    accessory: AnyView(AddAccountButton(cli: cli) { way in adding = Adding(cli: cli, way: way) })) {
+                                    accessory: AnyView(HStack(spacing: 4) {
+                                        GhostButton(title: "Add model", icon: "plus", open: addingModel == cli) { addingModel = addingModel == cli ? nil : cli }
+                                        AddAccountButton(cli: cli) { way in adding = Adding(cli: cli, way: way) }
+                                    })) {
                         section(cli, in: workspace)
                     }
                 }
@@ -39,7 +44,7 @@ struct SignInsPage: View {
     private func section(_ cli: Provider, in workspace: Workspace) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             accounts(cli, in: workspace)
-            AddedModels(cli: cli, workspace: workspace)
+            AddedModels(cli: cli, workspace: workspace, adding: Binding(get: { addingModel == cli }, set: { addingModel = $0 ? cli : nil }))
         }
     }
 
@@ -375,6 +380,8 @@ private extension String {
 private struct AddedModels: View {
     let cli: Provider
     let workspace: Workspace
+    /// Its row for a new model open, from the heading's Add model.
+    @Binding var adding: Bool
     @State private var id = ""
     @State private var name = ""
     @FocusState private var focused: Bool
@@ -383,8 +390,13 @@ private struct AddedModels: View {
     private var ready: Bool { !id.trimmingCharacters(in: .whitespaces).isEmpty }
 
     var body: some View {
+        if !mine.isEmpty || adding { card }
+    }
+
+    private var card: some View {
         VStack(spacing: 0) {
-            ForEach(mine) { model in
+            ForEach(Array(mine.enumerated()), id: \.element.id) { index, model in
+                if index > 0 { Divider().padding(.leading, 18) }
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(model.name).font(.system(size: 13, weight: .medium))
@@ -396,8 +408,9 @@ private struct AddedModels: View {
                         .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 18).frame(minHeight: 52)
-                Divider().padding(.leading, 18)
             }
+            if adding {
+            if !mine.isEmpty { Divider().padding(.leading, 18) }
             HStack(spacing: 10) {
                 TextField("", text: $id, prompt: Text("Model id, as \(cli.title) takes it (\(example))"))
                     .textFieldStyle(.plain).font(.system(size: 13).monospaced()).focused($focused).onSubmit(add)
@@ -407,6 +420,9 @@ private struct AddedModels: View {
                     .foregroundStyle(ready ? .primary : .secondary).disabled(!ready)
             }
             .padding(.horizontal, 18).frame(height: 48)
+            .onAppear { focused = true }
+            .onExitCommand { adding = false }
+            }
         }
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .bleedingCard()
@@ -430,6 +446,6 @@ private struct AddedModels: View {
         guard !id.isEmpty else { return }
         let name = name.trimmingCharacters(in: .whitespaces)
         Task { await CustomModels.shared.add(CustomModels.Model(cli: cli, id: id, name: name.isEmpty ? id : name)) }
-        self.id = ""; self.name = ""
+        self.id = ""; self.name = ""; adding = false
     }
 }
