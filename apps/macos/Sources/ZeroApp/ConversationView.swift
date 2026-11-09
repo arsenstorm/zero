@@ -63,6 +63,8 @@ struct ConversationView: View {
     static let rise = Animation.timingCurve(0.33, 1, 0.68, 1, duration: slideDuration)
 
     @Observable final class Foot {
+        /// When this conversation was opened: a question card there already shows in place, not coming in.
+        @ObservationIgnored let opened = Date()
         var height: CGFloat = 0
         /// How far the conversation is scrolled up from its end, the question card's height, and whether the pointer
         /// is on the card: read by the card and the mask alone, so a scroll redraws those, not the conversation.
@@ -306,6 +308,7 @@ struct ConversationView: View {
         .centredColumn(760)
         .environment(\.askInbox, inbox)
         .environment(\.askSession, conversation.id)
+        .environment(\.replyToSelection) { quote($0) }
     }
 
     /// More above: rows standing in for it, the next page fetched as they come into view, the view
@@ -845,6 +848,9 @@ private struct Sinker<Card: View>: View {
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] in if foot.card != $0 { foot.card = $0 } }
             .onDisappear { [foot] in foot.card = 0; foot.overCard = false; foot.typing = false }
             .onAppear {
+                // There as the conversation opened (waiting already): in place at once. Only one that comes while
+                // it's open comes in.
+                if Date().timeIntervalSince(foot.opened) < 0.5 { risen = true; return }
                 foot.arriving = true
                 DispatchQueue.main.async { withAnimation(ConversationView.rise) { risen = true } }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [foot] in foot.arriving = false }

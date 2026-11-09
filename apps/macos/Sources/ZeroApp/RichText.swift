@@ -138,6 +138,11 @@ enum RichMarkdown {
                 for (index, item) in items.enumerated() {
                     let marker = ordered ? "\(start + index)." : "•"
                     let text = NSMutableAttributedString(string: marker + "\t", attributes: [.font: NSFont.systemFont(ofSize: size), .foregroundColor: NSColor.secondaryLabelColor])
+                    // A bullet larger than the text's own "•" (a speck beside it), lowered to sit on the line's middle
+                    // as it was: a font scales up from the baseline.
+                    if !ordered {
+                        text.addAttributes([.font: NSFont.systemFont(ofSize: round(size * 1.4)), .baselineOffset: -round(size * 0.14)], range: NSRange(location: 0, length: 1))
+                    }
                     text.append(styled(inline(item.text), font: .systemFont(ofSize: size)))
                     let hang = indent + indentStep
                     let paragraph = style(size: size, indent: hang, first: indent + (ordered ? 0 : 4), after: index == items.count - 1 && item.children.isEmpty ? gap : round(size * 0.3))
@@ -287,7 +292,48 @@ final class RichLayoutManager: NSLayoutManager {
         return NSRect(x: origin.x + left, y: origin.y + rect.minY - 8, width: container.size.width - left - container.lineFragmentPadding, height: rect.height + 16)
     }
 
+    /// The selection's highlight on each line as wide as what's selected on it, and as tall as the line (not the room
+    /// after a paragraph): AppKit's ran to the text's right edge on lines that wrap and through the gap between items,
+    /// whitespace that isn't there.
+    override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>, count rectCount: Int, forCharacterRange charRange: NSRange, color: NSColor) {
+        guard let container = textContainers.first else {
+            return super.fillBackgroundRectArray(rectArray, count: rectCount, forCharacterRange: charRange, color: color)
+        }
+        // A selection carried across messages is one: each shows it as the active one does, not greyed.
+        // (Known by what's filled, its own selection, not by colour: the inactive one AppKit hands over isn't the
+        // system's named one.)
+        let isSelection = firstTextView?.selectedRanges.contains { NSIntersectionRange($0.rangeValue, charRange).length > 0 } == true
+        let color = isSelection && firstTextView?.window?.isKeyWindow == true ? NSColor.selectedTextBackgroundColor : color
+        // Set to fill with: AppKit sets its own before asking, and fills with what's set, not with what it's given.
+        color.setFill()
+        // Each of AppKit's rects on its own (it draws a selection in pieces), and each line it covers (one rect can span
+        // the lines selected whole): a band per line, as wide as the selected words there and as tall as the line;
+        // the after-room of a paragraph gets none.
+        let selected = glyphRange(forCharacterRange: charRange, actualCharacterRange: nil)
+        var placed: [NSRect] = []
+        for i in 0..<rectCount {
+            let rect = rectArray[i]
+            let local = rect.offsetBy(dx: -drawnAt.x, dy: -drawnAt.y)
+            let covered = glyphRange(forBoundingRect: local, in: container)
+            enumerateLineFragments(forGlyphRange: covered) { _, used, _, lineGlyphs, _ in
+                let picked = NSIntersectionRange(lineGlyphs, selected)
+                guard picked.length > 0, used.minY < local.maxY, used.maxY > local.minY else { return }
+                let words = self.boundingRect(forGlyphRange: picked, in: container)
+                let minX = max(local.minX, words.minX), maxX = min(local.maxX, words.maxX)
+                let minY = max(local.minY, used.minY), maxY = min(local.maxY, used.maxY)
+                guard maxX - minX > 0.5, maxY > minY else { return }
+                placed.append(NSRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY).offsetBy(dx: self.drawnAt.x, dy: self.drawnAt.y))
+            }
+        }
+        guard !placed.isEmpty else { return }
+        placed.withUnsafeBufferPointer { super.fillBackgroundRectArray($0.baseAddress!, count: $0.count, forCharacterRange: charRange, color: color) }
+    }
+    /// Where the text is being drawn (drawBackground's origin): AppKit's rects are in the view, the layout's in the
+    /// container.
+    private var drawnAt = NSPoint.zero
+
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+        drawnAt = origin
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
         guard let storage = textStorage, let container = textContainers.first else { return }
         let characters = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
@@ -370,6 +416,182 @@ final class RichTextView: NSTextView {
     /// How far the view reaches past its text on each side.
     static let bleed: CGFloat = 6
 
+    /// A selection made: a Reply chip just above where it starts, its words quoted into the composer.
+    var onReply: ((String) -> Void)?
+    private var replyChip: NSView?
+
+    /// The message a selection was started in (its anchor), and the others a drag (or Select All) took in with it:
+    /// a conversation's messages are each a view of their own, and a selection is one view's, so Zero carries it
+    /// across them. One selection at a time: started in one message, any other's goes.
+    private static weak var selecting: RichTextView?
+    private static var extended: [Weak] = []
+    private struct Weak { weak var view: RichTextView? }
+    /// Every text view in a window: a conversation's are those under the same scroll view (RichTextView.peers).
+    private static let all = NSHashTable<RichTextView>.weakObjects()
+    /// Set while Zero sets this view's selection itself (carrying one across), so it isn't taken as the user's.
+    private var carried = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil { Self.all.add(self) } else { Self.all.remove(self); if Self.selecting === self { Self.selecting = nil } }
+    }
+
+    /// This conversation's messages, top to bottom.
+    private func peers() -> [RichTextView] {
+        let scroll = enclosingScrollView
+        // On screen: a page kept behind the one shown has its messages in the window too, not to be taken in unseen.
+        return Self.all.allObjects.filter { $0.window === window && $0.enclosingScrollView === scroll && $0.superview != nil
+            && ($0 === self || (!$0.isHiddenOrHasHiddenAncestor && !$0.visibleRect.isEmpty)) }
+            .sorted { $0.convert($0.bounds, to: nil).maxY > $1.convert($1.bounds, to: nil).maxY }
+    }
+
+    /// A click anywhere in the app but a message's words (the composer, the sidebar, the page around them): what's
+    /// selected goes, as in one page of text, rather than staying highlighted.
+    private static var clickWatch: Any?
+    private static func watchClicks() {
+        guard clickWatch == nil else { return }
+        clickWatch = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+            var view = event.window?.contentView?.hitTest(event.locationInWindow)
+            while let found = view, !(found is RichTextView) { view = found.superview }
+            if view == nil {
+                MainActor.assumeIsolated {
+                    selecting?.deselect()
+                    clearExtended(except: nil)
+                    selecting = nil
+                }
+            }
+            return event
+        }
+    }
+
+    override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        guard !carried else { return }
+        if ranges.contains(where: { $0.rangeValue.length > 0 }) { Self.watchClicks() }
+        // Being made, the chip goes (it would answer what was selected before), and the selection is carried into
+        // the messages the pointer has gone to; made, the chip is placed above where it starts.
+        if stillSelecting { Self.hideReplies(); extend() } else { Self.placeReplies() }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        // A click in another message: the selection that was elsewhere goes.
+        if Self.selecting !== self { Self.selecting?.deselect() }
+        Self.clearExtended(except: self)
+        Self.selecting = self
+        clickedRest(event)
+    }
+
+    /// Select All: the whole conversation.
+    override func selectAll(_ sender: Any?) {
+        Self.selecting?.deselect()
+        Self.clearExtended(except: nil)
+        Self.selecting = self
+        super.selectAll(sender)
+        for view in peers() where view !== self {
+            view.carry(NSRange(location: 0, length: view.textStorage?.length ?? 0))
+            Self.extended.append(Weak(view: view))
+        }
+        Self.placeReplies()
+    }
+
+    /// Copied, every message's selected words, in order.
+    @objc override func copy(_ sender: Any?) {
+        let words = Self.selectedWords()
+        guard Self.selecting === self, !Self.extended.isEmpty, !words.isEmpty else { return super.copy(sender) }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(words, forType: .string)
+    }
+
+    private func carry(_ range: NSRange) {
+        carried = true
+        setSelectedRange(range)
+        carried = false
+    }
+
+    private func deselect() {
+        carry(NSRange(location: selectedRange().location, length: 0))
+        hideReply()
+    }
+
+    private static func clearExtended(except keep: RichTextView?) {
+        for view in extended.compactMap(\.view) where view !== keep { view.deselect() }
+        extended = []
+    }
+
+    /// Dragged past this message: the messages between taken in whole, the one under the pointer to the pointer.
+    private func extend() {
+        guard Self.selecting === self, let window else { return }
+        let point = window.mouseLocationOutsideOfEventStream
+        let views = peers()
+        guard let mine = views.firstIndex(where: { $0 === self }) else { return }
+        // The message under the pointer, or the last above it (between two, the one it has passed).
+        let target = views.firstIndex { let f = $0.convert($0.bounds, to: nil); return point.y >= f.minY && point.y <= f.maxY }
+            ?? views.lastIndex { $0.convert($0.bounds, to: nil).minY >= point.y } ?? mine
+        var taken: [Weak] = []
+        for (index, view) in views.enumerated() where view !== self {
+            let length = view.textStorage?.length ?? 0
+            var range: NSRange?
+            if target > mine, index > mine, index <= target {
+                range = index < target ? NSRange(location: 0, length: length)
+                    : NSRange(location: 0, length: view.characterIndexForInsertion(at: view.convert(point, from: nil)))
+            } else if target < mine, index < mine, index >= target {
+                let from = index > target ? 0 : view.characterIndexForInsertion(at: view.convert(point, from: nil))
+                range = NSRange(location: from, length: length - from)
+            }
+            if let range, range.length > 0 {
+                view.carry(range)
+                taken.append(Weak(view: view))
+            } else if view.selectedRange().length > 0 {
+                view.carry(NSRange(location: 0, length: 0))
+            }
+        }
+        Self.extended = taken
+    }
+
+    /// The selected words of the selection's messages, top to bottom.
+    private static func selectedWords() -> String {
+        guard let anchor = selecting else { return "" }
+        let views = ([anchor] + extended.compactMap(\.view)).sorted { $0.convert($0.bounds, to: nil).maxY > $1.convert($1.bounds, to: nil).maxY }
+        return views.compactMap { view -> String? in
+            guard let storage = view.textStorage, view.selectedRange().length > 0 else { return nil }
+            return storage.attributedSubstring(from: view.selectedRange()).string.replacingOccurrences(of: "\u{2028}", with: "\n")
+        }.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func hideReplies() {
+        selecting?.hideReply()
+        for view in extended.compactMap(\.view) { view.hideReply() }
+    }
+
+    /// The chip above where the selection starts, in its topmost message, for all of it.
+    private static func placeReplies() {
+        hideReplies()
+        guard let anchor = selecting else { return }
+        let views = ([anchor] + extended.compactMap(\.view)).filter { $0.selectedRange().length > 0 }
+        guard let top = views.max(by: { $0.convert($0.bounds, to: nil).maxY < $1.convert($1.bounds, to: nil).maxY }) else { return }
+        top.placeReply(words: selectedWords())
+    }
+
+    private func hideReply() { replyChip?.removeFromSuperview(); replyChip = nil }
+
+    private func placeReply(words: String) {
+        hideReply()
+        guard let onReply, let layout = layoutManager, let container = textContainer else { return }
+        let range = selectedRange()
+        guard !words.isEmpty, range.length > 0 else { return }
+        // Where it starts: its first line's part.
+        var firstLine = NSRange()
+        let start = layout.glyphIndexForCharacter(at: range.location)
+        layout.lineFragmentRect(forGlyphAt: start, effectiveRange: &firstLine)
+        let onFirst = NSIntersectionRange(firstLine, layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil))
+        let rect = layout.boundingRect(forGlyphRange: onFirst, in: container).offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+        let chip = NSHostingView(rootView: ReplyChip { [weak self] in onReply(words); self?.hideReply() })
+        let size = chip.fittingSize
+        chip.frame = NSRect(x: min(max(0, rect.minX), max(0, bounds.width - size.width)), y: rect.minY - size.height - 4, width: size.width, height: size.height)
+        addSubview(chip)
+        replyChip = chip
+    }
+
     /// Set: a click anywhere but on a link is this.
     var onClick: (() -> Void)?
 
@@ -383,6 +605,7 @@ final class RichTextView: NSTextView {
         measured = nil
         textStorage?.setAttributedString(text)
         hovered = nil
+        hideReply()
     }
 
     // Copying: a code block's lines are joined by line separators (one paragraph, one panel); copied, they're newlines.
@@ -518,7 +741,7 @@ final class RichTextView: NSTextView {
     override func scrollWheel(with event: NSEvent) { nextResponder?.scrollWheel(with: event) }
 
     /// A click on an image's pill opens the image; on a loop's pill, the loop.
-    override func mouseDown(with event: NSEvent) {
+    private func clickedRest(_ event: NSEvent) {
         if let hit = ImageToken.hit(event, in: self), let link = textStorage?.attribute(.link, at: hit.index, effectiveRange: nil) as? URL {
             ImageViewer.shared.show(link.path, among: imagePaths)
             return
@@ -616,6 +839,7 @@ private struct RichTextBox: NSViewRepresentable {
     func updateNSView(_ view: RichTextView, context: Context) {
         view.show(text)
         view.onClick = onClick
+        view.onReply = context.environment.replyToSelection
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: RichTextView, context: Context) -> CGSize? {
@@ -627,4 +851,29 @@ private struct RichTextBox: NSViewRepresentable {
         // As wide as its text, when it hugs (a message of yours); else the width it's given.
         return CGSize(width: hugs ? min(width, text.width) : width, height: text.height)
     }
+}
+
+/// Above a selection in a conversation: answer what's selected.
+private struct ReplyChip: View {
+    let reply: () -> Void
+    var body: some View {
+        Button(action: reply) {
+            HStack(spacing: 5) {
+                NucleoIcon("arrow-turn-up-2", size: 12).scaleEffect(x: -1, y: 1)
+                Text("Reply").font(.system(size: 12, weight: .medium))
+            }
+            .padding(.horizontal, 10).frame(height: 26)
+            .background(Theme.card, in: Capsule())
+            .overlay(Capsule().strokeBorder(Theme.stroke))
+            .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .tip("Reply to what's selected")
+    }
+}
+
+extension EnvironmentValues {
+    /// In a conversation: what's selected in its words, quoted into its composer.
+    @Entry var replyToSelection: ((String) -> Void)? = nil
 }
