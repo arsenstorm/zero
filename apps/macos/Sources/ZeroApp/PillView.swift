@@ -75,6 +75,22 @@ struct PillView: View {
     /// urgent state.
     private var agents: [(String, AgentStatus)] { controller.barAgents(settings: settings, workspace: workspace) }
 
+    /// The sidebar's sort and dragged order, shared: the bar lists the tasks as the sidebar does.
+    @AppStorage("taskSort") private var taskSort = BoardRow.Sort.state
+    @AppStorage("taskOrder") private var taskOrder = ""
+
+    /// A dot: one of Zero's tasks, drawn as the sidebar draws it, or an agent outside Zero (a terminal's) with asks.
+    private enum Mark: Equatable { case task(BoardRow.State), agent(AgentStatus) }
+
+    /// The bar's dots: this workspace's tasks as the sidebar lists them (its order, its icons), then the agents
+    /// outside Zero that have asks. Built from the agents with asks alone, it showed other things than the sidebar,
+    /// in other shapes.
+    private func dots(_ agents: [(String, AgentStatus)]) -> [(String, Mark)] {
+        let rows = workspace.map { w in BoardRow.sorted(w.board.filter { $0.workspace == w.current }, by: taskSort, order: taskOrder) } ?? []
+        return rows.map { ("zerod-" + $0.session, Mark.task($0.state)) }
+            + agents.filter { !$0.0.hasPrefix("zerod-") }.map { ($0.0, Mark.agent($0.1)) }
+    }
+
     private func scale(_ name: String) -> CGFloat { controller.agentFilter == name ? 13 / 11 : 1 }
 
     /// Where the dragged dot would land right now.
@@ -94,17 +110,17 @@ struct PillView: View {
 
     var body: some View {
         // Once a redraw: worked out from every ask the store holds, four reads of it cost the bar a frame.
-        let agents = agents
+        let dots = dots(agents)
         VStack(spacing: 2) {
             inboxSlot
             if controller.canSpawn { newAgentSlot }
-            if !agents.isEmpty {
+            if !dots.isEmpty {
                 Rectangle().fill(Theme.hairline).frame(width: 18, height: 1).padding(.vertical, 4)
-                    .onChange(of: agents.map(\.0), initial: true) { controller.barOrder = $1 }
+                    .onChange(of: dots.map(\.0), initial: true) { controller.barOrder = $1 }
                     .onDisappear { controller.barOrder = [] }
             }
-            let names = agents.map(\.0)
-            ForEach(agents, id: \.0) { name, status in agentDot(name, status, among: names) }
+            let names = dots.map(\.0)
+            ForEach(dots, id: \.0) { name, mark in agentDot(name, mark, among: names) }
         }
         .padding(.vertical, 8 + 10).padding(.horizontal, 6)
         .background(PillShape().fill(Theme.pill))
@@ -112,7 +128,7 @@ struct PillView: View {
         // The bar's drawn height, which the inbox uses for its scroll limits.
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { controller.barHeight = $0 }
         // Outermost on purpose: placed inside, only the dots would animate and the shape would snap.
-        .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: agents.map(\.0))
+        .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: dots.map(\.0))
         .pointerStyle(.link)
         .contextMenu {
             Button("Open Log") { NSWorkspace.shared.open(Paths.log) }
@@ -154,11 +170,16 @@ struct PillView: View {
             .tip("Start a new agent")
     }
 
-    private func agentDot(_ name: String, _ status: AgentStatus, among names: [String]) -> some View {
+    private func agentDot(_ name: String, _ mark: Mark, among names: [String]) -> some View {
         Group {
-            if status == .working { Spinner() } else { Circle().fill(status.color) }
+            switch mark {
+            // The sidebar's own icon for the task's state, at its size.
+            case .task(let state): TaskStateIcon(state: state).font(.system(size: 12))
+            case .agent(let status):
+                Group { if status == .working { Spinner() } else { Circle().fill(status.color) } }.frame(width: 11, height: 11)
+            }
         }
-            .frame(width: 11, height: 11)
+            .frame(width: 14, height: 14)
             .overlay(alignment: .topTrailing) {
                 if controller.pinned && controller.agentFilter == name { PinBadge().offset(x: 4, y: -6) }
             }
@@ -184,8 +205,8 @@ struct PillView: View {
                     if abs(value.translation.height) >= 4 || drag != nil { drag = (name, value.translation.height) }
                 }
                 .onEnded { _ in
-                    guard drag != nil else { selectAgent(name); return }
-                    drop(name)
+                    guard drag != nil else { open(name); return }
+                    drop(name, among: names)
                 })
             .transition(.opacity)
     }
@@ -201,14 +222,30 @@ struct PillView: View {
     }
 
     /// The dragged dot let go: the bar's order with it moved into the slot it's over.
-    private func drop(_ name: String) {
-        let names = agents.map(\.0)
+    /// A click: a task's asks in the inbox when it has some, else the task itself in the window, as the sidebar opens
+    /// it; an agent outside Zero, its asks.
+    private func open(_ name: String) {
+        let asking = controller.store.asks.contains { $0.agent.name == name && !$0.state.isFinal }
+        if name.hasPrefix("zerod-"), !asking, let url = URL(string: "zero://task/" + name.dropFirst("zerod-".count)) {
+            (NSApp.delegate as? AppDelegate)?.openZeroURL(url)
+        } else {
+            selectAgent(name)
+        }
+    }
+
+    /// Dropped: tasks reorder the sidebar too (its order is theirs), agents outside Zero their own.
+    private func drop(_ name: String, among names: [String]) {
         guard let from = names.firstIndex(of: name), let to = dropIndex(in: names) else { drag = nil; return }
         var order = names
         order.remove(at: from)
         order.insert(name, at: to)
         withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) {
-            settings.agentOrder = order
+            if name.hasPrefix("zerod-") {
+                taskOrder = order.filter { $0.hasPrefix("zerod-") }.map { String($0.dropFirst("zerod-".count)) }.joined(separator: "\n")
+                taskSort = .manual
+            } else {
+                settings.agentOrder = order.filter { !$0.hasPrefix("zerod-") }
+            }
             drag = nil
         }
     }
