@@ -76,6 +76,7 @@ pub(super) async fn messages(zerod: &Zerod, request: Request) -> Result<Value, S
     match request.op.as_str() {
         "send" => {
             let (id, text, images) = message(zerod, &request, "Send needs text")?;
+            let text = with_open_asks(&zerod.inbox, &id, text);
             daemon.send(&id, Message { text: &text, images: &images, context: None }, request.choice()).await.map(|_| Value::Null)
         }
         // For after the current turn: queued, one turn each; between turns it goes now.
@@ -197,17 +198,17 @@ fn message(zerod: &Zerod, request: &Request, needs: &'static str) -> Result<(Str
     let id = zerod.daemon.resolve(&request.session()?)?;
     let role = if zerod.daemon.get(&id).is_some_and(|c| c.parent.is_some()) { "worker" } else { "lead" };
     for name in &loops { zerod.loops.record(name, &id, role) }
-    let text = with_open_asks(zerod, &id, text);
     Ok((id, text, images))
 }
 
 /// The user writing to a task may answer one of its open asks there, or write about something else and leave it open
 /// on purpose (a step they're still running): Zero can't tell which, so it withdraws none and tells the agent, under
 /// the user's words, what's still open, to withdraw what the words answered. The provider's own questions are its
-/// adapter's (declined as the words go).
-fn with_open_asks(zerod: &Zerod, id: &str, text: String) -> String {
+/// adapter's (declined as the words go). Sent, as they're sent; queued, as they're given from the queue (Daemon's
+/// note_with), the queue keeping the user's own words.
+pub(super) fn with_open_asks(inbox: &crate::inbox::Inbox, id: &str, text: String) -> String {
     use crate::ask::AskKind;
-    let open: Vec<_> = zerod.inbox.asks().into_iter().filter(|a| !a.state.is_final() && a.request.is_none()
+    let open: Vec<_> = inbox.asks().into_iter().filter(|a| !a.state.is_final() && a.request.is_none()
         && !matches!(a.kind, AskKind::Note | AskKind::Message) && a.agent.runtime.as_deref() == Some("zerod") && a.agent.reference.as_deref() == Some(id)).collect();
     if open.is_empty() { return text }
     let which = open.iter().map(|a| format!("{} (\"{}\")", a.id, a.title)).collect::<Vec<_>>().join(", ");

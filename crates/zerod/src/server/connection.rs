@@ -17,6 +17,8 @@ use crate::inbox::{Inbox, InboxEvent};
 
 /// Serves until the listener fails. The socket is the owner's only: whoever can write to it runs agents.
 pub async fn serve(zerod: Zerod, socket: PathBuf) -> std::io::Result<()> {
+    let inbox = Arc::downgrade(&zerod.inbox);
+    zerod.daemon.note_with(Box::new(move |id, text| match inbox.upgrade() { Some(inbox) => super::sessions::with_open_asks(&inbox, id, text), None => text }));
     let _ = std::fs::remove_file(&socket);
     let listener = UnixListener::bind(&socket)?;
     std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;

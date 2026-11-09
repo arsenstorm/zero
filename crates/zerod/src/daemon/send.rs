@@ -292,15 +292,16 @@ impl Daemon {
             if self.held_signed_out(&session.summary()) || self.holding_crossed(id) || self.blocked_by_ask(id) {
                 let Some(at) = list.iter().position(|q| !q.report) else { self.delivering.lock().unwrap().remove(id); return };
                 let next = list.remove(at);
-                (next.text, next.images)
+                (self.noted(id, next.text), next.images)
             } else if list[0].report {
                 let reports = list.iter().take_while(|q| q.report).count();
                 let given: Vec<Queued> = list.drain(..reports).collect();
                 reporters = given.iter().filter_map(|q| crate::model::from(&q.text)).filter(|who| *who != "zero").map(String::from).collect();
                 (given.into_iter().map(|q| q.text).collect::<Vec<_>>().join("\n\n"), vec![])
             } else {
+                // The user's words as they wrote them, kept so in the queue; what's open is told as they go.
                 let next = list.remove(0);
-                (next.text, next.images)
+                (self.noted(id, next.text), next.images)
             }
         };
         self.keep_pending(id);

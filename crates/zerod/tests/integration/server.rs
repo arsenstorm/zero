@@ -584,16 +584,38 @@ async fn writing_in_the_chat_tells_the_agent_which_of_its_asks_are_still_open() 
     let question = asked["result"]["id"].as_str().unwrap().to_string();
     let ran = control.call(json!({"op": "agentAsk", "session": session, "args": {"tool": "run", "command": "bin/prod-check", "why": "the counts"}})).await;
     let run = ran["result"]["id"].as_str().unwrap().to_string();
-    control.call(json!({"op": "queue", "session": session, "text": "let's talk about the formatters"})).await;
+    // Sent once the agent is up (still starting, a send is turned away).
+    for _ in 0..60 {
+        if control.call(json!({"op": "send", "session": session, "text": "let's talk about the formatters"})).await["error"].is_null() { break }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
     let asks = control.call(json!({"op": "asks"})).await["result"].as_array().unwrap().clone();
     let state = |id: &str| asks.iter().find(|a| a["id"] == id).map(|a| (a["status"].clone(), a["state"].clone())).unwrap();
     assert!(state(&question).0 != "withdrawn" && state(&run).0 != "withdrawn", "left for the user");
-    // Waiting for the turn's end, or given to the agent already: either way the words carry the note.
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    let pending = std::fs::read_to_string(h.home.join("sessions").join(&session).join("pending.json")).unwrap_or_default();
-    let given = format!("{pending}{}", h.seen.lock().unwrap().iter().flat_map(|s| s.all()).map(|m| m.to_string()).collect::<String>());
+    // Given to the agent, the words carry the note (queued, they carry it as they're given: the queue keeps them as
+    // written, a_queued_message_is_kept_in_the_users_own_words).
+    let mut given = String::new();
+    for _ in 0..60 {
+        given = h.seen.lock().unwrap().iter().flat_map(|s| s.all()).map(|m| m.to_string()).collect::<String>();
+        if given.contains(zerod::daemon::OPEN_ASKS_MARK) { break }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
     assert!(given.contains("let's talk about the formatters") && given.contains(zerod::daemon::OPEN_ASKS_MARK), "{given}");
     assert!(given.contains(&question) && given.contains(&run) && given.contains("zero withdraw"), "the agent is told which: {given}");
+}
+
+#[tokio::test]
+async fn a_queued_message_is_kept_in_the_users_own_words() {
+    // The note on open asks goes with the words as they're given to the agent, not into the queue: the queue shows
+    // what the user wrote (the app matches its own copy of a message just queued to zerod's by its words, and Edit puts
+    // them back in the composer), and the note names what's open when it goes, not when it was queued.
+    let h = harness("server-queue-own-words").await;
+    let mut control = Client::connect(&h.socket).await;
+    let started = control.call(json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": "ls"})).await;
+    let session = started["result"]["session"].as_str().unwrap().to_string();
+    control.call(json!({"op": "agentAsk", "session": session, "args": {"tool": "ask", "question": "Which piece first?", "options": ["Formatters", "Docs"]}})).await;
+    let queued = control.call(json!({"op": "queue", "session": session, "text": "let's talk about the formatters"})).await;
+    assert_eq!(queued["result"]["text"], "let's talk about the formatters", "{queued}");
 }
 
 #[tokio::test]
