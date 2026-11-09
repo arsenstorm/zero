@@ -37,6 +37,26 @@ impl Daemon {
         true
     }
 
+    /// Refused its model by its account's provider (no access): that's kept of the account, and the task carries on as
+    /// one not refused it, as at a limit. False when there's none.
+    fn switch_for_model(&self, conversation: &Conversation) -> bool {
+        let (Some(model), Some(signin)) = (conversation.model.as_deref(), conversation.signin.as_deref()) else { return false };
+        if !conversation.failure.as_ref().is_some_and(|f| crate::signins::refuses_model(&f.message)) { return false }
+        self.signins.refuse(signin, model);
+        let Some(next) = self.signins.choose_for(conversation.provider, now(), Some(signin), Some(model)) else { return false };
+        let Ok(session) = self.session(&conversation.id) else { return false };
+        session.change(Change::SignedIn { signin: Some(next.id.clone()) });
+        session.change(Change::Status { status: conversation.status, turn: conversation.turn.clone(), error: None });
+        session.change(Change::Failed { failure: None });
+        let (me, id, model) = (self.me.clone(), conversation.id.clone(), model.to_string());
+        tokio::spawn(async move {
+            let Some(daemon) = me.upgrade() else { return };
+            if let Ok(session) = daemon.session(&id) { daemon.take_offline(&session).await }
+            daemon.tell(&id, crate::model::from_line("zero", &format!("Your account can't use {model}, so Zero carries this task on as another account that can: carry on with what you were doing.")));
+        });
+        true
+    }
+
     /// A turn its CLI ended on a server or network error, past its own retries: carried on, three turns in a row at
     /// most (then it's the user's to see). A turn that ends otherwise starts the count again.
     fn carry_on_after_error(&self, conversation: &Conversation) {
@@ -96,6 +116,7 @@ impl Daemon {
         // What its CLI says of its account's usage is the account's, for choosing accounts by.
         if let (Some(signin), Some(usage)) = (&conversation.signin, &conversation.usage) { self.signins.record_usage(signin, usage) }
         if now == Attention::Limited && !self.switch_account(&conversation) { self.after_reset(&conversation) }
+        if now == Attention::Failed && before != Some(Attention::Failed) { self.switch_for_model(&conversation); }
         if between_turns(&conversation) {
             // A change kept for this moment first (a model, permissions picked mid-turn), then what's queued, on it.
             match (self.next(id).is_some() && !self.restarting.load(Ordering::Relaxed), self.me.upgrade()) {

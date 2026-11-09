@@ -357,6 +357,33 @@ async fn a_task_at_its_accounts_limit_carries_on_as_another_account() {
     assert!(again.said("user", 1).await[0]["message"]["content"].as_str().unwrap().contains("another account"));
 }
 
+/// A task whose account its provider won't let use the task's model: that's known of the account, and the task
+/// carries on as an account that hasn't been refused it, its agent told why.
+#[tokio::test]
+async fn a_task_refused_its_model_carries_on_as_another_account() {
+    let w = world("signin-refused");
+    let dot = w.home.join("dot-claude");
+    std::fs::create_dir_all(&dot).unwrap();
+    w.daemon.signins.set_claude_dir(dot);
+    let account = |label: &str| w.daemon.signins.save(zerod::signins::SignIn { id: String::new(), cli: Provider::Claude, kind: zerod::signins::Kind::ClaudeHome,
+                                                                              label: label.into(), plan: None, variable: None, pending: false }).unwrap();
+    let (first, second) = (account("a@example.com"), account("b@example.com"));
+    let lead = w.daemon.start(Provider::Claude, "lead the work", Options { cwd: Some(w.project.to_str().unwrap().into()), model: Some("claude-mythos-5-2".into()), ..Default::default() }).unwrap();
+    assert_eq!(w.daemon.get(&lead).unwrap().signin.as_deref(), Some(first.id.as_str()));
+    let seen = lead_runtime(&w).await;
+    seen.said("user", 1).await;
+    seen.say(json!({"type": "result", "subtype": "error_during_execution", "is_error": true,
+                    "result": "There's an issue with the selected model (claude-mythos-5-2). It may not exist or you may not have access to it."}));
+    until(&w.daemon, &lead, |c| c.signin.as_deref() == Some(second.id.as_str())).await;
+    assert_eq!(w.daemon.signins.refused(&first.id), ["claude-mythos-5-2"]);
+    for _ in 0..200 { if w.claude.lock().unwrap().len() > 1 { break } tokio::time::sleep(Duration::from_millis(10)).await }
+    let again = w.claude.lock().unwrap()[1].clone();
+    assert!(again.said("user", 1).await[0]["message"]["content"].as_str().unwrap().contains("can't use"));
+    // A new task on that model starts as the account that can.
+    let next = w.daemon.start(Provider::Claude, "more", Options { cwd: Some(w.project.to_str().unwrap().into()), model: Some("claude-mythos-5-2".into()), ..Default::default() }).unwrap();
+    assert_eq!(w.daemon.get(&next).unwrap().signin.as_deref(), Some(second.id.as_str()));
+}
+
 #[tokio::test]
 async fn something_an_archived_task_follows_brings_it_back_to_hear_of_it() {
     let w = world("follow-unarchive");

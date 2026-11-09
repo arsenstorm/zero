@@ -57,6 +57,9 @@ struct Kept {
     /// Each sign-in's usage as its CLI last reported it, by id: what choosing an account goes by.
     #[serde(default)]
     usage: std::collections::BTreeMap<String, crate::model::Usage>,
+    /// The models each sign-in's provider refused it (no access), by id: never chosen for them.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    refused: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 pub struct SignIns {
@@ -142,16 +145,33 @@ impl SignIns {
 
     pub fn usage(&self, id: &str) -> Option<crate::model::Usage> { self.kept.lock().unwrap().usage.get(id).cloned() }
 
+    /// The provider refused this sign-in `model` (it has no access): learnt from its CLI's error, as nothing in Zero
+    /// asks a provider what an account may use.
+    pub fn refuse(&self, id: &str, model: &str) {
+        let mut kept = self.kept.lock().unwrap();
+        if !kept.signins.iter().any(|s| s.id == id) { return }
+        let models = kept.refused.entry(id.into()).or_default();
+        if models.iter().any(|m| m == model) { return }
+        models.push(model.into());
+        let _ = self.persist(&kept);
+    }
+
+    pub fn refused(&self, id: &str) -> Vec<String> { self.kept.lock().unwrap().refused.get(id).cloned().unwrap_or_default() }
+
     /// The account a task of `cli` runs as (`except` one, the account it's leaving): of those not at a limit (a 5-hour
     /// or 7-day window full and not reset yet), the one with the least of its 7-day allowance left, so one account is
     /// used up before the next; ties go to the one resetting sooner, then to the default. A week that's reset, or an
     /// account never used, counts as whole. None: every account is at a limit.
-    pub fn choose(&self, cli: Provider, now: i64, except: Option<&str>) -> Option<SignIn> {
+    pub fn choose(&self, cli: Provider, now: i64, except: Option<&str>) -> Option<SignIn> { self.choose_for(cli, now, except, None) }
+
+    /// As `choose`, for a task on `model`: an account refused it isn't one to choose.
+    pub fn choose_for(&self, cli: Provider, now: i64, except: Option<&str>, model: Option<&str>) -> Option<SignIn> {
         let kept = self.kept.lock().unwrap();
+        let refused = |id: &str| model.is_some_and(|m| kept.refused.get(id).is_some_and(|r| r.iter().any(|x| x == m)));
         let default = kept.defaults.get(&name(cli)).cloned();
         let live = |w: &crate::model::UsageWindow| w.resets_at.is_some_and(|at| at > now);
         let mut open: Vec<(f64, i64, bool, usize, &SignIn)> = kept.signins.iter().enumerate()
-            .filter(|(_, s)| s.cli == cli && !s.pending && except != Some(s.id.as_str()))
+            .filter(|(_, s)| s.cli == cli && !s.pending && except != Some(s.id.as_str()) && !refused(&s.id))
             .filter_map(|(order, signin)| {
                 let usage = kept.usage.get(&signin.id);
                 let stopped = usage.is_some_and(|u| (u.limited && u.resets_at.is_some_and(|at| at > now)) || u.windows.iter().any(|w| live(w) && w.used >= 1.0));
@@ -230,3 +250,12 @@ fn write_private(path: &Path, data: &[u8]) -> Result<(), String> {
 
 /// A CLI as the file names it: "claude", "codex", "opencode".
 fn name(cli: Provider) -> String { format!("{cli:?}").to_lowercase() }
+
+/// Whether a CLI's error says the account can't use the model asked for (no access, or none by that name for it), not
+/// that the model is busy: the CLIs say so in words, not codes.
+pub fn refuses_model(message: &str) -> bool {
+    let text = message.to_lowercase();
+    let any = |words: &[&str]| words.iter().any(|w| text.contains(w));
+    text.contains("model") && any(&["may not have access", "do not have access", "does not have access", "don't have access", "not supported when using",
+                                     "model_not_found", "may not exist", "does not exist"])
+}

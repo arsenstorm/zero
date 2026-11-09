@@ -150,6 +150,37 @@ fn a_task_runs_as_the_account_with_the_least_of_its_week_left_that_isnt_at_a_lim
     assert_eq!(chosen(None), None, "every account at a limit: none to switch to");
 }
 
+/// An account its provider refused a model on (no access to it) isn't chosen for that model again; for others it is.
+#[test]
+fn an_account_refused_a_model_isnt_chosen_for_it() {
+    let home = temp_dir("signins-refused");
+    let store = SignIns::open(&home);
+    let account = |label: &str| store.save(signin(Provider::Claude, Kind::ClaudeHome, label)).unwrap();
+    let (nearly, plenty) = (account("nearly@example.com"), account("plenty@example.com"));
+    store.record_usage(&nearly.id, &usage(0.2, 0.9, NOW + 2 * DAY));
+    store.record_usage(&plenty.id, &usage(0.1, 0.3, NOW + 5 * DAY));
+    store.refuse(&nearly.id, "claude-mythos-5-2");
+    let chosen = |model: Option<&str>| store.choose_for(Provider::Claude, NOW, None, model).map(|s| s.label);
+    assert_eq!(chosen(Some("claude-mythos-5-2")).as_deref(), Some("plenty@example.com"));
+    assert_eq!(chosen(Some("claude-opus-5-5")).as_deref(), Some("nearly@example.com"), "other models still go by usage");
+    assert_eq!(store.refused(&nearly.id), ["claude-mythos-5-2"]);
+    store.refuse(&plenty.id, "claude-mythos-5-2");
+    assert_eq!(chosen(Some("claude-mythos-5-2")), None, "no account can use it");
+    // Kept for the next start.
+    let again = SignIns::open(&home);
+    assert_eq!(again.refused(&plenty.id), ["claude-mythos-5-2"]);
+}
+
+#[test]
+fn a_model_refused_is_told_from_a_busy_one() {
+    use zerod::signins::refuses_model;
+    assert!(refuses_model("There's an issue with the selected model (claude-mythos-5-2). It may not exist or you may not have access to it. Run /model to pick a different model."));
+    assert!(refuses_model("The 'gpt-6' model is not supported when using Codex with a ChatGPT account."));
+    assert!(refuses_model("model_not_found: The model `gpt-6` does not exist or you do not have access to it."));
+    assert!(!refuses_model("API Error: 529 Overloaded"));
+    assert!(!refuses_model("You've hit your limit"));
+}
+
 #[tokio::test]
 async fn codex_and_opencode_get_zeros_own_tools_as_claude_code_does_from_its_plugin() {
     let home = temp_dir("zero-mcp");

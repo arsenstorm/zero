@@ -95,7 +95,7 @@ impl Daemon {
         // Chosen, else its lead's (a worker of the same CLI runs as its lead does), else the CLI's default.
         let lead = conversation.parent.as_deref().and_then(|lead| self.get(lead)).filter(|lead| lead.provider == provider).and_then(|lead| lead.signin);
         conversation.signin = options.signin.clone().or(lead)
-            .or_else(|| self.signins.choose(provider, now(), None).or_else(|| self.signins.default_for(provider)).map(|s| s.id));
+            .or_else(|| self.signins.choose_for(provider, now(), None, options.model.as_deref()).or_else(|| self.signins.default_for(provider)).map(|s| s.id));
         conversation.branch = branch(Path::new(cwd));
         // Claude takes its conversation's id from Zero, so the session can be resumed even if it never answered.
         if provider == Provider::Claude { conversation.thread = Some(claude::new_session_id()) }

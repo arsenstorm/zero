@@ -90,7 +90,8 @@ fn list(daemon: &Daemon) -> Value {
     let defaults: serde_json::Map<String, Value> = [Provider::Claude, Provider::Codex, Provider::Opencode].into_iter()
         .filter_map(|cli| daemon.signins.default_for(cli).map(|s| (format!("{cli:?}").to_lowercase(), json!(s.id)))).collect();
     let usage: serde_json::Map<String, Value> = list.iter().filter_map(|s| daemon.signins.usage(&s.id).map(|u| (s.id.clone(), json!(u)))).collect();
-    json!({"signins": list, "defaults": defaults, "usage": usage})
+    let refused: serde_json::Map<String, Value> = list.iter().map(|s| (s.id.clone(), json!(daemon.signins.refused(&s.id)))).filter(|(_, r)| r.as_array().is_some_and(|r| !r.is_empty())).collect();
+    json!({"signins": list, "defaults": defaults, "usage": usage, "refused": refused})
 }
 
 /// Starts a Codex sign-in: a pending sign-in and its home, Codex's app-server run there, and its ChatGPT page given
