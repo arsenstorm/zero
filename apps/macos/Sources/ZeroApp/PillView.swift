@@ -93,6 +93,8 @@ struct PillView: View {
     }
 
     var body: some View {
+        // Once a redraw: worked out from every ask the store holds, four reads of it cost the bar a frame.
+        let agents = agents
         VStack(spacing: 2) {
             inboxSlot
             if controller.canSpawn { newAgentSlot }
@@ -101,7 +103,8 @@ struct PillView: View {
                     .onChange(of: agents.map(\.0), initial: true) { controller.barOrder = $1 }
                     .onDisappear { controller.barOrder = [] }
             }
-            ForEach(agents, id: \.0) { name, status in agentDot(name, status) }
+            let names = agents.map(\.0)
+            ForEach(agents, id: \.0) { name, status in agentDot(name, status, among: names) }
         }
         .padding(.vertical, 8 + 10).padding(.horizontal, 6)
         .background(PillShape().fill(Theme.pill))
@@ -151,7 +154,7 @@ struct PillView: View {
             .tip("Start a new agent")
     }
 
-    private func agentDot(_ name: String, _ status: AgentStatus) -> some View {
+    private func agentDot(_ name: String, _ status: AgentStatus, among names: [String]) -> some View {
         Group {
             if status == .working { Spinner() } else { Circle().fill(status.color) }
         }
@@ -161,8 +164,8 @@ struct PillView: View {
             }
             .scaleEffect(scale(name))
             .animation(reduceMotion ? nil : .smooth(duration: 0.15), value: scale(name))
-            .offset(y: drag?.name == name ? drag!.y : shift(of: name, in: agents.map(\.0)))
-            .animation(drag?.name == name || reduceMotion ? nil : .snappy(duration: 0.2), value: dropIndex(in: agents.map(\.0)))
+            .offset(y: drag?.name == name ? drag!.y : shift(of: name, in: names))
+            .animation(drag?.name == name || reduceMotion ? nil : .snappy(duration: 0.2), value: dropIndex(in: names))
             // The whole slot, not just the dot, answers the pointer: full bar width, and the gap halves
             // above and below it, so the slots meet and there is no dead space between dots.
             .frame(width: 32, height: slot)

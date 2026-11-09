@@ -77,8 +77,11 @@ final class Settings {
         dropPatterns = defaults.stringArray(forKey: "dropPatterns") ?? []
     }
 
+    /// In the user's order, the rest after in the order given. Positions looked up once: found inside the comparison,
+    /// the control bar's every redraw spent a frame on it.
     func sorted(_ names: [String]) -> [String] {
-        names.sorted { (agentOrder.firstIndex(of: $0) ?? .max, names.firstIndex(of: $0)!) < (agentOrder.firstIndex(of: $1) ?? .max, names.firstIndex(of: $1)!) }
+        let ordered = Dictionary(agentOrder.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+        return names.enumerated().sorted { (ordered[$0.1] ?? .max, $0.0) < (ordered[$1.1] ?? .max, $1.0) }.map(\.1)
     }
 
     func move(_ name: String, before target: String, shown: [String]) {

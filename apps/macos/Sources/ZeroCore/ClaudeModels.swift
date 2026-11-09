@@ -85,10 +85,19 @@ public enum ClaudeModels {
     private struct Model: Decodable { let id: String; let display_name: String?; let created_at: String? }
     private struct Entry: Codable { let id: String; let name: String }
 
+    /// Claude Code's config, parsed again only once the file has changed: it's large (100 KB and more), and the control
+    /// bar's every redraw named its tasks' models through it, a parse or two a dot.
     private static func claudeConfig() -> [String: Any]? {
-        guard let data = try? Data(contentsOf: home.appendingPathComponent(".claude.json")) else { return nil }
-        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let url = home.appendingPathComponent(".claude.json")
+        guard let stamp = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date else { return nil }
+        configLock.lock(); defer { configLock.unlock() }
+        if let parsed, parsed.stamp == stamp { return parsed.json }
+        guard let data = try? Data(contentsOf: url), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        parsed = (stamp, json)
+        return json
     }
+    private static let configLock = NSLock()
+    nonisolated(unsafe) private static var parsed: (stamp: Date, json: [String: Any])?
 
     /// Claude Code's cached picker extras for the account, with their own descriptions.
     private static func localExtras() -> [SpawnChoice] {

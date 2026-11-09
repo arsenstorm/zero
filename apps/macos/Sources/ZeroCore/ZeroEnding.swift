@@ -10,8 +10,12 @@ public enum ZeroEnding: Equatable, Sendable {
     /// The answer without its ending, and the ending, when its last line is one.
     public static func split(_ text: String) -> (String, ZeroEnding?) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let match = trimmed.firstMatch(of: #/(?:^|\n)\[zero: (done|completed|waiting|blocked|working|asked ([^\]\s]+)|asked)\]$/#) else { return (text, nil) }
-        let answer = trimmed[..<match.range.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        // Its last line alone: a pattern run over a long answer for a line at its end cost the rail and the timeline
+        // tens of milliseconds on the main thread.
+        let last = trimmed[(trimmed.lastIndex(of: "\n").map(trimmed.index(after:)) ?? trimmed.startIndex)...]
+        guard last.hasPrefix("[zero: "),
+              let match = last.wholeMatch(of: #/\[zero: (done|completed|waiting|blocked|working|asked ([^\]\s]+)|asked)\]/#) else { return (text, nil) }
+        let answer = trimmed[..<last.startIndex].trimmingCharacters(in: .whitespacesAndNewlines)
         // No ask's id: no ask to wait on, so no state of its own, but not words to show either.
         if match.output.1 == "asked" { return (answer, nil) }
         let ending: ZeroEnding = switch match.output.1 {

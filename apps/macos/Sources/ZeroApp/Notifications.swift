@@ -1,3 +1,4 @@
+import AudioToolbox
 import AppKit
 import UserNotifications
 import ZeroCore
@@ -32,6 +33,8 @@ import ZeroCore
         self.open = open
         super.init()
         center.delegate = self
+        // Registered ahead, off the main thread: the first registered when it played cost 100 ms there.
+        Chime.warm([BoardRow.State.needsYou, .trouble, .done].map(settings.sound(for:)) + ["Glass"])
         center.requestAuthorization(options: [.alert, .sound]) { granted, error in
             if !granted { Log.write("notifications not allowed: \(error.map { "\($0)" } ?? "turned off")") }
         }
@@ -96,7 +99,7 @@ import ZeroCore
     func ask(_ ask: Ask, agent: String) {
         guard settings.notifyNeedsYou else { return }
         if NSApp.isActive && atMac {
-            if settings.notificationSounds { NSSound(named: "Glass")?.play() }
+            if settings.notificationSounds { Chime.play("Glass") }
             return
         }
         let alert = TaskAlerts.ask(ask, agent: agent)
@@ -129,7 +132,7 @@ import ZeroCore
         if present {
             let looking = navigation.place == .task(alert.session)
             let sound = settings.sound(for: alert.state)
-            if settings.notificationSounds && !sound.isEmpty && (looking || alert.kind != .finished) { NSSound(named: sound)?.play() }
+            if settings.notificationSounds && !sound.isEmpty && (looking || alert.kind != .finished) { Chime.play(sound) }
             held[alert.session] = (alert, Date())
             return
         }
@@ -180,4 +183,34 @@ import ZeroCore
 
 private extension Int {
     var nonZero: Int? { self == 0 ? nil : self }
+}
+
+/// A short alert sound by name (the system's, or one in a Sounds folder), as NSSound names them. Played through the
+/// system's sound service, which doesn't wait: NSSound loaded the file and opened audio on the main thread, 130 ms
+/// each time, and the window froze while a question's card slid in. Each is registered once.
+@MainActor enum Chime {
+    private static var ids: [String: SystemSoundID] = [:]
+
+    static func play(_ name: String) {
+        if let id = ids[name] ?? register(name) { ids[name] = id; AudioServicesPlaySystemSound(id) }
+    }
+
+    static func warm(_ names: [String]) {
+        for name in Set(names) where !name.isEmpty && ids[name] == nil {
+            Task.detached(priority: .utility) {
+                guard let id = register(name) else { return }
+                await MainActor.run { if ids[name] == nil { ids[name] = id } }
+            }
+        }
+    }
+
+    private nonisolated static func register(_ name: String) -> SystemSoundID? {
+        let folders = [FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Sounds"),
+                       URL(fileURLWithPath: "/Library/Sounds"), URL(fileURLWithPath: "/System/Library/Sounds")]
+        let found = folders.lazy.flatMap { folder in ["aiff", "aif", "wav", "caf"].map { folder.appendingPathComponent(name).appendingPathExtension($0) } }
+            .first { FileManager.default.fileExists(atPath: $0.path) } ?? Bundle.main.url(forResource: name, withExtension: "aiff")
+        var id: SystemSoundID = 0
+        guard let found, AudioServicesCreateSystemSoundID(found as CFURL, &id) == noErr else { return nil }
+        return id
+    }
 }

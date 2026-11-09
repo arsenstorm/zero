@@ -129,7 +129,8 @@ public final class Workspace {
         light.seq = 0
         if roster[id] != light { roster[id] = light }
         if let live = lives[id] {
-            live.conversation = full
+            // Only a real change: an assignment redraws the conversation, the same session sent again included.
+            if live.conversation != full { live.conversation = full }
             let earlier = mirror.earlier[id] ?? 0, later = mirror.later[id] ?? 0
             if live.earlier != earlier { live.earlier = earlier }
             if live.later != later { live.later = later }

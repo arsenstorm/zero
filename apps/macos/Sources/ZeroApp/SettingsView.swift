@@ -556,7 +556,7 @@ private struct SoundPicker: View {
         // the chip has that room. Let the menu kind scroll (Selector.swift) if a screen that short turns up.
         SettingChoice(id: "sound-" + state.rawValue, choices: [sounds, [(title: "None", value: "")]], selection: Binding(get: { settings.sound(for: state) }, set: { sound in
             settings.stateSounds[state.rawValue] = sound
-            if !sound.isEmpty { NSSound(named: sound)?.play() }
+            if !sound.isEmpty { Chime.play(sound) }
         }))
     }
 }
