@@ -11,8 +11,10 @@ func usage(help: Bool = false) -> Never {
                    --block: you can't go on without the answer; Zero holds your other events until it's answered
                    an option ending with "…" asks the user for text; the answer is then "label: text"
       zero approve "what you want to do" [--body "details"] [--code 'command or snippet']   (Yes / No / Suggest something else…)
-      zero run     'command' --why "what you need the output for" [--cwd DIR] [--title T]
+      zero run     'command' --why "what you need the output for" [--cwd DIR] [--title T] [--allow PREFIX]
                    runs on the user's Mac after they press Run; a script file's contents are shown to them
+                   --allow: the command is PREFIX and one file path (a read-only query run with a different file each
+                   time); the user can allow that kind for the rest of the task, and later ones run without asking
       zero note    "where you are now" [--waiting] [--needs "what the user should do, when they can"]
                    (no answer; sets your agent's dot and its row on Zero's board: working, or waiting on something
                    other than the user. Done is zero done's)

@@ -70,6 +70,9 @@ public struct Ask: Codable, Identifiable, Equatable, Sendable {
     public var detail: String?
     /// For a run of a script file (`sh path`, or the path itself): the script, so the user can read what will run.
     public var script: String?
+    /// A run's kind (`zero run --allow PREFIX`): its command is this and one path after it; allowed for a task, the
+    /// next of it runs without asking.
+    public var allow: String?
     /// A run asking for exactly the command another agent's open run already asks for: it shares that run's
     /// card and outcome instead of showing a second one.
     public var sameAs: String?

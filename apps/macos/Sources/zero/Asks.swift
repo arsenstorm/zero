@@ -140,6 +140,13 @@ func reason(_ ask: Ask) -> String? {
     var run = Ask(kind: .run, title: flag("title") ?? flag("ticket") ?? "Run a command", body: flag("why") ?? flag("body") ?? "",
                   options: ["Run", "Reject", "Suggest something else…"], command: shell, cwd: folder, agent: agentIdentity(), ttl: ttl)
     run.script = Ask.script(of: shell, cwd: folder)
+    if let prefix = flag("allow") {
+        let rest = shell.hasPrefix(prefix) ? shell.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces) : ""
+        guard !rest.isEmpty, rest.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "._/~-+@:,=".contains($0)) }) else {
+            fail("zero: --allow needs the command to be that prefix and one plain file path after it")
+        }
+        run.allow = prefix
+    }
     create(run)
 }
 
