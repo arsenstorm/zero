@@ -162,15 +162,10 @@ struct ArticlePanel<Strip: View, Content: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             strip()
             Group {
-                // Docked above the composer at the height of the tallest card waiting: a shorter one's body fills it,
-                // and only one taller than the dock allows scrolls. Nothing folds.
-                if dockHeight != nil {
-                    scrolling
-                } else if docked, let dockMax {
-                    // One alone, or not yet measured (just launched): never taller than its share of the page, a long
-                    // one scrolling inside. Uncapped, it took more than the window, the conversation out of reach.
-                    // Its own height, clamped: a frame with a most grew to it whatever the card held.
-                    Capped(most: max(80, dockMax - 34)) { ViewThatFits(in: .vertical) { content(); scrolling } }
+                // Docked above the composer: sized by DockFit, its body filling it, and scrolling only once it's at
+                // its most. Nothing folds.
+                if docked, dockMax != nil {
+                    ViewThatFits(in: .vertical) { content(); scrolling }.frame(maxHeight: .infinity, alignment: .top)
                 } else {
                     content()
                 }
@@ -182,7 +177,7 @@ struct ArticlePanel<Strip: View, Content: View>: View {
                               : AnyShape(RoundedRectangle(cornerRadius: 10)))
         }
         .padding(docked ? EdgeInsets(top: 0, leading: 2, bottom: 0, trailing: 2) : EdgeInsets(top: 2, leading: 2, bottom: 2, trailing: 2))
-        .frame(height: dockHeight)
+        .modifier(DockFit(most: docked ? dockMax : nil, held: dockHeight, own: dockOwn))
         // Docked, a tab behind the composer as the queue's is (its grey, its top corners, concentric with the surface's
         // 16 at 2 in); otherwise a panel in the page.
         .background(doneCard ? Theme.doneShell : docked ? Theme.fieldTab : Theme.rail,
@@ -196,6 +191,7 @@ struct ArticlePanel<Strip: View, Content: View>: View {
     @Environment(\.askDocked) private var docked
     @Environment(\.doneCard) private var doneCard
     @Environment(\.askDockHeight) private var dockHeight
+    @Environment(\.dockOwn) private var dockOwn
     @Environment(\.askDockMax) private var dockMax
 
     private var scrolling: some View {
@@ -282,14 +278,32 @@ struct Marquee: View {
     }
 }
 
-/// Its view as tall as it is, never taller than `most`: offered at most that, and hugging what it takes (a frame
-/// with a maximum takes all it's offered up to it, and showed a short card in a tall one).
-struct Capped: Layout {
-    let most: CGFloat
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        subviews.first?.sizeThatFits(ProposedViewSize(width: proposal.width, height: min(proposal.height ?? most, most))) ?? .zero
+/// A docked card's height: its own, so it grows as its box is typed in (held at the tallest card's, the box scrolled
+/// inside a card with room to grow), and at most its share of the page (uncapped, a long one took more than the
+/// window). Held at another while a step between cards eases it (AskDock), told its own as it goes.
+private struct DockFit: ViewModifier {
+    let most: CGFloat?
+    let held: CGFloat?
+    let own: ((CGFloat) -> Void)?
+    func body(content: Content) -> some View {
+        if let most { Fit(most: most, held: held, report: own) { content } } else { content }
     }
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+
+    private struct Fit: Layout {
+        let most: CGFloat
+        let held: CGFloat?
+        let report: ((CGFloat) -> Void)?
+        func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+            guard let view = subviews.first else { return .zero }
+            // Its own height: what it takes unconstrained (its body's content, not the scroll view after it).
+            let own = view.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil)).height
+            // Told after the layout: state changed in it is dropped.
+            if let report { DispatchQueue.main.async { report(own) } }
+            let height = min(held ?? own, most)
+            return CGSize(width: view.sizeThatFits(ProposedViewSize(width: proposal.width, height: height)).width, height: height)
+        }
+        func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+            subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+        }
     }
 }

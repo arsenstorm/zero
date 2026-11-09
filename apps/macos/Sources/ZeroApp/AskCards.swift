@@ -29,8 +29,7 @@ struct QuestionCard: View {
                 NucleoIcon("circle-question", fill: "glyph", size: 13)
                 Text(question.fields.count == 1 ? (question.fields.first?.header ?? "Question") : "Questions").font(.system(size: 12, weight: .medium)).tracking(-0.2)
             }
-            // Whether the task is done: a question still, in the Done state's colour, so it reads as the one it is.
-            .foregroundStyle(ask.doneCheck == true ? AnyShapeStyle(Theme.doneInk) : AnyShapeStyle(.secondary))
+            .foregroundStyle(.secondary)
             .padding(.horizontal, 14).padding(.vertical, 7)
             .modifier(PagedStrip())
         } content: {
@@ -98,7 +97,8 @@ struct AgentAskCard: View {
                 NucleoIcon(ask.kind == .run ? "terminal" : "circle-question", fill: ask.kind == .run ? "outline" : "glyph", size: 13)
                 Text(ask.kind == .run ? "Run on your Mac" : ask.kind == .approve ? "Approval" : "Question").font(.system(size: 12, weight: .medium)).tracking(-0.2)
             }
-            .foregroundStyle(.secondary)
+            // Whether the task is done: a question still, in the Done state's colour, so it reads as the one it is.
+            .foregroundStyle(ask.doneCheck == true ? AnyShapeStyle(Theme.doneInk) : AnyShapeStyle(.secondary))
             .padding(.horizontal, 14).padding(.vertical, 7)
             .modifier(PagedStrip())
         } content: {
@@ -288,12 +288,14 @@ struct ApprovalCard: View {
 extension EnvironmentValues {
     /// Above the composer (ConversationView's dock): as wide as the composer, and denser.
     @Entry var askDocked = false
-    /// The height of a docked card, the same for every card waiting; nil, its own.
-    @Entry var askDockHeight: CGFloat? = nil
     /// The most a docked card may be: its share of the page.
     @Entry var askDockMax: CGFloat? = nil
     /// Told when a text box in a docked card gains or loses focus.
     @Entry var dockFocus: ((Bool) -> Void)? = nil
+    /// A docked card held at a height (a step between cards easing it), not its own; nil, its own.
+    @Entry var askDockHeight: CGFloat? = nil
+    /// Told a docked card's own height as it's laid out, while a step eases to it.
+    @Entry var dockOwn: ((CGFloat) -> Void)? = nil
     /// A panel in a done question's shades (ArticlePanel).
     @Entry var doneCard = false
     /// The dock's place among what waits: "1 of 3", and a step either way.
@@ -331,11 +333,10 @@ private struct PagedStrip: ViewModifier {
 }
 
 /// What waits on you, above the composer: one at a time (the provider's questions and approvals, then what the agent
-/// asked through Zero), the rest a step away in its strip. As tall as the tallest of them, so stepping between them
-/// moves nothing, and a step is instant. A view of its own: paging and measuring redraw the dock, not the conversation.
+/// asked through Zero), the rest a step away in its strip. Each at its own height, a step between them instant. A
+/// view of its own: paging redraws the dock, not the conversation.
 struct AskDock: View, Equatable {
-    /// Drawn again only when what waits changes, not with each redraw of the conversation (a keystroke, a send): it
-    /// lays out every card waiting to measure them.
+    /// Drawn again only when what waits changes, not with each redraw of the conversation (a keystroke, a send).
     static func == (a: AskDock, b: AskDock) -> Bool {
         a.session == b.session && a.cwd == b.cwd && a.questions == b.questions && a.approvals == b.approvals && a.asks == b.asks && a.page == b.page
     }
@@ -352,7 +353,13 @@ struct AskDock: View, Equatable {
     let answer: (String, [String: [String]]) -> Void
     let decide: (String, String) -> Void
     @State private var index = 0
-    @State private var heights: [String: CGFloat] = [:]
+    /// A step between cards: the new one held at the last one's height, then eased to its own, frame by frame, so it
+    /// stays on the composer and the conversation slides with it. Instant, the conversation jumped; the dock's frame
+    /// eased around a card swapped at once, a shorter one was left off the composer for a moment.
+    @State private var stepping = false
+    @State private var easing = false
+    @State private var held: CGFloat = 0
+    @State private var shownHeight: CGFloat = 0
 
     private var ids: [String] { questions.map(\.id) + asks.map(\.id) + approvals.map(\.id) }
 
@@ -373,30 +380,20 @@ struct AskDock: View, Equatable {
         let ids = ids
         if !ids.isEmpty {
             let shown = min(index, ids.count - 1)
-            let tallest = ids.compactMap { heights[$0] }.max()
             card(ids[shown])
-                .environment(\.askDockHeight, tallest.map { min($0, max(160, page * 0.45)) })
+                .modifier(HeldHeight(height: held, on: stepping))
+                .environment(\.dockOwn, stepping ? { own in settle(own) } : nil)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { if !stepping { shownHeight = $0 } }
                 .environment(\.askDockMax, max(160, page * 0.45))
-                .environment(\.askPager, AskPager(index: shown, count: ids.count) { step in index = max(0, min(ids.count - 1, shown + step)) })
-                // Each one laid out unseen at its own height, so the dock is as tall as the tallest. Only with
-                // several: one alone is its own height (scrolled up, it sinks out of the way).
-                .background(alignment: .top) {
-                    if ids.count > 1 {
-                    ZStack(alignment: .top) {
-                        ForEach(ids, id: \.self) { id in
-                            card(id)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-                                    // Only a change: each write redraws the dock and every card in it.
-                                    if abs((heights[id] ?? 0) - height) > 0.5 { heights[id] = height }
-                                }
-                        }
-                    }
-                    .environment(\.askPager, AskPager(index: 0, count: ids.count) { _ in })
-                    .hidden().allowsHitTesting(false).accessibilityHidden(true)
-                    }
-                }
-                .onChange(of: ids) { heights = heights.filter { ids.contains($0.key) } }
+                .environment(\.askPager, AskPager(index: shown, count: ids.count) { step in
+                    let next = max(0, min(ids.count - 1, shown + step))
+                    guard next != shown, !stepping else { return }
+                    held = shownHeight
+                    stepping = true
+                    index = next
+                    // Never told its own height: let go of it, at its own at once.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { if stepping && !easing { stepping = false } }
+                })
                 .modifier(SinkingIn(foot: foot))
                 .geometryGroup()
                 // In, it rises from behind the composer (Sinker), with the conversation's scroll; out, it fades.
@@ -404,6 +401,16 @@ struct AskDock: View, Equatable {
                 .transition(.asymmetric(insertion: foot == nil ? .offset(y: 36).combined(with: .opacity) : .identity,
                                         removal: .offset(y: 48).combined(with: .opacity)))
         }
+    }
+
+    /// The new card's own height, known once it's laid out at the last one's: eased to.
+    private func settle(_ own: CGFloat) {
+        guard stepping, !easing else { return }
+        let to = min(own, max(160, page * 0.45))
+        guard abs(to - held) > 0.5 else { stepping = false; return }
+        easing = true
+        // Its height measured as it eased isn't kept (it was the held one's): the one it ends at is.
+        withAnimation(ConversationView.slide) { held = to } completion: { shownHeight = to; stepping = false; easing = false }
     }
 
     @ViewBuilder private func card(_ id: String) -> some View {
@@ -419,4 +426,15 @@ struct AskDock: View, Equatable {
         .id(id)
         .environment(\.askDocked, true)
     }
+}
+
+/// The docked card's height, given to it frame by frame as it eases (an environment value alone isn't animated).
+private struct HeldHeight: ViewModifier, Animatable {
+    var height: CGFloat
+    let on: Bool
+    var animatableData: CGFloat {
+        get { height }
+        set { height = newValue }
+    }
+    func body(content: Content) -> some View { content.environment(\.askDockHeight, on ? height : nil) }
 }
