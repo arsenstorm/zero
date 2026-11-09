@@ -201,6 +201,21 @@ impl Inbox {
             self.changed(&last);
             return last;
         }
+        // A run of a kind the agent named: allowed for its task already, it runs now; otherwise the user may allow it.
+        if ask.kind == AskKind::Run && ask.allow.is_some() && !of_its_kind(&ask) { ask.allow = None }
+        if ask.kind == AskKind::Run && ask.allow.is_some() {
+            if allowed(&state.asks, &ask) {
+                ask.state = AskState::Pending;
+                ask.answer = Some("Run (allowed for this task)".into());
+                ask.choice = Some(0);
+                state.asks.push(ask.clone());
+                drop(state);
+                self.changed(&ask);
+                self.run(ask.clone());
+                return ask;
+            }
+            ask.options.insert(1, ALLOW_FOR_TASK.into());
+        }
         // A run another agent already asks for, unanswered: one card, one run, both told the outcome.
         if ask.kind == AskKind::Run && let Some(original) = state.asks.iter().rev().find(|a| {
             a.kind == AskKind::Run && a.state == AskState::Waiting && a.same_as.is_none() && a.command == ask.command && a.cwd == ask.cwd
@@ -512,7 +527,9 @@ impl Inbox {
     pub fn delivery_text(ask: &Ask) -> String {
         let id = &ask.id;
         if ask.state == AskState::Expired {
-            return format!("Your ask {id} (\"{}\") expired without an answer from the user. Decide without it or ask again.", ask.title);
+            return format!("Your ask {id} (\"{}\") expired without an answer from the user. Go on with what you recommended (or, \
+                with none, what you would have), and say in your next message that you did; but what others will see or can't be \
+                undone (a push, a merge, a message, a production change) waits for the user's word: ask again when they're back.", ask.title);
         }
         let reason = ask.answer.as_ref().map(|a| format!(": {a}")).unwrap_or_else(|| ".".into());
         if ask.kind != AskKind::Run {
@@ -809,11 +826,32 @@ impl Inbox {
     }
 }
 
-/// For approve and run every option after the first declines; a permission declines only with a "Deny" option.
+/// The option that runs a run and allows its kind for the rest of its task.
+pub const ALLOW_FOR_TASK: &str = "Run, and allow the same for this task";
+
+/// A run whose command is its kind's prefix and one plain path after it: nothing chained on, redirected or expanded.
+fn of_its_kind(ask: &Ask) -> bool {
+    let (Some(command), Some(prefix)) = (ask.command.as_deref(), ask.allow.as_deref()) else { return false };
+    let Some(rest) = command.strip_prefix(prefix) else { return false };
+    let rest = rest.trim();
+    !prefix.trim().is_empty() && !rest.is_empty() && rest.chars().all(|c| c.is_ascii_alphanumeric() || "._/~-+@:,=".contains(c))
+}
+
+/// Its kind allowed already for its task: an earlier run of that kind from the same task (its session, or the agent
+/// without one) answered with the allowing option.
+fn allowed(asks: &[Ask], ask: &Ask) -> bool {
+    let task = |a: &Ask| a.agent.session.clone().unwrap_or_else(|| a.agent.name.clone());
+    asks.iter().any(|a| a.kind == AskKind::Run && a.allow == ask.allow && task(a) == task(ask) && a.cwd == ask.cwd
+        && a.choice.and_then(|c| a.options.get(c)).is_some_and(|o| o == ALLOW_FOR_TASK) && matches!(a.state, AskState::Running | AskState::Answered))
+}
+
+/// For approve and run every option after the first declines (but the one allowing a run's kind); a permission
+/// declines only with a "Deny" option.
 fn declines(ask: &Ask, index: usize) -> bool {
     match ask.kind {
         AskKind::Permission => ask.options.get(index).is_some_and(|o| o.starts_with("Deny")),
-        AskKind::Approve | AskKind::Run => index >= 1,
+        AskKind::Run => index >= 1 && ask.options.get(index).is_none_or(|o| o != ALLOW_FOR_TASK),
+        AskKind::Approve => index >= 1,
         _ => false,
     }
 }

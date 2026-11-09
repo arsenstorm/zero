@@ -254,6 +254,8 @@ fn agents_that_did_not_wait_are_told_what_happened() {
     let mut expired = ask(AskKind::Question, "Merge?", &[]);
     expired.state = AskState::Expired;
     assert!(Inbox::delivery_text(&expired).contains("expired without an answer"));
+    // What an expired ask means is written down: the recommendation, said so; never something others would see.
+    assert!(Inbox::delivery_text(&expired).contains("recommended") && Inbox::delivery_text(&expired).contains("others will see"));
 }
 
 #[tokio::test]
@@ -327,6 +329,48 @@ async fn identical_runs_share_one_card_and_its_outcome() {
     s.choose(&a.id, 1);
     until(&s, &a.id, |a| a.state == AskState::Declined).await;
     assert_eq!(until(&s, &b.id, |a| a.state.is_final()).await.state, AskState::Declined);
+}
+
+/// A run the agent marks as one of a kind (`--allow PREFIX`: a read-only query's command, any file) can be allowed for
+/// the rest of the task: the next of that kind from the same task runs without asking. Only commands that are the prefix
+/// and one plain path after it: anything else (another command chained on) still asks. Other tasks still ask.
+#[tokio::test]
+async fn a_kind_of_run_allowed_for_a_task_runs_without_asking_again() {
+    let s = inbox();
+    let dir = std::env::temp_dir().join(format!("allow-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let prefix = format!("cd {} && cat <", dir.display());
+    std::fs::write(dir.join("q1.rb"), "one").unwrap();
+    std::fs::write(dir.join("q2.rb"), "two").unwrap();
+    let task = AgentIdentity { session: Some("01a1task".into()), ..agent("lead") };
+    let query = |file: &str, who: &AgentIdentity| {
+        let mut run = Ask::new(AskKind::Run, "Production read", who.clone(), 3600);
+        run.options = ["Run", "Reject", "Suggest something else…"].map(String::from).to_vec();
+        run.command = Some(format!("{prefix} {file}"));
+        run.allow = Some(prefix.clone());
+        run
+    };
+    let first = s.create(query("q1.rb", &task), false);
+    let allow = first.options.iter().position(|o| o.contains("for this task")).expect("offered to allow its kind");
+    assert_eq!(first.options[0], "Run");
+    s.choose(&first.id, allow);
+    let ran = until(&s, &first.id, |a| a.state == AskState::Answered).await;
+    assert!(ran.output.contains("one"), "it runs, as Run does: {ran:?}");
+    let second = s.create(query("q2.rb", &task), false);
+    let ran = until(&s, &second.id, |a| a.state == AskState::Answered).await;
+    assert!(ran.output.contains("two") && ran.answer.as_deref().is_some_and(|a| a.contains("allowed")), "{ran:?}");
+    // Something chained on isn't that kind: asked.
+    let chained = s.create(query("q2.rb; rm -rf /tmp/x", &task), false);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(s.ask(&chained.id).unwrap().state, AskState::Waiting);
+    // Another task: asked.
+    let other = s.create(query("q2.rb", &AgentIdentity { session: Some("01a1other".into()), ..agent("other") }), false);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(s.ask(&other.id).unwrap().state, AskState::Waiting);
+    // Reject is still a no.
+    let rejected = s.create(query("q1.rb", &AgentIdentity { session: Some("01a1third".into()), ..agent("third") }), false);
+    s.choose(&rejected.id, rejected.options.iter().position(|o| o == "Reject").unwrap());
+    until(&s, &rejected.id, |a| a.state == AskState::Declined).await;
 }
 
 #[tokio::test]

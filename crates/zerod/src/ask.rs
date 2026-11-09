@@ -92,6 +92,10 @@ pub struct Ask {
     pub command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// A run's kind, as the agent says it (`zero run --allow PREFIX`): its command is this and one plain path after it.
+    /// The user can allow the kind for the rest of the task, and the next of it runs without asking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow: Option<String>,
     pub agent: AgentIdentity,
     pub created_at: Time,
     pub expires_at: Time,
@@ -154,7 +158,7 @@ impl Ask {
             id: new_id(), kind, title: title.into(), body: String::new(), options: vec![], command: None, cwd: None, agent,
             created_at: now, expires_at: Time(now.0 + ttl_seconds), state: AskState::Waiting, answer: None, output: String::new(),
             exit_code: None, run: None, answered_at: None, status: None, choice: None, waits: None, delivery: None, detail: None, script: None,
-            same_as: None, request: None, needs: None, blocks: false, confirmed: false, done_check: false,
+            same_as: None, request: None, needs: None, blocks: false, confirmed: false, done_check: false, allow: None,
         }
     }
 
