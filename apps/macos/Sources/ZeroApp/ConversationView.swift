@@ -53,7 +53,40 @@ struct ConversationView: View {
     @State private var newerShown = false
     @State private var olderArmed = true
     /// How tall the composer is: the conversation fades out just above it.
-    @State private var composerHeight: CGFloat = 0
+    /// The composer's height with what sits on it (the question card, the queue), read only by the few views it sizes:
+    /// held in the conversation's own state, a card coming or going redrew the whole timeline, a frame lost each time.
+    @State private var foot = Foot()
+    /// A question card sliding in or out, and the conversation with it.
+    static let slideDuration = 0.25
+    static let slide = Animation.smooth(duration: slideDuration)
+    /// The card's rise: ease-out cubic, the curve the room at the end grows on, step for step.
+    static let rise = Animation.timingCurve(0.33, 1, 0.68, 1, duration: slideDuration)
+
+    @Observable final class Foot {
+        var height: CGFloat = 0
+        /// How far the conversation is scrolled up from its end, the question card's height, and whether the pointer
+        /// is on the card: read by the card and the mask alone, so a scroll redraws those, not the conversation.
+        var below: CGFloat = 0
+        var card: CGFloat = 0
+        /// The composer's own height: the conversation shows down to it (behind the question card too), never under it.
+        var composer: CGFloat = 0
+        /// The pointer on the card, or on the composer: either brings the card up.
+        var overCard = false
+        var overComposer = false
+        var overQueue = false
+        /// A text box in the card focused: being typed in, it stays up whatever the pointer does.
+        var typing = false
+        var hovering: Bool { overCard || overComposer || overQueue || typing }
+        /// How far the card has sunk behind the composer: as far as the conversation is scrolled up from its end, until
+        /// only its strip shows (the surface under it gone too); none while the pointer is on it or the composer.
+        var sunk: CGFloat { arriving || hovering ? 0 : min(below, deepest) }
+        /// Just come: sliding up (Sinker) as the conversation slides up for it (EndRoom), neither sunk nor raised by
+        /// the scroll or the pointer meanwhile.
+        var arriving = false
+        /// As far as it sinks: all but its strip.
+        var deepest: CGFloat { max(0, card - AskDock.tuck - 24) }
+    }
+    private var composerHeight: CGFloat { foot.height }
     /// Just sent: the message sits at the top of the page with room under it for the answer, which fills that room
     /// without moving anything, as Codex's does. Over once you scroll.
     @State private var lifted = false
@@ -126,26 +159,11 @@ struct ConversationView: View {
     /// conversation is animated with it.
     static let fade = AnyTransition.opacity.animation(.easeOut(duration: 0.2))
 
-    /// What waits on you in the chat, by id: a card leaving this is one answered.
-    private func waitingIds(_ conversation: Conversation) -> [String] {
-        conversation.questions.map(\.id) + loose(conversation).map(\.id) + conversation.approvals.map(\.id)
-    }
 
-    /// The agent's asks still open: answered above the composer, whichever way it asked.
-    private func loose(_ conversation: Conversation) -> [Ask] {
-        inbox.store.asks.filter { $0.isAgents(in: conversation.id) && !$0.state.isFinal }
-    }
 
-    /// A block, then the asks its turn made, a line each: the question and its answer, or that it waits on you. The
-    /// card to answer it is above the composer (waiting), so answering changes nothing in the conversation but a word.
-    /// One view, whatever it holds: a row that put a varying number of children straight into the column's stack is
-    /// what SwiftUI's stack layout crashed on.
-    private func row(_ block: TimelineBlock, turns: [String: String], asks: [String: [Ask]]) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            blockRow(block, turns: turns)
-            ForEach(asks[block.id] ?? []) { ask in AgentAskCard(ask: ask, inbox: inbox, compact: true) }
-        }
-    }
+    /// A block. The asks its turn made are among its steps, folded as thinking is; the card to answer one is above
+    /// the composer.
+    private func row(_ block: TimelineBlock, turns: [String: String]) -> some View { blockRow(block, turns: turns) }
 
     private func blockRow(_ block: TimelineBlock, turns: [String: String]) -> some View {
         BlockRow(block: block, cwd: conversation.cwd, quote: quote, save: save, rewind: { rewinding = $0 },
@@ -196,11 +214,11 @@ struct ConversationView: View {
                 // Soft edges: at the top, there's more above; just above the composer, the text fades out before it,
                 // as Codex's does, with nothing behind the composer but the page.
                 // Under the composer: nothing, so the conversation doesn't show at its sides.
-                .softEdges(top: 28, bottom: 32, under: composerHeight)
+                .mask { SoftFoot(foot: foot) }
+                // Scrolled up: a way back down, just above the composer (and its question card's strip), under the card.
+                .overlay(alignment: .bottom) { wayDown(proxy) }
                 // The composer lies over the conversation's foot; the conversation runs the full height under it.
                 .overlay(alignment: .bottom) { composerOverlay }
-                // Scrolled up: a way back down, just above the composer.
-                .overlay(alignment: .bottom) { wayDown(proxy) }
                 .overlay(alignment: .trailing) { ThinScrollbar(tracker: tracker) { following = false; lifted = false; position.scrollTo(y: $0) }.padding(.trailing, 2) }
                 .overlay(alignment: .leading) { rail(proxy) }
                 // Fetched again as your messages come and go, not with every word streamed.
@@ -234,15 +252,13 @@ struct ConversationView: View {
         // Only you scroll: what's read keeps its distance from the top as the agent adds words below, so
         // nothing moves under your eyes. The end is kept only while you're at it (following), and while an
         // older page comes in above.
-        .defaultScrollAnchor((following || loadingAbove) && !lifted && !settling ? .bottom : .top, for: .sizeChanges)
+        // Following, the end isn't held by the anchor (which moved the page the whole way in a frame) but scrolled to
+        // as the page grows (scrollGeometryChanged): slid, a step at a time.
+        .defaultScrollAnchor(loadingAbove && !lifted && !settling ? .bottom : .top, for: .sizeChanges)
         .scrollPosition($position)
         .onScrollGeometryChange(for: CGFloat.self, of: { $0.containerSize.height }) { _, height in pageHeight = height }
         // The message just sent goes to the top of the page once it's in the conversation.
         .onChange(of: conversation.items.last(where: \.isYours)?.id) { _, id in placeLift(id) }
-        // An answered card leaving: the page keeps its height (see `room`).
-        .onChange(of: waitingIds(conversation)) { old, new in
-            if !Set(old).subtracting(new).isEmpty { room = max(room, tracker.columnHeight) }
-        }
         // Where you were in it, kept when scrolling stops and when you leave.
         .onScrollPhaseChange { _, phase in scrollPhaseChanged(phase) }
         .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { before, now in scrollGeometryChanged(from: before, to: now) }
@@ -253,23 +269,23 @@ struct ConversationView: View {
     /// few dozen rows; older pages come in on demand above.
     private var timelineColumn: some View {
         shape.update(items: conversation.items, sending: workspace.sending[conversation.id] ?? [],
-                     working: conversation.status == .working || conversation.status == .waiting, asks: inbox.store.asks, session: conversation.id)
-        let (blocks, turns, asks) = (shape.blocks, shape.turns, shape.asks)
+                     working: conversation.status == .working || conversation.status == .waiting)
+        let (blocks, turns) = (shape.blocks, shape.turns)
         let (head, tail) = split(blocks)
         return VStack(alignment: .leading, spacing: 18) {
             olderRows
             ForEach(shape.rows(head)) { line in
                 switch line {
-                case let .block(block): row(block, turns: turns, asks: asks)
+                case let .block(block): row(block, turns: turns)
                 case let .quiet(id, blocks, count):
                     QuietTurns(turns: count, open: Binding(get: { openQuiet.contains(id) }, set: { if $0 { openQuiet.insert(id) } else { openQuiet.remove(id) } })) {
-                        ForEach(blocks) { block in row(block, turns: turns, asks: asks) }
+                        ForEach(blocks) { block in row(block, turns: turns) }
                     }
                     .id(id)
                 }
             }
             if !tail.isEmpty {
-                liftedTail(tail, turns: turns, asks: asks)
+                liftedTail(tail, turns: turns)
             }
             // Its provider still getting ready (signing in, say): say so, rather than an empty page.
             // Or woken by a message just sent: its agent is starting, the message waiting for it above.
@@ -282,7 +298,7 @@ struct ConversationView: View {
             // Room for the composer and the fade above it: scrolled to the end, the last message sits just
             // above the composer, and the scrollbar is at the bottom. Just sent, a page of room, so the
             // message can sit at the top.
-            Color.clear.frame(height: composerHeight + 32).id("end")
+            EndRoom(foot: foot).id("end")
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { [tracker] in tracker.columnHeight = $0 }
         .frame(minHeight: room, alignment: .top)
@@ -311,9 +327,9 @@ struct ConversationView: View {
 
     /// Lifted: from the message just sent down, at least a page tall, so what the agent adds
     /// under it fills room that is already there and the page's size doesn't change.
-    private func liftedTail(_ tail: [TimelineBlock], turns: [String: String], asks: [String: [Ask]]) -> some View {
+    private func liftedTail(_ tail: [TimelineBlock], turns: [String: String]) -> some View {
         VStack(alignment: .leading, spacing: 18) {
-            ForEach(tail) { block in row(block, turns: turns, asks: asks) }
+            ForEach(tail) { block in row(block, turns: turns) }
         }
         .frame(minHeight: liftMin, alignment: .top)
     }
@@ -379,11 +395,6 @@ struct ConversationView: View {
     }
 
     private func userScrolled() {
-        // The room an answered card left goes back, the page kept where you are.
-        if room > 0, let offset = tracker.geometry?.contentOffset.y {
-            room = 0
-            DispatchQueue.main.async { position.scrollTo(y: offset) }
-        }
         workspace.markSeen(conversation.id)
         following = false
         if olderShown, !olderArmed { olderArmed = true; Task { await loadOlder() } }
@@ -415,6 +426,26 @@ struct ConversationView: View {
 
     private func scrollGeometryChanged(from before: ScrollGeometry, to now: ScrollGeometry) {
         tracker.geometry = now
+        // Grown at its end while you were there (a card, a turn's end, words streaming, the composer taller): the page
+        // slides to its new end on the card's curve, not moved there in a frame. More than a page (a task opened, a
+        // window jumped to) goes at once: sliding a whole screen would only slow it.
+        let grew = now.contentSize.height - before.contentSize.height
+        if following, !lifted, !loadingAbove, !userScrolling, grew > 0.5, Self.end(of: before) - before.contentOffset.y < 2 {
+            if grew < now.containerSize.height { withAnimation(Self.rise) { position.scrollTo(edge: .bottom) } }
+            else { position.scrollTo(edge: .bottom) }
+        }
+        // How far up from the end: the question card on the composer sinks as far, behind it.
+        // From where the scroll stops (the toolbar's inset at the top taken off: left in, the end read 38 pt off and the
+        // card sat sunk that much at the very bottom).
+        let below = max(0, Self.end(of: now) - now.contentOffset.y)
+        if abs(foot.below - below) > 0.5 { foot.below = below }
+        // The room an answered card left goes back as you scroll up, no faster: kept down to the window's foot, so the
+        // page never moves on its own. Taken back all at once, at a scroll's start, the conversation's end jumped up to
+        // the window's foot, the page thrown down by the card's height. (The column starts 20 down.)
+        if room > 0, userScrolling {
+            let foot = now.contentOffset.y + now.containerSize.height + now.contentInsets.top - now.contentInsets.bottom - 20
+            if foot <= tracker.columnHeight { room = 0 } else if foot < room - 0.5 { room = foot }
+        }
         // Lifted, and the reply has outgrown the room while you sat at its foot: the lift has done its
         // work, and the page follows the end from here, as it would have without it.
         let wasAtFoot = Self.end(of: before) - before.contentOffset.y < 2
@@ -449,14 +480,13 @@ struct ConversationView: View {
     /// you first (questions, approvals, the agent's asks), so answering never moves the conversation.
     private var composerOverlay: some View {
         VStack(spacing: 8) {
-            AskDock(session: conversation.id, cwd: conversation.cwd, questions: conversation.questions, approvals: conversation.approvals,
-                    asks: loose(conversation), inbox: inbox, page: pageHeight,
-                    answer: { [workspace, id = conversation.id] question, answers in Task { await workspace.answer(id, question: question, answers: answers) } },
-                    decide: { [workspace, id = conversation.id] approval, choice in Task { await workspace.decide(id, approval: approval, choice: choice) } })
-                .equatable()
-                .frame(maxWidth: 680)
+            DockSlot(conversation: conversation, inbox: inbox, foot: foot, page: pageHeight, behindQueue: !queued.isEmpty || held,
+                     answer: { [workspace, id = conversation.id] question, answers in Task { await workspace.answer(id, question: question, answers: answers) } },
+                     decide: { [workspace, id = conversation.id] approval, choice in Task { await workspace.decide(id, approval: approval, choice: choice) } },
+                     // An answered card leaving: the page keeps its height (see `room`).
+                     left: { [tracker] in room = max(room, tracker.columnHeight) })
             if !queued.isEmpty || held {
-                QueueStrip(queued: queued, held: held,
+                QueueStrip(queued: queued, held: held, hover: { [foot] inside in if foot.overQueue != inside { foot.overQueue = inside } },
                            steer: { item in Task { await workspace.steer(conversation.id, item: item) } },
                            edit: { item in Task { if await workspace.unqueue(conversation.id, item: item.id) { draft = item.text; images = (item.images ?? []).map { URL(fileURLWithPath: $0) } } } },
                            remove: { item in Task { _ = await workspace.unqueue(conversation.id, item: item.id) } },
@@ -464,8 +494,21 @@ struct ConversationView: View {
                     .frame(maxWidth: 680)
             }
             composer
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] in if foot.composer != $0 { foot.composer = $0 } }
+                .onHover { [foot] inside in if foot.overComposer != inside { foot.overComposer = inside } }
         }
-        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { composerHeight = $0 }
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] height in
+            guard foot.height != height else { return }
+            let grew = height > foot.height
+            // Grown (a question card arriving) while at the end: the end followed, the last words above the card and
+            // the card all the way up. Held where it was (just sent, the page kept for the answer), the room the card
+            // added went below the page, and the card sank as far, nothing scrolled.
+            let follow = grew && (foot.below < 2 || following)
+            foot.height = height
+            // Following, the page slides to its new end itself (scrollGeometryChanged); held (just sent, the page kept
+            // for the answer), it's taken there, on the card's curve.
+            if follow && !following { DispatchQueue.main.async { withAnimation(Self.rise) { position.scrollTo(edge: .bottom) } } }
+        }
     }
 
     private func wayDown(_ proxy: ScrollViewProxy) -> some View {
@@ -477,7 +520,10 @@ struct ConversationView: View {
                 withAnimation { proxy.scrollTo("end", anchor: .bottom) }
             }
         }
-        .padding(.bottom, composerHeight + 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        // Just above the question card's strip, as it sits sunk (the arrow shows only scrolled up, where it is), and
+        // under the card: brought up, the card covers it.
+        .safeAreaInset(edge: .bottom, spacing: 0) { FootRoom(foot: foot, extra: 6, sunk: true) }
     }
 
     /// Every message of yours, loaded or not, from zerod's outline of the conversation.
@@ -565,7 +611,15 @@ struct ConversationView: View {
                      draft = ""
                      images = []
                      Task { await workspace.queue(conversation.id, text: text, images: attached) }
-                 } : nil) {
+                 } : nil,
+                 // ponytail: the first agent ask waiting, not the dock's page shown; follow the pager if several wait.
+                 pick: { [inbox, conversation] digit in
+                     guard conversation.questions.isEmpty, conversation.approvals.isEmpty,
+                           let ask = inbox.store.asks.first(where: { $0.isAgents(in: conversation.id) && !$0.state.isFinal }),
+                           digit <= ask.options.count else { return false }
+                     inbox.choose(digit - 1, on: ask.id)
+                     return true
+                 }) {
             let (text, attached) = ImageToken.compact(draft, images: images.map(\.path))
             draft = ""
             images = []
@@ -667,23 +721,21 @@ struct ConversationView: View {
     }
 }
 
-/// The conversation's blocks, the message each answers, the asks under them and the folded rows, worked out again only
+/// The conversation's blocks, the message each answers and the folded rows, worked out again only
 /// when what they're made of changes: the column is asked for on every frame of a scroll, and working them out reads
 /// every item. Arrays left as they were compare at once (they share their storage).
 final class TimelineShape {
-    private var made: (items: [ConversationItem], sending: [Sending], working: Bool, asks: [Ask], session: String)?
+    private var made: (items: [ConversationItem], sending: [Sending], working: Bool)?
     private(set) var blocks: [TimelineBlock] = []
     private(set) var turns: [String: String] = [:]
-    private(set) var asks: [String: [Ask]] = [:]
     private var folded: (head: [TimelineBlock], rows: [TimelineRow])?
 
-    func update(items: [ConversationItem], sending: [Sending], working: Bool, asks all: [Ask], session: String) {
-        if let made, made.working == working, made.session == session, made.items == items, made.sending == sending, made.asks == all { return }
-        made = (items, sending, working, all, session)
+    func update(items: [ConversationItem], sending: [Sending], working: Bool) {
+        if let made, made.working == working, made.items == items, made.sending == sending { return }
+        made = (items, sending, working)
         // What's just been sent shows at once, before its agent has it (Sending).
         blocks = TimelineBlock.of(Sending.merge(items, sending), working: working)
         turns = TimelineBlock.turns(blocks)
-        asks = TimelineBlock.asks(after: blocks, in: all, session: session)
     }
 
     func rows(_ head: [TimelineBlock]) -> [TimelineRow] {
@@ -691,5 +743,127 @@ final class TimelineShape {
         let rows = TimelineRow.of(head)
         folded = (head, rows)
         return rows
+    }
+}
+
+/// The room at the timeline's foot for the composer and the fade above it: its own view, so the composer's height
+/// changing sizes this alone, not the conversation.
+private struct EndRoom: View {
+    let foot: ConversationView.Foot
+    var body: some View { Color.clear.frame(height: foot.height + 32) }
+}
+
+/// The conversation's soft edges as a mask, the foot's under the composer: a view of its own, so the composer's height
+/// changing redraws the mask, not the conversation (a modifier reading it counted as the conversation reading it).
+private struct SoftFoot: View {
+    let foot: ConversationView.Foot
+    var body: some View {
+        VStack(spacing: 0) {
+            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: 28)
+            Color.black
+            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 32)
+            // Under the composer only: the conversation runs on behind the question card, which a ring of its own sets
+            // apart (Sinker).
+            Color.clear.frame(height: foot.composer)
+        }
+    }
+}
+
+/// Room as tall as the composer (and `extra`), for what sits just above it.
+private struct FootRoom: View {
+    let foot: ConversationView.Foot
+    var extra: CGFloat = 0
+    /// Short by what the question card sinks.
+    var sunk = false
+    var body: some View { Color.clear.frame(height: max(0, foot.height - (sunk ? foot.deepest : 0)) + extra).allowsHitTesting(false) }
+}
+
+/// What waits on you, on the composer: the agent's asks read here, so one coming or going redraws this, not the
+/// conversation. A tab behind what's in front of it, its foot under it (drawn later, over it): the composer, at the
+/// queue's inset; or the queue's tab, one inset further back.
+private struct DockSlot: View {
+    let conversation: Conversation
+    let inbox: InboxController
+    let foot: ConversationView.Foot
+    let page: CGFloat
+    let behindQueue: Bool
+    let answer: (String, [String: [String]]) -> Void
+    let decide: (String, String) -> Void
+    let left: () -> Void
+
+    var body: some View {
+        let asks = inbox.store.asks.filter { $0.isAgents(in: conversation.id) && !$0.state.isFinal }
+        let ids = conversation.questions.map(\.id) + asks.map(\.id) + conversation.approvals.map(\.id)
+        AskDock(session: conversation.id, cwd: conversation.cwd, questions: conversation.questions, approvals: conversation.approvals,
+                asks: asks, inbox: inbox, page: page, foot: foot, answer: answer, decide: decide)
+            .equatable()
+            .padding(.horizontal, behindQueue ? 26 : 13)
+            .frame(maxWidth: 680)
+            .padding(.bottom, ids.isEmpty ? 0 : -(AskDock.tuck + 8))
+            .onChange(of: ids) { old, new in if !Set(old).subtracting(new).isEmpty { left() } }
+    }
+}
+
+/// Drawn again only when what it's given changes: the task page redraws with the board and the inbox (a question
+/// arriving), and handed the same conversation, its `open` a new closure, it redrew every message. Its own state and
+/// what it observes still redraw it.
+extension ConversationView: Equatable {
+    static func == (a: ConversationView, b: ConversationView) -> Bool {
+        a.live === b.live && a.workspace === b.workspace && a.inbox === b.inbox && a.active == b.active
+            && a.queued == b.queued && a.held == b.held && a.next == b.next
+    }
+}
+
+/// The question card sinking behind the composer as the conversation is scrolled up from its end, one point for one,
+/// until only its strip shows; back up while the pointer is on it. Moved, not faded, and its place kept, so nothing
+/// else moves. Its own view reads the scroll (`Sinker`), so a scroll redraws the card's position alone.
+struct Sinking: ViewModifier {
+    let foot: ConversationView.Foot
+    func body(content: Content) -> some View { Sinker(foot: foot, content: content) }
+}
+
+private struct Sinker<Card: View>: View {
+    let foot: ConversationView.Foot
+    let content: Card
+    /// Come up from behind the composer: its whole height down at first (clipped at its foot, out of sight), sliding
+    /// up on the curve the conversation slides up on as the room at its end grows for the card (EndRoom), the two
+    /// starting together.
+    @State private var risen = false
+
+    var body: some View {
+        content
+            .environment(\.dockFocus) { [foot] on in if foot.typing != on { foot.typing = on } }
+            // Over the conversation, which runs on behind it: a ring of blur and fade at its edges sets it apart.
+            .background { Ring() }
+            .onHover { inside in if foot.overCard != inside { foot.overCard = inside } }
+            .offset(y: foot.sunk)
+            .visualEffect { [risen] card, proxy in card.offset(y: risen ? 0 : proxy.size.height) }
+            .animation(.smooth(duration: 0.25), value: foot.hovering)
+            // What has sunk is gone below its place (behind the composer), not shown under it; the ring above and at
+            // its sides kept.
+            .mask { Rectangle().padding(.horizontal, -Ring.width).padding(.top, -Ring.width) }
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] in if foot.card != $0 { foot.card = $0 } }
+            .onDisappear { [foot] in foot.card = 0; foot.overCard = false; foot.typing = false }
+            .onAppear {
+                foot.arriving = true
+                DispatchQueue.main.async { withAnimation(ConversationView.rise) { risen = true } }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [foot] in foot.arriving = false }
+            }
+    }
+}
+
+/// The question card's edge over the conversation behind it: what's just around it blurred and faded, out to a
+/// soft edge.
+private struct Ring: View {
+    static let width: CGFloat = 22
+    private var shape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(topLeadingRadius: 18 + Self.width, topTrailingRadius: 18 + Self.width, style: .continuous)
+    }
+    var body: some View {
+        shape.fill(.thinMaterial)
+            .overlay(shape.fill(Theme.card.opacity(0.45)))
+            .padding(.horizontal, -Self.width).padding(.top, -Self.width)
+            .mask { shape.padding(.horizontal, -Self.width / 3).padding(.top, -Self.width / 3).blur(radius: Self.width / 2.5) }
+            .allowsHitTesting(false)
     }
 }

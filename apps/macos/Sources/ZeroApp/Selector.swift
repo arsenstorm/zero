@@ -79,8 +79,10 @@ struct SelectorView: View {
                     }
                 }
                 .padding(.horizontal, 6).padding(.vertical, 6)
-            } else if sections.count > 1 { tabs } else if let section { singleHeader(section) }
-            if state.kind != .menu { Divider().padding(.horizontal, 10) }
+            } else if state.kind == .runtime {
+                if sections.count > 1 { tabs } else if let section { singleHeader(section) }
+            }
+            if state.kind == .runtime { Divider().padding(.horizontal, 10) }
             if state.kind == .menu {
                 EmptyView()
             } else if state.kind == .runtime {
@@ -90,14 +92,20 @@ struct SelectorView: View {
                     details.frame(width: Self.paneWidth - 1, height: Self.modelListHeight)
                 }
                 .frame(height: Self.modelListHeight) // a vertical Divider would otherwise stretch the row to the strip
-            } else {
-                list.frame(height: min(CGFloat(max(rows.count, 1)) * Self.rowHeight + 8 + CGFloat(max(rows.count - 1, 0)), Self.modelListHeight))
+            } else if sections.count > 1 {
+                // A short list in sections (agents' places, say): tabs, as models have, then its rows.
+                tabs
                 Divider().padding(.horizontal, 10)
-                footer
+                shortList
+            } else {
+                shortList
             }
         }
         .frame(width: Self.width(state.kind))
-        .card()
+        // Lighter than a page's card: a hairline edge, a little less round. (The window gives it its shadow.)
+        .background(Theme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.stroke, lineWidth: 0.5))
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { state.cardHeight = $0 }
         .focusable()
         .focused($focused)
@@ -114,6 +122,13 @@ struct SelectorView: View {
             state.highlighted = rows.first { $0.selected }?.id ?? rows.first?.id
             focused = true
         }
+    }
+
+    /// A short list (permissions, projects, workspaces): no heading (the chip said what it is) and no footer (each row
+    /// says what it is), as tall as its rows; past eight, it scrolls.
+    @ViewBuilder private var shortList: some View {
+        let column = VStack(spacing: 1) { ForEach(rows) { rowView($0) } }.padding(5)
+        if rows.count <= 8 { column } else { ScrollView(.vertical, showsIndicators: false) { column }.frame(height: Self.modelListHeight + 40).scrollEdgeFades() }
     }
 
     private var list: some View {
@@ -170,15 +185,20 @@ struct SelectorView: View {
             row.pick()
             state.close()
         } label: {
-            HStack(spacing: 8) {
+            let described = state.kind == .project ? describe(row) : ""
+            HStack(alignment: described.isEmpty ? .center : .top, spacing: 8) {
                 if let glyph = row.glyph { WorkspaceGlyph(glyph: glyph, size: 14).foregroundStyle(.secondary).frame(width: 18) }
-                Text(row.title).font(.system(size: 13, weight: row.selected ? .semibold : .regular)).lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(row.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    if !described.isEmpty {
+                        Text(described).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
                 Spacer(minLength: 6)
-                // Effort: shown on the chosen row and the one under the pointer, so a pick and its level sit together.
-                NucleoIcon("check", size: 13).opacity(row.selected ? 1 : 0)
+                NucleoIcon("check", size: 13).foregroundStyle(Color.accentColor).opacity(row.selected ? 1 : 0)
             }
-            .padding(.horizontal, 10)
-            .frame(height: Self.rowHeight)
+            .padding(.horizontal, 10).padding(.vertical, described.isEmpty ? 0 : 7)
+            .frame(minHeight: Self.rowHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(current ? Theme.row : .clear)
             .clipShape(RoundedRectangle(cornerRadius: 10))

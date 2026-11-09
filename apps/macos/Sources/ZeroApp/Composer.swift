@@ -26,6 +26,9 @@ struct Composer<Controls: View>: View {
     var stop: (() -> Void)?
     /// While the agent works: what Return does (the message waits for after this turn); ⌘⏎ still sends to steer.
     var queue: (() -> Void)?
+    /// A digit (1–9) typed with the composer empty, while a question waits above it: its option picked, as the
+    /// inbox's numbers do. False leaves the digit to the composer.
+    var pick: ((Int) -> Bool)?
     let send: () -> Void
     /// See-through, over the new task page's backdrop, which frosts what's under it (and a little way out, fading):
     /// the card itself draws nothing, no edge and no shadow.
@@ -57,6 +60,9 @@ struct Composer<Controls: View>: View {
     /// Whether this composer's page is the one shown, where the typing and paste monitor (AppKit's, outside SwiftUI's
     /// updates) can read it: a page kept behind the shown one must leave the keyboard and the clipboard alone.
     @State private var shown = FocusBox()
+    /// `pick` as it is now, for the monitor (made once, at appearing).
+    final class PickBox { var pick: ((Int) -> Bool)? }
+    @State private var picker = PickBox()
 
     /// The same switches as the control bar's composer (Settings → Inbox).
     private var suggestCommands: Bool { UserDefaults.standard.object(forKey: "suggestCommands") as? Bool ?? true }
@@ -168,10 +174,15 @@ struct Composer<Controls: View>: View {
             guard monitor == nil else { return }
             let (focus, draft, focused, caret) = (focus, $draft, $focused, $caret)
             let attach = { (urls: [URL]) in attach(urls) }
-            let shown = shown
+            let shown = shown, picker = picker, images = $images
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 guard shown.on else { return event }
                 let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                if flags.isDisjoint(with: [.command, .control, .option]), draft.wrappedValue.isEmpty, images.wrappedValue.isEmpty,
+                   let digit = event.charactersIgnoringModifiers.flatMap(Int.init), (1...9).contains(digit),
+                   (focus.on || !Self.takesTyping(event.window?.firstResponder)), picker.pick?(digit) == true {
+                    return nil
+                }
                 let paste = flags == .command && event.charactersIgnoringModifiers == "v"
                 if focus.on {
                     guard paste, let urls = Attachments.fromPasteboard(), !urls.isEmpty else { return event }
@@ -200,6 +211,8 @@ struct Composer<Controls: View>: View {
         }
         .onDisappear { if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil; stopWatchingAdd() }
         .onChange(of: active, initial: true) { shown.on = active; if !active { focus.on = false } }
+        .onAppear { picker.pick = pick }
+        .onChange(of: pick == nil) { picker.pick = pick }
     }
 
     /// Whether what has the keyboard takes typing: an editable text view (a field's editor too), or anything that reads

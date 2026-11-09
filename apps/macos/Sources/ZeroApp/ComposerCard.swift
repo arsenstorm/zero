@@ -32,6 +32,12 @@ struct ReplyBox: View {
     let dictating: Bool
     let onMic: () -> Void
     let onSend: () -> Void
+    /// Focused as it appears (an option opening into it).
+    var autofocus = false
+    @State private var pasting: Any?
+    /// Told when this box gains or loses focus: a question card on the composer stays up while it's typed in (the
+    /// pointer, hidden while typing, no longer holds it there).
+    @Environment(\.dockFocus) private var dockFocus
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -54,6 +60,22 @@ struct ReplyBox: View {
         .padding(.horizontal, 10).padding(.vertical, 8)
         // The whole box is the field: a click on its padding focuses it too.
         .contentShape(Rectangle()).onTapGesture { focus.wrappedValue = key }
+        // An image pasted (⌘V) while it's focused: kept as the composer's are, its path in the words, for the agent to
+        // open. The field alone drops an image.
+        .onAppear {
+            let (focus, key, text) = (focus, key, $text)
+            pasting = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                guard focus.wrappedValue == key, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+                      event.charactersIgnoringModifiers == "v", let urls = Attachments.fromPasteboard(), !urls.isEmpty else { return event }
+                let words = text.wrappedValue
+                text.wrappedValue = words + (words.isEmpty || words.hasSuffix(" ") ? "" : " ") + urls.map(\.path).joined(separator: " ")
+                return nil
+            }
+        }
+        .onDisappear { if let pasting { NSEvent.removeMonitor(pasting) }; if focus.wrappedValue == key { dockFocus?(false) } }
+        .onChange(of: focus.wrappedValue == key) { _, on in dockFocus?(on) }
+        // A moment after appearing: in the same update, the field can't take focus yet and it's dropped.
+        .task { if autofocus { try? await Task.sleep(for: .milliseconds(50)); focus.wrappedValue = key } }
     }
 }
 

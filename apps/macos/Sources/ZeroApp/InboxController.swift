@@ -9,7 +9,12 @@ final class InboxController {
     let store: Store
     let dictation = Dictation()
     var selected: String?
-    var drafts: [String: String] = [:]
+    /// What's written in the inbox's boxes (a question's reply, its "Something else…", an agent's composer), and which
+    /// question has its text option open: kept as it's typed, so an update (Zero quitting and opening again) loses
+    /// none of it, as the composers' drafts are kept (Drafts).
+    var drafts: [String: String] = UserDefaults.standard.dictionary(forKey: "inboxDrafts") as? [String: String] ?? [:] {
+        didSet { UserDefaults.standard.set(drafts, forKey: "inboxDrafts") }
+    }
     var focusedReply: String? { didSet { if (focusedReply != nil) != (oldValue != nil) { onTyping?(focusedReply != nil) } } }
     /// Told when a text box in the inbox gains or loses focus, so Zero can be the active app while the user types.
     @ObservationIgnored var onTyping: ((Bool) -> Void)?
@@ -232,11 +237,17 @@ final class InboxController {
         let workers = Set((workspace?.conversations ?? []).filter { $0.parent != nil }.map(\.id)
                           + rows.flatMap { row in (row.team ?? []).map(\.session).filter { $0 != row.session } })
         let session = { (ask: Ask) -> String? in ask.session }
-        var seen: [String] = []
-        for ask in live where !seen.contains(ask.agent.name) && !(session(ask).map(workers.contains) ?? false) { seen.append(ask.agent.name) }
+        // Each agent's asks, gathered once (not every ask filtered again for every dot).
+        var byAgent: [String: [Ask]] = [:]
+        var seen: [String] = [], shown = Set<String>()
+        for ask in live {
+            let name = ask.agent.name
+            byAgent[name, default: []].append(ask)
+            if !shown.contains(name), !(session(ask).map(workers.contains) ?? false) { shown.insert(name); seen.append(name) }
+        }
         return settings.sorted(seen)
             .map { name -> (String, AgentStatus) in
-                let own = live.filter { $0.agent.name == name }
+                let own = byAgent[name] ?? []
                 var status = AgentStatus.of(own)
                 if let lead = own.first.flatMap(session), let row = rows.first(where: { $0.session == lead }) {
                     switch row.state {
@@ -358,7 +369,9 @@ final class InboxController {
     }
     static let newAgentKey = "new:"
     /// Ask id → index of the text option whose input is open on that card.
-    var textOption: [String: Int] = [:]
+    var textOption: [String: Int] = UserDefaults.standard.dictionary(forKey: "inboxTextOptions") as? [String: Int] ?? [:] {
+        didSet { UserDefaults.standard.set(textOption, forKey: "inboxTextOptions") }
+    }
     /// Bumped when the view should scroll the selected card to the bar's centre line (never on hover selection).
     var scrollRequest = 0
     @ObservationIgnored var scrollAnimated = false

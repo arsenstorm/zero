@@ -146,10 +146,12 @@ struct StepOrAsk: View {
     }
 }
 
-/// Other tasks by their ids: a message from one names it, and opens it.
-struct TaskLink {
+/// Other tasks by their ids: a message from one names it, and opens it. Always equal: its closures read the workspace
+/// and navigation, which don't change, and a new one each time the task page redrew redrew every message reading it.
+struct TaskLink: Equatable {
     let name: (String) -> String?
     let open: (String) -> Void
+    static func == (a: TaskLink, b: TaskLink) -> Bool { true }
 }
 
 extension EnvironmentValues {
@@ -270,16 +272,26 @@ struct GivenMessage: View {
                 }
                 .buttonStyle(.plain)
             }
-            // Opened, what follows its heading: the heading itself is the row above, said once.
-            if open, !rest.isEmpty { MarkdownText(rest, cwd: cwd, size: 13.5, compact: true).padding(.leading, 22) }
+            // Opened, what follows its heading: the heading itself is the row above, said once. Events on what's
+            // followed as cards of their own (their text is written for the agent).
+            if open, !rest.isEmpty {
+                let followed = from == "zero" ? FollowEvents.parse(report) : []
+                Group {
+                    if followed.isEmpty { MarkdownText(rest, cwd: cwd, size: 13.5, compact: true) } else { FollowedEvents(groups: followed) }
+                }
+                .padding(.leading, 22)
+            }
         }
         .font(.callout)
     }
 
-    /// Its first line, as words: the heading of the folded row.
+    /// Its first line, as words: the heading of the folded row. Without a closing colon: folded, it read as if the
+    /// line after it were what it introduces.
     private var first: String {
+        if from == "zero", let headline = NoticeText.headline(text) { return headline }
         let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
-        return line.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
+        let words = line.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
+        return words.hasSuffix(":") ? String(words.dropLast()) : words
     }
 
     /// The report after its first line, which heads the folded row.
@@ -292,6 +304,55 @@ struct GivenMessage: View {
     private var report: String {
         guard let note = text.range(of: "\n\n(It is session ") else { return text }
         return String(text[..<note.lowerBound])
+    }
+}
+
+/// Events on what a task follows, opened: a card a thing (its short name, its title opening it), its events under it,
+/// each with its words and a link to it.
+private struct FollowedEvents: View {
+    let groups: [FollowEvents.Group]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(groups.indices, id: \.self) { i in card(groups[i]) }
+        }
+    }
+
+    private func card(_ group: FollowEvents.Group) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(group.name).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                if !group.title.isEmpty { opening(group.title, group.url) }
+                Spacer(minLength: 0)
+            }
+            ForEach(group.events.indices, id: \.self) { i in
+                let event = group.events[i]
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Circle().fill(.secondary).frame(width: 5, height: 5).alignmentGuide(.firstTextBaseline) { $0[.bottom] + 3.5 }
+                        Text(event.summary).lineLimit(2)
+                        if event.mine { Text("Possibly yours").foregroundStyle(.secondary).lineLimit(1).fixedSize() }
+                        Spacer(minLength: 8)
+                        if let url = event.url { opening("View", url) }
+                    }
+                    if !event.body.isEmpty {
+                        Text(event.body).foregroundStyle(.secondary).lineLimit(6).textSelection(.enabled).padding(.leading, 13)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.choice, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    /// What opens, as properties have it: medium weight on a dashed underline.
+    @ViewBuilder private func opening(_ text: String, _ link: String?) -> some View {
+        if let link, let url = URL(string: link) {
+            Button { NSWorkspace.shared.open(url) } label: { TaskDetails.linked(text) }.buttonStyle(.plain).tip("Open " + link)
+        } else {
+            Text(text).fontWeight(.medium).lineLimit(1)
+        }
     }
 }
 

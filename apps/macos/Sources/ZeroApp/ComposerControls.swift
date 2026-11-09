@@ -10,6 +10,8 @@ import ZeroCore
 struct QueueStrip: View {
     let queued: [Queued]
     let held: Bool
+    /// The pointer on it: the question card behind it comes up, as for the composer.
+    var hover: (Bool) -> Void = { _ in }
     let steer: (Queued) -> Void
     let edit: (Queued) -> Void
     let remove: (Queued) -> Void
@@ -33,7 +35,9 @@ struct QueueStrip: View {
             .foregroundStyle(.secondary)
             .padding(.horizontal, 12).frame(height: 28)
             VStack(spacing: 0) {
-                ForEach(Array(queued.enumerated()), id: \.element.id) { index, item in
+                // By place, not id: a message just queued shows at once as Zero's own copy, then as zerod's (a new id),
+                // in the same place; by id, the row went and another came in its stead.
+                ForEach(Array(queued.enumerated()), id: \.offset) { index, item in
                     HStack(spacing: 2) {
                         Button { edit(item) } label: {
                             Text(Self.gist(item)).font(.system(size: 13)).foregroundStyle(.primary).lineLimit(1).truncationMode(.tail)
@@ -82,6 +86,7 @@ struct QueueStrip: View {
         // card sits 4 down inside its own column (the composer's top padding), so 16 here puts 12 of the tab under it:
         // the last row's 12 exactly, leaving the same 4 under its pill as over the first row's.
         .background(Theme.fieldTab, in: UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18, style: .continuous))
+        .onHover(perform: hover)
         .padding(.horizontal, 13).padding(.bottom, -16)
     }
 

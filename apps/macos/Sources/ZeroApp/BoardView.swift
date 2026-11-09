@@ -165,20 +165,29 @@ struct ArticlePanel<Strip: View, Content: View>: View {
                 // Docked above the composer at the height of the tallest card waiting: a shorter one's body fills it,
                 // and only one taller than the dock allows scrolls. Nothing folds.
                 if dockHeight != nil {
-                    ScrollView { content().frame(maxWidth: .infinity, alignment: .leading) }
-                        .scrollBounceBehavior(.basedOnSize)
-                        .thinScrollbar()
-                        .frame(maxHeight: .infinity, alignment: .top)
+                    scrolling
+                } else if docked, let dockMax {
+                    // One alone, or not yet measured (just launched): never taller than its share of the page, a long
+                    // one scrolling inside. Uncapped, it took more than the window, the conversation out of reach.
+                    // Its own height, clamped: a frame with a most grew to it whatever the card held.
+                    Capped(most: max(80, dockMax - 34)) { ViewThatFits(in: .vertical) { content(); scrolling } }
                 } else {
                     content()
                 }
             }
+            // Docked, its surface runs on under what's in front of it (the composer, or the queue's tab).
+            .padding(.bottom, docked ? AskDock.tuck : 0)
             .background(Theme.composer)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .clipShape(docked ? AnyShape(UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16, style: .continuous))
+                              : AnyShape(RoundedRectangle(cornerRadius: 10)))
         }
-        .padding(2)
+        .padding(docked ? EdgeInsets(top: 0, leading: 2, bottom: 0, trailing: 2) : EdgeInsets(top: 2, leading: 2, bottom: 2, trailing: 2))
         .frame(height: dockHeight)
-        .background(Theme.rail, in: RoundedRectangle(cornerRadius: 12))
+        // Docked, a tab behind the composer as the queue's is (its grey, its top corners, concentric with the surface's
+        // 16 at 2 in); otherwise a panel in the page.
+        .background(docked ? Theme.fieldTab : Theme.rail,
+                    in: docked ? AnyShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18, style: .continuous))
+                               : AnyShape(RoundedRectangle(cornerRadius: 12)))
         // Bled out by its inner padding (the shell's 2 pt and a cell's 16), so its text lines up with the page's, as
         // the site's panels do with its prose. Docked above the composer, as wide as the composer instead.
         .padding(.horizontal, docked ? 0 : -18)
@@ -186,6 +195,14 @@ struct ArticlePanel<Strip: View, Content: View>: View {
 
     @Environment(\.askDocked) private var docked
     @Environment(\.askDockHeight) private var dockHeight
+    @Environment(\.askDockMax) private var dockMax
+
+    private var scrolling: some View {
+        ScrollView { content().frame(maxWidth: .infinity, alignment: .leading) }
+            .scrollBounceBehavior(.basedOnSize)
+            .thinScrollbar()
+            .frame(maxHeight: .infinity, alignment: .top)
+    }
 }
 
 /// A task's Pause, or its Resume when it's paused: it and its workers, on hold and off it.
@@ -261,5 +278,17 @@ struct Marquee: View {
         } else if scrolling {
             withAnimation(.easeOut(duration: 0.2)) { offset = 0 } completion: { if offset == 0 { scrolling = false } }
         }
+    }
+}
+
+/// Its view as tall as it is, never taller than `most`: offered at most that, and hugging what it takes (a frame
+/// with a maximum takes all it's offered up to it, and showed a short card in a tall one).
+struct Capped: Layout {
+    let most: CGFloat
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        subviews.first?.sizeThatFits(ProposedViewSize(width: proposal.width, height: min(proposal.height ?? most, most))) ?? .zero
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
     }
 }

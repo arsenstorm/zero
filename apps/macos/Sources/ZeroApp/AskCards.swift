@@ -53,8 +53,8 @@ struct QuestionCard: View {
 struct AgentAskCard: View {
     let ask: Ask
     let inbox: InboxController
-    /// In the conversation: the question and its answer (or that it waits on you) on one line of fixed height; the
-    /// full card is above the composer while it waits.
+    /// In the conversation: a step among its turn's steps, quiet as thinking is (the question and what became of it);
+    /// the full card is above the composer while it waits.
     var compact = false
     @FocusState private var focus: String?
 
@@ -70,6 +70,27 @@ struct AgentAskCard: View {
     static func made(by item: ConversationItem, in asks: [Ask], session: String) -> Ask? { item.ask(in: asks, session: session) }
 
     var body: some View {
+        if compact { line } else { card }
+    }
+
+    private var line: some View {
+        HStack(alignment: .top, spacing: 8) {
+            NucleoIcon(ask.kind == .run ? "terminal" : "circle-question", fill: ask.kind == .run ? "outline" : "glyph", size: 14)
+                .foregroundStyle(.secondary).frame(width: 14, height: 16)
+            Text(ask.kind == .run ? "Asked to run" : "Asked").fontWeight(.medium)
+            Text(ask.kind == .run ? (ask.command ?? ask.title) : ask.title).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+            Spacer(minLength: 8)
+            Text(answered).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .font(.callout)
+        .tip(ask.title)
+    }
+
+    private var card: some View {
+        cardBody
+    }
+
+    private var cardBody: some View {
         ArticlePanel {
             HStack(spacing: 6) {
                 NucleoIcon(ask.kind == .run ? "terminal" : "circle-question", fill: ask.kind == .run ? "outline" : "glyph", size: 13)
@@ -79,19 +100,9 @@ struct AgentAskCard: View {
             .padding(.horizontal, 14).padding(.vertical, 7)
             .modifier(PagedStrip())
         } content: {
-            if compact {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(ask.kind == .run ? (ask.command ?? ask.title) : ask.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                    Spacer(minLength: 8)
-                    Text(answered).font(.system(size: 13)).foregroundStyle(ask.state.isFinal ? AnyShapeStyle(.secondary) : AnyShapeStyle(.orange)).lineLimit(1)
-                }
-                .padding(.horizontal, 14).padding(.vertical, 10)
-                .tip(ask.title)
-            } else {
-                CardView(ask: ask, controller: inbox, focus: $focus, flat: true, showsByline: false)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 2)
-            }
+            CardView(ask: ask, controller: inbox, focus: $focus, flat: true, showsByline: false)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 2)
         }
     }
 
@@ -105,6 +116,14 @@ struct AgentAskCard: View {
         case .answered where ask.kind == .run: (ask.exitCode ?? 0) == 0 ? "Ran" : "Failed (exit \(ask.exitCode ?? 0))"
         default: ask.choice.flatMap { ask.options.indices.contains($0) ? ask.options[$0] : nil } ?? ask.answer ?? "Answered"
         }
+    }
+}
+
+/// Sinking in a conversation, nothing elsewhere.
+private struct SinkingIn: ViewModifier {
+    let foot: ConversationView.Foot?
+    @ViewBuilder func body(content: Content) -> some View {
+        if let foot { content.modifier(Sinking(foot: foot)) } else { content }
     }
 }
 
@@ -269,6 +288,10 @@ extension EnvironmentValues {
     @Entry var askDocked = false
     /// The height of a docked card, the same for every card waiting; nil, its own.
     @Entry var askDockHeight: CGFloat? = nil
+    /// The most a docked card may be: its share of the page.
+    @Entry var askDockMax: CGFloat? = nil
+    /// Told when a text box in a docked card gains or loses focus.
+    @Entry var dockFocus: ((Bool) -> Void)? = nil
     /// The dock's place among what waits: "1 of 3", and a step either way.
     @Entry var askPager: AskPager? = nil
 }
@@ -320,6 +343,8 @@ struct AskDock: View, Equatable {
     let asks: [Ask]
     let inbox: InboxController
     let page: CGFloat
+    /// In a conversation: the card sinks as it's scrolled up (Sinking), its ring and clip coming and going with it.
+    var foot: ConversationView.Foot? = nil
     let answer: (String, [String: [String]]) -> Void
     let decide: (String, String) -> Void
     @State private var index = 0
@@ -327,33 +352,53 @@ struct AskDock: View, Equatable {
 
     private var ids: [String] { questions.map(\.id) + asks.map(\.id) + approvals.map(\.id) }
 
+    /// How far a docked card runs on under the composer: its foot behind it, so it reads as coming out from under it.
+    static let tuck: CGFloat = 14
+
     var body: some View {
+        // Rising out from behind the composer (drawn over it), and sinking back once answered.
+        // One piece: its contents placed by it as it moves (the body's text, an AppKit view, went straight to where it
+        // ends while the card was still rising). Its sinking (ring, clip) inside the transition: outside, the ring
+        // showed before the card, and the clip, sized to an emptied dock, left a scrap of the card leaving. (Not
+        // composited as one: the ring's blur would have nothing behind it to blur.)
+        ZStack { dock }
+            .animation(ConversationView.slide, value: ids.isEmpty)
+    }
+
+    @ViewBuilder private var dock: some View {
         let ids = ids
         if !ids.isEmpty {
             let shown = min(index, ids.count - 1)
             let tallest = ids.compactMap { heights[$0] }.max()
             card(ids[shown])
                 .environment(\.askDockHeight, tallest.map { min($0, max(160, page * 0.45)) })
+                .environment(\.askDockMax, max(160, page * 0.45))
                 .environment(\.askPager, AskPager(index: shown, count: ids.count) { step in index = max(0, min(ids.count - 1, shown + step)) })
                 // Each one laid out unseen at its own height, so the dock is as tall as the tallest. Only with
-                // several: one alone is its own height.
+                // several: one alone is its own height (scrolled up, it sinks out of the way).
                 .background(alignment: .top) {
                     if ids.count > 1 {
-                        ZStack(alignment: .top) {
-                            ForEach(ids, id: \.self) { id in
-                                card(id)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-                                        // Only a change: each write redraws the dock and every card in it.
-                                        if abs((heights[id] ?? 0) - height) > 0.5 { heights[id] = height }
-                                    }
-                            }
+                    ZStack(alignment: .top) {
+                        ForEach(ids, id: \.self) { id in
+                            card(id)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                                    // Only a change: each write redraws the dock and every card in it.
+                                    if abs((heights[id] ?? 0) - height) > 0.5 { heights[id] = height }
+                                }
                         }
-                        .environment(\.askPager, AskPager(index: 0, count: ids.count) { _ in })
-                        .hidden().allowsHitTesting(false).accessibilityHidden(true)
+                    }
+                    .environment(\.askPager, AskPager(index: 0, count: ids.count) { _ in })
+                    .hidden().allowsHitTesting(false).accessibilityHidden(true)
                     }
                 }
-                .onChange(of: ids.count) { if ids.count <= 1 { heights = [:] } }
+                .onChange(of: ids) { heights = heights.filter { ids.contains($0.key) } }
+                .modifier(SinkingIn(foot: foot))
+                .geometryGroup()
+                // In, it rises from behind the composer (Sinker), with the conversation's scroll; out, it fades.
+                // In, it slides up from behind the composer (Sinker); out, it slides back down as it fades.
+                .transition(.asymmetric(insertion: foot == nil ? .offset(y: 36).combined(with: .opacity) : .identity,
+                                        removal: .offset(y: 48).combined(with: .opacity)))
         }
     }
 

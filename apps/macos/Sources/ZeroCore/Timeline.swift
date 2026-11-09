@@ -66,29 +66,6 @@ public enum TimelineBlock: Identifiable, Equatable, Sendable {
         return blocks
     }
 
-    /// The agent's asks shown after each block: those a finished turn's steps made, under the turn's last block (its
-    /// answer), where they stay once answered, so answering moves nothing. A turn under way shows them in its steps.
-    public static func asks(after blocks: [TimelineBlock], in asks: [Ask], session: String) -> [String: [Ask]] {
-        // This task's own, once: an inbox holds every task's asks, and each step is matched against them.
-        let asks = asks.filter { $0.isAgents(in: session) }
-        if asks.isEmpty { return [:] }
-        var after: [String: [Ask]] = [:]
-        var made: [Ask] = []
-        // Each placed once, under the first turn that made it: the same ask twice in the column is the same view twice.
-        var placed: Set<String> = []
-        var last: String?
-        func place() { if let last, !made.isEmpty { after[last, default: []] += made }; made = [] }
-        for block in blocks {
-            if case .user = block { place() }
-            if case let .work(_, items, _, _, live) = block, !live {
-                for ask in items.compactMap({ $0.ask(in: asks, session: session) }) where placed.insert(ask.id).inserted { made.append(ask) }
-            }
-            last = block.id
-        }
-        place()
-        return after
-    }
-
     /// The message of yours each block answers to, for the rail.
     public static func turns(_ blocks: [TimelineBlock]) -> [String: String] {
         var owner: [String: String] = [:]
@@ -325,6 +302,20 @@ public enum NoticeText {
     public static func attributed(_ text: String) -> AttributedString {
         guard text.contains("](http"), let linked = try? AttributedString(markdown: text) else { return AttributedString(text) }
         return linked
+    }
+
+    /// Zero's word to an agent about one of its asks, as its folded row reads to the user: what came of it ("Ask
+    /// answered with “…”"), not "The user answered your ask…", which is written for the agent. Nil for anything else.
+    public static func headline(_ text: String) -> String? {
+        if text.hasPrefix("The user answered your ask "), let colon = text.range(of: "\"): ") {
+            let answer = text[colon.upperBound...].split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
+            return "Ask answered with “\(answer)”"
+        }
+        if text.hasPrefix("The user declined your ask ") { return "Ask declined" }
+        if text.hasPrefix("Your ask "), text.contains(" expired without an answer") { return "Ask expired" }
+        if text.hasPrefix("The user ran your command ") { return "Command ran" }
+        if text.hasPrefix("The user rejected your command ") { return "Command rejected" }
+        return nil
     }
 }
 

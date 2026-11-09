@@ -321,7 +321,9 @@ struct CardView: View {
         VStack(spacing: docked ? 6 : 12) {
             ForEach(Array(ask.options.enumerated()), id: \.offset) { index, option in
                 if !decided, controller.textOption[ask.id] == index {
-                    replyBox(placeholder: option)
+                    // Focused once it's there, chosen by a click or its number: focus asked for before it was there
+                    // was dropped.
+                    replyBox(placeholder: option, autofocus: true)
                 } else {
                     optionButton(index, option)
                 }
@@ -344,11 +346,11 @@ struct CardView: View {
         }.buttonStyle(.plain).allowsHitTesting(!decided || retry)
     }
 
-    private func replyBox(placeholder: String) -> some View {
+    private func replyBox(placeholder: String, autofocus: Bool = false) -> some View {
         ReplyBox(placeholder: placeholder,
                  text: Binding(get: { controller.drafts[ask.id, default: ""] }, set: { controller.drafts[ask.id] = $0 }),
                  key: ask.id, focus: focus, dictating: dictating,
-                 onMic: { controller.select(ask.id); controller.toggleDictation() }, onSend: { controller.send(ask.id) })
+                 onMic: { controller.select(ask.id); controller.toggleDictation() }, onSend: { controller.send(ask.id) }, autofocus: autofocus)
             .background(Theme.choice).clipShape(RoundedRectangle(cornerRadius: 10))
     }
 

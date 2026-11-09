@@ -15,6 +15,8 @@ extension NSAttributedString.Key {
     static let zeroToken = NSAttributedString.Key("zeroToken")
     /// What a token opens when clicked (a loop); not a link, which the view would colour as one.
     static let zeroOpens = NSAttributedString.Key("zeroOpens")
+    /// An image an agent shows (`![…](/path)`), by its file: a click opens it in the image viewer.
+    static let zeroPicture = NSAttributedString.Key("zeroPicture")
 }
 
 enum RichMarkdown {
@@ -179,12 +181,15 @@ enum RichMarkdown {
             return line(AttributedString(alt.isEmpty ? path : alt), font: .systemFont(ofSize: size), style: paragraph, color: .secondaryLabelColor)
         }
         let scale = min(1, 560 / image.size.width, 420 / image.size.height)
+        image.size = NSSize(width: round(image.size.width * scale), height: round(image.size.height * scale))
+        // Drawn through a cell of its own, as the image pills are: answers are laid out by TextKit 1, which keeps an
+        // attachment's `image` but draws nothing for it.
         let attachment = NSTextAttachment()
-        attachment.image = image
-        attachment.bounds = CGRect(x: 0, y: 0, width: round(image.size.width * scale), height: round(image.size.height * scale))
+        attachment.attachmentCell = NSTextAttachmentCell(imageCell: image)
         let out = NSMutableAttributedString(attachment: attachment)
         out.append(NSAttributedString(string: "\n"))
         out.addAttributes([.paragraphStyle: paragraph, .toolTip: alt], range: NSRange(location: 0, length: out.length))
+        out.addAttributes([.zeroPicture: path, .cursor: NSCursor.pointingHand], range: NSRange(location: 0, length: 1))
         return out
     }
 
@@ -518,6 +523,11 @@ final class RichTextView: NSTextView {
             ImageViewer.shared.show(link.path, among: imagePaths)
             return
         }
+        // An image an agent shows: opened in the viewer, with the message's other images to go through.
+        if let index = characterIndex(under: event), let path = textStorage?.attribute(.zeroPicture, at: index, effectiveRange: nil) as? String {
+            ImageViewer.shared.show(path, among: imagePaths)
+            return
+        }
         if let index = characterIndex(under: event), let url = textStorage?.attribute(.zeroOpens, at: index, effectiveRange: nil) as? URL {
             NSApp.sendAction(#selector(AppDelegate.openZeroURL(_:)), to: nil, from: url)
             return
@@ -544,6 +554,10 @@ final class RichTextView: NSTextView {
         guard let storage = textStorage else { return [] }
         var paths: [String] = []
         storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            if let picture = storage.attribute(.zeroPicture, at: range.location, effectiveRange: nil) as? String {
+                if !paths.contains(picture) { paths.append(picture) }
+                return
+            }
             guard (value as? NSTextAttachment)?.attachmentCell is ImageToken.Cell, let link = storage.attribute(.link, at: range.location, effectiveRange: nil) as? URL, link.isFileURL else { return }
             if !paths.contains(link.path) { paths.append(link.path) }
         }
