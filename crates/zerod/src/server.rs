@@ -172,6 +172,17 @@ pub struct Settings {
     /// Agents may use their CLI's own subagents; unset, they can't (adapter::subagents).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subagents: Option<bool>,
+    /// Models the user added for a CLI, Zero-wide: the pickers list them with the CLI's own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub models: Option<Vec<CustomModel>>,
+}
+
+/// A model the user added: for which CLI, the id it's started with (`--model`), and the name the picker shows.
+#[derive(serde::Serialize, Deserialize, Clone, PartialEq, Debug)]
+pub struct CustomModel {
+    pub cli: crate::model::Provider,
+    pub id: String,
+    pub name: String,
 }
 
 impl Settings {
@@ -360,6 +371,7 @@ fn configure(zerod: &Zerod, given: Settings) -> Result<Value, String> {
         settings.archive_completed = given.archive_completed.or(settings.archive_completed);
         settings.git = given.git.or(settings.git);
         settings.subagents = given.subagents.or(settings.subagents);
+        settings.models = given.models.or(settings.models);
         settings.apply_git(daemon.home());
         settings.apply(&zerod.inbox, zerod.drops.as_deref());
         let _ = std::fs::write(daemon.home().join("settings.json"), serde_json::to_vec_pretty(&settings).unwrap_or_default());

@@ -637,3 +637,18 @@ async fn a_lead_sets_its_issues_rows_and_the_board_shows_them() {
     // Kept: another zerod, rebuilt from the transcript, has the rows.
     assert!(std::fs::read_to_string(h.home.join("sessions").join(&session).join("transcript.jsonl")).unwrap().contains("merge decision"));
 }
+
+/// Models the user adds to Zero for a CLI (one its own list doesn't have yet): kept Zero-wide, each with the id the CLI
+/// is started with and the name the picker shows; a later list replaces the earlier one.
+#[tokio::test]
+async fn custom_models_are_kept_zero_wide() {
+    let h = harness("server-models").await;
+    let mut client = Client::connect(&h.socket).await;
+    let models = json!([{"cli": "claude", "id": "claude-mythos-5-2", "name": "Mythos 5.2"}]);
+    client.call(json!({"op": "configure", "models": models})).await;
+    assert_eq!(client.call(json!({"op": "settings"})).await["result"]["models"], models);
+    client.call(json!({"op": "configure", "ttl": 60})).await;
+    assert_eq!(client.call(json!({"op": "settings"})).await["result"]["models"], models, "kept when other settings change");
+    client.call(json!({"op": "configure", "models": []})).await;
+    assert!(client.call(json!({"op": "settings"})).await["result"]["models"].as_array().is_none_or(|m| m.is_empty()));
+}
