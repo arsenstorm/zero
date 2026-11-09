@@ -10,7 +10,7 @@ struct SignInsPage: View {
     let workspace: Workspace?
     /// The account being added (or switched to a token), in its dialog.
     @State private var adding: Adding?
-    /// The CLI a model is being added for: its row open in the models card.
+    /// The CLI a model is being added for, in its dialog.
     @State private var addingModel: Provider?
 
     var body: some View {
@@ -27,6 +27,7 @@ struct SignInsPage: View {
                     }
                 }
                 .zeroDialog(item: $adding) { adding in AddAccount(cli: adding.cli, way: adding.way, replacing: adding.replacing, workspace: workspace) }
+                .zeroDialog(item: $addingModel) { cli in AddModel(cli: cli) }
             }
         }
         .task { await CustomModels.shared.load() }
@@ -44,7 +45,7 @@ struct SignInsPage: View {
     private func section(_ cli: Provider, in workspace: Workspace) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             accounts(cli, in: workspace)
-            AddedModels(cli: cli, workspace: workspace, adding: Binding(get: { addingModel == cli }, set: { addingModel = $0 ? cli : nil }))
+            AddedModels(cli: cli, workspace: workspace)
         }
     }
 
@@ -375,57 +376,36 @@ private extension String {
     var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
 }
 
-/// The models added to Zero for a CLI, under its accounts: one its own list doesn't have yet (a new release), by the id
-/// the CLI is started with and a name for the picker. Zero-wide: every account of this CLI offers it.
+/// The models added to Zero for a CLI, under its accounts (added from the heading's Add model): one its own list
+/// doesn't have yet (a new release), by the id the CLI is started with and a name for the picker. Zero-wide: every
+/// account of this CLI offers it, but those its provider refused it.
 private struct AddedModels: View {
     let cli: Provider
     let workspace: Workspace
-    /// Its row for a new model open, from the heading's Add model.
-    @Binding var adding: Bool
-    @State private var id = ""
-    @State private var name = ""
-    @FocusState private var focused: Bool
 
     private var mine: [CustomModels.Model] { CustomModels.shared.models.filter { $0.cli == cli } }
-    private var ready: Bool { !id.trimmingCharacters(in: .whitespaces).isEmpty }
 
     var body: some View {
-        if !mine.isEmpty || adding { card }
-    }
-
-    private var card: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(mine.enumerated()), id: \.element.id) { index, model in
-                if index > 0 { Divider().padding(.leading, 18) }
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(model.name).font(.system(size: 13, weight: .medium))
-                        Text(model.id).font(.system(size: 11.5).monospaced()).foregroundStyle(.secondary)
-                        if let note = availability(model) { Text(note).font(.system(size: 11.5)).foregroundStyle(.secondary) }
+        if !mine.isEmpty {
+            VStack(spacing: 0) {
+                ForEach(Array(mine.enumerated()), id: \.element.id) { index, model in
+                    if index > 0 { Divider().padding(.leading, 18) }
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(model.name).font(.system(size: 13, weight: .medium))
+                            Text(model.id).font(.system(size: 11.5).monospaced()).foregroundStyle(.secondary)
+                            if let note = availability(model) { Text(note).font(.system(size: 11.5)).foregroundStyle(.secondary) }
+                        }
+                        Spacer()
+                        Button("Remove") { Task { await CustomModels.shared.remove(model) } }
+                            .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                     }
-                    Spacer()
-                    Button("Remove") { Task { await CustomModels.shared.remove(model) } }
-                        .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 18).frame(minHeight: 52)
                 }
-                .padding(.horizontal, 18).frame(minHeight: 52)
             }
-            if adding {
-            if !mine.isEmpty { Divider().padding(.leading, 18) }
-            HStack(spacing: 10) {
-                TextField("", text: $id, prompt: Text("Model id, as \(cli.title) takes it (\(example))"))
-                    .textFieldStyle(.plain).font(.system(size: 13).monospaced()).focused($focused).onSubmit(add)
-                TextField("", text: $name, prompt: Text("Name in the picker"))
-                    .textFieldStyle(.plain).font(.system(size: 13)).frame(width: 150).onSubmit(add)
-                Button("Add model", action: add).buttonStyle(.plain).font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(ready ? .primary : .secondary).disabled(!ready)
-            }
-            .padding(.horizontal, 18).frame(height: 48)
-            .onAppear { focused = true }
-            .onExitCommand { adding = false }
-            }
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .bleedingCard()
         }
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .bleedingCard()
     }
 
     /// Which of this CLI's accounts can't use it, as their provider said when a task tried: tasks on it go to the others.
@@ -436,16 +416,42 @@ private struct AddedModels: View {
         if refused.count == accounts.count { return "None of your accounts can use it" }
         return "Not on " + refused.map(\.label).joined(separator: ", ") + ": tasks on it run as your other accounts"
     }
+}
+
+/// A model added to Zero for a CLI, in a dialog as an account is: its id as the CLI takes it, and its name.
+private struct AddModel: View {
+    let cli: Provider
+    @Environment(\.closeDialog) private var dismiss
+    @State private var id = ""
+    @State private var name = ""
 
     private var example: String {
         switch cli { case .claude: "claude-mythos-5-2"; case .codex: "gpt-5.5-codex"; case .opencode: "provider/model" }
     }
 
-    private func add() {
-        let id = id.trimmingCharacters(in: .whitespaces)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                DialogTitle(text: "Add a \(cli.title) model")
+                Text("One \(cli.title)'s own list doesn't have yet. Every \(cli.title) account offers it; one its provider refuses it to is left out.")
+                    .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            VStack(spacing: 8) {
+                TextField("", text: $id, prompt: Text("Its id, as \(cli.title) takes it (\(example))")).textFieldStyle(.dialog).onSubmit(save)
+                TextField("", text: $name, prompt: Text("Its name in the picker (Mythos 5.2)")).textFieldStyle(.dialog).onSubmit(save)
+            }
+            HStack {
+                Spacer()
+                DialogButton(title: "Cancel") { dismiss() }
+                DialogButton(title: "Add", kind: .primary, enabled: !id.trimmed.isEmpty, action: save)
+            }
+        }
+    }
+
+    private func save() {
+        let id = id.trimmed, name = name.trimmed
         guard !id.isEmpty else { return }
-        let name = name.trimmingCharacters(in: .whitespaces)
         Task { await CustomModels.shared.add(CustomModels.Model(cli: cli, id: id, name: name.isEmpty ? id : name)) }
-        self.id = ""; self.name = ""; adding = false
+        dismiss()
     }
 }
