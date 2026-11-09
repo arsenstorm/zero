@@ -690,6 +690,9 @@ private struct AgentsPage: View {
                     SettingRow(title: "Archive done tasks", detail: "Done means finished end to end. Put away then; back when something they follow changes.") {
                         ArchiveCompletedPicker()
                     }
+                    SettingRow(title: "Agents' own subagents", detail: "Off, agents hand work to Zero workers, which you see, steer and stop here. On, Claude and Codex may also use their own, which you can't. From each task's next start.") {
+                        SubagentsSwitch()
+                    }
                     SettingRow(title: "Where tasks run", detail: "A command printing [{\"ticket\": \"ENG-1\", \"place\": \"my-bench\"}], run in your login shell every five minutes. Each task's Where is its place, by ticket, in place of its folder.") {
                         PlacesCommandField()
                     }
@@ -748,6 +751,20 @@ private struct ArchiveCompletedPicker: View {
             Task { try? await link?.setArchiveCompleted(chosen) }
         }))
         .task { if let kept = try? await link?.archiveCompleted() { seconds = Self.choices.contains { $0.1 == kept } ? kept : 24 * 3600 } }
+    }
+}
+
+/// Whether agents may use their CLI's own subagents. zerod's setting, read as each agent starts.
+private struct SubagentsSwitch: View {
+    @State private var on = false
+    @State private var link = try? ZerodLink()
+
+    var body: some View {
+        Switch(isOn: Binding(get: { on }, set: { chosen in
+            on = chosen
+            Task { try? await link?.setSubagents(chosen) }
+        }))
+        .task { if let kept = try? await link?.subagents() { on = kept } }
     }
 }
 

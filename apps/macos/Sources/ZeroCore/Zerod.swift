@@ -1107,6 +1107,11 @@ public final class ZerodLink: @unchecked Sendable {
         ((try await call("settings")) as? [String: Any])?["archiveCompleted"] as? Int ?? 24 * 3600
     }
     public func setArchiveCompleted(_ seconds: Int) async throws { _ = try await call("configure", ["archiveCompleted": seconds]) }
+    /// Whether agents may use their CLI's own subagents (Claude's Agent tool, Codex's multi-agent tools); unset, off.
+    public func subagents() async throws -> Bool {
+        ((try await call("settings")) as? [String: Any])?["subagents"] as? Bool ?? false
+    }
+    public func setSubagents(_ on: Bool) async throws { _ = try await call("configure", ["subagents": on]) }
 
     /// The sessions `session` started, without their items, each with how it's doing (which zerod tells, since the
     /// items it would be worked out from are left out).
