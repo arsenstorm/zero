@@ -308,8 +308,12 @@ extension EnvironmentValues {
         }, pick: pick)
     }
 
-    /// The models a provider's CLI offers the signed-in account, from its own cache.
+    /// The models a provider's CLI offers the signed-in account, from its own cache, and those the user added to Zero.
     static func catalogue(_ provider: Provider) -> [SpawnChoice] {
+        CustomModels.shared.adding(to: own(provider), for: provider)
+    }
+
+    private static func own(_ provider: Provider) -> [SpawnChoice] {
         switch provider {
         case .claude: SoloAdapter().spawnModels(for: SpawnChoice(id: "claude", name: "Claude"))
         case .codex: SoloAdapter().spawnModels(for: SpawnChoice(id: "codex", name: "Codex"))

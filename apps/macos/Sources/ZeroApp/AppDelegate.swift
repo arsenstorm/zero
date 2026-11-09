@@ -69,6 +69,7 @@ import ZeroCore
         NSApp.setActivationPolicy(.accessory)
         NSApp.mainMenu = Self.editMenu()
         Task { await Linear.shared.refresh() }
+        Task { await CustomModels.shared.load() }
         connectStore()
         connectWorkspace()
         connectInbox()

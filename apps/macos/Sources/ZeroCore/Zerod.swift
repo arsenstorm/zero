@@ -1112,6 +1112,15 @@ public final class ZerodLink: @unchecked Sendable {
         ((try await call("settings")) as? [String: Any])?["subagents"] as? Bool ?? false
     }
     public func setSubagents(_ on: Bool) async throws { _ = try await call("configure", ["subagents": on]) }
+    /// The models the user added to Zero, for each CLI.
+    public func customModels() async throws -> [CustomModels.Model] {
+        let kept = ((try await call("settings")) as? [String: Any])?["models"] ?? []
+        return try JSONDecoder().decode([CustomModels.Model].self, from: JSONSerialization.data(withJSONObject: kept))
+    }
+    public func setCustomModels(_ models: [CustomModels.Model]) async throws {
+        let list = try JSONSerialization.jsonObject(with: JSONEncoder().encode(models))
+        _ = try await call("configure", ["models": list])
+    }
 
     /// The sessions `session` started, without their items, each with how it's doing (which zerod tells, since the
     /// items it would be worked out from are left out).
