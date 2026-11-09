@@ -133,7 +133,8 @@ pub const CARRIED: &str = "Zero updated: carrying on where it left off";
 /// the user it never asked: sent once, unseen in the conversation. Every agent gets it, whichever runs the task.
 pub const END_YOUR_TURN_MARK: &str = "Zero can't tell where your turn left the task";
 pub const END_YOUR_TURN: &str = "Zero can't tell where your turn left the task. End it with exactly one of these as its last line: \
-[zero: done] (the work is finished end to end: merged and deployed, verified, or the user said so), [zero: waiting] \
+[zero: done] (the work is finished end to end: merged and deployed, verified, or the user said so; and only after \
+`zero done` confirmed it, its token, or zero done --ask), [zero: waiting] \
 (the next move is someone else's, not the user's: a review, CI, a deploy, QA), [zero: working] (pausing between steps), or [zero: asked <id>]. Anything you need from the user (a decision, a command for them to run, steps for them to take) \
 goes through zero ask, zero run or zero approve with --async (or Zero's zero_ask and zero_run tools), and the turn ends [zero: asked <id>]: a question left in \
 your words reaches no one. Don't repeat your answer; do what's missing and end.";

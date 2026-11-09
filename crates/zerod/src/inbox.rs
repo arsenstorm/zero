@@ -74,7 +74,12 @@ struct State {
     ticks: u64,
     take_back: Duration,
     default_ttl: i64,
+    /// `zero done`'s tokens, by agent: the second word that confirms a task done, good once, for DONE_WINDOW.
+    done_tokens: HashMap<String, (String, std::time::Instant)>,
 }
+
+/// How long `zero done`'s token is good for.
+const DONE_WINDOW: Duration = Duration::from_secs(5 * 60);
 
 pub struct Inbox {
     state: Mutex<State>,
@@ -97,6 +102,7 @@ impl Inbox {
             state: Mutex::new(State {
                 asks: vec![], timers: HashMap::new(), offline: HashSet::new(), sent: HashMap::new(),
                 reported: HashMap::new(), agents: Default::default(), ticks: 0, take_back: Duration::from_secs(2), default_ttl: 3600,
+                done_tokens: HashMap::new(),
             }),
             runs: Arc::new(crate::runs::Runs::new(runs_dir(log.as_deref()), host)),
             events, log, runtimes, me: me.clone(),
@@ -147,6 +153,9 @@ impl Inbox {
     pub fn create(&self, incoming: Ask, keep_id: bool) -> Ask {
         let mut state = self.lock();
         let mut ask = incoming.clone();
+        // Done is confirmed through `done` alone (its token, or the user's word): never taken as a client sent it.
+        ask.confirmed = false;
+        ask.done_check = false;
         if !keep_id || incoming.id.is_empty() || state.asks.iter().any(|a| a.id == incoming.id) { ask.id = crate::ask::new_id() }
         // The options are the agent's guesses: the user can always answer in their own words instead.
         if ask.kind == AskKind::Choice && !ask.options.is_empty() && !ask.options.iter().any(|o| Ask::expects_text(o)) {
@@ -265,6 +274,52 @@ impl Inbox {
     }
 
     /// Takes back an open ask: the agent withdrew it, or the user answered it some other way. Nobody is told.
+    /// `zero done`: an agent's word that its task is done, taken in two. Without a token it isn't done yet: the agent
+    /// is told what done means and given a token; with that token (once, within DONE_WINDOW) the task is done,
+    /// confirmed. A bare "done" cost an agent nothing to say, and it said it when a piece felt finished (committed, not
+    /// shipped), putting the task away.
+    pub fn done(&self, agent: &AgentIdentity, said: &str, token: Option<&str>) -> Result<(), String> {
+        let mut state = self.lock();
+        let quoted = said.replace('"', "'");
+        let Some(token) = token else {
+            let token = crate::ask::new_id();
+            state.done_tokens.insert(agent.name.clone(), (token.clone(), std::time::Instant::now()));
+            return Err(format!("Not marked done yet. Done means one of these, not a piece that feels finished:\n\
+                - the user said the task is done;\n\
+                - the work is finished end to end: merged, deployed and checked, its ticket closed, nothing left that \
+                anyone has to do for it. Committed, pushed, or sent for review is not done.\n\
+                If one of those is so, confirm within 5 minutes: zero done \"{quoted}\" --confirm {token}\n\
+                Unsure? Ask the user instead: zero done \"{quoted}\" --ask"));
+        };
+        let good = state.done_tokens.get(&agent.name).is_some_and(|(kept, at)| kept == token && at.elapsed() < DONE_WINDOW);
+        if !good { return Err("That token isn't good (wrong, used, or older than 5 minutes): run zero done again.".into()) }
+        state.done_tokens.remove(&agent.name);
+        drop(state);
+        self.confirm_done(agent, said);
+        Ok(())
+    }
+
+    /// `zero done --ask`: the user asked whether the task is done; their Done confirms it (finish).
+    pub fn ask_done(&self, agent: &AgentIdentity, said: &str) -> Ask {
+        let ttl = self.lock().default_ttl;
+        let mut question = Ask::new(AskKind::Choice, "Is this task done?", agent.clone(), ttl);
+        question.body = said.to_string();
+        question.options = vec!["Done".into(), "Not yet…".into()];
+        question.waits = Some(false);
+        let created = self.create(question, false);
+        self.update(&created.id, |a| { a.done_check = true; true });
+        self.ask(&created.id).unwrap_or(created)
+    }
+
+    /// The task done, confirmed: a done note the board takes as done.
+    fn confirm_done(&self, agent: &AgentIdentity, said: &str) {
+        let mut note = Ask::new(AskKind::Note, "Update", agent.clone(), 0);
+        note.body = said.to_string();
+        note.status = Some("done".into());
+        let created = self.create(note, false);
+        self.update(&created.id, |a| { a.confirmed = true; true });
+    }
+
     pub fn withdraw(&self, id: &str, reason: Option<&str>) {
         // A command under way stops with it: nothing else would stop it, and with its ask closed the user had no way to.
         let running = self.ask(id).filter(|a| a.state == AskState::Running).and_then(|a| a.run);
@@ -311,6 +366,10 @@ impl Inbox {
 
     fn finish(&self, id: &str, state: AskState, exit_code: Option<i32>) {
         if let Some(timer) = self.lock().timers.remove(&format!("expire-{id}")) { timer.abort() }
+        // Asked whether its task is done, the user said Done: done, confirmed.
+        if state == AskState::Answered && let Some(question) = self.ask(id).filter(|a| a.done_check && a.choice == Some(0)) {
+            self.confirm_done(&question.agent, &question.body);
+        }
         self.update(id, |a| {
             a.state = state;
             a.answered_at = Some(Time::now());

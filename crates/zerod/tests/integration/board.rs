@@ -23,6 +23,12 @@ fn note(session: &str, body: &str, status: Option<&str>, needs: Option<&str>) ->
     note
 }
 
+/// A done note confirmed (`zero done`'s token, or the user's word): the only done a row shows.
+fn confirmed(mut note: Ask) -> Ask {
+    note.confirmed = true;
+    note
+}
+
 /// What zerod posts itself as a session's attention changes.
 fn dot(body: &str, status: Option<&str>) -> Ask {
     let mut dot = note("a", body, status, None);
@@ -53,13 +59,13 @@ fn the_agents_own_note_says_where_it_is_and_what_it_needs() {
     // Done, with a step only the user can take: over to them. Not blocked, not a decision: a to-do.
     assert_eq!((row.state, row.needs.as_deref()), (State::Handed, Some("ship as is or one more round")));
 
-    let later = [asks[0].clone(), note("a", "Round 4 pushed", Some("done"), None)];
+    let later = [asks[0].clone(), confirmed(note("a", "Round 4 pushed", Some("done"), None))];
     let row = &board(std::slice::from_ref(&lead), &later)[0];
     assert_eq!((row.state, row.needs.as_deref(), row.now.as_deref()), (State::Done, None, Some("Round 4 pushed")), "a later note without needs clears them");
     // Done is the work finished; merged is it shipped.
-    let shipped = [note("a", "Merged #13336", Some("merged"), None)];
+    let shipped = [confirmed(note("a", "Merged #13336", Some("merged"), None))];
     assert_eq!(board(std::slice::from_ref(&lead), &shipped)[0].state, State::Done, "merged, as agents said it before: done");
-    assert_eq!(board(&[lead], &[note("a", "Shipped and checked", Some("completed"), None)])[0].state, State::Done, "completed, as agents said it before: done");
+    assert_eq!(board(&[lead], &[confirmed(note("a", "Shipped and checked", Some("completed"), None))])[0].state, State::Done, "completed, as agents said it before: done");
 }
 
 #[test]
@@ -74,7 +80,7 @@ fn a_new_turn_clears_what_the_last_note_said() {
 fn done_or_merged_stands_through_turns_zero_started_until_the_user_speaks() {
     // Merged, then told of a QA write-up it follows: that turn changes nothing, and Merged stands.
     let mut lead = session("a", "/work/app", Status::Idle);
-    let mut merged = note("a", "Merged #6714", Some("merged"), None);
+    let mut merged = confirmed(note("a", "Merged #6714", Some("merged"), None));
     merged.created_at = zerod::ask::Time(1_000);
     let said = |text: &str, at: i64| Item { at: Some(at * 1000), id: format!("u{at}"), turn: None, kind: ItemKind::User { text: text.into(), images: vec![] }, status: ItemStatus::Done };
     lead.items.push(said(&from_line("zero", "1 new event on what you follow"), 1_100));
@@ -175,8 +181,9 @@ fn how_the_agent_ended_its_turn_is_the_rows_state() {
         lead.items.push(Item { id: "1".into(), turn: None, kind: ItemKind::Agent { text: text.into(), final_answer: true }, status: ItemStatus::Done, at: None });
         board(&[lead], &[])[0].state
     };
-    assert_eq!(ended("Merged, deployed and checked; the PM moves the issue on.\n\n[zero: done]"), State::Done, "nothing left that it can do");
-    assert_eq!(ended("Pushed all four commits; nothing left.\n\n[zero: completed]"), State::Done, "completed, as agents said it before: done");
+    // Saying it isn't enough: done is confirmed (zero done, its token), and said alone it's a reply to read.
+    assert_eq!(ended("Merged, deployed and checked; the PM moves the issue on.\n\n[zero: done]"), State::Answered, "said, not confirmed");
+    assert_eq!(ended("Pushed all four commits; nothing left.\n\n[zero: completed]"), State::Answered, "completed, as agents said it before: done, so the same");
     assert_eq!(ended("Deploying; QA checks after.\n[zero: waiting]"), State::Waiting, "the next move is someone else's, not the user's: they'd be asked");
     assert_eq!(ended("Can't reach staging.\n[zero: blocked]"), State::Waiting, "blocked, as agents said it before: waiting");
     assert_eq!(ended("Which one?\n[zero: asked 3f2a]"), State::NeedsYou);
@@ -186,7 +193,22 @@ fn how_the_agent_ended_its_turn_is_the_rows_state() {
     // The agent's own note this turn says more than its ending.
     let mut lead = session("a", "/work/app", Status::Idle);
     lead.items.push(Item { id: "1".into(), turn: None, kind: ItemKind::Agent { text: "Merged.\n[zero: done]".into(), final_answer: true }, status: ItemStatus::Done, at: None });
-    assert_eq!(board(&[lead], &[note("a", "Merged #1", Some("merged"), None)])[0].state, State::Done);
+    let mut merged = note("a", "Merged #1", Some("merged"), None);
+    merged.confirmed = true;
+    assert_eq!(board(&[lead], &[merged])[0].state, State::Done);
+}
+
+#[test]
+fn a_lead_is_done_only_once_its_agent_has_confirmed_it() {
+    // An agent says done when a piece feels finished (committed, not shipped): it's Done only when it has confirmed it
+    // with zero done's token (or the user said so), and a reply to read until then, not put away.
+    let mut lead = session("a", "/work/app", Status::Idle);
+    lead.items.push(Item { id: "1".into(), turn: None, kind: ItemKind::Agent { text: "Committed.\n\n[zero: done]".into(), final_answer: true }, status: ItemStatus::Done, at: None });
+    assert_eq!(board(std::slice::from_ref(&lead), &[])[0].state, State::Answered);
+    assert_eq!(board(std::slice::from_ref(&lead), &[note("a", "Committed", Some("done"), None)])[0].state, State::Answered, "a done note, unconfirmed, too");
+    let mut confirmed = note("a", "Merged and deployed", Some("done"), None);
+    confirmed.confirmed = true;
+    assert_eq!(board(&[lead], &[confirmed])[0].state, State::Done);
 }
 
 #[test]
@@ -289,7 +311,7 @@ fn a_lead_that_replied_stays_replied_while_parked() {
     assert_eq!(board(&[replied], &[])[0].state, State::Answered);
     let mut finished = session("f", "/w/b", Status::Offline);
     finished.items.push(answer("All merged.\n\n[zero: done]"));
-    assert_eq!(board(&[finished], &[])[0].state, State::Done);
+    assert_eq!(board(&[finished], &[confirmed(note("f", "All merged", Some("done"), None))])[0].state, State::Done);
     let mut quiet = session("q", "/w/c", Status::Offline);
     quiet.items.push(Item { at: None, id: "u1".into(), turn: None, kind: ItemKind::User { text: "go on".into(), images: vec![] }, status: ItemStatus::Done });
     assert_eq!(board(&[quiet], &[])[0].state, State::Idle, "offline with no answer to read");
@@ -332,7 +354,7 @@ fn a_done_task_is_archived_once_its_been_done_a_while_counted_from_when_it_said_
     use zerod::board::due_to_archive;
     let mut lead = session("a", "/work/app", Status::Idle);
     lead.label = Some("Ship it".into());
-    let rows = board(&[lead.clone(), session("b", "/work/api", Status::Idle)], &[note("a", "Shipped", Some("completed"), None)]);
+    let rows = board(&[lead.clone(), session("b", "/work/api", Status::Idle)], &[confirmed(note("a", "Shipped", Some("completed"), None))]);
     let said = |id: &str| (id == "a").then_some(1_000);
     let day = 24 * 3600;
     assert!(due_to_archive(&rows, 1_000, Some(day), &said).is_empty(), "done just now");
@@ -354,7 +376,7 @@ fn an_offline_task_shows_the_state_its_last_answer_left_it_in() {
     };
     assert_eq!(ended("Hey Arsen, what are we working on?"), State::NeedsYou, "its question is still open");
     assert_eq!(ended("The build is green."), State::Answered);
-    assert_eq!(ended("Merged and checked.\n\n[zero: done]"), State::Done);
+    assert_eq!(ended("Merged and checked.\n\n[zero: done]"), State::Answered, "done said, not confirmed: a reply to read");
     assert_eq!(ended("Deploying.\n\n[zero: waiting]"), State::Waiting);
 }
 
@@ -404,7 +426,7 @@ fn a_question_in_the_reply_needs_the_user_whatever_ending_follows() {
         board(&[lead], &[])[0].state
     };
     assert_eq!(ended("Three things are left.\n\nWhich do you want to start with?\n\n[zero: done]"), State::NeedsYou);
-    assert_eq!(ended("## What's next?\n\nThe docs PR, then QA.\n\n[zero: done]"), State::Done, "a heading that asks isn't a question to the user");
+    assert_eq!(ended("## What's next?\n\nThe docs PR, then QA.\n\n[zero: done]"), State::Answered, "a heading that asks isn't a question to the user (and done unconfirmed is a reply)");
 }
 
 #[test]

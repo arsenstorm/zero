@@ -125,6 +125,37 @@ async fn a_run_streams_its_output_and_ends_with_its_exit_code() {
 }
 
 #[tokio::test]
+async fn done_takes_a_second_word_with_its_token() {
+    // Asked to be done, it isn't yet: told what done means, and given a token to confirm it with. A wrong or used token
+    // is refused; the right one marks it done, confirmed.
+    let s = inbox();
+    let agent = ask(AskKind::Note, "x", &[]).agent;
+    let refused = s.done(&agent, "Merged and deployed", None).unwrap_err();
+    assert!(refused.contains("end to end") && refused.contains("--confirm "), "{refused}");
+    let token = refused.split("--confirm ").nth(1).unwrap().split_whitespace().next().unwrap().trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+    assert!(s.done(&agent, "Merged and deployed", Some("nope")).is_err(), "a wrong token");
+    assert!(s.done(&agent, "Merged and deployed", Some(&token)).is_ok());
+    assert!(s.asks().iter().any(|a| a.kind == AskKind::Note && a.confirmed && a.status.as_deref() == Some("done") && a.body == "Merged and deployed"));
+    assert!(s.done(&agent, "Merged and deployed", Some(&token)).is_err(), "a token is good once");
+}
+
+#[tokio::test]
+async fn done_can_be_the_users_word() {
+    // Unsure: the user is asked, and their Done marks it done, confirmed; Not yet doesn't.
+    let s = inbox();
+    let agent = ask(AskKind::Note, "x", &[]).agent;
+    let question = s.ask_done(&agent, "PR open, CI green");
+    s.choose(&question.id, 0);
+    until(&s, &question.id, |a| a.state == AskState::Answered).await;
+    assert!(s.asks().iter().any(|a| a.kind == AskKind::Note && a.confirmed && a.status.as_deref() == Some("done")));
+    let other = s.ask_done(&agent, "PR open");
+    let notes = s.asks().iter().filter(|a| a.confirmed).count();
+    s.choose(&other.id, 1);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(s.asks().iter().filter(|a| a.confirmed).count(), notes, "not yet: nothing confirmed");
+}
+
+#[tokio::test]
 async fn a_run_withdrawn_while_it_runs_is_stopped() {
     // The agent took it back (it was taking too long): nothing else would stop it, and with its ask closed the user
     // had no way to. It stops, and its ask stays withdrawn when it ends, not answered.

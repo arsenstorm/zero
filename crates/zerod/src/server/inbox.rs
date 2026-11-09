@@ -46,6 +46,12 @@ fn agent_ask(zerod: &Zerod, request: &Request) -> Result<Value, String> {
         return Ok(json!({}));
     }
     let agent = crate::bridge::identity(&conversation, &crate::bridge::hostname());
+    // zero_done: as `zero done` (Inbox::done): refused with a token, done with it, or the user asked.
+    if args["tool"] == "done" {
+        let said = args["text"].as_str().unwrap_or("Done").trim().to_string();
+        if args["ask"].as_bool() == Some(true) { return Ok(json!({"id": zerod.inbox.ask_done(&agent, &said).id})) }
+        return zerod.inbox.done(&agent, &said, args["confirm"].as_str()).map(|_| json!({"done": true}));
+    }
     let ttl = Settings::load(daemon.home()).ttl.unwrap_or(3600);
     let mut ask = ask_of(&args, &conversation, agent, ttl)?;
     // A tool call returns at once, so nothing waits on the answer: it goes to the task as a message, as `--async`'s.

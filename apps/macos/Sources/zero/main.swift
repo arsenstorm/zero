@@ -13,9 +13,13 @@ func usage(help: Bool = false) -> Never {
       zero approve "what you want to do" [--body "details"] [--code 'command or snippet']   (Yes / No / Suggest something else…)
       zero run     'command' --why "what you need the output for" [--cwd DIR] [--title T]
                    runs on the user's Mac after they press Run; a script file's contents are shown to them
-      zero note    "where you are now" [--done | --waiting] [--needs "what the user should do, when they can"]
-                   (no answer; sets your agent's dot and its row on Zero's board: working, waiting on something
-                   other than the user, or done: finished end to end, with good reason to say so)
+      zero note    "where you are now" [--waiting] [--needs "what the user should do, when they can"]
+                   (no answer; sets your agent's dot and its row on Zero's board: working, or waiting on something
+                   other than the user. Done is zero done's)
+      zero done    "what's done" [--confirm TOKEN | --ask]
+                   marks the task done, in two steps: alone, it's refused with what done means and a token; if it
+                   is so (the user said it's done, or it's finished end to end: merged, deployed and checked), run it
+                   again with --confirm TOKEN within 5 minutes. Unsure: --ask asks the user (end [zero: asked <id>])
       zero withdraw <id> [--reason "why"]   (take back an open ask that no longer needs the user)
       zero wait    <id>
       zero status  <id>
@@ -165,6 +169,7 @@ case "withdraw": withdrawCommand()
 case "prompt": promptCommand()
 case "run": runCommand()
 case "note": noteCommand()
+case "done": doneCommand()
 case "wait" where positional.first.map(isSession) == true: await waitSessionsCommand()
 case "wait": waitCommand()
 case "status": statusCommand()

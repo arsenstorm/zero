@@ -17,7 +17,8 @@ user gives you such a link, read it with scratchpad_read. Read before you change
 scratchpad_write or scratchpad_edit, so changes made since aren't lost; scratchpad_append needs none. Give the user links \
 to what you wrote, as Markdown: [Title › Section](zero://pad/<id>#section). \
 In a Zero task, anything you need from the user goes through zero_ask (a question, a choice), zero_run (a command they run on their \
-Mac, its output coming back to you) or zero_note (where the task stands), when the `zero` command can't reach Zero (a sandbox).";
+Mac, its output coming back to you), zero_note (where the task stands) or zero_done (the task done, confirmed in two steps), when \
+the `zero` command can't reach Zero (a sandbox).";
 
 /// Zero's own: what a task asks of the user, as `zero ask`, `zero run` and `zero note` do, for agents whose commands
 /// can't reach Zero's socket.
@@ -38,9 +39,13 @@ fn zero_tools() -> Vec<Value> {
                "inputSchema": {"type": "object", "required": ["ticket", "state"], "properties": {
                    "ticket": string("The issue's ticket."), "state": string("you (on the user), working, waiting (on someone else), parked or done."),
                    "text": string("On the user: what you need from them. Waiting: on whom. Parked: why. Else where it stands.")}}}),
+        json!({"name": "zero_done", "description": "Marks the task done, in two steps: called with what's done, it's refused with what done means and a token; if it is so (the user said it's done, or it's finished end to end: merged, deployed and checked), call again with confirm: the token, within 5 minutes. Unsure: ask: true asks the user.",
+               "inputSchema": {"type": "object", "required": ["text"], "properties": {
+                   "text": string("What's done, one line."), "confirm": string("The token the first call gave."),
+                   "ask": {"type": "boolean", "description": "Ask the user whether it's done instead; end your turn with [zero: asked <id>]."}}}}),
         json!({"name": "zero_note", "description": "Says where the task stands, on its row in Zero.",
                "inputSchema": {"type": "object", "required": ["text"], "properties": {
-                   "text": string("Where it stands, one line."), "state": string("done (nothing left that you can do) or waiting (on someone else); left out, working."), "needs": string("What it needs from the user, if anything.")}}}),
+                   "text": string("Where it stands, one line."), "state": string("waiting (on someone else); left out, working. Done is zero_done's."), "needs": string("What it needs from the user, if anything.")}}}),
     ]
 }
 
@@ -107,6 +112,7 @@ where
             let note = name == "zero_note" || name == "zero_issue";
             match call(name, params["arguments"].clone()).await {
                 Ok(_) if note => json!({"content": [{"type": "text", "text": "Noted."}], "isError": false}),
+                Ok(made) if made["done"] == true => json!({"content": [{"type": "text", "text": "Marked done. End your turn with [zero: done]."}], "isError": false}),
                 Ok(made) => {
                     let id = made["id"].as_str().unwrap_or_default();
                     json!({"content": [{"type": "text", "text": format!("Asked as {id}. End your turn with [zero: asked {id}]; the answer comes to you as a message.")}], "isError": false})

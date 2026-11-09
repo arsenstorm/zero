@@ -31,7 +31,7 @@ pub enum State {
     Paused,
     /// It answered the user, who has seen the answer: Replied still, but nothing waits on them.
     Read,
-    /// Finished end to end, by its ending or note (`--done`; `--completed` and `--merged` as it was): merged and
+    /// Finished end to end, confirmed (`zero done`, its token, or the user's word; `--completed` and `--merged` as it was): merged and
     /// deployed, verified, or the user said so; a review, CI or QA still to come is Waiting. Last of all, and put
     /// away (Settings › archiveCompleted; a worker once its lead has its report); something it follows brings it back.
     Done,
@@ -266,6 +266,10 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
             _ => State::NeedsYou, // asked: it waits on the user's answer
         };
     }
+    // Done only as confirmed (`zero done`, its token; or the user's word): said alone, in a note or an ending, it's a
+    // reply to read, kept in view. Agents said done when a piece felt finished (committed, not shipped), and the task
+    // was put away.
+    if state == State::Done && !own.is_some_and(|n| n.confirmed) { state = State::Answered }
     // Its first line of prose: a table, heading or rule says nothing on its own; a list's item without its marker.
     let prose = |l: &&str| !l.is_empty() && !l.starts_with('|') && !l.starts_with('#') && !l.starts_with("---") && !l.starts_with("[zero:");
     let answer = session.answer().and_then(|a| a.lines().map(str::trim).find(prose)).map(|line| unlisted(line).to_string());

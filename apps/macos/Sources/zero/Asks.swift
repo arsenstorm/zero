@@ -151,8 +151,27 @@ func reason(_ ask: Ask) -> String? {
     note.status = ["blocked", "done", "completed", "merged", "waiting"].first { flag($0) != nil }.map { $0 == "merged" ? "completed" : $0 }
     note.needs = flag("needs")
     shortDetail(note.needs, flag: "needs")
+    if note.status == "done" || note.status == "completed" {
+        FileHandle.standardError.write(Data("zero: a note's --done doesn't mark the task done; zero done does (it asks you to confirm)\n".utf8))
+    }
     try? socket.send(Request(op: "create", ask: note, wait: false))
     guard let reply = socket.receive(Response.self), reply.op == "created" else { fail("zero: no reply from Zero.app") }
+}
+
+/// `zero done`: refused at first with what done means and a token, printed for the agent; with --confirm TOKEN, done;
+/// with --ask, the user asked (its id printed, to end the turn on).
+@MainActor func doneCommand() {
+    guard let text = positional.first else { usage() }
+    let socket = connect()
+    let said = Ask(kind: .note, title: "Update", body: text, agent: agentIdentity())
+    try? socket.send(Request(op: "done", ask: said, id: flag("confirm"), text: flag("ask") != nil ? "ask" : nil))
+    guard let reply = socket.receive(Response.self) else { fail("zero: no reply from Zero.app") }
+    switch reply.op {
+    case "marked": print("Marked done. End your turn with [zero: done].")
+    case "created": print("Asked as \(reply.id ?? ""). End your turn with [zero: asked \(reply.id ?? "")].")
+    case "notDone": print(reply.message ?? "Not marked done yet."); exit(1)
+    default: fail("zero: \(reply.message ?? "no reply")")
+    }
 }
 
 @MainActor func waitCommand() {

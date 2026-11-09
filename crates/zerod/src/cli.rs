@@ -89,6 +89,19 @@ async fn connection(inbox: Arc<Inbox>, stream: UnixStream) {
             let response = match inbox.ask(&id) { Some(ask) => Response { op: "ask", ask: Some(ask), ..Default::default() }, None => error(format!("no such ask {id}")) };
             send(&mut out, response).await;
         }
+        // `zero done`: said, refused with what done means and a token; with the token, done; --ask, the user's word.
+        "done" => {
+            let Some(said) = request.ask else { send(&mut out, error("done needs the agent and what's done".into())).await; return };
+            let reply = if request.text.as_deref() == Some("ask") {
+                Response { op: "created", id: Some(inbox.ask_done(&said.agent, &said.body).id), ..Default::default() }
+            } else {
+                match inbox.done(&said.agent, &said.body, request.id.as_deref()) {
+                    Ok(()) => Response { op: "marked", ..Default::default() },
+                    Err(why) => Response { op: "notDone", message: Some(why), ..Default::default() },
+                }
+            };
+            send(&mut out, reply).await;
+        }
         "withdraw" => {
             let Some(id) = request.id else { send(&mut out, error("withdraw needs an id".into())).await; return };
             inbox.withdraw(&id, request.text.as_deref());

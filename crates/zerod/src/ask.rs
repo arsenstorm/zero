@@ -121,6 +121,13 @@ pub struct Ask {
     /// task (its events, its workers' reports); the user's own words still go.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub blocks: bool,
+    /// A done note the agent confirmed (`zero done`, with its token) or the user said was: the only done a task's row
+    /// shows. Set by zerod alone, never taken from a client.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirmed: bool,
+    /// The question whether a task is done (`zero done --ask`): its first option, Done, confirms it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub done_check: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivery: Option<Delivery>,
     /// For a question: what the user may want to know to answer it.
@@ -147,7 +154,7 @@ impl Ask {
             id: new_id(), kind, title: title.into(), body: String::new(), options: vec![], command: None, cwd: None, agent,
             created_at: now, expires_at: Time(now.0 + ttl_seconds), state: AskState::Waiting, answer: None, output: String::new(),
             exit_code: None, run: None, answered_at: None, status: None, choice: None, waits: None, delivery: None, detail: None, script: None,
-            same_as: None, request: None, needs: None, blocks: false,
+            same_as: None, request: None, needs: None, blocks: false, confirmed: false, done_check: false,
         }
     }
 
