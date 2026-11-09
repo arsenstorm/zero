@@ -100,6 +100,9 @@ struct ConversationView: View {
     @State private var lifted = false
     /// The lift's scroll has put the message at the top: only then can scrolling up end the lift.
     @State private var liftPlaced = false
+    /// Scrolled by you since the lift: only then does the question card sink with it. Before, the room under the
+    /// message, past the page's foot as it came, read as scrolled up and sank the card, then raised it.
+    @State private var liftScrolled = false
     /// The message just sent and the least height of the conversation from it down: a page's worth, so the message
     /// sits at the top with room under it that the answer fills without changing the page's size, so nothing moves.
     /// A scroll up gives the room back: from where you stop you can come down a composer's height, no further.
@@ -393,6 +396,12 @@ struct ConversationView: View {
             guard lifted else { return }
             position.scrollTo(id: id, anchor: UnitPoint(x: 0, y: 52 / max(pageHeight, 1)))
             liftPlaced = true
+            // The room as it came out, past the page's foot: what's beyond it taken off, so the page is at its end.
+            // Left, the question card read it as scrolled up and sat sunk by as much.
+            try? await Task.sleep(for: .milliseconds(50))
+            guard lifted, let g = tracker.geometry else { return }
+            let over = Self.end(of: g) - g.contentOffset.y
+            if over > 0.5 { liftMin = max(0, liftMin - over) }
         }
     }
 
@@ -407,6 +416,7 @@ struct ConversationView: View {
     private func userScrolled() {
         workspace.markSeen(conversation.id)
         following = false
+        liftScrolled = true
         if olderShown, !olderArmed { olderArmed = true; Task { await loadOlder() } }
     }
 
@@ -450,7 +460,7 @@ struct ConversationView: View {
         // How far up from the end: the question card on the composer sinks as far, behind it.
         // From where the scroll stops (the toolbar's inset at the top taken off: left in, the end read 38 pt off and the
         // card sat sunk that much at the very bottom).
-        let below = max(0, Self.end(of: now) - now.contentOffset.y)
+        let below = lifted && !liftScrolled ? 0 : max(0, Self.end(of: now) - now.contentOffset.y)
         if abs(foot.below - below) > 0.5 { foot.below = below }
         // The room an answered card left goes back as you scroll up, no faster: kept down to the window's foot, so the
         // page never moves on its own. Taken back all at once, at a scroll's start, the conversation's end jumped up to
@@ -512,15 +522,27 @@ struct ConversationView: View {
         }
         .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] height in
             guard foot.height != height else { return }
+            // Lifted (just sent, the message at the top): the room under it takes the change (a step to a taller
+            // card, the queue's strip), so the page's size holds and the message stays. Added at the foot instead,
+            // it read as the reply outgrowing the room, and the lift was let go, the page thrown to its end.
+            if lifted, liftPlaced {
+                liftMin = max(0, liftMin - (height - foot.height))
+                foot.height = height
+                return
+            }
             let grew = height > foot.height
             // Grown (a question card arriving) while at the end: the end followed, the last words above the card and
             // the card all the way up. Held where it was (just sent, the page kept for the answer), the room the card
             // added went below the page, and the card sank as far, nothing scrolled.
-            let follow = grew && (foot.below < 2 || following)
+            let atEnd = foot.below < 2 || following
+            let follow = grew && atEnd
             foot.height = height
             // Following, the page slides to its new end itself (scrollGeometryChanged); held (just sent, the page kept
             // for the answer), it's taken there, on the card's curve.
             if follow && !following { DispatchQueue.main.async { withAnimation(Self.rise) { position.scrollTo(edge: .bottom) } } }
+            // Shrunk (the queue's strip gone, a step to a shorter card) while at the end: still at it. Left where it
+            // was, the page sat that far short of its end, and the card, reading it as scrolled up, sank as far.
+            if !grew, atEnd { DispatchQueue.main.async { position.scrollTo(edge: .bottom) } }
         }
     }
 
@@ -639,6 +661,7 @@ struct ConversationView: View {
             send(text, images: attached, with: provider ?? conversation.provider)
             lifted = true
             liftPlaced = false
+            liftScrolled = false
             following = false
         } controls: {
             // The model for the next message: one of this provider's, or another provider's, which takes the task
