@@ -88,6 +88,10 @@ final class TipView: NSView {
 
     func show(_ text: String, shortcut: String?, over view: NSView) {
         guard let window = view.window, let screen = window.screen ?? NSScreen.main else { return }
+        // Zero's window's tips while Zero is in front only: its views see the pointer through another app's window over
+        // them, and a tip floats over every app. The control bar's panels (used from other apps) keep theirs.
+        guard NSApp.isActive || window is NSPanel else { return }
+        watchApp()
         owner = view
         let host = NSHostingController(rootView: TipLabel(text: text, shortcut: shortcut))
         // At most 280 points of text to a line, the rest wrapped.
@@ -106,6 +110,19 @@ final class TipView: NSView {
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .scrollWheel, .keyDown]) { [weak self] event in
                 if let owner = self?.owner { self?.hide(from: owner) }
                 return event
+            }
+        }
+    }
+
+    /// Zero going behind another app: its tip goes, as the pointer leaving would have taken it (switched away with the
+    /// pointer still, it stayed over the other app).
+    private var appWatch: Any?
+    private func watchApp() {
+        guard appWatch == nil else { return }
+        appWatch = NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                guard let owner = TipPanel.shared.owner, !(owner.window is NSPanel) else { return }
+                TipPanel.shared.hide(from: owner)
             }
         }
     }

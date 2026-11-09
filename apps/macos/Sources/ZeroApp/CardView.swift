@@ -340,9 +340,15 @@ struct CardView: View {
         // Not `.disabled`: that greys the whole label, chosen row included. Decided rows just ignore clicks.
         // A decided row takes a click only to retry an answer that didn't reach the agent.
         let retry = decided && ask.choice == index && ask.delivery == .failed
+        // A text option answered: its words as they were in the box, laid out as the box was (no key, the box's room
+        // at the end), so sending changes nothing in its place. With "Something else: " before them and a key cap
+        // beside, they wrapped otherwise and the card grew.
+        let typed = decided && ask.choice == index && Ask.expectsText(option)
+        let label = option.replacingOccurrences(of: "…", with: "").replacingOccurrences(of: "...", with: "")
+        let answer = ask.answer ?? option
+        let shown = typed && answer.hasPrefix(label + ": ") ? String(answer.dropFirst(label.count + 2)) : decided && ask.choice == index ? answer : option
         return Button { if retry { controller.store.deliverAnswer(ask.id) } else if !decided { controller.choose(index, on: ask.id) } } label: {
-            optionRow(decided && ask.choice == index ? (ask.answer ?? option) : option,
-                      key: "\(index + 1)", chosen: decided && ask.choice == index, decided: decided)
+            optionRow(shown, key: typed ? nil : "\(index + 1)", chosen: decided && ask.choice == index, decided: decided, boxLike: typed)
         }.buttonStyle(.plain).allowsHitTesting(!decided || retry)
     }
 
@@ -404,13 +410,14 @@ struct CardView: View {
             .background(Theme.code).clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
-    private func optionRow(_ text: String, key: String?, chosen: Bool, decided: Bool) -> some View {
+    private func optionRow(_ text: String, key: String?, chosen: Bool, decided: Bool, boxLike: Bool = false) -> some View {
         // An answer Zero types into an agent that isn't waiting stays orange until it lands, and goes red if it can't.
         let failed = ask.delivery == .failed
         let settled = ask.state.isFinal && ask.delivery != .sending && !failed
         let surface: Color = chosen ? (failed ? Theme.redRow : settled ? Theme.greenRow : Theme.orangeRow) : Theme.choice
         let cap: Color = chosen ? (failed ? Theme.redCap : settled ? Theme.greenCap : Theme.orangeCap) : Theme.choiceCap
-        return HStack(spacing: 10) {
+        // Answered from the box: its state where the box's send button was, at its foot, not centred on the row.
+        return HStack(alignment: boxLike ? .bottom : .center, spacing: 10) {
             if let key {
                 Text(key).font(.system(size: 10, weight: .bold)).frame(width: 18, height: 18)
                     .foregroundStyle(chosen ? .white : .primary)
@@ -419,7 +426,9 @@ struct CardView: View {
             // A text option reads like a placeholder: pick it and the input appears with the same wording.
             Text(text).font(.system(size: 13))
                 .foregroundStyle(!chosen && Ask.expectsText(text) ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
-            Spacer()
+                // The reply box's room at the end (its 56 pt, less the state icon and the gap before it).
+                .padding(.trailing, boxLike ? 56 - 15 - 10 : 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
             if chosen {
                 ZStack {
                     if failed {
@@ -432,6 +441,7 @@ struct CardView: View {
                         Spinner(color: .orange).frame(width: 12, height: 12).transition(.opacity)
                     }
                 }
+                .frame(width: boxLike ? 15 : nil, height: boxLike ? 15 : nil)
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
