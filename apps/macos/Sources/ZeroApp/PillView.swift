@@ -53,8 +53,10 @@ struct PillView: View {
     let moveHere: () -> Void
     /// Hovering a control peeks: nil for the open asks, a name for that agent's timeline.
     let peek: (String?) -> Void
-    var openNewAgent: () -> Void = {}
-    var peekNewAgent: () -> Void = {}
+    /// The workspace slot clicked: where it is, for the selector to open beside.
+    var pickWorkspace: (CGRect) -> Void = { _ in }
+    @State private var workspaceSlotFrame = CGRect.zero
+    @State private var overWorkspace = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// A dot being dragged up or down the bar, and how far.
     @State private var drag: (name: String, y: CGFloat)?
@@ -63,11 +65,11 @@ struct PillView: View {
 
     init(controller: InboxController, settings: Settings, workspace: Workspace? = nil, openInbox: @escaping () -> Void,
          selectAgent: @escaping (String) -> Void, moveHere: @escaping () -> Void,
-         peek: @escaping (String?) -> Void = { _ in }, openNewAgent: @escaping () -> Void = {}, peekNewAgent: @escaping () -> Void = {},
+         peek: @escaping (String?) -> Void = { _ in }, pickWorkspace: @escaping (CGRect) -> Void = { _ in },
          previewHovered: String? = nil) {
         self.controller = controller; self.settings = settings; self.workspace = workspace
         self.openInbox = openInbox; self.selectAgent = selectAgent; self.moveHere = moveHere; self.peek = peek
-        self.openNewAgent = openNewAgent; self.peekNewAgent = peekNewAgent
+        self.pickWorkspace = pickWorkspace
     }
 
     /// Every agent that has spoken and has not been closed, with its status. Expired asks don't count. A worker's
@@ -113,7 +115,7 @@ struct PillView: View {
         let dots = dots(agents)
         VStack(spacing: 2) {
             inboxSlot
-            if controller.canSpawn { newAgentSlot }
+            if let workspace, workspace.workspaces.count > 1 { workspaceSlot(workspace) }
             if !dots.isEmpty {
                 Rectangle().fill(Theme.hairline).frame(width: 18, height: 1).padding(.vertical, 4)
                     .onChange(of: dots.map(\.0), initial: true) { controller.barOrder = $1 }
@@ -157,17 +159,19 @@ struct PillView: View {
         .tip("Open asks")
     }
 
-    private var newAgentSlot: some View {
-        NucleoIcon("plus", size: 15)
-            .foregroundStyle(controller.newAgentOpen ? .primary : .secondary)
-            .overlay(alignment: .topTrailing) {
-                if controller.pinned && controller.newAgentOpen { PinBadge().offset(x: 4, y: -6) }
-            }
+    /// The workspace the bar lists (and the window shows): its glyph; a click opens the others beside the bar.
+    private func workspaceSlot(_ workspace: Workspace) -> some View {
+        // Under the pointer, the chevron the phone's selector has: it switches, it isn't a workspace's own button.
+        Group {
+            if overWorkspace { NucleoIcon("chevron-expand-y", size: 15) } else { WorkspaceGlyph(glyph: workspace.currentWorkspace.glyph, size: 15) }
+        }
+            .foregroundStyle(WorkspaceSelector.shared.open == "bar-workspace" || overWorkspace ? .primary : .secondary)
             .frame(width: 32, height: 32)
             .contentShape(Rectangle())
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { controller.barSlots[InboxController.newSlot] = $0 }
-            .onTapGesture(perform: openNewAgent)
-            .tip("Start a new agent")
+            .onHover { overWorkspace = $0 }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { workspaceSlotFrame = $0 }
+            .onTapGesture { pickWorkspace(workspaceSlotFrame) }
+            .tip(workspace.currentWorkspace.name)
     }
 
     private func agentDot(_ name: String, _ mark: Mark, among names: [String]) -> some View {

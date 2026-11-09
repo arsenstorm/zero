@@ -24,8 +24,7 @@ extension AppDelegate {
             selectAgent: { [weak self] name in self?.pin(agent: name) },
             moveHere: { [weak self] in self?.pinnedDisplay = nil; self?.layout() },
             peek: { [weak self] agent in self?.peek(agent) },
-            openNewAgent: { [weak self] in self?.pinNewAgent() },
-            peekNewAgent: { [weak self] in self?.peekNewAgent() })))
+            pickWorkspace: { [weak self] anchor in self?.pickWorkspace(anchor) })))
         // Tall and transparent so the bar can morph inside it; the transparent rest is click-through.
         // Without clearing sizingOptions the hosting view shrinks the window to its content, top edge fixed.
         pillHosting.sizingOptions = []
@@ -124,6 +123,14 @@ extension AppDelegate {
         case InboxController.newSlot: peekNewAgent()
         default: peek(under)
         }
+    }
+
+    /// The bar's workspace: Zero's selector of them, to the bar's left; picking one shows it, in the window too.
+    private func pickWorkspace(_ anchor: CGRect) {
+        guard let workspace else { return }
+        WorkspaceSelector.shared.toggle("bar-workspace", kind: .menu, anchor: anchor, rows: {
+            ComposerRows.menu([workspace.workspaces.map { w in (w.id, w.name, w.glyph, w.id == workspace.current, { workspace.current = w.id }) }])
+        }, in: pill, beside: true)
     }
 
     /// The bar's + button: the new-agent composer, pinned open with the keyboard; again closes it.
