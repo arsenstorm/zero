@@ -1305,10 +1305,10 @@ public final class ZerodLink: @unchecked Sendable {
     }
     public static let signInKeychain = "Zero sign-ins"
 
-    public func signIns() async throws -> (list: [SignIn], defaults: [String: String], usage: [String: Usage]) {
-        struct Listed: Decodable { let signins: [SignIn]; let defaults: [String: String]; let usage: [String: Usage]? }
+    public func signIns() async throws -> (list: [SignIn], defaults: [String: String], usage: [String: Usage], refused: [String: [String]]) {
+        struct Listed: Decodable { let signins: [SignIn]; let defaults: [String: String]; let usage: [String: Usage]?; let refused: [String: [String]]? }
         let listed = try decode(Listed.self, from: await call("signIns"))
-        return (listed.signins, listed.defaults, listed.usage ?? [:])
+        return (listed.signins, listed.defaults, listed.usage ?? [:], listed.refused ?? [:])
     }
     public func saveSignIn(_ signin: SignIn) async throws -> SignIn {
         let data = try JSONEncoder().encode(signin)

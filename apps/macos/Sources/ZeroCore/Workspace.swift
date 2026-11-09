@@ -818,9 +818,12 @@ public final class Workspace {
 
     /// Each sign-in's usage as its CLI last reported it, by id: what zerod chooses accounts by.
     public private(set) var signinUsage: [String: Usage] = [:]
+    /// The models each sign-in's provider refused it (no access), by id: zerod doesn't choose it for them.
+    public private(set) var signinRefused: [String: [String]] = [:]
 
     public func loadSignIns() async {
-        guard let (list, defaults, usage) = try? await link?.signIns() else { return }
+        guard let (list, defaults, usage, refused) = try? await link?.signIns() else { return }
+        if refused != signinRefused { signinRefused = refused }
         if list != signins { signins = list }
         if defaults != signinDefaults { signinDefaults = defaults }
         if usage != signinUsage { signinUsage = usage }

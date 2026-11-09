@@ -39,7 +39,7 @@ struct SignInsPage: View {
     private func section(_ cli: Provider, in workspace: Workspace) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             accounts(cli, in: workspace)
-            AddedModels(cli: cli)
+            AddedModels(cli: cli, workspace: workspace)
         }
     }
 
@@ -374,6 +374,7 @@ private extension String {
 /// the CLI is started with and a name for the picker. Zero-wide: every account of this CLI offers it.
 private struct AddedModels: View {
     let cli: Provider
+    let workspace: Workspace
     @State private var id = ""
     @State private var name = ""
     @FocusState private var focused: Bool
@@ -388,6 +389,7 @@ private struct AddedModels: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(model.name).font(.system(size: 13, weight: .medium))
                         Text(model.id).font(.system(size: 11.5).monospaced()).foregroundStyle(.secondary)
+                        if let note = availability(model) { Text(note).font(.system(size: 11.5)).foregroundStyle(.secondary) }
                     }
                     Spacer()
                     Button("Remove") { Task { await CustomModels.shared.remove(model) } }
@@ -408,6 +410,15 @@ private struct AddedModels: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .bleedingCard()
+    }
+
+    /// Which of this CLI's accounts can't use it, as their provider said when a task tried: tasks on it go to the others.
+    private func availability(_ model: CustomModels.Model) -> String? {
+        let accounts = workspace.signins.filter { $0.cli == cli }
+        let refused = accounts.filter { workspace.signinRefused[$0.id]?.contains(model.id) == true }
+        guard !refused.isEmpty else { return nil }
+        if refused.count == accounts.count { return "None of your accounts can use it" }
+        return "Not on " + refused.map(\.label).joined(separator: ", ") + ": tasks on it run as your other accounts"
     }
 
     private var example: String {
