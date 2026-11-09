@@ -53,9 +53,8 @@ struct PillView: View {
     let moveHere: () -> Void
     /// Hovering a control peeks: nil for the open asks, a name for that agent's timeline.
     let peek: (String?) -> Void
-    /// The workspace slot clicked: where it is, for the selector to open beside.
-    var pickWorkspace: (CGRect) -> Void = { _ in }
-    @State private var workspaceSlotFrame = CGRect.zero
+    /// The workspace control clicked: the workspaces, in the inbox's pane.
+    var openWorkspaces: () -> Void = {}
     @State private var overWorkspace = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// A dot being dragged up or down the bar, and how far.
@@ -65,11 +64,11 @@ struct PillView: View {
 
     init(controller: InboxController, settings: Settings, workspace: Workspace? = nil, openInbox: @escaping () -> Void,
          selectAgent: @escaping (String) -> Void, moveHere: @escaping () -> Void,
-         peek: @escaping (String?) -> Void = { _ in }, pickWorkspace: @escaping (CGRect) -> Void = { _ in },
+         peek: @escaping (String?) -> Void = { _ in }, openWorkspaces: @escaping () -> Void = {},
          previewHovered: String? = nil) {
         self.controller = controller; self.settings = settings; self.workspace = workspace
         self.openInbox = openInbox; self.selectAgent = selectAgent; self.moveHere = moveHere; self.peek = peek
-        self.pickWorkspace = pickWorkspace
+        self.openWorkspaces = openWorkspaces
     }
 
     /// Every agent that has spoken and has not been closed, with its status. Expired asks don't count. A worker's
@@ -165,12 +164,16 @@ struct PillView: View {
         Group {
             if overWorkspace { NucleoIcon("chevron-expand-y", size: 15) } else { WorkspaceGlyph(glyph: workspace.currentWorkspace.glyph, size: 15) }
         }
-            .foregroundStyle(WorkspaceSelector.shared.open == "bar-workspace" || overWorkspace ? .primary : .secondary)
+            .foregroundStyle(controller.workspacesOpen || overWorkspace ? .primary : .secondary)
+            .overlay(alignment: .topTrailing) {
+                if controller.pinned && controller.workspacesOpen { PinBadge().offset(x: 4, y: -6) }
+            }
             .frame(width: 32, height: 32)
             .contentShape(Rectangle())
             .onHover { overWorkspace = $0 }
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { workspaceSlotFrame = $0 }
-            .onTapGesture { pickWorkspace(workspaceSlotFrame) }
+            // A slot of the bar's, as its others: the pointer on it opens its view in the inbox's pane.
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { controller.barSlots[InboxController.workspacesSlot] = $0 }
+            .onTapGesture(perform: openWorkspaces)
             .tip(workspace.currentWorkspace.name)
     }
 

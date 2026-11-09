@@ -38,12 +38,26 @@ final class InboxController {
     @ObservationIgnored var barSlots: [String: CGRect] = [:]
     /// The agents the bar shows now, top to bottom: a slot of one gone from the bar is not under the pointer.
     @ObservationIgnored var barOrder: [String] = []
-    static let inboxSlot = "\u{0}inbox", newSlot = "\u{0}new"
+    static let inboxSlot = "\u{0}inbox", newSlot = "\u{0}new", workspacesSlot = "\u{0}workspaces"
     /// The control the bar last opened from the pointer, so moving within it doesn't reopen it.
     @ObservationIgnored var barHover: String?
 
     /// The new-agent view: just the composer, opened from the bar's + button.
     var newAgentOpen = false
+    /// The workspaces' view: the user's workspaces, the one shown ticked; opened from the bar's workspace control, as
+    /// its other controls open theirs (a selector of its own beside the bar worked otherwise, and lay over these).
+    var workspacesOpen = false
+    /// Whose workspaces: the app's.
+    weak var workspace: Workspace?
+
+    func showWorkspaces() {
+        guard !workspacesOpen else { return }
+        holdTop = false
+        switching = true
+        cut { agentFilter = nil; newAgentOpen = false; workspacesOpen = true }
+        requestScroll(animated: false)
+        DispatchQueue.main.async { self.switching = false }
+    }
     /// Set while the user opens something in place (a card's text, an Earlier row): the view keeps its top where it
     /// is, so the opening only grows downward. Cleared when the view or its cards change.
     var holdTop = false
@@ -52,7 +66,7 @@ final class InboxController {
         guard !newAgentOpen else { return }
         holdTop = false
         switching = true
-        cut { agentFilter = nil; newAgentOpen = true }
+        cut { agentFilter = nil; workspacesOpen = false; newAgentOpen = true }
         requestScroll(animated: false)
         DispatchQueue.main.async { self.switching = false }
     }
@@ -65,8 +79,8 @@ final class InboxController {
     }
 
     func show(agent: String?) {
-        let wasNew = newAgentOpen
-        cut { newAgentOpen = false }
+        let wasNew = newAgentOpen || workspacesOpen
+        cut { newAgentOpen = false; workspacesOpen = false }
         // Hovering the control for the view already shown changes nothing: what the user opened stays open and
         // where it is.
         guard agentFilter != agent || wasNew else { return }

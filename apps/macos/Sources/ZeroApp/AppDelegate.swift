@@ -98,6 +98,7 @@ import ZeroCore
     /// zerod's sessions, their notifications, and the phones that see them.
     private func connectWorkspace() {
         workspace = Workspace()
+        inbox.workspace = workspace
         // The control bar names Zero's own tasks as the window does: their names, and what they run on.
         store.zeroTask = { [weak workspace] agent in
             guard agent.hasPrefix("zerod-"), let task = workspace?.roster[String(agent.dropFirst("zerod-".count))] else { return nil }

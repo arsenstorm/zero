@@ -24,7 +24,7 @@ extension AppDelegate {
             selectAgent: { [weak self] name in self?.pin(agent: name) },
             moveHere: { [weak self] in self?.pinnedDisplay = nil; self?.layout() },
             peek: { [weak self] agent in self?.peek(agent) },
-            pickWorkspace: { [weak self] anchor in self?.pickWorkspace(anchor) })))
+            openWorkspaces: { [weak self] in self?.pinWorkspaces() })))
         // Tall and transparent so the bar can morph inside it; the transparent rest is click-through.
         // Without clearing sizingOptions the hosting view shrinks the window to its content, top edge fixed.
         pillHosting.sizingOptions = []
@@ -63,7 +63,6 @@ extension AppDelegate {
 
     /// Instant on purpose: the inbox is the most-used surface, and motion there would only slow it down.
     func open(byIntent: Bool) {
-        if WorkspaceSelector.shared.open == "bar-workspace" { WorkspaceSelector.shared.close() }
         layout()
         notifier?.lookedAtAsks()
         inbox.ensureSelection()
@@ -114,26 +113,30 @@ extension AppDelegate {
         let local = pill.convertPoint(fromScreen: mouse)
         let point = CGPoint(x: local.x, y: pill.frame.height - local.y) // SwiftUI's global space runs top down
         // Among the controls shown now, the one whose slot is nearest: slots meet, so a point on their seam is in two.
-        let shown = Set([InboxController.inboxSlot, InboxController.newSlot] + inbox.barOrder)
+        let shown = Set([InboxController.inboxSlot, InboxController.newSlot, InboxController.workspacesSlot] + inbox.barOrder)
         let under = inbox.barSlots.filter { shown.contains($0.key) && $0.value.insetBy(dx: -8, dy: -1).contains(point) }
             .min { abs($0.value.midY - point.y) < abs($1.value.midY - point.y) }?.key
         guard let under, under != inbox.barHover else { if under == nil { inbox.barHover = nil }; return }
         inbox.barHover = under
-        // On to another of the bar's controls: the workspaces' selector goes, not left over what that opens.
-        if WorkspaceSelector.shared.open == "bar-workspace" { WorkspaceSelector.shared.close() }
         switch under {
         case InboxController.inboxSlot: peek(nil)
         case InboxController.newSlot: peekNewAgent()
+        case InboxController.workspacesSlot: peekWorkspaces()
         default: peek(under)
         }
     }
 
-    /// The bar's workspace: Zero's selector of them, to the bar's left; picking one shows it, in the window too.
-    private func pickWorkspace(_ anchor: CGRect) {
-        guard let workspace else { return }
-        WorkspaceSelector.shared.toggle("bar-workspace", kind: .menu, anchor: anchor, rows: {
-            ComposerRows.menu([workspace.workspaces.map { w in (w.id, w.name, w.glyph, w.id == workspace.current, { workspace.current = w.id }) }])
-        }, in: pill, beside: true)
+    /// The bar's workspace control: the workspaces, in the inbox's pane, pinned open; again closes it. Hovered, a peek.
+    private func pinWorkspaces() {
+        if openedByIntent && inboxPanel.isVisible && inbox.workspacesOpen { hideInbox(); return }
+        inbox.showWorkspaces()
+        open(byIntent: true)
+    }
+
+    private func peekWorkspaces() {
+        inbox.showWorkspaces()
+        if !inboxPanel.isVisible { open(byIntent: false) }
+        if !openedByIntent { syncKeyboard() }
     }
 
     /// The bar's + button: the new-agent composer, pinned open with the keyboard; again closes it.

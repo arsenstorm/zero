@@ -14,8 +14,7 @@ extension AppDelegate {
     /// The selector over any window, hung off the chip at `anchor` (its SwiftUI global frame in the window's
     /// content); the two-pane model selector centred on `centredOn`, else on the chip. With `returning`, that window
     /// gets the keys back when it closes (the workspace's composers).
-    func presentSelector(_ selector: SelectorState, chip anchor: CGRect, in window: NSWindow, centredOn: NSRect? = nil, returning: NSWindow? = nil,
-                         beside: Bool = false) {
+    func presentSelector(_ selector: SelectorState, chip anchor: CGRect, in window: NSWindow, centredOn: NSRect? = nil, returning: NSWindow? = nil) {
         guard let content = window.contentView else { return }
         hideSelector(keepState: true)
         selectorReturn = returning
@@ -28,15 +27,14 @@ extension AppDelegate {
         let screen = window.screen?.visibleFrame ?? NSScreen.screens[0].visibleFrame
         let roomBelow = chip.minY - 6 - screen.minY
         let roomAbove = screen.maxY - chip.maxY - 6
-        // Beside (the control bar's, at the screen's edge): to its left, hanging down from its top.
-        let opensBelow = beside || roomBelow >= 240 || roomBelow >= roomAbove
+        let opensBelow = roomBelow >= 240 || roomBelow >= roomAbove
         // Whole points: a fraction left the window between pixels, and the card's hairline at its top edge went when
         // a hover redrew part of it.
-        let size = NSSize(width: SelectorView.width(selector.kind), height: min(480, beside ? chip.maxY - screen.minY - 8 : opensBelow ? roomBelow : roomAbove).rounded(.down))
+        let size = NSSize(width: SelectorView.width(selector.kind), height: min(480, opensBelow ? roomBelow : roomAbove).rounded(.down))
         // Projects hang off their chip; the two-pane model selector is centred on the inbox, overhanging it equally.
-        let left = beside ? chip.minX - 8 - size.width : selector.kind == .runtime ? (centredOn ?? chip).midX - size.width / 2 : chip.minX
+        let left = selector.kind == .runtime ? (centredOn ?? chip).midX - size.width / 2 : chip.minX
         let x = max(screen.minX + 8, min(left, screen.maxX - size.width - 8)).rounded()
-        let y = (beside ? chip.maxY - size.height : opensBelow ? chip.minY - 6 - size.height : chip.maxY + 6).rounded()
+        let y = (opensBelow ? chip.minY - 6 - size.height : chip.maxY + 6).rounded()
         let view = FirstMouseHostingView(rootView: AnyView(SelectorView(state: selector)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: opensBelow ? .top : .bottom)))
         view.sizingOptions = []
