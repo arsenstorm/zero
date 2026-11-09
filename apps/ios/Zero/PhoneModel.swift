@@ -10,7 +10,28 @@ import UserNotifications
     static let shared = PhoneModel()
 
     enum Status: Equatable { case unpaired, connecting, connected, offline(String) }
-    private(set) var status = Status.unpaired
+    private(set) var status = Status.unpaired {
+        // The ways being tried settle with it: in when connected, missed when not.
+        didSet {
+            for i in routes.indices where routes[i].state == .trying {
+                switch status {
+                case .connected: routes[i].state = .connected
+                case .offline: routes[i].state = .missed; routes[i].detail = "No answer"
+                default: break
+                }
+            }
+        }
+    }
+    /// The way to the Mac this connection takes, and how it's going: the relay.
+    private(set) var routes: [Route] = []
+    /// Not reaching the Mac just now.
+    var offline: Bool { if case .offline = status { true } else { false } }
+    struct Route: Equatable, Identifiable {
+        enum State { case waiting, trying, connected, missed }
+        let id: String
+        var state: State
+        var detail: String
+    }
     private(set) var rows: [BoardRow] = []
     private(set) var asks: [Ask] = []
     /// How the Mac's sidebar arranges tasks: its sort and its dragged order.
@@ -30,7 +51,8 @@ import UserNotifications
         init(_ conversation: Conversation, earlier: Int) { self.conversation = conversation; self.earlier = earlier }
     }
     @ObservationIgnored private var link: ZerodLink?
-    @ObservationIgnored private var pairing = Pairing.load()
+    /// Read for which Mac, and when it was last seen.
+    private(set) var pairing = Pairing.load()
     /// Where Apple's push reaches this phone: told to the Mac each time the tunnel opens.
     @ObservationIgnored private var pushToken: String?
     /// The tasks open, as the navigation stack shows them: a tapped notification puts its task here.
@@ -99,37 +121,46 @@ import UserNotifications
         return status == .connected
     }
 
+    /// The link for a request, waited for a few seconds while it's (re)connecting: one made in a drop's gap (the Mac's
+    /// app restarting, the network changing) goes once it's back, rather than failing at once and leaving the page
+    /// empty (a model list, a task's history).
+    private func linked() async -> ZerodLink? {
+        if status == .connected, let link { return link }
+        guard await ready(within: 8) else { return nil }
+        return link
+    }
+
     /// Words put in a task's composer from elsewhere (Siri's draft): taken by the composer when it shows.
     var drafts: [String: String] = [:]
 
 
     /// The Mac's project folders, as New task offers them.
-    func projects() async -> [String] { (try? await link?.call("projects")) as? [String] ?? [] }
+    func projects() async -> [String] { (try? await linked()?.call("projects")) as? [String] ?? [] }
 
     /// A task started on the Mac, in the workspace shown here: its session.
     func start(_ prompt: String, in folder: String, with provider: Provider, model: String?, effort: String?, permissions: Permissions = .auto) async throws -> String {
-        guard let link else { throw ZerodError(message: "Not connected to your Mac") }
+        guard let link = await linked() else { throw ZerodError(message: "Not connected to your Mac") }
         return try await link.start(provider: provider, cwd: folder, prompt: prompt, model: model, effort: effort, permissions: permissions, workspace: workspace)
     }
 
     /// What the agent may do without asking; between turns, as the agent starts again with it.
     /// A model for the task: mid-turn, zerod keeps it for the next turn (as the Mac's chip does); between turns, now.
     func switchModel(_ session: String, provider: Provider, model: String, effort: String?) async {
-        try? await link?.switchProvider(session: session, to: provider, model: model, effort: effort)
+        try? await linked()?.switchProvider(session: session, to: provider, model: model, effort: effort)
     }
-        func setPermissions(_ session: String, _ permissions: Permissions) async { try? await link?.setPermissions(session: session, permissions) }
+        func setPermissions(_ session: String, _ permissions: Permissions) async { try? await linked()?.setPermissions(session: session, permissions) }
 
-    func pause(_ sessions: [String] = []) async -> [String] { (try? await link?.pause(sessions: sessions)) ?? [] }
-    func unpause(_ sessions: [String] = []) async -> [String] { (try? await link?.unpause(sessions: sessions)) ?? [] }
+    func pause(_ sessions: [String] = []) async -> [String] { (try? await linked()?.pause(sessions: sessions)) ?? [] }
+    func unpause(_ sessions: [String] = []) async -> [String] { (try? await linked()?.unpause(sessions: sessions)) ?? [] }
     /// A task's name (its ticket kept as it was).
     func rename(_ session: String, to name: String) async {
-        try? await link?.label(session: session, label: name, ticket: row(session)?.ticket)
+        try? await linked()?.label(session: session, label: name, ticket: row(session)?.ticket)
         names[session] = name
     }
     /// Put away with its workers, as the Mac's Archive.
     func archive(_ session: String) async {
         if path.contains(session) { path = [] }
-        try? await link?.archive(session: session)
+        try? await linked()?.archive(session: session)
     }
 
     /// Back in front: the connection checked, as iOS can let it die while the app was away without saying so (zerod
@@ -155,11 +186,53 @@ import UserNotifications
     }
     private final class Answered: @unchecked Sendable { var yes = false }
 
+    /// Tries in a row that didn't connect: the next waits longer (Views' reconnect), from half a second up to four.
+    @ObservationIgnored var retries = 0
+    @ObservationIgnored private var heartbeat: Task<Void, Never>?
+
+    /// While the app is in front, a small request every 25 s, there and back: no answer in 10 s and the connection is
+    /// dead without having said so (the network changed under it), so it's dropped and made again. Any answer counts.
+    /// A request, not a WebSocket ping: the relay's hibernating sockets aren't sure to answer those.
+    private func beat(_ link: ZerodLink) {
+        heartbeat?.cancel()
+        heartbeat = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(25))
+                guard let self, !Task.isCancelled, self.link === link else { return }
+                guard UIApplication.shared.applicationState == .active else { continue }
+                let answered = Answered()
+                Task { _ = try? await link.call("hello"); answered.yes = true }
+                for _ in 0..<100 where !answered.yes { try? await Task.sleep(for: .milliseconds(100)) }
+                guard self.link === link, !answered.yes else { continue }
+                Log.write("phone: no answer for 10 s; connecting again")
+                link.close()
+                self.link = nil
+                self.status = .offline("Reconnecting to your Mac")
+            }
+        }
+    }
+
     /// Connects, unless connected or connecting already: on launch, coming back to the foreground, after a drop.
     func connect() {
-        guard let pairing, link == nil else { return }
+        guard let pairing, link == nil, !connecting else { return }
+        connecting = true
         status = .connecting
-        guard let lines = try? TunnelLines(pairing: pairing) else { status = .offline("The relay's address is wrong"); return }
+        Task {
+            let lines = await lines(for: pairing)
+            connecting = false
+            guard let lines else { status = .offline("The relay's address is wrong"); return }
+            start(lines)
+        }
+    }
+    @ObservationIgnored private var connecting = false
+
+    /// The way to the Mac: the relay.
+    private func lines(for pairing: Pairing) async -> TunnelLines? {
+        routes = [Route(id: "Relay", state: .trying, detail: "Connecting")]
+        return try? TunnelLines(pairing: pairing)
+    }
+
+    private func start(_ lines: TunnelLines) {
         lines.onHeard = { [weak self] in
             Task { @MainActor in
                 guard let self, var kept = self.pairing, kept.code != nil else { return }
@@ -203,7 +276,9 @@ import UserNotifications
         }
         Task {
             do {
-                await arrange(now: true)
+                // Answered through the tunnel: connected, the badge gone; the rest loads behind it. (Marked only once
+                // all of it had come, one request after another over the relay, the badge stayed seconds longer.)
+                if await arrange(now: true), self.link === link { status = .connected; retries = 0 }
                 await loadWorkspaces()
                 await loadLater()
                 try await link.subscribeLazily()
@@ -212,6 +287,15 @@ import UserNotifications
                 try await link.followInbox()
                 if let pushToken { _ = try? await link.call("pushToken", ["token": pushToken]) }
                 status = .connected
+                retries = 0
+                beat(link)
+                // The Mac's name, and that it was seen now.
+                if var kept = pairing {
+                    if let name = try? await link.call("name") as? String { kept.name = name }
+                    kept.seen = .now
+                    kept.save()
+                    pairing = kept
+                }
             } catch {
                 // Dropped, so pulling to refresh (or coming back to the app) connects again.
                 link.close()
@@ -267,11 +351,13 @@ import UserNotifications
     /// The Mac's arrangement again: asked with a board, as dragging or sorting there doesn't move the board; at most
     /// every few seconds, as a board comes up to four times a second while tasks work.
     @ObservationIgnored private var arranged = Date.distantPast
-    private func arrange(now: Bool = false) async {
-        guard now || Date().timeIntervalSince(arranged) > 5 else { return }
+    /// Whether the Mac answered.
+    @discardableResult private func arrange(now: Bool = false) async -> Bool {
+        guard now || Date().timeIntervalSince(arranged) > 5 else { return false }
         arranged = Date()
-        guard let got = try? await link?.call("sidebar", [:]) as? [String: String] else { return }
+        guard let got = try? await link?.call("sidebar", [:]) as? [String: String] else { return false }
         sidebar = (BoardRow.Sort(rawValue: got["sort"] ?? "") ?? .state, got["order"] ?? "")
+        return true
     }
 
     /// Each worker's name, as the Mac's sidebar has it: asked of zerod when the board shows a worker not named yet.
@@ -347,30 +433,30 @@ import UserNotifications
 
     /// A task opened: its latest items fetched, unless they're here already (it moved since connecting).
     func load(_ id: String, again: Bool = false) async {
-        guard again || mirror.conversations[id] == nil, let (conversation, earlier) = try? await link?.recent(session: id) else { return }
+        guard again || mirror.conversations[id] == nil, let (conversation, earlier) = try? await linked()?.recent(session: id) else { return }
         mirror.receive(.session(conversation))
         mirror.receive(.earlier(session: id, count: earlier))
         sync(id)
     }
 
     func send(_ text: String, to session: String) async {
-        try? await link?.send(session: session, text: text)
+        try? await linked()?.send(session: session, text: text)
     }
 
-    func choose(_ ask: Ask, option: Int) async { try? await link?.choose(ask.id, option: option) }
-    func answer(_ ask: Ask, option: Int, text: String) async { try? await link?.answer(ask.id, option: option, text: text) }
-    func reply(_ ask: Ask, text: String) async { try? await link?.reply(ask.id, text: text) }
-    func deliver(_ ask: Ask) async { try? await link?.deliver(ask.id) }
+    func choose(_ ask: Ask, option: Int) async { try? await linked()?.choose(ask.id, option: option) }
+    func answer(_ ask: Ask, option: Int, text: String) async { try? await linked()?.answer(ask.id, option: option, text: text) }
+    func reply(_ ask: Ask, text: String) async { try? await linked()?.reply(ask.id, text: text) }
+    func deliver(_ ask: Ask) async { try? await linked()?.deliver(ask.id) }
     /// An answer taken back in the moment before it goes (the Mac's take-back window): the ask waits again.
-    func takeBack(_ ask: Ask) async { _ = try? await link?.takeBack(ask.id) }
-    func decide(session: String, approval: String, choice: String) async { try? await link?.decide(session: session, approval: approval, choice: choice) }
+    func takeBack(_ ask: Ask) async { _ = try? await linked()?.takeBack(ask.id) }
+    func decide(session: String, approval: String, choice: String) async { try? await linked()?.decide(session: session, approval: approval, choice: choice) }
     func answer(session: String, question: String, answers: [String: [String]]) async {
-        try? await link?.answer(session: session, question: question, answers: answers)
+        try? await linked()?.answer(session: session, question: question, answers: answers)
     }
 
     /// Images sent to a task: each kept on the Mac (its "upload"), then the message naming them.
     func send(_ text: String, images: [Data], to session: String, model: String? = nil, effort: String? = nil) async throws {
-        guard let link else { throw ZerodError(message: "Not connected to your Mac") }
+        guard let link = await linked() else { throw ZerodError(message: "Not connected to your Mac") }
         // Shown at once, while its agent starts: the conversation's own takes its place.
         let echo = Sending(text: text, images: [])
         sending[session, default: []].append(echo)
@@ -383,7 +469,7 @@ import UserNotifications
 
     /// For after the task's current turn: queued behind what's waiting, as the Mac's Return while it works.
     func queue(_ text: String, images: [Data], to session: String) async throws {
-        guard let link else { throw ZerodError(message: "Not connected to your Mac") }
+        guard let link = await linked() else { throw ZerodError(message: "Not connected to your Mac") }
         try await link.queue(session: session, text: text, images: upload(images, through: link))
     }
 
@@ -400,18 +486,18 @@ import UserNotifications
     func warm(_ session: String) {
         guard let row = row(session), !row.online, row.ownState != .paused, Date().timeIntervalSince(warmed[session] ?? .distantPast) > 60 else { return }
         warmed[session] = Date()
-        Task { try? await link?.resume(session: session) }
+        Task { try? await linked()?.resume(session: session) }
     }
     @ObservationIgnored private var warmed: [String: Date] = [:]
 
-    func unqueue(_ session: String, item: String) async -> Bool { (try? await link?.unqueue(session: session, item: item)) != nil }
+    func unqueue(_ session: String, item: String) async -> Bool { (try? await linked()?.unqueue(session: session, item: item)) != nil }
     /// A queued message sent now, mid-turn, its images as they were kept on the Mac.
     func steer(_ session: String, item: Queued) async {
         guard await unqueue(session, item: item.id) else { return }
-        try? await link?.send(session: session, text: item.text, images: item.images ?? [])
+        try? await linked()?.send(session: session, text: item.text, images: item.images ?? [])
     }
-    func release(_ session: String) async { try? await link?.release(session: session) }
-    func interrupt(_ session: String) async { try? await link?.interrupt(session: session) }
+    func release(_ session: String) async { try? await linked()?.release(session: session) }
+    func interrupt(_ session: String) async { try? await linked()?.interrupt(session: session) }
     /// A task's row on the board: a lead's own, or a worker's from its lead's team.
     func row(_ session: String) -> BoardRow? { rows.first { $0.session == session } ?? rows.lazy.compactMap { $0.member(session) }.first }
 
@@ -438,7 +524,7 @@ import UserNotifications
     }
 
     private func fetchModels(_ provider: Provider) async -> [ModelChoice] {
-        guard let all = try? await link?.call("models", ["provider": provider.rawValue]) as? [[String: Any]] else { return [] }
+        guard let all = try? await linked()?.call("models", ["provider": provider.rawValue]) as? [[String: Any]] else { return [] }
         return all.compactMap { model in
             guard let id = model["id"] as? String, let name = model["name"] as? String else { return nil }
             let levels = (model["levels"] as? [[String: String]] ?? []).compactMap { level in level["id"].flatMap { id in level["name"].map { (id, $0) } } }
@@ -455,16 +541,16 @@ import UserNotifications
         if let items = try? await link?.laterItems() { later = items }
     }
 
-    func laterItem(_ id: String) async -> ZerodLink.LaterItem? { try? await link?.laterItem(id) }
+    func laterItem(_ id: String) async -> ZerodLink.LaterItem? { try? await linked()?.laterItem(id) }
 
     func editLater(_ id: String, _ fields: [String: Any]) async {
-        try? await link?.editLater(id, fields)
+        try? await linked()?.editLater(id, fields)
         await loadLater()
     }
 
     /// The task's agent asked to save what it has for later; it writes the note and the artifact.
     func askToSaveForLater(_ session: String) async {
-        try? await link?.notify(session: session, text: LaterAsk.text(), from: "zero")
+        try? await linked()?.notify(session: session, text: LaterAsk.text(), from: "zero")
     }
 
     /// The user is reading this task: its latest reply is seen, on every client (zerod settles Replied a while on).
@@ -482,7 +568,7 @@ import UserNotifications
     func image(_ path: String, side: Int) async -> UIImage? {
         let key = "\(side)|\(path)" as NSString
         if let kept = images.object(forKey: key) { return kept }
-        guard let encoded = try? await link?.call("image", ["path": path, "side": side]) as? String,
+        guard let encoded = try? await linked()?.call("image", ["path": path, "side": side]) as? String,
               let data = Data(base64Encoded: encoded), let image = UIImage(data: data) else { return nil }
         images.setObject(image, forKey: key)
         return image
@@ -493,7 +579,7 @@ import UserNotifications
 
     /// The page of a task's items before those loaded.
     func loadEarlier(_ session: String) async {
-        guard earlier(session) > 0, let page = try? await link?.items(session: session, before: mirror.conversations[session]?.items.first?.id) else { return }
+        guard earlier(session) > 0, let page = try? await linked()?.items(session: session, before: mirror.conversations[session]?.items.first?.id) else { return }
         mirror.prepend(session, items: page, remaining: max(0, earlier(session) - page.count))
         sync(session)
     }

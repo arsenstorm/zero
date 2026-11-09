@@ -76,7 +76,37 @@ import ZeroCore
             .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
     }
 
-    func start() { if !relay.isEmpty { connect() } }
+    func start() {
+        if !relay.isEmpty { connect() }
+        watchWake()
+    }
+
+    /// Back from sleep: the relay's socket checked at once. Asleep, it may have died without saying so, and the ping
+    /// every 20 s took up to a minute to notice, the phones told the Mac isn't connected meanwhile.
+    @ObservationIgnored private var wakeWatch: Any?
+    private func watchWake() {
+        guard wakeWatch == nil else { return }
+        wakeWatch = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.check() }
+        }
+    }
+
+    /// A ping now: no answer in 5 s and the socket is dropped, which connects again (at once: the wait starts over).
+    private func check() {
+        guard !relay.isEmpty else { return }
+        retry = 1
+        // Off the relay already (waiting to try again): now. The wait's own try sees a newer socket and stands down.
+        let off: Bool = { if case .failed = status { true } else { false } }()
+        guard let task = socket, !off else { connect(); return }
+        let asked = Date.now
+        task.sendPing { [weak self] error in Task { @MainActor in if error == nil, task === self?.socket { self?.heardAt = .now } } }
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard let self, task === self.socket, self.heardAt < asked else { return }
+            Log.write("phones: the relay didn't answer after sleep")
+            task.cancel(with: .goingAway, reason: nil)
+        }
+    }
 
     func addPhone() { invite = host.invite(relay: relay, mac: mac) }
 
@@ -175,9 +205,16 @@ import ZeroCore
                 }
             }
         }
-        // The relay says nothing until a phone connects: a ping says the socket is up.
+        // The relay says nothing until a phone connects: a ping says the socket is up. Up, the wait before the next
+        // try starts over: it grew with each drop and was only reset by a phone's frame, so after a few (sleep, a
+        // network change) the Mac stayed off the relay a minute each time.
         task.sendPing { [weak self] error in
-            Task { @MainActor in if error == nil, task === self?.socket, self?.status == .connecting { self?.status = .connected } }
+            Task { @MainActor in
+                guard error == nil, let self, task === self.socket else { return }
+                self.heardAt = .now
+                self.retry = 1
+                if self.status == .connecting { self.status = .connected }
+            }
         }
     }
 
@@ -242,6 +279,9 @@ import ZeroCore
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             guard (try? data.write(to: file)) != nil else { return nil }
             result = file.path
+        case "name":
+            // The Mac's own name (System Settings › General › Sharing), for the phone to say which it's paired with.
+            result = Host.current().localizedName ?? "your Mac"
         case "projects":
             result = Projects.folders
         case "image":
@@ -408,7 +448,10 @@ enum QRCode {
 /// Apple's push service, with the user's key (Settings' push key, kept in the Keychain beside the tunnel's): token
 /// auth, a JWT signed with it, good for up to an hour, so made again after fifty minutes.
 enum APNs {
-    private static var made: (jwt: String, at: Date)?
+    /// Where pushes are signed and sent, one at a time: off the main thread (the key's first read, the Keychain's
+    /// `security`, cost 100 ms there, as a question's card slid in), and `made` only ever touched here.
+    private static let queue = DispatchQueue(label: "zero.apns")
+    nonisolated(unsafe) private static var made: (jwt: String, at: Date)?
 
     private static func jwt() -> String? {
         if let made, Date().timeIntervalSince(made.at) < 50 * 60 { return made.jwt }
@@ -426,8 +469,13 @@ enum APNs {
     /// ponytail: the sandbox's address, as development builds of the phone app use; the production one once it ships
     /// through TestFlight or the App Store.
     static func send(_ payload: [String: Any], to token: String, collapse: String?, quiet: Bool = false) {
+        guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        queue.async { post(body, to: token, collapse: collapse, quiet: quiet) }
+    }
+
+    private static func post(_ body: Data, to token: String, collapse: String?, quiet: Bool) {
         guard let jwt = jwt() else { Log.write("push: no push key in the Keychain"); return }
-        guard let body = try? JSONSerialization.data(withJSONObject: payload), let url = URL(string: "https://api.sandbox.push.apple.com/3/device/" + token) else { return }
+        guard let url = URL(string: "https://api.sandbox.push.apple.com/3/device/" + token) else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.httpBody = body

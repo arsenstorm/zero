@@ -14,10 +14,12 @@ struct ZeroPhone: App {
             Root(model: model)
             // Back in front: connected again if the connection dropped while away.
             .onChange(of: phase) { if phase == .active { Task { await model.wake() } } }
-            // Dropped: tried again every few seconds while the app is in front.
+            // Dropped: tried again while the app is in front, at once (the Mac's app restarting is back in a moment),
+            // then waiting longer each time it doesn't connect, up to four seconds.
             .task(id: model.status) {
                 guard case .offline = model.status, phase == .active else { return }
-                try? await Task.sleep(for: .seconds(4))
+                try? await Task.sleep(for: .seconds(min(4, 0.5 * pow(2, Double(model.retries)))))
+                model.retries += 1
                 model.connect()
             }
             .onAppear { AppDelegate.model = model }
@@ -33,9 +35,11 @@ struct Root: View {
     let model: PhoneModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private enum Screen { case pair, splash, home }
+    /// The mark held a moment at launch, however quick the Mac is: gone at once, it read as a flash, not a start.
+    @State private var holding = true
 
     var body: some View {
-        let screen: Screen = !model.paired ? .pair : model.rows.isEmpty && model.status != .connected ? .splash : .home
+        let screen: Screen = !model.paired ? .pair : holding || model.rows.isEmpty && model.status != .connected ? .splash : .home
         ZStack {
             switch screen {
             case .pair: PairView(model: model).transition(.opacity)
@@ -48,7 +52,11 @@ struct Root: View {
             }
         }
         // A strong ease-out: quick to start, settling gently.
-        .animation(.timingCurve(0.23, 1, 0.32, 1, duration: 0.55), value: screen)
+        .animation(.timingCurve(0.23, 1, 0.32, 1, duration: 0.8), value: screen)
+        .task {
+            try? await Task.sleep(for: .seconds(1))
+            holding = false
+        }
     }
 
     private struct Away: ViewModifier {
@@ -191,36 +199,6 @@ struct AgentAvatar: View {
     }
 }
 
-/// Before pairing: scan the code from the Mac's Settings › Devices.
-struct PairView: View {
-    let model: PhoneModel
-    @State private var scanning = false
-    @State private var pasted = ""
-    @State private var wrong = false
-
-    var body: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            Text("Zero").font(.largeTitle.weight(.semibold))
-            Text("On your Mac, open Zero's Settings › Devices, choose Show code, and scan it here.")
-                .multilineTextAlignment(.center).foregroundStyle(.secondary).padding(.horizontal, 32)
-            Button("Scan the code") { scanning = true }
-                .buttonStyle(.borderedProminent).disabled(!DataScannerViewController.isSupported)
-            TextField("Or paste its link", text: $pasted).textFieldStyle(.roundedBorder).padding(.horizontal, 32)
-                .onSubmit { wrong = !model.pair(pasted) }
-            if wrong { Text("That isn't a Zero pairing link.").foregroundStyle(.red).font(.footnote) }
-            Spacer()
-        }
-        .sheet(isPresented: $scanning) {
-            Scanner { text in
-                scanning = false
-                wrong = !model.pair(text)
-            }
-            .ignoresSafeArea()
-        }
-    }
-}
-
 /// The camera, reading QR codes: the first that's Zero's is the one.
 struct Scanner: UIViewControllerRepresentable {
     let found: (String) -> Void
@@ -301,8 +279,16 @@ struct Home: View {
                 .sharedBackgroundVisibility(.hidden)
             }
         }
-        .overlay(alignment: .top) {
-            // Dropped after loading: what's here stays, the line says it's being got back.
+        // On the lists; a task's page shows it under its own bar (over the bar, it sat on the task's name).
+        .overlay(alignment: .top) { if model.path.isEmpty { ConnectionBadge(model: model) } }
+    }
+}
+
+/// Dropped after loading: what's here stays, the line says it's being got back.
+struct ConnectionBadge: View {
+    let model: PhoneModel
+    var body: some View {
+        ZStack {
             if model.status != .connected {
                 Text(model.status == .connecting ? "Reconnecting to your Mac" : "Can't reach your Mac").font(.footnote.weight(.medium))
                     .padding(.horizontal, 14).padding(.vertical, 8)
@@ -312,6 +298,28 @@ struct Home: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: model.status)
+    }
+}
+
+/// A conversation coming: a few turns' shapes, greyed, where it will be (a spinner alone, pinned to the page's foot,
+/// read as nothing happening).
+private struct LoadingTurns: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            ForEach(0..<3, id: \.self) { turn in
+                HStack {
+                    Spacer(minLength: 80)
+                    Text("A message of yours, a line or so long").padding(.horizontal, 14).padding(.vertical, 9)
+                        .background(Color(.secondarySystemFill), in: RoundedRectangle(cornerRadius: 18))
+                }
+                Text(turn == 1 ? "An answer a few lines long, written out across the page as the agent's answers are, ending here." :
+                     "An answer, a couple of lines long, across the page as the agent's are.")
+            }
+        }
+        .redacted(reason: .placeholder)
+        .opacity(0.6)
+        .padding()
+        .accessibilityLabel("Loading")
     }
 }
 
@@ -340,33 +348,6 @@ extension Home {
 struct Logo: View {
     var size: CGFloat = 24
     var body: some View { Image("logo").resizable().scaledToFit().frame(width: size, height: size) }
-}
-
-/// Before the first board: the mark, and connecting, or why it can't (tried again on its own every few seconds).
-struct Splash: View {
-    let model: PhoneModel
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            Logo(size: 72)
-            if case .offline(let why) = model.status {
-                Text("Can't reach your Mac").font(.title3.weight(.semibold))
-                Text("Zero needs to be open on your Mac, and both online. Trying again…")
-                    .multilineTextAlignment(.center).foregroundStyle(.secondary)
-                Text(why).font(.footnote).foregroundStyle(.tertiary).multilineTextAlignment(.center)
-                Button("Try again") { model.connect() }.buttonStyle(.glassProminent).padding(.top, 8)
-            } else {
-                Text("Connecting to your Mac").font(.title3.weight(.semibold))
-                Spinner().frame(width: 22, height: 22)
-            }
-            Spacer()
-            Menu("Pairing") { Button("Unpair this phone", role: .destructive) { model.unpair() } }
-                .font(.footnote).foregroundStyle(.secondary)
-        }
-        .padding(32)
-        .animation(.easeOut(duration: 0.2), value: model.status)
-    }
 }
 
 /// Every task, most urgent first, as the Mac's board sorts them; as its sidebar has them, each lead's workers folded
@@ -415,7 +396,7 @@ struct TasksView: View {
 extension TasksView {
     /// Swiped left: archive (asking first, as from the menu), and pause or resume.
     @ViewBuilder func swipes(_ session: String, name: String, state: BoardRow.State, workers: Int) -> some View {
-        Button { archiving = (session, name, workers) } label: { Label("Archive", image: "trash-outline") }.tint(.red)
+        Button { archiving = (session, name, workers) } label: { Label("Archive", image: "trash-glyph") }.tint(.red)
         if state == .paused {
             Button { Task { _ = await model.unpause([session]) } } label: { Label("Resume", image: "arrow-rotate-clockwise-glyph") }.tint(.blue)
         } else {
@@ -425,7 +406,7 @@ extension TasksView {
 
     /// Swiped right: rename.
     func renameSwipe(_ session: String, name: String) -> some View {
-        Button { newName = name; renaming = (session, name) } label: { Label("Rename", image: "pen-outline") }.tint(.indigo)
+        Button { newName = name; renaming = (session, name) } label: { Label("Rename", image: "pen-glyph") }.tint(.indigo)
     }
 
     /// A task's long press, as the Mac's row menu: pause or resume, rename, archive.
@@ -435,9 +416,9 @@ extension TasksView {
         } else {
             Button { Task { _ = await model.pause([session]) } } label: { Label("Pause", image: "circle-pause-glyph") }
         }
-        Button { newName = name; renaming = (session, name) } label: { Label("Rename", image: "pen-outline") }
+        Button { newName = name; renaming = (session, name) } label: { Label("Rename", image: "pen-glyph") }
         Button { Task { await model.askToSaveForLater(session) } } label: { Label("Save for later", image: "bookmark-glyph") }
-        Button(role: .destructive) { archiving = (session, name, workers) } label: { Label("Archive", image: "trash-outline") }
+        Button(role: .destructive) { archiving = (session, name, workers) } label: { Label("Archive", image: "trash-glyph") }
     }
 }
 
@@ -516,6 +497,9 @@ struct TaskView: View {
     /// The room an answered card left (ConversationView's), given back once you scroll.
     @State private var room: CGFloat = 0
     @State private var couldNotLoad = false
+    /// The Mac not reached since this page opened: said until it's back, through the tries again (each a moment of
+    /// "connecting", which flipped the page between this and loading).
+    @State private var missedMac = false
 
     /// Its history, asked for again a few times when the Mac doesn't answer, rather than once and then a blank page.
     private func loadUntilLoaded() async {
@@ -533,15 +517,18 @@ struct TaskView: View {
         ScrollView {
             if let conversation { ConversationView(model: model, conversation: conversation, room: $room).padding() }
             // Not loaded: a moment the Mac couldn't be reached left the page blank, with nothing to say so.
-            else if couldNotLoad {
-                VStack(spacing: 10) {
-                    Text("Couldn't load this task").font(.headline)
-                    Text("Your Mac didn't answer in time.").font(.subheadline).foregroundStyle(.secondary)
-                    Button("Try again") { Task { await loadUntilLoaded() } }.buttonStyle(.bordered)
+            // Can't reach the Mac (or it didn't answer): said, in the page's middle, not a spinner going on.
+            else if couldNotLoad || missedMac {
+                ContentUnavailableView {
+                    Text(missedMac ? "Can't reach \(model.pairing?.name ?? "your Mac")" : "Couldn't load this task")
+                } description: {
+                    Text(missedMac ? "This task opens once your Mac is back." : "Your Mac didn't answer in time.")
+                } actions: {
+                    Button("Try again") { if model.offline { model.connect() }; Task { await loadUntilLoaded() } }.buttonStyle(.bordered)
                 }
-                .frame(maxWidth: .infinity).padding(.top, 120)
+                .containerRelativeFrame(.vertical)
             } else {
-                Spinner().frame(width: 20, height: 20).frame(maxWidth: .infinity).padding(.top, 120)
+                LoadingTurns()
             }
         }
         .onScrollPhaseChange { _, phase in if phase == .interacting, room > 0 { room = 0 } }
@@ -578,6 +565,13 @@ struct TaskView: View {
             }
         }
         .sheet(isPresented: $details) { TaskDetails(model: model, session: session).presentationDetents([.medium, .large]) }
+        // The connection's state under this page's bar, not on its name.
+        .overlay(alignment: .top) { if conversation != nil { ConnectionBadge(model: model) } }
+        // Back: what didn't load is asked for again.
+        .onChange(of: model.status, initial: true) { _, now in
+            if model.offline { missedMac = true }
+            if now == .connected { missedMac = false; if conversation == nil { Task { await loadUntilLoaded() } } }
+        }
         .navigationTitle(model.rows.first { $0.session == session }?.task ?? model.names[session] ?? "Task")
         // Seen: its notification goes (on the Mac too, the board moving on).
         .onAppear {

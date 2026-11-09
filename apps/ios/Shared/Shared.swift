@@ -13,6 +13,9 @@ struct Pairing: Codable {
     var key: Data
     /// The invite's code until the Mac has taken it: then nil, paired.
     var code: String?
+    /// The Mac's name, as it last gave it; and when the phone was last connected to it.
+    var name: String?
+    var seen: Date?
 
     static func load() -> Pairing? { Keychain.read("pairing").flatMap { try? JSONDecoder().decode(Pairing.self, from: $0) } }
     func save() { if let data = try? JSONEncoder().encode(self) { Keychain.write("pairing", data) } }

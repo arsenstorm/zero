@@ -14,7 +14,6 @@ final class TunnelLines: LineConnection, @unchecked Sendable {
     private let socket: URLSessionWebSocketTask
     /// The handshake done and the first line in: the Mac knows this phone.
     var onHeard: (() -> Void)?
-
     init(pairing: Pairing) throws {
         let key = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: pairing.key)
         let name = UIDevice.current.name

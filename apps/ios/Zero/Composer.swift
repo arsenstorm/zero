@@ -211,14 +211,9 @@ struct Composer: View {
                 images = loaded
             }
         }
-        // Tried again for a while when it comes back empty (the Mac out of reach a moment), not left empty.
+        // Its request waits for the link while it reconnects (PhoneModel.linked), so it comes back full.
         .task(id: conversation?.provider) {
-            guard let provider = conversation?.provider else { return }
-            for _ in 0..<5 {
-                models = await model.models(provider)
-                if !models.isEmpty { return }
-                try? await Task.sleep(for: .seconds(2))
-            }
+            if let provider = conversation?.provider { models = await model.models(provider) }
         }
         .onDisappear { dictation.stop() }
         // Words drafted elsewhere (Siri's "draft a message to …"): into the box, to look over and send.
