@@ -106,7 +106,12 @@ impl Daemon {
         // While zerod restarts, a turn ending is the pause for it: the new zerod carries it on, so its lead hears nothing.
         let restarting = self.restarting.load(Ordering::Relaxed);
         // Nor while it's paused by the user: its turn ending is the pause.
-        if let Some(lead) = &conversation.parent && (came_to_an_end || got_stuck) && !restarting && !self.is_paused(id) {
+        // Nor while it's being archived (its lead closed it): its end is the closing. Nor when it stopped without an
+        // answer while workers of its own still work: it's waiting on them, and reports once it hears from them.
+        let archiving = self.archiving.lock().unwrap().contains(id);
+        let unanswered = !matches!(now, Attention::Done | Attention::Failed | Attention::Stuck | Attention::Limited | Attention::Blocked | Attention::Offline);
+        let waiting_on_workers = unanswered && self.workers(id).iter().any(|w| matches!(w.attention(), Attention::Starting | Attention::Working | Attention::NeedsYou));
+        if let Some(lead) = &conversation.parent && (came_to_an_end || got_stuck) && !restarting && !self.is_paused(id) && !archiving && !waiting_on_workers {
             // Done is done-done: once the lead has this report, the worker leaves its tree (deliver).
             // Only said so: a report without an ending is a turn finished, which may not be the work.
             let said_done = conversation.answer().is_some_and(|answer| crate::board::ending(answer) == Some("done"));

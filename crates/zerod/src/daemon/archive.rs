@@ -32,7 +32,9 @@ impl Daemon {
     async fn archive_one(&self, id: &str, with: Option<&str>) -> Result<(), String> {
         let session = self.session(id)?;
         if session.summary().terminal.is_some() { self.close_terminal(id).await? }
+        self.archiving.lock().unwrap().insert(id.into());
         self.take_offline(&session).await;
+        self.archiving.lock().unwrap().remove(id);
         let seq = session.summary().seq;
         self.sessions.lock().unwrap().retain(|s| s.id() != id);
         self.attention.lock().unwrap().remove(id);

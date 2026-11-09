@@ -100,6 +100,8 @@ pub struct Daemon {
     crossing: Mutex<HashSet<String>>,
     /// Workers that ended done: each leaves its lead's tree (archived) once its report has been handed to the lead.
     leaving: Mutex<HashSet<String>>,
+    /// Sessions being archived now: their end is the archiving, not news for their lead.
+    archiving: Mutex<HashSet<String>>,
     /// (lead, ticket) → when Zero last reminded the lead to set that row: once, until the row is set again.
     reminded_rows: Mutex<HashMap<(String, String), i64>>,
     /// Accounts a task's CLI found signed out (`account`): Zero's words to any task on one wait for a turn that works.
@@ -265,7 +267,7 @@ impl Daemon {
         let daemon = Arc::new_cyclic(|me| Daemon {
             home: home.into(), sessions: Mutex::new(sessions), events, runtime, attention: Mutex::new(attention), pending: Mutex::new(pending),
             held: Mutex::new(held), delivering: Mutex::new(HashSet::new()), queues: broadcast::channel(64).0,
-            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(), held_up: Mutex::default(), updating: Mutex::default(), sent_back: Mutex::default(), carried_on: Mutex::default(), reminded_rows: Mutex::default(), leaving: Mutex::default(), blocked: Default::default(), noted: Default::default(), crossed: Mutex::default(), crossing: Mutex::default(), naming: Default::default(), signed_out: Mutex::default(), endings: Default::default(),
+            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(), held_up: Mutex::default(), updating: Mutex::default(), sent_back: Mutex::default(), carried_on: Mutex::default(), reminded_rows: Mutex::default(), leaving: Mutex::default(), archiving: Mutex::default(), blocked: Default::default(), noted: Default::default(), crossed: Mutex::default(), crossing: Mutex::default(), naming: Default::default(), signed_out: Mutex::default(), endings: Default::default(),
             workspaces: crate::workspaces::Workspaces::open(home),
             mcp_servers: crate::mcp_servers::McpServers::open(home),
             signins: crate::signins::SignIns::open(home),

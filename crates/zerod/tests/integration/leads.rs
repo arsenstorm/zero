@@ -384,6 +384,66 @@ async fn a_task_refused_its_model_carries_on_as_another_account() {
     assert_eq!(w.daemon.get(&next).unwrap().signin.as_deref(), Some(second.id.as_str()));
 }
 
+/// The nth Claude process started, once it has.
+async fn nth_runtime(w: &World, n: usize) -> Seen {
+    for _ in 0..500 {
+        if let Some(seen) = w.claude.lock().unwrap().get(n).cloned() { return seen }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("process {n} never started");
+}
+
+fn users(seen: &Seen) -> usize { seen.all().iter().filter(|m| m["type"] == "user").count() }
+
+/// A worker that ends a turn without an answer while workers of its own are still working is waiting on them, not
+/// stopped: its lead hears nothing until it does stop.
+#[tokio::test]
+async fn a_worker_waiting_on_its_own_workers_isnt_reported_as_stopped() {
+    let w = world("leads-waiting-children");
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let led = lead_runtime(&w).await;
+    led.said("user", 1).await;
+    led.say(turn_ends());
+    until(&w.daemon, &lead, |c| c.attention() == Attention::Idle).await;
+    let verify = w.daemon.spawn(&lead, Provider::Claude, "verify it", named("Verify", Some("ENG-1"))).unwrap();
+    let verifying = nth_runtime(&w, 1).await;
+    verifying.said("user", 1).await;
+    let reviewer = w.daemon.spawn(&verify, Provider::Claude, "review it", named("Reviewer", None)).unwrap();
+    let reviewing = nth_runtime(&w, 2).await;
+    reviewing.said("user", 1).await;
+    until(&w.daemon, &reviewer, |c| c.attention() == Attention::Working).await;
+    verifying.say(json!({"type": "result", "subtype": "success", "is_error": false, "result": ""}));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(users(&led), 1, "its reviewer is still working: {:?}", led.all());
+    // Its reviewer done, and it stops again without an answer: that is news.
+    reviewing.say(turn_ends());
+    verifying.said("user", 2).await;
+    verifying.say(json!({"type": "result", "subtype": "success", "is_error": false, "result": ""}));
+    assert!(led.said("user", 2).await[1]["message"]["content"].as_str().unwrap().contains("Worker Verify (ENG-1)"));
+}
+
+/// A worker archived (its lead closed it) ends because of that: no report of its end comes back.
+#[tokio::test]
+async fn a_worker_closed_by_its_lead_doesnt_report_its_end() {
+    let w = world("leads-closed");
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let led = lead_runtime(&w).await;
+    led.said("user", 1).await;
+    led.say(turn_ends());
+    until(&w.daemon, &lead, |c| c.attention() == Attention::Idle).await;
+    let worker = w.daemon.spawn(&lead, Provider::Claude, "check it", named("Check", None)).unwrap();
+    let checking = nth_runtime(&w, 1).await;
+    checking.said("user", 1).await;
+    // With a worker of its own, which goes with it, and whose end it hears of first.
+    let reviewer = w.daemon.spawn(&worker, Provider::Claude, "review it", named("Reviewer", None)).unwrap();
+    nth_runtime(&w, 2).await.said("user", 1).await;
+    checking.say(json!({"type": "result", "subtype": "success", "is_error": false, "result": ""}));
+    until(&w.daemon, &reviewer, |c| c.attention() == Attention::Working).await;
+    w.daemon.archive(&worker).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(users(&led), 1, "{:?}", led.all());
+}
+
 #[tokio::test]
 async fn something_an_archived_task_follows_brings_it_back_to_hear_of_it() {
     let w = world("follow-unarchive");
