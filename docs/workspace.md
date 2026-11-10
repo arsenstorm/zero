@@ -13,7 +13,7 @@ OpenCode 2.1.4).
 | `zero` CLI and the Unix socket it talks over; Claude Code plugin hooks (permission, question, prompt, stop) | `zero/main.swift`, `ZeroApp/Server.swift`, `hooks/` | Yes. |
 | Drop folders for agents on other machines (static `zero-drop` clients) | `DropWatcher.swift`, `crates/zero-drop/` | Yes. |
 | `AgentAdapter`: deliver text, read a reply, start, stop, resume, liveness | `ZeroCore/Adapters.swift` | Yes; structured runtimes implement it too. |
-| Solo, Rex and Zero's own terminals as runtimes; every one drives a TUI by typing into it and scraping its screen | `SoloAdapter`, `RexAdapter`, `HostAdapter`, `TerminalAdapter.swift` | Yes, as the terminal path. Screen scraping is their ceiling. |
+| Zero's own terminals as a runtime; it drives a TUI by typing into it and scraping its screen | `HostAdapter`, `TerminalAdapter.swift` | Yes, as the terminal path. Screen scraping is its ceiling. |
 | zero-host: a detached helper that keeps pty terminals (Ghostty's engine) alive when Zero quits; `zero attach` | `ZeroHost/`, `Host.swift` | For now; its terminals move into zerod. |
 | The bar (one dot per agent) and the floating inbox, composer, model selector | `ZeroApp/Inbox.swift`, `Selector.swift` | Yes. |
 

@@ -4,8 +4,8 @@ import ZeroCore
 
 /// What a task's state looks like, in colours that say it at a glance: orange it waits on you, red it's in trouble,
 /// blue it works, green it's ready for you, grey the rest.
-/// A task in the sidebar, as Solo lists an agent's: a lead with a chevron that folds its workers away, each worker
-/// under it on a dotted branch. The state sits at the right, as on every task row.
+/// A task in the sidebar: a lead with a chevron that folds its workers away, each worker under it on a dotted
+/// branch. The state sits at the right, as on every task row.
 struct TaskRow: View {
     enum Branch { case middle, last }
     let title: String

@@ -95,7 +95,7 @@ final class InboxController {
     }
     /// The new-agent composer: choices loaded from the spawning adapter, last picks remembered.
     /// Every spawning adapter's projects, and which adapter each one belongs to; the runtimes follow the project's
-    /// adapter (Solo's tools, or Claude and Codex in Rex), the pick kept by name across them.
+    /// adapter, the pick kept by name across them.
     var spawnTargets: [SpawnChoice] = []
     var spawnRuntimes: [SpawnChoice] { spawnAdapter.flatMap { runtimesByAdapter[$0.name] } ?? [] }
     @ObservationIgnored var targetAdapter: [String: String] = [:]
@@ -147,7 +147,7 @@ final class InboxController {
     func projectPath(for key: String) -> String? {
         let raw: String?
         if key.hasPrefix("msg:") {
-            raw = store.identity(of: String(key.dropFirst(4)))?.soloProjectID.flatMap { id in spawnTargets.first { $0.id == String(id) }?.detail }
+            raw = store.identity(of: String(key.dropFirst(4)))?.cwd
         } else {
             raw = spawnTargets.first { $0.id == spawnTarget }?.detail
         }
@@ -285,12 +285,12 @@ final class InboxController {
 
     /// The runtime an existing agent runs on, by its name ("claude-120" runs on the "Claude" tool).
     func runtime(of agent: String) -> SpawnChoice? {
-        // Only its own adapter's runtimes: another's (Solo's) would name a session of Zero's after their tools.
+        // Only its own adapter's runtimes: another's would name a session of Zero's after their tools.
         let own = adapter(of: agent).map { runtimesByAdapter[$0.name] ?? [] } ?? spawnRuntimes
         return own.first { $0.name.lowercased() == speaker(agent).lowercased() }
     }
 
-    /// The adapter that reaches this agent: Solo, Rex, or whichever runs it.
+    /// The adapter that reaches this agent: whichever runs it.
     func adapter(of agent: String) -> AgentAdapter? {
         store.identity(of: agent).flatMap { identity in store.adapters.first { $0.canReach(identity) } }
     }
@@ -338,12 +338,11 @@ final class InboxController {
     func selectorSections(for kind: SelectorKind) -> [SelectorSection] {
         switch kind {
         case .project:
-            // One group per adapter: Solo's projects, then the folders Zero starts its own agents in.
+            // One group per adapter: the folders Zero starts its own agents in.
             return store.spawners.compactMap { adapter in
                 let targets = spawnTargets.filter { targetAdapter[$0.id] == adapter.name }
                 guard !targets.isEmpty else { return nil }
-                return SelectorSection(id: adapter.name, title: adapter is SoloAdapter ? "Solo projects" : "Zero projects",
-                                       icon: choiceIcon(adapter is SoloAdapter ? "solo" : adapter.name == "Rex" ? "rex" : "zero"), rows: targets.map { choice in
+                return SelectorSection(id: adapter.name, title: "Zero projects", icon: choiceIcon("zero"), rows: targets.map { choice in
                     SelectorRow(id: choice.id, title: choice.name, provider: choice.provider, providerIcon: choiceIcon(choice.icon),
                                 detail: choice.detail, context: nil, levels: [], defaultLevel: nil, modelID: nil,
                                 selected: choice.id == spawnTarget) { [weak self] in self?.spawnTarget = choice.id }

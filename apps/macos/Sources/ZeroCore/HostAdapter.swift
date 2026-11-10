@@ -1,7 +1,7 @@
 import Foundation
 
 /// Agents in Zero's own terminals, kept by zero-host (Sources/ZeroHost), which runs on its own so they keep
-/// running when Zero quits. Zero starts agents here unless Rex is turned on.
+/// running when Zero quits.
 public struct HostAdapter: TerminalAdapter {
     public let name = "Zero"
     let runtime = "zero"
@@ -50,7 +50,7 @@ public struct HostAdapter: TerminalAdapter {
         return resumed
     }
 
-    public var canSpawn: Bool { !RexAdapter.enabled }
+    public var canSpawn: Bool { true }
 
     /// A terminal of its own with Claude Code (or Codex), started with the model and effort picked; once
     /// it sits at its prompt, the first message.

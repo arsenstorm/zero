@@ -2,8 +2,7 @@ import Foundation
 import Testing
 @testable import ZeroCore
 
-@Test func rexIdsAndLabelsAreReadFromItsOutput() {
-    #expect(RexAdapter.blockID(in: #"{"block_ids":["block:01a16439-704d-7121-ac95-65fb4ece04a5"]}"#) == "block:01a16439-704d-7121-ac95-65fb4ece04a5")
+@Test func labelsAreTheStartOfThePrompt() {
     #expect(AgentCommand.label(for: "Fix the login redirect on the billing page please") == "Fix the login redirect on the")
     #expect(AgentCommand.label(for: "  ") == "Zero agent")
 }
@@ -15,21 +14,14 @@ import Testing
     #expect(try AgentCommand.resume(agent) == ["claude", "--model", "haiku", "--resume", "new-session"])
 }
 
-/// Starts a real Claude agent in the folder named by ZERO_SPAWN (in Zero's own terminals; in Rex too when
-/// ZERO_REX_SPAWN is set), reads its reply, stops it, resumes it, and closes its terminal. Costs a launch and two
-/// short turns on Haiku each. Zero's terminals need zero-host running (`.build/debug/zero-host`).
+/// Starts a real Claude agent in the folder named by ZERO_SPAWN in Zero's own terminals, reads its reply, stops it,
+/// resumes it, and closes its terminal. Costs a launch and two short turns on Haiku. Zero's terminals need zero-host
+/// running (`.build/debug/zero-host`).
 @Test(.enabled(if: ProcessInfo.processInfo.environment["ZERO_SPAWN"] != nil))
 func ownTerminalAgentStartsRepliesStopsAndResumes() async throws {
     let folder = ProcessInfo.processInfo.environment["ZERO_SPAWN"]!
     let resumed = try await startReplyStopResume(HostAdapter(), runtime: "zero:claude", in: folder)
     _ = await HostLink.call(HostLink.Request(op: "close", id: resumed.ref))
-}
-
-@Test(.enabled(if: ProcessInfo.processInfo.environment["ZERO_REX_SPAWN"] != nil))
-func rexAgentStartsRepliesStopsAndResumes() async throws {
-    let folder = ProcessInfo.processInfo.environment["ZERO_REX_SPAWN"]!
-    let resumed = try await startReplyStopResume(RexAdapter(), runtime: "rex:claude", in: folder)
-    if let group = resumed.refGroup { _ = await RexAdapter.rex(["kill", group]) }
 }
 
 private func startReplyStopResume(_ adapter: some TerminalAdapter, runtime: String, in folder: String) async throws -> AgentIdentity {

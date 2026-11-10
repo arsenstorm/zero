@@ -15,17 +15,12 @@ func shortDetail(_ text: String?, flag name: String) {
 
 @MainActor func agentIdentity() -> AgentIdentity {
     let env = ProcessInfo.processInfo.environment
-    let solo: String? = env["SOLO_PROCESS_ID"].map { "solo-" + $0 }
-    let rex: String? = env["REX_BLOCK"].map { "rex-" + String($0.suffix(6)) }
     let own: String? = env["ZERO_HOST_TERMINAL"].map { "claude-" + String($0.suffix(6)) }
     let hyperfocus: String? = env["HF_SESSION_ID"].map { "hf-" + $0 }
-    let name: String = flag("agent") ?? env["ZERO_AGENT"] ?? solo ?? own ?? rex ?? hyperfocus ?? "shell-\(getppid())"
+    let name: String = flag("agent") ?? env["ZERO_AGENT"] ?? own ?? hyperfocus ?? "shell-\(getppid())"
     var identity = AgentIdentity(name: name, host: AgentIdentity.thisHost,
                          cwd: FileManager.default.currentDirectoryPath,
-                         soloProcessID: env["SOLO_PROCESS_ID"].flatMap(Int.init), soloProjectID: env["SOLO_PROJECT_ID"].flatMap(Int.init),
                          ticket: flag("ticket"))
-    // Inside a Rex terminal: Zero reaches the agent through Rex.
-    if let block = env["REX_BLOCK"] { identity.runtime = "rex"; identity.ref = block; identity.refGroup = env["REX_SESSION"] }
     // Inside one of Zero's own terminals: Zero reaches the agent through zero-host.
     if let terminal = env["ZERO_HOST_TERMINAL"] { identity.runtime = "zero"; identity.ref = terminal }
     // A session zerod runs: its notes, asks and runs join that session's approvals in the inbox.

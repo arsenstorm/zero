@@ -77,7 +77,7 @@ private func optionDescriptions(_ item: [String: Any]) -> String? {
     return descriptions.isEmpty ? nil : descriptions.joined(separator: "\n")
 }
 
-/// The plugin's UserPromptSubmit hook. Works out who sent the prompt: a Solo timer or a background result
+/// The plugin's UserPromptSubmit hook. Works out who sent the prompt: a background result
 /// (machinery), Zero (an answer or a message from the inbox), the lead (a worker's brief), or the user typing in
 /// the terminal. Records it for the stop hook and tells the agent how to treat the turn.
 @MainActor func promptCommand() {
@@ -90,7 +90,7 @@ private func optionDescriptions(_ item: [String: Any]) -> String? {
     let saved = (try? String(contentsOf: file, encoding: .utf8))?.split(separator: " ")
     let previous = saved?.first.map(String.init)
     let typedRecently = previous == "human" && (saved?.dropFirst().first.flatMap { Double($0) }).map { Date().timeIntervalSince1970 - $0 < 600 } == true
-    let machinery = ["[Solo timer", "<task-notification>", "<system-reminder>", "Caveat:"].contains { prompt.hasPrefix($0) }
+    let machinery = ["<task-notification>", "<system-reminder>", "Caveat:"].contains { prompt.hasPrefix($0) }
     let zeroSaid = ["The user answered your ask", "The user declined your ask", "The user ran your command", "The user rejected your command", "Your ask "]
         .contains { prompt.hasPrefix($0) }
     let brief = prompt.range(of: #"\b(BRIEF|FIX|REVIEW|TEST)[\w.-]*\.md\b"#, options: .regularExpression) != nil

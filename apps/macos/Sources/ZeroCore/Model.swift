@@ -22,9 +22,6 @@ public struct AgentIdentity: Codable, Hashable, Sendable {
     public var name: String
     public var host: String
     public var cwd: String?
-    public var soloProcessID: Int?
-    /// Solo scopes its calls to a project; every call about the process carries this one.
-    public var soloProjectID: Int?
     public var ticket: String?
     /// What to show for the agent (Claude's own title for the session once it has one); `name` stays the stable key.
     public var label: String?
@@ -32,15 +29,14 @@ public struct AgentIdentity: Codable, Hashable, Sendable {
     public var session: String?
     /// The Claude account the agent runs as, when it was started as one other than Claude Code's active account.
     public var account: String?
-    /// For runtimes other than Solo: which one hosts the agent ("rex"), its id for the agent's terminal there,
-    /// the group that terminal lives in (a Rex session), and the command line it was started with, for resuming.
+    /// Which runtime hosts the agent ("zero", "zerod"), its id for the agent's terminal there, and the command line
+    /// it was started with, for resuming.
     public var runtime: String?
     public var ref: String?
-    public var refGroup: String?
     public var launch: [String]?
 
-    public init(name: String, host: String, cwd: String? = nil, soloProcessID: Int? = nil, soloProjectID: Int? = nil, ticket: String? = nil, label: String? = nil, session: String? = nil) {
-        self.name = name; self.host = host; self.cwd = cwd; self.soloProcessID = soloProcessID; self.soloProjectID = soloProjectID; self.ticket = ticket; self.label = label; self.session = session
+    public init(name: String, host: String, cwd: String? = nil, ticket: String? = nil, label: String? = nil, session: String? = nil) {
+        self.name = name; self.host = host; self.cwd = cwd; self.ticket = ticket; self.label = label; self.session = session
     }
 }
 

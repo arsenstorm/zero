@@ -1,9 +1,9 @@
 import Foundation
 
-/// An agent in a terminal Zero types into and reads, wherever that terminal lives: Zero's own host (HostAdapter)
-/// or Rex. Each says how to type, read the screen and tell whether the program runs; the rest is shared here.
+/// An agent in a terminal Zero types into and reads: Zero's own host (HostAdapter) says how to type, read the screen
+/// and tell whether the program runs; the rest is here.
 protocol TerminalAdapter: AgentAdapter {
-    /// The agent's runtime as recorded on its identity ("zero", "rex").
+    /// The agent's runtime as recorded on its identity ("zero").
     var runtime: String { get }
     func type(_ text: String, into ref: String) async -> Bool
     func write(_ bytes: [UInt8], to ref: String) async
@@ -42,14 +42,14 @@ extension TerminalAdapter {
         return await capture(ref)
     }
 
-    /// The reply is read off the screen, as for Solo: once the agent is no longer working (Claude Code shows
+    /// The reply is read off the screen: once the agent is no longer working (Claude Code shows
     /// "esc to interrupt" while it is) and a reply follows the echo of our message.
     public func reply(from agent: AgentIdentity, to text: String) async -> String? {
         for _ in 0..<450 {
             try? await Task.sleep(for: .seconds(2))
             guard let screen = await screen(of: agent) else { return nil }
             if screen.contains("esc to interrupt") { continue }
-            if let reply = SoloAdapter.lastReply(in: screen, after: text) { return reply }
+            if let reply = ClaudeScreen.lastReply(in: screen, after: text) { return reply }
         }
         return nil
     }
@@ -125,9 +125,9 @@ extension TerminalAdapter {
         return runtimes
     }
 
-    public func refreshModels() async -> Bool { await SoloAdapter().refreshModels() }
-    public func spawnModels(for runtime: SpawnChoice) -> [SpawnChoice] { SoloAdapter().spawnModels(for: runtime) }
-    public func spawnNote(for runtime: SpawnChoice) -> String? { SoloAdapter().spawnNote(for: runtime) }
+    public func refreshModels() async -> Bool { await AgentModels.refresh() }
+    public func spawnModels(for runtime: SpawnChoice) -> [SpawnChoice] { AgentModels.spawnModels(for: runtime) }
+    public func spawnNote(for runtime: SpawnChoice) -> String? { AgentModels.spawnNote(for: runtime) }
 
     /// Claude Code's input box is drawn once it is ready. A folder it hasn't been trusted in asks first: these are
     /// folders the user added to Zero themselves, so "Yes, I trust this folder" is chosen (its cursor can start on
@@ -141,7 +141,7 @@ extension TerminalAdapter {
                 await write(chosen == nil ? TerminalKey.down : TerminalKey.enter, to: ref)
                 continue
             }
-            if SoloAdapter.draft(in: text) != nil { return }
+            if ClaudeScreen.draft(in: text) != nil { return }
         }
         throw AdapterError("\(agent) didn't reach its prompt in \(name)")
     }

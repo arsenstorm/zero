@@ -23,7 +23,7 @@ struct SelectorRow: Identifiable {
     var glyph: String? = nil
 }
 
-/// A provider (Anthropic, OpenAI, Solo): one tab of the selector.
+/// A provider (Anthropic, OpenAI): one tab of the selector.
 struct SelectorSection: Identifiable {
     let id: String
     let title: String

@@ -322,8 +322,8 @@ extension EnvironmentValues {
 
     private static func own(_ provider: Provider) -> [SpawnChoice] {
         switch provider {
-        case .claude: SoloAdapter().spawnModels(for: SpawnChoice(id: "claude", name: "Claude"))
-        case .codex: SoloAdapter().spawnModels(for: SpawnChoice(id: "codex", name: "Codex"))
+        case .claude: AgentModels.spawnModels(for: SpawnChoice(id: "claude", name: "Claude"))
+        case .codex: AgentModels.spawnModels(for: SpawnChoice(id: "codex", name: "Codex"))
         // Its own list, read in the background: the rows fill in once it's in.
         case .opencode: { OpenCodeModels.shared.refresh(); return OpenCodeModels.shared.models }()
         }

@@ -295,26 +295,21 @@ func newID() -> String {
 }
 
 func agentIdentity(session: String? = nil) -> String {
-    let solo = env("SOLO_PROCESS_ID").map { "solo-" + $0 }
-    let rex = env("REX_BLOCK").map { "rex-" + String($0.suffix(6)) }
     let own = env("ZERO_HOST_TERMINAL").map { "claude-" + String($0.suffix(6)) }
     let hyperfocus = env("HF_SESSION_ID").map { "hf-" + $0 }
-    let name = flag("agent") ?? env("ZERO_AGENT") ?? solo ?? own ?? rex ?? hyperfocus ?? "shell-\(getppid())"
+    let name = flag("agent") ?? env("ZERO_AGENT") ?? own ?? hyperfocus ?? "shell-\(getppid())"
     var host = [CChar](repeating: 0, count: 256)
     var cwd = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
-    var runtime: String?, ref: String?, refGroup: String?
-    if let block = env("REX_BLOCK") { runtime = "rex"; ref = block; refGroup = env("REX_SESSION") }
+    var runtime: String?, ref: String?
     if let terminal = env("ZERO_HOST_TERMINAL") { runtime = "zero"; ref = terminal }
     if let session = env("ZERO_SESSION") { runtime = "zerod"; ref = session }
     return object([
         ("name", quote(name)),
         ("host", quote(gethostname(&host, host.count) == 0 ? String(cString: host) : "mac")),
         ("cwd", quote(getcwd(&cwd, cwd.count) != nil ? String(cString: cwd) : "")),
-        ("soloProcessID", env("SOLO_PROCESS_ID").flatMap { Int($0) }.map { "\($0)" }),
-        ("soloProjectID", env("SOLO_PROJECT_ID").flatMap { Int($0) }.map { "\($0)" }),
         ("ticket", flag("ticket").map(quote)),
         ("session", session.map(quote)),
-        ("runtime", runtime.map(quote)), ("ref", ref.map(quote)), ("refGroup", refGroup.map(quote)),
+        ("runtime", runtime.map(quote)), ("ref", ref.map(quote)),
     ])
 }
 
@@ -423,7 +418,7 @@ func prompt() -> Never {
     var now = timespec()
     clock_gettime(CLOCK_REALTIME, &now)
     let typedRecently = previous == "human" && (saved?.dropFirst().first.flatMap { Double($0) }).map { Double(now.tv_sec) + Double(now.tv_nsec) / 1e9 - $0 < 600 } == true
-    let machinery = ["[Solo timer", "<task-notification>", "<system-reminder>", "Caveat:"].contains { prompt.hasPrefix($0) }
+    let machinery = ["<task-notification>", "<system-reminder>", "Caveat:"].contains { prompt.hasPrefix($0) }
     let zeroSaid = ["The user answered your ask", "The user declined your ask", "The user ran your command", "The user rejected your command", "Your ask "]
         .contains { prompt.hasPrefix($0) }
     var source: String

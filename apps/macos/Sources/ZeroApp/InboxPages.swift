@@ -21,14 +21,8 @@ struct InboxSidebar: View {
     var body: some View {
         let asks = AsksPage.asks(controller)
         let waiting = asks.filter { !$0.state.isFinal }
-        // Agents by their latest ask, newest first. Solo's agents that are gone (its process ended) with nothing open
-        // are history, not agents: their asks stay under Answered, their names leave the list (they carried the same
-        // session titles Zero's tasks do, and read as doubles).
+        // Agents by their latest ask, newest first.
         let agents = asks.reversed().reduce(into: [String]()) { names, ask in if !names.contains(ask.agent.name) { names.append(ask.agent.name) } }
-            .filter { name in
-                guard name.hasPrefix("solo-"), controller.store.offline.contains(name) else { return true }
-                return waiting.contains { $0.agent.name == name }
-            }
         SidebarColumn(title: "Inbox") {
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
@@ -195,7 +189,7 @@ struct AsksPage: View {
     }
 }
 
-/// An agent Zero doesn't run (Solo's, Rex's, Claude Code in a terminal), opened from the docked bar: its conversation
+/// An agent Zero doesn't run (Claude Code in a terminal, say), opened from the docked bar: its conversation
 /// with you, as the panel shows it, with the box to message it.
 struct AgentPage: View {
     @Bindable var controller: InboxController

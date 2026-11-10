@@ -82,7 +82,7 @@ struct ReplyBox: View {
 /// The composer's box: flush with its card's sides and bottom, bottom corners on the card's radius, and a top
 /// edge whose ends sweep up into the card's walls (concave fillets), so no sliver of card shows beside a corner.
 
-/// An icon the app bundles for an adapter's choice (claude, openai, solo), by resource name. Built once.
+/// An icon the app bundles for an adapter's choice (claude, openai), by resource name. Built once.
 @MainActor private var iconCache: [String: Image] = [:]
 
 @MainActor func choiceIcon(_ name: String?) -> Image? {
@@ -94,9 +94,8 @@ struct ReplyBox: View {
 }
 
 private func buildChoiceIcon(_ name: String) -> Image? {
-    // Apps' own icons: Solo's, Rex's, and Zero's for its own terminals.
-    let apps: [String: String?] = ["solo": "/Applications/Solo.app", "rex": NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.superlogical.rex")?.path,
-                "zero": Bundle.main.bundlePath]
+    // Zero's own icon, for its own terminals.
+    let apps: [String: String?] = ["zero": Bundle.main.bundlePath]
     if let entry = apps[name] {
         guard let path = entry else { return nil }
         let icon = NSWorkspace.shared.icon(forFile: path).copy() as! NSImage

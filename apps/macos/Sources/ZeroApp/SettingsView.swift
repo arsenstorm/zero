@@ -85,7 +85,7 @@ struct SettingsView: View {
         case .controlBar: ControlBarPage(settings: settings, store: store, inbox: inbox, workspace: workspace)
         case .composer: ComposerPage(settings: settings)
         case .devices: DevicesPage()
-        case .agents: AgentsPage(store: store, inbox: inbox, workspace: workspace)
+        case .agents: AgentsPage()
         case .projects: FoldersPage(settings: settings, inbox: inbox)
         case .git: GitPage()
         case .links: LinksPage(workspace: workspace)
@@ -678,13 +678,9 @@ private struct ComposerPage: View {
 
 /// How agents run and reach Zero, and where their tasks are.
 private struct AgentsPage: View {
-    let store: Store
-    let inbox: InboxController
-    let workspace: Workspace?
     var body: some View {
         Sections {
             SettingsSection(title: "Setup") { PluginRow() }
-            SettingsSection(title: "Runtimes") { RuntimesRows(store: store, inbox: inbox) }
             SettingsSection(title: "Tasks") {
                 Rows {
                     SettingRow(title: "Archive done tasks", detail: "Done means finished end to end. Put away then; back when something they follow changes.") {
@@ -699,42 +695,6 @@ private struct AgentsPage: View {
                 }
             }
         }
-    }
-}
-
-private struct RuntimesRows: View {
-    let store: Store
-    let inbox: InboxController
-    @State private var rexOn = UserDefaults.standard.bool(forKey: RexAdapter.enabledKey)
-
-    private var rexDetail: String {
-        rexOn && RexAdapter.executable != nil ? "New agents start in Rex." : "Start new agents in Rex instead of Zero's terminals."
-    }
-
-    var body: some View {
-        Rows {
-            SettingRow(picture: choiceIcon("solo"), title: "Solo", detail: "Starts agents and carries your messages.") {
-                Text(soloStatus).font(.system(size: 12)).foregroundStyle(.secondary)
-            }
-            SettingRow(picture: choiceIcon("rex"), title: "Rex", detail: rexDetail) {
-                if RexAdapter.executable == nil {
-                    Text("Not installed").font(.system(size: 12)).foregroundStyle(.secondary)
-                } else {
-                    Toggle("", isOn: Binding(get: { rexOn }, set: { on in
-                        rexOn = on
-                        UserDefaults.standard.set(on, forKey: RexAdapter.enabledKey)
-                        inbox.loadSpawnChoices(force: true)
-                    })).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                }
-            }
-        }
-    }
-
-    private var soloStatus: String {
-        guard let solo = store.adapters.first(where: { $0 is SoloAdapter }) as? SoloAdapter,
-              FileManager.default.isExecutableFile(atPath: solo.helper) else { return "Not installed" }
-        let socket = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/soloterm/solo-mcp.sock").path
-        return FileManager.default.fileExists(atPath: socket) ? "Connected" : "Not running"
     }
 }
 
@@ -1005,8 +965,8 @@ private struct IconButton: View {
     }
 }
 
-/// The folders Zero's own agents start in. Each runs in a terminal of its own (Zero's, or Rex's when Rex is on),
-/// so it keeps running whether or not Zero is open.
+/// The folders Zero's own agents start in. Each runs in a terminal of its own, so it keeps running whether or not
+/// Zero is open.
 /// Projects and drop folders: where agents start, and where asks arrive as files. Each folder a row with a name of
 /// the user's choosing (its own until then); what's done to one, in its menu.
 private struct FoldersPage: View {

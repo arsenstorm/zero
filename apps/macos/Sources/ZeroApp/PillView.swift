@@ -219,9 +219,6 @@ struct PillView: View {
     }
 
     @ViewBuilder private func agentMenu(_ name: String) -> some View {
-        if let identity = controller.store.identity(of: name), identity.runtime == "rex" {
-            Button("Open in Rex") { Task { await RexAdapter.reveal(identity) } }
-        }
         if let identity = controller.store.identity(of: name), identity.runtime == "zero", let ref = identity.ref {
             Button("Open in Terminal") { HostAdapter.reveal(ref) }
         }

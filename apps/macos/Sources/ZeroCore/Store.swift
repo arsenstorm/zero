@@ -27,7 +27,7 @@ public final class Store {
     @ObservationIgnored private var settings: (takeBack: Double, ttl: Int, patterns: [String])?
 
     /// `asks` to start from, for previews; a connected store gets zerod's.
-    public init(asks: [Ask] = [], adapters: [AgentAdapter] = [ZerodSpawner(), SoloAdapter(), HostAdapter(), RexAdapter()]) {
+    public init(asks: [Ask] = [], adapters: [AgentAdapter] = [ZerodSpawner(), HostAdapter()]) {
         self.asks = asks
         self.adapters = adapters
     }
@@ -102,7 +102,7 @@ public final class Store {
     @ObservationIgnored public var zeroTask: ((String) -> (name: String, runs: String)?)?
 
     /// Compiled once: the control bar names every dot on every redraw.
-    private static let processName = try! NSRegularExpression(pattern: #"^(solo|claude|shell)-\d+$"#)
+    private static let processName = try! NSRegularExpression(pattern: #"^(claude|shell)-\d+$"#)
 
     /// The name to show for an agent: the user's own name for it, else the task's name (Zero's own), else the
     /// runtime's label, else the key.
@@ -289,8 +289,8 @@ public struct ZerodSpawner: AgentAdapter {
             .map { SpawnChoice(id: "zerod:" + $0.0.rawValue, name: $0.1, detail: $0.0.rawValue, icon: $0.2, provider: $0.3) }
     }
 
-    public func spawnModels(for runtime: SpawnChoice) -> [SpawnChoice] { SoloAdapter().spawnModels(for: runtime) }
-    public func refreshModels() async -> Bool { await SoloAdapter().refreshModels() }
+    public func spawnModels(for runtime: SpawnChoice) -> [SpawnChoice] { AgentModels.spawnModels(for: runtime) }
+    public func refreshModels() async -> Bool { await AgentModels.refresh() }
 
     public func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String]) async throws -> AgentIdentity {
         guard let provider = Provider(rawValue: String(runtime.id.dropFirst("zerod:".count))) else { throw AdapterError("zerod can't run \(runtime.name)") }

@@ -43,7 +43,7 @@ A worker you start with `zero spawn` that ends `[zero: done]` leaves the board o
 
 Every call blocks until they answer and prints the answer on stdout. Exit 0 answered, 2 declined (the reason, if any, on stderr), 3 expired. For `run`, stdout is the command's output and the exit code is the command's own.
 
-Blocking is the default because you need the answer to continue. When you cannot hold a shell open, as a Solo agent that must end its turn, use `--async` to get an id back, then `zero wait <id>` when you resume. Put the id in your hand-off message, so the transcript records what was asked.
+Blocking is the default because you need the answer to continue. When you cannot hold a shell open, as an agent that must end its turn, use `--async` to get an id back, then `zero wait <id>` when you resume. Put the id in your hand-off message, so the transcript records what was asked.
 
 ## Writing the ask
 
@@ -208,7 +208,7 @@ removes what it has consumed.
 
 ## Identity
 
-Zero names you by `ZERO_AGENT`, or by your Solo process id. If neither is set, export `ZERO_AGENT` once at the start to a stable short name: the ticket id or your role (`ENG-9429`, `api-lead`). Why: one dot per name; a changing name scatters your history across several dots.
+Zero names you by `ZERO_AGENT`. If it isn't set, export `ZERO_AGENT` once at the start to a stable short name: the ticket id or your role (`ENG-9429`, `api-lead`). Why: one dot per name; a changing name scatters your history across several dots.
 
 ## Ending a turn
 
