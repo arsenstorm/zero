@@ -101,6 +101,9 @@ public final class Store {
     /// it runs on ("Opus 5.5"). The inbox's own record of them is only the label they asked under.
     @ObservationIgnored public var zeroTask: ((String) -> (name: String, runs: String)?)?
 
+    /// Compiled once: the control bar names every dot on every redraw.
+    private static let processName = try! NSRegularExpression(pattern: #"^(solo|claude|shell)-\d+$"#)
+
     /// The name to show for an agent: the user's own name for it, else the task's name (Zero's own), else the
     /// runtime's label, else the key.
     public func displayName(of agent: String) -> String {
@@ -109,7 +112,7 @@ public final class Store {
         let identity = identity(of: agent)
         if let label = identity?.label { return label }
         // A process number means nothing to the user; until the session's title is known, say where it works.
-        if agent.range(of: #"^(solo|claude|shell)-\d+$"#, options: .regularExpression) != nil,
+        if Self.processName.firstMatch(in: agent, range: NSRange(location: 0, length: (agent as NSString).length)) != nil,
            let folder = identity?.cwd.map({ ($0 as NSString).lastPathComponent }), !folder.isEmpty {
             return "Claude in \(folder)"
         }

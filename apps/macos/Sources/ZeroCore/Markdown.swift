@@ -52,7 +52,7 @@ public indirect enum MarkdownBlock: Equatable, Sendable {
                 while i < lines.count, case let line = lines[i].trimmingCharacters(in: .whitespaces), line.hasPrefix("|") {
                     let cells = line.trimmingCharacters(in: CharacterSet(charactersIn: "|")).components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
                     // The line under the headings (|---|:--:|) is layout, not a row.
-                    if !cells.allSatisfy({ $0.range(of: #"^:?-+:?$"#, options: .regularExpression) != nil }) { rows.append(cells) }
+                    if !cells.allSatisfy({ Self.matches(Self.dividerCell, $0) }) { rows.append(cells) }
                     i += 1
                 }
                 blocks.append(.table(rows))
@@ -77,7 +77,7 @@ public indirect enum MarkdownBlock: Equatable, Sendable {
 
     /// An image on a line of its own, when it's a file on the Mac (an absolute path, or a file:// link).
     private static func image(_ line: String) -> MarkdownBlock? {
-        guard let match = line.wholeMatch(of: #/!\[([^\]]*)\]\(<?([^)>]+)>?\)/#) else { return nil }
+        guard let match = line.wholeMatch(of: Self.imageLine) else { return nil }
         let target = String(match.2)
         let path = target.hasPrefix("file://") ? URL(string: target)?.path : target.hasPrefix("/") ? target : nil
         return path.map { .image(path: $0, alt: String(match.1)) }
@@ -114,11 +114,22 @@ public indirect enum MarkdownBlock: Equatable, Sendable {
         return .list(ordered: first.ordered, start: first.number, items: items)
     }
 
+    // Each pattern compiled once. Written in place, a pattern is compiled again every time the line runs: for every
+    // line of every message, and on every frame of a reply fading in.
+    nonisolated(unsafe) private static let markerLine = #/^( *)([-*+]|(\d{1,9})[.)])[ \t]+(.*)$/#
+    nonisolated(unsafe) private static let headingLine = #/^(#{1,6})[ \t]+(.*?)[ \t#]*$/#
+    nonisolated(unsafe) private static let imageLine = #/!\[([^\]]*)\]\(<?([^)>]+)>?\)/#
+    private static let ruleLine = try! NSRegularExpression(pattern: #"^(-{3,}|\*{3,}|_{3,})$"#)
+    private static let dividerCell = try! NSRegularExpression(pattern: #"^:?-+:?$"#)
+    private static func matches(_ pattern: NSRegularExpression, _ text: String) -> Bool {
+        pattern.firstMatch(in: text, range: NSRange(location: 0, length: (text as NSString).length)) != nil
+    }
+
     private struct Marker { let indent: Int; let ordered: Bool; let number: Int; let content: String; let width: Int }
 
     /// "- item", "* item", "12. item", "3) item", with how far in it is and how wide its marker.
     private static func marker(_ line: String) -> Marker? {
-        guard let match = line.firstMatch(of: #/^( *)([-*+]|(\d{1,9})[.)])[ \t]+(.*)$/#) else { return nil }
+        guard let match = line.firstMatch(of: Self.markerLine) else { return nil }
         let indent = match.output.1.count
         let number = match.output.3.flatMap { Int($0) }
         let width = line.count - match.output.4.count
@@ -127,10 +138,10 @@ public indirect enum MarkdownBlock: Equatable, Sendable {
 
     private static func indent(_ line: String) -> Int { line.prefix { $0 == " " || $0 == "\t" }.count }
     private static func fence(_ line: String) -> Bool { line.hasPrefix("```") || line.hasPrefix("~~~") }
-    private static func rule(_ line: String) -> Bool { line.range(of: #"^(-{3,}|\*{3,}|_{3,})$"#, options: .regularExpression) != nil }
+    private static func rule(_ line: String) -> Bool { matches(ruleLine, line) }
 
     private static func heading(_ line: String) -> MarkdownBlock? {
-        guard let match = line.firstMatch(of: #/^(#{1,6})[ \t]+(.*?)[ \t#]*$/#) else { return nil }
+        guard let match = line.firstMatch(of: Self.headingLine) else { return nil }
         return .heading(level: match.output.1.count, text: String(match.output.2))
     }
 }

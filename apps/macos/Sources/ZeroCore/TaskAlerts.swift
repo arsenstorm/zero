@@ -102,17 +102,22 @@ public enum TaskAlerts {
 
     /// Markdown as a notification shows it: its words, without the marks that are only noise there (**, `, #, links'
     /// addresses, list markers, code fences), its lines run together, and short.
+    // Compiled once: a notification's text is worked out for every task on every change of the board.
+    private static let lineMark = try! NSRegularExpression(pattern: #"^(#{1,6}\s+|>\s*|(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?)"#)
+    private static let spaces = try! NSRegularExpression(pattern: #"\s+"#)
+
     public static func plain(_ text: String, limit: Int = 200) -> String {
         var parts: [String] = []
         for raw in text.components(separatedBy: "\n") {
             var line = raw.trimmingCharacters(in: .whitespaces)
             if line.hasPrefix("```") || line.hasPrefix("~~~") || line.isEmpty { continue }
-            line = line.replacingOccurrences(of: #"^(#{1,6}\s+|>\s*|(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?)"#, with: "", options: .regularExpression)
+            line = Self.lineMark.stringByReplacingMatches(in: line, range: NSRange(location: 0, length: (line as NSString).length), withTemplate: "")
             let inline = (try? AttributedString(markdown: line, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))).map { String($0.characters) } ?? line
             let words = inline.trimmingCharacters(in: .whitespaces)
             if !words.isEmpty { parts.append(words) }
         }
-        let joined = parts.joined(separator: " · ").replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        let together = parts.joined(separator: " · ")
+        let joined = Self.spaces.stringByReplacingMatches(in: together, range: NSRange(location: 0, length: (together as NSString).length), withTemplate: " ")
         return joined.count > limit ? String(joined.prefix(limit - 1)).trimmingCharacters(in: .whitespaces) + "…" : joined
     }
 

@@ -24,7 +24,7 @@ public struct PadBlock: Equatable, Sendable {
         if trimmed.hasPrefix("|") { return .table }
         if PadBlocks.listItem(first) { return .list }
         if trimmed.hasPrefix(">") { return .quote }
-        if trimmed.range(of: #"^(-{3,}|\*{3,}|_{3,})$"#, options: .regularExpression) != nil { return .rule }
+        if PadBlocks.rule.firstMatch(in: trimmed, range: NSRange(location: 0, length: (trimmed as NSString).length)) != nil { return .rule }
         if !body.contains("\n"), let match = trimmed.range(of: #"^!\[[^\]]*\]\(([^)\s]+)\)$"#, options: .regularExpression) {
             let link = trimmed[match]
             let path = link[link.index(after: link.firstIndex(of: "(")!)..<link.index(before: link.endIndex)]
@@ -120,8 +120,12 @@ public enum PadBlocks {
 
     /// A list's item: "- ", "* ", "1. " and the like.
     static func listItem(_ line: String) -> Bool {
-        line.range(of: #"^\s*([-*+]|\d+[.)])(\s|$)"#, options: .regularExpression) != nil
+        item.firstMatch(in: line, range: NSRange(location: 0, length: (line as NSString).length)) != nil
     }
+    // Compiled once: a pad's every line is sorted into blocks as it's typed in.
+    static let rule = try! NSRegularExpression(pattern: #"^(-{3,}|\*{3,}|_{3,})$"#)
+    private static let item = try! NSRegularExpression(pattern: #"^\s*([-*+]|\d+[.)])(\s|$)"#)
+    private static let divider = try! NSRegularExpression(pattern: #"^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$"#)
 
     // A table's cells, and back.
 
@@ -142,7 +146,7 @@ public enum PadBlocks {
     public static func divider(of table: String) -> String? { table.split(separator: "\n").map(String.init).first(where: isDivider) }
 
     static func isDivider(_ line: String) -> Bool {
-        line.range(of: #"^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$"#, options: .regularExpression) != nil
+        divider.firstMatch(in: line, range: NSRange(location: 0, length: (line as NSString).length)) != nil
     }
 
     static func row(_ line: String) -> [String] {

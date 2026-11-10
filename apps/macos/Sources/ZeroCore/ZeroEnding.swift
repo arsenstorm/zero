@@ -7,6 +7,9 @@ public enum ZeroEnding: Equatable, Sendable {
     case done, waiting, working
     case asked(String)
 
+    /// Compiled once: in place, it was compiled again for every message drawn.
+    nonisolated(unsafe) private static let line = #/\[zero: (done|completed|waiting|blocked|working|asked ([^\]\s]+)|asked)\]/#
+
     /// The answer without its ending, and the ending, when its last line is one.
     public static func split(_ text: String) -> (String, ZeroEnding?) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -14,7 +17,7 @@ public enum ZeroEnding: Equatable, Sendable {
         // tens of milliseconds on the main thread.
         let last = trimmed[(trimmed.lastIndex(of: "\n").map(trimmed.index(after:)) ?? trimmed.startIndex)...]
         guard last.hasPrefix("[zero: "),
-              let match = last.wholeMatch(of: #/\[zero: (done|completed|waiting|blocked|working|asked ([^\]\s]+)|asked)\]/#) else { return (text, nil) }
+              let match = last.wholeMatch(of: Self.line) else { return (text, nil) }
         let answer = trimmed[..<last.startIndex].trimmingCharacters(in: .whitespacesAndNewlines)
         // No ask's id: no ask to wait on, so no state of its own, but not words to show either.
         if match.output.1 == "asked" { return (answer, nil) }
