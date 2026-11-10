@@ -851,12 +851,23 @@ struct StreamingText: View {
     }
     /// Redrawn as runs change (they're kept outside the view).
     @State private var tick = 0
+    /// Read out and faded in: plain text from here, no clock. (Two views of one reply share its runs: the one that
+    /// didn't prune them never saw them go, its clock kept ticking at 30 a second, a third of a core, for good.)
+    @State private var done = false
 
     static let pace: Double = 240
     static let fade: Double = 0.7
 
     var body: some View {
         let total = text.count
+        if done && shown >= total {
+            MarkdownText(text, cwd: cwd, size: 14.5)
+        } else {
+            reading(total)
+        }
+    }
+
+    private func reading(_ total: Int) -> some View {
         // 30 frames a second: each one styles and lays out the reply again (and the window with it), and the fade has
         // 24 steps over its 700 ms, about one a frame at 30; at 60, every other frame changed nothing.
         TimelineView(.animation(minimumInterval: 1 / 30, paused: shown >= total && runs.isEmpty)) { context in
@@ -885,7 +896,7 @@ struct StreamingText: View {
         last = now
         if runs.contains(where: { now.timeIntervalSince($0.since) >= Self.fade }) { runs = runs.filter { now.timeIntervalSince($0.since) < Self.fade }; tick += 1 }
         let behind = total - shown
-        guard behind > 0 else { return }
+        guard behind > 0 else { if runs.isEmpty, !done { done = true }; return }
         // Steady, a burst read out at the same pace (a reply arrives whole once Claude has thought); only a backlog of
         // more than six seconds' worth goes faster, keeping six seconds behind.
         let pace = max(Self.pace, Double(behind) / 6)

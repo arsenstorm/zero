@@ -34,16 +34,18 @@ struct TerminalView: NSViewRepresentable {
 
     func updateNSView(_ scroll: ContainedScrollView, context: Context) {
         guard let text = scroll.documentView as? NSTextView else { return }
+        // Only when what it says changed: compared as styled text, AppKit's own attributes made it differ every time,
+        // so every update set the text again and scrolled.
+        let said = command + "\n" + output
+        if text.string == "$ " + said { return }
         let mono = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         let bold = NSFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
         // The input line: an accent-coloured prompt and a semibold command; the output follows in regular weight.
         let transcript = NSMutableAttributedString(string: "$ ", attributes: [.font: bold, .foregroundColor: NSColor.controlAccentColor])
         transcript.append(NSAttributedString(string: command + "\n", attributes: [.font: bold, .foregroundColor: NSColor.labelColor]))
         transcript.append(NSAttributedString(string: output, attributes: [.font: mono, .foregroundColor: NSColor.labelColor]))
-        if text.attributedString() != transcript {
-            text.textStorage?.setAttributedString(transcript)
-            text.scrollToEndOfDocument(nil) // follow the newest line as it streams
-        }
+        text.textStorage?.setAttributedString(transcript)
+        text.scrollToEndOfDocument(nil) // follow the newest line as it streams
     }
 }
 

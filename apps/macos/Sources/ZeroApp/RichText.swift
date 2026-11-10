@@ -489,10 +489,12 @@ final class RichTextView: NSTextView {
     }
 
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+        let had = selectedRanges.contains { $0.rangeValue.length > 0 }
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
-        // All of it drawn again: AppKit redraws only the pieces it would have filled, and the bands go a little past
-        // them (over the selected words' line, not the selection's own rects).
-        needsDisplay = true
+        // All of it drawn again, when there's a selection to draw or one that went: AppKit redraws only the pieces it
+        // would have filled, and the bands go a little past them. Not for the empty one a new text sets (every frame
+        // of a reply fading in), which made each frame lay the whole text out again.
+        if had || ranges.contains(where: { $0.rangeValue.length > 0 }) { needsDisplay = true }
         guard !carried else { return }
         if ranges.contains(where: { $0.rangeValue.length > 0 }) { Self.watchClicks() }
         // Being made, the chip goes (it would answer what was selected before), and the selection is carried into
@@ -698,6 +700,15 @@ final class RichTextView: NSTextView {
 
     /// Each code block's range and its panel in the view, as RichLayoutManager draws it.
     private func codePanels() -> [(range: NSRange, panel: NSRect)] {
+        // Worked out once per text and width: the pointer moving over a message asked for them on every move.
+        if let kept = panelsKept, kept.text === shown, kept.width == bounds.width { return kept.panels }
+        let panels = findPanels()
+        panelsKept = (shown, bounds.width, panels)
+        return panels
+    }
+    private var panelsKept: (text: NSAttributedString?, width: CGFloat, panels: [(range: NSRange, panel: NSRect)])?
+
+    private func findPanels() -> [(range: NSRange, panel: NSRect)] {
         guard let storage = textStorage, let manager = layoutManager, let container = textContainer, storage.length > 0 else { return [] }
         var panels: [(NSRange, NSRect)] = []
         storage.enumerateAttribute(.zeroCodeBlock, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
