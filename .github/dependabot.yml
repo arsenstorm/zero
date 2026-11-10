@@ -22,15 +22,8 @@ updates:
       cargo:
         patterns: ["*"]
 
-  - package-ecosystem: swift
-    directory: /apps/macos
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 7
-    groups:
-      swift:
-        patterns: ["*"]
+  # No swift ecosystem: Package.swift names Ghostty's engine as a local binary target built on the Mac (Vendor/, not
+  # in the repo), and Dependabot fails on any package it can't resolve. Swift packages are updated by hand.
 
   # The bun ecosystem updates bun.lock with package.json (the npm one doesn't, failing `bun install --frozen-lockfile`).
   - package-ecosystem: bun
