@@ -379,7 +379,7 @@ import ZeroCore
     func end() { zerod?.shutdown(); zerod = nil }
 }
 
-/// Settings › Devices: the relay, the phones paired, and Add a phone's QR code.
+/// Settings › Phone: the relay, the phones paired, and Add a phone's QR code.
 struct DevicesPage: View {
     @Bindable private var phones = Phones.shared
     @State private var relay = Phones.shared.relay

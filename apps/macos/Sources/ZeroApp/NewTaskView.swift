@@ -36,7 +36,7 @@ struct NewTaskView: View {
                          workspace: workspace, images: $images, send: { start() }, translucent: true) {
                     // Where it starts, as chips in the row: the folder tab that sat above the card is gone.
                     if folders.isEmpty {
-                        NucleoLabel("Add a project in Settings → Projects", icon: "folder", size: 13).font(.system(size: 12)).foregroundStyle(.secondary)
+                        NucleoLabel("Add a project in Settings › Folders", icon: "folder", size: 13).font(.system(size: 12)).foregroundStyle(.secondary)
                     } else {
                         ComposerChip(id: "new.project", label: folders.contains(project) ? Projects.name(of: project) : "Choose project", symbol: "folder") {
                             ComposerRows.list("Projects", icon: choiceIcon("zero"), folders.map { folder in
