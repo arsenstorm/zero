@@ -80,7 +80,10 @@ import ZeroCore
         devices = paired
         host.onChange = { [weak self] devices in
             UserDefaults.standard.set(try? JSONEncoder().encode(devices), forKey: "tunnel.devices")
-            Task { @MainActor in self?.devices = devices }
+            Task { @MainActor in
+                self?.devices = devices
+                self?.register()
+            }
         }
     }
 
@@ -125,11 +128,22 @@ import ZeroCore
 
     func addPhone() { invite = host.invite(relay: relay, mac: mac) }
 
-    /// A task's notification on every phone that takes them: its words sealed for each, so Apple carries only a
-    /// generic line. One per task (its collapse id), replaced by the next.
     /// The MCP servers, for a phone to list: each one's name, how it runs and where, never its values.
     var mcpServers: (() async -> [[String: Any]])?
 
+    /// Where pushes go: the relay in use, which sends them to Apple for its Macs' phones (none set: the Mac's own key).
+    private var pushVia: APNs.Via? {
+        relay.isEmpty ? nil : URL(string: Self.https(relay) + "/push/" + mac).map { APNs.Via(url: $0, token: token) }
+    }
+
+    /// The phones' push tokens, told the relay: the only ones it sends this Mac's pushes to.
+    private func register() {
+        guard let text = try? String(data: JSONEncoder().encode(["push": devices.compactMap(\.push)]), encoding: .utf8) else { return }
+        socket?.send(.string(text)) { _ in }
+    }
+
+    /// A task's notification on every phone that takes them: its words sealed for each, so Apple carries only a
+    /// generic line. One per task (its collapse id), replaced by the next.
     func push(_ alert: TaskAlert, sound: String) {
         for device in devices {
             guard let token = device.push, let note = try? JSONEncoder().encode(["title": alert.title, "body": alert.body]),
@@ -137,7 +151,7 @@ import ZeroCore
             else { continue }
             var aps: [String: Any] = ["alert": ["title": "Zero", "body": "A task has news"], "mutable-content": 1]
             if !sound.isEmpty { aps["sound"] = sound + ".aiff" }
-            APNs.send(["aps": aps, "zero": sealed.base64EncodedString()], to: token, collapse: alert.session)
+            APNs.send(["aps": aps, "zero": sealed.base64EncodedString()], to: token, collapse: alert.session, via: pushVia)
             pushed.insert(alert.session)
         }
     }
@@ -150,7 +164,7 @@ import ZeroCore
         guard !ids.isEmpty else { return }
         pushed.subtract(ids)
         for token in devices.compactMap(\.push) {
-            APNs.send(["aps": ["content-available": 1], "clear": ids], to: token, collapse: nil, quiet: true)
+            APNs.send(["aps": ["content-available": 1], "clear": ids], to: token, collapse: nil, quiet: true, via: pushVia)
         }
     }
 
@@ -172,15 +186,19 @@ import ZeroCore
     /// The relay's word that it has closed, from its /status: its message, or nil while it's open (or can't be asked:
     /// then connecting says what's wrong).
     private static func closedMessage(_ relay: String) async -> String? {
-        let base = relay.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "wss://", with: "https://")
-            .replacingOccurrences(of: "ws://", with: "http://").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let url = URL(string: base + "/status") else { return nil }
+        guard let url = URL(string: https(relay) + "/status") else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 8)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         guard let (data, _) = try? await URLSession.shared.data(for: request),
             let said = try? JSONSerialization.jsonObject(with: data) as? [String: Any], said["open"] as? Bool == false
         else { return nil }
         return said["message"] as? String ?? "This relay has closed."
+    }
+
+    /// The relay's address over HTTPS, for its /status and /push.
+    private static func https(_ relay: String) -> String {
+        relay.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "wss://", with: "https://")
+            .replacingOccurrences(of: "ws://", with: "http://").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
     private func connect() {
@@ -214,6 +232,7 @@ import ZeroCore
         socket = task
         status = .connecting
         task.resume()
+        register()
         receive(on: task)
         heardAt = .now
         Task { [weak self] in
@@ -541,13 +560,22 @@ enum QRCode {
     }
 }
 
-/// Apple's push service, with the user's key (Settings' push key, kept in the Keychain beside the tunnel's): token
-/// auth, a JWT signed with it, good for up to an hour, so made again after fifty minutes.
+/// Apple's push service, through the relay: it holds the APNs key and sends to the phones this Mac registered. A relay
+/// that can't (a self-hosted one without the key, or one from before) leaves it to the Mac's own key, kept in the
+/// Keychain beside the tunnel's: token auth, a JWT signed with it, good for up to an hour, so made again after fifty
+/// minutes.
 enum APNs {
-    /// Where pushes are signed and sent, one at a time: off the main thread (the key's first read, the Keychain's
-    /// `security`, cost 100 ms there, as a question's card slid in), and `made` only ever touched here.
+    /// The relay's /push for this Mac, and the Mac's token for it.
+    struct Via: Sendable { let url: URL; let token: String }
+
+    /// Where pushes are signed and sent with the Mac's own key, one at a time: off the main thread (the key's first
+    /// read, the Keychain's `security`, cost 100 ms there, as a question's card slid in), and `made` and `sandboxed`
+    /// only ever touched here.
     private static let queue = DispatchQueue(label: "zero.apns")
     nonisolated(unsafe) private static var made: (jwt: String, at: Date)?
+    /// Tokens of development builds of the phone app, which only Apple's sandbox takes (it says BadDeviceToken to the
+    /// other).
+    nonisolated(unsafe) private static var sandboxed = Set<String>()
 
     private static func jwt() -> String? {
         if let made, Date().timeIntervalSince(made.at) < 50 * 60 { return made.jwt }
@@ -568,16 +596,36 @@ enum APNs {
         return jwt
     }
 
-    /// ponytail: the sandbox's address, as development builds of the phone app use; the production one once it ships
-    /// through TestFlight or the App Store.
-    static func send(_ payload: [String: Any], to token: String, collapse: String?, quiet: Bool = false) {
+    static func send(_ payload: [String: Any], to token: String, collapse: String?, quiet: Bool = false, via relay: Via?) {
         guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
-        queue.async { post(body, to: token, collapse: collapse, quiet: quiet) }
+        guard let relay,
+            let ask = try? JSONSerialization.data(withJSONObject: [
+                "token": token, "payload": payload, "collapse": collapse ?? NSNull(), "quiet": quiet,
+            ])
+        else {
+            queue.async { post(body, to: token, collapse: collapse, quiet: quiet) }
+            return
+        }
+        var request = URLRequest(url: relay.url)
+        request.httpMethod = "POST"
+        request.httpBody = ask
+        request.setValue("Bearer " + relay.token, forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
+            case 200: break
+            // A relay that doesn't send pushes (501), or from before it could (404): the Mac's own key, if it has one.
+            case 404, 501: queue.async { post(body, to: token, collapse: collapse, quiet: quiet) }
+            case let status:
+                Log.write("push: the relay said \(status) \(error.map { "\($0)" } ?? String(decoding: data ?? Data(), as: UTF8.self))")
+            }
+        }.resume()
     }
 
-    private static func post(_ body: Data, to token: String, collapse: String?, quiet: Bool) {
-        guard let jwt = jwt() else { Log.write("push: no push key in the Keychain"); return }
-        guard let url = URL(string: "https://api.sandbox.push.apple.com/3/device/" + token) else { return }
+    private static func post(_ body: Data, to token: String, collapse: String?, quiet: Bool, again: Bool = false) {
+        guard let jwt = jwt() else { Log.write("push: the relay doesn't send pushes and there's no push key in the Keychain"); return }
+        let sandbox = sandboxed.contains(token)
+        guard let url = URL(string: "https://api.\(sandbox ? "sandbox." : "")push.apple.com/3/device/" + token) else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.httpBody = body
@@ -588,7 +636,15 @@ enum APNs {
         if let collapse { request.setValue(collapse, forHTTPHeaderField: "apns-collapse-id") }
         URLSession.shared.dataTask(with: request) { data, response, error in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            if status != 200 { Log.write("push: \(status) \(error.map { "\($0)" } ?? String(decoding: data ?? Data(), as: UTF8.self))") }
+            let said = String(decoding: data ?? Data(), as: UTF8.self)
+            if status == 400, said.contains("BadDeviceToken"), !again {
+                queue.async {
+                    if sandbox { sandboxed.remove(token) } else { sandboxed.insert(token) }
+                    post(body, to: token, collapse: collapse, quiet: quiet, again: true)
+                }
+            } else if status != 200 {
+                Log.write("push: \(status) \(error.map { "\($0)" } ?? said)")
+            }
         }.resume()
     }
 }
