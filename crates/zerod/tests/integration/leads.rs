@@ -458,3 +458,25 @@ async fn something_an_archived_task_follows_brings_it_back_to_hear_of_it() {
     assert!(w.daemon.get(&lead).is_some(), "back from the archive");
     assert!(!w.daemon.queued(&lead).1, "the event isn't held: it goes to the agent");
 }
+
+/// Claude's words as they stream are for the live view: the finished message carries them all, so the transcript keeps
+/// that and not each piece (four in ten lines of a long task's transcript were pieces). Replayed, the words are there.
+#[tokio::test]
+async fn a_transcript_keeps_the_finished_words_not_each_piece() {
+    let w = world("leads-transcript-pieces");
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "say hello");
+    let seen = lead_runtime(&w).await;
+    seen.said("user", 1).await;
+    let piece = |text: &str| json!({"type": "stream_event", "api_message_id": "m1", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": text}}});
+    seen.say(json!({"type": "stream_event", "api_message_id": "m1", "event": {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}}));
+    seen.say(piece("Hello "));
+    seen.say(piece("there."));
+    seen.say(json!({"type": "assistant", "message": {"id": "m1", "role": "assistant", "content": [{"type": "text", "text": "Hello there."}]}}));
+    seen.say(turn_ends());
+    until(&w.daemon, &lead, |c| c.attention() != Attention::Working).await;
+    let transcript = std::fs::read_to_string(w.home.join("sessions").join(&lead).join("transcript.jsonl")).unwrap();
+    assert!(!transcript.contains("content_block_delta"), "{transcript}");
+    let again = Daemon::open(&w.home, runtime(w.claude.clone())).unwrap();
+    let said = again.get(&lead).unwrap().items.iter().any(|i| matches!(&i.kind, zerod::model::ItemKind::Agent { text, .. } if text == "Hello there."));
+    assert!(said, "replayed with its words");
+}

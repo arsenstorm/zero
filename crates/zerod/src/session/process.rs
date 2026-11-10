@@ -124,7 +124,10 @@ impl Session {
     fn receive(&self, message: Value) {
         let mut inner = self.lock();
         let at = now_ms();
-        inner.record(json!({"in": message, "at": at}));
+        // Not each piece of streamed words: the finished message that follows has them all, and pieces were four in
+        // ten lines of a long task's transcript (written one by one, under the lock). Replayed, the words are there.
+        let piece = message["type"] == "stream_event" && message["event"]["type"] == "content_block_delta";
+        if !piece { inner.record(json!({"in": message, "at": at})); }
         inner.core().at(at);
         inner.heard = Instant::now();
         let effects = inner.core().receive(&message);
