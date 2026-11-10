@@ -6,6 +6,8 @@ const plain = (md: string) =>
   md
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/<[^>]+>/g, "")
+    // Any angle bracket a stripped tag left behind ("<<b>script>"), so none survives into the index.
+    .replace(/[<>]/g, " ")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
     .replace(/^[\s|:-]+$/gm, " ")
     .replace(/[*_`#>|]/g, " ")
