@@ -308,3 +308,21 @@ fn a_slack_connection_kept_before_there_could_be_several_still_loads() {
     let integrations = Integrations::open(&home, canned(vec![]));
     assert_eq!(integrations.slack_state(), json!([{"team": {"id": "T0AB", "name": "Acme", "domain": "acme"}, "channels": {"deploys": "C0D"}}]));
 }
+
+/// A poll that finds the thing as it was doesn't write following.json again: with many things followed, the whole
+/// file (hundreds of kilobytes) was written after every poll of every one of them.
+#[tokio::test]
+async fn a_poll_that_finds_nothing_new_writes_nothing() {
+    let same = || Ok(pr(vec![("c1", "arsen", "First")], vec![], vec![], "aaa", "OPEN"));
+    let fetcher = canned(vec![same(), same()]);
+    let home = temp_dir("following-quiet");
+    let following = Following::open(&home, fetcher.clone(), Integrations::open(&home, fetcher.clone()));
+    following.follow("s1", "https://github.com/o/r/pull/42", false, vec![]).await.unwrap();
+    let file = home.join("following.json");
+    let written = std::fs::metadata(&file).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    following.hurry();
+    following.tick(|_| true, |_, _| {}).await;
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 2, "it was polled");
+    assert_eq!(std::fs::metadata(&file).unwrap().modified().unwrap(), written, "and nothing was written");
+}

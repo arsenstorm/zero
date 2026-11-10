@@ -266,6 +266,7 @@ impl Following {
         let result = self.fetch(source, key, state.as_ref()).await;
         let mut kept = self.kept.lock().unwrap();
         let target = kept.targets.entry(key.into()).or_default();
+        let before = (target.state.clone(), target.summary.clone(), target.error.clone(), target.fails);
         let mut events = vec![];
         match result {
             Ok(poll) => {
@@ -283,7 +284,9 @@ impl Following {
                 }
             }
         }
-        self.keep(&kept);
+        // Written only when what it found is new: the times of the polls aren't worth the file (hundreds of kilobytes
+        // with many things followed) after every poll of every one; lost with a restart, it's polled again, early.
+        if (target.state.clone(), target.summary.clone(), target.error.clone(), target.fails) != before { self.keep(&kept) }
         events
     }
 
