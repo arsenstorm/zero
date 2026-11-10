@@ -1,0 +1,30 @@
+import { render } from "astro:content";
+import { docPages, docHref } from "../../lib/docs";
+
+// The search index: one entry per section (a page's opening, then each ## heading), as plain text.
+const plain = (md: string) =>
+  md
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/^[\s|:-]+$/gm, " ")
+    .replace(/[*_`#>|]/g, " ")
+    .replace(/^-{3,}$/gm, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+export async function GET() {
+  const sections = [];
+  for (const page of await docPages()) {
+    const { headings } = await render(page);
+    const slugs = headings.filter((h) => h.depth === 2);
+    const parts = (page.body ?? "").split(/^## +/m);
+    const href = docHref(page.id);
+    sections.push({ page: page.data.title, title: page.data.title, heading: "", href, text: plain(`${page.data.description} ${parts[0]}`) });
+    parts.slice(1).forEach((part, i) => {
+      const [line, ...rest] = part.split("\n");
+      sections.push({ page: page.data.title, title: page.data.title, heading: line.trim(), href: `${href}#${slugs[i]?.slug ?? ""}`, text: plain(rest.join("\n")) });
+    });
+  }
+  return new Response(JSON.stringify(sections), { headers: { "Content-Type": "application/json" } });
+}

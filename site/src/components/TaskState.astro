@@ -1,0 +1,21 @@
+---
+// A task's state as the sidebar draws it (TaskStateIcon in apps/macos/Sources/ZeroApp/TaskRow.swift).
+import Icon from "./Icon.astro";
+import Spinner from "./Spinner.astro";
+
+const states = {
+  needsYou: { icon: "hand-3", color: "text-blue", name: "Needs you" },
+  blocked: { icon: "circle-minus", color: "text-red", name: "Blocked" },
+  working: { icon: "", color: "text-blue", name: "Working" },
+  handed: { icon: "hand-holding-box", color: "text-teal", name: "Over to you" },
+  waiting: { icon: "hourglass", color: "text-muted", name: "Waiting" },
+  answered: { icon: "message-check", color: "text-indigo", name: "Replied" },
+  done: { icon: "badge-check", color: "text-purple", name: "Done" },
+} as const;
+
+interface Props { state: keyof typeof states; /** The demo task it belongs to, so answering that task's ask can set it working. */ task?: string }
+const look = states[Astro.props.state];
+---
+<span data-task-state={Astro.props.task} class:list={["size-3.5 shrink-0 grid place-items-center", look.color]} title={look.name}>
+  {look.icon ? <Icon name={look.icon} fill="glyph" size={14} /> : <Spinner size={12} />}
+</span>

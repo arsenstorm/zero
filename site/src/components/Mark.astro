@@ -1,0 +1,12 @@
+---
+// The product's mark (apps/macos/Resources/logo/mark-small.svg), in the text's colour. Hidden from screen readers:
+// the name always sits beside it.
+import mark from "../../../apps/macos/Resources/logo/mark-small.svg?raw";
+interface Props { size?: number; class?: string }
+const { size = 20, class: className = "" } = Astro.props;
+const html = mark
+  .replace(/<title>.*?<\/title>/, "")
+  .replace(/fill="#000000"/g, 'fill="currentColor"')
+  .replace("<svg ", `<svg aria-hidden="true" class="${className}" width="${size}" height="${Math.round(size * 1094 / 997)}" `);
+---
+<Fragment set:html={html} />

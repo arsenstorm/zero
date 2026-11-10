@@ -1,0 +1,165 @@
+---
+// The control bar on the right edge of a Mac's screen, with a task's ask open beside it in the inbox. The stage shows
+// the whole screen first, then a pointer goes to the bar and answers an ask, the view closing in on the bar as it
+// goes; then it's yours to use. The screen is drawn at a 14-inch MacBook Pro's size and scaled to fit the stage.
+import Icon from "./Icon.astro";
+import AskCard from "./AskCard.astro";
+import TaskState from "./TaskState.astro";
+import { heroAsk } from "../lib/demo";
+
+interface Props { class?: string }
+const { class: className = "" } = Astro.props;
+// The bar's marks: every task on the board, workers included, in the sidebar's order, each with what the inbox shows
+// for it. The inbox control opens the ask waiting, as its task's mark does.
+const yesNo = ["Yes", "No", "Suggest something else…"];
+const peeks = [
+  { id: "notes", task: "notes", title: "Release notes for 2.4", state: "needsYou", ask: "Ship the release notes as they are?", options: yesNo },
+  { id: "flaky", task: "flaky", title: heroAsk.byline, state: "needsYou", ask: heroAsk.headline, options: heroAsk.options },
+  { id: "ci", task: "ci", title: "Fix the flaky login test · Reproduce it on CI", state: "needsYou", ask: "Allow this command?", options: ["Run", "Reject", "Suggest something else…"] },
+  { id: "bisect", task: "bisect", title: "Find the change that broke it · Done", state: "done", note: "The session refactor caused the failure." },
+  { id: "sqlite", task: "sqlite", title: "Move settings to SQLite · Over to you", state: "handed", note: "The migration is ready. When you are ready, run it on staging." },
+  { id: "parser", task: "parser", title: "Upgrade the Markdown parser · Waiting", state: "waiting", note: "The upgrade is in a pull request. It waits for a review." },
+  { id: "onboarding", task: "onboarding", title: "Onboarding copy · Replied", state: "answered", note: "The copy is done. The welcome screen is five lines shorter." },
+] as const;
+---
+{/* The inbox starts closed, as the page is drawn, so it never shows and then hides as the page loads; the demo opens
+    it (or, under Reduce Motion, shows it open at once). */}
+<div data-bar data-closed role="region" class:list={["group/desk overflow-hidden", className]} aria-label="The control bar: a demo you can use. Point at a mark to see its task.">
+  <div data-screen class="absolute left-0 top-0 w-[1512px] h-[982px] overflow-hidden">
+    {/* Half Dome from Glacier Point: John Gibbons, CC0, https://commons.wikimedia.org/wiki/File:Half_Dome_Sunset_(Unsplash).jpg */}
+    <img src="/yosemite.webp" alt="" loading="lazy" decoding="async" class="absolute inset-0 size-full object-cover pointer-events-none" />
+    {/* Pointing at a mark opens its task in the inbox beside the bar (src/scripts/demo.ts). */}
+    <div data-peeks class="absolute right-[56px] top-1/2 -translate-y-1/2 w-[300px] rounded-[28px] bg-hover p-2.5 origin-right transition-[opacity,scale] duration-200 ease-out group-data-[closed]/desk:opacity-0 group-data-[closed]/desk:scale-[0.96] group-data-[closed]/desk:pointer-events-none">
+      {peeks.map((peek, i) => (
+        <div data-peek={peek.id} hidden={i !== 0}>
+          {peek.ask
+            ? <AskCard interactive task={peek.task} headline={peek.ask} byline={peek.title} options={[...peek.options]} />
+            : <AskCard headline={"note" in peek ? peek.note : ""} byline={peek.title} />}
+        </div>
+      ))}
+    </div>
+    {/* The app's outline (PillView.swift's PillShape): round on the left, and where it meets the screen's edge it curves
+        out into it through a 10 px fillet above and below, like a tab grown out of the edge. */}
+    <div data-bar-marks class="absolute right-0 top-1/2 -translate-y-1/2 flex flex-col items-center gap-0.5 py-2 px-1.5 rounded-l-[22px] bg-pill border border-r-0 border-stroke">
+      <span aria-hidden="true" class="bar-fillet-top absolute -right-px -top-[11px] size-[11px]"></span>
+      <span aria-hidden="true" class="bar-fillet-bottom absolute -right-px -bottom-[11px] size-[11px]"></span>
+      <button type="button" data-peek-open="notes" aria-label="Open asks" aria-pressed="false" class="bar-mark size-8 grid place-items-center relative">
+        <Icon name="inbox" size={15} />
+        <span class="absolute top-[6px] right-[6px] size-[7px] rounded-full bg-red"></span>
+      </button>
+      <span class="w-[18px] h-px bg-hairline my-1" aria-hidden="true"></span>
+      {peeks.map((peek) => (
+        <button type="button" data-peek-open={peek.id} data-task-mark aria-label={peek.title} aria-pressed={String(peek.id === "notes")} class="bar-mark relative w-8 h-7 grid place-items-center"><TaskState state={peek.state} task={peek.task} /></button>
+      ))}
+    </div>
+    {/* The pointer, its tip at its box's top left. */}
+    <svg data-cursor aria-hidden="true" width="22" height="30" viewBox="0 0 22 30" class="absolute left-0 top-0 z-10 pointer-events-none opacity-0 transition-opacity duration-300 drop-shadow-[0_1px_2px_rgb(0_0_0/0.35)]">
+      <path d="M1.5 1.5v22.4l5.6-5.4 3.7 8.6 3.6-1.5-3.6-8.5h7.8z" fill="#000" stroke="#fff" stroke-width="1.5" stroke-linejoin="round" />
+    </svg>
+  </div>
+</div>
+
+<script>
+  const SCREEN = { width: 1512, height: 982 };
+  // The view closing in: a plain ease-out, quick to start and settling without a long drift. The pointer: a hand
+  // moving a mouse, speeding up then slowing onto its target.
+  const ZOOM = "cubic-bezier(0.33, 1, 0.68, 1)";
+  const POINT = "cubic-bezier(0.645, 0.045, 0.355, 1)";
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)");
+
+  for (const desk of document.querySelectorAll<HTMLElement>("[data-bar]")) {
+    const screen = desk.querySelector<HTMLElement>("[data-screen]")!;
+    const cursor = desk.querySelector<SVGElement>("[data-cursor]")!;
+    const mark = desk.querySelector<HTMLElement>('[data-task-mark][data-peek-open="notes"]')!;
+    let zoomed = false;
+    let over = false;
+    let at = { x: 1120, y: 600 };
+
+    // The whole screen, filling the stage; or close in on the bar, the screen's right edge at the stage's, the bar
+    // level with the stage's middle. Both are drawn as one scale about the one point of the screen that stays put
+    // between them, so closing in is a straight zoom toward it: moving and scaling at once, the picture swung along
+    // a curve on its way, and that made people queasy.
+    function place(animate: boolean, ms = 1200) {
+      const w = desk.clientWidth, h = desk.clientHeight;
+      const fit = Math.max(w / SCREEN.width, h / SCREEN.height);
+      const close = Math.min(w / 420, h / 400, 1.15);
+      const from = { s: fit, x: (w - SCREEN.width * fit) / 2, y: (h - SCREEN.height * fit) / 2 };
+      const to = { s: close, x: w - SCREEN.width * close, y: h / 2 - (SCREEN.height / 2) * close };
+      // The screen point drawn at the same stage point in both: x1 + s1·p = x2 + s2·p.
+      const d = from.s - to.s || 1;
+      const fixed = { x: (to.x - from.x) / d, y: (to.y - from.y) / d };
+      const at = { x: from.x + from.s * fixed.x, y: from.y + from.s * fixed.y };
+      screen.style.transition = animate ? `transform ${ms}ms ${ZOOM}` : "none";
+      screen.style.transformOrigin = `${fixed.x}px ${fixed.y}px`;
+      screen.style.transform = `translate(${at.x - fixed.x}px, ${at.y - fixed.y}px) scale(${zoomed ? close : fit})`;
+    }
+    function point(to: { x: number; y: number }, ms: number) {
+      at = to;
+      cursor.style.transition = `transform ${ms}ms ${POINT}, opacity 300ms ease-out`;
+      cursor.style.transform = `translate(${to.x}px, ${to.y}px)`;
+    }
+    // Where an element's middle is on the screen, at whatever scale it's drawn now.
+    function middle(el: Element) {
+      const s = screen.getBoundingClientRect(), r = el.getBoundingClientRect(), k = s.width / SCREEN.width;
+      return { x: (r.left + r.width / 2 - s.left) / k, y: (r.top + r.height / 2 - s.top) / k };
+    }
+    const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
+
+    // Yours from here: close in, the inbox open, no pointer but your own.
+    function finish() {
+      over = true;
+      zoomed = true;
+      place(false);
+      desk.removeAttribute("data-closed");
+      cursor.style.opacity = "0";
+    }
+
+    // One thing moves at a time: the view closes in with the pointer still, then the pointer goes.
+    async function play() {
+      cursor.style.opacity = "1";
+      await wait(600);
+      if (over) return;
+      zoomed = true;
+      place(true);
+      await wait(1300);
+      if (over) return;
+      point(middle(mark), 700);
+      await wait(800);
+      if (over) return;
+      mark.dispatchEvent(new PointerEvent("pointerenter"));
+      desk.removeAttribute("data-closed");
+      await wait(600);
+      if (over) return;
+      const yes = desk.querySelector<HTMLButtonElement>('[data-peek="notes"] [data-option="0"]')!;
+      point(middle(yes), 700);
+      await wait(850);
+      if (over) return;
+      cursor.style.transition = "transform 100ms ease-out";
+      cursor.style.transform = `translate(${at.x}px, ${at.y}px) scale(0.9)`;
+      await wait(110);
+      yes.click();
+      point(at, 120);
+      await wait(1400);
+      if (over) return;
+      point({ x: at.x - 140, y: at.y + 90 }, 700);
+      await wait(900);
+      if (!over) { over = true; cursor.style.opacity = "0"; }
+    }
+
+    if (reduce.matches) finish();
+    else {
+      place(false);
+      point(at, 0);
+      // Your own pointer moving in it, a press or a key: it's yours. (Scrolling under a still pointer moves nothing.)
+      desk.addEventListener("pointermove", (e) => { if (!over && (e.movementX || e.movementY)) finish(); });
+      desk.addEventListener("pointerdown", () => over || finish());
+      desk.addEventListener("focusin", () => over || finish());
+      new IntersectionObserver((entries, observer) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        observer.disconnect();
+        play();
+      }, { threshold: 0.6 }).observe(desk);
+    }
+    new ResizeObserver(() => place(false)).observe(desk);
+  }
+</script>

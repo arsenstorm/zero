@@ -1,0 +1,118 @@
+---
+import Base from "../layouts/Base.astro";
+import Icon from "../components/Icon.astro";
+import TaskState from "../components/TaskState.astro";
+import WindowMock from "../components/WindowMock.astro";
+import BarMock from "../components/BarMock.astro";
+import Cta from "../components/Cta.astro";
+import { site } from "../lib/site";
+import InboxDeck from "../components/InboxDeck.astro";
+import claudeIcon from "../../../apps/macos/Resources/icons/claude.png?url";
+import openaiIcon from "../../../apps/macos/Resources/icons/openai.png?url";
+import opencodeIcon from "../icons/opencode-mark.svg?url";
+
+// In the order a task goes through them: at work, then held up (by you, someone else, or something outside), then
+// finished (with an answer, a step for you, or nothing left).
+const states = [
+  { state: "working", name: "Working" },
+  { state: "needsYou", name: "Needs you" },
+  { state: "waiting", name: "Waiting" },
+  { state: "blocked", name: "Blocked" },
+  { state: "answered", name: "Replied" },
+  { state: "handed", name: "Over to you" },
+  { state: "done", name: "Done" },
+] as const;
+
+// The agents the inbox's asks come from, each as its own mark on its own ground, as the app shows them; `at` is its
+// mark's middle in the box its line is drawn in.
+const agents = [
+  { name: "Claude Code", icon: claudeIcon, ground: "bg-[#f4f0e8]", size: 22, at: [80, 30] },
+  { name: "Codex", icon: openaiIcon, ground: "bg-black border border-white/10", size: 20, at: [20, 130] },
+  { name: "OpenCode", icon: opencodeIcon, ground: "bg-[#131010] border border-white/10", size: 16, at: [80, 230] },
+];
+
+const intro = "Zero is a Mac workspace for coding agents. It runs Claude Code, Codex and OpenCode side by side. You give them work, and you answer their questions in one inbox.";
+const secondary = "h-9 pl-3.5 pr-4 gap-1.5 flex items-center rounded-full bg-hover text-ink text-[14px] font-medium whitespace-nowrap transition-[transform,background-color] duration-150 hover:bg-keycap active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100";
+const primary = "h-9 flex items-center rounded-full bg-knob text-on-knob text-[14px] font-medium whitespace-nowrap transition-transform duration-150 active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100";
+const more = "inline-flex items-center gap-1 whitespace-nowrap font-medium text-ink [&>svg]:transition-transform [&>svg]:duration-150 hover:[&>svg]:translate-x-0.5 motion-reduce:[&>svg]:transition-none";
+const h2 = "text-[28px] leading-[1.15] font-semibold tracking-[-0.02em]";
+---
+<Base title={`${site.name}: a workspace for coding agents`} description="Zero is a Mac workspace for coding agents. It runs Claude Code, Codex and OpenCode side by side. You answer them in one inbox.">
+  {/* Left-aligned, in the window's column below. */}
+  <section class="px-6 sm:px-8 pt-20 sm:pt-28 pb-16">
+    <div class="mx-auto max-w-5xl">
+      <h1 class="text-[44px] sm:text-[60px] leading-[1.02] font-semibold tracking-[-0.035em]">Engineer with care.</h1>
+        <p class="mt-5 max-w-[30rem] text-[17px] leading-[1.5] text-muted">{intro}</p>
+        <div class="mt-8 flex flex-wrap items-center gap-3">
+          <a href="/docs/getting-started" class={`${primary} gap-1.5 pl-4 pr-3.5`}>Get started<Icon name="arrow-right" size={14} /></a>
+          <a href={site.repo} class={secondary}><Icon name="github" fill="glyph" size={16} />View on GitHub</a>
+        </div>
+    </div>
+  </section>
+  <section class="px-4 sm:px-8 pb-24"><WindowMock /></section>
+
+  {/* Each part gets the page's width: its words above, left-aligned, and its picture on a grey stage below. */}
+  <section class="px-4 sm:px-8 py-16">
+    <div class="mx-auto max-w-5xl">
+      <div class="grid md:grid-cols-2 gap-x-12 gap-y-3 items-end">
+        <h2 class={h2}>One inbox for every agent</h2>
+        <p class="text-[16px] leading-[1.55] text-muted md:text-right">Every agent asks you in one place. <a href="/docs/inbox-and-asks" class={more}>Learn more<span class="sr-only"> about the inbox</span><Icon name="arrow-right" size={16} /></a></p>
+      </div>
+      {/* The marks and their lines drawn together in one 280 × 260 box, the lines meeting at its middle, where the
+          pile's middle is: the whole centred in the stage. Codex, in the middle, sits further out than the two beside. */}
+      <div class="mt-8 rounded-[28px] bg-rail p-6 sm:p-10 flex items-center justify-center">
+        <div class="hidden md:block relative shrink-0 w-[280px] h-[260px]">
+          <svg aria-hidden="true" viewBox="0 0 280 260" class="absolute inset-0 size-full text-faint">
+            {agents.map((agent) => {
+              const sx = agent.at[0] + 20, sy = agent.at[1], run = 280 - sx;
+              return <path d={`M${sx} ${sy} C ${sx + run * 0.55} ${sy}, ${280 - run * 0.55} 130, 280 130`} fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 4" />;
+            })}
+          </svg>
+          <ul aria-label="Agents">
+            {agents.map((agent) => (
+              <li title={agent.name} style={`left: ${agent.at[0] - 20}px; top: ${agent.at[1] - 20}px`} class:list={["absolute size-10 rounded-full grid place-items-center", agent.ground]}>
+                <img src={agent.icon} alt={agent.name} width={agent.size} height={agent.size} />
+              </li>
+            ))}
+          </ul>
+        </div>
+        <InboxDeck class="w-full max-w-[420px]" />
+      </div>
+    </div>
+  </section>
+  <section class="px-4 sm:px-8 py-16">
+    <div class="mx-auto max-w-5xl">
+      <div class="grid md:grid-cols-2 gap-x-12 gap-y-3 items-end">
+        <h2 class={h2}>Tasks and their workers</h2>
+        <p class="text-[16px] leading-[1.55] text-muted md:text-right">Big jobs split into workers. <a href="/docs/tasks-and-workers" class={more}>Learn more<span class="sr-only"> about tasks and workers</span><Icon name="arrow-right" size={16} /></a></p>
+      </div>
+      {/* The sidebar's icons, large, on the composer's grey: the colour is the state's alone. */}
+      <ul aria-label="The states a task can be in" class="mt-8 rounded-[28px] bg-rail px-6 py-10 sm:px-10 grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-x-4 gap-y-8 text-center">
+        {states.map((st) => (
+          <li class="flex flex-col items-center">
+            <span class="size-14 rounded-full grid place-items-center bg-composer [&_svg]:size-6 [&>span]:size-6"><TaskState state={st.state} /></span>
+            <span class="mt-3 text-[14px] font-medium">{st.name}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  </section>
+  <section class="px-4 sm:px-8 py-16">
+    <div class="mx-auto max-w-5xl">
+      <div class="grid md:grid-cols-2 gap-x-12 gap-y-3 items-end">
+        <h2 class={h2}>The control bar</h2>
+        <p class="text-[16px] leading-[1.55] text-muted md:text-right">Your agents stay in view while you work. <a href="/docs/control-bar" class={more}>Learn more<span class="sr-only"> about the control bar</span><Icon name="arrow-right" size={16} /></a></p>
+      </div>
+      <BarMock class="relative mt-8 h-[420px] md:h-auto md:aspect-[16/10] rounded-[28px] bg-rail" />
+    </div>
+  </section>
+
+  {/* The call to action: the page's last section, in the panel, in the page's column. */}
+  {/* The call to action: the app's dither on black, a large planet below with its lit edge a low arc across the foot,
+      the words on the sky above. No dimming toward the foot: the horizon is there. */}
+  <section class="px-4 sm:px-8 pt-8 pb-16"><Cta planet={[0.5, 8.7, 8]} fade={0} class="mx-auto max-w-5xl rounded-[28px]" /></section>
+</Base>
+
+<script>
+  import "../scripts/demo";
+</script>

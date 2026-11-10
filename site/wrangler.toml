@@ -1,0 +1,19 @@
+# Zero's site: the Astro build (dist/) as Workers static assets, at withzero.dev; www.withzero.dev redirects to it.
+# Deployed from main by .github/workflows/deploy-site.yml; by hand: `bun run build && npx wrangler deploy`.
+name = "zero-site"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+account_id = "8dd0864e5cce87fba700990f062744f0"
+routes = [
+  { pattern = "withzero.dev", custom_domain = true },
+  { pattern = "www.withzero.dev", custom_domain = true },
+]
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+# Pages are built as files (docs/getting-started.html), served without .html and without a trailing slash.
+html_handling = "drop-trailing-slash"
+not_found_handling = "404-page"
+# The Worker sees every request first, so www redirects before any file is served.
+run_worker_first = true

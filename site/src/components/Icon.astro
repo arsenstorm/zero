@@ -1,0 +1,14 @@
+---
+// The app's own Nucleo icons, read from apps/macos/Resources/nucleo at build time and drawn inline. A few the app
+// doesn't use (the docs sidebar's filled icons) are in src/icons, from the same Nucleo UI family at 18 px. The size
+// set is the outer svg's, whatever size the file was drawn at (the GitHub mark is 32).
+const app = import.meta.glob("../../../apps/macos/Resources/nucleo/*.svg", { query: "?raw", import: "default", eager: true });
+const own = import.meta.glob("../icons/*.svg", { query: "?raw", import: "default", eager: true });
+
+interface Props { name: string; fill?: "outline" | "glyph"; size?: number; class?: string }
+const { name, fill = "outline", size = 18, class: className = "" } = Astro.props;
+const svg = (app[`../../../apps/macos/Resources/nucleo/${name}-${fill}.svg`] ?? own[`../icons/${name}-${fill}.svg`]) as string | undefined;
+if (!svg) throw new Error(`No Nucleo icon ${name}-${fill} in apps/macos/Resources/nucleo or site/src/icons`);
+const html = svg.replace("<svg ", `<svg aria-hidden="true" class="${className}" `).replace(/width="\d+" height="\d+"/, `width="${size}" height="${size}"`);
+---
+<Fragment set:html={html} />

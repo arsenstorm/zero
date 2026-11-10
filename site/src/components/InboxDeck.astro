@@ -1,0 +1,80 @@
+---
+// The inbox as a pile: the asks waiting, from each agent, the first in front and the next ones peeking out behind it.
+// Answered, the front one leaves and the next comes forward; the one answered goes to the back, asked again, so the
+// pile never runs out.
+import AskCard from "./AskCard.astro";
+import { inboxAsks } from "../lib/demo";
+
+interface Props { class?: string }
+const { class: className = "" } = Astro.props;
+---
+<div data-deck role="region" aria-label="Asks from three agents in the inbox. Answer the one in front: click an answer or press 1, 2 or 3." class:list={["relative pt-6", className]}>
+  {inboxAsks.map((ask) => (
+    <div data-deck-card class="deck-card absolute inset-x-0 top-6 origin-top">
+      <AskCard interactive headline={ask.headline} byline={`${ask.agent} · ${ask.task}`} supporting={ask.supporting} command={ask.command} options={ask.options} />
+    </div>
+  ))}
+</div>
+
+<style>
+  /* Moving up a place: a steep start and a soft landing (iOS sheets' curve), so the next ask is there at once. */
+  /* Each ask kept on a layer of its own: otherwise the browser drops the layer as the move ends and draws the text again
+     on the pixel grid, and it jumps a pixel just after it lands. */
+  .deck-card { will-change: transform; transition: transform 420ms cubic-bezier(0.32, 0.72, 0, 1), clip-path 420ms cubic-bezier(0.32, 0.72, 0, 1), opacity 240ms ease-out, filter 240ms ease-out; }
+  /* Leaving: quicker than arriving, as exits are; ease-out too. */
+  .deck-card[data-leaving] { transition: transform 200ms ease-out, opacity 200ms ease-out, filter 200ms ease-out; }
+  /* Reduce Motion: the asks fade from one to the next without moving. */
+  @media (prefers-reduced-motion: reduce) {
+    .deck-card, .deck-card[data-leaving] { transition: opacity 200ms ease; }
+  }
+</style>
+
+<script>
+  // Green for a moment once sent, so you see it went, then on to the next.
+  const HOLD_MS = 300;
+  for (const deck of document.querySelectorAll<HTMLElement>("[data-deck]")) {
+    let cards = [...deck.querySelectorAll<HTMLElement>("[data-deck-card]")];
+    // Tall enough for the tallest ask, so the pile never changes the page's height.
+    const fit = () => (deck.style.height = `${24 + Math.max(...cards.map((c) => c.offsetHeight))}px`);
+    // A place in the pile: the front one whole, each behind it a step up and smaller, past the third out of sight
+    // (still a step further back, so the one coming into view grows out from behind rather than appearing). Those
+    // behind are cut to the front one's height, so a taller ask never shows below a shorter one in front; coming to
+    // the front, an ask opens out to its own height.
+    function put(card: HTMLElement, i: number) {
+      const cut = i === 0 ? 0 : Math.max(0, card.offsetHeight - cards[0].offsetHeight);
+      card.style.clipPath = `inset(0 0 ${cut}px 0 round 18px)`;
+      card.style.transform = `translateY(${-12 * i}px) scale(${1 - 0.05 * i})`;
+      card.style.opacity = i > 2 ? "0" : "1";
+      card.style.filter = "";
+      card.style.zIndex = String(10 - i);
+      card.inert = i > 0;
+    }
+    document.addEventListener("zero:answered", (event) => {
+      const headline = (event as CustomEvent).detail.headline;
+      const front = cards[0];
+      if (!front || front.querySelector("[data-ask]")!.getAttribute("data-headline") !== headline) return;
+      setTimeout(() => {
+        // It drops away, fading and softening; the rest move up a place as it goes.
+        front.toggleAttribute("data-leaving", true);
+        front.style.transform = "translateY(10px) scale(0.97)";
+        front.style.opacity = "0";
+        front.style.filter = "blur(2px)";
+        front.inert = true;
+        cards = [...cards.slice(1), front];
+        cards.slice(0, -1).forEach(put);
+        // Gone: asked again, and put at the back out of sight, without moving there on screen.
+        setTimeout(() => {
+          document.dispatchEvent(new CustomEvent("zero:reask", { detail: { headline } }));
+          front.removeAttribute("data-leaving");
+          front.style.transition = "none";
+          put(front, cards.length - 1);
+          front.getBoundingClientRect();
+          front.style.transition = "";
+        }, 220);
+      }, HOLD_MS);
+    });
+    fit();
+    cards.forEach(put);
+    new ResizeObserver(fit).observe(deck);
+  }
+</script>
