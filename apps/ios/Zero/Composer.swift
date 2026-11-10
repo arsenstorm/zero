@@ -133,11 +133,12 @@ struct Composer: View {
 
     private var box: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if !images.isEmpty && !compact {
+            // Folded too: smaller, so what's attached is still seen.
+            if !images.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: compact ? 6 : 8) {
                         ForEach(Array(images.enumerated()), id: \.offset) { index, image in
-                            Image(uiImage: image).resizable().scaledToFill().frame(width: 56, height: 56)
+                            Image(uiImage: image).resizable().scaledToFill().frame(width: compact ? 40 : 56, height: compact ? 40 : 56)
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                                 .overlay(alignment: .topTrailing) {
                                     Button { images.remove(at: index); if index < picked.count { picked.remove(at: index) } } label: {
@@ -148,7 +149,7 @@ struct Composer: View {
                                 }
                         }
                     }
-                    .padding(.horizontal, 14).padding(.top, 14)
+                    .padding(.horizontal, compact ? 12 : 14).padding(.top, compact ? 10 : 14)
                 }
             }
             // One field in both shapes, so focusing it doesn't make a new one: the controls arrange around it.

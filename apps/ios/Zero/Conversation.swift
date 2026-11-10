@@ -139,6 +139,28 @@ struct UserMessage: View {
     let item: ConversationItem
     @State private var open = false
 
+    /// A video's line for the agent (the Mac's composer adds it): its number, and the stills cut from it.
+    private static let videoLine = try! NSRegularExpression(pattern: #"\n*\[Video #(\d+): (.+?)(?:, \d+:\d|\. It's a video)[^\n]*\]$"#, options: [.anchorsMatchLines])
+    private static let token = try! NSRegularExpression(pattern: #"\[(?:Image|Video) #\d+\]"#)
+
+    /// The tiles a message of yours shows and its words: a video once, by its first still; the images that aren't
+    /// a video's stills; the words without the tokens or the video's line.
+    static func shown(_ text: String, images: [String]) -> (tiles: [(path: String, video: Bool)], words: String) {
+        let whole = text as NSString
+        var stills = Set<Int>(), videos: [(path: String, video: Bool)] = []
+        for match in videoLine.matches(in: text, range: NSRange(location: 0, length: whole.length)) {
+            let line = whole.substring(with: match.range) as NSString
+            let numbers = (try! NSRegularExpression(pattern: #"\[Image #(\d+)\]"#)).matches(in: line as String, range: NSRange(location: 0, length: line.length))
+                .compactMap { Int(line.substring(with: $0.range(at: 1))) }
+            stills.formUnion(numbers)
+            if let first = numbers.first, images.indices.contains(first - 1) { videos.append((images[first - 1], true)) }
+        }
+        let tiles = videos + images.enumerated().filter { !stills.contains($0.offset + 1) }.map { ($0.element, false) }
+        var words = videoLine.stringByReplacingMatches(in: text, range: NSRange(location: 0, length: whole.length), withTemplate: "")
+        words = token.stringByReplacingMatches(in: words, range: NSRange(location: 0, length: (words as NSString).length), withTemplate: "")
+        return (tiles, words.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
     var body: some View {
         if case let .user(text, images) = item.kind {
             if let given = ConversationItem.from(text) {
@@ -151,10 +173,11 @@ struct UserMessage: View {
                 }
                 .buttonStyle(.plain)
             } else {
-                // As the Mac shows yours: the images above the words, as tiles; the words without their "[Image #1]".
-                let words = text.replacingOccurrences(of: #"\[Image #\d+\]"#, with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+                // As the Mac shows yours: the images above the words, as tiles (a video as one, its first still, not the
+                // stills cut from it for the agent); the words without their tokens or the video's line for the agent.
+                let (tiles, words) = Self.shown(text, images: images)
                 VStack(alignment: .trailing, spacing: 6) {
-                    if !images.isEmpty { MessageImages(paths: images) }
+                    if !tiles.isEmpty { MessageImages(tiles: tiles) }
                     if !words.isEmpty {
                         Text(words).padding(.horizontal, 12).padding(.vertical, 8)
                             .contextMenu { CopyActions(text: words) }
@@ -501,38 +524,21 @@ struct AskCard: View {
                         .font(.footnote.weight(.medium))
                 }
             }
-            if ask.state == .waiting {
-                if ask.options.isEmpty {
-                    answerField { text in await model.reply(ask, text: text) }
-                } else {
-                    ForEach(Array(ask.options.enumerated()), id: \.offset) { index, option in
-                        Button {
-                            if Ask.expectsText(option) { typing = index } else { Task { await model.choose(ask, option: index) } }
-                        } label: {
-                            Text(option).font(.subheadline.weight(.medium))
-                                .foregroundStyle(Ask.expectsText(option) ? (ask.doneCheck == true ? AnyShapeStyle(DoneShades.muted) : AnyShapeStyle(.secondary)) : AnyShapeStyle(.primary))
-                                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 14).padding(.vertical, 12)
-                                .background(ask.doneCheck == true ? DoneShades.row : Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-                                .contentShape(RoundedRectangle(cornerRadius: 12))
-                        }
-                        .buttonStyle(.plain)
+            if !ask.options.isEmpty {
+                // As the Mac lays them: a tap answers, and "Something else…" opens into its box where it is.
+                ForEach(Array(ask.options.enumerated()), id: \.offset) { index, option in
+                    if ask.state == .waiting, typing == index {
+                        ReplyBox(placeholder: option, words: $words, fill: rowFill) { text in await model.answer(ask, option: index, text: text) }
+                    } else {
+                        optionRow(index, option)
                     }
-                    if let typing { answerField { text in await model.answer(ask, option: typing, text: text) } }
                 }
-            } else if ask.state == .pending {
-                // Answered, and about to go: a moment to take it back.
-                HStack {
-                    Text(ask.answer ?? (ask.choice.flatMap { ask.options.indices.contains($0) ? ask.options[$0] : nil } ?? "Answered")).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
-                    Spacer()
-                    Button("Take back") { Task { await model.takeBack(ask) } }.font(.footnote.weight(.semibold))
-                }
+            } else if ask.state == .waiting {
+                ReplyBox(placeholder: "Reply…", words: $words, fill: rowFill) { text in await model.reply(ask, text: text) }
             } else if let answer = ask.answer, ask.kind != .run {
-                Text(answer).font(.footnote).foregroundStyle(.secondary)
-                // Typed into the agent's session for it, and that didn't take: again.
-                if ask.delivery == .failed {
-                    Button("Not delivered · Try again") { Task { await model.deliver(ask) } }.font(.footnote.weight(.medium))
-                }
-            } else if ask.state == .running {
+                answeredRow(answer)
+            }
+            if ask.state == .running {
                 Text("Running…").font(.footnote).foregroundStyle(.secondary)
             } else if ask.lost {
                 Text("Lost: Zero can't tell whether it finished. Check what it did before running it again.").font(.footnote).foregroundStyle(.orange)
@@ -545,12 +551,61 @@ struct AskCard: View {
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(flat ? AnyShapeStyle(.clear) : AnyShapeStyle(.quaternary)))
     }
 
-    private func answerField(_ send: @escaping (String) async -> Void) -> some View {
-        HStack {
-            TextField("Your answer", text: $words, axis: .vertical).textFieldStyle(.roundedBorder)
-            Button("Send") { let text = words; words = ""; Task { await send(text) } }
-                .disabled(words.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    /// An option's row, and once answered, how it stands: the one chosen in its state's colour (on its way, delivered,
+    /// not delivered), the others dimmed. A typed answer shows its words where the box was.
+    private func optionRow(_ index: Int, _ option: String) -> some View {
+        let decided = ask.state != .waiting
+        let chosen = decided && ask.choice == index
+        let label = option.replacingOccurrences(of: "…", with: "").replacingOccurrences(of: "...", with: "")
+        let answer = ask.answer ?? option
+        let shown = chosen && Ask.expectsText(option) && answer.hasPrefix(label + ": ") ? String(answer.dropFirst(label.count + 2)) : chosen ? answer : option
+        return choiceRow(shown, muted: !chosen && Ask.expectsText(option), chosen: chosen)
+            .opacity(decided && !chosen ? 0.4 : 1)
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+            .onTapGesture {
+                if !decided { if Ask.expectsText(option) { words = ""; typing = index } else { Task { await model.choose(ask, option: index) } } }
+                else if chosen, ask.delivery == .failed { Task { await model.deliver(ask) } }
+            }
+            .allowsHitTesting(!decided || chosen)
+    }
+
+    /// A reply to an ask without options, once sent: as a chosen option.
+    private func answeredRow(_ answer: String) -> some View {
+        choiceRow(answer, muted: false, chosen: true)
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+            .onTapGesture { if ask.delivery == .failed { Task { await model.deliver(ask) } } }
+    }
+
+    private func choiceRow(_ text: String, muted: Bool, chosen: Bool) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            Text(text).font(.subheadline.weight(.medium))
+                .foregroundStyle(muted ? (ask.doneCheck == true ? AnyShapeStyle(DoneShades.muted) : AnyShapeStyle(.secondary)) : AnyShapeStyle(.primary))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if chosen { standing }
         }
+        .padding(.leading, 14).padding(.trailing, chosen ? 8 : 14).frame(minHeight: 44)
+        .background(chosen ? chosenFill : rowFill, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// At the chosen row's end: a moment to take it back, then on its way, and not delivered, again.
+    @ViewBuilder private var standing: some View {
+        if ask.state == .pending {
+            Button("Take back") { Task { await model.takeBack(ask) } }
+                .font(.footnote.weight(.semibold)).foregroundStyle(.primary)
+                .padding(.horizontal, 10).frame(height: 30).background(.background.opacity(0.6), in: Capsule())
+        } else if ask.delivery == .sending {
+            ProgressView().controlSize(.small).frame(width: 30, height: 30)
+        } else if ask.delivery == .failed {
+            Text("Not delivered · Try again").font(.footnote.weight(.medium)).foregroundStyle(.red)
+        }
+    }
+
+    private var rowFill: Color { ask.doneCheck == true ? DoneShades.row : Color.primary.opacity(0.08) }
+
+    /// The Mac's chosen rows: apricot until it's landed, mint once it has, rose when it didn't.
+    private var chosenFill: Color {
+        if ask.delivery == .failed { return RowShades.red }
+        return ask.state == .pending || ask.delivery == .sending ? RowShades.orange : RowShades.green
     }
 }
 
@@ -698,17 +753,61 @@ struct StatusIcon: View {
 }
 
 /// A message's images as tiles, from the right as the Mac lays them; each a tap from its full size.
+/// Rows of views from the leading (or trailing) edge, wrapping at the width given.
+struct WrappingStack: Layout {
+    var spacing: CGFloat
+    var trailing = false
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = arrange(subviews, width: proposal.width ?? .infinity)
+        return CGSize(width: proposal.width ?? rows.map(\.width).max() ?? 0, height: rows.last.map { $0.y + $0.height } ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for row in arrange(subviews, width: bounds.width) {
+            let shift = trailing ? bounds.width - row.width : 0
+            for (index, x) in row.items { subviews[index].place(at: CGPoint(x: bounds.minX + shift + x, y: bounds.minY + row.y), proposal: .unspecified) }
+        }
+    }
+
+    private func arrange(_ subviews: Subviews, width: CGFloat) -> [(items: [(Int, CGFloat)], y: CGFloat, width: CGFloat, height: CGFloat)] {
+        var rows: [(items: [(Int, CGFloat)], y: CGFloat, width: CGFloat, height: CGFloat)] = []
+        var x: CGFloat = 0, y: CGFloat = 0, height: CGFloat = 0, items: [(Int, CGFloat)] = []
+        for (index, subview) in subviews.enumerated() {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0 && x + size.width > width {
+                rows.append((items, y, x - spacing, height))
+                y += height + spacing; x = 0; height = 0; items = []
+            }
+            items.append((index, x))
+            x += size.width + spacing
+            height = max(height, size.height)
+        }
+        if !items.isEmpty { rows.append((items, y, x - spacing, height)) }
+        return rows
+    }
+}
+
 struct MessageImages: View {
-    let paths: [String]
+    /// Each tile's image, and whether it stands for a video (its first still, a play mark on it).
+    let tiles: [(path: String, video: Bool)]
     @State private var shown: String?
 
     var body: some View {
-        HStack(spacing: 6) {
-            Spacer(minLength: 0)
-            ForEach(paths, id: \.self) { path in
-                ImageTile(path: path, side: 88).onTapGesture { shown = path }
+        // In rows from the right: several (a video's, say) wrap rather than widen the page past the screen.
+        WrappingStack(spacing: 6, trailing: true) {
+            ForEach(tiles, id: \.path) { tile in
+                ImageTile(path: tile.path, side: 88)
+                    .overlay {
+                        if tile.video {
+                            Image("media-play-glyph").resizable().frame(width: 12, height: 12).foregroundStyle(.white)
+                                .frame(width: 30, height: 30).background(.black.opacity(0.55), in: Circle())
+                        }
+                    }
+                    .onTapGesture { shown = tile.path }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .trailing)
         .sheet(item: Binding(get: { shown.map(Shown.init) }, set: { shown = $0?.path })) { shown in
             ImageViewer(path: shown.path)
         }
@@ -791,4 +890,46 @@ enum DoneShades {
     static let row = dynamic(dark: hsl(292, 0.50, 0.21), light: hsl(292, 0.85, 0.945))
     static let ink = Color.purple
     static let muted = dynamic(dark: hsl(292, 0.55, 0.75), light: hsl(292, 0.30, 0.48))
+}
+
+/// The Mac's pastel rows for a chosen option, in both appearances.
+enum RowShades {
+    private static func dynamic(dark: (CGFloat, CGFloat, CGFloat), light: (CGFloat, CGFloat, CGFloat)) -> Color {
+        Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: dark.0, green: dark.1, blue: dark.2, alpha: 1)
+                                                                : UIColor(red: light.0, green: light.1, blue: light.2, alpha: 1) })
+    }
+    static let green = dynamic(dark: (0.13, 0.25, 0.16), light: (0.87, 0.96, 0.89))
+    static let orange = dynamic(dark: (0.30, 0.22, 0.12), light: (0.99, 0.93, 0.85))
+    static let red = dynamic(dark: (0.32, 0.14, 0.14), light: (0.99, 0.89, 0.89))
+}
+
+/// "Something else…" open where its row was: the same shape, the words wrapping as they grow, sent from the round
+/// button inside it (the composer's), focused as it opens.
+private struct ReplyBox: View {
+    let placeholder: String
+    @Binding var words: String
+    let fill: Color
+    let send: (String) async -> Void
+    @FocusState private var focused: Bool
+    private var empty: Bool { words.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            TextField(placeholder, text: $words, axis: .vertical)
+                .font(.subheadline.weight(.medium)).lineLimit(1...6).focused($focused)
+                .padding(.vertical, 12)
+            Button { let text = words; words = ""; focused = false; Task { await send(text) } } label: {
+                Image("arrow-up-outline").resizable().frame(width: 14, height: 14)
+                    .foregroundStyle(Color(uiColor: .systemBackground))
+                    .frame(width: 30, height: 30).background(Color.primary.opacity(empty ? 0.25 : 1), in: Circle())
+            }
+            .disabled(empty)
+            .padding(.bottom, 7)
+            .accessibilityLabel("Send")
+        }
+        .padding(.leading, 14).padding(.trailing, 7).frame(minHeight: 44)
+        .background(fill, in: RoundedRectangle(cornerRadius: 12))
+        // A moment after it's there: asked for in the same update, focus is dropped.
+        .task { try? await Task.sleep(for: .milliseconds(50)); focused = true }
+    }
 }
