@@ -19,7 +19,18 @@ impl Daemon {
     /// At its account's usage limit: carried on as another of its CLI's accounts, the one the policy picks
     /// (signins.rs choose), its agent started again on the same conversation. False when there's none to go to.
     fn switch_account(&self, conversation: &Conversation) -> bool {
-        if conversation.usage.as_ref().is_none_or(|u| !u.limited) { return false }
+        let reported = conversation.usage.as_ref().is_some_and(|u| u.limited);
+        // Or said only in its CLI's error, without figures for the account's windows (a worker's process ending on it).
+        let said = conversation.failure.as_ref().is_some_and(|f| f.kind == crate::model::FailureKind::Limit);
+        if !reported && !said { return false }
+        if !reported && let Some(signin) = conversation.signin.as_deref() {
+            // Kept as limited, so it isn't chosen again at once. Its reset unknown: an hour, until a read says otherwise.
+            // ponytail: a guessed hour; the account's next usage read (Settings, a task's report) corrects it.
+            let mut usage = self.signins.usage(signin).unwrap_or(crate::model::Usage { limited: true, resets_at: None, windows: vec![] });
+            usage.limited = true;
+            usage.resets_at = usage.resets_at.filter(|at| *at > now()).or(Some(now() + 3600));
+            self.signins.record_usage(signin, &usage);
+        }
         let Some(next) = self.signins.choose(conversation.provider, now(), conversation.signin.as_deref()) else { return false };
         let Ok(session) = self.session(&conversation.id) else { return false };
         session.change(Change::SignedIn { signin: Some(next.id.clone()) });

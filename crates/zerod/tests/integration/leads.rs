@@ -357,6 +357,27 @@ async fn a_task_at_its_accounts_limit_carries_on_as_another_account() {
     assert!(again.said("user", 1).await[0]["message"]["content"].as_str().unwrap().contains("another account"));
 }
 
+/// At its limit by its CLI's error alone, no figures for its account's windows (a worker's process that ended on it): it
+/// carries on as another account all the same, and the first is kept as limited for a while, not chosen again at once.
+#[tokio::test]
+async fn a_task_whose_cli_only_says_it_hit_its_limit_carries_on_as_another_account() {
+    let w = world("signin-switch-said");
+    let dot = w.home.join("dot-claude");
+    std::fs::create_dir_all(&dot).unwrap();
+    w.daemon.signins.set_claude_dir(dot);
+    let account = |label: &str| w.daemon.signins.save(zerod::signins::SignIn { id: String::new(), cli: Provider::Claude, kind: zerod::signins::Kind::ClaudeHome,
+                                                                              label: label.into(), plan: None, variable: None, pending: false }).unwrap();
+    let (first, second) = (account("a@example.com"), account("b@example.com"));
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let seen = lead_runtime(&w).await;
+    seen.said("user", 1).await;
+    seen.say(json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "You've hit your usage limit"}));
+    until(&w.daemon, &lead, |c| c.signin.as_deref() == Some(second.id.as_str())).await;
+    assert!(w.daemon.signins.usage(&first.id).is_some_and(|u| u.limited), "the first account kept as limited");
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+    assert_eq!(w.daemon.signins.choose(Provider::Claude, now, None).map(|s| s.id), Some(second.id.clone()), "not chosen again for now");
+}
+
 /// A task whose account its provider won't let use the task's model: that's known of the account, and the task
 /// carries on as an account that hasn't been refused it, its agent told why.
 #[tokio::test]
