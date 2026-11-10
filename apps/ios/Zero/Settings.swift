@@ -32,12 +32,14 @@ struct SettingsView: View {
                             icon: "circle-info-outline")
                     // Last, under the version: in a group of its own it had a heading's gap above it and nothing to head.
                     PageAction(title: "Unpair this phone", icon: "link-slash-outline", destructive: true) { unpairing = true }
+                        // On the row: iOS points its confirmation at the view it's attached to (on the page, it
+                        // pointed at the page's middle).
+                        .confirmationDialog("Unpair this phone?", isPresented: $unpairing, titleVisibility: .visible) {
+                            Button("Unpair", role: .destructive) { model.unpair() }
+                        } message: {
+                            Text("It stops reaching your Mac until you pair it again.")
+                        }
                 }
-            }
-            .confirmationDialog("Unpair this phone?", isPresented: $unpairing, titleVisibility: .visible) {
-                Button("Unpair", role: .destructive) { model.unpair() }
-            } message: {
-                Text("It stops reaching your Mac until you pair it again.")
             }
             // Back from iOS Settings: what was allowed there, read again.
             .task(id: phase) { notifications = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus }

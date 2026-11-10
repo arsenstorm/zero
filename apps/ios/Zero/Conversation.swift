@@ -57,27 +57,43 @@ struct TaskInbox: View {
 
     var body: some View {
         let conversation = model.conversation(session)
+        let waiting = conversation.map(model.waitingCount) ?? 0
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if let conversation {
-                        ForEach(conversation.questions) { question in QuestionCard(model: model, session: session, question: question).transition(Self.fade) }
-                        ForEach(conversation.approvals) { approval in ApprovalCard(model: model, session: session, approval: approval).transition(Self.fade) }
+            Group {
+                if waiting == 0 {
+                    // Nothing to answer: said in a few words in the middle, in a sheet only as tall as that.
+                    VStack(spacing: 10) {
+                        Image("inbox-glyph").resizable().frame(width: 28, height: 28).foregroundStyle(.secondary)
+                        Text("Nothing waiting on you").font(.headline)
+                        Text("This task's questions and approvals come here.").font(.subheadline).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
                     }
-                    ForEach(model.openAsks(session)) { ask in AskCard(model: model, ask: ask).transition(Self.fade) }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity).padding(.horizontal, 24)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            if let conversation {
+                                ForEach(conversation.questions) { question in QuestionCard(model: model, session: session, question: question).transition(Self.fade) }
+                                ForEach(conversation.approvals) { approval in ApprovalCard(model: model, session: session, approval: approval).transition(Self.fade) }
+                            }
+                            ForEach(model.openAsks(session)) { ask in AskCard(model: model, ask: ask).transition(Self.fade) }
+                        }
+                        .padding()
+                    }
                 }
-                .padding()
             }
-            .overlay { if conversation.map(model.waitingCount) ?? 0 == 0 { ContentUnavailableView("Nothing waiting on you", image: "inbox-glyph") } }
             .navigationTitle("Waiting on you")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
-        .onChange(of: conversation.map(model.waitingCount) ?? 0) { old, now in if now == 0 && old > 0 { dismiss() } }
+        .onChange(of: waiting) { old, now in if now == 0 && old > 0 { dismiss() } }
+        .presentationDetents(waiting == 0 ? [.height(230)] : [.medium, .large])
     }
 }
 
-/// The bar's way into a task's inbox: its icon, and how many wait on you on it.
+/// The bar's way into a task's inbox: the tray, white as the ⋯ beside it, and with something waiting, a small blue dot
+/// at its corner, clear of the tray (a count over it crowded it; one beside it in blue sat apart from the bar). How
+/// many is the sheet's to say.
 struct TaskInboxButton: View {
     let count: Int
     let open: () -> Void
@@ -86,11 +102,7 @@ struct TaskInboxButton: View {
         Button(action: open) {
             Image("inbox-glyph")
                 .overlay(alignment: .topTrailing) {
-                    if count > 0 {
-                        Text("\(count)").font(.system(size: 11, weight: .semibold)).monospacedDigit().foregroundStyle(.white)
-                            .padding(.horizontal, 5).frame(minWidth: 17, minHeight: 17).background(.blue, in: Capsule())
-                            .offset(x: 9, y: -8)
-                    }
+                    if count > 0 { Circle().fill(.blue).frame(width: 7, height: 7).offset(x: 3, y: -1) }
                 }
         }
         .accessibilityLabel(count > 0 ? "\(count) waiting on you" : "Nothing waiting on you")
@@ -520,7 +532,11 @@ struct AskCard: View {
     let ask: Ask
     /// In a list's row, which is the card already: no card of its own (never a card in a card).
     var flat = false
+    /// Under its task's name in the inbox (InboxAskRow): what kind it is in a word, the question in plain weight, its
+    /// reasons a few lines until tapped.
+    var inRow = false
     @State private var typing: Int?
+    @State private var expanded = false
     @State private var words = ""
 
     /// A command for you to run yourself (an agent's question with `--code`: another machine's shell, sudo), laid out as
@@ -557,17 +573,24 @@ struct AskCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 5) {
-                Image(ask.kind == .run || manual ? "terminal-outline" : "circle-question-glyph").resizable().frame(width: 13, height: 13)
-                Text(kindName)
-                Text("·")
-                Text(ask.agent.label ?? ask.agent.name).lineLimit(1)
+            if !inRow {
+                HStack(spacing: 5) {
+                    Image(ask.kind == .run || manual ? "terminal-outline" : "circle-question-glyph").resizable().frame(width: 13, height: 13)
+                    Text(kindName)
+                    Text("·")
+                    Text(ask.agent.label ?? ask.agent.name).lineLimit(1)
+                }
+                .font(.footnote.weight(.medium))
+                // Whether the task is done: a question still, in the Done state's colour (the Mac's purple).
+                .foregroundStyle(ask.doneCheck == true ? AnyShapeStyle(DoneShades.ink) : AnyShapeStyle(.secondary))
             }
-            .font(.footnote.weight(.medium))
-            // Whether the task is done: a question still, in the Done state's colour (the Mac's purple).
-            .foregroundStyle(ask.doneCheck == true ? AnyShapeStyle(DoneShades.ink) : AnyShapeStyle(.secondary))
-            Text(headline).font(.body.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
-            if let supporting { MarkdownView(text: supporting).font(.subheadline).foregroundStyle(.secondary) }
+            Text(headline).font(inRow ? .body : .body.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+            if let supporting {
+                MarkdownView(text: supporting).font(.subheadline).foregroundStyle(.secondary)
+                    .lineLimit(inRow && !expanded ? 3 : nil)
+                    .contentShape(Rectangle())
+                    .onTapGesture { if inRow { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } } }
+            }
             if let command = ask.command {
                 // What runs is what's read: the command, the script it runs, and what it printed.
                 let shown = [(ask.kind == .run ? "$ " : "") + command, ask.script, ask.output.isEmpty ? nil : ask.output].compactMap { $0 }.joined(separator: "\n")
@@ -586,14 +609,20 @@ struct AskCard: View {
                 }
             }
             if !ask.options.isEmpty {
-                // As the Mac lays them: a tap answers, and "Something else…" opens into its box where it is.
-                ForEach(Array(ask.options.enumerated()), id: \.offset) { index, option in
-                    if ask.state == .waiting, typing == index {
-                        ReplyBox(placeholder: option, words: $words, fill: rowFill) { text in await model.answer(ask, option: index, text: text) }
-                    } else {
-                        optionRow(index, option)
+                // One group, as iOS lists its choices, a line between each: a tap answers, and "Something else…" opens
+                // into its box where it is. Each its own pill, four took most of a screen.
+                VStack(spacing: 0) {
+                    ForEach(Array(ask.options.enumerated()), id: \.offset) { index, option in
+                        if index > 0 { Divider().padding(.leading, 14) }
+                        if ask.state == .waiting, typing == index {
+                            ReplyBox(placeholder: option, words: $words, fill: .clear) { text in await model.answer(ask, option: index, text: text) }
+                        } else {
+                            optionRow(index, option)
+                        }
                     }
                 }
+                .background(rowFill, in: RoundedRectangle(cornerRadius: 12))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
             } else if ask.state == .waiting {
                 ReplyBox(placeholder: "Reply…", words: $words, fill: rowFill) { text in await model.reply(ask, text: text) }
             } else if let answer = ask.answer, ask.kind != .run {
@@ -620,9 +649,9 @@ struct AskCard: View {
         let label = option.replacingOccurrences(of: "…", with: "").replacingOccurrences(of: "...", with: "")
         let answer = ask.answer ?? option
         let shown = chosen && Ask.expectsText(option) && answer.hasPrefix(label + ": ") ? String(answer.dropFirst(label.count + 2)) : chosen ? answer : option
-        return choiceRow(shown, muted: !chosen && Ask.expectsText(option), chosen: chosen)
+        return choiceRow(shown, muted: !chosen && Ask.expectsText(option), chosen: chosen, grouped: true)
             .opacity(decided && !chosen ? 0.4 : 1)
-            .contentShape(RoundedRectangle(cornerRadius: 12))
+            .contentShape(Rectangle())
             .onTapGesture {
                 if !decided { if Ask.expectsText(option) { words = ""; typing = index } else { Task { await model.choose(ask, option: index) } } }
                 else if chosen, ask.delivery == .failed { Task { await model.deliver(ask) } }
@@ -637,15 +666,23 @@ struct AskCard: View {
             .onTapGesture { if ask.delivery == .failed { Task { await model.deliver(ask) } } }
     }
 
-    private func choiceRow(_ text: String, muted: Bool, chosen: Bool) -> some View {
-        HStack(alignment: .center, spacing: 8) {
-            Text(text).font(.subheadline.weight(.medium))
+    /// `grouped`: a row of the options' group, which has the fill: only a chosen one colours its own.
+    private func choiceRow(_ text: String, muted: Bool, chosen: Bool, grouped: Bool = false) -> some View {
+        // An agent's "(Recommended)" as a tag after the words, not part of them.
+        let mark = " (Recommended)"
+        let recommended = text.hasSuffix(mark)
+        let words = recommended ? String(text.dropLast(mark.count)) : text
+        return HStack(alignment: .center, spacing: 8) {
+            (Text(words) + (recommended ? Text("  Recommended").font(.caption.weight(.semibold)).foregroundStyle(.blue) : Text("")))
+                .font(.subheadline.weight(.medium))
                 .foregroundStyle(muted ? (ask.doneCheck == true ? AnyShapeStyle(DoneShades.muted) : AnyShapeStyle(.secondary)) : AnyShapeStyle(.primary))
                 .frame(maxWidth: .infinity, alignment: .leading)
             if chosen { standing }
         }
+        // Room above and below: an option of two lines sat against the group's edge.
+        .padding(.vertical, 11)
         .padding(.leading, 14).padding(.trailing, chosen ? 8 : 14).frame(minHeight: 44)
-        .background(chosen ? chosenFill : rowFill, in: RoundedRectangle(cornerRadius: 12))
+        .background(chosen ? chosenFill : grouped ? .clear : rowFill, in: RoundedRectangle(cornerRadius: grouped ? 0 : 12))
     }
 
     /// At the chosen row's end: a moment to take it back, then on its way, and not delivered, again.

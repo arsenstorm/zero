@@ -10,7 +10,7 @@ struct PairView: View {
     var body: some View {
         Welcome(title: "Pair with your Mac", words: "Your phone talks to Zero on your Mac, end to end encrypted.") {
             Panel {
-                ForEach(Array(["Open Zero on your Mac", "Settings › Devices › Add a phone", "Scan the code it shows"].enumerated()), id: \.offset) { n, step in
+                ForEach(Array(["Open Zero on your Mac", "Settings › Phone › Add a phone", "Scan the code it shows"].enumerated()), id: \.offset) { n, step in
                     HStack(spacing: 14) {
                         Text("\(n + 1)").font(.subheadline.weight(.semibold)).monospacedDigit()
                             .frame(width: 28, height: 28).background(Color.primary.opacity(0.1), in: Circle())

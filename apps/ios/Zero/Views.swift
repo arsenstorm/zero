@@ -487,6 +487,30 @@ struct TaskRow: View {
     }
 }
 
+/// An ask in the inbox, laid out as the rows under it: its task's avatar (needing you), its name and when, then the
+/// question, answered in place.
+struct InboxAskRow: View {
+    let model: PhoneModel
+    let ask: Ask
+
+    var body: some View {
+        let row = ask.session.flatMap { id in model.rows.first { $0.session == id } }
+        HStack(alignment: .top, spacing: 12) {
+            AgentAvatar(provider: row?.provider, state: .needsYou)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    FadingLine(text: row?.task ?? ask.agent.label ?? ask.agent.name, font: .body.weight(.semibold)).frame(maxWidth: .infinity, alignment: .leading)
+                    TimeBeside(at: Int(ask.createdAt.timeIntervalSince1970 * 1000))
+                }
+                AskCard(model: model, ask: ask, flat: true, inRow: true)
+            }
+        }
+        .padding(.vertical, 6)
+        .listRowInsets(EdgeInsets(top: 6, leading: 20.5, bottom: 10, trailing: 16))
+        .listRowSeparator(.hidden)
+    }
+}
+
 /// A task's conversation, as the Mac shows it, and a box to write to it.
 struct TaskView: View {
     let model: PhoneModel
@@ -515,6 +539,7 @@ struct TaskView: View {
 
     var body: some View {
         let conversation = model.conversation(session)
+        let waiting: Int = conversation.map(model.waitingCount) ?? 0
         ScrollView {
             if let conversation { ConversationView(model: model, conversation: conversation).padding() }
             // Not loaded: a moment the Mac couldn't be reached left the page blank, with nothing to say so.
@@ -556,19 +581,9 @@ struct TaskView: View {
         .safeAreaInset(edge: .bottom) { Composer(model: model, conversation: conversation, session: session) }
         // On screen, for Siri: "this" is this task ("save this for later", "what's it doing?").
         .appEntityIdentifier(EntityIdentifier(for: ZeroTask.self, identifier: session))
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                TaskInboxButton(count: conversation.map(model.waitingCount) ?? 0) { asking = true }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button("Details") { details = true }
-                    Button("Save for later") { Task { await model.askToSaveForLater(session) } }
-                } label: { Image("dots-glyph") }
-            }
-        }
+        .toolbar { bar(waiting: waiting) }
         .sheet(isPresented: $details) { TaskDetails(model: model, session: session).presentationDetents([.medium, .large]) }
-        .sheet(isPresented: $asking) { TaskInbox(model: model, session: session).presentationDetents([.medium, .large]) }
+        .sheet(isPresented: $asking) { TaskInbox(model: model, session: session) }
         .environment(\.openTaskInbox) { asking = true }
         // The connection's state under this page's bar, not on its name.
         .overlay(alignment: .top) { if conversation != nil { ConnectionBadge(model: model) } }
@@ -591,6 +606,18 @@ struct TaskView: View {
         .simultaneousGesture(TapGesture().onEnded { model.markSeen(session) })
         .task { await loadUntilLoaded() }
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    @ToolbarContentBuilder private func bar(waiting: Int) -> some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            TaskInboxButton(count: waiting) { asking = true }
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            Menu {
+                Button("Details") { details = true }
+                Button("Save for later") { Task { await model.askToSaveForLater(session) } }
+            } label: { Image("dots-glyph") }
+        }
     }
 
     /// To the bottom now, and again a moment on, once a push or the app's own opening has finished moving it.
@@ -716,7 +743,7 @@ struct InboxView: View {
         List {
             // Asks first, answered in place; then the tasks over to the user, then unread replies. No headings: each row's
             // badge says which it is, and the page's title says where you are.
-            ForEach(model.waiting) { ask in AskCard(model: model, ask: ask, flat: true).listRowSeparator(.hidden) }
+            ForEach(model.waiting) { ask in InboxAskRow(model: model, ask: ask) }
             ForEach(handed) { row in item(row, row.needs ?? row.now) }
             ForEach(unread) { row in item(row, row.now) }
         }
