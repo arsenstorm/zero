@@ -130,3 +130,18 @@ private func row(_ id: String, state: String, own: String? = nil, worker: String
                                     to: [row("1", state: "needsYou", onYou: [("ENG-1", "merge decision"), ("ENG-2", "the OCI Apply")])], announced: &announced)
     #expect(second.alerts.first?.body == "ENG-2: the OCI Apply")
 }
+
+@Test func anIssueStillOnTheUserIsNotNewsAgainAfterEachTurn() {
+    // The lead works on other things and ends each turn with new words; the issue on the user hasn't changed, so the
+    // notification it already gave isn't given again (it came three times, each about the same issue).
+    var announced: [String: String] = [:]
+    let issue = [("ENG-1", "Live in production; move it to PM review")]
+    let first = TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "needsYou", now: "Merged #1.", onYou: issue)], announced: &announced)
+    #expect(first.alerts.count == 1)
+    _ = TaskAlerts.changes(from: [row("1", state: "needsYou", now: "Merged #1.", onYou: issue)], to: [row("1", state: "working", onYou: issue)], announced: &announced)
+    let again = TaskAlerts.changes(from: [row("1", state: "working", onYou: issue)], to: [row("1", state: "needsYou", now: "Opened #2.", onYou: issue)], announced: &announced)
+    #expect(again.alerts.isEmpty, "the same issue, still on the user")
+    // Asked something new meanwhile: news.
+    let asked = TaskAlerts.changes(from: [row("1", state: "working", onYou: issue)], to: [row("1", state: "needsYou", now: "Opened #3.", asks: ["Merge #3?"], onYou: issue)], announced: &announced)
+    #expect(asked.alerts.count == 1)
+}

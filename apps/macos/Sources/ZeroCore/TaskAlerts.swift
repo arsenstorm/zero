@@ -46,7 +46,10 @@ public enum TaskAlerts {
     static func announcement(_ row: BoardRow, _ state: BoardRow.State) -> String {
         guard state == .needsYou else { return state.rawValue }
         let issues = onYou(row).map { $0.ticket + " " + $0.text }.joined(separator: "|")
-        return state.rawValue + ":" + (row.asks.isEmpty ? row.now ?? "" : row.asks.map { $0.id + " " + $0.title }.joined(separator: "|")) + "#" + issues
+        // On the user for its issues alone: those are what it says, not the lead's latest words, which change with
+        // every turn it takes on something else (the same issue came again after each).
+        let asked = row.asks.isEmpty ? (issues.isEmpty ? row.now ?? "" : "") : row.asks.map { $0.id + " " + $0.title }.joined(separator: "|")
+        return state.rawValue + ":" + asked + "#" + issues
     }
 
     /// As above, `announced` keeping what each task was last announced as (the notifier's, across boards).
@@ -62,6 +65,10 @@ public enum TaskAlerts {
             guard let now else { continue }
             let said = announcement(row, now.state)
             if !now.worker && (settled.contains(now.state) || now.state == .needsYou) && announced[row.session] == said { continue }
+            // Its issues alone again, all of them announced already (with an ask since answered, too): nothing new.
+            let issues = onYou(row).map { $0.ticket + " " + $0.text }.joined(separator: "|")
+            if !now.worker, now.state == .needsYou, row.asks.isEmpty, !issues.isEmpty, !newIssue,
+               announced[row.session]?.hasSuffix("#" + issues) == true { continue }
             announced[row.session] = said
             // An issue that has just turned to the user is the news, by its ticket.
             let issue = onYou(row).first { mine in !(previous.map(onYou) ?? []).contains { $0.ticket == mine.ticket } } ?? onYou(row).first
