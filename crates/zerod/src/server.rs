@@ -230,6 +230,20 @@ pub struct Zerod {
 impl Zerod {
     /// The board as every client sees it: each session as a summary (its latest answer for Now, not its whole
     /// conversation), paused tasks shown so.
+    pub(crate) fn shared_board(&self) -> Vec<crate::board::Row> {
+        // Worked out once for every client: each connection's feed asked for it after the same settle (6 ms each, up
+        // to four times a second while a session streams). Kept 200 ms, under the feed's 250 ms settle, so a feed
+        // that heard a change never gets a board from before it. By daemon: tests run several in one process. Asked for directly (`zero board`), it's worked out fresh.
+        static KEPT: std::sync::Mutex<Option<(usize, std::time::Instant, Vec<crate::board::Row>)>> = std::sync::Mutex::new(None);
+        let key = Arc::as_ptr(&self.daemon) as usize;
+        if let Some((kept, at, rows)) = KEPT.lock().unwrap().as_ref() && *kept == key && at.elapsed() < std::time::Duration::from_millis(200) {
+            return rows.clone();
+        }
+        let rows = self.board();
+        *KEPT.lock().unwrap() = Some((key, std::time::Instant::now(), rows.clone()));
+        rows
+    }
+
     fn board(&self) -> Vec<crate::board::Row> {
         let daemon = &self.daemon;
         let mut rows = crate::board::board_in(&daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(), &self.inbox.asks(), &self.places.get(), &daemon.queues(), &|c| daemon.workspace_of(c));

@@ -83,7 +83,8 @@ async fn a_github_view_is_fetched_through_gh() {
     let view = integrations.settings().github.views[0].id.clone();
     assert_eq!(integrations.items("github", &view).await.unwrap(), vec![]);
     let (argv, stdin) = fetcher.asked.lock().unwrap()[0].clone();
-    assert_eq!(argv[4..7], ["gh", "api", "graphql"]);
+    let gh = argv.iter().position(|a| a == "gh").expect("runs gh");
+    assert_eq!(argv[gh..gh + 3], ["gh", "api", "graphql"]);
     assert!(argv.contains(&"q=is:pr is:open author:@me archived:false".to_string()), "{argv:?}");
     assert_eq!(stdin, None);
     assert_eq!(integrations.items("github", "nope").await.unwrap_err(), "No view nope");

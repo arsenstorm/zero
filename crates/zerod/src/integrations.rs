@@ -270,7 +270,7 @@ impl Integrations {
     /// Who gh is signed in as: asked until it answers, then remembered.
     pub async fn github_account(&self) -> Option<String> {
         if let Some(known) = self.github_known() { return Some(known) }
-        let argv = crate::adapter::login_shell(&["gh", "api", "user", "--jq", ".login"]);
+        let argv = crate::adapter::on_login_path(&["gh", "api", "user", "--jq", ".login"]);
         let login = self.fetcher.run(argv, None).await.ok().map(|out| out.trim().to_string()).filter(|login| !login.is_empty())?;
         *self.github.lock().unwrap() = Some(login.clone());
         Some(login)
@@ -342,7 +342,7 @@ impl Integrations {
         match integration {
             "github" => {
                 let view = settings.github.views.iter().find(|v| v.id == view).ok_or_else(|| format!("No view {view}"))?;
-                let argv = crate::adapter::login_shell(&["gh", "api", "graphql", "-f", &format!("query={GITHUB_SEARCH}"), "-f", &format!("q={}", view.query)]);
+                let argv = crate::adapter::on_login_path(&["gh", "api", "graphql", "-f", &format!("query={GITHUB_SEARCH}"), "-f", &format!("q={}", view.query)]);
                 let reply = self.fetcher.run(argv, None).await?;
                 Ok(github_items(&serde_json::from_str(&reply).map_err(|e| format!("gh answered oddly: {e}"))?))
             }

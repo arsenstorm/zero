@@ -100,7 +100,7 @@ async fn feed(zerod: Zerod, out: mpsc::UnboundedSender<Value>) {
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
     let mut last: Option<Value> = None;
     loop {
-        let rows = json!(zerod.board());
+        let rows = json!(zerod.shared_board());
         if last.as_ref() != Some(&rows) {
             if out.send(json!({"event": "board", "rows": rows})).is_err() { return }
             last = Some(rows);

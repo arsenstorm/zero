@@ -99,8 +99,15 @@ pub fn take_key(from: &Path, home: &Path) -> Result<String, String> {
 
 /// The key's public half, when there is one.
 pub fn public_key(home: &Path) -> Option<String> {
-    let output = std::process::Command::new("ssh-keygen").args(["-y", "-P", "", "-f"]).arg(key_path(home)).output().ok()?;
-    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    // Kept until the key file changes: `settings` asks for it on every call (ssh-keygen each time, ~4 ms).
+    static KEPT: Mutex<Option<(PathBuf, std::time::SystemTime, Option<String>)>> = Mutex::new(None);
+    let path = key_path(home);
+    let changed = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
+    if let Some((kept, at, key)) = KEPT.lock().unwrap().as_ref() && *kept == path && *at == changed { return key.clone() }
+    let output = std::process::Command::new("ssh-keygen").args(["-y", "-P", "", "-f"]).arg(&path).output().ok()?;
+    let key = output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string());
+    *KEPT.lock().unwrap() = Some((path, changed, key.clone()));
+    key
 }
 
 /// The committer an account's `gh api users/<login>` answer gives: its name (else its login) and its noreply email.
@@ -121,7 +128,7 @@ pub fn listed_as(keys: &str, public: &str) -> Option<String> {
 
 /// `gh api <path>`, with the user's own GitHub CLI and sign-in.
 async fn gh(path: &str) -> Result<String, String> {
-    let argv = crate::adapter::login_shell(&["gh", "api", path]);
+    let argv = crate::adapter::on_login_path(&["gh", "api", path]);
     let output = tokio::process::Command::new(&argv[0]).args(&argv[1..]).stdin(std::process::Stdio::null()).output().await.map_err(|e| e.to_string())?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()) }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())

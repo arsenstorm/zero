@@ -100,7 +100,11 @@ async fn following_a_pull_request_reads_it_through_gh_and_tells_the_session_what
     let followed = following.follow("s1", "https://github.com/o/r/pull/42", false, vec![]).await.unwrap();
     assert_eq!((followed.follow.topic.as_str(), followed.new, followed.summary.as_str()), ("github/o/r/42", true, "Fix vitals (open) https://github.com/o/r/pull/42"));
     let argv = fetcher.asked.lock().unwrap()[0].clone();
-    assert_eq!(&argv[4..7], ["gh", "api", "graphql"]);
+    // gh itself, on the login shell's PATH (read once), not a login shell per poll: one cost 94 ms of CPU and half a
+    // second, for every poll of every pull request followed.
+    assert!(!argv.contains(&"-lic".to_string()), "{argv:?}");
+    let gh = argv.iter().position(|a| a == "gh").expect("runs gh");
+    assert_eq!(&argv[gh..gh + 3], ["gh", "api", "graphql"]);
     assert!(argv.contains(&"owner=o".to_string()) && argv.contains(&"repo=r".to_string()) && argv.contains(&"number=42".to_string()), "{argv:?}");
     // Following again is no new follow, and the fresh reading isn't read again.
     assert!(!following.follow("s1", "github/o/r/42", false, vec![]).await.unwrap().new);

@@ -142,6 +142,18 @@ pub fn login_shell(args: &[&str]) -> Vec<String> {
     ["/bin/zsh", "-lic", "exec \"$@\"", "zsh"].iter().chain(args).map(|s| s.to_string()).collect()
 }
 
+/// `args` run directly, with the PATH the user's login shell gives (read once): for what zerod runs over and over
+/// (gh for every pull request followed, every minute), where a login shell each time cost ~94 ms of CPU and half a
+/// second. Agents' CLIs still start through `login_shell`, for the rest of the user's environment.
+pub fn on_login_path(args: &[&str]) -> Vec<String> {
+    static PATH: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        std::process::Command::new("/bin/zsh").args(["-lic", "printf %s \"$PATH\""]).output().ok()
+            .and_then(|out| String::from_utf8(out.stdout).ok()).filter(|p| !p.trim().is_empty())
+            .unwrap_or_else(|| std::env::var("PATH").unwrap_or_default())
+    });
+    ["/usr/bin/env".to_string(), format!("PATH={}", *PATH)].into_iter().chain(args.iter().map(|s| s.to_string())).collect()
+}
+
 impl Provider {
     pub fn adapter(self) -> Box<dyn Adapter> {
         match self {

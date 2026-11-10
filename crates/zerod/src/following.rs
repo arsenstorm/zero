@@ -294,7 +294,7 @@ impl Following {
         let parts: Vec<&str> = key.split('/').skip(1).collect();
         match source {
             Source::GitHub => {
-                let argv = crate::adapter::login_shell(&github::argv(&parts).iter().map(String::as_str).collect::<Vec<_>>());
+                let argv = crate::adapter::on_login_path(&github::argv(&parts).iter().map(String::as_str).collect::<Vec<_>>());
                 let reply: Value = serde_json::from_str(&self.fetcher.run(argv, None).await?).map_err(|e| format!("gh answered oddly: {e}"))?;
                 github::poll(&reply, state, key)
             }
