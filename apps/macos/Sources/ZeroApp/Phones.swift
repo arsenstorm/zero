@@ -14,16 +14,24 @@ import ZeroCore
 @MainActor @Observable final class Phones {
     static let shared = Phones()
 
-    enum Status: Equatable { case off, connecting, connected, failed(String) }
+    /// `closed`: the relay said it's closed for good (its CLOSED message): not tried again until its address changes.
+    enum Status: Equatable { case off, connecting, connected, failed(String), closed(String) }
     private(set) var status = Status.off
     private(set) var devices: [Tunnel.Device] = []
     /// The QR code's invite while Add a phone is showing.
     var invite: Tunnel.Invite?
 
+    /// Zero's own relay, used until the user sets theirs. It can close (relay.js's CLOSED): then Zero says so and stops.
+    static let hosted = "wss://relay.withzero.dev"
+
+    /// The relay in use: the user's, else Zero's hosted one. Emptied, phones are off.
     var relay: String {
-        get { UserDefaults.standard.string(forKey: "relay") ?? "" }
+        get { UserDefaults.standard.string(forKey: "relay") ?? Self.hosted }
         set { UserDefaults.standard.set(newValue, forKey: "relay"); reconnect() }
     }
+
+    func useHostedRelay() { UserDefaults.standard.removeObject(forKey: "relay"); reconnect() }
+
 
     @ObservationIgnored private let host: Tunnel.Host
     @ObservationIgnored private let mac: String
@@ -151,7 +159,35 @@ import ZeroCore
         start()
     }
 
+    /// The relay's word that it has closed, from its /status: its message, or nil while it's open (or can't be asked:
+    /// then connecting says what's wrong).
+    private static func closedMessage(_ relay: String) async -> String? {
+        let base = relay.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "wss://", with: "https://")
+            .replacingOccurrences(of: "ws://", with: "http://").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: base + "/status") else { return nil }
+        var request = URLRequest(url: url, timeoutInterval: 8)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let said = try? JSONSerialization.jsonObject(with: data) as? [String: Any], said["open"] as? Bool == false else { return nil }
+        return said["message"] as? String ?? "This relay has closed."
+    }
+
     private func connect() {
+        let relay = relay
+        Task { [weak self] in
+            // Closed for good: said, and not tried again (a closed relay refuses every connection with 410).
+            if let message = await Self.closedMessage(relay) {
+                guard let self, self.relay == relay else { return }
+                Log.write("phones: the relay has closed")
+                self.socket = nil
+                self.status = .closed(message)
+                return
+            }
+            self?.open()
+        }
+    }
+
+    private func open() {
         guard let url = URL(string: relay.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "https://", with: "wss://")
                                 .trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/mac/" + mac) else {
             status = .failed("That isn't a relay's address")
@@ -197,7 +233,7 @@ import ZeroCore
                     self.status = .failed(error.localizedDescription)
                     for conn in self.bridges.keys { self.bridges[conn]?.end() }
                     self.bridges = [:]
-                    // Again, a little later each time, up to a minute.
+                    // Again, a little later each time, up to a minute (connect asks first whether it has closed).
                     let wait = self.retry
                     self.retry = min(self.retry * 2, 60)
                     try? await Task.sleep(for: .seconds(wait))
@@ -388,10 +424,17 @@ struct DevicesPage: View {
         VStack(alignment: .leading, spacing: 32) {
             SettingsSection(title: "Relay") {
                 Rows {
-                    SettingRow(title: "Address", detail: "Passes your phone's encrypted messages; it can't read them.") {
-                        TextField("", text: $relay, prompt: Text("wss://zero-relay.you.workers.dev"))
-                            .textFieldStyle(.roundedBorder).frame(width: 260)
-                            .onSubmit { phones.relay = relay }
+                    SettingRow(title: "Address", detail: phones.relay == Phones.hosted
+                               ? "Zero's relay passes your phone's encrypted messages; it can't read them. Or run your own (apps/relay)."
+                               : "Your relay passes your phone's encrypted messages; it can't read them.") {
+                        HStack(spacing: 8) {
+                            if phones.relay != Phones.hosted {
+                                RowButton(title: "Use Zero's") { phones.useHostedRelay(); relay = phones.relay }
+                            }
+                            TextField("", text: $relay, prompt: Text("wss://zero-relay.you.workers.dev"))
+                                .textFieldStyle(.roundedBorder).frame(width: 260)
+                                .onSubmit { phones.relay = relay }
+                        }
                     }
                     SettingRow(title: "Status", detail: statusDetail) { EmptyView() }
                 }
@@ -425,10 +468,11 @@ struct DevicesPage: View {
 
     private var statusDetail: String {
         switch phones.status {
-        case .off: phones.relay.isEmpty ? "Not set up" : "Off"
+        case .off: phones.relay.isEmpty ? "Off: no relay set" : "Off"
         case .connecting: "Connecting…"
         case .connected: "Connected: your phones can reach this Mac"
         case .failed(let why): "Can't reach it: \(why)"
+        case .closed(let message): (phones.relay == Phones.hosted ? "Zero's relay has closed: " : "This relay has closed: ") + message
         }
     }
 }

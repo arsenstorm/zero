@@ -4,6 +4,11 @@
 //   wss://<relay>/mac/<mac id>     the Mac, with "Authorization: Bearer <token>": the first token a Mac id is used with
 //                                  is the only one it takes from then on (its hash kept, nothing else)
 //   wss://<relay>/phone/<mac id>   a phone; refused while its Mac isn't connected
+//   https://<relay>/status         {"open": true}, or {"open": false, "message"} once it's closed (below)
+//
+// Closing it: set the CLOSED variable (`npx wrangler secret put CLOSED`, or in the dashboard) to what Zero should tell its
+// users, such as where to run their own. Every connection is then refused with 410 and that message, and Zero shows it
+// in Settings › Phone and stops trying.
 //
 // Between the relay and the Mac, text frames of JSON: {"conn","open"}, {"conn","data"} (base64), {"conn","close"}.
 // Between the relay and a phone, the binary frames themselves.
@@ -13,6 +18,9 @@ import { DurableObject } from "cloudflare:workers";
 export default {
   async fetch(request, env) {
     const [, side, mac] = new URL(request.url).pathname.split("/");
+    const closed = env.CLOSED ? { open: false, message: String(env.CLOSED) } : null;
+    if (side === "status") return Response.json(closed ?? { open: true }, { headers: { "Cache-Control": "max-age=300" } });
+    if (closed) return Response.json(closed, { status: 410 });
     if (!["mac", "phone"].includes(side) || !/^[A-Za-z0-9_-]{16,64}$/.test(mac ?? "")) return new Response("Zero's relay", { status: 404 });
     if (request.headers.get("Upgrade") !== "websocket") return new Response("WebSocket only", { status: 426 });
     return env.MACS.get(env.MACS.idFromName(mac)).fetch(request);
