@@ -1,20 +1,12 @@
 import SwiftUI
 
 // A task's conversation on the phone, read as the Mac reads it (ZeroCore's TimelineBlock): your messages, each turn's
-// work folded under "Worked for…" with only its answer in full, and what waits on you, answered where it stands.
+// work folded under "Worked for…" with only its answer in full. What waits on you is in the task's own inbox (its
+// button in the bar, TaskInbox), not at the conversation's foot, where a few cards took the whole screen.
 
 struct ConversationView: View {
     let model: PhoneModel
     let conversation: Conversation
-    /// A question, ask or approval just answered: the page keeps the height it had, so the card fades out where it was
-    /// and nothing above it moves; what comes next fills that room. Given back when you scroll (the page's).
-    @Binding var room: CGFloat
-    /// The conversation's own height, without that room: read when a card leaves, never by the body, so its every
-    /// change redraws nothing.
-    @State private var measured = Measured()
-    final class Measured { var height: CGFloat = 0 }
-    /// A card answered fades out where it was (and a new one in): its own animation, nothing else animated with it.
-    private static let fade = AnyTransition.opacity.animation(.easeOut(duration: 0.2))
 
     var body: some View {
         let blocks = TimelineBlock.of(Sending.merge(conversation.items, model.sending[conversation.id] ?? []).filter { item in !conversation.approvals.contains { $0.item == item.id } },
@@ -37,23 +29,92 @@ struct ConversationView: View {
                 case let .step(item): StepView(model: model, session: conversation.id, item: item)
                 }
             }
-            ForEach(conversation.questions) { question in QuestionCard(model: model, session: conversation.id, question: question).transition(Self.fade) }
-            ForEach(conversation.approvals) { approval in ApprovalCard(model: model, session: conversation.id, approval: approval).transition(Self.fade) }
-            // Still waiting after its turn (an ask sent with --async), its step folded away with the rest.
-            ForEach(openAsks) { ask in AskCard(model: model, ask: ask).transition(Self.fade) }
         }
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { [measured] in measured.height = $0 }
-        .frame(minHeight: room, alignment: .top)
-        .onChange(of: waiting) { old, new in if !Set(old).subtracting(new).isEmpty { room = max(room, measured.height) } }
     }
+}
 
-    private var openAsks: [Ask] {
-        guard conversation.status != .working, conversation.status != .waiting else { return [] }
-        return model.asks.filter { $0.isAgents(in: conversation.id) && !$0.state.isFinal }
+extension PhoneModel {
+    /// A task's asks still open: what its inbox holds, with its questions and approvals.
+    func openAsks(_ session: String) -> [Ask] { asks.filter { $0.isAgents(in: session) && !$0.state.isFinal } }
+
+    func waitingCount(_ conversation: Conversation) -> Int {
+        conversation.questions.count + conversation.approvals.count + openAsks(conversation.id).count
     }
+}
 
-    /// What waits on you, by id: a card leaving this is one answered.
-    private var waiting: [String] { conversation.questions.map(\.id) + conversation.approvals.map(\.id) + openAsks.map(\.id) }
+/// What a task opens its inbox with, from a step in its conversation that asked you something.
+extension EnvironmentValues {
+    @Entry var openTaskInbox: () -> Void = {}
+}
+
+/// A task's inbox: its questions, approvals and asks, each answered where it stands, in a sheet from the bar's button.
+/// Closed once nothing is left.
+struct TaskInbox: View {
+    let model: PhoneModel
+    let session: String
+    @Environment(\.dismiss) private var dismiss
+    private static let fade = AnyTransition.opacity.animation(.easeOut(duration: 0.2))
+
+    var body: some View {
+        let conversation = model.conversation(session)
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if let conversation {
+                        ForEach(conversation.questions) { question in QuestionCard(model: model, session: session, question: question).transition(Self.fade) }
+                        ForEach(conversation.approvals) { approval in ApprovalCard(model: model, session: session, approval: approval).transition(Self.fade) }
+                    }
+                    ForEach(model.openAsks(session)) { ask in AskCard(model: model, ask: ask).transition(Self.fade) }
+                }
+                .padding()
+            }
+            .overlay { if conversation.map(model.waitingCount) ?? 0 == 0 { ContentUnavailableView("Nothing waiting on you", image: "inbox-glyph") } }
+            .navigationTitle("Waiting on you")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+        .onChange(of: conversation.map(model.waitingCount) ?? 0) { old, now in if now == 0 && old > 0 { dismiss() } }
+    }
+}
+
+/// The bar's way into a task's inbox: its icon, and how many wait on you on it.
+struct TaskInboxButton: View {
+    let count: Int
+    let open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            Image("inbox-glyph")
+                .overlay(alignment: .topTrailing) {
+                    if count > 0 {
+                        Text("\(count)").font(.system(size: 11, weight: .semibold)).monospacedDigit().foregroundStyle(.white)
+                            .padding(.horizontal, 5).frame(minWidth: 17, minHeight: 17).background(.blue, in: Capsule())
+                            .offset(x: 9, y: -8)
+                    }
+                }
+        }
+        .accessibilityLabel(count > 0 ? "\(count) waiting on you" : "Nothing waiting on you")
+    }
+}
+
+/// A step that asks you something still open: its question in a line, the card itself in the task's inbox.
+struct OpenAskRow: View {
+    let ask: Ask
+    @Environment(\.openTaskInbox) private var openInbox
+
+    var body: some View {
+        Button(action: openInbox) {
+            HStack(spacing: 8) {
+                Image("inbox-glyph").resizable().frame(width: 16, height: 16).foregroundStyle(.blue)
+                Text(ask.title).lineLimit(1)
+                Spacer(minLength: 0)
+                Text("Answer").foregroundStyle(.blue)
+            }
+            .font(.subheadline)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
 }
 
 /// An answer: its Markdown, and under it a copy button and the way to pick out part of it (as ChatGPT's): SwiftUI's
@@ -248,7 +309,7 @@ struct StepView: View {
 
     var body: some View {
         if let ask = item.ask(in: model.asks, session: session) {
-            AskCard(model: model, ask: ask)
+            if ask.state.isFinal { AskCard(model: model, ask: ask) } else { OpenAskRow(ask: ask) }
         } else {
             switch item.kind {
             case let .command(command, _, output, exitCode, _):

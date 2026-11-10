@@ -495,8 +495,8 @@ struct TaskView: View {
     @State private var atBottom = true
     @Environment(\.scenePhase) private var phase
     @State private var details = false
-    /// The room an answered card left (ConversationView's), given back once you scroll.
-    @State private var room: CGFloat = 0
+    /// The task's inbox open: what waits on you on it.
+    @State private var asking = false
     @State private var couldNotLoad = false
     /// The Mac not reached since this page opened: said until it's back, through the tries again (each a moment of
     /// "connecting", which flipped the page between this and loading).
@@ -516,7 +516,7 @@ struct TaskView: View {
     var body: some View {
         let conversation = model.conversation(session)
         ScrollView {
-            if let conversation { ConversationView(model: model, conversation: conversation, room: $room).padding() }
+            if let conversation { ConversationView(model: model, conversation: conversation).padding() }
             // Not loaded: a moment the Mac couldn't be reached left the page blank, with nothing to say so.
             // Can't reach the Mac (or it didn't answer): said, in the page's middle, not a spinner going on.
             else if couldNotLoad || missedMac {
@@ -532,7 +532,6 @@ struct TaskView: View {
                 LoadingTurns()
             }
         }
-        .onScrollPhaseChange { _, phase in if phase == .interacting, room > 0 { room = 0 } }
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom)
         // The keyboard goes as the conversation is dragged down, as in Messages, or with a tap on the conversation:
@@ -559,6 +558,9 @@ struct TaskView: View {
         .appEntityIdentifier(EntityIdentifier(for: ZeroTask.self, identifier: session))
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                TaskInboxButton(count: conversation.map(model.waitingCount) ?? 0) { asking = true }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button("Details") { details = true }
                     Button("Save for later") { Task { await model.askToSaveForLater(session) } }
@@ -566,6 +568,8 @@ struct TaskView: View {
             }
         }
         .sheet(isPresented: $details) { TaskDetails(model: model, session: session).presentationDetents([.medium, .large]) }
+        .sheet(isPresented: $asking) { TaskInbox(model: model, session: session).presentationDetents([.medium, .large]) }
+        .environment(\.openTaskInbox) { asking = true }
         // The connection's state under this page's bar, not on its name.
         .overlay(alignment: .top) { if conversation != nil { ConnectionBadge(model: model) } }
         // Back: what didn't load is asked for again.
