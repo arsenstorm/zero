@@ -68,7 +68,76 @@ struct Composer<Controls: View>: View {
     private var suggestCommands: Bool { UserDefaults.standard.object(forKey: "suggestCommands") as? Bool ?? true }
     private var suggestFiles: Bool { UserDefaults.standard.object(forKey: "suggestFiles") as? Bool ?? false }
 
+    // In two: the card, then what it watches and handles. As one chain, the compiler gave up type-checking it on a
+    // slower Mac (CI's).
     var body: some View {
+        card
+            .onChange(of: adding == nil) { _, closed in closed ? stopWatchingAdd() : watchAdd() }
+            .task(id: workspace?.loopsVersion) { await workspace?.loadLoops() }
+            .onChange(of: adding) { _, page in if page == .pads { Task { await workspace?.loadPads() } } }
+            .onDrop(of: [.fileURL, .image], isTargeted: $dropping) { providers in
+                Attachments.fromDrop(providers) { attach($0) }
+                return true
+            }
+            // ⌘V with an image on the clipboard attaches it; anything else pastes into the text as usual. With nothing that
+            // takes typing focused (a click into the conversation, say), typing or pasting goes to the composer, focused.
+            .onAppear {
+                guard monitor == nil else { return }
+                let (focus, draft, focused, caret) = (focus, $draft, $focused, $caret)
+                let attach = { (urls: [URL]) in attach(urls) }
+                let shown = shown, picker = picker, images = $images
+                monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                    guard shown.on else { return event }
+                    let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                    if flags.isDisjoint(with: [.command, .control, .option]), draft.wrappedValue.isEmpty, images.wrappedValue.isEmpty,
+                        let digit = event.charactersIgnoringModifiers.flatMap(Int.init), (1...9).contains(digit),
+                        (focus.on || !Self.takesTyping(event.window?.firstResponder)), picker.pick?(digit) == true
+                    {
+                        return nil
+                    }
+                    let paste = flags == .command && event.charactersIgnoringModifiers == "v"
+                    if focus.on {
+                        guard paste, let urls = Attachments.fromPasteboard(), !urls.isEmpty else { return event }
+                        attach(urls)
+                        return nil
+                    }
+                    // Only in the workspace's window (not a panel), and only when nothing there takes typing already: a
+                    // field, the inbox card's reply, a terminal. An answer's text (selectable, not editable) doesn't.
+                    guard let window = event.window, !(window is NSPanel), !Self.takesTyping(window.firstResponder) else { return event }
+                    let land = { (text: String) in
+                        draft.wrappedValue += text
+                        caret.wrappedValue = (draft.wrappedValue as NSString).length
+                        focused.wrappedValue = true
+                    }
+                    if paste {
+                        if let urls = Attachments.fromPasteboard(), !urls.isEmpty {
+                            attach(urls)
+                        } else if let text = NSPasteboard.general.string(forType: .string) {
+                            land(text)
+                        } else {
+                            return event
+                        }
+                        return nil
+                    }
+                    // Words, not shortcuts (⌘, ⌃) or keys that move about (Return, Tab, Esc, arrows, Space).
+                    guard flags.isDisjoint(with: [.command, .control]), let typed = event.characters, Self.isWords(typed) else {
+                        return event
+                    }
+                    land(typed)
+                    return nil
+                }
+            }
+            .onDisappear {
+                if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil; stopWatchingAdd()
+            }
+            .onChange(of: active, initial: true) {
+                shown.on = active; if !active { focus.on = false }
+            }
+            .onAppear { picker.pick = pick }
+            .onChange(of: pick == nil) { picker.pick = pick }
+    }
+
+    @ViewBuilder private var card: some View {
         // The images whose pill is in the words: one whose pills were deleted is out of the strip (and back with ⌘Z).
         let named = Set(ImageToken.find(in: draft).map(\.number))
         let attached = images.enumerated().filter { named.contains($0.offset + 1) }
@@ -210,67 +279,6 @@ struct Composer<Controls: View>: View {
                 .offset(y: -addHeight - 6)
             }
         }
-        .onChange(of: adding == nil) { _, closed in closed ? stopWatchingAdd() : watchAdd() }
-        .task(id: workspace?.loopsVersion) { await workspace?.loadLoops() }
-        .onChange(of: adding) { _, page in if page == .pads { Task { await workspace?.loadPads() } } }
-        .onDrop(of: [.fileURL, .image], isTargeted: $dropping) { providers in
-            Attachments.fromDrop(providers) { attach($0) }
-            return true
-        }
-        // ⌘V with an image on the clipboard attaches it; anything else pastes into the text as usual. With nothing that
-        // takes typing focused (a click into the conversation, say), typing or pasting goes to the composer, focused.
-        .onAppear {
-            guard monitor == nil else { return }
-            let (focus, draft, focused, caret) = (focus, $draft, $focused, $caret)
-            let attach = { (urls: [URL]) in attach(urls) }
-            let shown = shown, picker = picker, images = $images
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                guard shown.on else { return event }
-                let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-                if flags.isDisjoint(with: [.command, .control, .option]), draft.wrappedValue.isEmpty, images.wrappedValue.isEmpty,
-                    let digit = event.charactersIgnoringModifiers.flatMap(Int.init), (1...9).contains(digit),
-                    (focus.on || !Self.takesTyping(event.window?.firstResponder)), picker.pick?(digit) == true
-                {
-                    return nil
-                }
-                let paste = flags == .command && event.charactersIgnoringModifiers == "v"
-                if focus.on {
-                    guard paste, let urls = Attachments.fromPasteboard(), !urls.isEmpty else { return event }
-                    attach(urls)
-                    return nil
-                }
-                // Only in the workspace's window (not a panel), and only when nothing there takes typing already: a
-                // field, the inbox card's reply, a terminal. An answer's text (selectable, not editable) doesn't.
-                guard let window = event.window, !(window is NSPanel), !Self.takesTyping(window.firstResponder) else { return event }
-                let land = { (text: String) in
-                    draft.wrappedValue += text
-                    caret.wrappedValue = (draft.wrappedValue as NSString).length
-                    focused.wrappedValue = true
-                }
-                if paste {
-                    if let urls = Attachments.fromPasteboard(), !urls.isEmpty {
-                        attach(urls)
-                    } else if let text = NSPasteboard.general.string(forType: .string) {
-                        land(text)
-                    } else {
-                        return event
-                    }
-                    return nil
-                }
-                // Words, not shortcuts (⌘, ⌃) or keys that move about (Return, Tab, Esc, arrows, Space).
-                guard flags.isDisjoint(with: [.command, .control]), let typed = event.characters, Self.isWords(typed) else { return event }
-                land(typed)
-                return nil
-            }
-        }
-        .onDisappear {
-            if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil; stopWatchingAdd()
-        }
-        .onChange(of: active, initial: true) {
-            shown.on = active; if !active { focus.on = false }
-        }
-        .onAppear { picker.pick = pick }
-        .onChange(of: pick == nil) { picker.pick = pick }
     }
 
     /// Whether what has the keyboard takes typing: an editable text view (a field's editor too), or anything that reads
