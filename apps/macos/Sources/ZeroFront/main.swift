@@ -296,8 +296,7 @@ func newID() -> String {
 
 func agentIdentity(session: String? = nil) -> String {
     let own = env("ZERO_HOST_TERMINAL").map { "claude-" + String($0.suffix(6)) }
-    let hyperfocus = env("HF_SESSION_ID").map { "hf-" + $0 }
-    let name = flag("agent") ?? env("ZERO_AGENT") ?? own ?? hyperfocus ?? "shell-\(getppid())"
+    let name = flag("agent") ?? env("ZERO_AGENT") ?? own ?? "shell-\(getppid())"
     var host = [CChar](repeating: 0, count: 256)
     var cwd = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
     var runtime: String?, ref: String?

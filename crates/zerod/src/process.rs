@@ -12,7 +12,7 @@ use crate::session::Transport;
 
 /// What another agent or terminal sets for the processes it runs: an agent inheriting it would think it is nested in
 /// Claude Code (and refuse to start), speak to Zero as another terminal's agent, or take a Codex sandbox for its own.
-const LEFT_OUT: [&str; 7] = ["ZERO_HOST_TERMINAL", "HF_SESSION_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT",
+const LEFT_OUT: [&str; 6] = ["ZERO_HOST_TERMINAL", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT",
                              "CODEX_THREAD_ID", "CODEX_SANDBOX"];
 
 /// Variables for one session's processes alone (its MCP servers' values, for Claude to expand): set by zerod before

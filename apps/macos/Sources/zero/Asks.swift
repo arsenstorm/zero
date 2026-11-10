@@ -16,8 +16,7 @@ func shortDetail(_ text: String?, flag name: String) {
 @MainActor func agentIdentity() -> AgentIdentity {
     let env = ProcessInfo.processInfo.environment
     let own: String? = env["ZERO_HOST_TERMINAL"].map { "claude-" + String($0.suffix(6)) }
-    let hyperfocus: String? = env["HF_SESSION_ID"].map { "hf-" + $0 }
-    let name: String = flag("agent") ?? env["ZERO_AGENT"] ?? own ?? hyperfocus ?? "shell-\(getppid())"
+    let name: String = flag("agent") ?? env["ZERO_AGENT"] ?? own ?? "shell-\(getppid())"
     var identity = AgentIdentity(name: name, host: AgentIdentity.thisHost,
                          cwd: FileManager.default.currentDirectoryPath,
                          ticket: flag("ticket"))
