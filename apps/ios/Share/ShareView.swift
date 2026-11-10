@@ -35,19 +35,18 @@ struct ShareView: View {
 
     var body: some View {
         NavigationStack {
-            List(selection: $picked) {
+            List {
                 Section { TextField("What should it look at?", text: $text, axis: .vertical).lineLimit(2...6) }
                 if let problem { Text(problem).foregroundStyle(.red).font(.footnote) }
                 Section("Send to a task") {
-                    ForEach(rows) { row in Text(row.task).lineLimit(1).tag("task:" + row.session) }
+                    ForEach(rows) { row in choice(row.task, "task:" + row.session) }
                 }
                 if !projects.isEmpty {
                     Section("Or start one in") {
-                        ForEach(projects, id: \.self) { folder in Text((folder as NSString).lastPathComponent).tag("new:" + folder) }
+                        ForEach(projects, id: \.self) { folder in choice((folder as NSString).lastPathComponent, "new:" + folder) }
                     }
                 }
             }
-            .environment(\.editMode, .constant(.active))
             .navigationTitle(video != nil ? "1 video" : providers.count == 1 ? "1 image" : "\(providers.count) images")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -57,6 +56,18 @@ struct ShareView: View {
                 }
             }
             .task { await connect() }
+        }
+    }
+
+    /// A row to pick, as a native list's: the one picked with a tick (a selection list in edit mode only greyed it).
+    private func choice(_ title: String, _ tag: String) -> some View {
+        Button { picked = tag } label: {
+            HStack {
+                Text(title).lineLimit(1).foregroundStyle(.primary)
+                Spacer()
+                if picked == tag { Image(systemName: "checkmark").font(.body.weight(.semibold)).foregroundStyle(.tint) }
+            }
+            .contentShape(Rectangle())
         }
     }
 
