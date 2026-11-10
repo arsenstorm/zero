@@ -306,7 +306,8 @@ impl Inbox {
         let quoted = said.replace('"', "'");
         self.second_word(agent, said, token, "blocked", || format!("Not marked blocked yet. Blocked means the task can't go on at all, on any \
             part of it, until something outside you and the user changes: an outage, access only another team can \
-            grant, a dependency broken upstream. It shows red, so keep it for that.\n\
+            grant, a dependency broken upstream. A worker is blocked too when it can't go on without a decision only its \
+            lead or the user can make (its lead takes it to them). It shows red, so keep it for that.\n\
             - Waiting on a review, CI, a deploy or QA is waiting: zero note \"…\" --waiting.\n\
             - Something the user can give (an answer, access, a decision) is an ask: zero ask.\n\
             If it is blocked, confirm within 5 minutes: zero blocked \"{quoted}\" --confirm {{token}}"))

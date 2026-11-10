@@ -132,7 +132,9 @@ impl Daemon {
         let archiving = self.archiving.lock().unwrap().contains(id);
         let unanswered = !matches!(now, Attention::Done | Attention::Failed | Attention::Stuck | Attention::Limited | Attention::Blocked | Attention::Offline);
         let waiting_on_workers = unanswered && self.workers(id).iter().any(|w| matches!(w.attention(), Attention::Starting | Attention::Working | Attention::NeedsYou));
-        if let Some(lead) = &conversation.parent && (came_to_an_end || got_stuck) && !restarting && !self.is_paused(id) && !archiving && !waiting_on_workers {
+        // Nor the turn it was just sent back from (no Zero ending): its lead hears the turn as it ends properly, once.
+        let sent_back = self.sent_back.lock().unwrap().contains(id);
+        if let Some(lead) = &conversation.parent && (came_to_an_end || got_stuck) && !restarting && !self.is_paused(id) && !archiving && !waiting_on_workers && !sent_back {
             // Done is done-done: once the lead has this report, the worker leaves its tree (deliver).
             // Only said so: a report without an ending is a turn finished, which may not be the work.
             let said_done = conversation.answer().is_some_and(|answer| crate::board::ending(answer) == Some("done"));
@@ -182,7 +184,9 @@ impl Daemon {
     pub fn require_endings(&self) { self.endings.store(true, Ordering::Relaxed) }
 
     fn check_ending(&self, conversation: &Conversation) {
-        if !self.endings.load(Ordering::Relaxed) || conversation.parent.is_some() { return }
+        if !self.endings.load(Ordering::Relaxed) { return }
+        // A worker too: its row says where it left its work, and its lead hears how it ended.
+        let worker = conversation.parent.is_some();
         // Its ending after being sent back: taken as it is.
         if self.sent_back.lock().unwrap().remove(&conversation.id) { return }
         // This turn's own answer (since the last message to it): a turn stopped before it answered (by the user, by
@@ -192,12 +196,15 @@ impl Daemon {
         if self.restarting.load(Ordering::Relaxed) || turn.last().is_some_and(|i| matches!(i.kind, ItemKind::Notice { .. })) { return }
         // Started by the user's own words: they're in the conversation, and a question in the reply is how one goes.
         // The rule is for turns they aren't in (an event, a worker's report, a wake-up), where words reach no one.
-        if turn.first().is_some_and(|i| matches!(&i.kind, ItemKind::User { text, .. } if users_own(text))) { return }
+        // A worker's first words are its brief, from its lead: no conversation with the user.
+        if !worker && turn.first().is_some_and(|i| matches!(&i.kind, ItemKind::User { text, .. } if users_own(text))) { return }
         let Some(answer) = turn.iter().rev().find_map(|i| match &i.kind { ItemKind::Agent { text, final_answer: true } => Some(text.as_str()), _ => None }) else { return };
         let ending = crate::board::ending(answer);
-        if ending.is_some() && (ending == Some("asked") || !crate::board::asks_in_prose(answer)) { return }
+        // A worker's question in prose is its lead's to take up: any ending will do.
+        if ending.is_some() && (worker || ending == Some("asked") || !crate::board::asks_in_prose(answer)) { return }
         self.sent_back.lock().unwrap().insert(conversation.id.clone());
-        self.pending.lock().unwrap().entry(conversation.id.clone()).or_default().push(Queued { id: new_id(), text: END_YOUR_TURN.into(), images: vec![], report: true });
+        let words = if worker { END_A_WORKERS_TURN } else { END_YOUR_TURN };
+        self.pending.lock().unwrap().entry(conversation.id.clone()).or_default().push(Queued { id: new_id(), text: words.into(), images: vec![], report: true });
         self.keep_pending(&conversation.id);
         if between_turns(conversation) { self.deliver(&conversation.id) }
     }

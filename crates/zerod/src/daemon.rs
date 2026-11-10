@@ -148,6 +148,14 @@ pub const END_YOUR_TURN: &str = "Zero can't tell where your turn left the task. 
 (the next move is someone else's, not the user's: a review, CI, a deploy, QA), [zero: working] (pausing between steps), or [zero: asked <id>]. Anything you need from the user (a decision, a command for them to run, steps for them to take) \
 goes through zero ask, zero run or zero approve with --async (or Zero's zero_ask and zero_run tools), and the turn ends [zero: asked <id>]: a question left in \
 your words reaches no one. Don't repeat your answer; do what's missing and end.";
+/// What a worker is told when its turn ends without Zero's ending: as a task's, in a worker's terms. Its lead hears how
+/// it ended, and a decision it can't make (its lead's or the user's) is blocked, red on its row, not a reply.
+pub const END_A_WORKERS_TURN: &str = "Zero can't tell where your turn left the task. You're a worker: your lead hears how you end. End it with \
+exactly one of these as its last line: [zero: done] (your part is finished: your lead takes it from here), [zero: waiting] \
+(the next move is someone else's: CI, a review, another worker), [zero: blocked] (you can't go on without a decision or \
+access you don't have, your lead's or the user's: mark it first with `zero blocked \"what you need\"`, confirmed with its \
+token, and say exactly what would unblock you; your lead takes it to the user), or [zero: working] (pausing between steps). \
+Don't repeat your answer; do what's missing and end.";
 /// What a turn paused for a restart is told once the new zerod is up. Zero's own words, not the user's: never shown as
 /// a message (core.rs leaves its item out).
 /// What a lead is told when a worker's report reached it and the issue's row wasn't set in that turn (`zero issue`).

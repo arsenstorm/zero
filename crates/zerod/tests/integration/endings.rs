@@ -85,13 +85,29 @@ async fn a_proper_ending_passes_and_a_reply_to_being_sent_back_is_taken_as_it_is
 }
 
 #[tokio::test]
-async fn a_worker_reports_to_its_lead_and_needs_no_ending() {
+async fn a_worker_ends_its_turn_as_a_task_does_and_its_lead_hears_once() {
+    // A worker's row says where it left its work too: one that ends in prose (a decision it can't make, "say if you
+    // want to go that way") is sent back once, told that being stuck on its lead's or the user's decision is blocked;
+    // its lead hears the turn as it finally ended, once, not the turn it was sent back from as well.
     let home = temp_dir("endings-worker");
     let (daemon, lead, sent) = task(&home, Provider::Claude).await;
     let worker = daemon.spawn(&lead, Provider::Claude, "check it", Default::default()).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
-    turn(&daemon.session(&worker).unwrap(), 1, "check it", "Checked: all green.").await;
-    assert_eq!(sent_back(&sent), 0);
+    let session = daemon.session(&worker).unwrap();
+    turn(&session, 1, "Read the brief and do it.", "I stopped: the dump needs production. Say if you want to go that way.").await;
+    assert_eq!(sent_back(&sent), 1, "sent back once");
+    assert!(sent.lock().unwrap().contains("You're a worker: your lead hears how you end"), "told a worker's endings");
+    // Its lead is mid-turn (it never ends one here), so a report waits in its queue rather than reaching it.
+    let reports = || {
+        let waiting = std::fs::read_to_string(home.join("zerod/sessions").join(&lead).join("pending.json")).unwrap_or_default();
+        waiting.matches(&format!("from: {worker} -->")).count() + sent.lock().unwrap().matches(&format!("from: {worker} -->")).count()
+    };
+    assert_eq!(reports(), 0, "its lead hears nothing of the turn it was sent back from");
+    turn(&session, 2, &zeros("end it"), "Blocked: the dump needs production.\n\n[zero: blocked]").await;
+    for _ in 0..50 { if reports() > 0 { break } tokio::time::sleep(Duration::from_millis(20)).await }
+    assert_eq!((reports(), sent_back(&sent)), (1, 1), "then its lead hears once, and it isn't sent back again");
+    turn(&session, 3, &zeros("carry on"), "All green.\n\n[zero: done]").await;
+    assert_eq!(sent_back(&sent), 1, "a worker's proper ending passes");
 }
 
 #[tokio::test]
