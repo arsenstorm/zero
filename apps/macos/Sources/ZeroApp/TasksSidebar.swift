@@ -147,7 +147,7 @@ struct TasksSidebar: View {
                 SidebarHeading(text: "Earlier")
                 ForEach(earlier) { lead in
                     SidebarItem(Workspace.label(of: lead), selected: place == .task(lead.id)) { place = .task(lead.id) }
-                        .contextMenu { menu(lead.id, name: Workspace.label(of: lead), ticket: lead.ticket) }
+                        .zeroContextMenu("task-\(lead.id)") { menu(lead.id, name: Workspace.label(of: lead), ticket: lead.ticket) }
                 }
             }
         }
@@ -219,7 +219,7 @@ struct TasksSidebar: View {
                 place = .task(row.session)
                 navigation.worker = nil
             }, toggle: { toggle(row.session) }, reorder: reorder(row.session, in: rows))
-                .contextMenu { menu(row.session, name: row.task, ticket: row.ticket) }
+                .zeroContextMenu("task-\(row.session)") { menu(row.session, name: row.task, ticket: row.ticket) }
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named("tasks")).minY } action: { tops[row.session] = $0 }
                 .onHover { inside in TaskPeek.shared.hover(row.session, top: tops[row.session] ?? 0, inside: inside && drag == nil) }
             // Its workers, a row each. Its issues aren't rows (not tasks of their own, a row with nothing to open):
@@ -251,8 +251,20 @@ struct TasksSidebar: View {
             place = .task(row.session)
             navigation.worker = worker.id
         })
+        // A worker's own menu, as its lead's: rename it, pause or stop it, archive it.
+        .zeroContextMenu("worker-\(worker.id)") { workerMenu(worker) }
         .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named("tasks")).minY } action: { tops[worker.id] = $0 }
         .onHover { inside in TaskPeek.shared.hover(worker.id, top: tops[worker.id] ?? 0, inside: inside && drag == nil) }
+    }
+
+    private func workerMenu(_ worker: Conversation) -> [[MenuItem]] {
+        [
+            [MenuItem("Rename…", "pen") { renaming = Renaming(id: worker.id, name: Workspace.label(of: worker), ticket: worker.ticket) }],
+            [workspace.isPaused(worker.id) ? MenuItem("Resume", "circle-play") { Task { await workspace.unpause([worker.id]) } }
+                                           : MenuItem("Pause", "circle-pause") { Task { await workspace.pause([worker.id]) } }]
+                + (worker.status == .working || worker.status == .waiting ? [MenuItem("Stop", "circle-xmark") { Task { await workspace.stop(worker.id) } }] : []),
+            [MenuItem("Archive…", "archive") { workspace.archiving = worker.id }],
+        ]
     }
 
     /// ⌘1 to ⌘9: the first nine tasks as the sidebar shows them (this workspace's, leads only), as a browser's tabs.
@@ -278,24 +290,24 @@ struct TasksSidebar: View {
     /// Asked to work with another task: the one the menu was opened on.
     @State private var pairing: Renaming?
 
-    @ViewBuilder private func menu(_ id: String, name: String, ticket: String?) -> some View {
-        Button("Rename…") { renaming = Renaming(id: id, name: name, ticket: ticket) }
-        if workspace.workspaces.count > 1 {
-            Menu("Move to") {
-                ForEach(workspace.workspaces) { w in
-                    Button(w.name) { Task { await workspace.place(id, in: w.id) } }.disabled(w.id == workspace.current)
-                }
-                if workspace.roster[id]?.workspace != nil {
-                    Divider()
-                    Button("Its folder's workspace") { Task { await workspace.place(id, in: nil) } }
-                }
-            }
+    private func menu(_ id: String, name: String, ticket: String?) -> [[MenuItem]] {
+        // Move to: a group of its own (Zero's menus have no submenus), the workspace it's in left out.
+        var moves = workspace.workspaces.count > 1 ? workspace.workspaces.filter { $0.id != workspace.current }.map { w in
+            MenuItem("Move to \(w.name)", "layers") { Task { await workspace.place(id, in: w.id) } }
+        } : []
+        if workspace.workspaces.count > 1, workspace.roster[id]?.workspace != nil {
+            moves.append(MenuItem("Move to its folder's workspace", "folder") { Task { await workspace.place(id, in: nil) } })
         }
-        pausing(id, in: workspace)
-        Button("Work with another task…") { pairing = Renaming(id: id, name: name, ticket: ticket) }
-        Button("Save for later") { Task { await workspace.askToSaveForLater(id) } }
-        Button("Move to Later") { Task { if place == .task(id) { place = .home }; await workspace.moveToLater(id) } }
-        Button("Archive…") { workspace.archiving = id }
+        return [
+            [MenuItem("Rename…", "pen") { renaming = Renaming(id: id, name: name, ticket: ticket) },
+             MenuItem("Work with another task…", "link") { pairing = Renaming(id: id, name: name, ticket: ticket) }],
+            moves,
+            [workspace.isPaused(id) ? MenuItem("Resume", "circle-play") { Task { await workspace.unpause([id]) } }
+                                    : MenuItem("Pause", "circle-pause") { Task { await workspace.pause([id]) } },
+             MenuItem("Save for later", "bookmark") { Task { await workspace.askToSaveForLater(id) } },
+             MenuItem("Move to Later", "clock") { Task { if place == .task(id) { place = .home }; await workspace.moveToLater(id) } }],
+            [MenuItem("Archive…", "archive") { workspace.archiving = id }],
+        ]
     }
 
     /// At the foot, in a card of its own: the accounts used today and their usage; while Zero can't reach its daemon,

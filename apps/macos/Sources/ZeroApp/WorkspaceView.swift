@@ -280,13 +280,12 @@ private struct Rail: View {
                 .zIndex(dragging == integration ? 1 : 0)
                 .animation(.spring(duration: 0.22), value: dragging == integration ? 0 : shift(index, in: shown))
                 .highPriorityGesture(drag(integration, from: index, of: shown.count), including: command ? .all : .subviews)
-                .contextMenu {
-                    if index > 0 { Button("Move up") { move(integration, to: index - 1) } }
-                    if index < shown.count - 1 { Button("Move down") { move(integration, to: index + 1) } }
-                    Button("Edit views") { Integration.edit(integration.rawValue, place: &place) }
-                    Divider()
-                    Button("Hide from the sidebar") { Task { await workspace.setIntegration(integration.rawValue, enabled: false) } }
-                }
+                .zeroContextMenu("rail-\(integration.rawValue)") {[
+                    (index > 0 ? [MenuItem("Move up", "arrow-up") { move(integration, to: index - 1) }] : [])
+                        + (index < shown.count - 1 ? [MenuItem("Move down", "chevron-down") { move(integration, to: index + 1) }] : [])
+                        + [MenuItem("Edit views", "pen") { Integration.edit(integration.rawValue, place: &place) }],
+                    [MenuItem("Hide from the sidebar", "eye") { Task { await workspace.setIntegration(integration.rawValue, enabled: false) } }],
+                ]}
             }
             Spacer()
             item("puzzle-piece", selected: place == .integrations, help: "Integrations") { place = .integrations }

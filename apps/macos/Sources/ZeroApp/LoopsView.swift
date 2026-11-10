@@ -36,11 +36,10 @@ struct LoopsPage: View {
                                 .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).frame(height: loop.description.isEmpty ? 30 : 42)
                             }
                             .buttonStyle(Hovering(selected: shown == loop.name))
-                            .contextMenu {
-                                Button("Copy name") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString("@" + loop.name, forType: .string) }
-                                Divider()
-                                Button("Delete") { Task { await workspace.deleteLoop(loop.name); if shown == loop.name { navigation.place = .loops } } }
-                            }
+                            .zeroContextMenu("loop-\(loop.name)") {[
+                                [MenuItem("Copy name", "copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString("@" + loop.name, forType: .string) }],
+                                [MenuItem("Delete", "trash") { Task { await workspace.deleteLoop(loop.name); if shown == loop.name { navigation.place = .loops } } }],
+                            ]}
                         }
                     }
                     .padding(.bottom, 8)

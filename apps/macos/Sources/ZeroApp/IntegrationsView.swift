@@ -267,13 +267,12 @@ private struct ViewRow<Form: View>: View {
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture(count: 2) { editing = true }
-        .contextMenu {
-            Button("Edit") { editing = true }
-            if let moveUp { Button("Move up", action: moveUp) }
-            if let moveDown { Button("Move down", action: moveDown) }
-            Divider()
-            Button("Delete", role: .destructive, action: delete)
-        }
+        .zeroContextMenu("view-\(name)") {[
+            [MenuItem("Edit", "pen") { editing = true }]
+                + (moveUp.map { [MenuItem("Move up", "arrow-up", action: $0)] } ?? [])
+                + (moveDown.map { [MenuItem("Move down", "chevron-down", action: $0)] } ?? []),
+            [MenuItem("Delete", "trash", action: delete)],
+        ]}
     }
 }
 
@@ -316,7 +315,7 @@ private struct FormSheet<Fields: View>: View {
                 Button("Save") { save(); dismiss() }.keyboardShortcut(.defaultAction).disabled(!canSave)
             }
         }
-        .textFieldStyle(.roundedBorder)
+        .textFieldStyle(.dialog)
         .padding(18).frame(width: width)
     }
 }
@@ -872,10 +871,11 @@ private struct IssueRow: View {
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture { if let url = LinearLinks.url(row.url) { NSWorkspace.shared.open(url) } }
-        .contextMenu {
-            if let task = row.task { Button("Open task") { actions.open(task) } } else if let start = actions.start { Button("Start task") { start(row) } }
-            Button("Open in Linear") { if let url = LinearLinks.url(row.url) { NSWorkspace.shared.open(url) } }
-            Button("Copy link") { PadLinks.copy(row.url, title: "\(row.key) \(row.title)") }
+        .zeroContextMenu("issue-\(row.key)") {
+            let task: [MenuItem] = if let task = row.task { [MenuItem("Open task", "arrow-right") { actions.open(task) }] }
+                else if let start = actions.start { [MenuItem("Start task", "compose") { start(row) }] } else { [] }
+            return [task + [MenuItem("Open in Linear", "arrow-up-right") { if let url = LinearLinks.url(row.url) { NSWorkspace.shared.open(url) } },
+                            MenuItem("Copy link", "link") { PadLinks.copy(row.url, title: "\(row.key) \(row.title)") }]]
         }
         .tip(row.title)
     }
@@ -1032,7 +1032,7 @@ struct ConnectCard: View {
                 Text("Slack opens with the app filled in: Create, then Install to Workspace, then copy the User OAuth Token it shows and paste it here. Connected before agents could follow Slack? Add the scopes from the manifest to your app, reinstall it, and paste the new token.")
                     .font(.system(size: 11)).foregroundStyle(.tertiary).multilineTextAlignment(.center).frame(maxWidth: 380).padding(.top, 12).padding(.bottom, 14)
                 HStack(spacing: 8) {
-                    SecureField("xoxp-…", text: $token).textFieldStyle(.roundedBorder).font(.system(size: 12).monospaced()).frame(width: 260)
+                    SecureField("xoxp-…", text: $token).textFieldStyle(.dialog).font(.system(size: 12).monospaced()).frame(width: 260)
                         .onSubmit(connectSlack)
                     Button(waiting ? "Connecting…" : "Connect") { connectSlack() }.disabled(waiting || token.trimmingCharacters(in: .whitespaces).isEmpty)
                 }

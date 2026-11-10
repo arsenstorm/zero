@@ -78,14 +78,15 @@ struct LaterPage: View {
     private func row(_ item: ZerodLink.LaterItem) -> some View {
         Button { navigation.place = .laterItem(item.id) } label: { LaterRow(item: item) }
             .buttonStyle(Hovering(selected: shown == item.id))
-            .contextMenu {
-                Button("Copy link") { copy(item.link) }
-                if item.resume != nil && !item.done { Button("Resume task") { resume(item) } }
-                if item.suggested == true { Button("Keep") { Task { await workspace.editLater(item.id, ["keep": true]) } } }
-                Button(item.done ? "Not done" : "Done") { Task { await workspace.editLater(item.id, ["done": !item.done]) } }
-                Divider()
-                Button(item.suggested == true ? "Dismiss" : "Delete") { Task { await workspace.deleteLater(item.id); if shown == item.id { navigation.place = .later } } }
-            }
+            .zeroContextMenu("later-\(item.id)") {[
+                [MenuItem("Copy link", "link") { copy(item.link) }]
+                    + (item.resume != nil && !item.done ? [MenuItem("Resume task", "circle-play") { resume(item) }] : [])
+                    + (item.suggested == true ? [MenuItem("Keep", "bookmark") { Task { await workspace.editLater(item.id, ["keep": true]) } }] : [])
+                    + [MenuItem(item.done ? "Not done" : "Done", item.done ? "undo" : "check") { Task { await workspace.editLater(item.id, ["done": !item.done]) } }],
+                [MenuItem(item.suggested == true ? "Dismiss" : "Delete", item.suggested == true ? "xmark" : "trash") {
+                    Task { await workspace.deleteLater(item.id); if shown == item.id { navigation.place = .later } }
+                }],
+            ]}
     }
 }
 

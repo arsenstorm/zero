@@ -58,11 +58,19 @@ struct SelectorView: View {
     @FocusState private var focused: Bool
 
     /// Models get two panes, the list and its details, centred on the inbox; projects a single list on the chip.
-    static func width(_ kind: SelectorKind) -> CGFloat { switch kind { case .runtime: 2 * paneWidth; case .project: 272; case .menu: 236 } }
+    static func width(_ kind: SelectorKind) -> CGFloat { switch kind { case .runtime: 2 * paneWidth; case .project: 272; case .menu: 220 } }
     private static let paneWidth: CGFloat = 240
     /// The model list is always eight rows tall, so neither a tab change nor a hover moves anything.
     private static let modelListHeight: CGFloat = 8 * rowHeight + 8 + 7
     private static let rowHeight: CGFloat = 28
+    /// Menus and short lists as Linear's (measured): 10 pt corners, rows 32 tall 6 in from the edge, a 6 pt highlight
+    /// (#323234, the row's words and icon white on it), its icon 9 in from the highlight's edge, the words 8 after it.
+    /// The model selector keeps its own.
+    private var linear: Bool { state.kind != .runtime }
+    private var radius: CGFloat { linear ? 10 : 14 }
+    private var inset: CGFloat { 6 }
+    private var highlightRadius: CGFloat { linear ? 6 : radius - inset }
+    private var rowHeight: CGFloat { linear ? 32 : Self.rowHeight }
 
     private var sections: [SelectorSection] { state.sections }
     private var section: SelectorSection? { sections.first { $0.id == state.tab } ?? sections.first }
@@ -74,11 +82,12 @@ struct SelectorView: View {
             if state.kind == .menu {
                 VStack(spacing: 0) {
                     ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
-                        if index > 0 { Divider().padding(.horizontal, 10).padding(.vertical, 3) }
-                        VStack(spacing: 1) { ForEach(section.rows) { rowView($0) } }
+                        // A line between groups, edge to edge, 5 above and below.
+                        if index > 0 { Rectangle().fill(Theme.menuLine).frame(height: 1).padding(.horizontal, -inset).padding(.vertical, 5) }
+                        VStack(spacing: 0) { ForEach(section.rows) { rowView($0) } }
                     }
                 }
-                .padding(.horizontal, 6).padding(.vertical, 6)
+                .padding(inset)
             } else if state.kind == .runtime {
                 if sections.count > 1 { tabs } else if let section { singleHeader(section) }
             }
@@ -103,9 +112,9 @@ struct SelectorView: View {
         }
         .frame(width: Self.width(state.kind))
         // Lighter than a page's card: a hairline edge, a little less round. (The window gives it its shadow.)
-        .background(Theme.card)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.stroke, lineWidth: 0.5))
+        .background(linear ? Theme.menu : Theme.card)
+        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(linear ? Theme.menuStroke : Theme.stroke, lineWidth: linear ? 1 : 0.5))
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { state.cardHeight = $0 }
         .focusable()
         .focused($focused)
@@ -127,7 +136,7 @@ struct SelectorView: View {
     /// A short list (permissions, projects, workspaces): no heading (the chip said what it is) and no footer (each row
     /// says what it is), as tall as its rows; past eight, it scrolls.
     @ViewBuilder private var shortList: some View {
-        let column = VStack(spacing: 1) { ForEach(rows) { rowView($0) } }.padding(5)
+        let column = VStack(spacing: linear ? 0 : 1) { ForEach(rows) { rowView($0) } }.padding(inset)
         if rows.count <= 8 { column } else { ScrollView(.vertical, showsIndicators: false) { column }.frame(height: Self.modelListHeight + 40).scrollEdgeFades() }
     }
 
@@ -187,21 +196,26 @@ struct SelectorView: View {
         } label: {
             let described = state.kind == .project ? describe(row) : ""
             HStack(alignment: described.isEmpty ? .center : .top, spacing: 8) {
-                if let glyph = row.glyph { WorkspaceGlyph(glyph: glyph, size: 14).foregroundStyle(.secondary).frame(width: 18) }
+                if let glyph = row.glyph {
+                    WorkspaceGlyph(glyph: glyph, size: linear ? 16 : 14)
+                        .foregroundStyle(linear ? (current ? Theme.menuHot : Theme.menuIcon) : Color.secondary).frame(width: linear ? 16 : 18)
+                }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(row.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                        Text(row.title).font(.system(size: 13, weight: state.kind == .menu ? .regular : .medium)).lineLimit(1)
+                        .foregroundStyle(linear ? (current ? Theme.menuHot : Theme.menuText) : Color.primary)
                     if !described.isEmpty {
                         Text(described).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Spacer(minLength: 6)
-                NucleoIcon("check", size: 13).foregroundStyle(Color.accentColor).opacity(row.selected ? 1 : 0)
+                // The check's place only where something can be checked: a menu of actions has none, and kept no gap.
+                if rows.contains(where: \.selected) { NucleoIcon("check", size: 13).foregroundStyle(Color.accentColor).opacity(row.selected ? 1 : 0) }
             }
-            .padding(.horizontal, 10).padding(.vertical, described.isEmpty ? 0 : 7)
-            .frame(minHeight: Self.rowHeight)
+            .padding(.leading, linear ? 9 : 10).padding(.trailing, 10).padding(.vertical, described.isEmpty ? 0 : 7)
+            .frame(minHeight: rowHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(current ? Theme.row : .clear)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .background(current ? (linear ? Theme.menuHover : Theme.row) : .clear)
+            .clipShape(RoundedRectangle(cornerRadius: highlightRadius, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -389,3 +403,57 @@ struct EdgeFadeMask: View {
 extension View {
     func scrollEdgeFades(_ fade: CGFloat = 28) -> some View { modifier(ScrollEdgeFades(fade: fade)) }
 }
+
+/// One item of a right-click menu: its words, a Nucleo icon's name, what it does.
+struct MenuItem {
+    let title: String
+    var glyph: String? = nil
+    let action: () -> Void
+    init(_ title: String, _ glyph: String? = nil, action: @escaping () -> Void) { self.title = title; self.glyph = glyph; self.action = action }
+}
+
+extension View {
+    /// A right-click menu in Zero's own look (Linear's, as every menu of Zero's), at the pointer, in place of the
+    /// system's: its groups with a line between. No submenus: what one held goes in a group of its own.
+    func zeroContextMenu(_ id: String, _ groups: @escaping () -> [[MenuItem]]) -> some View {
+        overlay { RightClick { ZeroContextMenu.open(id, groups) } }
+    }
+}
+
+@MainActor enum ZeroContextMenu {
+    static func open(_ id: String, _ groups: @escaping () -> [[MenuItem]]) {
+        let point = NSEvent.mouseLocation
+        guard let window = NSApp.window(withWindowNumber: NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0)),
+              let content = window.contentView else { return }
+        let inWindow = window.convertPoint(fromScreen: point)
+        // SwiftUI's global frame (the window's content, from its top left): the menu hangs off the pointer.
+        let anchor = CGRect(x: inWindow.x, y: content.bounds.height - inWindow.y, width: 1, height: 1)
+        WorkspaceSelector.shared.toggle("menu-" + id, kind: .menu, anchor: anchor, in: window) {
+            groups().filter { !$0.isEmpty }.enumerated().map { index, items in
+                SelectorSection(id: "group-\(index)", title: "", icon: nil, rows: items.enumerated().map { n, item in
+                    SelectorRow(id: "\(index)-\(n)", title: item.title, provider: nil, providerIcon: nil, detail: nil, context: nil, levels: [],
+                                defaultLevel: nil, modelID: nil, selected: false, pick: item.action, glyph: item.glyph)
+                })
+            }
+        }
+    }
+}
+
+/// A right-click on what it lies over, and nothing else: any other click goes through to the view under it.
+struct RightClick: NSViewRepresentable {
+    let action: () -> Void
+    func makeNSView(context: Context) -> Catcher { Catcher(action: action) }
+    func updateNSView(_ view: Catcher, context: Context) { view.action = action }
+
+    final class Catcher: NSView {
+        var action: () -> Void
+        init(action: @escaping () -> Void) { self.action = action; super.init(frame: .zero) }
+        required init?(coder: NSCoder) { fatalError() }
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            let event = NSApp.currentEvent?.type
+            return event == .rightMouseDown || event == .rightMouseUp ? super.hitTest(point) : nil
+        }
+        override func rightMouseDown(with event: NSEvent) { action() }
+    }
+}
+

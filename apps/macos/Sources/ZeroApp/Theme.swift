@@ -79,6 +79,16 @@ enum Theme {
     // Light strokes sit a step above the key-cap grey (L 0.92 against 0.91): an outline, not a frame.
     static let hairline = dynamic(dark: NSColor(white: 0.30, alpha: 1), light: NSColor(white: 0.88, alpha: 1))
     static let stroke = dynamic(dark: NSColor(white: 0.24, alpha: 1), light: NSColor(white: 0.89, alpha: 1))
+    /// Menus, as Linear draws its (measured): #212122 under a #333436 edge, #2a2a2b between groups.
+    static let menu = dynamic(dark: NSColor(srgbRed: 33 / 255, green: 33 / 255, blue: 34 / 255, alpha: 1), light: .white)
+    static let menuStroke = dynamic(dark: NSColor(srgbRed: 51 / 255, green: 52 / 255, blue: 54 / 255, alpha: 1), light: NSColor(white: 0.86, alpha: 1))
+    static let menuLine = dynamic(dark: NSColor(srgbRed: 41 / 255, green: 42 / 255, blue: 45 / 255, alpha: 1), light: NSColor(white: 0.92, alpha: 1))
+    /// The row under the pointer: #323234, its words and icon white.
+    static let menuHover = dynamic(dark: NSColor(srgbRed: 50 / 255, green: 50 / 255, blue: 52 / 255, alpha: 1), light: NSColor(white: 0.94, alpha: 1))
+    /// A row's words #e5e6e9 and its icon #9c9da0, as Linear's.
+    static let menuText = dynamic(dark: NSColor(srgbRed: 229 / 255, green: 230 / 255, blue: 233 / 255, alpha: 1), light: NSColor(white: 0.12, alpha: 1))
+    static let menuIcon = dynamic(dark: NSColor(srgbRed: 156 / 255, green: 157 / 255, blue: 160 / 255, alpha: 1), light: NSColor(white: 0.45, alpha: 1))
+    static let menuHot = dynamic(dark: .white, light: .black)
     static let selectedStroke = dynamic(dark: NSColor(white: 0.45, alpha: 1), light: NSColor(white: 0.70, alpha: 1))
     /// Key cap fills for a chosen option: deeper in dark mode so the white digit keeps its contrast.
     static let greenCap = dynamic(dark: NSColor(red: 0.16, green: 0.55, blue: 0.27, alpha: 1), light: NSColor.systemGreen)

@@ -95,11 +95,10 @@ private struct FollowRow: View {
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture(count: 2) { if let url { NSWorkspace.shared.open(url) } }
-        .contextMenu {
-            if let url { Button("Open") { NSWorkspace.shared.open(url) } }
-            Button("Copy topic") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(row.topic, forType: .string) }
-            Divider()
-            Button("Unfollow", role: .destructive, action: unfollow)
-        }
+        .zeroContextMenu("follow-\(row.session)-\(row.topic)") {[
+            (url.map { url in [MenuItem("Open", "arrow-up-right") { NSWorkspace.shared.open(url) }] } ?? [])
+                + [MenuItem("Copy topic", "copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(row.topic, forType: .string) }],
+            [MenuItem("Unfollow", "xmark", action: unfollow)],
+        ]}
     }
 }

@@ -193,12 +193,13 @@ final class WorkspaceSelector {
     private(set) var open: String?
     @ObservationIgnored private var closed: (chip: String, at: Date)?
 
-    func toggle(_ chip: String, kind: SelectorKind, anchor: CGRect, rows: @escaping () -> [SelectorSection],
+    /// `window`: the one the chip is in, when it isn't the key window (the control bar's panel never is).
+    func toggle(_ chip: String, kind: SelectorKind, anchor: CGRect, in window: NSWindow? = nil, rows: @escaping () -> [SelectorSection],
                 level: @escaping (String) -> String? = { _ in nil }, setLevel: @escaping (String, String) -> Void = { _, _ in }) {
         if open == chip { close(); return }
         // The click that closed it through the click-outside monitor arrives here next: it was that close.
         if let closed, closed.chip == chip, Date().timeIntervalSince(closed.at) < 0.3 { return }
-        guard let window = NSApp.keyWindow, let app = NSApp.delegate as? AppDelegate else { return }
+        guard let window = window ?? NSApp.keyWindow, let app = NSApp.delegate as? AppDelegate else { return }
         let state = SelectorState(kind: kind)
         state.sections = rows()
         state.rebuild = rows

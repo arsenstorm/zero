@@ -138,7 +138,7 @@ struct Thumbnail: View {
             .contentShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
-        .contextMenu { ImageActions(path: path) }
+        .zeroContextMenu("image-\(path)") { imageActions(path) }
         .overlay(alignment: .topTrailing) {
             if let remove, hovered {
                 Button(action: remove) {
@@ -338,12 +338,9 @@ enum ImageToken {
 }
 
 /// Where an image's file can go from Zero: Preview, or its folder.
-struct ImageActions: View {
-    let path: String
-    var body: some View {
-        Button("Open with Preview") { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
-        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
-    }
+@MainActor func imageActions(_ path: String) -> [[MenuItem]] {
+    [[MenuItem("Open with Preview", "image") { NSWorkspace.shared.open(URL(fileURLWithPath: path)) },
+      MenuItem("Show in Finder", "folder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }]]
 }
 
 struct ImageLightbox: View {
@@ -365,7 +362,7 @@ struct ImageLightbox: View {
                     .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.15)))
                     .shadow(color: .black.opacity(0.35), radius: 24, y: 8)
                     .padding(48)
-                    .contextMenu { ImageActions(path: path) }
+                    .zeroContextMenu("image-\(path)") { imageActions(path) }
                     .id(path)
             }
             if paths.count > 1 {

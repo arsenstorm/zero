@@ -579,13 +579,13 @@ private struct TableGrid: View {
                                     .background(r == 0 ? Theme.fieldTab : Color.clear)
                                     .overlay(alignment: .trailing) { if c < width - 1 { Rectangle().fill(Theme.stroke).frame(width: 1) } }
                                     .overlay(alignment: .bottom) { if r < rows.count - 1 { Rectangle().fill(Theme.stroke).frame(height: 1) } }
-                                    .contextMenu {
-                                        Button("Add row below") { change { $0.insert(Array(repeating: "", count: width), at: r + 1) } }
-                                        Button("Add column after") { change { rows in for i in rows.indices { rows[i].insert(i == 0 ? "Column" : "", at: min(c + 1, rows[i].count)) } } }
-                                        Divider()
-                                        if r > 0 { Button("Delete row") { change { $0.remove(at: r) } } }
-                                        if width > 1 { Button("Delete column") { change { rows in for i in rows.indices where c < rows[i].count { rows[i].remove(at: c) } } } }
-                                    }
+                                    // Behind the cell's text field, so the field keeps its own Cut, Copy and Paste.
+                                    .background { RightClick { ZeroContextMenu.open("cell-\(r)-\(c)") {[
+                                        [MenuItem("Add row below", "plus") { change { $0.insert(Array(repeating: "", count: width), at: r + 1) } },
+                                         MenuItem("Add column after", "plus") { change { rows in for i in rows.indices { rows[i].insert(i == 0 ? "Column" : "", at: min(c + 1, rows[i].count)) } } }],
+                                        (r > 0 ? [MenuItem("Delete row", "trash") { change { $0.remove(at: r) } }] : [])
+                                            + (width > 1 ? [MenuItem("Delete column", "trash") { change { rows in for i in rows.indices where c < rows[i].count { rows[i].remove(at: c) } } }] : []),
+                                    ]} } }
                             }
                         }
                     }

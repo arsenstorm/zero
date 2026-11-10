@@ -164,12 +164,11 @@ struct ScratchpadsPage: View {
             .padding(.leading, 10 + CGFloat(depth) * 14).padding(.trailing, 10).frame(height: 30)
         }
         .buttonStyle(Hovering())
-        .contextMenu {
-            Button("New scratchpad here") { create(in: folder) }
-            Button("New folder inside") { naming = .folder(in: folder) }
-            Divider()
-            Button("Show in Finder") { NSWorkspace.shared.open(Self.root.appendingPathComponent(folder)) }
-        }
+        .zeroContextMenu("pad-folder-\(folder)") {[
+            [MenuItem("New scratchpad here", "compose") { create(in: folder) },
+             MenuItem("New folder inside", "folder-plus") { naming = .folder(in: folder) }],
+            [MenuItem("Show in Finder", "folder") { NSWorkspace.shared.open(Self.root.appendingPathComponent(folder)) }],
+        ]}
     }
 
     private func padRow(_ pad: PadSummary, depth: Int, showFolder: Bool) -> some View {
@@ -185,29 +184,25 @@ struct ScratchpadsPage: View {
         .buttonStyle(Hovering(selected: shown == pad.id))
         .onHover { if $0 { workspace.prefetchPad(pad.id) } }
         .draggable(pad.link)
-        .contextMenu {
-            Button("Copy link") { PadLinks.copy(pad.link, title: pad.title) }
-            Button("Copy Markdown link") { PadLinks.copy(pad.link, title: pad.title, markdown: true) }
-            Divider()
-            Button("Rename…") { naming = .rename(pad) }
-            Menu("Move to") {
-                Button("Scratchpads (top)") { Task { await workspace.movePad(pad.id, to: "") } }.disabled(pad.folder.isEmpty)
-                ForEach(workspace.padFolders, id: \.self) { folder in
-                    Button(folder) { Task { await workspace.movePad(pad.id, to: folder) } }.disabled(folder == pad.folder)
-                }
-            }
-            Button("Show in Finder") {
-                let file = Self.root.appendingPathComponent(pad.folder).appendingPathComponent(pad.title + ".md")
-                NSWorkspace.shared.activateFileViewerSelecting([file])
-            }
-            Divider()
-            Button("Move to Trash") {
+        .zeroContextMenu("pad-\(pad.id)") {[
+            [MenuItem("Copy link", "link") { PadLinks.copy(pad.link, title: pad.title) },
+             MenuItem("Copy Markdown link", "copy") { PadLinks.copy(pad.link, title: pad.title, markdown: true) }],
+            [MenuItem("Rename…", "pen") { naming = .rename(pad) },
+             MenuItem("Show in Finder", "folder") {
+                 let file = Self.root.appendingPathComponent(pad.folder).appendingPathComponent(pad.title + ".md")
+                 NSWorkspace.shared.activateFileViewerSelecting([file])
+             }],
+            (pad.folder.isEmpty ? [] : [MenuItem("Move to Scratchpads (top)", "folder-download") { Task { await workspace.movePad(pad.id, to: "") } }])
+                + workspace.padFolders.filter { $0 != pad.folder }.map { folder in
+                    MenuItem("Move to \(folder)", "folder-download") { Task { await workspace.movePad(pad.id, to: folder) } }
+                },
+            [MenuItem("Move to Trash", "trash") {
                 Task {
                     await workspace.deletePad(pad.id)
                     if shown == pad.id { navigation.place = .pads }
                 }
-            }
-        }
+            }],
+        ]}
     }
 
     static let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".zero/scratchpads")

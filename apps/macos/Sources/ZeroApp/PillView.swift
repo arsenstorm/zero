@@ -131,11 +131,15 @@ struct PillView: View {
         // Outermost on purpose: placed inside, only the dots would animate and the shape would snap.
         .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: dots.map(\.0))
         .pointerStyle(.link)
-        .contextMenu {
-            Button("Open Log") { NSWorkspace.shared.open(Paths.log) }
-            Divider()
-            Button("Settings…") { (NSApp.delegate as? AppDelegate)?.openSettings() }
-            Button("Quit Zero") { NSApp.terminate(nil) }
+        // Behind the dots, so a dot's own menu (in front) answers on a dot and this one everywhere else on the bar.
+        .background {
+            RightClick {
+                ZeroContextMenu.open("bar") {[
+                    [MenuItem("Open Log", "file-content") { NSWorkspace.shared.open(Paths.log) }],
+                    [MenuItem("Settings…", "gear") { (NSApp.delegate as? AppDelegate)?.openSettings() },
+                     MenuItem("Quit Zero", "power-off") { NSApp.terminate(nil) }],
+                ]}
+            }
         }
     }
 
@@ -203,7 +207,9 @@ struct PillView: View {
             .onDisappear { controller.barSlots[name] = nil }
             .zIndex(drag?.name == name ? 1 : 0)
             .tip(controller.store.displayName(of: name))
-            .contextMenu { agentMenu(name) }
+            // A right-click: Zero's own menu by the dot, with the task's actions under its name (not the system's menu,
+            // which said "Remove zerod-01a1…").
+            .overlay { RightClick { menu(name) } }
             // One gesture for click and drag, so they never compete: a press that moves under 4 pt selects;
             // a longer one drags the dot with the pointer and drops it into the nearest slot.
             // Global space: the dot moves with the drag, so a local translation would cancel itself out.
@@ -218,11 +224,35 @@ struct PillView: View {
             .transition(.opacity)
     }
 
-    @ViewBuilder private func agentMenu(_ name: String) -> some View {
-        if let identity = controller.store.identity(of: name), identity.runtime == "zero", let ref = identity.ref {
-            Button("Open in Terminal") { HostAdapter.reveal(ref) }
+    /// A dot's menu, in Zero's selector by the dot: a task's own actions (open it, pause or resume it, move it to Later,
+    /// archive it), or for an agent outside Zero, closing it.
+    private func menu(_ name: String) {
+        let window = NSApp.window(withWindowNumber: NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0))
+        guard let slot = controller.barSlots[name] else { return }
+        let width = SelectorView.width(.menu)
+        // Beside the bar, level with the dot, on the side with room (the bar's panel is the window's width).
+        let anchor = CGRect(x: slot.minX - width - 8, y: slot.minY, width: width, height: slot.height)
+        WorkspaceSelector.shared.toggle("bar-\(name)", kind: .menu, anchor: anchor, in: window) { [controller, workspace] in
+            var rows: [[(id: String, title: String, glyph: String, selected: Bool, pick: () -> Void)]] = []
+            if name.hasPrefix("zerod-"), let workspace {
+                let id = String(name.dropFirst("zerod-".count))
+                let open: () -> Void = { if let url = URL(string: "zero://task/" + id) { (NSApp.delegate as? AppDelegate)?.openZeroURL(url) } }
+                rows.append([("open", "Open", "arrow-up-right", false, open)])
+                rows.append([
+                    workspace.isPaused(id) ? ("resume", "Resume", "circle-play", false, { Task { await workspace.unpause([id]) } })
+                                           : ("pause", "Pause", "circle-pause", false, { Task { await workspace.pause([id]) } }),
+                    ("later", "Move to Later", "bookmark", false, { Task { await workspace.moveToLater(id) } }),
+                ])
+                rows.append([("archive", "Archive…", "archive", false, { open(); workspace.archiving = id })])
+            } else {
+                if let identity = controller.store.identity(of: name), identity.runtime == "zero", let ref = identity.ref {
+                    rows.append([("terminal", "Open in Terminal", "terminal", false, { HostAdapter.reveal(ref) })])
+                }
+                rows.append([(controller.store.canStop(name) ? "stop" : "remove", controller.store.canStop(name) ? "Remove and stop" : "Remove", "trash", false,
+                              { controller.store.closeAgent(name) })])
+            }
+            return ComposerRows.menu(rows)
         }
-        Button(controller.store.canStop(name) ? "Remove and stop \(name)" : "Remove \(name)") { controller.store.closeAgent(name) }
     }
 
     /// The dragged dot let go: the bar's order with it moved into the slot it's over.
