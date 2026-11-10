@@ -298,23 +298,23 @@ struct TasksSidebar: View {
         Button("Archive…") { workspace.archiving = id }
     }
 
-    /// At the foot: each agent's account usage; while Zero can't reach its daemon, that instead. Over the list's end,
-    /// on a fade.
+    /// At the foot, in a card of its own: the accounts used today and their usage; while Zero can't reach its daemon,
+    /// that instead (on a fade, over the list's end).
     @ViewBuilder private var footer: some View {
-        Group {
-            if !workspace.connected {
-                NucleoLabel("Connecting to Zero's daemon…", icon: "plug-off", size: 12)
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                UsageFooter(workspace: workspace) { SettingsView.requested = .signins; place = .settings }
-            }
+        if !workspace.connected {
+            NucleoLabel("Connecting to Zero's daemon…", icon: "plug-off", size: 12)
+                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10).padding(.vertical, 10)
+                .padding(.horizontal, 10).padding(.top, 22)
+                .background(LinearGradient(stops: [.init(color: Theme.composer.opacity(0), location: 0), .init(color: Theme.composer, location: 0.5)],
+                                           startPoint: .top, endPoint: .bottom))
+                .padding(.horizontal, -10)
+        } else {
+            // In from the sidebar's edges by its inset (the column pads its content 10 at the sides, none below).
+            UsageFooter(workspace: workspace) { SettingsView.requested = .signins; place = .settings }
+                .padding(.horizontal, UsageFooter.inset - 10).padding(.vertical, UsageFooter.inset)
         }
-        .padding(.horizontal, 10).padding(.vertical, 10)
-        .padding(.horizontal, 10).padding(.top, 22)
-        .background(LinearGradient(stops: [.init(color: Theme.composer.opacity(0), location: 0), .init(color: Theme.composer, location: 0.5)],
-                                   startPoint: .top, endPoint: .bottom))
-        .padding(.horizontal, -10)
     }
 }
 

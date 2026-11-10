@@ -243,29 +243,49 @@ struct UsageMeter: View {
     }
 }
 
-/// At the sidebar's foot: each agent's account in use (its CLI's default), how much of its 5 hours and its week it has
-/// used, and when a full one resets. A click opens Settings › Accounts.
+/// At the sidebar's foot: the accounts tasks used in the last day, each with how much of its 5 hours and its week it
+/// has used, and when a full one resets. A click opens Settings › Accounts.
 struct UsageFooter: View {
     let workspace: Workspace
     let open: () -> Void
+    static let recent: TimeInterval = 24 * 3600
+
+    /// The accounts the board's tasks that moved in the last day run as (their workers' too), with their usage, Claude
+    /// Code's first. A task with no account of its own runs as its CLI's default.
+    private var used: [(ZerodLink.SignIn, Usage)] {
+        let since = Int((Date().timeIntervalSince1970 - Self.recent) * 1000)
+        let sessions = workspace.board.filter { ($0.at ?? Int.max) > since }.flatMap { [$0.session] + ($0.team ?? []).map(\.session) }
+        let ids = Set(sessions.compactMap { id in
+            workspace.conversation(id).flatMap { $0.signin ?? workspace.signinDefaults[$0.provider.rawValue] }
+        })
+        return workspace.signins.filter { ids.contains($0.id) }
+            .sorted { ($0.cli.rawValue, $0.label) < ($1.cli.rawValue, $1.label) }
+            .compactMap { signin in workspace.signinUsage[signin.id].flatMap { $0.windows.isEmpty ? nil : (signin, $0) } }
+    }
 
     var body: some View {
-        let rows: [(Provider, Usage)] = [Provider.claude, .codex, .opencode].compactMap { cli in
-            guard let id = workspace.signinDefaults[cli.rawValue] ?? workspace.signins.first(where: { $0.cli == cli })?.id,
-                  let usage = workspace.signinUsage[id], !usage.windows.isEmpty else { return nil }
-            return (cli, usage)
-        }
-        Button(action: open) {
-            TimelineView(.everyMinute) { context in
-                let now = Int(context.date.timeIntervalSince1970)
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(rows, id: \.0) { cli, usage in line(cli, usage, now: now) }
+        let used = used
+        // Always a view (an empty Group isn't one, and its task never ran: nothing loaded, so nothing ever showed).
+        VStack(spacing: 0) {
+            Color.clear.frame(height: 0)
+            if !used.isEmpty {
+                Button(action: open) {
+                    TimelineView(.everyMinute) { context in
+                        let now = Int(context.date.timeIntervalSince1970)
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(used, id: \.0.id) { signin, usage in account(signin, usage, now: now) }
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.card, in: RoundedRectangle(cornerRadius: Self.radius))
+                        .overlay(RoundedRectangle(cornerRadius: Self.radius).strokeBorder(Theme.stroke))
+                        .contentShape(RoundedRectangle(cornerRadius: Self.radius))
+                    }
                 }
+                .buttonStyle(.plain)
+                .tip("Usage of the accounts used today · Settings › Accounts")
             }
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .tip("Usage of each agent's account · Settings › Accounts")
         // Read when the window opens and every few minutes: zerod keeps what tasks hear, and asks each CLI now and then.
         .task {
             await workspace.loadSignIns()
@@ -279,36 +299,37 @@ struct UsageFooter: View {
         }
     }
 
-    /// One agent: its mark, then each window's bar and figure; a full one says when it resets instead.
-    private func line(_ cli: Provider, _ usage: Usage, now: Int) -> some View {
-        HStack(spacing: 8) {
-            Group { if let mark = cli.mark { mark.resizable().scaledToFit() } else { NucleoIcon("terminal", size: 12) } }
-                .frame(width: 12, height: 12).foregroundStyle(.secondary)
-            ForEach(UsageColumns.slots, id: \.0) { name, short in
-                let window = usage.windows.first { $0.name == name }
-                let live = (window?.resetsAt ?? Int.max) > now
-                let used = window.map { live ? min(1, $0.used) : 0 }
-                HStack(spacing: 5) {
-                    Text(short).foregroundStyle(.tertiary)
-                    if let used {
-                        UsageMeter(used: used, width: 28)
-                        Text(UsageMeter.percent(used)).monospacedDigit().foregroundStyle(used >= 1 ? .red : .secondary)
-                    } else {
-                        Text("–").foregroundStyle(.tertiary)
+    /// Concentric with the sidebar's corner it sits in: its radius and its inset add up to the panel's (6 + 6 = 12).
+    static let radius: CGFloat = 6
+    static let inset: CGFloat = 6
+
+    /// One account: its CLI's mark and name, and when a full window lets it work again; under them, each window's bar.
+    private func account(_ signin: ZerodLink.SignIn, _ usage: Usage, now: Int) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Group { if let mark = signin.cli.mark { mark.resizable().scaledToFit() } else { NucleoIcon("terminal", size: 11) } }
+                    .frame(width: 11, height: 11).foregroundStyle(.secondary)
+                Text(signin.label).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                if let full = usage.windows.filter({ $0.used >= 1 && ($0.resetsAt ?? 0) > now }).compactMap(\.resetsAt).max() {
+                    Text(UsageMeter.resets(full, now: now).replacingOccurrences(of: "Resets ", with: "")).foregroundStyle(.red).monospacedDigit().fixedSize()
+                }
+            }
+            HStack(spacing: 12) {
+                ForEach(UsageColumns.slots, id: \.0) { name, short in
+                    let window = usage.windows.first { $0.name == name }
+                    let used = window.map { ($0.resetsAt ?? Int.max) > now ? min(1, $0.used) : 0 }
+                    HStack(spacing: 5) {
+                        Text(short).foregroundStyle(.tertiary).fixedSize()
+                        UsageMeter(used: used ?? 0, width: 30).opacity(used == nil ? 0.4 : 1)
+                        Text(used.map(UsageMeter.percent) ?? "–").monospacedDigit().fixedSize()
+                            .foregroundStyle((used ?? 0) >= 1 ? .red : .secondary)
                     }
                 }
-                .frame(width: 84, alignment: .leading)
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
         }
         .font(.system(size: 11))
-        .overlay(alignment: .trailing) {
-            // Full: when it can work again, the soonest a full window lets go.
-            if let full = usage.windows.filter({ $0.used >= 1 && ($0.resetsAt ?? 0) > now }).compactMap(\.resetsAt).max() {
-                Text(UsageMeter.resets(full, now: now).replacingOccurrences(of: "Resets ", with: ""))
-                    .font(.system(size: 10.5)).foregroundStyle(.red).monospacedDigit()
-            }
-        }
     }
 }
 
