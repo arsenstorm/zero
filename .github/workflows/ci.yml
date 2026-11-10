@@ -42,6 +42,8 @@ jobs:
 
   swift:
     name: Apps (Swift)
+    # Needs Ghostty's engine built on macOS, whose minutes are costly on a private repository: public only.
+    if: github.event.repository.visibility == 'public'
     runs-on: macos-26
     timeout-minutes: 45
     permissions:

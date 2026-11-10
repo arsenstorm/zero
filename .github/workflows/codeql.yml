@@ -17,8 +17,8 @@ concurrency:
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       security-events: write
       actions: read
@@ -26,17 +26,42 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - language: rust
-            runner: ubuntu-latest
-            build-mode: none
-          - language: javascript-typescript
-            runner: ubuntu-latest
-            build-mode: none
-          # Swift is analysed while it builds, so it needs macOS, Ghostty's engine and a build.
-          - language: swift
-            runner: macos-26
-            build-mode: manual
+        language: [rust, javascript-typescript]
+
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+          config: |
+            paths-ignore:
+              - site/dist
+              - "**/node_modules"
+              - crates/zerod/tests/fixtures
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: /language:${{ matrix.language }}
+
+  # Swift is analysed while it builds: macOS, Ghostty's engine and a build, whose minutes are costly on a private
+  # repository, so public only. (Scheduled runs carry no repository details, so they skip it; pushes cover it.)
+  analyze-swift:
+    name: Analyze (swift)
+    if: github.event.repository.visibility == 'public'
+    runs-on: macos-26
+    timeout-minutes: 45
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
 
     steps:
       - name: Check out repository code
@@ -45,30 +70,22 @@ jobs:
           persist-credentials: false
 
       - name: Use the newest Xcode
-        if: matrix.language == 'swift'
         run: sudo xcode-select -s "$(find /Applications -maxdepth 1 -name 'Xcode_*.app' | sort -V | tail -1)" && swift --version
 
       - name: Ghostty engine
-        if: matrix.language == 'swift'
         uses: ./.github/actions/ghostty
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
-          languages: ${{ matrix.language }}
-          build-mode: ${{ matrix.build-mode }}
+          languages: swift
+          build-mode: manual
           queries: security-extended
-          config: |
-            paths-ignore:
-              - site/dist
-              - "**/node_modules"
-              - crates/zerod/tests/fixtures
 
       - name: Build
-        if: matrix.build-mode == 'manual'
         run: swift build --package-path apps/macos
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
-          category: /language:${{ matrix.language }}
+          category: /language:swift
