@@ -72,6 +72,8 @@ struct Inner {
     /// When the runtime last said anything, and when each command still running started.
     heard: Instant,
     running: HashMap<String, Instant>,
+    /// Claude's last init recorded (its hash), without what changes every time: the same again isn't recorded.
+    init: Option<u64>,
 }
 
 /// A session not in memory, as parked.json keeps it: enough for the board, a list and a snapshot's latest items.
@@ -130,7 +132,7 @@ impl Session {
             let session = Session(Arc::new(Mutex::new(Inner {
                 mcp: vec![], core: None, parked: Some(parked), summary: None, dir: Some(dir.into()), lines, touched: Instant::now(), events, transcript: Some(append(dir)?), unwritten: false,
                 out: None, child: None, pid: None, fds: None, stop_reading: None, writing: None, waiting: HashMap::new(), answered: HashSet::new(), next: lines + 1, generation: 0,
-                heard: Instant::now(), running: HashMap::new(),
+                heard: Instant::now(), running: HashMap::new(), init: None,
             })));
             return Ok(session);
         }
@@ -191,7 +193,7 @@ impl Session {
     fn with(core: Core, transcript: Option<File>, events: broadcast::Sender<Event>, next: u64) -> Session {
         Session(Arc::new(Mutex::new(Inner {
             mcp: vec![], core: Some(core), parked: None, summary: None, dir: None, lines: 0, touched: Instant::now(), events, transcript, unwritten: false, out: None, child: None, pid: None, fds: None, stop_reading: None, writing: None, waiting: HashMap::new(), answered: HashSet::new(), next, generation: 0,
-            heard: Instant::now(), running: HashMap::new(),
+            heard: Instant::now(), running: HashMap::new(), init: None,
         })))
     }
 

@@ -480,3 +480,24 @@ async fn a_transcript_keeps_the_finished_words_not_each_piece() {
     let said = again.get(&lead).unwrap().items.iter().any(|i| matches!(&i.kind, zerod::model::ItemKind::Agent { text, .. } if text == "Hello there."));
     assert!(said, "replayed with its words");
 }
+
+/// Claude says who it is (system/init, 15 KB with its tools and skills) on every start: the transcript keeps it only
+/// when it says something new, not again for a fresh uuid or socket. Replayed, the latest is what counts.
+#[tokio::test]
+async fn a_transcript_keeps_claudes_init_only_when_it_changes() {
+    let w = world("leads-transcript-init");
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "say hello");
+    let seen = lead_runtime(&w).await;
+    seen.said("user", 1).await;
+    let init = |session: &str, uuid: &str| json!({"type": "system", "subtype": "init", "session_id": session, "model": "claude-fable-5-1",
+                                                 "uuid": uuid, "messaging_socket_path": format!("/tmp/{uuid}.sock"), "tools": ["Bash", "Edit"]});
+    seen.say(init("t1", "u1"));
+    seen.say(init("t1", "u2"));
+    seen.say(init("t2", "u3"));
+    seen.say(turn_ends());
+    until(&w.daemon, &lead, |c| c.attention() != Attention::Working).await;
+    let transcript = std::fs::read_to_string(w.home.join("sessions").join(&lead).join("transcript.jsonl")).unwrap();
+    assert_eq!(transcript.matches("\"subtype\":\"init\"").count(), 2, "the same init again isn't kept: {transcript}");
+    let again = Daemon::open(&w.home, runtime(w.claude.clone())).unwrap();
+    assert_eq!(again.get(&lead).unwrap().thread.as_deref(), Some("t2"), "replayed, the latest init's thread");
+}

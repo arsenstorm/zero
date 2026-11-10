@@ -127,7 +127,17 @@ impl Session {
         // Not each piece of streamed words: the finished message that follows has them all, and pieces were four in
         // ten lines of a long task's transcript (written one by one, under the lock). Replayed, the words are there.
         let piece = message["type"] == "stream_event" && message["event"]["type"] == "content_block_delta";
-        if !piece { inner.record(json!({"in": message, "at": at})); }
+        // Nor Claude's init (15 KB) when it says what the last one recorded did: it comes on every start, each with a
+        // fresh uuid and socket. Replay needs only the latest, and that's the same.
+        let repeated = message["type"] == "system" && message["subtype"] == "init" && {
+            let mut said = message.clone();
+            if let Some(fields) = said.as_object_mut() { fields.remove("uuid"); fields.remove("messaging_socket_path"); }
+            let mut hasher = std::hash::DefaultHasher::new();
+            std::hash::Hash::hash(&said.to_string(), &mut hasher);
+            let said = std::hash::Hasher::finish(&hasher);
+            inner.init == Some(said) || { inner.init = Some(said); false }
+        };
+        if !piece && !repeated { inner.record(json!({"in": message, "at": at})); }
         inner.core().at(at);
         inner.heard = Instant::now();
         let effects = inner.core().receive(&message);
