@@ -273,7 +273,7 @@ struct PillView: View {
                 rows.append([("open", "Open", "arrow-up-right", false, open)])
                 rows.append([
                     workspace.isPaused(id)
-                        ? ("resume", "Resume", "circle-play", false, { Task { await workspace.unpause([id]) } })
+                        ? ("resume", "Resume", "media-play", false, { Task { await workspace.unpause([id]) } })
                         : ("pause", "Pause", "circle-pause", false, { Task { await workspace.pause([id]) } }),
                     ("later", "Move to Later", "bookmark", false, { Task { await workspace.moveToLater(id) } }),
                 ])

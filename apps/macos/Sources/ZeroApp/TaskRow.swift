@@ -256,7 +256,7 @@ struct TaskPeekCard: View {
             if let wakes = row.wakes {
                 let at = Date(timeIntervalSince1970: TimeInterval(wakes))
                 line(
-                    "alarm-clock",
+                    "clock",
                     "Wakes "
                         + (Calendar.current.isDateInToday(at)
                             ? at.formatted(date: .omitted, time: .shortened)

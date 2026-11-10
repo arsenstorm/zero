@@ -275,7 +275,7 @@ struct ComposerCard: View {
                 }.buttonStyle(.plain)
             }
             if let error {
-                NucleoLabel(error, icon: "circle-warning", size: 12).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                NucleoLabel(error, icon: "triangle-warning", size: 12).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
             }
         }
     }

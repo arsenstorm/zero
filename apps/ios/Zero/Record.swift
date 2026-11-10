@@ -77,7 +77,7 @@ struct RecordView: View {
         VStack(spacing: 28) {
             shutter
             HStack(spacing: 8) {
-                PhotosPicker(selection: $picked, maxSelectionCount: 10, matching: .images) { chip("Photos", icon: "images-glyph") }
+                PhotosPicker(selection: $picked, maxSelectionCount: 10, matching: .images) { chip("Photos", icon: "image-glyph") }
                 PhotosPicker(selection: $video, matching: .videos) { chip(reading ? "Reading…" : "Recordings", icon: "record-glyph") }
                     .disabled(reading)
             }

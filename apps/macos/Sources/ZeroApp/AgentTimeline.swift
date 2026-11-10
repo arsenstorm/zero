@@ -198,7 +198,7 @@ private struct EarlierRow: View {
     private var symbol: String {
         switch ask.kind {
         case .note where ask.status == "closed": "circle-xmark"
-        case .note: "chat-bubble"
+        case .note: "message-check"
         case .message: "circle-arrow-up"
         case .run: "terminal"
         case .permission: "lock"

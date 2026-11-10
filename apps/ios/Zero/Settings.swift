@@ -22,7 +22,7 @@ struct SettingsView: View {
                 }
             }
             PageGroup(title: "Permissions") {
-                PageRow(title: "Notifications", value: notificationsText, icon: "bell-outline")
+                PageRow(title: "Notifications", value: notificationsText, icon: "inbox-outline")
                 PageRow(
                     title: "Microphone", value: AVAudioApplication.shared.recordPermission == .granted ? "Allowed" : "Not allowed",
                     icon: "microphone-outline")

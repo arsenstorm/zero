@@ -73,7 +73,7 @@ struct OnboardingView: View {
         case .habits:
             StepPage(title: "Make it yours", detail: "Change these later in **Zero menu bar icon → Settings**.") {
                 VStack(spacing: 0) {
-                    OnboardingRow(icon: "keyboard", title: "Talk hotkey", detail: "Opens the inbox and starts dictation.") {
+                    OnboardingRow(icon: "command", title: "Talk hotkey", detail: "Opens the inbox and starts dictation.") {
                         HotKeyRecorder(settings: settings, minWidth: nil)
                     }
                     Divider()

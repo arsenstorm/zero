@@ -239,7 +239,7 @@ struct TasksSidebar: View {
             [
                 sorts.map { option, title, glyph in (option.rawValue, title, glyph, sort == option, { sort = option }) },
                 pausing,
-                [("archive", "Archived tasks…", "stack", false, { showingArchive = true })],
+                [("archive", "Archived tasks…", "layers", false, { showingArchive = true })],
             ].filter { !$0.isEmpty })
     }
 
@@ -328,7 +328,7 @@ struct TasksSidebar: View {
             [MenuItem("Rename…", "pen") { renaming = Renaming(id: worker.id, name: Workspace.label(of: worker), ticket: worker.ticket) }],
             [
                 workspace.isPaused(worker.id)
-                    ? MenuItem("Resume", "circle-play") { Task { await workspace.unpause([worker.id]) } }
+                    ? MenuItem("Resume", "media-play") { Task { await workspace.unpause([worker.id]) } }
                     : MenuItem("Pause", "circle-pause") { Task { await workspace.pause([worker.id]) } }
             ]
                 + (worker.status == .working || worker.status == .waiting
@@ -380,7 +380,7 @@ struct TasksSidebar: View {
             moves,
             [
                 workspace.isPaused(id)
-                    ? MenuItem("Resume", "circle-play") { Task { await workspace.unpause([id]) } }
+                    ? MenuItem("Resume", "media-play") { Task { await workspace.unpause([id]) } }
                     : MenuItem("Pause", "circle-pause") { Task { await workspace.pause([id]) } },
                 MenuItem("Save for later", "bookmark") { Task { await workspace.askToSaveForLater(id) } },
                 MenuItem("Move to Later", "clock") {
@@ -397,7 +397,7 @@ struct TasksSidebar: View {
     /// that instead (on a fade, over the list's end).
     @ViewBuilder private var footer: some View {
         if !workspace.connected {
-            NucleoLabel("Connecting to Zero's daemon…", icon: "plug-off", size: 12)
+            NucleoLabel("Connecting to Zero's daemon…", icon: "plug", size: 12)
                 .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10).padding(.vertical, 10)

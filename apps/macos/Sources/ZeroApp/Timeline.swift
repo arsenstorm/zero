@@ -284,7 +284,7 @@ struct QuietTurns<Content: View>: View {
                 open.toggle()
             } label: {
                 HStack(spacing: 8) {
-                    NucleoIcon("stack", size: 14).foregroundStyle(.secondary).frame(width: 14, height: 16)
+                    NucleoIcon("layers", size: 14).foregroundStyle(.secondary).frame(width: 14, height: 16)
                     Text(turns == 1 ? "An update that needed nothing from you" : "\(turns) updates that needed nothing from you")
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 0)

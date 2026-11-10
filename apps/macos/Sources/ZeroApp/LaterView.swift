@@ -93,7 +93,7 @@ struct LaterPage: View {
         .zeroContextMenu("later-\(item.id)") {
             [
                 [MenuItem("Copy link", "link") { copy(item.link) }]
-                    + (item.resume != nil && !item.done ? [MenuItem("Resume task", "circle-play") { resume(item) }] : [])
+                    + (item.resume != nil && !item.done ? [MenuItem("Resume task", "media-play") { resume(item) }] : [])
                     + (item.suggested == true
                         ? [MenuItem("Keep", "bookmark") { Task { await workspace.editLater(item.id, ["keep": true]) } }] : [])
                     + [

@@ -54,6 +54,8 @@ is their UI and the inbox where agents reach the user. `docs/workspace.md` has t
   (Zero's own, `SelectorView`), one card for an ask (`CardView`; `flat` inside other surfaces, never a card in a card).
 - Zero's own popovers and cards, not native ones (slow, animated): drawn in place, instant.
 - Nucleo icons only (`apps/macos/Resources/nucleo`, the UI family at 18 px; fetch missing ones with the Nucleo tools).
+  Nucleo's licence caps the repo at 100 distinct icons (Mac, iPhone and site together, listed in
+  THIRD_PARTY_LICENSES): reuse one before adding one, and keep the total at 100 or fewer.
 - Concentric corners: an inner radius plus its inset equals the outer radius. `compositingGroup()` before `shadow`
   on a stack (otherwise every row in it casts a shadow).
 - Links in properties: medium weight on a dashed underline, no icon, no blue. States as pills.

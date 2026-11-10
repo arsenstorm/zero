@@ -82,15 +82,20 @@ private struct WorkspaceRow: View {
 struct WorkspaceGlyph: View {
     let glyph: String
     let size: CGFloat
+
+    static func isEmoji(_ glyph: String) -> Bool { glyph.unicodeScalars.first?.properties.isEmoji == true && glyph.count <= 2 }
+
     var body: some View {
         // Zero's mark in the box the icons beside it get, its own shape kept (a hexagon, narrower than it is tall):
         // never stretched to fill it.
         if glyph.isEmpty {
             ZeroMark(small: true).frame(width: size, height: size)
-        } else if glyph.unicodeScalars.first?.properties.isEmoji == true, glyph.count <= 2 {
+        } else if Self.isEmoji(glyph) {
             Text(glyph).font(.system(size: size - 1))
         } else {
-            NucleoIcon(glyph, size: size)
+            // An icon no longer bundled (since taken out of the palette) draws the palette's first, not a blank.
+            let known = Bundle.main.url(forResource: "\(glyph)-outline", withExtension: "svg", subdirectory: "nucleo") != nil
+            NucleoIcon(known ? glyph : WorkspaceForm.icons[0], size: size)
         }
     }
 }
@@ -167,8 +172,12 @@ private struct WorkspaceForm: View {
             }
         }
         .frame(width: 400)
-        // A new one (or one with an emoji or Zero's mark from before) starts on the first of Nucleo's.
-        .onAppear { if workspace.id != "zero" && !Self.icons.contains(workspace.glyph) { workspace.glyph = Self.icons[0] } }
+        // A new one (or one with Zero's mark, or an icon since taken out) starts on the first of Nucleo's; an emoji stays.
+        .onAppear {
+            if workspace.id != "zero" && !Self.icons.contains(workspace.glyph) && !WorkspaceGlyph.isEmoji(workspace.glyph) {
+                workspace.glyph = Self.icons[0]
+            }
+        }
         .task {
             await model.loadMcpServers()
             servers = Set(model.mcpServers.filter { $0.workspaces.contains(workspace.id) }.map(\.id))
@@ -191,11 +200,9 @@ private struct WorkspaceForm: View {
     /// Zero's own icons (Resources/nucleo), each once, by name.
     /// Icons that read as a workspace's logo: things and places, not the app's controls (arrows, headings).
     static let icons: [String] = [
-        "layers", "suitcase", "house", "code", "terminal", "rocket", "star", "heart", "globe", "book", "flask", "cube",
-        "chart-bar", "bug", "shield", "lock", "key", "robot", "microchip", "database", "server", "atom", "lightbulb",
-        "puzzle-piece", "magnifier", "camera", "music", "headphones", "palette", "leaf", "sun", "moon", "cloud", "fire",
-        "bolt-lightning", "trophy", "crown", "flag", "gift", "compass", "map-pin", "anchor", "plane", "car", "mug",
-        "gamepad", "graduation-cap", "wallet", "calendar", "megaphone", "folder",
+        "layers", "suitcase", "house-4", "code", "terminal", "rocket", "globe", "shield", "lock", "key", "robot", "server",
+        "folder", "brain", "puzzle-piece", "magnifier", "bolt-lightning", "sparkle", "wand-sparkle", "moon", "code-branch",
+        "paper-plane", "bookmark", "note-3", "eye", "mobile", "monitor",
     ]
 
     private func field(_ label: String, @ViewBuilder content: @escaping () -> some View) -> some View {
