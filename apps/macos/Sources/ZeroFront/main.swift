@@ -198,8 +198,8 @@ struct Parser {
 
 // The sockets: zero.sock for asks and notes, zerod.sock for zerod's requests.
 
-/// NSHomeDirectory(), as zero-full has it: CFFIXED_USER_HOME, else the account's (not $HOME).
-let home: String = env("CFFIXED_USER_HOME") ?? getpwuid(getuid()).map { String(cString: $0.pointee.pw_dir) } ?? "/"
+/// $HOME, as zerod finds ~/.zero: asking for the account's home instead took a millisecond of each call.
+let home: String = env("HOME") ?? getpwuid(getuid()).map { String(cString: $0.pointee.pw_dir) } ?? "/"
 let askSocket = env("ZERO_SOCKET") ?? home + "/.zero/zero.sock"
 let daemonSocket = env("ZERO_DAEMON") ?? home + "/.zero/zerod.sock"
 
