@@ -48,7 +48,13 @@ fn later(zerod: &Zerod, request: &Request) -> Result<Value, String> {
             fields.insert("by".into(), json!(id));
         }
     }
+    // A task saved whole, its item deleted: back on the board, rather than kept off it with nothing to bring it back.
+    let saved = (tool == "delete").then(|| args["item"].as_str().and_then(|i| zerod.later.view(i, None).ok()).and_then(|i| i.resume)).flatten();
     let result = crate::later::call(&zerod.later, tool, &args);
+    if result.is_ok() && let Some(session) = saved {
+        let daemon = daemon.clone();
+        tokio::spawn(async move { daemon.bring_back(&session).await });
+    }
     if result.is_ok() && !matches!(tool, "list" | "view") { let _ = zerod.notices.send("later"); }
     result
 }

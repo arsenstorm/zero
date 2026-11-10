@@ -29,6 +29,17 @@ pub(super) async fn lifecycle(zerod: &Zerod, request: Request) -> Result<Value, 
         }
         "archive" => daemon.archive(&request.session()?).await.map(|_| Value::Null),
         "unarchive" => daemon.unarchive(&request.session()?).map(|back| json!(back)),
+        "saveForLater" => save_for_later(zerod, &request.session()?),
+        // Back from Later: on the board again, off hold, and its item done.
+        "resumeLater" => {
+            let args = request.args.clone().unwrap_or(json!({}));
+            let item = zerod.later.view(args["item"].as_str().ok_or("Which item?")?, None)?;
+            let session = item.resume.ok_or("That item isn't a task saved for later")?;
+            daemon.bring_back(&session).await;
+            zerod.later.edit(&item.id, crate::later::Edit { done: Some(true), ..Default::default() })?;
+            let _ = zerod.notices.send("later");
+            Ok(json!({"session": session}))
+        }
         "archived" => Ok(json!(daemon.archived(request.limit.unwrap_or(1000)))),
         // While a restart waits for turns to pause: what it's waiting for.
         "restartStatus" => Ok(daemon.restart_status()),
@@ -246,4 +257,19 @@ fn summary(conversation: &Conversation) -> Value {
     let mut summary = json!(Conversation { items: vec![], ..conversation.clone() });
     summary["attention"] = json!(conversation.attention());
     summary
+}
+
+/// A task saved for later, whole: off the board and on hold, with an item in Later, its name for a note and its last
+/// answer behind it, that resumes it.
+fn save_for_later(zerod: &Zerod, id: &str) -> Result<Value, String> {
+    let daemon = &zerod.daemon;
+    let task = daemon.get(id).ok_or_else(|| format!("No session {id}"))?;
+    let name = crate::bridge::label(&task);
+    let note: String = name.chars().take(crate::later::NOTE).collect();
+    let artifact = task.answer().map(crate::board::without_ending).unwrap_or_default().to_string();
+    let item = zerod.later.save(crate::later::New { note, artifact, from: Some(id.into()), task: Some(name), workspace: Some(daemon.workspace_of(&task)),
+        asked: true, resume: Some(id.into()), ..Default::default() })?;
+    daemon.save_for_later(id)?;
+    let _ = zerod.notices.send("later");
+    Ok(json!(item))
 }

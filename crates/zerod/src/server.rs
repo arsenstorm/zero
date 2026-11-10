@@ -249,6 +249,8 @@ impl Zerod {
         let mut rows = crate::board::board_in(&daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(), &self.inbox.asks(), &self.places.get(), &daemon.queues(), &|c| daemon.workspace_of(c));
         crate::board::mark_read(&mut rows, &|id| daemon.has_read(id));
         crate::board::mark_paused(&mut rows, &|id| daemon.is_paused(id) || daemon.is_paused_for_update(id));
+        // Saved for later: in Later until it's resumed from there.
+        rows.retain(|r| !daemon.is_saved(&r.session));
         for row in rows.iter_mut() { row.wakes = daemon.next_wake(&row.session); row.next = daemon.next(&row.session) }
         rows
     }
@@ -292,7 +294,7 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "pad" | "later" | "loops" | "loop" | "saveLoop" | "deleteLoop" => notes::handle(zerod, request),
         "watch" | "watchFile" | "watches" | "unwatch" | "remind" | "schedule" | "schedules" | "unschedule" | "follow" | "unfollow"
         | "following" => watches::handle(zerod, request).await,
-        "start" | "spawn" | "adopt" | "detach" | "migrate" | "archive" | "unarchive" | "archived" | "restartStatus" | "restart" => {
+        "start" | "spawn" | "adopt" | "detach" | "migrate" | "archive" | "unarchive" | "archived" | "saveForLater" | "resumeLater" | "restartStatus" | "restart" => {
             sessions::lifecycle(zerod, request).await
         }
         "release" | "resume" | "openTerminal" | "closeTerminal" | "rewindPreview" | "rewind" | "branch" | "switch" | "interrupt" | "stop"

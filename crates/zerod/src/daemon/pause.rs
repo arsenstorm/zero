@@ -180,6 +180,36 @@ impl Daemon {
         targets
     }
 
+    pub fn is_saved(&self, id: &str) -> bool { self.saved.lock().unwrap().contains(id) }
+
+    /// Saves a task for later, whole: off the board and on hold (paused, with its workers), not archived. Marked at
+    /// once; its turns wrap up behind, as a pause's do.
+    pub fn save_for_later(&self, id: &str) -> Result<(), String> {
+        self.session(id)?;
+        self.saved.lock().unwrap().insert(id.into());
+        self.keep_saved();
+        self.paused.lock().unwrap().extend(self.with_workers(vec![id.into()]));
+        self.keep_paused();
+        let _ = self.queues.send(());
+        if let Some(daemon) = self.me.upgrade() {
+            let id = id.to_string();
+            tokio::spawn(async move { daemon.pause(&[id], Duration::from_secs(5 * 60)).await });
+        }
+        Ok(())
+    }
+
+    /// A task saved for later back on the board, off hold.
+    pub async fn bring_back(&self, id: &str) -> Vec<String> {
+        self.saved.lock().unwrap().remove(id);
+        self.keep_saved();
+        self.unpause(&[id.to_string()]).await
+    }
+
+    fn keep_saved(&self) {
+        let saved: Vec<String> = self.saved.lock().unwrap().iter().cloned().collect();
+        let _ = std::fs::write(self.home.join(SAVED), serde_json::to_vec(&saved).unwrap_or_default());
+    }
+
     /// Takes `ids` (every paused session, `ids` empty) off hold. Those with words waiting are resumed for them; the
     /// rest stay parked until they're written to, as any finished task. Gives the sessions taken off hold.
     pub async fn unpause(&self, ids: &[String]) -> Vec<String> {

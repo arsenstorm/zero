@@ -36,6 +36,9 @@ pub struct Item {
     pub version: u32,
     pub versions: Vec<Version>,
     pub link: String,
+    /// A task saved whole, by its session: off the board until it's resumed from here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resume: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -61,6 +64,8 @@ pub struct New {
     pub workspace: Option<String>,
     /// The user asked for it to be saved; otherwise, from a task, it's a suggestion.
     pub asked: bool,
+    /// The task itself saved, to resume from Later.
+    pub resume: Option<String>,
 }
 
 #[derive(Deserialize, Clone, Debug, Default)]
@@ -113,7 +118,7 @@ impl Later {
         let now = now();
         let item = Item { id: id.clone(), note: note.clone(), artifact: None, from: new.from.clone(), task: new.task, workspace: new.workspace,
             links: new.links, files, created: now, updated: now, done: false, suggested, version: 1,
-            versions: vec![Version { version: 1, note, at: now, by: new.from }], link: link(&id) };
+            versions: vec![Version { version: 1, note, at: now, by: new.from }], link: link(&id), resume: new.resume };
         std::fs::write(dir.join("artifact.md"), &new.artifact).map_err(|e| e.to_string())?;
         self.store(&item)?;
         self.view(&id, None)

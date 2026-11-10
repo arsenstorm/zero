@@ -44,6 +44,7 @@ pub fn real_runtime() -> Runtime {
 }
 
 const PAUSED: &str = "paused-by-user.json";
+const SAVED: &str = "saved-for-later.json";
 /// Whether a task has a blocking ask open (the inbox knows).
 pub type Blocked = Box<dyn Fn(&str) -> bool + Send + Sync>;
 /// A user's queued words as they go to the agent: the note on its open asks added then (the inbox's to say).
@@ -115,6 +116,9 @@ pub struct Daemon {
     /// Sessions the user put on hold: parked, and kept parked whatever arrives for them, until resumed. Kept in
     /// paused-by-user.json (the restart's paused.json is its own, and short-lived).
     paused: Mutex<HashSet<String>>,
+    /// Tasks the user saved for later, whole: on hold and off the board, not archived, until resumed from Later. Kept
+    /// in saved-for-later.json.
+    saved: Mutex<HashSet<String>>,
     seen: Mutex<HashMap<String, (String, i64)>>,
     pub workspaces: crate::workspaces::Workspaces,
     /// The MCP servers set up in Zero, each task's CLI given its workspace's as it starts.
@@ -277,6 +281,7 @@ impl Daemon {
             watches: Mutex::new(crate::watches::load(home).into_iter().map(|w| (w.id.clone(), w)).collect()),
             schedules: Mutex::new(crate::schedules::load(home)),
             paused: Mutex::new(std::fs::read(home.join(PAUSED)).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default()),
+            saved: Mutex::new(std::fs::read(home.join(SAVED)).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default()),
             seen: Mutex::new(std::fs::read(home.join(SEEN)).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default()),
         });
         park_every_minute(&daemon);

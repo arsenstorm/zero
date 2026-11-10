@@ -457,6 +457,34 @@ async fn a_task_started_in_a_workspace_is_still_there_after_a_restart() {
 }
 
 #[tokio::test]
+async fn a_task_saved_for_later_leaves_the_board_paused_and_comes_back_from_later() {
+    // Not archived: kept as it was, off the board and on hold, with an item in Later that brings it back.
+    let h = harness("server-save-later").await;
+    let mut client = Client::connect(&h.socket).await;
+    let started = client.call(json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": "ls"})).await;
+    let session = started["result"]["session"].as_str().unwrap().to_string();
+    client.call(json!({"op": "label", "session": session, "label": "Login bug"})).await;
+    let on_board = |board: &Value| board["result"].as_array().unwrap().iter().any(|r| r["session"] == session.as_str());
+    assert!(on_board(&client.call(json!({"op": "board"})).await));
+
+    let saved = client.call(json!({"op": "saveForLater", "session": session})).await;
+    assert_eq!(saved["ok"], true, "{saved}");
+    assert_eq!((saved["result"]["resume"].as_str(), saved["result"]["note"].as_str(), saved["result"]["suggested"].as_bool()),
+               (Some(session.as_str()), Some("Login bug"), Some(false)));
+    assert!(!on_board(&client.call(json!({"op": "board"})).await), "off the board");
+    assert_eq!(client.call(json!({"op": "get", "session": session})).await["ok"], true, "not archived");
+    assert!(client.call(json!({"op": "archived"})).await["result"].as_array().unwrap().is_empty());
+    let paused = || std::fs::read_to_string(h.home.join("paused-by-user.json")).unwrap_or_default().contains(session.as_str());
+    assert!(paused(), "on hold");
+
+    let item = saved["result"]["id"].as_str().unwrap();
+    let back = client.call(json!({"op": "resumeLater", "args": {"item": item}})).await;
+    assert_eq!(back["result"]["session"], session.as_str(), "{back}");
+    assert!(on_board(&client.call(json!({"op": "board"})).await) && !paused());
+    assert_eq!(client.call(json!({"op": "later", "tool": "view", "args": {"item": item}})).await["result"]["done"], true);
+}
+
+#[tokio::test]
 async fn a_lead_unarchived_brings_back_the_workers_archived_with_it_and_no_others() {
     let h = harness("server-unarchive").await;
     let mut client = Client::connect(&h.socket).await;
