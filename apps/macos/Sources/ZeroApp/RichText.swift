@@ -234,8 +234,8 @@ enum RichMarkdown {
             }
             if let link = run.link { attributes[.link] = link }
             // An image's token (ImageToken.linked): its pill, which opens the image.
-            if let link = run.link, link.isFileURL, let number = ImageToken.number(inLabel: piece) {
-                let token = NSMutableAttributedString(attributedString: ImageToken.attachment(number, font: font))
+            if let link = run.link, link.isFileURL, let named = ImageToken.number(inLabel: piece) {
+                let token = NSMutableAttributedString(attributedString: ImageToken.attachment(named.number, font: font, video: named.video))
                 token.addAttribute(.link, value: link, range: NSRange(location: 0, length: 1))
                 out.append(token)
                 continue
@@ -302,25 +302,43 @@ final class RichLayoutManager: NSLayoutManager {
         // A selection carried across messages is one: each shows it as the active one does, not greyed.
         // (Known by what's filled, its own selection, not by colour: the inactive one AppKit hands over isn't the
         // system's named one.)
-        let isSelection = firstTextView?.selectedRanges.contains { NSIntersectionRange($0.rangeValue, charRange).length > 0 } == true
-        let color = isSelection && firstTextView?.window?.isKeyWindow == true ? NSColor.selectedTextBackgroundColor : color
+        // One colour, Codex's: a neutral grey, whether the window is active or the selection is carried across
+        // messages (AppKit greys an inactive one, and its accent blue read heavy over a whole answer).
+        let color = Self.selection
         // Set to fill with: AppKit sets its own before asking, and fills with what's set, not with what it's given.
         color.setFill()
         // Each of AppKit's rects on its own (it draws a selection in pieces), and each line it covers (one rect can span
-        // the lines selected whole): a band per line, as wide as the selected words there and as tall as the line;
-        // the after-room of a paragraph gets none.
+        // the lines selected whole): a band per line, over the selected words alone (not the line's end after its
+        // last word, not a newline's room to the edge) and a body line tall, so a line with a bullet (its glyph
+        // larger) is no taller, and the room after a paragraph gets none.
         let selected = glyphRange(forCharacterRange: charRange, actualCharacterRange: nil)
+        let text = textStorage?.string as NSString?
         var placed: [NSRect] = []
         for i in 0..<rectCount {
             let rect = rectArray[i]
             let local = rect.offsetBy(dx: -drawnAt.x, dy: -drawnAt.y)
             let covered = glyphRange(forBoundingRect: local, in: container)
-            enumerateLineFragments(forGlyphRange: covered) { _, used, _, lineGlyphs, _ in
-                let picked = NSIntersectionRange(lineGlyphs, selected)
+            enumerateLineFragments(forGlyphRange: covered) { fragment, used, _, lineGlyphs, _ in
+                var picked = NSIntersectionRange(lineGlyphs, selected)
+                // Its trailing spaces and newline off: they're no words, and a newline's box runs to the edge.
+                while picked.length > 0, let text, case let c = text.character(at: self.characterIndexForGlyph(at: NSMaxRange(picked) - 1)),
+                      let scalar = Unicode.Scalar(c), CharacterSet.whitespacesAndNewlines.contains(scalar) { picked.length -= 1 }
                 guard picked.length > 0, used.minY < local.maxY, used.maxY > local.minY else { return }
                 let words = self.boundingRect(forGlyphRange: picked, in: container)
-                let minX = max(local.minX, words.minX), maxX = min(local.maxX, words.maxX)
-                let minY = max(local.minY, used.minY), maxY = min(local.maxY, used.maxY)
+                let font = self.textStorage?.attribute(.font, at: self.characterIndexForGlyph(at: NSMaxRange(picked) - 1), effectiveRange: nil) as? NSFont
+                let style = self.textStorage?.attribute(.paragraphStyle, at: self.characterIndexForGlyph(at: picked.location), effectiveRange: nil) as? NSParagraphStyle
+                // Each line's own room, as AppKit lays it (one line's ends where the next's begins, so a paragraph's
+                // bands meet with no seam), moved up half its line spacing so the words sit in the middle of the band,
+                // and a body line tall (a bullet's line, taller for its larger glyph,
+                // keeps the bottom of its room, where its words are).
+                let pitch = font.map { self.defaultLineHeight(for: $0) + (style?.lineSpacing ?? 0) } ?? used.height
+                // (A paragraph's room after it isn't in its last line's: taking it off put that line's band up on the
+                // line above.)
+                // The text's last line has no line spacing after it (AppKit adds none there): its room is short by that,
+                // and the band, laid on it, ended at the baseline, a "g"'s tail left out.
+                let maxY = fragment.maxY - (style?.lineSpacing ?? 0) / 2 + max(0, pitch - fragment.height)
+                let minY = maxY - pitch
+                let minX = words.minX, maxX = words.maxX
                 guard maxX - minX > 0.5, maxY > minY else { return }
                 placed.append(NSRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY).offsetBy(dx: self.drawnAt.x, dy: self.drawnAt.y))
             }
@@ -328,6 +346,9 @@ final class RichLayoutManager: NSLayoutManager {
         guard !placed.isEmpty else { return }
         placed.withUnsafeBufferPointer { super.fillBackgroundRectArray($0.baseAddress!, count: $0.count, forCharacterRange: charRange, color: color) }
     }
+    /// The selection's grey: light text stays readable on it in dark mode, dark text in light.
+    static let selection = NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 0.36, alpha: 1) : NSColor(white: 0.82, alpha: 1) }
+
     /// Where the text is being drawn (drawBackground's origin): AppKit's rects are in the view, the layout's in the
     /// container.
     private var drawnAt = NSPoint.zero
@@ -466,6 +487,9 @@ final class RichTextView: NSTextView {
 
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        // All of it drawn again: AppKit redraws only the pieces it would have filled, and the bands go a little past
+        // them (over the selected words' line, not the selection's own rects).
+        needsDisplay = true
         guard !carried else { return }
         if ranges.contains(where: { $0.rangeValue.length > 0 }) { Self.watchClicks() }
         // Being made, the chip goes (it would answer what was selected before), and the selection is carried into
@@ -743,6 +767,7 @@ final class RichTextView: NSTextView {
     /// A click on an image's pill opens the image; on a loop's pill, the loop.
     private func clickedRest(_ event: NSEvent) {
         if let hit = ImageToken.hit(event, in: self), let link = textStorage?.attribute(.link, at: hit.index, effectiveRange: nil) as? URL {
+            if hit.cell.video { NSWorkspace.shared.open(link); return }
             ImageViewer.shared.show(link.path, among: imagePaths)
             return
         }
@@ -877,3 +902,4 @@ extension EnvironmentValues {
     /// In a conversation: what's selected in its words, quoted into its composer.
     @Entry var replyToSelection: ((String) -> Void)? = nil
 }
+
