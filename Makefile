@@ -44,6 +44,7 @@ bundle: build
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp $(BIN)/ZeroApp $(APP)/Contents/MacOS/Zero
 	cp $(BIN)/zero $(APP)/Contents/MacOS/zero-cli
+	cp $(BIN)/zero-full $(APP)/Contents/MacOS/zero-full
 	cp $(BIN)/zero-host $(APP)/Contents/MacOS/zero-host
 	cp target/release/zerod $(APP)/Contents/MacOS/zerod
 	cp $(MACOS)/Resources/Info.plist $(APP)/Contents/Info.plist
@@ -60,6 +61,7 @@ bundle: build
 	cp target/aarch64-unknown-linux-musl/drop/zero-drop $(APP)/Contents/Resources/zero-drop-linux-aarch64
 	codesign --force --sign "$(SIGN)" $(APP)/Contents/Resources/zero-drop-darwin-arm64
 	codesign --force --sign "$(SIGN)" $(APP)/Contents/MacOS/zero-cli
+	codesign --force --sign "$(SIGN)" $(APP)/Contents/MacOS/zero-full
 	codesign --force --sign "$(SIGN)" $(APP)/Contents/MacOS/zero-host
 	codesign --force --sign "$(SIGN)" $(APP)/Contents/MacOS/zerod
 	codesign --force --sign "$(SIGN)" $(APP)

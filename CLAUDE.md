@@ -14,8 +14,11 @@ is their UI and the inbox where agents reach the user. `docs/workspace.md` has t
   `InboxView.swift` (its panel), `InboxController.swift`, `CardView.swift` (the ask cards). The app: `ZeroApp.swift`
   (entry point), `AppDelegate.swift` (launch, menus, hot key), `InboxPanel.swift`, `WorkspaceWindow.swift`,
   `SelectorPanel.swift`, `Settings.swift`.
-- `apps/macos/Sources/zero`: the `zero` CLI agents use: `main.swift` parses the arguments and dispatches, one file per
-  topic (Asks, Hooks, Sessions, Board, Follow, Later, Watch). `plugin/`: Claude Code's plugin for Zero.
+- `apps/macos/Sources/zero`: the CLI agents use (the `zero-full` program): `main.swift` parses the arguments and
+  dispatches, one file per topic (Asks, Hooks, Sessions, Board, Follow, Later, Watch). `apps/macos/Sources/ZeroFront`:
+  `zero` itself, Darwin only, so the commands called most (note, done, withdraw, status, prompt, issue, send) start in
+  a third of the time; it runs zero-full for everything else, and a change to one of those commands is made in both.
+  `plugin/`: Claude Code's plugin for Zero.
 
 ## Working on it
 
