@@ -77,8 +77,9 @@ struct TasksSidebar: View {
     /// just started, before the board has it, is among the tasks: `starting`); one being archived isn't either.
     private func earlier(_ all: [Conversation]) -> [Conversation] {
         let ids = Set(all.map(\.id)), onBoard = Set(workspace.board.map(\.session))
+        let saved = workspace.savedForLater
         return all.filter { lead in (lead.parent.map { !ids.contains($0) } ?? true) && !onBoard.contains(lead.id) && !workspace.putAway.contains(lead.id)
-            && lead.status == .offline }.reversed()
+            && !saved.contains(lead.id) && lead.status == .offline }.reversed()
     }
 
     /// Leads started and running that the board hasn't got to yet: rows of their own, Working, until it has.
@@ -320,6 +321,7 @@ struct TasksSidebar: View {
         pausing(id, in: workspace)
         Button("Work with another task…") { pairing = Renaming(id: id, name: name, ticket: ticket) }
         Button("Save for later") { Task { await workspace.askToSaveForLater(id) } }
+        Button("Move to Later") { Task { if place == .task(id) { place = .home }; await workspace.moveToLater(id) } }
         Button("Archive…") { workspace.archiving = id }
     }
 

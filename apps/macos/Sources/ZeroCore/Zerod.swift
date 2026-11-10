@@ -979,6 +979,10 @@ public final class ZerodLink: @unchecked Sendable {
     public func archived() async throws -> [Archived] { try decode([Archived].self, from: await call("archived")) }
 
     /// Brings a task back, and the workers archived with it: the ids back.
+    /// A task saved for later, whole: off the board, on hold, an item in Later. The item.
+    public func saveForLater(session: String) async throws { _ = try await call("saveForLater", ["session": session]) }
+    /// A task saved for later back on the board: its session.
+    public func resumeLater(_ item: String) async throws -> String? { (try await call("resumeLater", ["args": ["item": item]]) as? [String: Any])?["session"] as? String }
     public func unarchive(session: String) async throws -> [String] { try await call("unarchive", ["session": session]) as? [String] ?? [] }
 
     /// What going back to a message of yours would do to the folder.
@@ -1179,6 +1183,8 @@ public final class ZerodLink: @unchecked Sendable {
         public let version: Int
         public let versions: [Version]
         public let link: String
+        /// A task saved whole, by its session: off the board until it's resumed from Later.
+        public let resume: String?
         public struct Version: Decodable, Equatable, Sendable { public let version: Int; public let note: String; public let at: Int; public let by: String? }
         public var createdAt: Date { Date(timeIntervalSince1970: TimeInterval(created)) }
     }

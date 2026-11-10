@@ -190,6 +190,7 @@ struct TitleBar: View {
             Button("Show folder in Finder") { NSWorkspace.shared.open(URL(fileURLWithPath: conversation.cwd)) }
             Divider()
             if case .task(let lead) = navigation.place {
+                Button("Move to Later") { navigation.place = .home; Task { await workspace.moveToLater(lead) } }
                 Button("Archive…") { workspace.archiving = lead }
             }
         } label: {

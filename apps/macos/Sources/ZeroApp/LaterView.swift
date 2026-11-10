@@ -71,11 +71,16 @@ struct LaterPage: View {
         }
     }
 
+    private func resume(_ item: ZerodLink.LaterItem) {
+        Task { if let session = await workspace.resumeLater(item.id) { navigation.place = .task(session) } }
+    }
+
     private func row(_ item: ZerodLink.LaterItem) -> some View {
         Button { navigation.place = .laterItem(item.id) } label: { LaterRow(item: item) }
             .buttonStyle(Hovering(selected: shown == item.id))
             .contextMenu {
                 Button("Copy link") { copy(item.link) }
+                if item.resume != nil && !item.done { Button("Resume task") { resume(item) } }
                 if item.suggested == true { Button("Keep") { Task { await workspace.editLater(item.id, ["keep": true]) } } }
                 Button(item.done ? "Not done" : "Done") { Task { await workspace.editLater(item.id, ["done": !item.done]) } }
                 Divider()
@@ -122,6 +127,7 @@ private struct LaterDetail: View {
                             Text(item.createdAt.formatted(.relative(presentation: .named)))
                             if item.done { StatePill(text: "Done", color: .green) }
                             if item.suggested == true && !item.done { StatePill(text: "Suggested", color: .secondary) }
+                            if item.resume != nil && !item.done { StatePill(text: "Task", color: .secondary) }
                         }
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                     }
@@ -168,7 +174,26 @@ private struct LaterDetail: View {
         missing = item == nil
     }
 
-    private func actions(_ item: ZerodLink.LaterItem) -> some View {
+    @ViewBuilder private func actions(_ item: ZerodLink.LaterItem) -> some View {
+        // A task saved whole: picked up where it was, its conversation and all, not started over from a note.
+        if item.resume != nil && !item.done {
+            HStack(spacing: 8) {
+                Button {
+                    Task { if let session = await workspace.resumeLater(item.id) { navigation.place = .task(session) } }
+                } label: { NucleoLabel("Resume task", icon: "media-play:glyph", size: 13) }
+                    .buttonStyle(.borderedProminent)
+                Button("Copy") { copy(item.note + (item.artifact.map { "\n\n" + $0 } ?? "")) }
+                Spacer()
+                Button("Delete", role: .destructive) { Task { await workspace.deleteLater(item.id); navigation.place = .later } }
+                    .tip("Back to the sidebar, on hold, and out of Later")
+            }
+            .controlSize(.regular)
+        } else {
+            notes(item)
+        }
+    }
+
+    private func notes(_ item: ZerodLink.LaterItem) -> some View {
         HStack(spacing: 8) {
             Button {
                 workspace.pendingDrafts["new"] = LaterAsk.pickUp(item)

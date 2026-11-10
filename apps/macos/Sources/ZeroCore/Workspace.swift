@@ -271,6 +271,25 @@ public final class Workspace {
         await refreshBoard()
     }
 
+    /// Tasks saved for later, whole: in Later, not in the sidebar, until resumed.
+    public var savedForLater: Set<String> { Set(later.filter { !$0.done }.compactMap(\.resume)) }
+
+    public func moveToLater(_ id: String) async {
+        putAway.insert(id)
+        _ = await attempt { try await $0.saveForLater(session: id) }
+        await loadLater()
+        putAway.remove(id)
+        await refreshBoard()
+    }
+
+    /// A task saved for later back in the sidebar, off hold: its session.
+    public func resumeLater(_ item: String) async -> String? {
+        let session = await attempt { try await $0.resumeLater(item) } ?? nil
+        await loadLater()
+        await refreshBoard()
+        return session
+    }
+
     /// How many of a session's items aren't loaded, before those that are.
     public func earlier(_ session: String) -> Int { lives[session]?.earlier ?? mirror.earlier[session] ?? 0 }
 
