@@ -212,13 +212,14 @@ async fn a_run_withdrawn_while_it_runs_is_stopped() {
     let marker = std::env::temp_dir().join(format!("zero-withdrawn-run-{}", std::process::id()));
     let _ = std::fs::remove_file(&marker);
     let mut run = ask(AskKind::Run, "Slow", &["Run", "Decline"]);
-    run.command = Some(format!("sleep 1; touch {}", marker.display()));
+    // Slow enough that stopping it is sure to beat it, on a busy CI runner too (a second wasn't).
+    run.command = Some(format!("sleep 3; touch {}", marker.display()));
     run.cwd = Some("/tmp".into());
     let a = s.create(run, false);
     s.choose(&a.id, 0);
     until(&s, &a.id, |a| a.state == AskState::Running && a.run.is_some()).await;
     s.withdraw(&a.id, Some("taking too long"));
-    tokio::time::sleep(Duration::from_millis(2500)).await;
+    tokio::time::sleep(Duration::from_millis(4000)).await;
     assert!(!marker.exists(), "the command was stopped before it got further");
     let after = s.ask(&a.id).unwrap();
     assert!(after.state == AskState::Expired && after.status.as_deref() == Some("withdrawn"), "{:?} {:?}", after.state, after.status);
