@@ -27,14 +27,18 @@ struct State {
     patterns: Vec<String>,
     /// "<drop>/<file>" already read.
     ingested: HashSet<String>,
+    /// Each drop's asks folder as last read, by when it last changed: one that hasn't isn't listed again (hundreds
+    /// of drops, each listed every second, kept zerod at a few percent of a core).
+    read: HashMap<PathBuf, std::time::SystemTime>,
     /// Ask id → the drop it came from, until its answer is written there.
     origin: HashMap<String, PathBuf>,
     /// The drops last found, and when: patterns over a thousand folders aren't walked every second.
     found: Option<(std::time::Instant, Vec<PathBuf>)>,
 }
 
-/// How often the patterns are walked again, and each drop's folders, client and old answers seen to.
-const LOOK_AGAIN: Duration = Duration::from_secs(30);
+/// How often the patterns are walked again (thousands of folders), and each drop's folders, client and old answers
+/// seen to: a new drop is a new bench, rare.
+const LOOK_AGAIN: Duration = Duration::from_secs(120);
 
 impl Drops {
     pub fn new(inbox: Arc<Inbox>, resources: PathBuf) -> Arc<Drops> {
@@ -86,8 +90,13 @@ impl Drops {
                 self.prepare(&drop);
                 sweep(&drop.join("answers"));
             }
-            let Ok(entries) = std::fs::read_dir(drop.join("asks")) else { continue };
+            let asks = drop.join("asks");
+            // Unchanged since it was read (a file added, removed or renamed in it changes it): nothing new.
+            let changed = std::fs::metadata(&asks).and_then(|m| m.modified()).ok();
+            if changed.is_some() && self.state.lock().unwrap().read.get(&asks) == changed.as_ref() { continue }
+            let Ok(entries) = std::fs::read_dir(&asks) else { continue };
             let files: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+            let mut unfinished = false;
             // `zero withdraw` from a drop: "<id>.withdraw", holding the reason.
             for file in files.iter().filter(|f| f.extension().is_some_and(|e| e == "withdraw")) {
                 let reason = std::fs::read_to_string(file).map(|r| r.trim().to_string()).unwrap_or_default();
@@ -99,13 +108,16 @@ impl Drops {
                 let key = file.display().to_string();
                 if self.state.lock().unwrap().ingested.contains(&key) { continue }
                 let Ok(incoming) = std::fs::read(file).map(|data| serde_json::from_slice::<Ask>(&data)) else { continue };
-                // Half-written by the sync: read it on a later look.
-                let Ok(incoming) = incoming else { continue };
+                // Half-written by the sync: read it on a later look (the folder isn't marked read, so there is one).
+                let Ok(incoming) = incoming else { unfinished = true; continue };
                 self.state.lock().unwrap().ingested.insert(key);
                 let ask = self.inbox.create(incoming, true);
                 if ask.kind == AskKind::Note { let _ = std::fs::remove_file(file); }
                 else { self.state.lock().unwrap().origin.insert(ask.id, drop.clone()); }
             }
+            // Marked as it was before it was listed: a file that came while it was read changes it again, and is read
+            // next time (what this look removed changes it too: one more listing, no more).
+            if !unfinished && let Some(changed) = changed { self.state.lock().unwrap().read.insert(asks, changed); }
         }
     }
 
