@@ -23,6 +23,8 @@ struct AgentTimeline: View {
                 // Yours rises out of the composer; a reply takes the placeholder's place.
                 .transition(ask.kind == .message ? .move(edge: .bottom).combined(with: .opacity) : .opacity)
         }
+        // A task of Zero's: what it said last, in its own words, newer than any note above.
+        if let agent = controller.agentFilter, let reply = latestReply(agent), !waiting { replyCard(agent, reply) }
         if waiting, let agent = controller.agentFilter { workingRow(agent) }
         ForEach(open) { ask in CardView(ask: ask, controller: controller, focus: focus).id(ask.id) }
         if let agent = controller.agentFilter, let screen = controller.store.screens[agent] {
@@ -68,6 +70,38 @@ struct AgentTimeline: View {
         }
         .padding(14).frame(maxWidth: .infinity, alignment: .leading)
         .card()
+    }
+
+    /// A Zero task's latest answer, without its ending line, when it's newer than the agent's latest ask or note.
+    private func latestReply(_ agent: String) -> (text: String, at: Date?)? {
+        guard agent.hasPrefix("zerod-"), let conversation = controller.workspace?.conversation(String(agent.dropFirst("zerod-".count))),
+              let answer = conversation.items.last(where: { if case .agent(_, true) = $0.kind { true } else { false } }),
+              case let .agent(text, _) = answer.kind else { return nil }
+        let words = ZeroEnding.split(text).0.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !words.isEmpty else { return nil }
+        let at = answer.at.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000) }
+        if let at, let latest = controller.cards.last?.createdAt, latest > at { return nil }
+        return (words, at)
+    }
+
+    private func replyCard(_ agent: String, _ reply: (text: String, at: Date?)) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(speaker(agent)).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                if let at = reply.at { Text("· " + at.formatted(.relative(presentation: .named))).font(.system(size: 11)).foregroundStyle(.tertiary) }
+                Spacer()
+                Button("Open task") {
+                    if let url = URL(string: "zero://task/" + agent.dropFirst("zerod-".count)) { (NSApp.delegate as? AppDelegate)?.openZeroURL(url) }
+                }
+                .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+            }
+            // Its first few paragraphs: the pane is a glance; the task's page has the rest.
+            MarkdownText(String(reply.text.prefix(1200)), size: 12.5, compact: true)
+                .frame(maxHeight: 220, alignment: .top).clipped()
+        }
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+        .id("reply-\(agent)")
     }
 
     private func workingRow(_ agent: String) -> some View {

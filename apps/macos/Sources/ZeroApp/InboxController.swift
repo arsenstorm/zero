@@ -430,7 +430,10 @@ final class InboxController {
     var cards: [Ask] {
         if let agentFilter {
             // Messages that never arrived (from before delivery confirmed first) are not part of the conversation.
-            return store.asks.filter { $0.agent.name == agentFilter && $0.state != .expired && !(($0.status ?? "").hasPrefix("failed") && $0.kind == .message) }
+            // Nor zerod's own marks of a task's state ("Working", "Offline"): the agent said none of them, and they were
+            // most of what a task's pane showed.
+            return store.asks.filter { $0.agent.name == agentFilter && $0.state != .expired && $0.request != "attention"
+                && !(($0.status ?? "").hasPrefix("failed") && $0.kind == .message) }
         }
         return store.asks.filter {
             $0.isForYou && (!$0.state.isFinal || ($0.answeredAt ?? .distantPast) >= inboxOpenedAt)
