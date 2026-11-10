@@ -125,8 +125,11 @@ public enum Dither {
         float3 ink = e > 0 ? mix(core, above, smoothstep(0.0, 0.10, e)) : mix(core, below, smoothstep(0.0, 0.06, -e));
         float inked = inside * step(threshold, t);
         float3 dotted = mix(u.ground.rgb, ink, inked * (0.5 + 0.45 * t));
-        // Frosted white: the colour through it, a little paler, so dark words on it always read.
-        float3 blurred = mix(u.ground.rgb, ink, share * t * (0.5 + 0.45 * t) * 0.7);
+        // Frosted white: a faint, even wash of the colour through it, so dark words on it always read. Without the
+        // noise the dots take (fbm): through glass it read as blotches of blue and peach that swam under the words.
+        float glow = clamp(exp(-abs(d) * 7.0) * (1 - 0.6 * smoothstep(0.5, 1.0, q.y)), 0.0, 1.0);
+        float3 tint = d > 0 ? mix(core, above, smoothstep(0.0, 0.10, d)) : mix(core, below, smoothstep(0.0, 0.06, -d));
+        float3 blurred = mix(u.ground.rgb, tint, share * glow * 0.22);
         return float4(mix(dotted, blurred, frosted), 1);
     }
     """

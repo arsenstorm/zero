@@ -117,7 +117,9 @@ struct AsksPage: View {
                         CardView(ask: ask, controller: controller, focus: $focus, flat: true)
                             // Room at the right for the ×, clear of the card's own corner (a run's Stop sits there).
                             .padding(.trailing, 30)
-                            .background(Theme.rowHover)
+                            // Whether the task is done: on the done card's own purple, as everywhere else it's asked;
+                            // its purple rows on the open row's grey read as broken.
+                            .background(ask.doneCheck == true ? Theme.doneSurface : Theme.rowHover)
                             .overlay(alignment: .topTrailing) {
                                 Button { picked = "" } label: {
                                     NucleoIcon("xmark", size: 11).foregroundStyle(.secondary).frame(width: 24, height: 24)
