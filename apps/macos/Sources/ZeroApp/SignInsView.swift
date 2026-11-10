@@ -182,42 +182,133 @@ private struct SignInRow: View {
 }
 
 /// How much of each of an account's windows its CLI last said was used: a column each, the 5-hour then the week, at
-/// fixed widths so every row lines up (a window it gave no figure for keeps its place). A window that has reset since
-/// is unused. When it resets is on hover.
-private struct UsageColumns: View {
+/// fixed widths so every row lines up (a window it gave no figure for keeps its place), and under each, when it resets.
+/// A window that has reset since is unused.
+struct UsageColumns: View {
     let usage: Usage
-    private static let slots = [("5 hours", "5h"), ("7 days", "Week")]
+    static let slots = [("5 hours", "5h"), ("7 days", "Week")]
 
     var body: some View {
-        let now = Int(Date().timeIntervalSince1970)
-        HStack(spacing: 18) {
-            ForEach(Self.slots, id: \.0) { name, short in
-                if let window = usage.windows.first(where: { $0.name == name }) {
-                    let live = (window.resetsAt ?? Int.max) > now
-                    column(short, used: live ? min(1, window.used) : 0)
-                        .tip(live ? window.resetsAt.map { "Resets \(Date(timeIntervalSince1970: TimeInterval($0)).formatted(.dateTime.weekday(.abbreviated).hour().minute()))" } ?? "" : "Reset since it was read")
-                } else {
-                    Color.clear.frame(width: Self.width, height: 1)
+        TimelineView(.everyMinute) { context in
+            let now = Int(context.date.timeIntervalSince1970)
+            HStack(spacing: 18) {
+                ForEach(Self.slots, id: \.0) { name, short in
+                    if let window = usage.windows.first(where: { $0.name == name }) {
+                        let live = (window.resetsAt ?? Int.max) > now
+                        column(short, used: live ? min(1, window.used) : 0, resets: live ? window.resetsAt.map { UsageMeter.resets($0, now: now) } : nil)
+                    } else {
+                        Color.clear.frame(width: Self.width, height: 1)
+                    }
                 }
             }
         }
     }
 
-    private static let width: CGFloat = 84
+    private static let width: CGFloat = 104
 
-    private func column(_ name: String, used: Double) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
+    private func column(_ name: String, used: Double, resets: String?) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
             Text(name).font(.system(size: 11)).foregroundStyle(.secondary)
             HStack(spacing: 8) {
-                Capsule().fill(Color.primary.opacity(0.08)).frame(width: 46, height: 4)
-                    .overlay(alignment: .leading) {
-                        Capsule().fill(used >= 1 ? Color.red : used >= 0.9 ? Color.orange : Color.primary.opacity(0.5)).frame(width: 46 * used, height: 4)
-                    }
-                Text("\(Int((used * 100).rounded()))%").font(.system(size: 11.5, weight: .medium)).monospacedDigit()
+                UsageMeter(used: used, width: 56)
+                Text(UsageMeter.percent(used)).font(.system(size: 11.5, weight: .medium)).monospacedDigit().fixedSize()
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
+            Text(resets ?? " ").font(.system(size: 10.5)).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
         }
         .frame(width: Self.width)
+    }
+}
+
+/// A window's use as a thin bar: grey, orange from 90%, red once full.
+struct UsageMeter: View {
+    let used: Double
+    var width: CGFloat = 46
+
+    var body: some View {
+        Capsule().fill(Color.primary.opacity(0.08)).frame(width: width, height: 4)
+            .overlay(alignment: .leading) { Capsule().fill(Self.color(used)).frame(width: width * used, height: 4) }
+    }
+
+    static func color(_ used: Double) -> Color { used >= 1 ? .red : used >= 0.9 ? .orange : Color.primary.opacity(0.5) }
+    static func percent(_ used: Double) -> String { "\(Int((used * 100).rounded()))%" }
+
+    /// When a window resets, as it's read at a glance: how long until, within a day ("in 4h 44m"); its day and time
+    /// past that ("Mon 21:00").
+    static func resets(_ at: Int, now: Int = Int(Date().timeIntervalSince1970)) -> String {
+        let minutes = max(0, at - now) / 60
+        if minutes < 60 { return "Resets in \(max(1, minutes))m" }
+        if minutes < 24 * 60 { return "Resets in \(minutes / 60)h \(minutes % 60)m" }
+        return "Resets " + Date(timeIntervalSince1970: TimeInterval(at)).formatted(.dateTime.weekday(.abbreviated).hour().minute())
+    }
+}
+
+/// At the sidebar's foot: each agent's account in use (its CLI's default), how much of its 5 hours and its week it has
+/// used, and when a full one resets. A click opens Settings › Accounts.
+struct UsageFooter: View {
+    let workspace: Workspace
+    let open: () -> Void
+
+    var body: some View {
+        let rows: [(Provider, Usage)] = [Provider.claude, .codex, .opencode].compactMap { cli in
+            guard let id = workspace.signinDefaults[cli.rawValue] ?? workspace.signins.first(where: { $0.cli == cli })?.id,
+                  let usage = workspace.signinUsage[id], !usage.windows.isEmpty else { return nil }
+            return (cli, usage)
+        }
+        Button(action: open) {
+            TimelineView(.everyMinute) { context in
+                let now = Int(context.date.timeIntervalSince1970)
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(rows, id: \.0) { cli, usage in line(cli, usage, now: now) }
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .tip("Usage of each agent's account · Settings › Accounts")
+        // Read when the window opens and every few minutes: zerod keeps what tasks hear, and asks each CLI now and then.
+        .task {
+            await workspace.loadSignIns()
+            var minutes = 0
+            while !Task.isCancelled {
+                if minutes % 15 == 0 { await workspace.readUsage() }
+                try? await Task.sleep(for: .seconds(60))
+                minutes += 1
+                await workspace.loadSignIns()
+            }
+        }
+    }
+
+    /// One agent: its mark, then each window's bar and figure; a full one says when it resets instead.
+    private func line(_ cli: Provider, _ usage: Usage, now: Int) -> some View {
+        HStack(spacing: 8) {
+            Group { if let mark = cli.mark { mark.resizable().scaledToFit() } else { NucleoIcon("terminal", size: 12) } }
+                .frame(width: 12, height: 12).foregroundStyle(.secondary)
+            ForEach(UsageColumns.slots, id: \.0) { name, short in
+                let window = usage.windows.first { $0.name == name }
+                let live = (window?.resetsAt ?? Int.max) > now
+                let used = window.map { live ? min(1, $0.used) : 0 }
+                HStack(spacing: 5) {
+                    Text(short).foregroundStyle(.tertiary)
+                    if let used {
+                        UsageMeter(used: used, width: 28)
+                        Text(UsageMeter.percent(used)).monospacedDigit().foregroundStyle(used >= 1 ? .red : .secondary)
+                    } else {
+                        Text("–").foregroundStyle(.tertiary)
+                    }
+                }
+                .frame(width: 84, alignment: .leading)
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 11))
+        .overlay(alignment: .trailing) {
+            // Full: when it can work again, the soonest a full window lets go.
+            if let full = usage.windows.filter({ $0.used >= 1 && ($0.resetsAt ?? 0) > now }).compactMap(\.resetsAt).max() {
+                Text(UsageMeter.resets(full, now: now).replacingOccurrences(of: "Resets ", with: ""))
+                    .font(.system(size: 10.5)).foregroundStyle(.red).monospacedDigit()
+            }
+        }
     }
 }
 

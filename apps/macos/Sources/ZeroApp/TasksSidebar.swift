@@ -214,7 +214,7 @@ struct TasksSidebar: View {
         let ids = rows.map(\.session)
         return VStack(alignment: .leading, spacing: 0) {
             TaskRow(title: row.task, state: row.ownState, selected: place == .task(row.session) && navigation.worker == nil,
-                    fold: workers.isEmpty && (row.issues ?? []).isEmpty ? nil : open, action: {
+                    fold: workers.isEmpty ? nil : open, action: {
                 // Its worker shown, the same task: back to the lead.
                 place = .task(row.session)
                 navigation.worker = nil
@@ -222,22 +222,11 @@ struct TasksSidebar: View {
                 .contextMenu { menu(row.session, name: row.task, ticket: row.ticket) }
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named("tasks")).minY } action: { tops[row.session] = $0 }
                 .onHover { inside in TaskPeek.shared.hover(row.session, top: tops[row.session] ?? 0, inside: inside && drag == nil) }
+            // Its workers, a row each. Its issues aren't rows (not tasks of their own, a row with nothing to open):
+            // they're in its details pane.
             if open {
-                // Its issues, a row each, its workers on each folded into it (a reviewer, a verifier beside the
-                // issue's own); workers on no issue as they are.
-                let issues = row.issues ?? []
-                let loose = workers.filter { worker in !issues.contains { $0.ticket == worker.ticket } }
-                TimelineView(.everyMinute) { now in
-                    // Stacked tight, as the rows around them: several views in a TimelineView get the default 8 pt
-                    // between them, gaps in the tree's line.
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(issues.enumerated()), id: \.element.id) { index, issue in
-                            issueRow(issue, of: row, workers: workers, branch: index == issues.count - 1 && loose.isEmpty ? .last : .middle, now: now.date)
-                        }
-                    }
-                }
-                ForEach(Array(loose.enumerated()), id: \.element.id) { index, worker in
-                    workerRow(worker, of: row, branch: index == loose.count - 1 ? .last : .middle)
+                ForEach(Array(workers.enumerated()), id: \.element.id) { index, worker in
+                    workerRow(worker, of: row, branch: index == workers.count - 1 ? .last : .middle)
                 }
             }
         }
@@ -254,22 +243,6 @@ struct TasksSidebar: View {
         .zIndex(drag?.lead == row.session ? 1 : workspace.archiving == row.session ? 2 : 0)
         // A task arriving slides in under the heading as the rest move down; one leaving fades.
         .transition(.asymmetric(insertion: .move(edge: .top).combined(with: .opacity), removal: .opacity))
-    }
-
-    /// One issue of a lead's: its ticket and what it needs or where it stands, with how long it has been on the user.
-    /// Opens the issue's own worker (the one started for it), else the lead.
-    private func issueRow(_ issue: BoardRow.Issue, of row: BoardRow, workers: [Conversation], branch: TaskRow.Branch, now: Date) -> some View {
-        let own = workers.first { $0.ticket == issue.ticket }
-        // Hovered, the status card of the agent on it: its own worker, else the lead.
-        let peeked = own?.id ?? row.session
-        let key = "issue-" + issue.id
-        return TaskRow(title: issue.text.isEmpty ? issue.ticket : "\(issue.ticket) · \(issue.text)", state: issue.boardState,
-                       selected: own.map { navigation.worker == $0.id } ?? false, branch: branch, detail: issue.waiting(at: now), action: {
-            place = .task(row.session)
-            navigation.worker = own?.id
-        })
-        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named("tasks")).minY } action: { tops[key] = $0 }
-        .onHover { inside in TaskPeek.shared.hover(peeked, top: tops[key] ?? 0, inside: inside && drag == nil) }
     }
 
     private func workerRow(_ worker: Conversation, of row: BoardRow, branch: TaskRow.Branch) -> some View {
@@ -325,19 +298,23 @@ struct TasksSidebar: View {
         Button("Archive…") { workspace.archiving = id }
     }
 
-    /// Only while Zero can't reach its daemon: otherwise the list runs to the sidebar's foot, under its fade. Usage is
-    /// in Settings › Accounts.
+    /// At the foot: each agent's account usage; while Zero can't reach its daemon, that instead. Over the list's end,
+    /// on a fade.
     @ViewBuilder private var footer: some View {
-        if !workspace.connected {
-            NucleoLabel("Connecting to Zero's daemon…", icon: "plug-off", size: 12)
-                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10).padding(.vertical, 10)
-                .padding(.horizontal, 10).padding(.top, 22)
-                .background(LinearGradient(stops: [.init(color: Theme.composer.opacity(0), location: 0), .init(color: Theme.composer, location: 0.5)],
-                                           startPoint: .top, endPoint: .bottom))
-                .padding(.horizontal, -10)
+        Group {
+            if !workspace.connected {
+                NucleoLabel("Connecting to Zero's daemon…", icon: "plug-off", size: 12)
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                UsageFooter(workspace: workspace) { SettingsView.requested = .signins; place = .settings }
+            }
         }
+        .padding(.horizontal, 10).padding(.vertical, 10)
+        .padding(.horizontal, 10).padding(.top, 22)
+        .background(LinearGradient(stops: [.init(color: Theme.composer.opacity(0), location: 0), .init(color: Theme.composer, location: 0.5)],
+                                   startPoint: .top, endPoint: .bottom))
+        .padding(.horizontal, -10)
     }
 }
 
