@@ -79,13 +79,13 @@ struct MarkdownText: View {
 
     /// The rendered text with its newest characters faded: matched to the source from the end (the Markdown's marks
     /// are few there), each run of one opacity (in 24 steps) set once.
-    /// How far from the end a fade can recolour.
-    nonisolated static let fadeReach = 600
+    /// How far from the end a fade can recolour: 700 ms at Playback's fastest pace.
+    nonisolated static let fadeReach = 1400
 
     nonisolated static func faded(_ made: NSAttributedString, sourceLength: Int, alpha: (Int) -> Double) -> NSAttributedString {
         let out = NSMutableAttributedString(attributedString: made)
         let length = out.length
-        // Only the last 700 ms' worth can be fading: at most a few hundred characters.
+        // Only the last 700 ms' worth can be fading.
         let reach = min(length, fadeReach)
         var i = length - reach
         while i < length {

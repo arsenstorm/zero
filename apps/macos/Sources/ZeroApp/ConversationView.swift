@@ -33,6 +33,8 @@ struct ConversationView: View {
     @State private var rewinding: ConversationItem?
     /// The conversation's blocks, rows and asks, kept between redraws.
     @State private var shape = TimelineShape()
+    /// What of the conversation is on screen: zerod's items played back in order, an answer read out before what follows.
+    @State private var playback = Playback()
     /// Folds of quiet turns (TimelineRow) the user opened.
     @State private var openQuiet: Set<String> = []
     /// Esc twice in quick succession: pick a message to rewind to, then how (RewindCard).
@@ -249,9 +251,6 @@ struct ConversationView: View {
                     .onDisappear {
                         rememberScroll(); workspace.trim(conversation.id); lifted = false
                     }
-                    // Opened (or another task in its place): a reply under way now is shown as it stands, not replayed.
-                    .onAppear { Reveal.opened = Date() }
-                    .onChange(of: conversation.id) { Reveal.opened = Date() }
                     // Back where you were: the block that was at the top of the screen, its older page loaded first if
                     // it isn't any more. At the end, it opens at the end, as ever.
                     .task { await restoreScroll() }
@@ -290,15 +289,19 @@ struct ConversationView: View {
             // Where you were in it, kept when scrolling stops and when you leave.
             .onScrollPhaseChange { _, phase in scrollPhaseChanged(phase) }
             .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { before, now in scrollGeometryChanged(from: before, to: now) }
+            .background { PlaybackClock(playback: playback) }
     }
 
     /// Laid out in full, not lazily: a lazy stack keeps the heights it guessed for rows measured off
     /// screen, so its end could sit below its last row and the page open blank. The page loaded is a
     /// few dozen rows; older pages come in on demand above.
     private var timelineColumn: some View {
+        // What's on screen is what playback has reached: opened (or shown again, or a window jumped to) it's all there.
+        let items = shape.merge(conversation.items, sending: workspace.sending[conversation.id] ?? [])
+        playback.update(items, conversation: conversation.id, live: active && live.later == 0, now: Date())
         shape.update(
-            items: conversation.items, sending: workspace.sending[conversation.id] ?? [],
-            working: conversation.status == .working || conversation.status == .waiting)
+            items: items, shown: playback.count,
+            working: playback.working(conversation.status == .working || conversation.status == .waiting))
         let (blocks, turns) = (shape.blocks, shape.turns)
         let (head, tail) = split(blocks)
         return VStack(alignment: .leading, spacing: 18) {
@@ -326,7 +329,9 @@ struct ConversationView: View {
                 Thinking(text: "Starting \(conversation.provider.title)…").id("starting")
             }
             if let health { healthCallout(health) }
-            if let diff = conversation.diff, conversation.status == .idle, !diff.isEmpty { lastTurnDiff(diff) }
+            if let diff = conversation.diff, conversation.status == .idle, !diff.isEmpty {
+                CaughtUp(playback: playback) { lastTurnDiff(diff) }
+            }
             newerRows
             // Room for the composer and the fade above it: scrolled to the end, the last message sits just
             // above the composer, and the scrollbar is at the bottom. Just sent, a page of room, so the
@@ -342,6 +347,7 @@ struct ConversationView: View {
         .padding(.top, 20)
         .centredColumn(760)
         .environment(\.askInbox, inbox)
+        .environment(\.playback, playback)
         .environment(\.askSession, conversation.id)
         .environment(\.replyToSelection) { quote($0) }
     }
@@ -538,7 +544,8 @@ struct ConversationView: View {
         VStack(spacing: 8) {
             let queued = shownQueue
             DockSlot(
-                conversation: conversation, inbox: inbox, foot: foot, page: pageHeight, behindQueue: !queued.isEmpty || held,
+                conversation: conversation, inbox: inbox, playback: playback, foot: foot, page: pageHeight,
+                behindQueue: !queued.isEmpty || held,
                 answer: { [workspace, id = conversation.id] question, answers in
                     Task { await workspace.answer(id, question: question, answers: answers) }
                 },
@@ -870,16 +877,25 @@ struct ConversationView: View {
 /// when what they're made of changes: the column is asked for on every frame of a scroll, and working them out reads
 /// every item. Arrays left as they were compare at once (they share their storage).
 final class TimelineShape {
-    private var made: (items: [ConversationItem], sending: [Sending], working: Bool)?
+    private var merged: (items: [ConversationItem], sending: [Sending], all: [ConversationItem])?
+    private var made: (items: [ConversationItem], shown: Int, working: Bool)?
     private(set) var blocks: [TimelineBlock] = []
     private(set) var turns: [String: String] = [:]
     private var folded: (head: [TimelineBlock], rows: [TimelineRow])?
 
-    func update(items: [ConversationItem], sending: [Sending], working: Bool) {
-        if let made, made.working == working, made.items == items, made.sending == sending { return }
-        made = (items, sending, working)
-        // What's just been sent shows at once, before its agent has it (Sending).
-        blocks = TimelineBlock.of(Sending.merge(items, sending), working: working)
+    /// The conversation's items and what's just been sent, which shows at once, before its agent has it (Sending).
+    func merge(_ items: [ConversationItem], sending: [Sending]) -> [ConversationItem] {
+        if let merged, merged.items == items, merged.sending == sending { return merged.all }
+        let all = Sending.merge(items, sending)
+        merged = (items, sending, all)
+        return all
+    }
+
+    /// The blocks of the first `shown` items: those playback has reached.
+    func update(items: [ConversationItem], shown: Int, working: Bool) {
+        if let made, made.working == working, made.shown == shown, made.items == items { return }
+        made = (items, shown, working)
+        blocks = TimelineBlock.of(shown >= items.count ? items : Array(items.prefix(shown)), working: working)
         turns = TimelineBlock.turns(blocks)
     }
 
@@ -889,6 +905,25 @@ final class TimelineShape {
         folded = (head, rows)
         return rows
     }
+}
+
+/// Playback's clock: ticks at most 30 times a second while something is shown, read out or fading, and not at all
+/// otherwise. Its own view, so a tick redraws nothing else: what changed (an item shown, words read) redraws what
+/// reads it.
+private struct PlaybackClock: View {
+    let playback: Playback
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !playback.playing)) { context in
+            Color.clear.onChange(of: context.date) { _, now in playback.advance(to: now) }
+        }
+    }
+}
+
+/// Shown once playback has caught up with zerod: what comes with a turn's end comes after its last words.
+private struct CaughtUp<Content: View>: View {
+    let playback: Playback
+    @ViewBuilder let content: () -> Content
+    var body: some View { if playback.caughtUp { content() } }
 }
 
 /// The room at the timeline's foot for the composer and the fade above it: its own view, so the composer's height
@@ -929,25 +964,36 @@ private struct FootRoom: View {
 private struct DockSlot: View {
     let conversation: Conversation
     let inbox: InboxController
+    let playback: Playback
     let foot: ConversationView.Foot
     let page: CGFloat
     let behindQueue: Bool
     let answer: (String, [String: [String]]) -> Void
     let decide: (String, String) -> Void
     let left: () -> Void
+    /// Cards that have shown: they stay while playback falls behind again, never going and coming back.
+    @State private var shown: Set<String> = []
 
     var body: some View {
-        let asks = inbox.store.asks.filter { $0.isAgents(in: conversation.id) && !$0.state.isFinal }
-        let ids = conversation.questions.map(\.id) + asks.map(\.id) + conversation.approvals.map(\.id)
+        // A card comes once playback has shown what came before it (the step that asked, the words leading to it).
+        let caughtUp = playback.caughtUp
+        let admit = { (id: String) in caughtUp || shown.contains(id) }
+        let asks = inbox.store.asks.filter { $0.isAgents(in: conversation.id) && !$0.state.isFinal && admit($0.id) }
+        let questions = conversation.questions.filter { admit($0.id) }
+        let approvals = conversation.approvals.filter { admit($0.id) }
+        let ids = questions.map(\.id) + asks.map(\.id) + approvals.map(\.id)
         AskDock(
-            session: conversation.id, cwd: conversation.cwd, questions: conversation.questions, approvals: conversation.approvals,
+            session: conversation.id, cwd: conversation.cwd, questions: questions, approvals: approvals,
             asks: asks, inbox: inbox, page: page, foot: foot, answer: answer, decide: decide
         )
         .equatable()
         .padding(.horizontal, behindQueue ? 26 : 13)
         .frame(maxWidth: 680)
         .padding(.bottom, ids.isEmpty ? 0 : -(AskDock.tuck + 8))
-        .onChange(of: ids) { old, new in if !Set(old).subtracting(new).isEmpty { left() } }
+        .onChange(of: ids, initial: true) { old, new in
+            shown.formUnion(new)
+            if !Set(old).subtracting(new).isEmpty { left() }
+        }
     }
 }
 
