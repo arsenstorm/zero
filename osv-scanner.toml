@@ -1,0 +1,5 @@
+# Known vulnerabilities Zero has looked at and doesn't act on, for OSV-Scanner and OpenSSF Scorecard.
+
+[[IgnoredVulns]]
+id = "GHSA-gcqx-w48m-w2h4"
+reason = "deepmerge, only through Ultracite, the formatter run on developers' machines and in CI on the repo's own files: no untrusted input reaches it, and no fixed version exists."
