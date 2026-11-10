@@ -28,8 +28,8 @@ struct TaskDetails: View {
     @State private var allWorkers = false
 
     var body: some View {
-        // Its properties, then its workers.
-        VStack(alignment: .leading, spacing: 0) { properties; workers }.padding(16)
+        // Its properties, then its issues and its workers.
+        VStack(alignment: .leading, spacing: 0) { properties; issues; workers }.padding(16)
         .frame(width: 280, alignment: .leading)
         .frame(maxHeight: docked ? .infinity : nil, alignment: .top)
         // Concentric with the panel's corner it sits in: its radius and its inset add up to the panel's (6 + 6 = 12).
@@ -136,6 +136,40 @@ struct TaskDetails: View {
             }
         }
         .font(.system(size: 12.5))
+    }
+
+    /// The issues a lead keeps a row for (`zero issue`): each one's state, ticket and where it stands. One with a
+    /// worker of its own opens it; the ticket opens its page.
+    @ViewBuilder private var issues: some View {
+        let issues = (row?.issues ?? []).sorted { $0.boardState.urgency < $1.boardState.urgency }
+        if !issues.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Issues").foregroundStyle(.secondary).padding(.top, 14).padding(.bottom, 2)
+                TimelineView(.everyMinute) { now in
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(issues) { issue in issueRow(issue, now: now.date) }
+                    }
+                }
+            }
+            .font(.system(size: 12.5))
+        }
+    }
+
+    private func issueRow(_ issue: BoardRow.Issue, now: Date) -> some View {
+        let own = (row?.team ?? []).first { member in workspace.conversations.first { $0.id == member.session }?.ticket == issue.ticket }
+        return HStack(alignment: .top, spacing: 7) {
+            TaskStateIcon(state: issue.boardState).frame(width: 14, height: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    link(issue.ticket, to: ticketURL(issue.ticket))
+                    if let waiting = issue.waiting(at: now) { Text(waiting).monospacedDigit().foregroundStyle(.secondary) }
+                    Spacer(minLength: 0)
+                    if let own { Button("Open") { navigation.worker = own.session }.buttonStyle(.plain).foregroundStyle(.secondary) }
+                }
+                if !issue.text.isEmpty { Text(issue.text).foregroundStyle(.secondary).lineLimit(3) }
+            }
+        }
+        .opacity(["done", "parked"].contains(issue.state) ? 0.6 : 1)
     }
 
     /// Its workers, what each is on and where it stands, most urgent first; a click shows that worker.
