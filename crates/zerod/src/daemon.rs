@@ -90,6 +90,8 @@ pub struct Daemon {
     sent_back: Mutex<std::collections::HashSet<String>>,
     /// Turns in a row each task's CLI ended on a server or network error, that Zero carried on.
     carried_on: Mutex<HashMap<String, u32>>,
+    /// Each session's last answer counted for its account's activity (heard.rs): a turn counts once.
+    counted: Mutex<HashMap<String, String>>,
     /// New Claude tasks without a name get one from a small model (naming.rs): zerod's, not the tests', which would spend.
     naming: std::sync::atomic::AtomicBool,
     /// Messages between two tasks (neither the other's lead) since the user last wrote to either, by the pair.
@@ -273,7 +275,7 @@ impl Daemon {
         let daemon = Arc::new_cyclic(|me| Daemon {
             home: home.into(), sessions: Mutex::new(sessions), events, runtime, attention: Mutex::new(attention), pending: Mutex::new(pending),
             held: Mutex::new(held), delivering: Mutex::new(HashSet::new()), queues: broadcast::channel(64).0,
-            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(), held_up: Mutex::default(), updating: Mutex::default(), sent_back: Mutex::default(), carried_on: Mutex::default(), reminded_rows: Mutex::default(), leaving: Mutex::default(), archiving: Mutex::default(), archive_index: Mutex::default(), blocked: Default::default(), noted: Default::default(), crossed: Mutex::default(), crossing: Mutex::default(), naming: Default::default(), signed_out: Mutex::default(), endings: Default::default(),
+            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(), held_up: Mutex::default(), updating: Mutex::default(), sent_back: Mutex::default(), carried_on: Mutex::default(), counted: Mutex::default(), reminded_rows: Mutex::default(), leaving: Mutex::default(), archiving: Mutex::default(), archive_index: Mutex::default(), blocked: Default::default(), noted: Default::default(), crossed: Mutex::default(), crossing: Mutex::default(), naming: Default::default(), signed_out: Mutex::default(), endings: Default::default(),
             workspaces: crate::workspaces::Workspaces::open(home),
             mcp_servers: crate::mcp_servers::McpServers::open(home),
             signins: crate::signins::SignIns::open(home),

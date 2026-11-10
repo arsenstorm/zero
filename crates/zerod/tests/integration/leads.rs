@@ -9,7 +9,7 @@ use std::time::Duration;
 use crate::common::{Seen, fixture, play, temp_dir};
 use serde_json::json;
 use zerod::daemon::{Daemon, Options, Runtime};
-use zerod::model::{Attention, Conversation, Permissions, Provider};
+use zerod::model::{Attention, Change, Conversation, Permissions, Provider, Status};
 
 /// Runtimes by provider: Claude sessions (leads) accept anything and finish nothing; Codex sessions (workers) play
 /// the Codex command recording, which ends in an answer once its approval is allowed.
@@ -392,11 +392,18 @@ async fn a_finished_turn_counts_for_its_account() {
     seen.said("user", 1).await;
     seen.say(json!({"type": "assistant", "message": {"id": "m1", "role": "assistant", "content": [{"type": "text", "text": "Done."}]}}));
     seen.say(json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."}));
-    for _ in 0..300 {
-        if w.daemon.signins.activity().get(&first.id).is_some_and(|h| h.values().sum::<u32>() == 1) { return }
-        tokio::time::sleep(Duration::from_millis(10)).await;
+    let counted = || w.daemon.signins.activity().get(&first.id).map_or(0, |h| h.values().sum::<u32>());
+    for _ in 0..300 { if counted() == 1 { break } tokio::time::sleep(Duration::from_millis(10)).await; }
+    assert_eq!(counted(), 1, "lead {lead}");
+    // Its status going round again with no new answer (a restart, a resume, a wobble between steps) is no new turn: it
+    // counted one turn as hundreds an hour.
+    let session = w.daemon.session(&lead).unwrap();
+    for _ in 0..3 {
+        session.change(Change::Status { status: Status::Working, turn: None, error: None });
+        session.change(Change::Status { status: Status::Idle, turn: None, error: None });
     }
-    panic!("not counted: {:?} (lead {lead})", w.daemon.signins.activity());
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(counted(), 1, "still the one turn");
 }
 
 /// A task whose account its provider won't let use the task's model: that's known of the account, and the task

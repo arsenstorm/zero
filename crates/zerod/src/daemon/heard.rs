@@ -114,7 +114,12 @@ impl Daemon {
         self.sign_in_heard(&conversation, came_to_an_end && conversation.failure.is_none());
         if came_to_an_end { self.carry_read(&conversation); self.check_ending(&conversation); self.check_issue_row(&conversation); self.carry_on_after_error(&conversation) }
         // A turn finished counts for the account it ran as (its own, else its CLI's default): that account's activity.
+        // Once per answer, by its item: the session's state passing through an end more than once a turn (it counted
+        // six times the turns there were) is still the one turn.
+        let answer = conversation.items.iter().rev().find(|i| matches!(i.kind, crate::model::ItemKind::Agent { final_answer: true, .. })).map(|i| i.id.clone());
         if came_to_an_end && conversation.failure.is_none()
+            && let Some(answer) = answer
+            && self.counted.lock().unwrap().insert(id.to_string(), answer.clone()) != Some(answer)
             && let Some(account) = conversation.signin.clone().or_else(|| self.signins.default_for(conversation.provider).map(|s| s.id)) {
             self.signins.record_turn(&account, crate::now());
         }
