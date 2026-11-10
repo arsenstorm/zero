@@ -167,6 +167,22 @@ fn a_report_without_figures_keeps_the_accounts_windows() {
     assert_eq!((used("5 hours"), used("7 days")), (Some(0.4), Some(0.8)), "the week updated, the 5 hours kept");
 }
 
+/// Each account's activity, as a contribution graph counts it: the turns its tasks finished, by the hour they ended
+/// in (the app puts them in the user's own days), kept across a restart.
+#[test]
+fn an_accounts_finished_turns_are_counted_by_the_hour() {
+    let home = temp_dir("signins-activity");
+    let store = SignIns::open(&home);
+    let account = store.save(signin(Provider::Claude, Kind::ClaudeHome, "a@example.com")).unwrap();
+    store.record_turn(&account.id, NOW);
+    store.record_turn(&account.id, NOW + 60);
+    store.record_turn(&account.id, NOW + 3_600);
+    store.record_turn("gone", NOW);
+    let counted = SignIns::open(&home).activity();
+    assert_eq!(counted.get(&account.id).map(|hours| hours.values().copied().collect::<Vec<_>>()), Some(vec![2, 1]));
+    assert!(!counted.contains_key("gone"), "only accounts Zero keeps");
+}
+
 /// An account its provider refused a model on (no access to it) isn't chosen for that model again; for others it is.
 #[test]
 fn an_account_refused_a_model_isnt_chosen_for_it() {

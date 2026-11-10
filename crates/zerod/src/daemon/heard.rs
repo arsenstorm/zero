@@ -113,6 +113,11 @@ impl Daemon {
         // Before its lead hears of it: a lead on the same account holds the report rather than failing on it.
         self.sign_in_heard(&conversation, came_to_an_end && conversation.failure.is_none());
         if came_to_an_end { self.carry_read(&conversation); self.check_ending(&conversation); self.check_issue_row(&conversation); self.carry_on_after_error(&conversation) }
+        // A turn finished counts for the account it ran as (its own, else its CLI's default): that account's activity.
+        if came_to_an_end && conversation.failure.is_none()
+            && let Some(account) = conversation.signin.clone().or_else(|| self.signins.default_for(conversation.provider).map(|s| s.id)) {
+            self.signins.record_turn(&account, crate::now());
+        }
         let got_stuck = now == Attention::Stuck && before != Some(Attention::Stuck);
         // While zerod restarts, a turn ending is the pause for it: the new zerod carries it on, so its lead hears nothing.
         let restarting = self.restarting.load(Ordering::Relaxed);

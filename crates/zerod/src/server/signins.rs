@@ -13,6 +13,9 @@ pub(super) async fn handle(zerod: &Zerod, request: Request) -> Result<Value, Str
     let daemon = &zerod.daemon;
     match request.op.as_str() {
         "signIns" => Ok(list(daemon)),
+        // Each account's finished turns by the hour (Unix hours), for its activity graph: asked for apart from the list,
+        // which is read every minute.
+        "accountActivity" => Ok(json!(daemon.signins.activity())),
         "saveSignIn" => {
             let signin = serde_json::from_value(request.signin.clone().ok_or("Which sign-in?")?).map_err(|e| format!("Not a sign-in: {e}"))?;
             let saved = daemon.signins.save(signin)?;

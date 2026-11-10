@@ -378,6 +378,27 @@ async fn a_task_whose_cli_only_says_it_hit_its_limit_carries_on_as_another_accou
     assert_eq!(w.daemon.signins.choose(Provider::Claude, now, None).map(|s| s.id), Some(second.id.clone()), "not chosen again for now");
 }
 
+/// A turn a task finishes counts for the account it ran as: its own, else its CLI's default.
+#[tokio::test]
+async fn a_finished_turn_counts_for_its_account() {
+    let w = world("signin-activity");
+    let dot = w.home.join("dot-claude");
+    std::fs::create_dir_all(&dot).unwrap();
+    w.daemon.signins.set_claude_dir(dot);
+    let first = w.daemon.signins.save(zerod::signins::SignIn { id: String::new(), cli: Provider::Claude, kind: zerod::signins::Kind::ClaudeHome,
+                                                               label: "a@example.com".into(), plan: None, variable: None, pending: false }).unwrap();
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let seen = lead_runtime(&w).await;
+    seen.said("user", 1).await;
+    seen.say(json!({"type": "assistant", "message": {"id": "m1", "role": "assistant", "content": [{"type": "text", "text": "Done."}]}}));
+    seen.say(json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."}));
+    for _ in 0..300 {
+        if w.daemon.signins.activity().get(&first.id).is_some_and(|h| h.values().sum::<u32>() == 1) { return }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("not counted: {:?} (lead {lead})", w.daemon.signins.activity());
+}
+
 /// A task whose account its provider won't let use the task's model: that's known of the account, and the task
 /// carries on as an account that hasn't been refused it, its agent told why.
 #[tokio::test]

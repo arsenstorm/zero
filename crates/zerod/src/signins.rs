@@ -13,6 +13,8 @@ use crate::process::Variables;
 /// The Keychain service sign-ins' values are kept under, by the sign-in's id.
 pub const KEYCHAIN: &str = "Zero sign-ins";
 
+const ACTIVITY: &str = "activity.json";
+
 /// Reads a value from the Keychain (service, account); a stand-in in tests.
 pub type Secrets = Arc<dyn Fn(&str, &str) -> Option<String> + Send + Sync>;
 
@@ -71,7 +73,13 @@ pub struct SignIns {
     /// The user's own Codex home and Claude Code folder, whose config and history every account's folder shares.
     codex: Mutex<PathBuf>,
     claude: Mutex<PathBuf>,
+    /// Each account's finished turns, by the hour (Unix hours) they ended in: its activity, as a contribution graph
+    /// shows it. Kept in activity.json, a little over a year of it.
+    activity: Mutex<Activity>,
 }
+
+/// An account's turns by hour, by its id.
+pub type Activity = std::collections::BTreeMap<String, std::collections::BTreeMap<i64, u32>>;
 
 impl SignIns {
     pub fn open(home: &Path) -> SignIns {
@@ -80,9 +88,23 @@ impl SignIns {
         let user = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
         let codex = std::env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| user.join(".codex"));
         let claude = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|| user.join(".claude"));
+        let activity = std::fs::read(home.join(ACTIVITY)).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default();
         SignIns { file, home: home.into(), kept: Mutex::new(kept), secrets: Mutex::new(Arc::new(crate::mcp_servers::keychain)),
-                  codex: Mutex::new(codex), claude: Mutex::new(claude) }
+                  codex: Mutex::new(codex), claude: Mutex::new(claude), activity: Mutex::new(activity) }
     }
+
+    /// A turn the account's task finished at `at` (Unix seconds), counted in its hour; what's over a year old let go.
+    pub fn record_turn(&self, id: &str, at: i64) {
+        if !self.kept.lock().unwrap().signins.iter().any(|s| s.id == id) { return }
+        let mut activity = self.activity.lock().unwrap();
+        let hours = activity.entry(id.into()).or_default();
+        *hours.entry(at / 3600).or_default() += 1;
+        let oldest = at / 3600 - 400 * 24;
+        hours.retain(|hour, _| *hour >= oldest);
+        if let Ok(data) = serde_json::to_vec(&*activity) { let _ = std::fs::write(self.home.join(ACTIVITY), data); }
+    }
+
+    pub fn activity(&self) -> Activity { self.activity.lock().unwrap().clone() }
 
     pub fn set_secrets(&self, secrets: Secrets) { *self.secrets.lock().unwrap() = secrets }
     pub fn set_codex_dir(&self, dir: PathBuf) { *self.codex.lock().unwrap() = dir }
