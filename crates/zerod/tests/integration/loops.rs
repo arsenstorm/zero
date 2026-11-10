@@ -1,7 +1,6 @@
 //! Loops: named instructions an agent follows, kept as Markdown files, named as `@name` in a message or a brief and
 //! expanded into their words for the agent; a loop names its children, never a parent; each use is recorded.
 
-
 use crate::common::temp_dir;
 use serde_json::json;
 use zerod::core::Core;
@@ -13,7 +12,10 @@ fn a_loop_is_a_markdown_file_with_a_description_and_the_children_it_names() {
     let root = temp_dir("loops-files");
     let loops = Loops::open(&root);
     let worker = loops.save("ticket-worker", "One ticket, on its bench", "Claim a bench. Do the task. Verify with /verify.").unwrap();
-    assert_eq!(std::fs::read_to_string(root.join("ticket-worker.md")).unwrap(), "---\ndescription: One ticket, on its bench\n---\nClaim a bench. Do the task. Verify with /verify.");
+    assert_eq!(
+        std::fs::read_to_string(root.join("ticket-worker.md")).unwrap(),
+        "---\ndescription: One ticket, on its bench\n---\nClaim a bench. Do the task. Verify with /verify."
+    );
     assert!(worker.children.is_empty());
     let batch = loops.save("batch", "", "For each ticket, start a worker on @ticket-worker; @nothing isn't a loop.").unwrap();
     assert_eq!(batch.children, ["ticket-worker"]);
@@ -39,13 +41,18 @@ fn a_name_in_the_words_becomes_the_loops_words_and_the_record_keeps_the_name() {
     loops.save("ticket-worker", "", "Do the ticket.").unwrap();
     let (text, used) = loops.expand("Run @batch for ENG-9790 and ENG-9793. Mail me@example.com; @nobody stays.");
     assert_eq!(used, ["batch"]);
-    assert_eq!(text, "Run <!-- loop: batch -->\n## Loop: batch\n\nTickets, one worker each\n\nFor each ticket, start a worker on @ticket-worker.\n<!-- /loop: batch --> for ENG-9790 and ENG-9793. Mail me@example.com; @nobody stays.",
-               "the child stays a name inside: a reference, not an inclusion");
+    assert_eq!(
+        text,
+        "Run <!-- loop: batch -->\n## Loop: batch\n\nTickets, one worker each\n\nFor each ticket, start a worker on @ticket-worker.\n<!-- /loop: batch --> for ENG-9790 and ENG-9793. Mail me@example.com; @nobody stays.",
+        "the child stays a name inside: a reference, not an inclusion"
+    );
     assert_eq!(collapse(&text), "Run @batch for ENG-9790 and ENG-9793. Mail me@example.com; @nobody stays.");
     // A message of yours that named a loop is kept with the name, whatever the agent was given.
     let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/w"));
     core.sent(&json!({"type": "user", "message": {"role": "user", "content": text}}));
-    assert!(matches!(&core.conversation().items[0].kind, ItemKind::User { text, .. } if text == "Run @batch for ENG-9790 and ENG-9793. Mail me@example.com; @nobody stays."));
+    assert!(
+        matches!(&core.conversation().items[0].kind, ItemKind::User { text, .. } if text == "Run @batch for ENG-9790 and ENG-9793. Mail me@example.com; @nobody stays.")
+    );
 }
 
 #[test]

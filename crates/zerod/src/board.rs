@@ -136,7 +136,9 @@ pub struct Waiting {
 /// The notes zerod posts itself to follow a session's attention (bridge.rs), told from the agent's own.
 pub const ATTENTION: &str = "attention";
 
-pub fn board(conversations: &[Conversation], asks: &[Ask]) -> Vec<Row> { board_with(conversations, asks, &HashMap::new()) }
+pub fn board(conversations: &[Conversation], asks: &[Ask]) -> Vec<Row> {
+    board_with(conversations, asks, &HashMap::new())
+}
 
 /// The board, with where tasks run by ticket from the user's places command.
 pub fn board_with(conversations: &[Conversation], asks: &[Ask], places: &HashMap<String, Place>) -> Vec<Row> {
@@ -144,19 +146,31 @@ pub fn board_with(conversations: &[Conversation], asks: &[Ask], places: &HashMap
 }
 
 /// The board with each session's queue (daemon.rs `queues`).
-fn default_workspace() -> String { crate::workspaces::DEFAULT.into() }
+fn default_workspace() -> String {
+    crate::workspaces::DEFAULT.into()
+}
 
-pub fn board_full(conversations: &[Conversation], asks: &[Ask], places: &HashMap<String, Place>, queues: &HashMap<String, (Vec<Queued>, bool)>) -> Vec<Row> {
+pub fn board_full(
+    conversations: &[Conversation], asks: &[Ask], places: &HashMap<String, Place>, queues: &HashMap<String, (Vec<Queued>, bool)>,
+) -> Vec<Row> {
     board_in(conversations, asks, places, queues, &|_| default_workspace())
 }
 
 /// `workspace_of` says which workspace each lead is in.
-pub fn board_in(conversations: &[Conversation], asks: &[Ask], places: &HashMap<String, Place>, queues: &HashMap<String, (Vec<Queued>, bool)>,
-                workspace_of: &dyn Fn(&Conversation) -> String) -> Vec<Row> {
+pub fn board_in(
+    conversations: &[Conversation], asks: &[Ask], places: &HashMap<String, Place>, queues: &HashMap<String, (Vec<Queued>, bool)>,
+    workspace_of: &dyn Fn(&Conversation) -> String,
+) -> Vec<Row> {
     // Only the asks of tasks on the board, looked through once: the inbox also keeps every agent's latest, hundreds
     // of them long gone.
     let on_board: std::collections::HashSet<&str> = conversations.iter().map(|c| c.id.as_str()).collect();
-    let asks: &Vec<Ask> = &asks.iter().filter(|a| [a.agent.reference.as_deref(), a.agent.name.strip_prefix("zerod-")].into_iter().flatten().any(|id| on_board.contains(id))).cloned().collect();
+    let asks: &Vec<Ask> = &asks
+        .iter()
+        .filter(|a| {
+            [a.agent.reference.as_deref(), a.agent.name.strip_prefix("zerod-")].into_iter().flatten().any(|id| on_board.contains(id))
+        })
+        .cloned()
+        .collect();
     let queue = |id: &str| queues.get(id).cloned().unwrap_or_default();
     let known = |id: &Option<String>| id.as_ref().is_some_and(|id| conversations.iter().any(|c| &c.id == id));
     let leads: Vec<&Conversation> = conversations.iter().filter(|c| !known(&c.parent)).collect();
@@ -164,32 +178,79 @@ pub fn board_in(conversations: &[Conversation], asks: &[Ask], places: &HashMap<S
     // its folder that tells the leads' apart.
     let folders: Vec<String> = leads.iter().map(|lead| lead.cwd.clone()).collect();
     let whereabouts = |c: &Conversation| -> (String, Option<String>) {
-        if let Some(named) = &c.place { return (named.clone(), None) }
+        if let Some(named) = &c.place {
+            return (named.clone(), None);
+        }
         match c.ticket.as_ref().and_then(|t| places.get(t)) {
             Some(listed) => (listed.name.clone(), listed.path.clone()),
             None => (place(&c.cwd, &folders), None),
         }
     };
-    let mut rows: Vec<Row> = leads.iter().map(|lead| {
-        let team = team(lead, conversations);
-        let its = standing(lead, conversations, asks);
-        let own = standing(lead, std::slice::from_ref(*lead), asks).state;
-        let (place, path) = whereabouts(lead);
-        let members = team[1..].iter().map(|member| {
-            let own = standing(member, conversations, asks);
-            let (place, path) = whereabouts(member);
-            let (queued, held) = queue(&member.id);
-            Member { session: member.id.clone(), state: own.state, place, path, now: own.now, needs: own.needs, asks: own.asks, queued, held }
-        }).collect();
-        let (queued, held) = queue(&lead.id);
-        Row {
-            session: lead.id.clone(), task: crate::bridge::label(lead), workspace: workspace_of(lead), ticket: lead.ticket.clone(),
-            provider: lead.provider, at: lead.items.iter().filter_map(|i| i.at).max(), place, path, online: its.online,
-            state: its.state, own, now: its.now, needs: its.needs, asks: its.asks, workers: team.len() - 1, team: members, queued, held, wakes: None, next: None,
-            quiet: lead.items.iter().rev().find_map(|i| match &i.kind { ItemKind::User { text, .. } => Some(text.starts_with(crate::model::FROM)), _ => None }).unwrap_or(false),
-            issues: { let mut issues = lead.issues.clone(); issues.sort_by_key(|i| (i.state, i.since)); issues },
-        }
-    }).collect();
+    let mut rows: Vec<Row> = leads
+        .iter()
+        .map(|lead| {
+            let team = team(lead, conversations);
+            let its = standing(lead, conversations, asks);
+            let own = standing(lead, std::slice::from_ref(*lead), asks).state;
+            let (place, path) = whereabouts(lead);
+            let members = team[1..]
+                .iter()
+                .map(|member| {
+                    let own = standing(member, conversations, asks);
+                    let (place, path) = whereabouts(member);
+                    let (queued, held) = queue(&member.id);
+                    Member {
+                        session: member.id.clone(),
+                        state: own.state,
+                        place,
+                        path,
+                        now: own.now,
+                        needs: own.needs,
+                        asks: own.asks,
+                        queued,
+                        held,
+                    }
+                })
+                .collect();
+            let (queued, held) = queue(&lead.id);
+            Row {
+                session: lead.id.clone(),
+                task: crate::bridge::label(lead),
+                workspace: workspace_of(lead),
+                ticket: lead.ticket.clone(),
+                provider: lead.provider,
+                at: lead.items.iter().filter_map(|i| i.at).max(),
+                place,
+                path,
+                online: its.online,
+                state: its.state,
+                own,
+                now: its.now,
+                needs: its.needs,
+                asks: its.asks,
+                workers: team.len() - 1,
+                team: members,
+                queued,
+                held,
+                wakes: None,
+                next: None,
+                quiet: lead
+                    .items
+                    .iter()
+                    .rev()
+                    .find_map(|i| match &i.kind {
+                        ItemKind::User { text, .. } => Some(text.starts_with(crate::model::FROM)),
+                        _ => None,
+                    })
+                    .unwrap_or(false),
+                issues: {
+                    let mut issues = lead.issues.clone();
+                    issues.sort_by_key(|i| (i.state, i.since));
+                    issues
+                },
+            }
+        })
+        .collect();
     rows.sort_by_key(|row| row.state);
     rows
 }
@@ -204,8 +265,12 @@ pub fn read(seen: Option<(&str, i64)>, latest: Option<&str>, now: i64) -> bool {
 /// The rows whose reply the user has read: Read rather than Replied, on every client alike.
 pub fn mark_read(rows: &mut [Row], read: &dyn Fn(&str) -> bool) {
     for row in rows.iter_mut().filter(|r| (r.state == State::Answered || r.own == State::Answered) && read(&r.session)) {
-        if row.state == State::Answered { row.state = State::Read }
-        if row.own == State::Answered { row.own = State::Read }
+        if row.state == State::Answered {
+            row.state = State::Read
+        }
+        if row.own == State::Answered {
+            row.own = State::Read
+        }
     }
     rows.sort_by_key(|row| row.state);
 }
@@ -215,8 +280,12 @@ pub fn mark_read(rows: &mut [Row], read: &dyn Fn(&str) -> bool) {
 /// isn't due.
 pub fn due_to_archive(rows: &[Row], now: i64, after: Option<i64>, said: &dyn Fn(&str) -> Option<i64>) -> Vec<String> {
     let Some(after) = after else { return vec![] };
-    let mut due: Vec<String> = rows.iter().filter(|r| r.state == State::Done && r.own == State::Done)
-        .filter(|r| said(&r.session).is_some_and(|at| now - at >= after)).map(|r| r.session.clone()).collect();
+    let mut due: Vec<String> = rows
+        .iter()
+        .filter(|r| r.state == State::Done && r.own == State::Done)
+        .filter(|r| said(&r.session).is_some_and(|at| now - at >= after))
+        .map(|r| r.session.clone())
+        .collect();
     due.sort();
     due
 }
@@ -224,8 +293,13 @@ pub fn due_to_archive(rows: &[Row], now: i64, after: Option<i64>, said: &dyn Fn(
 /// The rows of tasks the user paused, and their paused workers, shown as Paused whatever they were doing.
 pub fn mark_paused(rows: &mut [Row], paused: &dyn Fn(&str) -> bool) {
     for row in rows.iter_mut() {
-        for member in row.team.iter_mut().filter(|m| paused(&m.session)) { member.state = State::Paused }
-        if paused(&row.session) { row.state = State::Paused; row.own = State::Paused }
+        for member in row.team.iter_mut().filter(|m| paused(&m.session)) {
+            member.state = State::Paused
+        }
+        if paused(&row.session) {
+            row.state = State::Paused;
+            row.own = State::Paused
+        }
     }
     rows.sort_by_key(|row| row.state);
 }
@@ -235,25 +309,38 @@ pub fn mark_paused(rows: &mut [Row], paused: &dyn Fn(&str) -> bool) {
 fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]) -> Standing {
     let team = team(session, conversations);
     let own = note(session, asks);
-    let open: Vec<Waiting> = asks.iter()
+    let open: Vec<Waiting> = asks
+        .iter()
         .filter(|a| a.state == AskState::Waiting && !matches!(a.kind, AskKind::Note | AskKind::Message) && team.iter().any(|c| is(a, c)))
-        .map(|a| Waiting { id: a.id.clone(), title: a.title.clone() }).collect();
+        .map(|a| Waiting { id: a.id.clone(), title: a.title.clone() })
+        .collect();
     let online = team.iter().any(|c| c.attention() != Attention::Offline);
     // Its own standing, raised by a worker's only when that needs attention: a worker finished says nothing about
     // the lead.
-    let mut state = team.iter().skip(1).map(|c| attention(c)).filter(|s| *s <= State::Working).min().unwrap_or(State::Idle).min(attention(session));
-    if !open.is_empty() { state = State::NeedsYou }
+    let mut state =
+        team.iter().skip(1).map(|c| attention(c)).filter(|s| *s <= State::Working).min().unwrap_or(State::Idle).min(attention(session));
+    if !open.is_empty() {
+        state = State::NeedsYou
+    }
     // An issue its agent says is on the user (`zero issue … you`): the task needs them, as an ask would.
-    if session.issues.iter().any(|i| i.state == crate::model::IssueState::You) { state = state.min(State::NeedsYou) }
+    if session.issues.iter().any(|i| i.state == crate::model::IssueState::You) {
+        state = state.min(State::NeedsYou)
+    }
     // Ended on an ask that's no longer open (answered, withdrawn, expired), its question no longer anyone's: what it
     // said is a reply to read. Agents repeat the ending through later turns, long after the answer came.
-    if state == State::NeedsYou && open.is_empty() && session.questions.is_empty() && session.approvals.is_empty()
+    if state == State::NeedsYou
+        && open.is_empty()
+        && session.questions.is_empty()
+        && session.approvals.is_empty()
         && team.iter().skip(1).all(|c| attention(c) != State::NeedsYou)
         && let Some(id) = session.answer().and_then(asked)
-        && asks.iter().any(|a| a.id == id && a.state.is_final()) {
+        && asks.iter().any(|a| a.id == id && a.state.is_final())
+    {
         state = State::Answered;
     }
-    if let Some(note) = own && state > State::Trouble {
+    if let Some(note) = own
+        && state > State::Trouble
+    {
         state = match note.status.as_deref() {
             Some("blocked") if note.confirmed => State::Blocked,
             // Waiting on what isn't the user (what needs them is an ask).
@@ -265,7 +352,10 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
         };
     }
     // No note of its own this turn: how it ended its turn (Zero's ending, "[zero: done]") says its state.
-    if own.is_none() && matches!(state, State::Idle | State::Done) && let Some(ending) = session.answer().and_then(ending) {
+    if own.is_none()
+        && matches!(state, State::Idle | State::Done)
+        && let Some(ending) = session.answer().and_then(ending)
+    {
         state = match ending {
             "done" => State::Done,
             // Between steps, its work going on elsewhere: a reply to read, as any.
@@ -277,11 +367,19 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
     // Done only as confirmed (`zero done`, its token; or the user's word): said alone, in a note or an ending, it's a
     // reply to read, kept in view. Agents said done when a piece felt finished (committed, not shipped), and the task
     // was put away.
-    if state == State::Done && !own.is_some_and(|n| n.confirmed) { state = State::Answered }
+    if state == State::Done && !own.is_some_and(|n| n.confirmed) {
+        state = State::Answered
+    }
     // Its first line of prose: a table, heading or rule says nothing on its own; a list's item without its marker.
     let prose = |l: &&str| !l.is_empty() && !l.starts_with('|') && !l.starts_with('#') && !l.starts_with("---") && !l.starts_with("[zero:");
     let answer = session.answer().and_then(|a| a.lines().map(str::trim).find(prose)).map(|line| unlisted(line).to_string());
-    Standing { state, online, now: own.map(|n| n.body.clone()).filter(|b| !b.is_empty()).or(answer), needs: own.and_then(|n| n.needs.clone()), asks: open }
+    Standing {
+        state,
+        online,
+        now: own.map(|n| n.body.clone()).filter(|b| !b.is_empty()).or(answer),
+        needs: own.and_then(|n| n.needs.clone()),
+        asks: open,
+    }
 }
 
 /// The ending Zero has an agent close its turn with, when it's the answer's last line: "done", "waiting", "working",
@@ -293,16 +391,27 @@ fn asked(answer: &str) -> Option<&str> {
 
 /// A line without its list marker ("- ", "* ", "3. "), if it has one.
 fn unlisted(line: &str) -> &str {
-    if let Some(rest) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) { return rest.trim_start() }
+    if let Some(rest) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) {
+        return rest.trim_start();
+    }
     let digits = line.len() - line.trim_start_matches(|c: char| c.is_ascii_digit()).len();
-    if digits > 0 && let Some(rest) = line[digits..].strip_prefix(". ") { return rest.trim_start() }
+    if digits > 0
+        && let Some(rest) = line[digits..].strip_prefix(". ")
+    {
+        return rest.trim_start();
+    }
     line
 }
 
 /// Whether an answer ends on a question to the user: one of its last few lines of prose (Zero's ending, headings and
 /// table rows aside) ends with "?".
 pub fn asks_in_prose(answer: &str) -> bool {
-    answer.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("[zero:") && !l.starts_with('#') && !l.starts_with('|')).rev().take(3)
+    answer
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with("[zero:") && !l.starts_with('#') && !l.starts_with('|'))
+        .rev()
+        .take(3)
         .any(|l| l.trim_end_matches(['*', '_', ')', '"']).ends_with('?'))
 }
 
@@ -342,12 +451,22 @@ pub struct Place {
 /// ticket; a ticket in several places has them all, and then no one path.
 pub fn parse_places(text: &str) -> Result<HashMap<String, Place>, String> {
     #[derive(serde::Deserialize)]
-    struct Entry { ticket: String, place: String, path: Option<String> }
-    let entries: Vec<Entry> = serde_json::from_str(text).map_err(|e| format!("The places command printed something other than [{{\"ticket\", \"place\"}}]: {e}"))?;
+    struct Entry {
+        ticket: String,
+        place: String,
+        path: Option<String>,
+    }
+    let entries: Vec<Entry> = serde_json::from_str(text)
+        .map_err(|e| format!("The places command printed something other than [{{\"ticket\", \"place\"}}]: {e}"))?;
     let mut places: HashMap<String, Place> = HashMap::new();
     for entry in entries {
-        places.entry(entry.ticket)
-            .and_modify(|all| { all.name.push_str(", "); all.name.push_str(&entry.place); all.path = None })
+        places
+            .entry(entry.ticket)
+            .and_modify(|all| {
+                all.name.push_str(", ");
+                all.name.push_str(&entry.place);
+                all.path = None
+            })
             .or_insert(Place { name: entry.place, path: entry.path });
     }
     Ok(places)
@@ -358,7 +477,9 @@ pub fn parse_places(text: &str) -> Result<HashMap<String, Place>, String> {
 pub struct Places(Mutex<HashMap<String, Place>>);
 
 impl Places {
-    pub fn get(&self) -> HashMap<String, Place> { self.0.lock().unwrap().clone() }
+    pub fn get(&self) -> HashMap<String, Place> {
+        self.0.lock().unwrap().clone()
+    }
 
     /// Runs the user's places command (zerod's settings.json `places`) every five minutes while zerod runs: a place
     /// changes rarely, and the command may be slow (one may ask GitHub for each place's PR).
@@ -384,7 +505,8 @@ fn team<'a>(lead: &'a Conversation, all: &'a [Conversation]) -> Vec<&'a Conversa
     let mut team = vec![lead];
     let mut i = 0;
     while i < team.len() {
-        let started: Vec<&Conversation> = all.iter().filter(|c| c.parent.as_ref() == Some(&team[i].id) && !team.iter().any(|t| t.id == c.id)).collect();
+        let started: Vec<&Conversation> =
+            all.iter().filter(|c| c.parent.as_ref() == Some(&team[i].id) && !team.iter().any(|t| t.id == c.id)).collect();
         team.extend(started);
         i += 1;
     }
@@ -400,8 +522,14 @@ fn is(ask: &Ask, conversation: &Conversation) -> bool {
 fn note<'a>(conversation: &Conversation, asks: &'a [Ask]) -> Option<&'a Ask> {
     let notes = asks.iter().filter(|a| a.kind == AskKind::Note && is(a, conversation));
     // When the user last said something themselves (not Zero passing on an event, a worker's report, a wake-up).
-    let spoke = conversation.items.iter().filter_map(|i| match &i.kind {
-        ItemKind::User { text, .. } if !text.starts_with(crate::model::FROM) => i.at.map(|ms| ms / 1000), _ => None }).max();
+    let spoke = conversation
+        .items
+        .iter()
+        .filter_map(|i| match &i.kind {
+            ItemKind::User { text, .. } if !text.starts_with(crate::model::FROM) => i.at.map(|ms| ms / 1000),
+            _ => None,
+        })
+        .max();
     let mut own: Option<&Ask> = None;
     for note in notes {
         // Closed, by the user or its runtime: nothing it said still stands.
@@ -410,8 +538,14 @@ fn note<'a>(conversation: &Conversation, asks: &'a [Ask]) -> Option<&'a Ask> {
         let closed = !ours && note.status.as_deref() == Some("closed");
         // A new turn clears what it said, except that done or merged stands through turns Zero started (an event it
         // follows, a worker's report): only the user's own word since makes it theirs to settle again.
-        let final_state = own.is_some_and(|n| matches!(n.status.as_deref(), Some("done" | "merged" | "completed")) && spoke.is_none_or(|at| at < n.created_at.0));
-        if closed || (ours && note.status.is_none() && !final_state) { own = None } else if !ours { own = Some(note) }
+        let final_state = own.is_some_and(|n| {
+            matches!(n.status.as_deref(), Some("done" | "merged" | "completed")) && spoke.is_none_or(|at| at < n.created_at.0)
+        });
+        if closed || (ours && note.status.is_none() && !final_state) {
+            own = None
+        } else if !ours {
+            own = Some(note)
+        }
     }
     own
 }
@@ -439,7 +573,10 @@ fn attention(conversation: &Conversation) -> State {
 /// The fewest trailing parts of `folder` that no other folder in `all` ends with.
 fn place(folder: &str, all: &[String]) -> String {
     let parts: Vec<&str> = folder.split('/').filter(|p| !p.is_empty()).collect();
-    let tail = |path: &str, n: usize| { let p: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect(); p[p.len().saturating_sub(n)..].join("/") };
+    let tail = |path: &str, n: usize| {
+        let p: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+        p[p.len().saturating_sub(n)..].join("/")
+    };
     (1..=parts.len().max(1))
         .map(|n| tail(folder, n))
         .find(|end| all.iter().filter(|other| other.as_str() != folder).all(|other| tail(other, end.matches('/').count() + 1) != *end))

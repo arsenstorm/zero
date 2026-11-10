@@ -32,7 +32,9 @@ async fn main() {
         std::process::exit(0);
     }
     let args = Args::parse(args, &zero);
-    if mcp { return zerod::mcp::serve(&args.socket).await }
+    if mcp {
+        return zerod::mcp::serve(&args.socket).await;
+    }
     if UnixStream::connect(&args.socket).await.is_ok() {
         eprintln!("zerod: already running on {}", args.socket.display());
         return;
@@ -46,7 +48,9 @@ async fn main() {
     keep_liveness(&inbox);
     let (cli, cli_socket) = (inbox.clone(), args.cli_socket.clone());
     tokio::spawn(async move {
-        if let Err(error) = zerod::cli::serve(cli, cli_socket).await { eprintln!("zerod: the CLI socket stopped: {error}") }
+        if let Err(error) = zerod::cli::serve(cli, cli_socket).await {
+            eprintln!("zerod: the CLI socket stopped: {error}")
+        }
     });
     let mut terminate = signal(SignalKind::terminate()).expect("a SIGTERM handler");
     eprintln!("zerod: {} sessions, listening on {}", daemon.list().len(), args.socket.display());
@@ -83,9 +87,7 @@ fn open_daemon(home: &Path) -> Arc<zerod::daemon::Daemon> {
 
 /// The inbox with every runtime its agents run in, the drops feeding it, and the bridge from tasks to it.
 fn open_inbox(daemon: &Arc<zerod::daemon::Daemon>, args: &Args) -> (Arc<zerod::inbox::Inbox>, Arc<zerod::drops::Drops>) {
-    let runtimes: Vec<Arc<dyn Runtime>> = vec![
-        Arc::new(zerod::daemon::Sessions::of(daemon)), Arc::new(zerod::host::Host::installed()),
-    ];
+    let runtimes: Vec<Arc<dyn Runtime>> = vec![Arc::new(zerod::daemon::Sessions::of(daemon)), Arc::new(zerod::host::Host::installed())];
     let inbox = zerod::inbox::Inbox::open_with(Some(args.asks_log.clone()), runtimes, Some(zerod::host::Host::installed()));
     let drops = zerod::drops::Drops::new(inbox.clone(), args.resources.clone());
     let settings = zerod::server::Settings::load(&args.home);
@@ -99,7 +101,9 @@ fn open_inbox(daemon: &Arc<zerod::daemon::Daemon>, args: &Args) -> (Arc<zerod::i
 }
 
 /// What a connection reaches, each part opened from where it's kept, and what follows on its own set going.
-fn zerod_for(args: &Args, daemon: &Arc<zerod::daemon::Daemon>, inbox: Arc<zerod::inbox::Inbox>, drops: Arc<zerod::drops::Drops>) -> zerod::server::Zerod {
+fn zerod_for(
+    args: &Args, daemon: &Arc<zerod::daemon::Daemon>, inbox: Arc<zerod::inbox::Inbox>, drops: Arc<zerod::drops::Drops>,
+) -> zerod::server::Zerod {
     let (home, beside) = (&args.home, &args.beside);
     let integrations = zerod::integrations::Integrations::open(home, Arc::new(zerod::integrations::Commands::default()));
     let pads = Arc::new(zerod::pads::Pads::open(&beside.join("scratchpads")));
@@ -111,9 +115,20 @@ fn zerod_for(args: &Args, daemon: &Arc<zerod::daemon::Daemon>, inbox: Arc<zerod:
     browsers.follow(daemon.clone(), inbox.clone());
     let places = Arc::new(zerod::board::Places::default());
     tokio::spawn(places.clone().follow(home.clone()));
-    zerod::server::Zerod { daemon: daemon.clone(), inbox, drops: Some(drops), integrations, pads, later, loops, following, browsers, places, notices: tokio::sync::broadcast::channel(64).0 }
+    zerod::server::Zerod {
+        daemon: daemon.clone(),
+        inbox,
+        drops: Some(drops),
+        integrations,
+        pads,
+        later,
+        loops,
+        following,
+        browsers,
+        places,
+        notices: tokio::sync::broadcast::channel(64).0,
+    }
 }
-
 
 /// Where this zerod keeps its sessions and serves them, from its flags; the rest beside its home.
 struct Args {
@@ -150,9 +165,14 @@ impl Args {
             asks_log: asks_log.unwrap_or_else(|| beside.join("asks.jsonl")),
             // Zero.app's Resources, beside the MacOS folder zerod is in: the drop clients.
             resources: resources.unwrap_or_else(|| {
-                std::env::current_exe().ok().and_then(|exe| exe.parent()?.parent().map(|contents| contents.join("Resources"))).unwrap_or_default()
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|exe| exe.parent()?.parent().map(|contents| contents.join("Resources")))
+                    .unwrap_or_default()
             }),
-            home, socket, beside,
+            home,
+            socket,
+            beside,
         }
     }
 }
@@ -181,7 +201,16 @@ fn poll_following(poller: Arc<zerod::following::Following>, polled: Arc<zerod::d
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
-            poller.tick(|id| polled.exists(id), |id, words| if let Err(error) = polled.notify(id, words) { eprintln!("zerod: couldn't tell {id} what it follows changed: {error}") }).await;
+            poller
+                .tick(
+                    |id| polled.exists(id),
+                    |id, words| {
+                        if let Err(error) = polled.notify(id, words) {
+                            eprintln!("zerod: couldn't tell {id} what it follows changed: {error}")
+                        }
+                    },
+                )
+                .await;
         }
     });
 }
@@ -191,10 +220,19 @@ fn poll_following(poller: Arc<zerod::following::Following>, polled: Arc<zerod::d
 fn open_browsers(home: &Path) -> Arc<zerod::browser::Browsers> {
     let browsers = zerod::browser::Browsers::open(home);
     browsers.set_launcher(zerod::browser::Browsers::chrome());
-    if let Ok(exe) = std::env::current_exe() && exe.starts_with("/Applications") { let _ = zerod::browser::install_firefox(&exe); }
-    let firefox_extension = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.parent()?.join("Resources/firefox"))).unwrap_or_default();
+    if let Ok(exe) = std::env::current_exe()
+        && exe.starts_with("/Applications")
+    {
+        let _ = zerod::browser::install_firefox(&exe);
+    }
+    let firefox_extension =
+        std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.parent()?.join("Resources/firefox"))).unwrap_or_default();
     browsers.set_safari(zerod::safari::Safari::new(Some(home.join("safari-session"))));
-    browsers.set_firefox(zerod::firefox::Firefox::new(&format!("127.0.0.1:{}", zerod::firefox::PORT), firefox_extension, Some(zerod::firefox::Firefox::launcher()),
-                                                   Some(home.join("firefox-session"))));
+    browsers.set_firefox(zerod::firefox::Firefox::new(
+        &format!("127.0.0.1:{}", zerod::firefox::PORT),
+        firefox_extension,
+        Some(zerod::firefox::Firefox::launcher()),
+        Some(home.join("firefox-session")),
+    ));
     browsers
 }

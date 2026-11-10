@@ -6,7 +6,14 @@ use crate::common::temp_dir;
 use zerod::git::AgentGit;
 
 fn agents(folders: Vec<String>) -> AgentGit {
-    AgentGit { enabled: true, login: "arsenstorm2".into(), name: "Arsen (Agent)".into(), email: "117126823+arsenstorm2@users.noreply.github.com".into(), https: true, folders }
+    AgentGit {
+        enabled: true,
+        login: "arsenstorm2".into(),
+        name: "Arsen (Agent)".into(),
+        email: "117126823+arsenstorm2@users.noreply.github.com".into(),
+        https: true,
+        folders,
+    }
 }
 
 #[test]
@@ -20,11 +27,17 @@ fn agents_sign_as_their_own_committer_with_their_key_and_push_over_https() {
     assert_eq!(get("GIT_COMMITTER_NAME"), Some("Arsen (Agent)"));
     assert!(get("GIT_AUTHOR_EMAIL").is_none(), "the author stays the user, as the repo has them");
     let config: Vec<(String, String)> = (0..get("GIT_CONFIG_COUNT").unwrap().parse::<usize>().unwrap())
-        .map(|i| (get(&format!("GIT_CONFIG_KEY_{i}")).unwrap().to_string(), get(&format!("GIT_CONFIG_VALUE_{i}")).unwrap().to_string())).collect();
+        .map(|i| (get(&format!("GIT_CONFIG_KEY_{i}")).unwrap().to_string(), get(&format!("GIT_CONFIG_VALUE_{i}")).unwrap().to_string()))
+        .collect();
     let has = |k: &str, v: &str| config.iter().any(|(ck, cv)| ck == k && cv == v);
-    assert!(has("gpg.format", "ssh") && has("gpg.ssh.program", "ssh-keygen") && has("user.signingKey", key.to_str().unwrap()), "{config:?}");
+    assert!(
+        has("gpg.format", "ssh") && has("gpg.ssh.program", "ssh-keygen") && has("user.signingKey", key.to_str().unwrap()),
+        "{config:?}"
+    );
     assert!(has("commit.gpgSign", "true") && has("tag.gpgSign", "true"));
-    assert!(has("url.https://github.com/.insteadOf", "git@github.com:") && has("url.https://github.com/.insteadOf", "ssh://git@github.com/"));
+    assert!(
+        has("url.https://github.com/.insteadOf", "git@github.com:") && has("url.https://github.com/.insteadOf", "ssh://git@github.com/")
+    );
     let ssh = zerod::git::variables_for(&AgentGit { https: false, ..agents(vec![]) }, &key, &home);
     assert!(!ssh.iter().any(|(_, v)| v == "git@github.com:"), "SSH as the user has it");
 }
@@ -48,19 +61,34 @@ async fn an_agents_commit_is_signed_with_its_key_as_its_committer() {
     // Real git, a real key: what an agent's own `git commit` makes.
     let home = temp_dir("git-commit");
     let key = home.join("git-signing-key");
-    let made = std::process::Command::new("ssh-keygen").args(["-q", "-t", "ed25519", "-N", "", "-f", key.to_str().unwrap()]).status().unwrap();
+    let made =
+        std::process::Command::new("ssh-keygen").args(["-q", "-t", "ed25519", "-N", "", "-f", key.to_str().unwrap()]).status().unwrap();
     assert!(made.success());
     let repo = home.join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     let vars = zerod::git::variables_for(&agents(vec![]), &key, &repo);
-    let git = |args: &[&str]| std::process::Command::new("git").args(args).current_dir(&repo).env_clear()
-        .env("PATH", "/usr/bin:/bin:/opt/homebrew/bin").env("HOME", &home).envs(vars.iter().cloned())
-        .env("GIT_AUTHOR_NAME", "Arsen").env("GIT_AUTHOR_EMAIL", "arsen@example.com").output().unwrap();
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(&repo)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin:/opt/homebrew/bin")
+            .env("HOME", &home)
+            .envs(vars.iter().cloned())
+            .env("GIT_AUTHOR_NAME", "Arsen")
+            .env("GIT_AUTHOR_EMAIL", "arsen@example.com")
+            .output()
+            .unwrap()
+    };
     assert!(git(&["init", "-q"]).status.success());
     let commit = git(&["commit", "-q", "--allow-empty", "-m", "first"]);
     assert!(commit.status.success(), "{}", String::from_utf8_lossy(&commit.stderr));
     let raw = String::from_utf8_lossy(&git(&["cat-file", "-p", "HEAD"]).stdout).to_string();
-    assert!(raw.contains("author Arsen <arsen@example.com>") && raw.contains("committer Arsen (Agent) <117126823+arsenstorm2@users.noreply.github.com>"), "{raw}");
+    assert!(
+        raw.contains("author Arsen <arsen@example.com>")
+            && raw.contains("committer Arsen (Agent) <117126823+arsenstorm2@users.noreply.github.com>"),
+        "{raw}"
+    );
     assert!(raw.contains("gpgsig -----BEGIN SSH SIGNATURE-----"), "{raw}");
 }
 
@@ -76,7 +104,8 @@ fn a_github_account_gives_the_committer_its_name_and_noreply_email() {
 
 #[test]
 fn the_key_is_found_among_the_accounts_signing_keys_by_its_body() {
-    let listed = r#"[{"title": "Bitwarden", "key": "ssh-ed25519 AAAAother"}, {"title": "Signing-only Key", "key": "ssh-ed25519 AAAAmine"}]"#;
+    let listed =
+        r#"[{"title": "Bitwarden", "key": "ssh-ed25519 AAAAother"}, {"title": "Signing-only Key", "key": "ssh-ed25519 AAAAmine"}]"#;
     assert_eq!(zerod::git::listed_as(listed, "ssh-ed25519 AAAAmine arsen@mac").as_deref(), Some("Signing-only Key"), "its comment aside");
     assert_eq!(zerod::git::listed_as(listed, "ssh-ed25519 AAAAnone"), None);
 }
@@ -89,7 +118,9 @@ fn a_tasks_own_terminal_commits_as_the_agents_too() {
     std::fs::write(home.join("git-signing-key"), "key").unwrap();
     let mut conversation = zerod::model::Conversation::new("s1", zerod::model::Provider::Claude, home.to_str().unwrap());
     conversation.thread = Some("3f1c".into());
-    let argv = zerod::daemon::terminal_command(&conversation, &zerod::git::variables_for(&agents(vec![]), &home.join("git-signing-key"), &home)).unwrap();
+    let argv =
+        zerod::daemon::terminal_command(&conversation, &zerod::git::variables_for(&agents(vec![]), &home.join("git-signing-key"), &home))
+            .unwrap();
     let at = argv.iter().position(|a| a == "env").expect("env in front");
     assert!(argv[at..].iter().any(|a| a == "GIT_COMMITTER_EMAIL=117126823+arsenstorm2@users.noreply.github.com"), "{argv:?}");
     assert!(argv[at..].iter().position(|a| a == "claude").is_some_and(|c| c > 1), "then the command: {argv:?}");

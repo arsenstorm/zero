@@ -2,7 +2,6 @@
 //! its history read from its session file, resumed on its own thread by the next message; a task archived leaves the
 //! list but stays on disk.
 
-
 use std::sync::Arc;
 
 use crate::common::temp_dir;
@@ -10,7 +9,9 @@ use serde_json::json;
 use zerod::daemon::{Daemon, Options, Runtime};
 use zerod::model::*;
 
-fn quiet() -> Runtime { Arc::new(|_, _, _| Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink()))) }
+fn quiet() -> Runtime {
+    Arc::new(|_, _, _| Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())))
+}
 
 #[tokio::test]
 async fn a_claude_code_session_from_elsewhere_becomes_a_task_with_its_history() {
@@ -31,9 +32,19 @@ async fn a_claude_code_session_from_elsewhere_becomes_a_task_with_its_history() 
     let options = Options { label: Some("ENG-9767 Webhooks".into()), ticket: Some("ENG-9767".into()), ..Default::default() };
     let id = daemon.adopt(Provider::Claude, "5cb4036a-0000", cwd, options.clone()).unwrap();
     let task = daemon.get(&id).unwrap();
-    assert_eq!((task.status, task.thread.as_deref(), task.ticket.as_deref(), task.label.as_deref()),
-               (Status::Offline, Some("5cb4036a-0000"), Some("ENG-9767"), Some("ENG-9767 Webhooks")), "taken in offline, on the session's own thread");
-    let texts: Vec<&str> = task.items.iter().filter_map(|i| match &i.kind { ItemKind::User { text, .. } | ItemKind::Agent { text, .. } => Some(text.as_str()), _ => None }).collect();
+    assert_eq!(
+        (task.status, task.thread.as_deref(), task.ticket.as_deref(), task.label.as_deref()),
+        (Status::Offline, Some("5cb4036a-0000"), Some("ENG-9767"), Some("ENG-9767 Webhooks")),
+        "taken in offline, on the session's own thread"
+    );
+    let texts: Vec<&str> = task
+        .items
+        .iter()
+        .filter_map(|i| match &i.kind {
+            ItemKind::User { text, .. } | ItemKind::Agent { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
     assert_eq!(texts, ["Read SUPERVISE.md and follow it for ENG-9767", "Claimed green-elk."]);
     assert_eq!(daemon.adopt(Provider::Claude, "5cb4036a-0000", cwd, options.clone()).unwrap(), id, "the same session is one task");
     assert_eq!(daemon.adopt(Provider::Claude, "nope", cwd, options).unwrap_err(), format!("No Claude Code session nope in {cwd}"));
@@ -47,12 +58,19 @@ async fn a_claude_code_session_from_elsewhere_becomes_a_task_with_its_history() 
 async fn an_archived_task_leaves_the_list_and_keeps_its_files() {
     let home = temp_dir("archive");
     let daemon = Daemon::open(&home.join("zerod"), quiet()).unwrap();
-    let id = daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    let id = daemon
+        .start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() })
+        .unwrap();
     let mut events = daemon.subscribe();
     daemon.archive(&id).await.unwrap();
     assert!(daemon.get(&id).is_none());
     assert!(home.join("zerod/archive").join(&id).join("meta.json").exists(), "kept under archive/, where it can be brought back");
-    let gone = loop { let event = events.recv().await.unwrap(); if event.change == Change::Archived { break event } };
+    let gone = loop {
+        let event = events.recv().await.unwrap();
+        if event.change == Change::Archived {
+            break event;
+        }
+    };
     assert_eq!(gone.session, id, "clients are told it's gone");
     assert!(Daemon::open(&home.join("zerod"), quiet()).unwrap().get(&id).is_none());
     assert_eq!(daemon.archive(&id).await.unwrap_err(), format!("No session {id}"));
@@ -65,13 +83,18 @@ async fn the_archive_is_listed_from_an_index_rebuilt_when_missing_or_stale() {
     let home = temp_dir("archive-index");
     let zerod = home.join("zerod");
     let daemon = Daemon::open(&zerod, quiet()).unwrap();
-    let start = |prompt: &str| daemon.start(Provider::Claude, prompt, zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    let start = |prompt: &str| {
+        daemon
+            .start(Provider::Claude, prompt, zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() })
+            .unwrap()
+    };
     let (one, two) = (start("one"), start("two"));
     daemon.archive(&one).await.unwrap();
     daemon.archive(&two).await.unwrap();
     let ids = |daemon: &Daemon| daemon.archived(100).iter().map(|a| a["id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
     assert_eq!(ids(&daemon), [two.clone(), one.clone()]);
-    let index: serde_json::Value = serde_json::from_slice(&std::fs::read(zerod.join("archive.json")).expect("the index is written as tasks are archived")).unwrap();
+    let index: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(zerod.join("archive.json")).expect("the index is written as tasks are archived")).unwrap();
     assert_eq!(index.as_array().map(Vec::len), Some(2), "{index}");
 
     daemon.unarchive(&one).unwrap();
@@ -96,7 +119,9 @@ async fn a_lead_adopts_tasks_and_claude_code_sessions_as_its_workers() {
     daemon.place(&user, &home.join("host.sock"));
     let cwd = project.to_str().unwrap();
     let lead = daemon.start(Provider::Claude, "lead them", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
-    let task = daemon.start(Provider::Claude, "one of yesterday's", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
+    let task = daemon
+        .start(Provider::Claude, "one of yesterday's", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() })
+        .unwrap();
 
     assert_eq!(daemon.adopt_into(&lead, &task).unwrap(), task, "a task Zero has, by its id");
     assert_eq!(daemon.get(&task).unwrap().parent.as_deref(), Some(lead.as_str()));
@@ -106,7 +131,11 @@ async fn a_lead_adopts_tasks_and_claude_code_sessions_as_its_workers() {
     // A Claude Code session Zero doesn't have, by its id alone: its folder is in its file.
     let file = zerod::handoff::claude_folder(&user, cwd).join("9f00.jsonl");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-    std::fs::write(&file, json!({"type": "user", "cwd": cwd, "uuid": "u1", "message": {"role": "user", "content": "Fix ENG-1"}}).to_string() + "\n").unwrap();
+    std::fs::write(
+        &file,
+        json!({"type": "user", "cwd": cwd, "uuid": "u1", "message": {"role": "user", "content": "Fix ENG-1"}}).to_string() + "\n",
+    )
+    .unwrap();
     let adopted = daemon.adopt_into(&lead, "9f00").unwrap();
     let worker = daemon.get(&adopted).unwrap();
     assert_eq!((worker.parent.as_deref(), worker.thread.as_deref(), worker.cwd.as_str()), (Some(lead.as_str()), Some("9f00"), cwd));
@@ -154,20 +183,38 @@ async fn a_session_from_claude_code_or_codex_migrates_by_its_id_alone() {
 
     let from_claude = daemon.migrate("c1a0-0000", Options::default()).unwrap();
     let task = daemon.get(&from_claude).unwrap();
-    assert_eq!((task.provider, task.cwd.as_str(), task.thread.as_deref(), task.status), (Provider::Claude, cwd, Some("c1a0-0000"), Status::Offline),
-               "taken in where it ran, offline until a message resumes it on its own thread");
+    assert_eq!(
+        (task.provider, task.cwd.as_str(), task.thread.as_deref(), task.status),
+        (Provider::Claude, cwd, Some("c1a0-0000"), Status::Offline),
+        "taken in where it ran, offline until a message resumes it on its own thread"
+    );
     let from_codex = daemon.migrate("01a1-c0de", Options { label: Some("Flaky test".into()), ..Default::default() }).unwrap();
     let task = daemon.get(&from_codex).unwrap();
-    assert_eq!((task.provider, task.cwd.as_str(), task.thread.as_deref(), task.label.as_deref()), (Provider::Codex, cwd, Some("01a1-c0de"), Some("Flaky test")));
-    let kinds: Vec<String> = task.items.iter().map(|i| match &i.kind {
-        ItemKind::User { text, .. } => format!("user {text}"),
-        ItemKind::Agent { text, final_answer } => format!("agent{} {text}", if *final_answer { " (answer)" } else { "" }),
-        ItemKind::Command { command, output, exit_code, .. } => format!("$ {command} → {exit_code:?} {output}"),
-        ItemKind::Tool { name, .. } => format!("tool {name}"),
-        other => format!("{other:?}"),
-    }).collect();
-    assert_eq!(kinds, ["user Fix the flaky test", "agent Running it first.", "$ bin/rspec spec/x_spec.rb → Some(0) 1 example, 0 failures",
-                       "tool linear.get_issue", "agent (answer) Fixed: it raced the clock."]);
+    assert_eq!(
+        (task.provider, task.cwd.as_str(), task.thread.as_deref(), task.label.as_deref()),
+        (Provider::Codex, cwd, Some("01a1-c0de"), Some("Flaky test"))
+    );
+    let kinds: Vec<String> = task
+        .items
+        .iter()
+        .map(|i| match &i.kind {
+            ItemKind::User { text, .. } => format!("user {text}"),
+            ItemKind::Agent { text, final_answer } => format!("agent{} {text}", if *final_answer { " (answer)" } else { "" }),
+            ItemKind::Command { command, output, exit_code, .. } => format!("$ {command} → {exit_code:?} {output}"),
+            ItemKind::Tool { name, .. } => format!("tool {name}"),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "user Fix the flaky test",
+            "agent Running it first.",
+            "$ bin/rspec spec/x_spec.rb → Some(0) 1 example, 0 failures",
+            "tool linear.get_issue",
+            "agent (answer) Fixed: it raced the clock."
+        ]
+    );
     assert_eq!(daemon.migrate("01a1-c0de", Options::default()).unwrap(), from_codex, "the same session is one task");
     assert!(daemon.migrate("nope", Options::default()).unwrap_err().contains("No Claude Code, Codex or OpenCode session nope"));
 }
@@ -186,13 +233,25 @@ fn an_opencode_export_reads_as_the_tasks_history() {
         {"id": "m4", "type": "idle", "outcome": "succeeded"}]});
     let (cwd, items) = zerod::handoff::from_opencode_export(&export).unwrap();
     assert_eq!(cwd, "/work/app");
-    let kinds: Vec<String> = items.iter().map(|i| match &i.kind {
-        ItemKind::User { text, .. } => format!("user {text}"),
-        ItemKind::Agent { text, final_answer } => format!("agent{} {text}", if *final_answer { " (answer)" } else { "" }),
-        ItemKind::Command { command, output, .. } => format!("$ {command} {output}"),
-        ItemKind::Tool { name, detail } => format!("tool {name} {detail}"),
-        other => format!("{other:?}"),
-    }).collect();
-    assert_eq!(kinds, ["user Check the CVE", "agent Looking it up.", "$ git log -1 abc123", "tool webfetch https://cve.example/1", "agent (answer) Not affected."],
-               "what was typed, said and run; its thinking and OpenCode's own notices stay out");
+    let kinds: Vec<String> = items
+        .iter()
+        .map(|i| match &i.kind {
+            ItemKind::User { text, .. } => format!("user {text}"),
+            ItemKind::Agent { text, final_answer } => format!("agent{} {text}", if *final_answer { " (answer)" } else { "" }),
+            ItemKind::Command { command, output, .. } => format!("$ {command} {output}"),
+            ItemKind::Tool { name, detail } => format!("tool {name} {detail}"),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "user Check the CVE",
+            "agent Looking it up.",
+            "$ git log -1 abc123",
+            "tool webfetch https://cve.example/1",
+            "agent (answer) Not affected."
+        ],
+        "what was typed, said and run; its thinking and OpenCode's own notices stay out"
+    );
 }

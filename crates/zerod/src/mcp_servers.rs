@@ -37,7 +37,9 @@ pub struct McpServer {
     pub enabled: bool,
 }
 
-fn on() -> bool { true }
+fn on() -> bool {
+    true
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -76,21 +78,36 @@ impl McpServer {
     /// Its values, from where each is kept; `keychain` reads one (service, account).
     pub fn resolve(&self, keychain: &dyn Fn(&str, &str) -> Option<String>) -> Resolved {
         let read = |values: &[Value]| -> Vec<(String, String)> {
-            values.iter().filter_map(|v| match v.from {
-                Source::File => v.value.clone().map(|value| (v.name.clone(), value)),
-                Source::Keychain => keychain(KEYCHAIN, &format!("{}.{}", self.id, v.name)).map(|value| (v.name.clone(), value)),
-                Source::Command => None,
-            }).collect()
+            values
+                .iter()
+                .filter_map(|v| match v.from {
+                    Source::File => v.value.clone().map(|value| (v.name.clone(), value)),
+                    Source::Keychain => keychain(KEYCHAIN, &format!("{}.{}", self.id, v.name)).map(|value| (v.name.clone(), value)),
+                    Source::Command => None,
+                })
+                .collect()
         };
-        Resolved { id: self.id.clone(), name: self.name.clone(), command: self.command.clone(), args: self.args.clone(), url: self.url.clone(),
-                   env: read(&self.env), headers: read(&self.headers) }
+        Resolved {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            command: self.command.clone(),
+            args: self.args.clone(),
+            url: self.url.clone(),
+            env: read(&self.env),
+            headers: read(&self.headers),
+        }
     }
 }
 
 /// The Keychain's value for an account, through the `security` tool (as the app keeps its own secrets): no prompt.
 pub fn keychain(service: &str, account: &str) -> Option<String> {
-    let output = std::process::Command::new("/usr/bin/security").args(["find-generic-password", "-s", service, "-a", account, "-w"]).output().ok()?;
-    if !output.status.success() { return None }
+    let output = std::process::Command::new("/usr/bin/security")
+        .args(["find-generic-password", "-s", service, "-a", account, "-w"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
     let value = String::from_utf8(output.stdout).ok()?.trim_end_matches('\n').to_string();
     (!value.is_empty()).then_some(value)
 }
@@ -107,7 +124,9 @@ impl McpServers {
         McpServers { file, list: Mutex::new(list) }
     }
 
-    pub fn list(&self) -> Vec<McpServer> { self.list.lock().unwrap().clone() }
+    pub fn list(&self) -> Vec<McpServer> {
+        self.list.lock().unwrap().clone()
+    }
 
     /// The servers a workspace's tasks get: those for every workspace and those put in it, turned on.
     pub fn for_workspace(&self, workspace: &str) -> Vec<McpServer> {
@@ -117,20 +136,37 @@ impl McpServers {
     /// A new server (no id: one made from its name) or a changed one. A value kept elsewhere isn't written here.
     pub fn save(&self, mut server: McpServer) -> Result<McpServer, String> {
         server.name = server.name.trim().to_string();
-        if server.name.is_empty() { return Err("A server needs a name".into()) }
+        if server.name.is_empty() {
+            return Err("A server needs a name".into());
+        }
         let blank = |s: &Option<String>| s.as_deref().is_none_or(|s| s.trim().is_empty());
-        if blank(&server.command) && blank(&server.url) { return Err("A server runs a command or is at a URL".into()) }
+        if blank(&server.command) && blank(&server.url) {
+            return Err("A server runs a command or is at a URL".into());
+        }
         for value in server.env.iter_mut().chain(server.headers.iter_mut()) {
-            if value.from != Source::File { value.value = None }
+            if value.from != Source::File {
+                value.value = None
+            }
         }
         let mut list = self.list.lock().unwrap();
         if server.id.is_empty() {
-            let base: String = server.name.to_lowercase().chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect::<String>()
-                .split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
+            let base: String = server
+                .name
+                .to_lowercase()
+                .chars()
+                .map(|c| if c.is_alphanumeric() { c } else { '-' })
+                .collect::<String>()
+                .split('-')
+                .filter(|p| !p.is_empty())
+                .collect::<Vec<_>>()
+                .join("-");
             let base = if base.is_empty() { "server".to_string() } else { base };
             let mut id = base.clone();
             let mut n = 2;
-            while list.iter().any(|s| s.id == id) { id = format!("{base}-{n}"); n += 1 }
+            while list.iter().any(|s| s.id == id) {
+                id = format!("{base}-{n}");
+                n += 1
+            }
             server.id = id;
             list.push(server.clone());
         } else if let Some(kept) = list.iter_mut().find(|s| s.id == server.id) {
@@ -146,7 +182,9 @@ impl McpServers {
         let mut list = self.list.lock().unwrap();
         let before = list.len();
         list.retain(|s| s.id != id);
-        if list.len() == before { return Err(format!("No server {id}")) }
+        if list.len() == before {
+            return Err(format!("No server {id}"));
+        }
         self.keep(&list)
     }
 
@@ -172,11 +210,15 @@ pub fn signs_in<'a>(conversation: &'a crate::model::Conversation, id: &str) -> O
 
 /// What the CLI said to a sign-in: its link for the user to open (the CLI hears the callback and keeps what it's
 /// given), or why not.
-pub fn signing_in(conversation: &crate::model::Conversation, id: &str, url: Option<&str>, error: Option<&str>, effects: &mut crate::adapter::Effects) {
+pub fn signing_in(
+    conversation: &crate::model::Conversation, id: &str, url: Option<&str>, error: Option<&str>, effects: &mut crate::adapter::Effects,
+) {
     let name = signs_in(conversation, id).map_or(id, |s| s.name.as_str());
     match (url, error) {
         (_, Some(error)) => effects.notice(conversation, &format!("Couldn't sign in to {name}: {error}"), true),
-        (Some(url), None) => effects.notice(conversation, &format!("{name} needs you to sign in on your Mac: [open its sign-in page]({url})"), false),
+        (Some(url), None) => {
+            effects.notice(conversation, &format!("{name} needs you to sign in on your Mac: [open its sign-in page]({url})"), false)
+        }
         (None, None) => {}
     }
 }

@@ -21,8 +21,13 @@ pub struct Account {
 
 /// Signs in over an app-server's stdio. `page` is given Codex's sign-in page as soon as there is one (none for a
 /// key); the account comes once the user has signed in there.
-pub async fn sign_in<R, W>(reader: R, mut writer: W, method: Method, page: tokio::sync::oneshot::Sender<Option<String>>) -> Result<Account, String>
-where R: AsyncRead + Unpin, W: AsyncWrite + Unpin {
+pub async fn sign_in<R, W>(
+    reader: R, mut writer: W, method: Method, page: tokio::sync::oneshot::Sender<Option<String>>,
+) -> Result<Account, String>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     let mut lines = BufReader::new(reader).lines();
     greet(&mut lines, &mut writer).await?;
     let params = match &method {
@@ -36,7 +41,9 @@ where R: AsyncRead + Unpin, W: AsyncWrite + Unpin {
         // The user signs in in the browser; Codex says when that's done (or wasn't).
         loop {
             let message = next(&mut lines).await?;
-            if message["method"] != "account/login/completed" { continue }
+            if message["method"] != "account/login/completed" {
+                continue;
+            }
             if message["params"]["success"] != true {
                 return Err(format!("Codex didn't sign in: {}", message["params"]["error"].as_str().unwrap_or("no reason given")));
             }
@@ -48,7 +55,10 @@ where R: AsyncRead + Unpin, W: AsyncWrite + Unpin {
 
 /// Who the home an app-server runs in is signed in as, asked of Codex without signing in.
 pub async fn account<R, W>(reader: R, mut writer: W) -> Result<Account, String>
-where R: AsyncRead + Unpin, W: AsyncWrite + Unpin {
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     let mut lines = BufReader::new(reader).lines();
     greet(&mut lines, &mut writer).await?;
     read(&mut lines, &mut writer).await
@@ -56,21 +66,28 @@ where R: AsyncRead + Unpin, W: AsyncWrite + Unpin {
 
 /// How much of its plan's windows the home's account has used, as Codex reads it: no task needed.
 pub async fn rate_limits<R, W>(reader: R, mut writer: W) -> Result<crate::model::Usage, String>
-where R: AsyncRead + Unpin, W: AsyncWrite + Unpin {
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     let mut lines = BufReader::new(reader).lines();
     greet(&mut lines, &mut writer).await?;
     write(&mut writer, json!({"id": 4, "method": "account/rateLimits/read"})).await?;
     Ok(crate::codex::usage(&answer(&mut lines, 4).await?["rateLimits"]))
 }
 
-async fn greet<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(lines: &mut tokio::io::Lines<BufReader<R>>, writer: &mut W) -> Result<(), String> {
+async fn greet<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+    lines: &mut tokio::io::Lines<BufReader<R>>, writer: &mut W,
+) -> Result<(), String> {
     write(writer, json!({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "zero", "title": "Zero", "version": env!("CARGO_PKG_VERSION")},
                                                                      "capabilities": {"experimentalApi": false, "requestAttestation": false}}})).await?;
     answer(lines, 1).await?;
     write(writer, json!({"method": "initialized"})).await
 }
 
-async fn read<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(lines: &mut tokio::io::Lines<BufReader<R>>, writer: &mut W) -> Result<Account, String> {
+async fn read<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+    lines: &mut tokio::io::Lines<BufReader<R>>, writer: &mut W,
+) -> Result<Account, String> {
     write(writer, json!({"id": 3, "method": "account/read", "params": {}})).await?;
     let account = &answer(lines, 3).await?["account"];
     Ok(Account { email: account["email"].as_str().map(String::from), plan: account["planType"].as_str().map(String::from) })
@@ -83,7 +100,9 @@ async fn write<W: AsyncWrite + Unpin>(writer: &mut W, message: Value) -> Result<
 async fn next<R: AsyncRead + Unpin>(lines: &mut tokio::io::Lines<BufReader<R>>) -> Result<Value, String> {
     loop {
         let line = lines.next_line().await.map_err(|e| e.to_string())?.ok_or("Codex stopped before it had signed in")?;
-        if let Ok(message) = serde_json::from_str::<Value>(&line) { return Ok(message) }
+        if let Ok(message) = serde_json::from_str::<Value>(&line) {
+            return Ok(message);
+        }
     }
 }
 
@@ -91,8 +110,12 @@ async fn next<R: AsyncRead + Unpin>(lines: &mut tokio::io::Lines<BufReader<R>>) 
 async fn answer<R: AsyncRead + Unpin>(lines: &mut tokio::io::Lines<BufReader<R>>, id: u64) -> Result<Value, String> {
     loop {
         let message = next(lines).await?;
-        if message["id"] != id || message.get("method").is_some() { continue }
-        if let Some(error) = message.get("error") { return Err(format!("Codex refused: {}", error["message"].as_str().unwrap_or("no reason given"))) }
+        if message["id"] != id || message.get("method").is_some() {
+            continue;
+        }
+        if let Some(error) = message.get("error") {
+            return Err(format!("Codex refused: {}", error["message"].as_str().unwrap_or("no reason given")));
+        }
         return Ok(message["result"].clone());
     }
 }

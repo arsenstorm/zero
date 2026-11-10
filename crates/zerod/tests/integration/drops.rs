@@ -22,14 +22,20 @@ fn write_ask(drop: &Path, ask: &Ask) {
 }
 
 fn remote(kind: AskKind, id: &str) -> Ask {
-    let mut ask = Ask::new(kind, "From the bench", AgentIdentity { name: "bench-agent".into(), host: "bench".into(), ..Default::default() }, 3600);
+    let mut ask =
+        Ask::new(kind, "From the bench", AgentIdentity { name: "bench-agent".into(), host: "bench".into(), ..Default::default() }, 3600);
     ask.id = id.into();
     ask.options = vec!["Yes".into(), "No".into()];
     ask
 }
 
 async fn eventually(test: impl Fn() -> bool) {
-    for _ in 0..300 { if test() { return } tokio::time::sleep(Duration::from_millis(10)).await }
+    for _ in 0..300 {
+        if test() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await
+    }
     panic!("timed out");
 }
 
@@ -84,7 +90,9 @@ async fn a_dropped_note_is_read_and_removed_and_a_withdraw_file_withdraws() {
 #[tokio::test]
 async fn patterns_find_folders_and_make_the_drop_inside_each() {
     let (_inbox, drops, root) = setup("patterns");
-    for app in ["api", "web"] { std::fs::create_dir_all(root.join("worktrees/alpha").join(app)).unwrap() }
+    for app in ["api", "web"] {
+        std::fs::create_dir_all(root.join("worktrees/alpha").join(app)).unwrap()
+    }
     std::fs::create_dir_all(root.join("worktrees/beta/api")).unwrap();
     std::fs::create_dir_all(root.join("worktrees/beta/notes.txt.d")).unwrap();
     // "*/*/.zero": every app folder gets a `.zero` drop, made here so the other side finds the client.

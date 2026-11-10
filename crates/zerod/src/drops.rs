@@ -49,7 +49,9 @@ impl Drops {
             while let Ok(event) = events.recv().await {
                 let InboxEvent::Ask(ask) = event else { continue };
                 let Some(drops) = weak.upgrade() else { return };
-                if ask.state.is_final() { drops.answer(&ask) }
+                if ask.state.is_final() {
+                    drops.answer(&ask)
+                }
             }
         });
         drops
@@ -61,7 +63,10 @@ impl Drops {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
-                match weak.upgrade() { Some(drops) => drops.scan(), None => return }
+                match weak.upgrade() {
+                    Some(drops) => drops.scan(),
+                    None => return,
+                }
             }
         });
     }
@@ -84,7 +89,9 @@ impl Drops {
             Some((_, drops)) => (drops, false),
             None => (self.folders(), true),
         };
-        if fresh { self.state.lock().unwrap().found = Some((std::time::Instant::now(), drops.clone())) }
+        if fresh {
+            self.state.lock().unwrap().found = Some((std::time::Instant::now(), drops.clone()))
+        }
         for drop in drops {
             if fresh {
                 self.prepare(&drop);
@@ -93,7 +100,9 @@ impl Drops {
             let asks = drop.join("asks");
             // Unchanged since it was read (a file added, removed or renamed in it changes it): nothing new.
             let changed = std::fs::metadata(&asks).and_then(|m| m.modified()).ok();
-            if changed.is_some() && self.state.lock().unwrap().read.get(&asks) == changed.as_ref() { continue }
+            if changed.is_some() && self.state.lock().unwrap().read.get(&asks) == changed.as_ref() {
+                continue;
+            }
             let Ok(entries) = std::fs::read_dir(&asks) else { continue };
             let files: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
             let mut unfinished = false;
@@ -106,18 +115,28 @@ impl Drops {
             }
             for file in files.iter().filter(|f| f.extension().is_some_and(|e| e == "json")) {
                 let key = file.display().to_string();
-                if self.state.lock().unwrap().ingested.contains(&key) { continue }
+                if self.state.lock().unwrap().ingested.contains(&key) {
+                    continue;
+                }
                 let Ok(incoming) = std::fs::read(file).map(|data| serde_json::from_slice::<Ask>(&data)) else { continue };
                 // Half-written by the sync: read it on a later look (the folder isn't marked read, so there is one).
-                let Ok(incoming) = incoming else { unfinished = true; continue };
+                let Ok(incoming) = incoming else {
+                    unfinished = true;
+                    continue;
+                };
                 self.state.lock().unwrap().ingested.insert(key);
                 let ask = self.inbox.create(incoming, true);
-                if ask.kind == AskKind::Note { let _ = std::fs::remove_file(file); }
-                else { self.state.lock().unwrap().origin.insert(ask.id, drop.clone()); }
+                if ask.kind == AskKind::Note {
+                    let _ = std::fs::remove_file(file);
+                } else {
+                    self.state.lock().unwrap().origin.insert(ask.id, drop.clone());
+                }
             }
             // Marked as it was before it was listed: a file that came while it was read changes it again, and is read
             // next time (what this look removed changes it too: one more listing, no more).
-            if !unfinished && let Some(changed) = changed { self.state.lock().unwrap().read.insert(asks, changed); }
+            if !unfinished && let Some(changed) = changed {
+                self.state.lock().unwrap().read.insert(asks, changed);
+            }
         }
     }
 
@@ -126,22 +145,32 @@ impl Drops {
         let Some(drop) = self.state.lock().unwrap().origin.remove(&ask.id) else { return };
         let Ok(data) = serde_json::to_vec(ask) else { return };
         let (answer, partial) = (drop.join(format!("answers/{}.json", ask.id)), drop.join(format!("answers/{}.json.tmp", ask.id)));
-        if std::fs::write(&partial, data).is_ok() { let _ = std::fs::rename(&partial, &answer); }
+        if std::fs::write(&partial, data).is_ok() {
+            let _ = std::fs::rename(&partial, &answer);
+        }
         let _ = std::fs::remove_file(drop.join(format!("asks/{}.json", ask.id)));
     }
 
     /// The two folders, the client binaries (copied only when their size differs, so a sync isn't asked to move them
     /// every second) and the shim.
     fn prepare(&self, drop: &Path) {
-        for name in ["asks", "answers"] { let _ = std::fs::create_dir_all(drop.join(name)); }
+        for name in ["asks", "answers"] {
+            let _ = std::fs::create_dir_all(drop.join(name));
+        }
         if let Ok(entries) = std::fs::read_dir(&self.resources) {
             for source in entries.filter_map(|e| e.ok().map(|e| e.path())) {
-                let Some(name) = source.file_name().map(|n| n.to_string_lossy().to_string()).filter(|n| n.starts_with("zero-drop-")) else { continue };
+                let Some(name) = source.file_name().map(|n| n.to_string_lossy().to_string()).filter(|n| n.starts_with("zero-drop-")) else {
+                    continue;
+                };
                 let target = drop.join(&name);
                 let size = |p: &Path| std::fs::metadata(p).map(|m| m.len()).ok();
-                if size(&source) == size(&target) { continue }
+                if size(&source) == size(&target) {
+                    continue;
+                }
                 let _ = std::fs::remove_file(&target);
-                if std::fs::copy(&source, &target).is_ok() { let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)); }
+                if std::fs::copy(&source, &target).is_ok() {
+                    let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755));
+                }
             }
         }
         let shim = drop.join("zero");
@@ -155,9 +184,14 @@ impl Drops {
 fn sweep(answers: &Path) {
     let Ok(entries) = std::fs::read_dir(answers) else { return };
     for file in entries.filter_map(|e| e.ok().map(|e| e.path())) {
-        let old = std::fs::metadata(&file).and_then(|m| m.modified()).ok()
-            .and_then(|at| SystemTime::now().duration_since(at).ok()).is_some_and(|age| age > Duration::from_secs(86400));
-        if old { let _ = std::fs::remove_file(file); }
+        let old = std::fs::metadata(&file)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|at| SystemTime::now().duration_since(at).ok())
+            .is_some_and(|age| age > Duration::from_secs(86400));
+        if old {
+            let _ = std::fs::remove_file(file);
+        }
     }
 }
 
@@ -166,20 +200,28 @@ fn sweep(answers: &Path) {
 fn expand(pattern: &str) -> Vec<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();
     let path = if let Some(rest) = pattern.strip_prefix("~/") { format!("{home}/{rest}") } else { pattern.to_string() };
-    braces(&path).into_iter().flat_map(|path| {
-        let (parent, leaf) = path.rsplit_once('/').unwrap_or(("", path.as_str()));
-        if !leaf.chars().any(|c| "*?[".contains(c)) {
-            for folder in glob(parent) { let _ = std::fs::create_dir(folder.join(leaf)); }
-        }
-        glob(&path)
-    }).collect()
+    braces(&path)
+        .into_iter()
+        .flat_map(|path| {
+            let (parent, leaf) = path.rsplit_once('/').unwrap_or(("", path.as_str()));
+            if !leaf.chars().any(|c| "*?[".contains(c)) {
+                for folder in glob(parent) {
+                    let _ = std::fs::create_dir(folder.join(leaf));
+                }
+            }
+            glob(&path)
+        })
+        .collect()
 }
 
 /// "{a,b}" alternatives spelled out, every brace in turn.
 fn braces(pattern: &str) -> Vec<String> {
     let Some(open) = pattern.find('{') else { return vec![pattern.into()] };
     let Some(close) = pattern[open..].find('}').map(|i| open + i) else { return vec![pattern.into()] };
-    pattern[open + 1..close].split(',').flat_map(|choice| braces(&format!("{}{choice}{}", &pattern[..open], &pattern[close + 1..]))).collect()
+    pattern[open + 1..close]
+        .split(',')
+        .flat_map(|choice| braces(&format!("{}{choice}{}", &pattern[..open], &pattern[close + 1..])))
+        .collect()
 }
 
 /// The folders matching an absolute pattern of `*`, `?` and `[...]` in its parts.
@@ -187,14 +229,26 @@ fn glob(pattern: &str) -> Vec<PathBuf> {
     let mut found = vec![PathBuf::from("/")];
     for part in pattern.split('/').filter(|p| !p.is_empty()) {
         let glob = part.chars().any(|c| "*?[".contains(c));
-        found = found.into_iter().flat_map(|dir| {
-            if !glob { return vec![dir.join(part)] }
-            std::fs::read_dir(&dir).map(|entries| entries.filter_map(|e| e.ok()).filter_map(|e| {
-                let name = e.file_name().to_string_lossy().to_string();
-                // A leading dot is matched only by a pattern that says so, as the shell does.
-                (matches(part, &name) && (!name.starts_with('.') || part.starts_with('.'))).then(|| e.path())
-            }).collect()).unwrap_or_default()
-        }).collect();
+        found = found
+            .into_iter()
+            .flat_map(|dir| {
+                if !glob {
+                    return vec![dir.join(part)];
+                }
+                std::fs::read_dir(&dir)
+                    .map(|entries| {
+                        entries
+                            .filter_map(|e| e.ok())
+                            .filter_map(|e| {
+                                let name = e.file_name().to_string_lossy().to_string();
+                                // A leading dot is matched only by a pattern that says so, as the shell does.
+                                (matches(part, &name) && (!name.starts_with('.') || part.starts_with('.'))).then(|| e.path())
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .collect();
     }
     found.into_iter().filter(|p| p.is_dir()).collect()
 }
@@ -215,7 +269,13 @@ fn matches(pattern: &str, name: &str) -> bool {
                 let mut hit = false;
                 let mut i = 0;
                 while i < set.len() {
-                    if i + 2 < set.len() && set[i + 1] == '-' { hit |= set[i] <= c && c <= set[i + 2]; i += 3 } else { hit |= set[i] == c; i += 1 }
+                    if i + 2 < set.len() && set[i + 1] == '-' {
+                        hit |= set[i] <= c && c <= set[i + 2];
+                        i += 3
+                    } else {
+                        hit |= set[i] == c;
+                        i += 1
+                    }
                 }
                 hit != negate && go(&p[end + 1..], &n[1..])
             }

@@ -21,7 +21,9 @@ pub fn take(cwd: &Path, name: &str) -> Option<String> {
     let tree = tree(cwd, &top)?;
     let head = git(&top, &["rev-parse", "--verify", "-q", "HEAD"]);
     let mut args = vec!["commit-tree", tree.as_str(), "-m", "Zero: the folder before a message"];
-    if let Some(head) = &head { args.extend(["-p", head.as_str()]) }
+    if let Some(head) = &head {
+        args.extend(["-p", head.as_str()])
+    }
     let commit = git_as_zero(&top, &args)?;
     git(&top, &["update-ref", &format!("refs/zero/{name}"), &commit])?;
     Some(commit)
@@ -52,11 +54,21 @@ pub fn restore(cwd: &Path, snapshot: &str, point: &str) -> Result<Diff, String> 
     }
     if !back.is_empty() {
         // Paths on stdin, so however many there are fits.
-        let mut child = Command::new("git").args(["restore", &format!("--source={snapshot}"), "--worktree", "--pathspec-from-file=-", "--pathspec-file-nul"])
-            .current_dir(&top).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
-        if let Some(mut stdin) = child.stdin.take() { let _ = stdin.write_all(back.join("\0").as_bytes()); }
+        let mut child = Command::new("git")
+            .args(["restore", &format!("--source={snapshot}"), "--worktree", "--pathspec-from-file=-", "--pathspec-file-nul"])
+            .current_dir(&top)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(back.join("\0").as_bytes());
+        }
         let output = child.wait_with_output().map_err(|e| e.to_string())?;
-        if !output.status.success() { return Err(format!("git couldn't restore the files: {}", String::from_utf8_lossy(&output.stderr).trim())) }
+        if !output.status.success() {
+            return Err(format!("git couldn't restore the files: {}", String::from_utf8_lossy(&output.stderr).trim()));
+        }
     }
     Ok(changed)
 }
@@ -70,9 +82,14 @@ fn top(cwd: &Path) -> Option<PathBuf> {
 /// files that haven't changed), so the real one is left as it is.
 fn tree(cwd: &Path, top: &Path) -> Option<String> {
     let index = git(cwd, &["rev-parse", "--path-format=absolute", "--git-path", "index"])?;
-    let copy = std::env::temp_dir().join(format!("zero-index-{}-{}", std::process::id(), std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)));
-    if std::fs::copy(&index, &copy).is_err() { let _ = std::fs::remove_file(&copy); }
+    let copy = std::env::temp_dir().join(format!(
+        "zero-index-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+    ));
+    if std::fs::copy(&index, &copy).is_err() {
+        let _ = std::fs::remove_file(&copy);
+    }
     let with = |args: &[&str]| run(Command::new("git").args(args).current_dir(top).env("GIT_INDEX_FILE", &copy));
     let tree = with(&["add", "-A"]).and_then(|_| with(&["write-tree"]));
     let _ = std::fs::remove_file(&copy);
@@ -97,8 +114,13 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
 
 /// A commit Zero makes, as Zero: the user's git may have no name set, and these aren't the user's commits.
 fn git_as_zero(dir: &Path, args: &[&str]) -> Option<String> {
-    run(Command::new("git").args(args).current_dir(dir).env("GIT_AUTHOR_NAME", "Zero").env("GIT_AUTHOR_EMAIL", "zero@localhost")
-        .env("GIT_COMMITTER_NAME", "Zero").env("GIT_COMMITTER_EMAIL", "zero@localhost"))
+    run(Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_AUTHOR_NAME", "Zero")
+        .env("GIT_AUTHOR_EMAIL", "zero@localhost")
+        .env("GIT_COMMITTER_NAME", "Zero")
+        .env("GIT_COMMITTER_EMAIL", "zero@localhost"))
 }
 
 fn run(command: &mut Command) -> Option<String> {

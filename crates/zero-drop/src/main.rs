@@ -141,8 +141,12 @@ impl Args {
         }
         Args { command, positional, flags }
     }
-    fn flag(&self, key: &str) -> Option<&String> { self.flags.get(key).and_then(|v| v.last()) }
-    fn has(&self, key: &str) -> bool { self.flags.contains_key(key) }
+    fn flag(&self, key: &str) -> Option<&String> {
+        self.flags.get(key).and_then(|v| v.last())
+    }
+    fn has(&self, key: &str) -> bool {
+        self.flags.contains_key(key)
+    }
 }
 
 struct Drop {
@@ -155,24 +159,24 @@ impl Drop {
         let exe = fs::canonicalize(&exe).unwrap_or(exe);
         Drop { root: exe.parent().map(Path::to_path_buf).unwrap_or_else(|| ".".into()) }
     }
-    fn asks(&self) -> PathBuf { self.root.join("asks") }
-    fn answers(&self) -> PathBuf { self.root.join("answers") }
+    fn asks(&self) -> PathBuf {
+        self.root.join("asks")
+    }
+    fn answers(&self) -> PathBuf {
+        self.root.join("answers")
+    }
 
     /// Without ZERO_AGENT, the folder's two parent names: in a worktree that reads "<worktree>/<repo>".
     fn agent(&self, args: &Args) -> Agent {
-        let name = args
-            .flag("agent")
-            .cloned()
-            .or_else(|| env::var("ZERO_AGENT").ok())
-            .unwrap_or_else(|| {
-                let parent = self.root.parent();
-                let leaf = |p: Option<&Path>| p.and_then(Path::file_name).map(|n| n.to_string_lossy().to_string());
-                match (leaf(parent.and_then(Path::parent)), leaf(parent)) {
-                    (Some(a), Some(b)) => format!("{a}/{b}"),
-                    (_, Some(b)) => b,
-                    _ => "drop".into(),
-                }
-            });
+        let name = args.flag("agent").cloned().or_else(|| env::var("ZERO_AGENT").ok()).unwrap_or_else(|| {
+            let parent = self.root.parent();
+            let leaf = |p: Option<&Path>| p.and_then(Path::file_name).map(|n| n.to_string_lossy().to_string());
+            match (leaf(parent.and_then(Path::parent)), leaf(parent)) {
+                (Some(a), Some(b)) => format!("{a}/{b}"),
+                (_, Some(b)) => b,
+                _ => "drop".into(),
+            }
+        });
         Agent {
             name,
             host: hostname(),
@@ -181,16 +185,26 @@ impl Drop {
         }
     }
 
-    fn create(&self, args: &Args, kind: &str, title: String, body: String, options: Vec<String>, command: Option<String>, cwd: Option<String>) -> Ask {
+    fn create(
+        &self, args: &Args, kind: &str, title: String, body: String, options: Vec<String>, command: Option<String>, cwd: Option<String>,
+    ) -> Ask {
         let ask = self.create_unsent(args, kind, title, body, options, command, cwd);
         self.send(&ask);
         ask
     }
 
-    fn create_unsent(&self, args: &Args, kind: &str, title: String, body: String, options: Vec<String>, command: Option<String>, cwd: Option<String>) -> Ask {
+    fn create_unsent(
+        &self, args: &Args, kind: &str, title: String, body: String, options: Vec<String>, command: Option<String>, cwd: Option<String>,
+    ) -> Ask {
         let ttl: f64 = args.flag("ttl").and_then(|t| t.parse().ok()).unwrap_or(0.0) * 60.0;
         let status = if kind == "note" {
-            if args.has("blocked") { Some("blocked".into()) } else if args.has("done") { Some("done".into()) } else { None }
+            if args.has("blocked") {
+                Some("blocked".into())
+            } else if args.has("done") {
+                Some("done".into())
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -293,9 +307,14 @@ fn permission(input: &str) -> Option<(String, String, String, Option<String>)> {
     let tool = json["tool_name"].as_str()?;
     let field = |key: &str| json["tool_input"][key].as_str().map(str::to_string);
     let (what, code) = match tool {
-        "Bash" => (field("description").map(|d| d.trim_end_matches('?').to_string()).unwrap_or_else(|| "Run a command".into()), field("command").unwrap_or_default()),
+        "Bash" => (
+            field("description").map(|d| d.trim_end_matches('?').to_string()).unwrap_or_else(|| "Run a command".into()),
+            field("command").unwrap_or_default(),
+        ),
         "Write" => ("Write a file".into(), field("file_path").unwrap_or_default()),
-        "Edit" | "MultiEdit" | "NotebookEdit" => ("Edit a file".into(), field("file_path").or_else(|| field("notebook_path")).unwrap_or_default()),
+        "Edit" | "MultiEdit" | "NotebookEdit" => {
+            ("Edit a file".into(), field("file_path").or_else(|| field("notebook_path")).unwrap_or_default())
+        }
         "WebFetch" => ("Fetch a page".into(), field("url").unwrap_or_default()),
         other => (format!("Use {other}"), json["tool_input"].to_string()),
     };
@@ -309,9 +328,13 @@ fn last_words(path: &str) -> Option<String> {
     let tail = &data[data.len().saturating_sub(400_000)..];
     String::from_utf8_lossy(tail).lines().rev().find_map(|line| {
         let entry: serde_json::Value = serde_json::from_str(line).ok()?;
-        if entry["type"] != "assistant" { return None; }
+        if entry["type"] != "assistant" {
+            return None;
+        }
         let text = entry["message"]["content"].as_array()?.iter().rev().find(|c| c["type"] == "text")?["text"].as_str()?.trim().to_string();
-        if text.is_empty() { return None; }
+        if text.is_empty() {
+            return None;
+        }
         Some(if text.chars().count() > 500 { text.chars().take(500).collect::<String>() + "…" } else { text })
     })
 }
@@ -339,7 +362,9 @@ fn script_of(command: &str, cwd: Option<&str>) -> Option<String> {
     let words: Vec<&str> = command.split_whitespace().collect();
     let first = *words.first()?;
     let path = if matches!(first, "sh" | "bash" | "zsh") { *words.get(1)? } else { first };
-    if path.starts_with('-') { return None; }
+    if path.starts_with('-') {
+        return None;
+    }
     let full = if path.starts_with('/') { PathBuf::from(path) } else { PathBuf::from(cwd.unwrap_or(".")).join(path) };
     let text = fs::read_to_string(full).ok()?;
     Some(if text.chars().count() > 6000 { text.chars().take(6000).collect::<String>() + "\n…" } else { text })
@@ -356,7 +381,9 @@ fn main() {
             short_detail(args.flag("body"), "body");
             let options = args.flags.get("option").cloned().unwrap_or_default();
             // Choices written into the question can only be answered by typing; as options they take one key.
-            if options.is_empty() && (question.contains("(a)") && question.contains("(b)") || question.contains("(1)") && question.contains("(2)")) {
+            if options.is_empty()
+                && (question.contains("(a)") && question.contains("(b)") || question.contains("(1)") && question.contains("(2)"))
+            {
                 fail("zero: put the choices in --option, one each (the first is the one you recommend), not as (a)/(b) in the question", 1)
             }
             let title = args.flag("title").or(args.flag("ticket")).cloned().unwrap_or_else(|| question.clone());
@@ -372,7 +399,15 @@ fn main() {
             short_headline(&what);
             short_detail(args.flag("body"), "body");
             let options = vec!["Yes".into(), "No".into(), "Suggest something else…".into()];
-            let ask = drop.create(&args, "approve", what, args.flag("body").cloned().unwrap_or_default(), options, args.flag("code").cloned(), None);
+            let ask = drop.create(
+                &args,
+                "approve",
+                what,
+                args.flag("body").cloned().unwrap_or_default(),
+                options,
+                args.flag("code").cloned(),
+                None,
+            );
             submit(&drop, &args, ask)
         }
         "permission" => {
@@ -380,28 +415,41 @@ fn main() {
             // If the ask expires, nothing is printed and Claude Code's own permission flow carries on.
             let mut input = String::new();
             std::io::stdin().read_to_string(&mut input).ok();
-            if serde_json::from_str::<serde_json::Value>(&input).ok().and_then(|j| j["tool_name"].as_str().map(str::to_string)).as_deref() == Some("AskUserQuestion") {
+            if serde_json::from_str::<serde_json::Value>(&input).ok().and_then(|j| j["tool_name"].as_str().map(str::to_string)).as_deref()
+                == Some("AskUserQuestion")
+            {
                 process::exit(0) // answered by the question hook, as questions
             }
             let (title, why, code, cwd) = permission(&input).unwrap_or_else(|| fail("zero: no permission request on stdin", 1));
-            let suggestions = serde_json::from_str::<serde_json::Value>(&input).ok()
+            let suggestions = serde_json::from_str::<serde_json::Value>(&input)
+                .ok()
                 .and_then(|j| j.get("permission_suggestions").cloned())
                 .filter(|s| s.as_array().map_or(false, |a| !a.is_empty()));
             let mut options: Vec<String> = vec!["Allow".into()];
-            if suggestions.is_some() { options.push("Always allow".into()); }
+            if suggestions.is_some() {
+                options.push("Always allow".into());
+            }
             options.extend(["Deny".into(), "Deny, and say why…".into()]);
             let ask = drop.create(&args, "permission", title, why, options, Some(code), cwd);
             let done = drop.wait_ask(&ask.id).unwrap_or_else(|| process::exit(0));
             let decision = match done.state.as_str() {
                 "answered" => {
                     let mut d = serde_json::json!({"behavior": "allow"});
-                    if done.answer.as_deref() == Some("Always allow") { if let Some(s) = suggestions { d["updatedPermissions"] = s; } }
+                    if done.answer.as_deref() == Some("Always allow") {
+                        if let Some(s) = suggestions {
+                            d["updatedPermissions"] = s;
+                        }
+                    }
                     d
                 }
                 "declined" => {
                     let reason = done.answer.unwrap_or_default();
                     let reason = reason.split_once(": ").map(|(_, r)| r.to_string()).unwrap_or_default();
-                    let message = if reason.is_empty() { "The user said no in Zero".to_string() } else { format!("The user said no in Zero: {reason}") };
+                    let message = if reason.is_empty() {
+                        "The user said no in Zero".to_string()
+                    } else {
+                        format!("The user said no in Zero: {reason}")
+                    };
                     serde_json::json!({"behavior": "deny", "message": message})
                 }
                 _ => process::exit(0),
@@ -417,32 +465,49 @@ fn main() {
             let hook: serde_json::Value = serde_json::from_str(&raw).unwrap_or_else(|_| process::exit(0));
             let mut input = hook["tool_input"].clone();
             let questions = input["questions"].as_array().cloned().unwrap_or_default();
-            if questions.is_empty() { process::exit(0) }
+            if questions.is_empty() {
+                process::exit(0)
+            }
             let mut answers = serde_json::Map::new();
             for item in questions {
                 let question = item["question"].as_str().unwrap_or_else(|| process::exit(0)).to_string();
                 let opts = item["options"].as_array().cloned().unwrap_or_default();
                 let labels: Vec<String> = opts.iter().filter_map(|o| o["label"].as_str().map(str::to_string)).collect();
-                let details: Vec<String> = opts.iter().filter_map(|o| {
-                    let (l, d) = (o["label"].as_str()?, o["description"].as_str()?);
-                    if d.is_empty() { None } else { Some(format!("{l}: {d}")) }
-                }).collect();
+                let details: Vec<String> = opts
+                    .iter()
+                    .filter_map(|o| {
+                        let (l, d) = (o["label"].as_str()?, o["description"].as_str()?);
+                        if d.is_empty() {
+                            None
+                        } else {
+                            Some(format!("{l}: {d}"))
+                        }
+                    })
+                    .collect();
                 let several = item["multiSelect"].as_bool() == Some(true);
                 let mut options = labels.clone();
                 options.push(if several { "Several, or something else…".into() } else { "Something else…".into() });
                 let title = item["header"].as_str().map(str::to_string).unwrap_or_else(|| question.clone());
                 let cwd = hook["cwd"].as_str().map(str::to_string);
                 let mut ask = drop.create_unsent(&args, "choice", title, question.clone(), options, None, cwd);
-                if !details.is_empty() { ask.detail = Some(details.join("\n")); }
+                if !details.is_empty() {
+                    ask.detail = Some(details.join("\n"));
+                }
                 drop.send(&ask);
                 let done = drop.wait_ask(&ask.id).unwrap_or_else(|| process::exit(0));
-                if done.state != "answered" { process::exit(0) }
+                if done.state != "answered" {
+                    process::exit(0)
+                }
                 let answer = done.answer.unwrap_or_default();
-                let value = if labels.contains(&answer) { answer } else { answer.split_once(": ").map(|(_, t)| t.to_string()).unwrap_or(answer) };
+                let value =
+                    if labels.contains(&answer) { answer } else { answer.split_once(": ").map(|(_, t)| t.to_string()).unwrap_or(answer) };
                 answers.insert(question, serde_json::Value::String(value));
             }
             input["answers"] = serde_json::Value::Object(answers);
-            println!("{}", serde_json::json!({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow", "updatedInput": input}}));
+            println!(
+                "{}",
+                serde_json::json!({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow", "updatedInput": input}})
+            );
             process::exit(0)
         }
         "withdraw" => {

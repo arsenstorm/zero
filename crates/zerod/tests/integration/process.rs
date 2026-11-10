@@ -1,7 +1,6 @@
 //! Runtime processes: started in the session's folder with a clean environment, their output read as the
 //! session's input, their errors kept in a file, and ended by `stop`.
 
-
 use crate::common::{temp_dir, until};
 use tokio::sync::broadcast;
 use zerod::model::{Conversation, Provider, Status};
@@ -22,19 +21,37 @@ async fn a_runtime_runs_in_the_sessions_folder_with_its_own_name_for_zero() {
     let body = r#"printf '{"method":"thread/name/updated","params":{"threadName":"%s %s"}}\n' "$ZERO_SESSION/$ZERO_AGENT/$ZERO_MANAGED" "$(pwd -P)"; cat >/dev/null"#;
     session.attach(process::spawn(&script(body), &cwd, "s1", None).unwrap());
     let named = until(&session, |c| c.title.is_some()).await;
-    assert_eq!(named.title.unwrap(), format!("s1/zerod-s1/0 {}", cwd.display()),
-        "the session's own name for its zero calls; Zero's plugin stands down, since zerod answers and brings the rules");
+    assert_eq!(
+        named.title.unwrap(),
+        format!("s1/zerod-s1/0 {}", cwd.display()),
+        "the session's own name for its zero calls; Zero's plugin stands down, since zerod answers and brings the rules"
+    );
 }
 
 #[test]
 fn a_runtime_gets_the_login_environment_but_not_who_started_zero() {
-    let login = [("HOME", "/Users/u"), ("CLIPROXY_API_KEY", "k"), ("PATH", "/opt/x/bin"), ("ZERO_HOST_TERMINAL", "t1"), ("CLAUDECODE", "1"),
-                 ("CLAUDE_CODE_ENTRYPOINT", "cli"), ("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "9"), ("ZERO_AGENT", "claude-7"), ("CODEX_THREAD_ID", "t")];
-    let env: std::collections::HashMap<String, String> = process::environment(login.iter().map(|(k, v)| (k.to_string(), v.to_string())), "s1").into_iter().collect();
+    let login = [
+        ("HOME", "/Users/u"),
+        ("CLIPROXY_API_KEY", "k"),
+        ("PATH", "/opt/x/bin"),
+        ("ZERO_HOST_TERMINAL", "t1"),
+        ("CLAUDECODE", "1"),
+        ("CLAUDE_CODE_ENTRYPOINT", "cli"),
+        ("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "9"),
+        ("ZERO_AGENT", "claude-7"),
+        ("CODEX_THREAD_ID", "t"),
+    ];
+    let env: std::collections::HashMap<String, String> =
+        process::environment(login.iter().map(|(k, v)| (k.to_string(), v.to_string())), "s1").into_iter().collect();
     // As Codex gets it when run by hand: a provider's own settings (here a key for a custom model provider) come along.
-    assert_eq!((env["HOME"].as_str(), env["CLIPROXY_API_KEY"].as_str(), env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"].as_str()), ("/Users/u", "k", "9"));
+    assert_eq!(
+        (env["HOME"].as_str(), env["CLIPROXY_API_KEY"].as_str(), env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"].as_str()),
+        ("/Users/u", "k", "9")
+    );
     // Whatever started zerod (a terminal, a Claude Code session, Codex) isn't the agent's parent: it isn't told it's nested in one.
-    for gone in ["ZERO_HOST_TERMINAL", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CODEX_THREAD_ID"] { assert!(!env.contains_key(gone), "{gone}") }
+    for gone in ["ZERO_HOST_TERMINAL", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CODEX_THREAD_ID"] {
+        assert!(!env.contains_key(gone), "{gone}")
+    }
     assert_eq!((env["ZERO_AGENT"].as_str(), env["ZERO_SESSION"].as_str(), env["TERM"].as_str()), ("zerod-s1", "s1", "dumb"));
     assert_eq!(env["PATH"], "/usr/bin:/bin:/usr/sbin:/sbin", "the login shell builds the PATH from the user's profile");
 }
@@ -85,14 +102,20 @@ fn every_runtime_starts_through_the_login_shell_so_its_path_is_arsens() {
 #[test]
 fn two_daemons_started_at_once_on_one_home_leave_one_running() {
     let dir = temp_dir("process-lock");
-    let start = |socket: &str| std::process::Command::new(env!("CARGO_BIN_EXE_zerod"))
-        .args(["--home", dir.join("data").to_str().unwrap(), "--socket", dir.join(socket).to_str().unwrap()])
-        .stderr(std::process::Stdio::piped()).spawn().unwrap();
+    let start = |socket: &str| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_zerod"))
+            .args(["--home", dir.join("data").to_str().unwrap(), "--socket", dir.join(socket).to_str().unwrap()])
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap()
+    };
     let mut both = [start("a.sock"), start("b.sock")];
     let mut ended = None;
     for _ in 0..500 {
         ended = both.iter_mut().position(|d| d.try_wait().unwrap().is_some());
-        if ended.is_some() { break }
+        if ended.is_some() {
+            break;
+        }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     let ended = ended.expect("one of them left");

@@ -69,7 +69,9 @@ const TRASH: &str = ".trash";
 /// Tasks' own pads (Tasks/ENG-9767/State): kept apart, so the scratchpads stay the user's own notes.
 pub const TASKS: &str = "Tasks";
 
-fn in_folder(folder: &str, root: &str) -> bool { folder == root || folder.starts_with(&format!("{root}/")) }
+fn in_folder(folder: &str, root: &str) -> bool {
+    folder == root || folder.starts_with(&format!("{root}/"))
+}
 
 impl Pads {
     pub fn open(root: &Path) -> Pads {
@@ -80,26 +82,40 @@ impl Pads {
         pads
     }
 
-    pub fn root(&self) -> &Path { &self.root }
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
 
     /// Every pad but tasks', the latest changed first; with a query, those whose title or text has it.
-    pub fn list(&self, query: Option<&str>) -> Vec<Summary> { self.list_in(query, None) }
+    pub fn list(&self, query: Option<&str>) -> Vec<Summary> {
+        self.list_in(query, None)
+    }
 
     /// The pads in a folder and those inside it (a task's too, asked for by name); with none, all but tasks'.
     pub fn list_in(&self, query: Option<&str>, folder: Option<&str>) -> Vec<Summary> {
         self.sync();
         let query = query.map(str::to_lowercase).filter(|q| !q.is_empty());
         let folder = folder.map(|f| f.trim_matches('/')).filter(|f| !f.is_empty());
-        let mut pads: Vec<Summary> = self.index.lock().unwrap().iter().filter_map(|(id, file)| {
-            let within = folder_of(file);
-            if !folder.map_or(!in_folder(&within, TASKS), |folder| in_folder(&within, folder)) { return None }
-            let path = self.root.join(file);
-            if let Some(query) = &query {
-                let text = std::fs::read_to_string(&path).unwrap_or_default().to_lowercase();
-                if !title_of(file).to_lowercase().contains(query) && !text.contains(query) { return None }
-            }
-            Some(Summary { id: id.clone(), title: title_of(file), folder: folder_of(file), link: link(id), updated: modified(&path) })
-        }).collect();
+        let mut pads: Vec<Summary> = self
+            .index
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(id, file)| {
+                let within = folder_of(file);
+                if !folder.map_or(!in_folder(&within, TASKS), |folder| in_folder(&within, folder)) {
+                    return None;
+                }
+                let path = self.root.join(file);
+                if let Some(query) = &query {
+                    let text = std::fs::read_to_string(&path).unwrap_or_default().to_lowercase();
+                    if !title_of(file).to_lowercase().contains(query) && !text.contains(query) {
+                        return None;
+                    }
+                }
+                Some(Summary { id: id.clone(), title: title_of(file), folder: folder_of(file), link: link(id), updated: modified(&path) })
+            })
+            .collect();
         pads.sort_by(|a, b| b.updated.cmp(&a.updated).then(a.title.cmp(&b.title)));
         pads
     }
@@ -143,7 +159,10 @@ impl Pads {
         };
         let title = clean_title(&title)?;
         std::fs::create_dir_all(self.root.join(&folder)).map_err(|e| e.to_string())?;
-        let file = (1..).map(|n| join(&folder, &if n == 1 { title.clone() } else { format!("{title} {n}") })).find(|file| !self.root.join(file).exists()).unwrap();
+        let file = (1..)
+            .map(|n| join(&folder, &if n == 1 { title.clone() } else { format!("{title} {n}") }))
+            .find(|file| !self.root.join(file).exists())
+            .unwrap();
         std::fs::write(self.root.join(&file), content).map_err(|e| e.to_string())?;
         let id = self.new_id();
         self.index.lock().unwrap().insert(id.clone(), file.clone());
@@ -210,7 +229,10 @@ impl Pads {
         let (file, _) = self.load(&id)?;
         std::fs::create_dir_all(self.root.join(TRASH)).map_err(|e| e.to_string())?;
         let title = title_of(&file);
-        let to = (1..).map(|n| self.root.join(TRASH).join(if n == 1 { format!("{title}.md") } else { format!("{title} {n}.md") })).find(|p| !p.exists()).unwrap();
+        let to = (1..)
+            .map(|n| self.root.join(TRASH).join(if n == 1 { format!("{title}.md") } else { format!("{title} {n}.md") }))
+            .find(|p| !p.exists())
+            .unwrap();
         std::fs::rename(self.root.join(&file), to).map_err(|e| e.to_string())?;
         self.index.lock().unwrap().remove(&id);
         self.save_index();
@@ -219,20 +241,26 @@ impl Pads {
 
     pub fn make_folder(&self, folder: &str) -> Result<(), String> {
         let folder = clean_folder(folder)?;
-        if folder.is_empty() { return Err("Name the folder".into()) }
+        if folder.is_empty() {
+            return Err("Name the folder".into());
+        }
         std::fs::create_dir_all(self.root.join(folder)).map_err(|e| e.to_string())
     }
 
     /// Lines with the text in them, case aside, across every pad.
     pub fn find(&self, query: &str) -> Vec<Match> {
         let query = query.to_lowercase();
-        if query.is_empty() { return vec![] }
+        if query.is_empty() {
+            return vec![];
+        }
         let mut found = vec![];
         for summary in self.list(None) {
             let Ok((file, text)) = self.load(&summary.id) else { continue };
             let outline = sections(&text);
             for (index, line) in text.lines().enumerate() {
-                if !line.to_lowercase().contains(&query) { continue }
+                if !line.to_lowercase().contains(&query) {
+                    continue;
+                }
                 let section = outline.iter().rev().find(|s| s.line <= index + 1).map(|s| s.slug.clone());
                 found.push(Match { id: summary.id.clone(), title: title_of(&file), section, line: index + 1, text: line.to_string() });
             }
@@ -242,18 +270,32 @@ impl Pads {
 
     fn pad(&self, id: &str, file: &str, text: &str) -> Pad {
         Pad {
-            id: id.into(), title: title_of(file), folder: folder_of(file), content: text.into(), revision: revision(text),
-            sections: sections(text), link: link(id), updated: modified(&self.root.join(file)),
+            id: id.into(),
+            title: title_of(file),
+            folder: folder_of(file),
+            content: text.into(),
+            revision: revision(text),
+            sections: sections(text),
+            link: link(id),
+            updated: modified(&self.root.join(file)),
         }
     }
 
     /// Where a section's lines start and end (its heading to the next heading as high as it).
     fn span(&self, pad: &Pad, slug: &str) -> Result<(usize, usize), String> {
         let Some(at) = pad.sections.iter().position(|s| s.slug == slug) else {
-            return Err(format!("No section {slug} in {}: {}", pad.title, pad.sections.iter().map(|s| s.slug.as_str()).collect::<Vec<_>>().join(", ")));
+            return Err(format!(
+                "No section {slug} in {}: {}",
+                pad.title,
+                pad.sections.iter().map(|s| s.slug.as_str()).collect::<Vec<_>>().join(", ")
+            ));
         };
         let section = &pad.sections[at];
-        let end = pad.sections[at + 1..].iter().find(|s| s.level <= section.level).map(|s| s.line - 1).unwrap_or_else(|| lines(&pad.content).len());
+        let end = pad.sections[at + 1..]
+            .iter()
+            .find(|s| s.level <= section.level)
+            .map(|s| s.line - 1)
+            .unwrap_or_else(|| lines(&pad.content).len());
         Ok((section.line - 1, end))
     }
 
@@ -273,7 +315,9 @@ impl Pads {
 
     fn relocate(&self, id: &str, from: &str, to: String) -> Result<Pad, String> {
         if to != from {
-            if self.root.join(&to).exists() { return Err(format!("There's already a {} in {}", title_of(&to), shown(&folder_of(&to)))) }
+            if self.root.join(&to).exists() {
+                return Err(format!("There's already a {} in {}", title_of(&to), shown(&folder_of(&to))));
+            }
             std::fs::rename(self.root.join(from), self.root.join(&to)).map_err(|e| e.to_string())?;
             self.index.lock().unwrap().insert(id.into(), to.clone());
             self.save_index();
@@ -288,7 +332,12 @@ impl Pads {
             let file = pads.index.lock().unwrap().get(id).cloned()?;
             std::fs::read_to_string(pads.root.join(&file)).ok().map(|text| (file, text))
         };
-        found(self).or_else(|| { self.sync(); found(self) }).ok_or_else(|| format!("No scratchpad {id}"))
+        found(self)
+            .or_else(|| {
+                self.sync();
+                found(self)
+            })
+            .ok_or_else(|| format!("No scratchpad {id}"))
     }
 
     /// The index matched to the files: one added outside Zero gets an id, one gone loses its.
@@ -297,8 +346,14 @@ impl Pads {
         fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
             for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
                 let path = entry.path();
-                if hidden(&path) { continue }
-                if path.is_dir() { walk(&path, root, out) } else if path.extension().is_some_and(|e| e == "md") { out.push(relative(&path, root)) }
+                if hidden(&path) {
+                    continue;
+                }
+                if path.is_dir() {
+                    walk(&path, root, out)
+                } else if path.extension().is_some_and(|e| e == "md") {
+                    out.push(relative(&path, root))
+                }
             }
         }
         let mut files = vec![];
@@ -315,22 +370,32 @@ impl Pads {
             }
             before != index.len() || !new.is_empty()
         };
-        if changed { self.save_index() }
+        if changed {
+            self.save_index()
+        }
     }
 
-    fn new_id(&self) -> String { self.new_id_in(&self.index.lock().unwrap()) }
+    fn new_id(&self) -> String {
+        self.new_id_in(&self.index.lock().unwrap())
+    }
 
     fn new_id_in(&self, index: &BTreeMap<String, String>) -> String {
         loop {
             let mut bytes = [0u8; 6];
-            if let Ok(mut source) = std::fs::File::open("/dev/urandom") { let _ = std::io::Read::read_exact(&mut source, &mut bytes); }
+            if let Ok(mut source) = std::fs::File::open("/dev/urandom") {
+                let _ = std::io::Read::read_exact(&mut source, &mut bytes);
+            }
             let id: String = bytes.iter().map(|b| b"abcdefghijkmnpqrstuvwxyz23456789"[(*b % 32) as usize] as char).collect();
-            if !index.contains_key(&id) { return id }
+            if !index.contains_key(&id) {
+                return id;
+            }
         }
     }
 
     fn save_index(&self) {
-        if let Ok(data) = serde_json::to_vec_pretty(&*self.index.lock().unwrap()) { let _ = std::fs::write(self.root.join(".index.json"), data); }
+        if let Ok(data) = serde_json::to_vec_pretty(&*self.index.lock().unwrap()) {
+            let _ = std::fs::write(self.root.join(".index.json"), data);
+        }
     }
 }
 
@@ -340,17 +405,31 @@ pub fn sections(text: &str) -> Vec<Section> {
     let mut fenced = false;
     for (index, line) in text.lines().enumerate() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") { fenced = !fenced; continue }
-        if fenced { continue }
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
         let level = line.bytes().take_while(|b| *b == b'#').count();
-        if !(1..=6).contains(&level) || !line[level..].starts_with(' ') { continue }
+        if !(1..=6).contains(&level) || !line[level..].starts_with(' ') {
+            continue;
+        }
         let title = line[level..].trim().trim_end_matches('#').trim().to_string();
-        let base: String = title.to_lowercase().chars().filter_map(|c| match c {
-            c if c.is_alphanumeric() || c == '_' || c == '-' => Some(c),
-            ' ' => Some('-'),
-            _ => None,
-        }).collect();
-        let repeats = found.iter().filter(|s| s.slug == base || s.slug.strip_prefix(&format!("{base}-")).is_some_and(|n| n.parse::<u32>().is_ok())).count();
+        let base: String = title
+            .to_lowercase()
+            .chars()
+            .filter_map(|c| match c {
+                c if c.is_alphanumeric() || c == '_' || c == '-' => Some(c),
+                ' ' => Some('-'),
+                _ => None,
+            })
+            .collect();
+        let repeats = found
+            .iter()
+            .filter(|s| s.slug == base || s.slug.strip_prefix(&format!("{base}-")).is_some_and(|n| n.parse::<u32>().is_ok()))
+            .count();
         let slug = if repeats == 0 { base } else { format!("{base}-{repeats}") };
         found.push(Section { slug, title, level: level as u8, line: index + 1 });
     }
@@ -367,13 +446,17 @@ pub fn parse_link(pad: &str) -> (String, Option<String>) {
     }
 }
 
-pub fn link(id: &str) -> String { format!("zero://pad/{id}") }
+pub fn link(id: &str) -> String {
+    format!("zero://pad/{id}")
+}
 
 fn revision(text: &str) -> String {
     crate::integrations::sha256(text.as_bytes())[..6].iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn lines(text: &str) -> Vec<&str> { text.lines().collect() }
+fn lines(text: &str) -> Vec<&str> {
+    text.lines().collect()
+}
 
 /// The lines with [start, end) replaced, a blank line before what follows.
 fn splice(all: &[&str], start: usize, end: usize, replacement: &str) -> String {
@@ -382,24 +465,45 @@ fn splice(all: &[&str], start: usize, end: usize, replacement: &str) -> String {
     let mut out = if start == 0 { String::new() } else { before + "\n" };
     out.push_str(replacement.trim_end());
     out.push('\n');
-    if !after.trim().is_empty() { out.push('\n'); out.push_str(after.trim_start_matches('\n')); out.push('\n') }
+    if !after.trim().is_empty() {
+        out.push('\n');
+        out.push_str(after.trim_start_matches('\n'));
+        out.push('\n')
+    }
     out
 }
 
-fn title_of(file: &str) -> String { Path::new(file).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default() }
+fn title_of(file: &str) -> String {
+    Path::new(file).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
+}
 
-fn folder_of(file: &str) -> String { Path::new(file).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default() }
+fn folder_of(file: &str) -> String {
+    Path::new(file).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default()
+}
 
-fn join(folder: &str, title: &str) -> String { if folder.is_empty() { format!("{title}.md") } else { format!("{folder}/{title}.md") } }
+fn join(folder: &str, title: &str) -> String {
+    if folder.is_empty() { format!("{title}.md") } else { format!("{folder}/{title}.md") }
+}
 
-fn shown(folder: &str) -> &str { if folder.is_empty() { "Scratchpads" } else { folder } }
+fn shown(folder: &str) -> &str {
+    if folder.is_empty() { "Scratchpads" } else { folder }
+}
 
-fn relative(path: &Path, root: &Path) -> String { path.strip_prefix(root).unwrap_or(path).to_string_lossy().to_string() }
+fn relative(path: &Path, root: &Path) -> String {
+    path.strip_prefix(root).unwrap_or(path).to_string_lossy().to_string()
+}
 
-fn hidden(path: &Path) -> bool { path.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')) }
+fn hidden(path: &Path) -> bool {
+    path.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.'))
+}
 
 fn modified(path: &Path) -> i64 {
-    std::fs::metadata(path).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0)
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 /// A folder inside the root: plain names, no "..", no hidden ones.
@@ -411,7 +515,9 @@ fn clean_folder(folder: &str) -> Result<String, String> {
 
 fn clean_title(title: &str) -> Result<String, String> {
     let title = title.trim();
-    if title.is_empty() || title.starts_with('.') || title.contains('/') { return Err(format!("{title:?} can't be a scratchpad's name")) }
+    if title.is_empty() || title.starts_with('.') || title.contains('/') {
+        return Err(format!("{title:?} can't be a scratchpad's name"));
+    }
     Ok(title.to_string())
 }
 

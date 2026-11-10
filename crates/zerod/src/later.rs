@@ -2,8 +2,8 @@
 //! task it came from, its links, its versions), artifact.md (everything behind it, in full), files/ (what was attached)
 //! and versions/<n>.md (each earlier artifact). A link reaches it: zero://later/<id>.
 
-use std::path::{Path, PathBuf};
 use crate::now;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -98,14 +98,21 @@ impl Later {
 
     pub fn save(&self, new: New) -> Result<Item, String> {
         let note = clean_note(&new.note)?;
-        if new.from.is_some() { headline(&note)? }
+        if new.from.is_some() {
+            headline(&note)?
+        }
         let suggested = !new.asked && new.from.is_some();
         if suggested {
-            let open: Vec<String> = self.list(None).into_iter().filter(|i| i.suggested && !i.done && i.from == new.from).map(|i| i.id).collect();
+            let open: Vec<String> =
+                self.list(None).into_iter().filter(|i| i.suggested && !i.done && i.from == new.from).map(|i| i.id).collect();
             if open.len() >= SUGGESTIONS {
-                return Err(format!("This task already has {} suggestions open in Later ({}), the most it may have. Add this to the one it belongs with \
+                return Err(format!(
+                    "This task already has {} suggestions open in Later ({}), the most it may have. Add this to the one it belongs with \
                                     (`zero later edit <id> --file -`), or leave it out: Later is for what the user will come back to, not every \
-                                    idea along the way.", open.len(), open.join(", ")));
+                                    idea along the way.",
+                    open.len(),
+                    open.join(", ")
+                ));
             }
         }
         let id = self.new_id();
@@ -113,12 +120,30 @@ impl Later {
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let files = match self.attach(&dir, &new.files) {
             Ok(files) => files,
-            Err(error) => { let _ = std::fs::remove_dir_all(&dir); return Err(error) }
+            Err(error) => {
+                let _ = std::fs::remove_dir_all(&dir);
+                return Err(error);
+            }
         };
         let now = now();
-        let item = Item { id: id.clone(), note: note.clone(), artifact: None, from: new.from.clone(), task: new.task, workspace: new.workspace,
-            links: new.links, files, created: now, updated: now, done: false, suggested, version: 1,
-            versions: vec![Version { version: 1, note, at: now, by: new.from }], link: link(&id), resume: new.resume };
+        let item = Item {
+            id: id.clone(),
+            note: note.clone(),
+            artifact: None,
+            from: new.from.clone(),
+            task: new.task,
+            workspace: new.workspace,
+            links: new.links,
+            files,
+            created: now,
+            updated: now,
+            done: false,
+            suggested,
+            version: 1,
+            versions: vec![Version { version: 1, note, at: now, by: new.from }],
+            link: link(&id),
+            resume: new.resume,
+        };
         std::fs::write(dir.join("artifact.md"), &new.artifact).map_err(|e| e.to_string())?;
         self.store(&item)?;
         self.view(&id, None)
@@ -128,21 +153,30 @@ impl Later {
     /// artifact has it.
     pub fn list(&self, query: Option<&str>) -> Vec<Item> {
         let query = query.map(str::to_lowercase).filter(|q| !q.is_empty());
-        let mut items: Vec<Item> = std::fs::read_dir(&self.root).into_iter().flatten().flatten().filter_map(|entry| {
-            let id = entry.file_name().to_string_lossy().to_string();
-            if id.starts_with('.') { return None }
-            let item = self.load(&id).ok()?;
-            if item.suggested && !item.done && now() - item.created > SUGGESTED_FOR {
-                let _ = self.delete(&id);
-                return None
-            }
-            if let Some(query) = &query {
-                let artifact = std::fs::read_to_string(self.root.join(&id).join("artifact.md")).unwrap_or_default();
-                let words = format!("{}\n{}\n{}", item.note, item.task.as_deref().unwrap_or(""), artifact).to_lowercase();
-                if !words.contains(query) { return None }
-            }
-            Some(item)
-        }).collect();
+        let mut items: Vec<Item> = std::fs::read_dir(&self.root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| {
+                let id = entry.file_name().to_string_lossy().to_string();
+                if id.starts_with('.') {
+                    return None;
+                }
+                let item = self.load(&id).ok()?;
+                if item.suggested && !item.done && now() - item.created > SUGGESTED_FOR {
+                    let _ = self.delete(&id);
+                    return None;
+                }
+                if let Some(query) = &query {
+                    let artifact = std::fs::read_to_string(self.root.join(&id).join("artifact.md")).unwrap_or_default();
+                    let words = format!("{}\n{}\n{}", item.note, item.task.as_deref().unwrap_or(""), artifact).to_lowercase();
+                    if !words.contains(query) {
+                        return None;
+                    }
+                }
+                Some(item)
+            })
+            .collect();
         items.sort_by(|a, b| a.done.cmp(&b.done).then(b.created.cmp(&a.created)).then(a.id.cmp(&b.id)));
         items
     }
@@ -169,22 +203,38 @@ impl Later {
         let dir = self.root.join(&id);
         let artifact = std::fs::read_to_string(dir.join("artifact.md")).unwrap_or_default();
         let note = edit.note.as_deref().map(clean_note).transpose()?;
-        if let Some(note) = &note && edit.by.is_some() { headline(note)? }
+        if let Some(note) = &note
+            && edit.by.is_some()
+        {
+            headline(note)?
+        }
         let changed = note.as_ref().is_some_and(|n| *n != kept.note) || edit.artifact.as_ref().is_some_and(|a| *a != artifact);
         let now = now();
         if changed {
             std::fs::create_dir_all(dir.join("versions")).map_err(|e| e.to_string())?;
             std::fs::write(dir.join("versions").join(format!("{}.md", kept.version)), &artifact).map_err(|e| e.to_string())?;
-            if let Some(new) = &edit.artifact { std::fs::write(dir.join("artifact.md"), new).map_err(|e| e.to_string())? }
-            if let Some(note) = note { kept.note = note }
+            if let Some(new) = &edit.artifact {
+                std::fs::write(dir.join("artifact.md"), new).map_err(|e| e.to_string())?
+            }
+            if let Some(note) = note {
+                kept.note = note
+            }
             kept.version += 1;
             kept.versions.push(Version { version: kept.version, note: kept.note.clone(), at: now, by: edit.by });
         }
         kept.files.extend(self.attach(&dir, &edit.files)?.into_iter().map(|path| name_of(&path)));
         kept.files.dedup();
-        for link in edit.links { if !kept.links.contains(&link) { kept.links.push(link) } }
-        if let Some(done) = edit.done { kept.done = done }
-        if edit.keep == Some(true) { kept.suggested = false }
+        for link in edit.links {
+            if !kept.links.contains(&link) {
+                kept.links.push(link)
+            }
+        }
+        if let Some(done) = edit.done {
+            kept.done = done
+        }
+        if edit.keep == Some(true) {
+            kept.suggested = false
+        }
         kept.updated = now;
         self.store(&kept)?;
         self.view(&id, None)
@@ -220,57 +270,77 @@ impl Later {
 
     /// Copies each file into the item's files/, a name already there getting a number; their new paths.
     fn attach(&self, dir: &Path, paths: &[String]) -> Result<Vec<String>, String> {
-        if paths.is_empty() { return Ok(vec![]) }
+        if paths.is_empty() {
+            return Ok(vec![]);
+        }
         let files = dir.join("files");
         std::fs::create_dir_all(&files).map_err(|e| e.to_string())?;
-        paths.iter().map(|path| {
-            let source = Path::new(path);
-            let name = source.file_name().map(|n| n.to_string_lossy().to_string()).ok_or_else(|| format!("{path} isn't a file"))?;
-            let mut target = files.join(&name);
-            let mut n = 2;
-            while target.exists() {
-                let stem = source.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-                let ext = source.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
-                target = files.join(format!("{stem}-{n}{ext}"));
-                n += 1;
-            }
-            std::fs::copy(source, &target).map_err(|e| format!("Couldn't attach {name}: {e}"))?;
-            Ok(target.to_string_lossy().to_string())
-        }).collect()
+        paths
+            .iter()
+            .map(|path| {
+                let source = Path::new(path);
+                let name = source.file_name().map(|n| n.to_string_lossy().to_string()).ok_or_else(|| format!("{path} isn't a file"))?;
+                let mut target = files.join(&name);
+                let mut n = 2;
+                while target.exists() {
+                    let stem = source.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+                    let ext = source.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+                    target = files.join(format!("{stem}-{n}{ext}"));
+                    n += 1;
+                }
+                std::fs::copy(source, &target).map_err(|e| format!("Couldn't attach {name}: {e}"))?;
+                Ok(target.to_string_lossy().to_string())
+            })
+            .collect()
     }
 
     fn new_id(&self) -> String {
         loop {
             let mut bytes = [0u8; 6];
-            if let Ok(mut source) = std::fs::File::open("/dev/urandom") { let _ = std::io::Read::read_exact(&mut source, &mut bytes); }
+            if let Ok(mut source) = std::fs::File::open("/dev/urandom") {
+                let _ = std::io::Read::read_exact(&mut source, &mut bytes);
+            }
             let id: String = bytes.iter().map(|b| b"abcdefghijkmnpqrstuvwxyz23456789"[(*b % 32) as usize] as char).collect();
-            if !self.root.join(&id).exists() { return id }
+            if !self.root.join(&id).exists() {
+                return id;
+            }
         }
     }
 }
 
 fn clean_note(note: &str) -> Result<String, String> {
     let note = note.trim();
-    if note.is_empty() { Err("Something saved for later needs a note: what's to be done, in plain words".into()) } else { Ok(note.to_string()) }
+    if note.is_empty() {
+        Err("Something saved for later needs a note: what's to be done, in plain words".into())
+    } else {
+        Ok(note.to_string())
+    }
 }
 
 /// A note short enough to read at a glance; what's behind it goes in the artifact.
 fn headline(note: &str) -> Result<(), String> {
     let length = note.chars().count();
-    if length <= NOTE { return Ok(()) }
-    Err(format!("The note is {length} characters; keep it under {NOTE}: a headline the user reads at a glance, in plain words, \
-                 saying what's to be done (no ids, paths or lists). Everything else goes in the artifact (--file)."))
+    if length <= NOTE {
+        return Ok(());
+    }
+    Err(format!(
+        "The note is {length} characters; keep it under {NOTE}: a headline the user reads at a glance, in plain words, \
+                 saying what's to be done (no ids, paths or lists). Everything else goes in the artifact (--file)."
+    ))
 }
 
-fn link(id: &str) -> String { format!("zero://later/{id}") }
+fn link(id: &str) -> String {
+    format!("zero://later/{id}")
+}
 
 /// An id from itself or its link; no slashes or dots, so it stays a folder in the root.
 fn parse(item: &str) -> String {
     item.trim().trim_start_matches("zero://later/").chars().filter(|c| c.is_ascii_alphanumeric()).collect()
 }
 
-fn name_of(path: &str) -> String { Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default() }
-
+fn name_of(path: &str) -> String {
+    Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
+}
 
 /// One tool by its name, as the `later` op calls them.
 pub fn call(later: &Later, tool: &str, args: &serde_json::Value) -> Result<serde_json::Value, String> {

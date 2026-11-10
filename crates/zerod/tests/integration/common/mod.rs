@@ -24,8 +24,12 @@ pub fn replay(provider: Provider, name: &str) -> (Core, Vec<Change>) {
     let mut core = Core::new(Conversation::new("s1", provider, "/work/project"));
     let mut changes = vec![];
     for entry in fixture(name) {
-        if let Some(message) = entry.get("out") { changes.extend(core.sent(message)) }
-        if let Some(message) = entry.get("in") { changes.extend(core.receive(message).changes) }
+        if let Some(message) = entry.get("out") {
+            changes.extend(core.sent(message))
+        }
+        if let Some(message) = entry.get("in") {
+            changes.extend(core.receive(message).changes)
+        }
     }
     (core, changes)
 }
@@ -37,7 +41,9 @@ pub struct Seen(Arc<Mutex<Vec<Value>>>, Arc<Mutex<Option<tokio::sync::mpsc::Unbo
 impl Seen {
     /// Has the runtime say `message` (after its script has played).
     pub fn say(&self, message: Value) {
-        if let Some(say) = self.1.lock().unwrap().as_ref() { let _ = say.send(message); }
+        if let Some(say) = self.1.lock().unwrap().as_ref() {
+            let _ = say.send(message);
+        }
     }
 
     pub fn all(&self) -> Vec<Value> {
@@ -58,7 +64,9 @@ impl Seen {
     pub async fn said(&self, method: &str, count: usize) -> Vec<Value> {
         for _ in 0..500 {
             let found: Vec<Value> = self.all().into_iter().filter(|m| name(m).as_deref() == Some(method)).collect();
-            if found.len() >= count { return found }
+            if found.len() >= count {
+                return found;
+            }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("Zero never said {method} {count} times; it said {:?}", self.methods());
@@ -70,7 +78,9 @@ impl Seen {
 }
 
 fn name(message: &Value) -> Option<String> {
-    if let Some(method) = message["method"].as_str() { return Some(method.into()) }
+    if let Some(method) = message["method"].as_str() {
+        return Some(method.into());
+    }
     match message["type"].as_str()? {
         "control_request" => Some(format!("control_request:{}", message["request"]["subtype"].as_str().unwrap_or(""))),
         other => Some(other.into()),
@@ -82,7 +92,9 @@ fn name(message: &Value) -> Option<String> {
 fn same(recorded: &Value, said: &Value) -> bool {
     match (recorded.get("method"), recorded["type"].as_str()) {
         (Some(method), _) => said.get("method") == Some(method),
-        (None, Some("control_response")) => said["type"] == "control_response" && said["response"]["request_id"] == recorded["response"]["request_id"],
+        (None, Some("control_response")) => {
+            said["type"] == "control_response" && said["response"]["request_id"] == recorded["response"]["request_id"]
+        }
         (None, Some(kind)) => name(said) == name(recorded) && said["type"] == kind,
         (None, None) => said.get("method").is_none() && said["id"] == recorded["id"],
     }
@@ -106,19 +118,33 @@ pub fn play(script: Vec<Value>) -> (Transport, Seen) {
         // Recorded ids of Zero's requests → the ids Zero used this time.
         let mut ids: HashMap<String, Value> = HashMap::new();
         for entry in script {
-            if entry.get("hangup").is_some() { return }
+            if entry.get("hangup").is_some() {
+                return;
+            }
             if let Some(message) = entry.get("in") {
                 let mut message = message.clone();
-                if message.get("method").is_none() && let Some(actual) = message.get("id").and_then(|id| ids.get(&key(id))) { message["id"] = actual.clone() }
-                if message["type"] == "control_response" && let Some(actual) = ids.get(&key(&message["response"]["request_id"])) {
+                if message.get("method").is_none()
+                    && let Some(actual) = message.get("id").and_then(|id| ids.get(&key(id)))
+                {
+                    message["id"] = actual.clone()
+                }
+                if message["type"] == "control_response"
+                    && let Some(actual) = ids.get(&key(&message["response"]["request_id"]))
+                {
                     message["response"]["request_id"] = actual.clone();
                 }
                 write(&mut runtime_write, &message).await;
             }
             if let Some(recorded) = entry.get("out") {
                 let Some(said) = wait(&mut lines, &mut runtime_write, &recorder, &|m| same(recorded, m)).await else { return };
-                if recorded.get("method").is_some() && let (Some(from), Some(to)) = (recorded.get("id"), said.get("id")) { ids.insert(key(from), to.clone()); }
-                if recorded["type"] == "control_request" { ids.insert(key(&recorded["request_id"]), said["request_id"].clone()); }
+                if recorded.get("method").is_some()
+                    && let (Some(from), Some(to)) = (recorded.get("id"), said.get("id"))
+                {
+                    ids.insert(key(from), to.clone());
+                }
+                if recorded["type"] == "control_request" {
+                    ids.insert(key(&recorded["request_id"]), said["request_id"].clone());
+                }
             }
         }
         // The script is over: keep answering what Zero says, and say what the test asks for.
@@ -147,7 +173,9 @@ async fn wait(lines: &mut In, out: &mut Out, seen: &Seen, wanted: &(dyn Fn(&Valu
     while let Ok(Some(line)) = lines.next_line().await {
         let message: Value = serde_json::from_str(&line).unwrap();
         seen.0.lock().unwrap().push(message.clone());
-        if wanted(&message) { return Some(message) }
+        if wanted(&message) {
+            return Some(message);
+        }
         if message.get("method").is_some() && message.get("id").is_some() {
             write(out, &json!({"jsonrpc": "2.0", "id": message["id"], "result": {}})).await;
         }
@@ -172,7 +200,9 @@ async fn write(out: &mut Out, message: &Value) {
 pub async fn until(session: &Session, test: impl Fn(&Conversation) -> bool) -> Conversation {
     for _ in 0..500 {
         let now = session.snapshot();
-        if test(&now) { return now }
+        if test(&now) {
+            return now;
+        }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("timed out; the conversation is {:#?}", session.snapshot());

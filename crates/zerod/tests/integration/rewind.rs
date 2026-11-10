@@ -2,7 +2,6 @@
 //! thread made from Zero's record up to there), the folder as it was when it was sent if wanted, or a new task branched
 //! from there that leaves this one as it is.
 
-
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -12,11 +11,16 @@ use serde_json::json;
 use zerod::daemon::{Daemon, Options, Runtime};
 use zerod::model::*;
 
-fn quiet() -> Runtime { Arc::new(|_, _, _| Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink()))) }
+fn quiet() -> Runtime {
+    Arc::new(|_, _, _| Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())))
+}
 
 fn git(dir: &Path, args: &[&str]) {
     // The fixture's own commits unsigned: the user's global config may sign through an agent that's locked.
-    assert!(Command::new("git").args(["-c", "commit.gpgsign=false"]).args(args).current_dir(dir).output().unwrap().status.success(), "git {args:?}");
+    assert!(
+        Command::new("git").args(["-c", "commit.gpgsign=false"]).args(args).current_dir(dir).output().unwrap().status.success(),
+        "git {args:?}"
+    );
 }
 
 /// A Claude Code session of two turns, taken in from a git folder.
@@ -34,14 +38,26 @@ fn task(name: &str) -> (Arc<Daemon>, String, std::path::PathBuf, std::path::Path
     let file = zerod::handoff::claude_folder(&user, cwd).join("t1.jsonl");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     let said = |uuid: &str, role: &str, text: &str| json!({"type": role, "uuid": uuid, "message": {"role": role, "content": [{"type": "text", "text": text}]}});
-    let records = [said("u1", "user", "first"), said("a1", "assistant", "done one"), said("u2", "user", "second"), said("a2", "assistant", "done two")];
+    let records = [
+        said("u1", "user", "first"),
+        said("a1", "assistant", "done one"),
+        said("u2", "user", "second"),
+        said("a2", "assistant", "done two"),
+    ];
     std::fs::write(&file, records.iter().map(|r| r.to_string() + "\n").collect::<String>()).unwrap();
     let id = daemon.adopt(Provider::Claude, "t1", cwd, Options { label: Some("Fix it".into()), ..Default::default() }).unwrap();
     (daemon, id, project, user)
 }
 
 fn texts(conversation: &Conversation) -> Vec<String> {
-    conversation.items.iter().filter_map(|i| match &i.kind { ItemKind::User { text, .. } | ItemKind::Agent { text, .. } => Some(text.clone()), _ => None }).collect()
+    conversation
+        .items
+        .iter()
+        .filter_map(|i| match &i.kind {
+            ItemKind::User { text, .. } | ItemKind::Agent { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn message(daemon: &Daemon, id: &str, text: &str) -> String {
@@ -107,7 +123,10 @@ async fn a_branch_is_a_new_task_from_before_the_message_and_this_one_stays() {
     assert_eq!(branched["text"], "second");
     let branch = daemon.get(branched["session"].as_str().unwrap()).unwrap();
     assert_eq!(texts(&branch), ["first", "done one"]);
-    assert_eq!((branch.cwd.as_str(), branch.label.as_deref(), branch.provider), (project.to_str().unwrap(), Some("Fix it (branch)"), Provider::Claude));
+    assert_eq!(
+        (branch.cwd.as_str(), branch.label.as_deref(), branch.provider),
+        (project.to_str().unwrap(), Some("Fix it (branch)"), Provider::Claude)
+    );
     assert!(branch.thread.is_some_and(|t| t != "t1"), "a thread of its own");
     assert_eq!(texts(&daemon.get(&id).unwrap()).len(), 4, "the original is as it was");
 }

@@ -49,7 +49,11 @@ fn claudes_sessions_are_found_by_first_prompt_and_titled() {
     assert_eq!(folder.file_name().unwrap(), "-Users-x-proj-app");
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(folder.join("aaaa.jsonl"), r#"{"type":"user","message":{"role":"user","content":"say \"hi\" please"}}"#).unwrap();
-    std::fs::write(folder.join("bbbb.jsonl"), "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"other\"}}\n{\"aiTitle\":\"Other task\"}").unwrap();
+    std::fs::write(
+        folder.join("bbbb.jsonl"),
+        "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"other\"}}\n{\"aiTitle\":\"Other task\"}",
+    )
+    .unwrap();
     assert_eq!(sessions.find("say \"hi\" please", cwd).as_deref(), Some("aaaa"));
     assert_eq!(sessions.find("other", cwd).as_deref(), Some("bbbb"));
     assert_eq!(sessions.find("missing", cwd), None);
@@ -87,7 +91,13 @@ async fn zeros_own_terminals_are_typed_into_and_read_through_zero_host() {
         "state": {"ok": true, "terminal": {"id": "term-1", "label": "x", "cwd": "/w", "argv": ["claude"], "running": false, "exitCode": 0}},
     });
     let (host, seen) = fake_host(&dir, answers).await;
-    let agent = AgentIdentity { name: "claude-term01".into(), host: "mac".into(), runtime: Some("zero".into()), reference: Some("term-1".into()), ..Default::default() };
+    let agent = AgentIdentity {
+        name: "claude-term01".into(),
+        host: "mac".into(),
+        runtime: Some("zero".into()),
+        reference: Some("term-1".into()),
+        ..Default::default()
+    };
     assert!(host.can_reach(&agent));
     host.send("hello", &agent).await.unwrap();
     let writes: Vec<Value> = seen.lock().unwrap().iter().filter(|r| r["op"] == "write").cloned().collect();

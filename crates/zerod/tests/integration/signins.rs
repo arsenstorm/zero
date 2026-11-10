@@ -2,13 +2,14 @@
 //! in its environment, Codex a home of its own where it keeps its ChatGPT sign-in, OpenCode its providers' keys. The
 //! CLIs still make every call to their providers; Zero only hands them what to sign in with.
 
-
 use crate::common::temp_dir;
 use std::sync::Arc;
 use zerod::model::Provider;
 use zerod::signins::*;
 
-fn secrets() -> Secrets { Arc::new(|service: &str, account: &str| (service == KEYCHAIN).then(|| format!("secret-for-{account}"))) }
+fn secrets() -> Secrets {
+    Arc::new(|service: &str, account: &str| (service == KEYCHAIN).then(|| format!("secret-for-{account}")))
+}
 
 fn signin(cli: Provider, kind: Kind, label: &str) -> SignIn {
     SignIn { id: String::new(), cli, kind, label: label.into(), plan: None, variable: None, pending: false }
@@ -47,10 +48,16 @@ fn each_cli_gets_its_sign_in_the_way_it_reads_one() {
     assert_eq!(store.environment(&token).unwrap(), [("CLAUDE_CODE_OAUTH_TOKEN".to_string(), format!("secret-for-{}", token.id))]);
     let key = store.save(signin(Provider::Claude, Kind::ApiKey, "Team key")).unwrap();
     assert_eq!(store.environment(&key).unwrap()[0].0, "ANTHROPIC_API_KEY");
-    let go = store.save(SignIn { variable: Some("OPENCODE_API_KEY".into()), ..signin(Provider::Opencode, Kind::ApiKey, "OpenCode Go") }).unwrap();
+    let go = store
+        .save(SignIn { variable: Some("OPENCODE_API_KEY".into()), ..signin(Provider::Opencode, Kind::ApiKey, "OpenCode Go") })
+        .unwrap();
     assert_eq!(store.environment(&go).unwrap()[0].0, "OPENCODE_API_KEY", "an OpenCode provider's own variable");
     store.set_secrets(Arc::new(|_, _| None));
-    assert_eq!(store.environment(&token).unwrap_err(), "a@example.com isn't in the Keychain any more: sign in again", "missing: said, not started unsigned");
+    assert_eq!(
+        store.environment(&token).unwrap_err(),
+        "a@example.com isn't in the Keychain any more: sign in again",
+        "missing: said, not started unsigned"
+    );
 }
 
 #[test]
@@ -80,10 +87,20 @@ async fn a_task_runs_as_its_sign_in_or_its_clis_default() {
     daemon.signins.set_secrets(secrets());
     let a = daemon.signins.save(signin(Provider::Claude, Kind::Token, "a@example.com")).unwrap();
     let b = daemon.signins.save(signin(Provider::Claude, Kind::Token, "b@example.com")).unwrap();
-    let token = |id: &str| zerod::process::environment(std::iter::empty(), id).into_iter().find(|(k, _)| k == "CLAUDE_CODE_OAUTH_TOKEN").map(|(_, v)| v);
-    let plain = daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(project.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    let token = |id: &str| {
+        zerod::process::environment(std::iter::empty(), id).into_iter().find(|(k, _)| k == "CLAUDE_CODE_OAUTH_TOKEN").map(|(_, v)| v)
+    };
+    let plain = daemon
+        .start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(project.to_str().unwrap().into()), ..Default::default() })
+        .unwrap();
     assert_eq!(token(&plain), Some(format!("secret-for-{}", a.id)), "no account chosen: the CLI's default");
-    let chosen = daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(project.to_str().unwrap().into()), signin: Some(b.id.clone()), ..Default::default() }).unwrap();
+    let chosen = daemon
+        .start(
+            Provider::Claude,
+            "hi",
+            zerod::daemon::Options { cwd: Some(project.to_str().unwrap().into()), signin: Some(b.id.clone()), ..Default::default() },
+        )
+        .unwrap();
     assert_eq!(token(&chosen), Some(format!("secret-for-{}", b.id)));
     assert_eq!(daemon.get(&chosen).unwrap().signin.as_deref(), Some(b.id.as_str()), "kept with the task, for its restarts");
 }
@@ -105,7 +122,8 @@ fn a_claude_account_has_a_folder_of_its_own_sharing_everything_but_its_sign_in()
     std::fs::create_dir_all(dot.join("projects")).unwrap();
     std::fs::write(dot.join("settings.json"), "{}").unwrap();
     std::fs::write(dot.join(".credentials.json"), "{\"personal\": true}").unwrap();
-    std::fs::write(home.join(".claude.json"), r#"{"oauthAccount": {"emailAddress": "me@example.com"}, "mcpServers": {"docs": {}}}"#).unwrap();
+    std::fs::write(home.join(".claude.json"), r#"{"oauthAccount": {"emailAddress": "me@example.com"}, "mcpServers": {"docs": {}}}"#)
+        .unwrap();
     let store = SignIns::open(&home);
     store.set_claude_dir(dot);
     let account = store.save(signin(Provider::Claude, Kind::ClaudeHome, "a@example.com")).unwrap();
@@ -122,8 +140,11 @@ fn a_claude_account_has_a_folder_of_its_own_sharing_everything_but_its_sign_in()
 
 fn usage(five: f64, seven: f64, seven_resets: i64) -> zerod::model::Usage {
     let window = |name: &str, used: f64, resets: i64| zerod::model::UsageWindow { name: name.into(), used, resets_at: Some(resets) };
-    zerod::model::Usage { limited: five >= 1.0, resets_at: (five >= 1.0).then_some(NOW + 3_600),
-                          windows: vec![window("5 hours", five, NOW + 3_600), window("7 days", seven, seven_resets)] }
+    zerod::model::Usage {
+        limited: five >= 1.0,
+        resets_at: (five >= 1.0).then_some(NOW + 3_600),
+        windows: vec![window("5 hours", five, NOW + 3_600), window("7 days", seven, seven_resets)],
+    }
 }
 const NOW: i64 = 1_800_000_000;
 const DAY: i64 = 86_400;
@@ -132,12 +153,17 @@ const DAY: i64 = 86_400;
 fn a_task_runs_as_the_account_with_the_least_of_its_week_left_that_isnt_at_a_limit() {
     let store = SignIns::open(&temp_dir("signins-choose"));
     let account = |label: &str| store.save(signin(Provider::Claude, Kind::ClaudeHome, label)).unwrap();
-    let (nearly, plenty, stopped, fresh) = (account("nearly@example.com"), account("plenty@example.com"), account("stopped@example.com"), account("fresh@example.com"));
+    let (nearly, plenty, stopped, fresh) =
+        (account("nearly@example.com"), account("plenty@example.com"), account("stopped@example.com"), account("fresh@example.com"));
     store.record_usage(&nearly.id, &usage(0.2, 0.9, NOW + 2 * DAY));
     store.record_usage(&plenty.id, &usage(0.1, 0.3, NOW + 5 * DAY));
     store.record_usage(&stopped.id, &usage(1.0, 0.95, NOW + DAY));
     let chosen = |except: Option<&str>| store.choose(Provider::Claude, NOW, except).map(|s| s.label);
-    assert_eq!(chosen(None).as_deref(), Some("nearly@example.com"), "the least of its week left goes first; one at its 5-hour limit doesn't");
+    assert_eq!(
+        chosen(None).as_deref(),
+        Some("nearly@example.com"),
+        "the least of its week left goes first; one at its 5-hour limit doesn't"
+    );
     assert_eq!(chosen(Some(&nearly.id)).as_deref(), Some("plenty@example.com"), "then the next least");
     // Its week over, an account's allowance is whole again.
     store.record_usage(&nearly.id, &usage(0.2, 0.9, NOW - 60));
@@ -207,7 +233,9 @@ fn an_account_refused_a_model_isnt_chosen_for_it() {
 #[test]
 fn a_model_refused_is_told_from_a_busy_one() {
     use zerod::signins::refuses_model;
-    assert!(refuses_model("There's an issue with the selected model (claude-mythos-5-2). It may not exist or you may not have access to it. Run /model to pick a different model."));
+    assert!(refuses_model(
+        "There's an issue with the selected model (claude-mythos-5-2). It may not exist or you may not have access to it. Run /model to pick a different model."
+    ));
     assert!(refuses_model("The 'gpt-6' model is not supported when using Codex with a ChatGPT account."));
     assert!(refuses_model("model_not_found: The model `gpt-6` does not exist or you do not have access to it."));
     assert!(!refuses_model("API Error: 529 Overloaded"));
@@ -218,7 +246,9 @@ fn a_model_refused_is_told_from_a_busy_one() {
 async fn codex_and_opencode_get_zeros_own_tools_as_claude_code_does_from_its_plugin() {
     let home = temp_dir("zero-mcp");
     let daemon = zerod::daemon::Daemon::open(&home, Arc::new(|_, _, _| Ok(crate::common::play(vec![]).0))).unwrap();
-    let start = |provider| daemon.start(provider, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    let start = |provider| {
+        daemon.start(provider, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap()
+    };
     for provider in [Provider::Codex, Provider::Opencode] {
         let id = start(provider);
         let mcp = daemon.session(&id).unwrap().snapshot().mcp;
@@ -227,7 +257,10 @@ async fn codex_and_opencode_get_zeros_own_tools_as_claude_code_does_from_its_plu
         assert!(zero.env.contains(&("ZERO_SESSION".to_string(), id.clone())), "for this task's browser");
     }
     let claude = start(Provider::Claude);
-    assert!(daemon.session(&claude).unwrap().snapshot().mcp.iter().all(|s| s.id != "zero"), "Claude Code has them from Zero's plugin already");
+    assert!(
+        daemon.session(&claude).unwrap().snapshot().mcp.iter().all(|s| s.id != "zero"),
+        "Claude Code has them from Zero's plugin already"
+    );
 }
 
 #[test]
@@ -243,7 +276,10 @@ fn a_claude_account_switched_to_a_token_keeps_its_id_and_uses_the_users_own_fold
     assert!(folder.exists());
     let token = store.save(SignIn { kind: Kind::Token, ..account.clone() }).unwrap();
     assert_eq!(token.id, account.id, "tasks set to it carry on as it");
-    assert_eq!(store.environment(&token).unwrap(), [("CLAUDE_CODE_OAUTH_TOKEN".to_string(), format!("secret-for-{}", account.id))],
-               "the token alone: the user's own Claude Code folder for everything else, MCP sign-ins included");
+    assert_eq!(
+        store.environment(&token).unwrap(),
+        [("CLAUDE_CODE_OAUTH_TOKEN".to_string(), format!("secret-for-{}", account.id))],
+        "the token alone: the user's own Claude Code folder for everything else, MCP sign-ins included"
+    );
     assert!(!folder.exists(), "its own folder gone with it");
 }

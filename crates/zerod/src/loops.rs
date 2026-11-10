@@ -41,8 +41,12 @@ impl Loops {
 
     /// Every loop, by name, without its uses' detail.
     pub fn list(&self) -> Vec<Loop> {
-        let mut names: Vec<String> = std::fs::read_dir(&self.root).into_iter().flatten().flatten()
-            .filter_map(|e| e.path().file_name()?.to_str()?.strip_suffix(".md").map(String::from)).collect();
+        let mut names: Vec<String> = std::fs::read_dir(&self.root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| e.path().file_name()?.to_str()?.strip_suffix(".md").map(String::from))
+            .collect();
         names.sort();
         names.iter().filter_map(|name| self.read(name).ok()).collect()
     }
@@ -59,9 +63,15 @@ impl Loops {
     pub fn save(&self, name: &str, description: &str, body: &str) -> Result<Loop, String> {
         let file = self.file(name)?;
         for child in self.children_of(body) {
-            if child == name || self.reaches(&child, name, 0) { return Err(format!("@{child} leads back to {name}: a loop names its children, never a parent")) }
+            if child == name || self.reaches(&child, name, 0) {
+                return Err(format!("@{child} leads back to {name}: a loop names its children, never a parent"));
+            }
         }
-        let text = if description.trim().is_empty() { body.to_string() } else { format!("---\ndescription: {}\n---\n{}", description.trim(), body) };
+        let text = if description.trim().is_empty() {
+            body.to_string()
+        } else {
+            format!("---\ndescription: {}\n---\n{}", description.trim(), body)
+        };
         std::fs::write(&file, text).map_err(|e| e.to_string())?;
         self.read(name)
     }
@@ -108,7 +118,9 @@ impl Loops {
     }
 
     pub fn uses(&self, name: &str) -> Vec<Use> {
-        std::fs::read_to_string(self.root.join("uses.jsonl")).unwrap_or_default().lines()
+        std::fs::read_to_string(self.root.join("uses.jsonl"))
+            .unwrap_or_default()
+            .lines()
             .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
             .filter(|v| v["loop"] == name)
             .filter_map(|v| Some(Use { session: v["session"].as_str()?.into(), role: v["role"].as_str()?.into(), at: v["at"].as_i64()? }))
@@ -116,21 +128,33 @@ impl Loops {
     }
 
     fn file(&self, name: &str) -> Result<PathBuf, String> {
-        let ok = !name.is_empty() && name.len() <= 60 && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-            && !name.starts_with('-') && !name.ends_with('-');
-        if !ok { return Err(format!("A loop's name is lowercase words joined by hyphens (ticket-worker), not {name:?}")) }
+        let ok = !name.is_empty()
+            && name.len() <= 60
+            && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            && !name.starts_with('-')
+            && !name.ends_with('-');
+        if !ok {
+            return Err(format!("A loop's name is lowercase words joined by hyphens (ticket-worker), not {name:?}"));
+        }
         Ok(self.root.join(format!("{name}.md")))
     }
 
     fn children_of(&self, body: &str) -> Vec<String> {
-        let mut children: Vec<String> = references(body).into_iter().filter(|name| self.file(name).map(|f| f.exists()).unwrap_or(false)).collect();
+        let mut children: Vec<String> =
+            references(body).into_iter().filter(|name| self.file(name).map(|f| f.exists()).unwrap_or(false)).collect();
         children.dedup();
         children
     }
 
     fn reaches(&self, from: &str, target: &str, depth: usize) -> bool {
-        if depth > 20 { return true }
-        self.read(from).map(|l| l.children).unwrap_or_default().iter().any(|child| child == target || self.reaches(child, target, depth + 1))
+        if depth > 20 {
+            return true;
+        }
+        self.read(from)
+            .map(|l| l.children)
+            .unwrap_or_default()
+            .iter()
+            .any(|child| child == target || self.reaches(child, target, depth + 1))
     }
 }
 
@@ -142,7 +166,9 @@ pub fn references(text: &str) -> Vec<String> {
         let (before, from) = rest.split_at(at);
         let starts_word = before.chars().last().is_none_or(|c| !c.is_alphanumeric());
         let name: String = from[1..].chars().take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-').collect();
-        if starts_word && !name.is_empty() && !names.contains(&name) { names.push(name.clone()) }
+        if starts_word && !name.is_empty() && !names.contains(&name) {
+            names.push(name.clone())
+        }
         rest = &from[1..];
     }
     names
@@ -150,7 +176,9 @@ pub fn references(text: &str) -> Vec<String> {
 
 /// The description above the body, when the file has a header.
 fn split(text: &str) -> (String, String) {
-    if let Some(rest) = text.strip_prefix("---\n") && let Some((header, body)) = rest.split_once("\n---\n") {
+    if let Some(rest) = text.strip_prefix("---\n")
+        && let Some((header, body)) = rest.split_once("\n---\n")
+    {
         let description = header.lines().find_map(|l| l.strip_prefix("description:")).unwrap_or("").trim().to_string();
         return (description, body.to_string());
     }

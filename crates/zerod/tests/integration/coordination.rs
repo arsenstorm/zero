@@ -13,10 +13,20 @@ async fn two(name: &str) -> (Arc<Daemon>, String, String, Arc<std::sync::Mutex<S
     let home = temp_dir(name);
     let sent = Arc::new(std::sync::Mutex::new(String::new()));
     let daemon = Daemon::open(&home.join("zerod"), listening(sent.clone())).unwrap();
-    let start = |label: &str| daemon.start(Provider::Claude, "hi", Options { cwd: Some(home.to_str().unwrap().into()), label: Some(label.into()), ..Default::default() }).unwrap();
+    let start = |label: &str| {
+        daemon
+            .start(
+                Provider::Claude,
+                "hi",
+                Options { cwd: Some(home.to_str().unwrap().into()), label: Some(label.into()), ..Default::default() },
+            )
+            .unwrap()
+    };
     let (zero, dashboard) = (start("Zero"), start("Server status dashboard"));
     tokio::time::sleep(Duration::from_millis(100)).await;
-    for id in [&zero, &dashboard] { daemon.session(id).unwrap().change(Change::Status { status: Status::Idle, turn: None, error: None }) }
+    for id in [&zero, &dashboard] {
+        daemon.session(id).unwrap().change(Change::Status { status: Status::Idle, turn: None, error: None })
+    }
     (daemon, zero, dashboard, sent)
 }
 
@@ -54,7 +64,12 @@ async fn two_tasks_writing_to_each_other_without_the_user_are_held_after_ten() {
     daemon.notify_from(&zero, &dashboard, "message 10").unwrap();
     assert!(daemon.holding_crossed(&zero), "eleven without the user: held for them");
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let notices = daemon.get(&zero).unwrap().items.iter().any(|i| matches!(&i.kind, zerod::model::ItemKind::Notice { text, .. } if text.contains("Server status dashboard")));
+    let notices = daemon
+        .get(&zero)
+        .unwrap()
+        .items
+        .iter()
+        .any(|i| matches!(&i.kind, zerod::model::ItemKind::Notice { text, .. } if text.contains("Server status dashboard")));
     assert!(notices, "said where it happens, naming the other task");
     // The user writing to it lets them carry on.
     daemon.queue(&zero, "carry on, you two", &[]).unwrap();

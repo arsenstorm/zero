@@ -1,14 +1,19 @@
 //! Codex through `codex app-server`, on real output (tests/fixtures/codex-*, recorded from codex-cli 0.160.1 with
 //! its approvals accepted): what each turn becomes in Zero's model.
 
-
 use crate::common::replay;
 use serde_json::json;
 use zerod::core::Core;
 use zerod::model::{ApprovalKind, Change, ChoiceKind, Conversation, ItemKind, ItemStatus, Provider, Status};
 
 fn approvals(changes: &[Change]) -> Vec<zerod::model::Approval> {
-    changes.iter().filter_map(|c| match c { Change::Approval { approval } => Some(approval.clone()), _ => None }).collect()
+    changes
+        .iter()
+        .filter_map(|c| match c {
+            Change::Approval { approval } => Some(approval.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn core() -> Core {
@@ -50,7 +55,10 @@ fn a_command_approval_offers_exactly_what_codex_offers_and_closes_when_codex_res
     assert_eq!(approval.command.as_deref(), Some("ls -la"));
     assert_eq!(approval.cwd.as_deref(), Some("/work/project"));
     let offered: Vec<_> = approval.choices.iter().map(|c| (c.label.as_str(), c.kind)).collect();
-    assert_eq!(offered, [("Allow", ChoiceKind::Allow), ("Always allow ls -la", ChoiceKind::AllowAlways), ("Deny and stop", ChoiceKind::Stop)]);
+    assert_eq!(
+        offered,
+        [("Allow", ChoiceKind::Allow), ("Always allow ls -la", ChoiceKind::AllowAlways), ("Deny and stop", ChoiceKind::Stop)]
+    );
     assert!(changes.iter().any(|change| matches!(change, Change::Resolved { approval: id } if *id == approval.id)));
 }
 
@@ -76,7 +84,10 @@ fn a_file_change_reads_as_the_file_and_its_diff() {
     let conversation = core.conversation();
     let change = conversation.items.iter().find(|item| matches!(item.kind, ItemKind::FileChange { .. })).unwrap();
     let ItemKind::FileChange { changes: files } = &change.kind else { unreachable!() };
-    assert_eq!((files[0].path.as_str(), files[0].kind.as_str(), files[0].diff.as_str()), ("/work/project/hello.txt", "add", "hello from zero\n"));
+    assert_eq!(
+        (files[0].path.as_str(), files[0].kind.as_str(), files[0].diff.as_str()),
+        ("/work/project/hello.txt", "add", "hello from zero\n")
+    );
     assert_eq!(change.status, ItemStatus::Done);
     assert!(conversation.diff.as_deref().unwrap().contains("+++ b/hello.txt"));
 
@@ -110,7 +121,9 @@ fn a_request_zero_cannot_answer_yet_is_refused_with_a_notice() {
     let effects = core.receive(&json!({"id": 7, "method": "mcpServer/elicitation/request", "params": {"itemId": "x"}}));
     assert_eq!(effects.replies[0]["id"], json!(7));
     assert!(effects.replies[0]["error"]["message"].as_str().unwrap().contains("mcpServer/elicitation/request"));
-    assert!(matches!(&core.conversation().items[0].kind, ItemKind::Notice { text, error: true } if text.contains("mcpServer/elicitation/request")));
+    assert!(
+        matches!(&core.conversation().items[0].kind, ItemKind::Notice { text, error: true } if text.contains("mcpServer/elicitation/request"))
+    );
 }
 
 #[test]
@@ -143,8 +156,14 @@ fn codexs_request_for_input_is_a_question_answered_by_question_id() {
     assert_eq!(question.fields.iter().map(|f| f.id.as_str()).collect::<Vec<_>>(), ["env", "token"]);
     assert!(question.fields[1].secret);
     assert!(question.fields[1].options.is_empty());
-    let answers = std::collections::HashMap::from([("env".to_string(), vec!["Staging".to_string()]), ("token".to_string(), vec!["s3cret".to_string()])]);
-    assert_eq!(core.reply(&question.id, &answers).unwrap(), json!({"id": 11, "result": {"answers": {"env": {"answers": ["Staging"]}, "token": {"answers": ["s3cret"]}}}}));
+    let answers = std::collections::HashMap::from([
+        ("env".to_string(), vec!["Staging".to_string()]),
+        ("token".to_string(), vec!["s3cret".to_string()]),
+    ]);
+    assert_eq!(
+        core.reply(&question.id, &answers).unwrap(),
+        json!({"id": 11, "result": {"answers": {"env": {"answers": ["Staging"]}, "token": {"answers": ["s3cret"]}}}})
+    );
     core.receive(&json!({"method": "serverRequest/resolved", "params": {"threadId": "t", "requestId": 11}}));
     assert!(core.conversation().questions.is_empty());
 }
@@ -152,18 +171,34 @@ fn codexs_request_for_input_is_a_question_answered_by_question_id() {
 #[test]
 fn a_server_of_zeros_that_needs_signing_in_gives_the_user_codexs_own_sign_in_link() {
     let mut conversation = Conversation::new("s1", Provider::Codex, "/work/project");
-    conversation.mcp = vec![zerod::mcp_servers::Resolved { id: "cve-lookup".into(), name: "CVE lookup".into(), command: None, args: vec![],
-                                                           url: Some("https://cve.example/mcp".into()), env: vec![], headers: vec![] }];
+    conversation.mcp = vec![zerod::mcp_servers::Resolved {
+        id: "cve-lookup".into(),
+        name: "CVE lookup".into(),
+        command: None,
+        args: vec![],
+        url: Some("https://cve.example/mcp".into()),
+        env: vec![],
+        headers: vec![],
+    }];
     let mut core = Core::new(conversation);
     let needs = |name: &str| json!({"method": "mcpServer/startupStatus/updated", "params": {"name": name, "status": "failed", "failureReason": "reauthenticationRequired", "threadId": "t1"}});
     assert!(core.receive(&needs("theirs")).replies.is_empty(), "the user's own servers are theirs to sign in to");
     let effects = core.receive(&needs("cve-lookup"));
-    assert_eq!(effects.replies, [json!({"id": "mcp-auth-cve-lookup", "method": "mcpServer/oauth/login", "params": {"name": "cve-lookup", "threadId": "t1"}})]);
+    assert_eq!(
+        effects.replies,
+        [json!({"id": "mcp-auth-cve-lookup", "method": "mcpServer/oauth/login", "params": {"name": "cve-lookup", "threadId": "t1"}})]
+    );
     core.receive(&json!({"id": "mcp-auth-cve-lookup", "result": {"authorizationUrl": "https://cve.example/authorize?x=1"}}));
-    assert!(matches!(&core.conversation().items.last().unwrap().kind,
-                     ItemKind::Notice { text, error: false } if text == "CVE lookup needs you to sign in on your Mac: [open its sign-in page](https://cve.example/authorize?x=1)"), "{:?}", core.conversation().items);
+    assert!(
+        matches!(&core.conversation().items.last().unwrap().kind,
+                     ItemKind::Notice { text, error: false } if text == "CVE lookup needs you to sign in on your Mac: [open its sign-in page](https://cve.example/authorize?x=1)"),
+        "{:?}",
+        core.conversation().items
+    );
     core.receive(&json!({"method": "mcpServer/oauthLogin/completed", "params": {"name": "cve-lookup", "success": true, "threadId": "t1"}}));
-    assert!(matches!(&core.conversation().items.last().unwrap().kind, ItemKind::Notice { text, error: false } if text == "Signed in to CVE lookup"));
+    assert!(
+        matches!(&core.conversation().items.last().unwrap().kind, ItemKind::Notice { text, error: false } if text == "Signed in to CVE lookup")
+    );
 }
 
 #[test]

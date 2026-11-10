@@ -2,7 +2,6 @@
 //! memory, and it goes offline keeping its state. Words for it (a reminder, a watch ending, a worker's report) resume it
 //! on its own thread first.
 
-
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -22,7 +21,9 @@ fn silent(started: Arc<Mutex<Vec<tokio::io::DuplexStream>>>) -> Runtime {
 }
 
 async fn minutes(n: u64) {
-    for _ in 0..n * 4 { tokio::time::sleep(Duration::from_secs(15)).await }
+    for _ in 0..n * 4 {
+        tokio::time::sleep(Duration::from_secs(15)).await
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -48,7 +49,12 @@ async fn an_idle_agent_is_parked_and_woken_by_words_for_it() {
     assert_eq!(session.snapshot().status, Status::Offline);
 
     daemon.notify(&id, "The deploy finished.").unwrap();
-    for _ in 0..20 { if session.is_attached() { break } tokio::time::sleep(Duration::from_millis(50)).await }
+    for _ in 0..20 {
+        if session.is_attached() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await
+    }
     assert!(session.is_attached(), "words for a parked agent resume it");
     assert_eq!(started.lock().unwrap().len(), 2);
 }
@@ -67,11 +73,21 @@ async fn an_agent_waiting_on_someone_is_parked_too_unless_work_runs_in_its_backg
     tokio::time::sleep(Duration::from_millis(100)).await;
     for id in [&waiting, &busy] {
         let session = daemon.session(id).unwrap();
-        session.change(Change::Item { item: Item { at: None, id: "a1".into(), turn: None, kind: ItemKind::Agent { text: "CI is running.\n\n[zero: waiting]".into(), final_answer: true }, status: ItemStatus::Done } });
+        session.change(Change::Item {
+            item: Item {
+                at: None,
+                id: "a1".into(),
+                turn: None,
+                kind: ItemKind::Agent { text: "CI is running.\n\n[zero: waiting]".into(), final_answer: true },
+                status: ItemStatus::Done,
+            },
+        });
         session.change(Change::Status { status: Status::Idle, turn: None, error: None });
     }
     // The second has a subagent running on in the background.
-    let line = json!({"type": "system", "subtype": "task_started", "task_id": "b1", "tool_use_id": "t9", "is_backgrounded": true}).to_string() + "\n";
+    let line = json!({"type": "system", "subtype": "task_started", "task_id": "b1", "tool_use_id": "t9", "is_backgrounded": true})
+        .to_string()
+        + "\n";
     let mut runtime = started.lock().unwrap().remove(1);
     runtime.write_all(line.as_bytes()).await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -87,7 +103,10 @@ async fn two_resumes_at_once_start_one_agent() {
     let started = Arc::new(Mutex::new(vec![]));
     let quiet = silent(started.clone());
     // As an agent's process does, it takes a moment to start.
-    let slow: Runtime = Arc::new(move |c, d, a| { std::thread::sleep(Duration::from_millis(100)); quiet(c, d, a) });
+    let slow: Runtime = Arc::new(move |c, d, a| {
+        std::thread::sleep(Duration::from_millis(100));
+        quiet(c, d, a)
+    });
     let daemon = Daemon::open(&home.join("zerod"), slow).unwrap();
     daemon.place(&user, &home.join("host.sock"));
     let cwd = home.to_str().unwrap();
@@ -98,7 +117,8 @@ async fn two_resumes_at_once_start_one_agent() {
     // The app warming it up as the user types, and their message arriving: one agent between them.
     let (one, two) = (daemon.clone(), daemon.clone());
     let (first, second) = (id.clone(), id.clone());
-    let (a, b) = tokio::join!(tokio::spawn(async move { one.resume(&first).await }), tokio::spawn(async move { two.resume(&second).await }));
+    let (a, b) =
+        tokio::join!(tokio::spawn(async move { one.resume(&first).await }), tokio::spawn(async move { two.resume(&second).await }));
     a.unwrap().unwrap();
     b.unwrap().unwrap();
     assert_eq!(started.lock().unwrap().len(), 1, "the second waits for the first, and finds it running");

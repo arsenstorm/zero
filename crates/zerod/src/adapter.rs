@@ -28,7 +28,9 @@ pub trait Adapter: Send {
 
     /// Lines that stop what runs in the background (a subagent, a long command) apart from the turn: what Stop sends
     /// besides interrupting the turn. None where the provider has no such thing.
-    fn stops(&self) -> Vec<Value> { vec![] }
+    fn stops(&self) -> Vec<Value> {
+        vec![]
+    }
 }
 
 /// What one line from the runtime leads to: changes to the conversation, and lines to send back at once.
@@ -42,7 +44,13 @@ impl Effects {
     /// A notice, with an id nothing else in the conversation has: the sequence number it will be applied at.
     pub fn notice(&mut self, conversation: &Conversation, text: &str, error: bool) {
         let id = format!("notice-{}", conversation.seq + 1 + self.changes.len() as u64);
-        let item = Item { at: None, id, turn: conversation.turn.clone(), kind: ItemKind::Notice { text: text.into(), error }, status: ItemStatus::Done };
+        let item = Item {
+            at: None,
+            id,
+            turn: conversation.turn.clone(),
+            kind: ItemKind::Notice { text: text.into(), error },
+            status: ItemStatus::Done,
+        };
         self.changes.push(Change::Item { item });
     }
 
@@ -64,7 +72,9 @@ pub fn key(id: &Value) -> String {
 
 /// A JSON-RPC answer: whose request it answers, and its result or why it failed.
 pub fn json_rpc_answer(message: &Value) -> Option<(String, Result<Value, String>)> {
-    if message.get("method").is_some() { return None }
+    if message.get("method").is_some() {
+        return None;
+    }
     let id = message.get("id")?;
     let outcome = match message.get("error") {
         Some(error) => Err(error["message"].as_str().unwrap_or("refused").to_string()),
@@ -77,8 +87,15 @@ pub fn json_rpc_answer(message: &Value) -> Option<(String, Result<Value, String>
 pub fn after_approval(conversation: &Conversation, settled: &str) -> Change {
     let others = conversation.approvals.iter().any(|a| a.id != settled) || conversation.questions.iter().any(|q| q.id != settled);
     // No turn under way (a background subagent's request, between turns): no turn to go back to, so not left waiting.
-    let status = if others { Status::Waiting } else if conversation.turn.is_some() { Status::Working }
-                 else if conversation.status == Status::Waiting { Status::Idle } else { conversation.status };
+    let status = if others {
+        Status::Waiting
+    } else if conversation.turn.is_some() {
+        Status::Working
+    } else if conversation.status == Status::Waiting {
+        Status::Idle
+    } else {
+        conversation.status
+    };
     Change::Status { status, turn: conversation.turn.clone(), error: conversation.error.clone() }
 }
 
@@ -130,14 +147,19 @@ pub const COMPACTED: &str = "compaction-";
 /// handed to another agent goes to a Zero worker, which the user sees, steers and stops in Zero. Read as each process
 /// starts.
 static SUBAGENTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-pub fn allow_subagents(on: bool) { SUBAGENTS.store(on, std::sync::atomic::Ordering::Relaxed) }
-pub fn subagents() -> bool { SUBAGENTS.load(std::sync::atomic::Ordering::Relaxed) }
+pub fn allow_subagents(on: bool) {
+    SUBAGENTS.store(on, std::sync::atomic::Ordering::Relaxed)
+}
+pub fn subagents() -> bool {
+    SUBAGENTS.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// Codex's own subagents (its multi-agent tools), off for this run only.
 const CODEX_NO_SUBAGENTS: &[&str] = &["-c", "features.multi_agent=false"];
 
 /// Codex's own browser, its bundled chrome and browser plugins, off for this run only: the user's config is left as is.
-const CODEX_NO_BROWSER: &[&str] = &["-c", "plugins.chrome@openai-bundled.enabled=false", "-c", "plugins.browser@openai-bundled.enabled=false"];
+const CODEX_NO_BROWSER: &[&str] =
+    &["-c", "plugins.chrome@openai-bundled.enabled=false", "-c", "plugins.browser@openai-bundled.enabled=false"];
 
 /// `args` run through the user's login shell, so their PATH (nvm, ~/.local/bin, Homebrew) finds the provider's CLI.
 pub fn login_shell(args: &[&str]) -> Vec<String> {
@@ -149,8 +171,12 @@ pub fn login_shell(args: &[&str]) -> Vec<String> {
 /// second. Agents' CLIs still start through `login_shell`, for the rest of the user's environment.
 pub fn on_login_path(args: &[&str]) -> Vec<String> {
     static PATH: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-        std::process::Command::new("/bin/zsh").args(["-lic", "printf %s \"$PATH\""]).output().ok()
-            .and_then(|out| String::from_utf8(out.stdout).ok()).filter(|p| !p.trim().is_empty())
+        std::process::Command::new("/bin/zsh")
+            .args(["-lic", "printf %s \"$PATH\""])
+            .output()
+            .ok()
+            .and_then(|out| String::from_utf8(out.stdout).ok())
+            .filter(|p| !p.trim().is_empty())
             .unwrap_or_else(|| std::env::var("PATH").unwrap_or_default())
     });
     ["/usr/bin/env".to_string(), format!("PATH={}", *PATH)].into_iter().chain(args.iter().map(|s| s.to_string())).collect()
@@ -175,9 +201,13 @@ impl Provider {
     /// As `command`, with the CLI's own subagents on or off (`subagents`): off, Claude's Agent tool and Codex's
     /// multi-agent tools are left out. OpenCode's can't be, for a run alone: its background service reads the user's
     /// own config.
-    pub fn command_with(self, conversation: &Conversation, resume: bool, model: Option<&str>, effort: Option<&str>, subagents: bool) -> Vec<String> {
+    pub fn command_with(
+        self, conversation: &Conversation, resume: bool, model: Option<&str>, effort: Option<&str>, subagents: bool,
+    ) -> Vec<String> {
         match self {
-            Provider::Codex => login_shell(&[&["codex", "app-server"][..], CODEX_NO_BROWSER, if subagents { &[] } else { CODEX_NO_SUBAGENTS }].concat()),
+            Provider::Codex => {
+                login_shell(&[&["codex", "app-server"][..], CODEX_NO_BROWSER, if subagents { &[] } else { CODEX_NO_SUBAGENTS }].concat())
+            }
             Provider::Claude => claude::command(conversation, resume, model, effort, subagents),
             Provider::Opencode => login_shell(&["opencode", "acp"]),
         }
@@ -188,15 +218,41 @@ impl Provider {
         let thread = conversation.thread.as_deref().ok_or_else(|| format!("{} hasn't started this task's thread yet", self.title()))?;
         let unrestricted = conversation.permissions == crate::model::Permissions::Unrestricted;
         let mut args: Vec<&str> = match self {
-            Provider::Claude => [&["claude", "--resume", thread, "--permission-mode", if unrestricted { "bypassPermissions" } else { "auto" }, "--no-chrome",
-                                    "--settings", claude::NO_IDLE_COMPACTION][..], if subagents() { &[] } else { claude::NO_SUBAGENTS }].concat(),
+            Provider::Claude => [
+                &[
+                    "claude",
+                    "--resume",
+                    thread,
+                    "--permission-mode",
+                    if unrestricted { "bypassPermissions" } else { "auto" },
+                    "--no-chrome",
+                    "--settings",
+                    claude::NO_IDLE_COMPACTION,
+                ][..],
+                if subagents() { &[] } else { claude::NO_SUBAGENTS },
+            ]
+            .concat(),
             // Its own app-server, as Zero runs Codex headless: the shared one may run with other settings, and Codex asks
             // before using it.
-            Provider::Codex => [&["codex", "resume", thread, "--no-daemon", if unrestricted { "--dangerously-bypass-approvals-and-sandbox" } else { "--sandbox=workspace-write" }][..], CODEX_NO_BROWSER,
-                                 if subagents() { &[] } else { CODEX_NO_SUBAGENTS }].concat(),
+            Provider::Codex => [
+                &[
+                    "codex",
+                    "resume",
+                    thread,
+                    "--no-daemon",
+                    if unrestricted { "--dangerously-bypass-approvals-and-sandbox" } else { "--sandbox=workspace-write" },
+                ][..],
+                CODEX_NO_BROWSER,
+                if subagents() { &[] } else { CODEX_NO_SUBAGENTS },
+            ]
+            .concat(),
             Provider::Opencode => vec!["opencode", "--session", thread],
         };
-        if self != Provider::Opencode && let Some(model) = conversation.model.as_deref() { args.extend(["--model", model]) }
+        if self != Provider::Opencode
+            && let Some(model) = conversation.model.as_deref()
+        {
+            args.extend(["--model", model])
+        }
         Ok(login_shell(&args))
     }
 

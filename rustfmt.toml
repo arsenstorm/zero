@@ -1,0 +1,7 @@
+# Zero's code is wide and compact: a call, a struct literal or a chain stays on one line while it fits in 140, and a
+# long signature wraps its parameters rather than putting each on a line. (Keeping `fn f() { x }` and `if c { x }` on
+# one line needs nightly-only options, fn_single_line and the like, so those open up.)
+max_width = 140
+use_small_heuristics = "Max"
+fn_params_layout = "Compressed"
+edition = "2024"

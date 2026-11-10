@@ -20,7 +20,11 @@ pub struct Schedule {
 impl Schedule {
     /// What the task hears when it's due; `now` past its time by more than a minute, that it's late and why.
     pub fn told(&self, now: i64) -> String {
-        let late = if now - self.at > 60 { format!(" (late: it was due {} minutes ago, while Zero wasn't running)", (now - self.at) / 60) } else { String::new() };
+        let late = if now - self.at > 60 {
+            format!(" (late: it was due {} minutes ago, while Zero wasn't running)", (now - self.at) / 60)
+        } else {
+            String::new()
+        };
         format!("Scheduled: {}{late}", self.text)
     }
 }
@@ -30,5 +34,7 @@ pub fn load(home: &Path) -> Vec<Schedule> {
 }
 
 pub fn keep(home: &Path, schedules: &[Schedule]) {
-    if let Ok(data) = serde_json::to_vec_pretty(schedules) { let _ = std::fs::write(home.join("schedules.json"), data); }
+    if let Ok(data) = serde_json::to_vec_pretty(schedules) {
+        let _ = std::fs::write(home.join("schedules.json"), data);
+    }
 }

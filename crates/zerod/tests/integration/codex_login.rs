@@ -17,20 +17,29 @@ fn codex(finish: Option<Value>) -> (tokio::io::DuplexStream, tokio::task::JoinHa
             heard.push(message.clone());
             let reply = match message["method"].as_str() {
                 Some("initialize") => Some(json!({"id": message["id"], "result": {"userAgent": "codex"}})),
-                Some("account/login/start") if message["params"]["type"] == "chatgpt" =>
-                    Some(json!({"id": message["id"], "result": {"type": "chatgpt", "loginId": "l1", "authUrl": "https://auth.openai.com/authorize?x=1"}})),
+                Some("account/login/start") if message["params"]["type"] == "chatgpt" => Some(
+                    json!({"id": message["id"], "result": {"type": "chatgpt", "loginId": "l1", "authUrl": "https://auth.openai.com/authorize?x=1"}}),
+                ),
                 Some("account/login/start") => Some(json!({"id": message["id"], "result": {"type": "apiKey"}})),
-                Some("account/read") => Some(json!({"id": message["id"], "result": {"account": {"type": "chatgpt", "email": "c@example.com", "planType": "pro"}}})),
+                Some("account/read") => Some(
+                    json!({"id": message["id"], "result": {"account": {"type": "chatgpt", "email": "c@example.com", "planType": "pro"}}}),
+                ),
                 Some("account/rateLimits/read") => Some(json!({"id": message["id"], "result": {"rateLimits": {
                     "primary": {"usedPercent": 12.0, "windowDurationMins": 300, "resetsAt": 1793970000},
                     "secondary": {"usedPercent": 64.0, "windowDurationMins": 10080, "resetsAt": 1794400000}}}})),
                 _ => None,
             };
-            if let Some(reply) = reply { write.write_all(format!("{reply}\n").as_bytes()).await.unwrap() }
-            if message["method"] == "account/login/start" && let Some(finish) = &finish {
+            if let Some(reply) = reply {
+                write.write_all(format!("{reply}\n").as_bytes()).await.unwrap()
+            }
+            if message["method"] == "account/login/start"
+                && let Some(finish) = &finish
+            {
                 write.write_all(format!("{finish}\n").as_bytes()).await.unwrap();
             }
-            if message["method"] == "account/read" || message["method"] == "account/rateLimits/read" { break }
+            if message["method"] == "account/read" || message["method"] == "account/rateLimits/read" {
+                break;
+            }
         }
         heard
     });
@@ -46,12 +55,17 @@ async fn a_chatgpt_sign_in_gives_its_page_then_who_signed_in() {
     assert_eq!(page.await.unwrap().as_deref(), Some("https://auth.openai.com/authorize?x=1"), "Codex's own page, for the user to open");
     assert_eq!((account.email.as_deref(), account.plan.as_deref()), (Some("c@example.com"), Some("pro")));
     let heard = server.await.unwrap();
-    assert_eq!(heard.iter().filter_map(|m| m["method"].as_str()).collect::<Vec<_>>(), ["initialize", "initialized", "account/login/start", "account/read"]);
+    assert_eq!(
+        heard.iter().filter_map(|m| m["method"].as_str()).collect::<Vec<_>>(),
+        ["initialize", "initialized", "account/login/start", "account/read"]
+    );
 }
 
 #[tokio::test]
 async fn a_sign_in_turned_down_says_why() {
-    let (zero, _server) = codex(Some(json!({"method": "account/login/completed", "params": {"loginId": "l1", "success": false, "error": "Login was cancelled"}})));
+    let (zero, _server) = codex(Some(
+        json!({"method": "account/login/completed", "params": {"loginId": "l1", "success": false, "error": "Login was cancelled"}}),
+    ));
     let (read, write) = tokio::io::split(zero);
     let (link, _page) = tokio::sync::oneshot::channel();
     assert_eq!(sign_in(read, write, Method::ChatGpt, link).await.unwrap_err(), "Codex didn't sign in: Login was cancelled");
@@ -87,5 +101,8 @@ async fn an_accounts_usage_is_read_without_a_task() {
     assert_eq!(windows, [("5 hours", 0.12, Some(1793970000)), ("7 days", 0.64, Some(1794400000))]);
     assert!(!usage.limited);
     let heard = server.await.unwrap();
-    assert_eq!(heard.iter().filter_map(|m| m["method"].as_str()).collect::<Vec<_>>(), ["initialize", "initialized", "account/rateLimits/read"]);
+    assert_eq!(
+        heard.iter().filter_map(|m| m["method"].as_str()).collect::<Vec<_>>(),
+        ["initialize", "initialized", "account/rateLimits/read"]
+    );
 }

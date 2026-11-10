@@ -27,10 +27,17 @@ struct Fake {
 }
 
 impl Runtime for Fake {
-    fn name(&self) -> &str { "fake" }
-    fn can_reach(&self, agent: &AgentIdentity) -> bool { agent.name != "unreachable" }
+    fn name(&self) -> &str {
+        "fake"
+    }
+    fn can_reach(&self, agent: &AgentIdentity) -> bool {
+        agent.name != "unreachable"
+    }
     fn send<'a>(&'a self, text: &'a str, agent: &'a AgentIdentity) -> Fut<'a, Result<(), String>> {
-        Box::pin(async move { self.sent.lock().unwrap().push((agent.name.clone(), text.to_string())); Ok(()) })
+        Box::pin(async move {
+            self.sent.lock().unwrap().push((agent.name.clone(), text.to_string()));
+            Ok(())
+        })
     }
     fn gone<'a>(&'a self, agents: &'a [AgentIdentity]) -> Fut<'a, HashSet<String>> {
         Box::pin(async move { agents.iter().map(|a| a.name.clone()).filter(|n| self.gone.lock().unwrap().contains(n)).collect() })
@@ -52,7 +59,11 @@ fn inbox_with(runtimes: Vec<Arc<dyn Runtime>>) -> Arc<Inbox> {
 
 async fn until(inbox: &Inbox, id: &str, test: impl Fn(&Ask) -> bool) -> Ask {
     for _ in 0..300 {
-        if let Some(ask) = inbox.ask(id) && test(&ask) { return ask }
+        if let Some(ask) = inbox.ask(id)
+            && test(&ask)
+        {
+            return ask;
+        }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("timed out: {:#?}", inbox.ask(id));
@@ -120,7 +131,11 @@ async fn a_run_streams_its_output_and_ends_with_its_exit_code() {
     assert_eq!(done.exit_code, Some(3));
     assert!(done.output.contains("hi"));
     let mut streamed = String::new();
-    while let Ok(event) = events.try_recv() { if let InboxEvent::Output { chunk, .. } = event { streamed += &chunk } }
+    while let Ok(event) = events.try_recv() {
+        if let InboxEvent::Output { chunk, .. } = event {
+            streamed += &chunk
+        }
+    }
     assert!(streamed.contains("hi"));
 }
 
@@ -132,10 +147,22 @@ async fn done_takes_a_second_word_with_its_token() {
     let agent = ask(AskKind::Note, "x", &[]).agent;
     let refused = s.done(&agent, "Merged and deployed", None).unwrap_err();
     assert!(refused.contains("end to end") && refused.contains("--confirm "), "{refused}");
-    let token = refused.split("--confirm ").nth(1).unwrap().split_whitespace().next().unwrap().trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+    let token = refused
+        .split("--confirm ")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .trim_matches(|c: char| !c.is_alphanumeric())
+        .to_string();
     assert!(s.done(&agent, "Merged and deployed", Some("nope")).is_err(), "a wrong token");
     assert!(s.done(&agent, "Merged and deployed", Some(&token)).is_ok());
-    assert!(s.asks().iter().any(|a| a.kind == AskKind::Note && a.confirmed && a.status.as_deref() == Some("done") && a.body == "Merged and deployed"));
+    assert!(
+        s.asks()
+            .iter()
+            .any(|a| a.kind == AskKind::Note && a.confirmed && a.status.as_deref() == Some("done") && a.body == "Merged and deployed")
+    );
     assert!(s.done(&agent, "Merged and deployed", Some(&token)).is_err(), "a token is good once");
 }
 
@@ -146,7 +173,15 @@ async fn blocked_takes_a_second_word_with_its_token() {
     let agent = ask(AskKind::Note, "x", &[]).agent;
     let refused = s.blocked(&agent, "The vendor's API is down", None).unwrap_err();
     assert!(refused.contains("--waiting") && refused.contains("--confirm "), "{refused}");
-    let token = refused.split("--confirm ").nth(1).unwrap().split_whitespace().next().unwrap().trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+    let token = refused
+        .split("--confirm ")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .trim_matches(|c: char| !c.is_alphanumeric())
+        .to_string();
     assert!(s.done(&agent, "x", Some(&token)).is_err(), "a blocked token doesn't confirm done");
     assert!(s.blocked(&agent, "The vendor's API is down", Some(&token)).is_ok());
     assert!(s.asks().iter().any(|a| a.kind == AskKind::Note && a.confirmed && a.status.as_deref() == Some("blocked")));
@@ -239,7 +274,12 @@ async fn agents_closed_in_their_runtime_leave_and_removed_ones_stop() {
     assert!(s.is_closed("a") && !s.is_closed("b"));
     assert!(fake.stopped.lock().unwrap().is_empty(), "already gone: nothing to stop");
     s.close_agent("b", true);
-    for _ in 0..50 { if !fake.stopped.lock().unwrap().is_empty() { break } tokio::time::sleep(Duration::from_millis(10)).await }
+    for _ in 0..50 {
+        if !fake.stopped.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await
+    }
     assert_eq!(*fake.stopped.lock().unwrap(), ["b"]);
 }
 
@@ -417,7 +457,11 @@ fn the_log_reads_and_writes_as_the_app_wrote_it() {
 /// A line as zerod writes it back: what an agent had from when Zero reached Solo and Rex (its Solo process and project,
 /// its Rex session) is read past.
 fn without_retired(mut line: serde_json::Value) -> serde_json::Value {
-    if let Some(agent) = line["agent"].as_object_mut() { for key in ["soloProcessID", "soloProjectID", "refGroup"] { agent.remove(key); } }
+    if let Some(agent) = line["agent"].as_object_mut() {
+        for key in ["soloProcessID", "soloProjectID", "refGroup"] {
+            agent.remove(key);
+        }
+    }
     line
 }
 

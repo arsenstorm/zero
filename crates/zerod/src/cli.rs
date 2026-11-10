@@ -68,32 +68,51 @@ async fn connection(inbox: Arc<Inbox>, stream: UnixStream) {
     let Ok(Some(line)) = lines.next_line().await else { return };
     let request: Request = match serde_json::from_str(&line) {
         Ok(request) => request,
-        Err(e) => { send(&mut out, error(format!("not a request: {e}"))).await; return }
+        Err(e) => {
+            send(&mut out, error(format!("not a request: {e}"))).await;
+            return;
+        }
     };
     match request.op.as_str() {
         "create" => {
-            let Some(mut incoming) = request.ask else { send(&mut out, error("create needs an ask".into())).await; return };
+            let Some(mut incoming) = request.ask else {
+                send(&mut out, error("create needs an ask".into())).await;
+                return;
+            };
             let waits = request.wait.unwrap_or(true);
-            if !waits { incoming.waits = Some(false) }
+            if !waits {
+                incoming.waits = Some(false)
+            }
             // Listening starts before the ask exists, so not even an instant answer slips past.
             let events = inbox.subscribe();
             let ask = inbox.create(incoming, false);
-            if !send(&mut out, Response { op: "created", id: Some(ask.id.clone()), ..Default::default() }).await || !waits { return }
+            if !send(&mut out, Response { op: "created", id: Some(ask.id.clone()), ..Default::default() }).await || !waits {
+                return;
+            }
             park(&inbox, events, &ask.id, out, lines).await;
         }
         "wait" => {
-            let Some(id) = request.id else { send(&mut out, error("wait needs an id".into())).await; return };
+            let Some(id) = request.id else {
+                send(&mut out, error("wait needs an id".into())).await;
+                return;
+            };
             let events = inbox.subscribe();
             park(&inbox, events, &id, out, lines).await;
         }
         "status" => {
             let id = request.id.unwrap_or_default();
-            let response = match inbox.ask(&id) { Some(ask) => Response { op: "ask", ask: Some(ask), ..Default::default() }, None => error(format!("no such ask {id}")) };
+            let response = match inbox.ask(&id) {
+                Some(ask) => Response { op: "ask", ask: Some(ask), ..Default::default() },
+                None => error(format!("no such ask {id}")),
+            };
             send(&mut out, response).await;
         }
         // `zero done`: said, refused with what done means and a token; with the token, done; --ask, the user's word.
         "done" => {
-            let Some(said) = request.ask else { send(&mut out, error("done needs the agent and what's done".into())).await; return };
+            let Some(said) = request.ask else {
+                send(&mut out, error("done needs the agent and what's done".into())).await;
+                return;
+            };
             let reply = if request.text.as_deref() == Some("ask") {
                 Response { op: "created", id: Some(inbox.ask_done(&said.agent, &said.body).id), ..Default::default() }
             } else {
@@ -106,7 +125,10 @@ async fn connection(inbox: Arc<Inbox>, stream: UnixStream) {
         }
         // `zero blocked`: as done, refused with what blocked means and a token; with the token, blocked.
         "blocked" => {
-            let Some(said) = request.ask else { send(&mut out, error("blocked needs the agent and what blocks it".into())).await; return };
+            let Some(said) = request.ask else {
+                send(&mut out, error("blocked needs the agent and what blocks it".into())).await;
+                return;
+            };
             let reply = match inbox.blocked(&said.agent, &said.body, request.id.as_deref()) {
                 Ok(()) => Response { op: "marked", ..Default::default() },
                 Err(why) => Response { op: "notBlocked", message: Some(why), ..Default::default() },
@@ -114,13 +136,19 @@ async fn connection(inbox: Arc<Inbox>, stream: UnixStream) {
             send(&mut out, reply).await;
         }
         "withdraw" => {
-            let Some(id) = request.id else { send(&mut out, error("withdraw needs an id".into())).await; return };
+            let Some(id) = request.id else {
+                send(&mut out, error("withdraw needs an id".into())).await;
+                return;
+            };
             inbox.withdraw(&id, request.text.as_deref());
             send(&mut out, Response { op: "withdrawn", id: Some(id), ..Default::default() }).await;
         }
         "prompt" => {
             // The plugin's prompt hook: who typed what just arrived in the agent's session.
-            let Some(ask) = request.ask else { send(&mut out, error("prompt needs the agent and its text".into())).await; return };
+            let Some(ask) = request.ask else {
+                send(&mut out, error("prompt needs the agent and its text".into())).await;
+                return;
+            };
             let source = inbox.prompted(&ask.agent, &ask.body);
             send(&mut out, Response { op: "prompt", message: Some(source.into()), ..Default::default() }).await;
         }
@@ -129,20 +157,39 @@ async fn connection(inbox: Arc<Inbox>, stream: UnixStream) {
             send(&mut out, Response { op: "asks", asks: Some(asks), ..Default::default() }).await;
         }
         "message" => {
-            let (Some(agent), Some(text)) = (request.agent, request.text) else { send(&mut out, error("message needs an agent and text".into())).await; return };
-            tokio::spawn(async move { let _ = inbox.message(&text, &agent).await; });
+            let (Some(agent), Some(text)) = (request.agent, request.text) else {
+                send(&mut out, error("message needs an agent and text".into())).await;
+                return;
+            };
+            tokio::spawn(async move {
+                let _ = inbox.message(&text, &agent).await;
+            });
             send(&mut out, Response { op: "created", ..Default::default() }).await;
         }
-        other => { send(&mut out, error(format!("unknown op {other}"))).await; }
+        other => {
+            send(&mut out, error(format!("unknown op {other}"))).await;
+        }
     }
 }
 
 /// Holds the connection until the ask is final, streaming a run's output; ends early if the client hangs up.
-async fn park(inbox: &Inbox, mut events: broadcast::Receiver<InboxEvent>, id: &str, mut out: OwnedWriteHalf,
-              mut lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>) {
-    let Some(ask) = inbox.ask(id) else { send(&mut out, error(format!("no such ask {id}"))).await; return };
-    if ask.state.is_final() { send(&mut out, Response { op: "done", ask: Some(ask), ..Default::default() }).await; return }
-    if !ask.output.is_empty() && !send(&mut out, Response { op: "output", id: Some(id.into()), chunk: Some(ask.output), ..Default::default() }).await { return }
+async fn park(
+    inbox: &Inbox, mut events: broadcast::Receiver<InboxEvent>, id: &str, mut out: OwnedWriteHalf,
+    mut lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+) {
+    let Some(ask) = inbox.ask(id) else {
+        send(&mut out, error(format!("no such ask {id}"))).await;
+        return;
+    };
+    if ask.state.is_final() {
+        send(&mut out, Response { op: "done", ask: Some(ask), ..Default::default() }).await;
+        return;
+    }
+    if !ask.output.is_empty()
+        && !send(&mut out, Response { op: "output", id: Some(id.into()), chunk: Some(ask.output), ..Default::default() }).await
+    {
+        return;
+    }
     loop {
         tokio::select! {
             event = events.recv() => match event {

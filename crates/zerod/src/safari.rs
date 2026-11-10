@@ -91,40 +91,74 @@ impl Safari {
     async fn http(&self, method: &str, path: &str, body: Option<&Value>) -> Result<Value, String> {
         let mut stream = tokio::net::TcpStream::connect(&self.address).await.map_err(|e| format!("Safari's driver isn't running: {e}"))?;
         let body = body.map(|b| b.to_string()).unwrap_or_default();
-        let request = format!("{method} {path} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                              self.address, body.len());
+        let request = format!(
+            "{method} {path} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            self.address,
+            body.len()
+        );
         stream.write_all(request.as_bytes()).await.map_err(|e| e.to_string())?;
         let mut response = vec![];
-        tokio::time::timeout(Duration::from_secs(60), stream.read_to_end(&mut response)).await.map_err(|_| "Safari didn't answer")?.map_err(|e| e.to_string())?;
+        tokio::time::timeout(Duration::from_secs(60), stream.read_to_end(&mut response))
+            .await
+            .map_err(|_| "Safari didn't answer")?
+            .map_err(|e| e.to_string())?;
         let split = response.windows(4).position(|w| w == b"\r\n\r\n").ok_or("Safari's driver answered oddly")?;
         let answer: Value = serde_json::from_slice(&response[split + 4..]).map_err(|_| "Safari's driver answered oddly")?;
         let value = answer["value"].clone();
-        if let Some(error) = value["error"].as_str() { return Err(format!("Safari: {}", value["message"].as_str().filter(|m| !m.is_empty()).unwrap_or(error))) }
+        if let Some(error) = value["error"].as_str() {
+            return Err(format!("Safari: {}", value["message"].as_str().filter(|m| !m.is_empty()).unwrap_or(error)));
+        }
         Ok(value)
     }
 
     /// The automation session, safaridriver started and the session begun if they weren't.
     async fn session(&self, state: &mut State) -> Result<String, String> {
-        if let Some(session) = &state.session { return Ok(session.clone()) }
-        let saved = self.kept.as_ref().and_then(|file| std::fs::read_to_string(file).ok()).map(|id| id.trim().to_string()).filter(|id| !id.is_empty());
-        if let Some(id) = saved && self.http("GET", &format!("/session/{id}/window"), None).await.is_ok() {
+        if let Some(session) = &state.session {
+            return Ok(session.clone());
+        }
+        let saved = self
+            .kept
+            .as_ref()
+            .and_then(|file| std::fs::read_to_string(file).ok())
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty());
+        if let Some(id) = saved
+            && self.http("GET", &format!("/session/{id}/window"), None).await.is_ok()
+        {
             state.session = Some(id.clone());
             state.windows.clear();
             return Ok(id);
         }
         if self.start && state.driver.as_mut().is_none_or(|d| d.try_wait().ok().flatten().is_some()) {
-            let child = tokio::process::Command::new("/usr/bin/safaridriver").args(["--port", &PORT.to_string()]).kill_on_drop(true)
-                .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().map_err(|e| format!("Couldn't start safaridriver: {e}"))?;
+            let child = tokio::process::Command::new("/usr/bin/safaridriver")
+                .args(["--port", &PORT.to_string()])
+                .kill_on_drop(true)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .map_err(|e| format!("Couldn't start safaridriver: {e}"))?;
             state.driver = Some(child);
             for _ in 0..40 {
-                if self.http("GET", "/status", None).await.is_ok() { break }
+                if self.http("GET", "/status", None).await.is_ok() {
+                    break;
+                }
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }
-        let started = self.http("POST", "/session", Some(&json!({"capabilities": {"alwaysMatch": {"browserName": "safari"}}}))).await
-            .map_err(|e| if e.contains("remote automation") { "Safari won't take remote control: turn on Settings › Developer › Allow remote automation in Safari".to_string() } else { e })?;
+        let started = self
+            .http("POST", "/session", Some(&json!({"capabilities": {"alwaysMatch": {"browserName": "safari"}}})))
+            .await
+            .map_err(|e| {
+                if e.contains("remote automation") {
+                    "Safari won't take remote control: turn on Settings › Developer › Allow remote automation in Safari".to_string()
+                } else {
+                    e
+                }
+            })?;
         let session = started["sessionId"].as_str().ok_or("Safari didn't start a session")?.to_string();
-        if let Some(file) = &self.kept { let _ = std::fs::write(file, &session); }
+        if let Some(file) = &self.kept {
+            let _ = std::fs::write(file, &session);
+        }
         state.session = Some(session.clone());
         state.windows.clear();
         Ok(session)
@@ -135,8 +169,13 @@ impl Safari {
         let session = self.session(state).await?;
         let handle = match state.windows.get(task) {
             Some(handle) => handle.clone(),
-            None if state.windows.is_empty() => self.http("GET", &format!("/session/{session}/window"), None).await?.as_str().unwrap_or_default().to_string(),
-            None => self.http("POST", &format!("/session/{session}/window/new"), Some(&json!({"type": "window"}))).await?["handle"].as_str().unwrap_or_default().to_string(),
+            None if state.windows.is_empty() => {
+                self.http("GET", &format!("/session/{session}/window"), None).await?.as_str().unwrap_or_default().to_string()
+            }
+            None => self.http("POST", &format!("/session/{session}/window/new"), Some(&json!({"type": "window"}))).await?["handle"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
         };
         self.http("POST", &format!("/session/{session}/window"), Some(&json!({"handle": handle}))).await?;
         state.windows.insert(task.to_string(), handle);
@@ -167,24 +206,36 @@ impl Safari {
         let at = |path: &str| format!("/session/{session}{path}");
         let script = |source: &str, args: Value| json!({"script": source, "args": args});
         let mut said = vec![];
-        if let Some(url) = &step.url { self.http("POST", &at("/url"), Some(&json!({"url": url}))).await?; }
+        if let Some(url) = &step.url {
+            self.http("POST", &at("/url"), Some(&json!({"url": url}))).await?;
+        }
         if let (Some(width), Some(height)) = (step.width, step.height) {
             // The window sized so the page inside it is width × height.
-            let chrome = self.http("POST", &at("/execute/sync"), Some(&script("return [outerWidth - innerWidth, outerHeight - innerHeight]", json!([])))).await?;
+            let chrome = self
+                .http("POST", &at("/execute/sync"), Some(&script("return [outerWidth - innerWidth, outerHeight - innerHeight]", json!([]))))
+                .await?;
             let (dx, dy) = (chrome[0].as_u64().unwrap_or(0), chrome[1].as_u64().unwrap_or(0));
             self.http("POST", &at("/window/rect"), Some(&json!({"width": width + dx, "height": height + dy}))).await?;
         }
         let element = async |selector: &str| -> Result<String, String> {
-            let found = self.http("POST", &at("/element"), Some(&json!({"using": "css selector", "value": selector}))).await
+            let found = self
+                .http("POST", &at("/element"), Some(&json!({"using": "css selector", "value": selector})))
+                .await
                 .map_err(|_| format!("Nothing on the page matches {selector}"))?;
             found[ELEMENT].as_str().map(String::from).ok_or_else(|| format!("Nothing on the page matches {selector}"))
         };
         match step.action.as_str() {
-            "click" => { let id = element(step.selector.as_deref().unwrap_or("")).await?; self.http("POST", &at(&format!("/element/{id}/click")), Some(&json!({}))).await?; }
+            "click" => {
+                let id = element(step.selector.as_deref().unwrap_or("")).await?;
+                self.http("POST", &at(&format!("/element/{id}/click")), Some(&json!({}))).await?;
+            }
             "type" => {
                 let text = step.text.clone().unwrap_or_default();
                 match &step.selector {
-                    Some(selector) => { let id = element(selector).await?; self.http("POST", &at(&format!("/element/{id}/value")), Some(&json!({"text": text}))).await?; }
+                    Some(selector) => {
+                        let id = element(selector).await?;
+                        self.http("POST", &at(&format!("/element/{id}/value")), Some(&json!({"text": text}))).await?;
+                    }
                     None => self.keys(&at("/actions"), text.chars().map(|c| c.to_string()).collect()).await?,
                 }
             }
@@ -193,9 +244,12 @@ impl Safari {
                 let key = crate::firefox::special(&name).map(String::from).unwrap_or(name);
                 self.keys(&at("/actions"), vec![key]).await?;
             }
-            "scroll" => { self.http("POST", &at("/execute/sync"), Some(&script("window.scrollBy(0, arguments[0])", json!([step.scroll])))).await?; }
+            "scroll" => {
+                self.http("POST", &at("/execute/sync"), Some(&script("window.scrollBy(0, arguments[0])", json!([step.scroll])))).await?;
+            }
             "js" => {
-                let value = self.http("POST", &at("/execute/sync"), Some(&script("return (0, eval)(arguments[0])", json!([step.text])))).await?;
+                let value =
+                    self.http("POST", &at("/execute/sync"), Some(&script("return (0, eval)(arguments[0])", json!([step.text])))).await?;
                 said.push(json!({"type": "text", "text": serde_json::to_string_pretty(&value).unwrap_or_default()}));
             }
             _ => {}
@@ -203,14 +257,17 @@ impl Safari {
         let shot = self.http("GET", &at("/screenshot"), None).await?;
         let png = shot.as_str().ok_or("Safari gave no screenshot")?;
         let (data, mime) = shrink(png).await;
-        if step.full_page { said.push(json!({"type": "text", "text": "Safari shows only what's in its window: this is the view, not the whole page."})) }
+        if step.full_page {
+            said.push(json!({"type": "text", "text": "Safari shows only what's in its window: this is the view, not the whole page."}))
+        }
         said.push(json!({"type": "image", "data": data, "mimeType": mime}));
         Ok(said)
     }
 
     /// Keys pressed and let go in turn, each a character or WebDriver's code for a key.
     async fn keys(&self, path: &str, keys: Vec<String>) -> Result<(), String> {
-        let actions: Vec<Value> = keys.iter().flat_map(|k| [json!({"type": "keyDown", "value": k}), json!({"type": "keyUp", "value": k})]).collect();
+        let actions: Vec<Value> =
+            keys.iter().flat_map(|k| [json!({"type": "keyDown", "value": k}), json!({"type": "keyUp", "value": k})]).collect();
         self.http("POST", path, Some(&json!({"actions": [{"type": "key", "id": "keyboard", "actions": actions}]}))).await?;
         Ok(())
     }
@@ -221,15 +278,30 @@ impl Safari {
 async fn shrink(png: &str) -> (String, &'static str) {
     let Some(bytes) = crate::images::unbase64(png) else { return (png.to_string(), "image/png") };
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let (from, to) = (std::env::temp_dir().join(format!("zero-safari-{stamp}.png")), std::env::temp_dir().join(format!("zero-safari-{stamp}.jpg")));
+    let (from, to) =
+        (std::env::temp_dir().join(format!("zero-safari-{stamp}.png")), std::env::temp_dir().join(format!("zero-safari-{stamp}.jpg")));
     let shrunk = async {
         tokio::fs::write(&from, &bytes).await.ok()?;
-        let done = tokio::process::Command::new("/usr/bin/sips").args(["-Z", &MAX_PX.to_string(), "-s", "format", "jpeg", "-s", "formatOptions", "80"])
-            .arg(&from).arg("--out").arg(&to).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().await.ok()?;
-        if !done.success() { return None }
+        let done = tokio::process::Command::new("/usr/bin/sips")
+            .args(["-Z", &MAX_PX.to_string(), "-s", "format", "jpeg", "-s", "formatOptions", "80"])
+            .arg(&from)
+            .arg("--out")
+            .arg(&to)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+            .ok()?;
+        if !done.success() {
+            return None;
+        }
         tokio::fs::read(&to).await.ok()
-    }.await;
+    }
+    .await;
     let _ = tokio::fs::remove_file(&from).await;
     let _ = tokio::fs::remove_file(&to).await;
-    match shrunk { Some(jpeg) => (crate::images::base64(&jpeg), "image/jpeg"), None => (png.to_string(), "image/png") }
+    match shrunk {
+        Some(jpeg) => (crate::images::base64(&jpeg), "image/jpeg"),
+        None => (png.to_string(), "image/png"),
+    }
 }

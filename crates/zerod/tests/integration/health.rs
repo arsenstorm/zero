@@ -1,7 +1,6 @@
 //! How a session is doing, beyond its status: the usage limits its CLI reports, failures by kind, and sessions that
 //! have stopped making progress. All of it adds up to one attention state, which the app's bar shows as a dot.
 
-
 use std::time::Duration;
 
 use crate::common::{fixture, play, replay};
@@ -25,8 +24,10 @@ fn claudes_own_rate_limit_report_is_the_sessions_usage() {
 #[test]
 fn a_rejected_claude_limit_is_limited_until_it_resets() {
     let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/w"));
-    core.receive(&json!({"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "resetsAt": 1793030000, "rateLimitType": "five_hour",
-        "unifiedWindows": {"five_hour": {"utilization": 1.0, "resetsAt": 1793030000, "status": "rejected"}}}}));
+    core.receive(
+        &json!({"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "resetsAt": 1793030000, "rateLimitType": "five_hour",
+        "unifiedWindows": {"five_hour": {"utilization": 1.0, "resetsAt": 1793030000, "status": "rejected"}}}}),
+    );
     let usage = core.conversation().usage.clone().unwrap();
     assert!(usage.limited);
     assert_eq!(usage.resets_at, Some(1793030000));
@@ -84,9 +85,21 @@ fn attention_puts_what_needs_arsen_first() {
     conversation.status = Status::Idle;
     conversation.stalled = None;
     assert_eq!(conversation.attention(), Attention::Idle);
-    conversation.items.push(zerod::model::Item { at: None, id: "a".into(), turn: None, kind: zerod::model::ItemKind::Agent { text: "Checked.".into(), final_answer: true }, status: zerod::model::ItemStatus::Done });
+    conversation.items.push(zerod::model::Item {
+        at: None,
+        id: "a".into(),
+        turn: None,
+        kind: zerod::model::ItemKind::Agent { text: "Checked.".into(), final_answer: true },
+        status: zerod::model::ItemStatus::Done,
+    });
     assert_eq!(conversation.attention(), Attention::Answered, "a turn ended is not a task done; the answer is there to read");
-    conversation.items.push(zerod::model::Item { at: None, id: "b".into(), turn: None, kind: zerod::model::ItemKind::Agent { text: "Done.\n\n[zero: done]".into(), final_answer: true }, status: zerod::model::ItemStatus::Done });
+    conversation.items.push(zerod::model::Item {
+        at: None,
+        id: "b".into(),
+        turn: None,
+        kind: zerod::model::ItemKind::Agent { text: "Done.\n\n[zero: done]".into(), final_answer: true },
+        status: zerod::model::ItemStatus::Done,
+    });
     assert_eq!(conversation.attention(), Attention::Done, "it said so: an answer is waiting to be read");
     conversation.failure = Some(zerod::model::Failure { kind: FailureKind::SignIn, message: "Not logged in".into() });
     assert_eq!(conversation.attention(), Attention::Failed);
@@ -105,7 +118,9 @@ fn session(provider: Provider) -> Session {
 
 /// Lets the paused clock run `minutes` forward, a tick at a time, so the session's watchdog runs on the way.
 async fn wait_minutes(minutes: u64) {
-    for _ in 0..minutes * 4 { tokio::time::sleep(Duration::from_secs(15)).await }
+    for _ in 0..minutes * 4 {
+        tokio::time::sleep(Duration::from_secs(15)).await
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -147,7 +162,13 @@ async fn a_command_running_for_half_an_hour_is_stuck_until_it_ends() {
     session.attach(zerod::session::Transport::new(read, write));
     // Output keeps coming, so the agent isn't silent, but the command never ends.
     for _ in 0..31 {
-        runtime_write.write_all(line(&json!({"method": "item/commandExecution/outputDelta", "params": {"turnId": "u", "itemId": "c1", "delta": "."}})).as_bytes()).await.unwrap();
+        runtime_write
+            .write_all(
+                line(&json!({"method": "item/commandExecution/outputDelta", "params": {"turnId": "u", "itemId": "c1", "delta": "."}}))
+                    .as_bytes(),
+            )
+            .await
+            .unwrap();
         wait_minutes(1).await;
     }
     assert_eq!(session.snapshot().stalled.as_deref(), Some("bin/rails test has been running for 30 minutes"));
@@ -162,13 +183,21 @@ async fn a_command_running_for_half_an_hour_is_stuck_until_it_ends() {
 async fn the_same_command_five_times_in_a_row_is_stuck() {
     let session = session(Provider::Codex);
     let mut script = vec![json!({"in": {"method": "turn/started", "params": {"turn": {"id": "u"}}}})];
-    let command = |i: usize| json!({"method": "item/completed", "params": {"turnId": "u", "item": {"type": "commandExecution", "id": format!("c{i}"),
-        "command": "gh pr checks 42", "cwd": "/w", "status": "completed", "exitCode": 1, "commandActions": []}}});
-    for i in 0..7 { script.push(json!({"in": command(i)})) }
+    let command = |i: usize| {
+        json!({"method": "item/completed", "params": {"turnId": "u", "item": {"type": "commandExecution", "id": format!("c{i}"),
+        "command": "gh pr checks 42", "cwd": "/w", "status": "completed", "exitCode": 1, "commandActions": []}}})
+    };
+    for i in 0..7 {
+        script.push(json!({"in": command(i)}))
+    }
     let (transport, seen) = play(script);
     session.attach(transport);
     wait_minutes(1).await;
-    assert_eq!(session.snapshot().stalled.as_deref(), Some("Ran gh pr checks 42 7 times in a row"), "the whole run is counted, not the five that make it one");
+    assert_eq!(
+        session.snapshot().stalled.as_deref(),
+        Some("Ran gh pr checks 42 7 times in a row"),
+        "the whole run is counted, not the five that make it one"
+    );
     // Another kind of step between is work, not a loop: the run starts over.
     seen.say(json!({"method": "item/completed", "params": {"turnId": "u", "item": {"type": "mcpToolCall", "id": "t1", "server": "linear", "tool": "list_issues", "arguments": {}, "status": "completed"}}}));
     seen.say(command(7));
@@ -181,7 +210,9 @@ async fn fails(session: &Session, n: usize, error: &str) {
     session.change(zerod::model::Change::Status { status: Status::Working, turn: Some(format!("t{n}")), error: None });
     session.change(zerod::model::Change::Failed { failure: None });
     tokio::time::sleep(Duration::from_millis(100)).await;
-    session.change(zerod::model::Change::Failed { failure: Some(zerod::model::Failure { kind: FailureKind::of(error), message: error.into() }) });
+    session.change(zerod::model::Change::Failed {
+        failure: Some(zerod::model::Failure { kind: FailureKind::of(error), message: error.into() }),
+    });
     session.change(zerod::model::Change::Status { status: Status::Idle, turn: None, error: Some(error.into()) });
     tokio::time::sleep(Duration::from_millis(300)).await;
 }
@@ -191,7 +222,9 @@ async fn failed_task(name: &str, error: &str) -> (std::sync::Arc<zerod::daemon::
     let home = crate::common::temp_dir(name);
     let sent = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     let daemon = zerod::daemon::Daemon::open(&home.join("zerod"), crate::endings::listening(sent.clone())).unwrap();
-    let id = daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    let id = daemon
+        .start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() })
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     fails(&daemon.session(&id).unwrap(), 1, error).await;
     (daemon, id, sent)
@@ -200,7 +233,8 @@ async fn failed_task(name: &str, error: &str) -> (std::sync::Arc<zerod::daemon::
 #[tokio::test]
 async fn signed_out_zeros_words_wait_and_the_users_go() {
     // Every event it follows would start a turn that fails the same way: they wait for a turn that works.
-    let (daemon, id, sent) = failed_task("health-signed-out", "Failed to authenticate: OAuth session expired and could not be refreshed").await;
+    let (daemon, id, sent) =
+        failed_task("health-signed-out", "Failed to authenticate: OAuth session expired and could not be refreshed").await;
     daemon.notify(&id, "1 new event on what you follow").unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(!sent.lock().unwrap().contains("1 new event"), "nothing for Zero's words while signed out");
@@ -218,7 +252,9 @@ async fn a_turn_ended_by_a_server_error_is_carried_on_three_times_at_most() {
     let carried = || sent.lock().unwrap().matches(zerod::daemon::CARRY_ON_AFTER_ERROR).count();
     assert_eq!(carried(), 1);
     let session = daemon.session(&id).unwrap();
-    for n in 2..6 { fails(&session, n, error).await }
+    for n in 2..6 {
+        fails(&session, n, error).await
+    }
     assert_eq!(carried(), 3, "then it's the user's to see");
 }
 
@@ -230,10 +266,16 @@ async fn signed_out_holds_zeros_words_for_every_task_on_that_account_until_a_tur
     let home = crate::common::temp_dir("health-account-out");
     let sent = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     let daemon = zerod::daemon::Daemon::open(&home.join("zerod"), crate::endings::listening(sent.clone())).unwrap();
-    let start = || daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    let start = || {
+        daemon
+            .start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() })
+            .unwrap()
+    };
     let (failed, other) = (start(), start());
     tokio::time::sleep(Duration::from_millis(100)).await;
-    for id in [&failed, &other] { daemon.session(id).unwrap().change(zerod::model::Change::Status { status: Status::Idle, turn: None, error: None }) }
+    for id in [&failed, &other] {
+        daemon.session(id).unwrap().change(zerod::model::Change::Status { status: Status::Idle, turn: None, error: None })
+    }
     tokio::time::sleep(Duration::from_millis(100)).await;
     fails(&daemon.session(&failed).unwrap(), 1, expired).await;
     daemon.notify(&other, "A schedule came due").unwrap();

@@ -136,15 +136,31 @@ struct Request {
 
 /// What an op needs from the request, refused with what's missing.
 impl Request {
-    fn ask(&self) -> Result<String, &'static str> { self.ask.as_ref().and_then(|a| a.as_str()).map(String::from).ok_or("Which ask?") }
-    fn agent(&self) -> Result<String, &'static str> { self.agent.clone().ok_or("Which agent?") }
-    fn option(&self) -> Result<usize, &'static str> { self.option.ok_or("Which option?") }
-    fn session(&self) -> Result<String, &'static str> { self.session.clone().ok_or("Which session?") }
-    fn integration(&self) -> Result<String, &'static str> { self.integration.clone().ok_or("Which integration: github or linear?") }
-    fn view(&self) -> Result<String, &'static str> { self.view.as_ref().and_then(|v| v.as_str()).map(String::from).ok_or("Which view?") }
+    fn ask(&self) -> Result<String, &'static str> {
+        self.ask.as_ref().and_then(|a| a.as_str()).map(String::from).ok_or("Which ask?")
+    }
+    fn agent(&self) -> Result<String, &'static str> {
+        self.agent.clone().ok_or("Which agent?")
+    }
+    fn option(&self) -> Result<usize, &'static str> {
+        self.option.ok_or("Which option?")
+    }
+    fn session(&self) -> Result<String, &'static str> {
+        self.session.clone().ok_or("Which session?")
+    }
+    fn integration(&self) -> Result<String, &'static str> {
+        self.integration.clone().ok_or("Which integration: github or linear?")
+    }
+    fn view(&self) -> Result<String, &'static str> {
+        self.view.as_ref().and_then(|v| v.as_str()).map(String::from).ok_or("Which view?")
+    }
     /// The model and effort asked for; none, the session's own.
-    fn choice(&self) -> crate::session::ModelChoice<'_> { crate::session::ModelChoice { model: self.model.as_deref(), effort: self.effort.as_deref() } }
-    fn workspace_id(&self) -> Option<String> { self.workspace.as_ref().and_then(|w| w.as_str()).filter(|w| !w.is_empty()).map(String::from) }
+    fn choice(&self) -> crate::session::ModelChoice<'_> {
+        crate::session::ModelChoice { model: self.model.as_deref(), effort: self.effort.as_deref() }
+    }
+    fn workspace_id(&self) -> Option<String> {
+        self.workspace.as_ref().and_then(|w| w.as_str()).filter(|w| !w.is_empty()).map(String::from)
+    }
 }
 
 /// What the app's settings say about the inbox; kept in zerod's home, so they hold before the app has connected.
@@ -188,25 +204,38 @@ pub struct CustomModel {
 impl Settings {
     /// How long a done task stays before it's archived; none, never. Once read, at once (archive_once_read).
     pub fn archive_after(&self) -> Option<i64> {
-        match self.archive_completed { None => Some(24 * 3600), Some(0) => None, Some(-1) => Some(0), Some(seconds) => Some(seconds.max(60)) }
+        match self.archive_completed {
+            None => Some(24 * 3600),
+            Some(0) => None,
+            Some(-1) => Some(0),
+            Some(seconds) => Some(seconds.max(60)),
+        }
     }
 
-    pub fn allows_subagents(&self) -> bool { self.subagents.unwrap_or(false) }
+    pub fn allows_subagents(&self) -> bool {
+        self.subagents.unwrap_or(false)
+    }
 
     /// A done task leaves once the user has read its last answer, as a done worker does once its lead has its report.
-    pub fn archive_once_read(&self) -> bool { self.archive_completed == Some(-1) }
+    pub fn archive_once_read(&self) -> bool {
+        self.archive_completed == Some(-1)
+    }
 
     pub fn load(home: &std::path::Path) -> Settings {
         std::fs::read(home.join("settings.json")).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default()
     }
 
     /// Agents' processes started from here on commit and sign as the settings say.
-    pub fn apply_git(&self, home: &std::path::Path) { crate::git::set(self.git.clone(), crate::git::key_path(home)) }
+    pub fn apply_git(&self, home: &std::path::Path) {
+        crate::git::set(self.git.clone(), crate::git::key_path(home))
+    }
 
     pub fn apply(&self, inbox: &Inbox, drops: Option<&Drops>) {
         inbox.configure(std::time::Duration::from_secs_f64(self.take_back.unwrap_or(2.0).max(0.0)), self.ttl.unwrap_or(3600));
         crate::adapter::allow_subagents(self.allows_subagents());
-        if let (Some(drops), Some(patterns)) = (drops, &self.patterns) { drops.set_patterns(patterns.clone()) }
+        if let (Some(drops), Some(patterns)) = (drops, &self.patterns) {
+            drops.set_patterns(patterns.clone())
+        }
     }
 }
 
@@ -236,7 +265,10 @@ impl Zerod {
         // that heard a change never gets a board from before it. By daemon: tests run several in one process. Asked for directly (`zero board`), it's worked out fresh.
         static KEPT: std::sync::Mutex<Option<(usize, std::time::Instant, Vec<crate::board::Row>)>> = std::sync::Mutex::new(None);
         let key = Arc::as_ptr(&self.daemon) as usize;
-        if let Some((kept, at, rows)) = KEPT.lock().unwrap().as_ref() && *kept == key && at.elapsed() < std::time::Duration::from_millis(200) {
+        if let Some((kept, at, rows)) = KEPT.lock().unwrap().as_ref()
+            && *kept == key
+            && at.elapsed() < std::time::Duration::from_millis(200)
+        {
             return rows.clone();
         }
         let rows = self.board();
@@ -246,12 +278,21 @@ impl Zerod {
 
     fn board(&self) -> Vec<crate::board::Row> {
         let daemon = &self.daemon;
-        let mut rows = crate::board::board_in(&daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(), &self.inbox.asks(), &self.places.get(), &daemon.queues(), &|c| daemon.workspace_of(c));
+        let mut rows = crate::board::board_in(
+            &daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(),
+            &self.inbox.asks(),
+            &self.places.get(),
+            &daemon.queues(),
+            &|c| daemon.workspace_of(c),
+        );
         crate::board::mark_read(&mut rows, &|id| daemon.has_read(id));
         crate::board::mark_paused(&mut rows, &|id| daemon.is_paused(id) || daemon.is_paused_for_update(id));
         // Saved for later: in Later until it's resumed from there.
         rows.retain(|r| !daemon.is_saved(&r.session));
-        for row in rows.iter_mut() { row.wakes = daemon.next_wake(&row.session); row.next = daemon.next(&row.session) }
+        for row in rows.iter_mut() {
+            row.wakes = daemon.next_wake(&row.session);
+            row.next = daemon.next(&row.session)
+        }
         rows
     }
 }
@@ -260,8 +301,14 @@ impl Zerod {
 /// daemon which tasks those are.
 pub fn hold_while_blocked(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
     let inbox = Arc::downgrade(inbox);
-    daemon.hold_while(Box::new(move |session| inbox.upgrade().is_some_and(|inbox| inbox.open_asks().iter()
-        .any(|a| a.blocks && (a.agent.reference.as_deref() == Some(session) || a.agent.name == format!("zerod-{session}"))))));
+    daemon.hold_while(Box::new(move |session| {
+        inbox.upgrade().is_some_and(|inbox| {
+            inbox
+                .open_asks()
+                .iter()
+                .any(|a| a.blocks && (a.agent.reference.as_deref() == Some(session) || a.agent.name == format!("zerod-{session}")))
+        })
+    }));
 }
 
 /// Archives each task done for as long as the settings say (a day, unless the user changed it), or once the user has
@@ -274,14 +321,22 @@ pub async fn archive_completed(zerod: Zerod) {
         let asks = zerod.inbox.asks();
         // Its last answer, or its last note (`zero note --done`), whichever came later: when it said it was done.
         let said = |id: &str| -> Option<i64> {
-            let answered = zerod.daemon.get(id).and_then(|c| c.items.iter().rev().find(|i| matches!(i.kind, crate::model::ItemKind::Agent { final_answer: true, .. })).and_then(|i| i.at));
-            let noted = asks.iter().filter(|a| a.kind == crate::ask::AskKind::Note && a.agent.reference.as_deref() == Some(id)).map(|a| a.created_at.0).max();
+            let answered = zerod.daemon.get(id).and_then(|c| {
+                c.items.iter().rev().find(|i| matches!(i.kind, crate::model::ItemKind::Agent { final_answer: true, .. })).and_then(|i| i.at)
+            });
+            let noted = asks
+                .iter()
+                .filter(|a| a.kind == crate::ask::AskKind::Note && a.agent.reference.as_deref() == Some(id))
+                .map(|a| a.created_at.0)
+                .max();
             // Items are stamped in milliseconds, asks in seconds.
             answered.map(|ms| ms / 1000).max(noted)
         };
         let due = crate::board::due_to_archive(&zerod.board(), now, settings.archive_after(), &said);
         for id in due.into_iter().filter(|id| !settings.archive_once_read() || zerod.daemon.has_read(id)) {
-            if let Err(error) = zerod.daemon.archive(&id).await { eprintln!("zerod: couldn't archive completed {id}: {error}") }
+            if let Err(error) = zerod.daemon.archive(&id).await {
+                eprintln!("zerod: couldn't archive completed {id}: {error}")
+            }
         }
     }
 }
@@ -290,29 +345,40 @@ pub async fn archive_completed(zerod: Zerod) {
 async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
     match request.op.as_str() {
         "integrations" | "setIntegration" | "saveView" | "deleteView" | "orderViews" | "viewItems" | "startTask" | "linearTeams"
-        | "connectLinear" | "disconnectLinear" | "connectSlack" | "disconnectSlack" | "refreshSlack" => integrations::handle(zerod, request).await,
+        | "connectLinear" | "disconnectLinear" | "connectSlack" | "disconnectSlack" | "refreshSlack" => {
+            integrations::handle(zerod, request).await
+        }
         "pad" | "later" | "loops" | "loop" | "saveLoop" | "deleteLoop" => notes::handle(zerod, request),
         "watch" | "watchFile" | "watches" | "unwatch" | "remind" | "schedule" | "schedules" | "unschedule" | "follow" | "unfollow"
         | "following" => watches::handle(zerod, request).await,
-        "start" | "spawn" | "adopt" | "detach" | "migrate" | "archive" | "unarchive" | "archived" | "saveForLater" | "resumeLater" | "restartStatus" | "restart" => {
-            sessions::lifecycle(zerod, request).await
-        }
-        "release" | "resume" | "openTerminal" | "closeTerminal" | "rewindPreview" | "rewind" | "branch" | "switch" | "interrupt" | "stop"
-        | "pause" | "unpause" => sessions::control(zerod, request).await,
+        "start" | "spawn" | "adopt" | "detach" | "migrate" | "archive" | "unarchive" | "archived" | "saveForLater" | "resumeLater"
+        | "restartStatus" | "restart" => sessions::lifecycle(zerod, request).await,
+        "release" | "resume" | "openTerminal" | "closeTerminal" | "rewindPreview" | "rewind" | "branch" | "switch" | "interrupt"
+        | "stop" | "pause" | "unpause" => sessions::control(zerod, request).await,
         "send" | "queue" | "unqueue" | "notify" | "decide" | "answer" | "seen" | "introduce" => sessions::messages(zerod, request).await,
-        "label" | "setPermissions" | "placeInWorkspace" | "attr" | "issue" | "table" | "place" => sessions::properties(zerod, request).await,
+        "label" | "setPermissions" | "placeInWorkspace" | "attr" | "issue" | "table" | "place" => {
+            sessions::properties(zerod, request).await
+        }
         "hello" | "list" | "get" | "workers" | "result" | "wait" | "usage" | "board" | "recent" | "items" | "window" | "outline" => {
             sessions::reads(zerod, request).await
         }
-        "browserCall" | "browsers" | "browserState" | "checkSafari" | "openFirefox" | "firefox" | "browserSettings" | "saveBrowserSettings"
+        "browserCall"
+        | "browsers"
+        | "browserState"
+        | "checkSafari"
+        | "openFirefox"
+        | "firefox"
+        | "browserSettings"
+        | "saveBrowserSettings"
         | "browserSetup" => browser::handle(zerod, request).await,
-        "signIns" | "saveSignIn" | "codexSignIn" | "claudeSignIn" | "deleteSignIn" | "defaultSignIn" | "readUsage" | "accountActivity" => signins::handle(zerod, request).await,
-        "agentAsk" | "create" | "asks" | "choose" | "answerAsk" | "reply" | "takeBack" | "withdraw" | "dismiss" | "cancelRun" | "deliver"
-        | "message" | "close" | "screen" | "press" | "switchModel" => inbox::handle(zerod, request).await,
-        "gitAccount" | "gitCheck" => git(zerod, request).await,
-        "mcpServers" | "saveMcpServer" | "deleteMcpServer" | "workspaces" | "saveWorkspace" | "deleteWorkspace" | "settings" | "configure" | "gitKey" => {
-            setup(zerod, request)
+        "signIns" | "saveSignIn" | "codexSignIn" | "claudeSignIn" | "deleteSignIn" | "defaultSignIn" | "readUsage" | "accountActivity" => {
+            signins::handle(zerod, request).await
         }
+        "agentAsk" | "create" | "asks" | "choose" | "answerAsk" | "reply" | "takeBack" | "withdraw" | "dismiss" | "cancelRun"
+        | "deliver" | "message" | "close" | "screen" | "press" | "switchModel" => inbox::handle(zerod, request).await,
+        "gitAccount" | "gitCheck" => git(zerod, request).await,
+        "mcpServers" | "saveMcpServer" | "deleteMcpServer" | "workspaces" | "saveWorkspace" | "deleteWorkspace" | "settings"
+        | "configure" | "gitKey" => setup(zerod, request),
         other => unknown(other),
     }
 }
@@ -322,7 +388,9 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
 async fn git(zerod: &Zerod, request: Request) -> Result<Value, String> {
     let login = request.args.as_ref().and_then(|a| a["login"].as_str()).unwrap_or("").to_string();
     match request.op.as_str() {
-        "gitAccount" => crate::git::account(&login).await.map(|(name, email)| json!({"login": login.trim().trim_start_matches('@'), "name": name, "email": email})),
+        "gitAccount" => crate::git::account(&login)
+            .await
+            .map(|(name, email)| json!({"login": login.trim().trim_start_matches('@'), "name": name, "email": email})),
         "gitCheck" => Ok(json!({"title": crate::git::on_github(&login, zerod.daemon.home()).await})),
         other => unknown(other),
     }
@@ -339,7 +407,8 @@ fn setup(zerod: &Zerod, request: Request) -> Result<Value, String> {
         // MCP servers set up in Zero: each task's CLI gets its workspace's as it starts.
         "mcpServers" => Ok(json!(daemon.mcp_servers.list())),
         "saveMcpServer" => {
-            let server = serde_json::from_value(request.server.clone().ok_or("Which server?")?).map_err(|e| format!("Not a server: {e}"))?;
+            let server =
+                serde_json::from_value(request.server.clone().ok_or("Which server?")?).map_err(|e| format!("Not a server: {e}"))?;
             let saved = daemon.mcp_servers.save(server)?;
             let _ = zerod.notices.send("mcp");
             Ok(json!(saved))
@@ -350,7 +419,8 @@ fn setup(zerod: &Zerod, request: Request) -> Result<Value, String> {
             Ok(Value::Null)
         }
         "saveWorkspace" => {
-            let workspace = serde_json::from_value(request.workspace.clone().ok_or("Which workspace?")?).map_err(|e| format!("Not a workspace: {e}"))?;
+            let workspace = serde_json::from_value(request.workspace.clone().ok_or("Which workspace?")?)
+                .map_err(|e| format!("Not a workspace: {e}"))?;
             let saved = daemon.workspaces.save(workspace)?;
             let _ = zerod.notices.send("workspaces");
             Ok(json!(saved))
@@ -363,7 +433,9 @@ fn setup(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "workspaces" => Ok(json!(daemon.workspaces.list())),
         "settings" => {
             let mut settings = json!(Settings::load(daemon.home()));
-            if let Some(key) = crate::git::public_key(daemon.home()) { settings["gitPublicKey"] = json!(key) }
+            if let Some(key) = crate::git::public_key(daemon.home()) {
+                settings["gitPublicKey"] = json!(key)
+            }
             Ok(settings)
         }
         // The agents' signing key, taken from a file the user chose: its public half back, for GitHub.
@@ -380,18 +452,18 @@ fn setup(zerod: &Zerod, request: Request) -> Result<Value, String> {
 fn configure(zerod: &Zerod, given: Settings) -> Result<Value, String> {
     let daemon = &zerod.daemon;
     let mut settings = Settings::load(daemon.home());
-        settings.take_back = given.take_back.or(settings.take_back);
-        settings.ttl = given.ttl.or(settings.ttl);
-        settings.patterns = given.patterns.or(settings.patterns);
-        settings.places = given.places.or(settings.places);
-        settings.archive_completed = given.archive_completed.or(settings.archive_completed);
-        settings.git = given.git.or(settings.git);
-        settings.subagents = given.subagents.or(settings.subagents);
-        settings.models = given.models.or(settings.models);
-        settings.apply_git(daemon.home());
-        settings.apply(&zerod.inbox, zerod.drops.as_deref());
-        let _ = std::fs::write(daemon.home().join("settings.json"), serde_json::to_vec_pretty(&settings).unwrap_or_default());
-        Ok(Value::Null)
+    settings.take_back = given.take_back.or(settings.take_back);
+    settings.ttl = given.ttl.or(settings.ttl);
+    settings.patterns = given.patterns.or(settings.patterns);
+    settings.places = given.places.or(settings.places);
+    settings.archive_completed = given.archive_completed.or(settings.archive_completed);
+    settings.git = given.git.or(settings.git);
+    settings.subagents = given.subagents.or(settings.subagents);
+    settings.models = given.models.or(settings.models);
+    settings.apply_git(daemon.home());
+    settings.apply(&zerod.inbox, zerod.drops.as_deref());
+    let _ = std::fs::write(daemon.home().join("settings.json"), serde_json::to_vec_pretty(&settings).unwrap_or_default());
+    Ok(Value::Null)
 }
 
 /// How many of a session's latest items a snapshot carries.

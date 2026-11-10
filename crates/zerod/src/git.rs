@@ -31,7 +31,9 @@ pub struct AgentGit {
 }
 
 /// Where Zero keeps the agents' signing key, readable by the user alone.
-pub fn key_path(home: &Path) -> PathBuf { home.join("git-signing-key") }
+pub fn key_path(home: &Path) -> PathBuf {
+    home.join("git-signing-key")
+}
 
 static CURRENT: LazyLock<Mutex<Option<(AgentGit, PathBuf)>>> = LazyLock::new(Default::default);
 
@@ -52,7 +54,9 @@ pub fn variables(cwd: &Path) -> Variables {
 /// outside their folders.
 pub fn variables_for(settings: &AgentGit, key: &Path, cwd: &Path) -> Variables {
     let inside = settings.folders.is_empty() || settings.folders.iter().any(|f| cwd.starts_with(expand(f)));
-    if !settings.enabled || !key.exists() || !inside || settings.email.trim().is_empty() { return vec![] }
+    if !settings.enabled || !key.exists() || !inside || settings.email.trim().is_empty() {
+        return vec![];
+    }
     let mut config = vec![
         ("gpg.format", "ssh".to_string()),
         ("gpg.ssh.program", "ssh-keygen".to_string()),
@@ -89,7 +93,9 @@ fn expand(folder: &str) -> PathBuf {
 /// public half.
 pub fn take_key(from: &Path, home: &Path) -> Result<String, String> {
     let public = std::process::Command::new("ssh-keygen").args(["-y", "-P", "", "-f"]).arg(from).output().map_err(|e| e.to_string())?;
-    if !public.status.success() { return Err("That isn't a private key Zero can sign with: it needs one without a passphrase".into()) }
+    if !public.status.success() {
+        return Err("That isn't a private key Zero can sign with: it needs one without a passphrase".into());
+    }
     let to = key_path(home);
     std::fs::copy(from, &to).map_err(|e| format!("Couldn't keep the key: {e}"))?;
     use std::os::unix::fs::PermissionsExt;
@@ -103,7 +109,12 @@ pub fn public_key(home: &Path) -> Option<String> {
     static KEPT: Mutex<Option<(PathBuf, std::time::SystemTime, Option<String>)>> = Mutex::new(None);
     let path = key_path(home);
     let changed = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
-    if let Some((kept, at, key)) = KEPT.lock().unwrap().as_ref() && *kept == path && *at == changed { return key.clone() }
+    if let Some((kept, at, key)) = KEPT.lock().unwrap().as_ref()
+        && *kept == path
+        && *at == changed
+    {
+        return key.clone();
+    }
     let output = std::process::Command::new("ssh-keygen").args(["-y", "-P", "", "-f"]).arg(&path).output().ok()?;
     let key = output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string());
     *KEPT.lock().unwrap() = Some((path, changed, key.clone()));
@@ -123,22 +134,34 @@ pub fn committer(user: &str) -> Option<(String, String)> {
 pub fn listed_as(keys: &str, public: &str) -> Option<String> {
     let body = |key: &str| key.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
     let keys: Vec<serde_json::Value> = serde_json::from_str(keys).ok()?;
-    keys.iter().find(|k| k["key"].as_str().map(body) == Some(body(public))).map(|k| k["title"].as_str().unwrap_or("Signing key").to_string())
+    keys.iter()
+        .find(|k| k["key"].as_str().map(body) == Some(body(public)))
+        .map(|k| k["title"].as_str().unwrap_or("Signing key").to_string())
 }
 
 /// `gh api <path>`, with the user's own GitHub CLI and sign-in.
 async fn gh(path: &str) -> Result<String, String> {
     let argv = crate::adapter::on_login_path(&["gh", "api", path]);
-    let output = tokio::process::Command::new(&argv[0]).args(&argv[1..]).stdin(std::process::Stdio::null()).output().await.map_err(|e| e.to_string())?;
-    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()) }
+    let output = tokio::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 /// The committer for GitHub account `login`, as GitHub has it.
 pub async fn account(login: &str) -> Result<(String, String), String> {
     let login = login.trim().trim_start_matches('@');
-    if login.is_empty() || !login.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') { return Err("That isn't a GitHub username".into()) }
-    committer(&gh(&format!("users/{login}")).await.map_err(|_| format!("GitHub has no account {login}"))?).ok_or_else(|| format!("GitHub has no account {login}"))
+    if login.is_empty() || !login.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err("That isn't a GitHub username".into());
+    }
+    committer(&gh(&format!("users/{login}")).await.map_err(|_| format!("GitHub has no account {login}"))?)
+        .ok_or_else(|| format!("GitHub has no account {login}"))
 }
 
 /// Whether the agents' key is one of `login`'s signing keys, by its title there; none when it isn't, or GitHub can't say.

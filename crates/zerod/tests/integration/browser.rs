@@ -2,7 +2,6 @@
 //! which relays Chrome's framing (a 4-byte length, then JSON) to zerod's socket. A task's browser tools go to the
 //! extension as calls, with the task they're for; the extension answers each by its id.
 
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,7 +24,10 @@ async fn unframe(from: &mut DuplexStream) -> Value {
     serde_json::from_slice(&data).unwrap()
 }
 
-struct Client { lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>, write: tokio::net::unix::OwnedWriteHalf }
+struct Client {
+    lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+    write: tokio::net::unix::OwnedWriteHalf,
+}
 
 impl Client {
     async fn connect(socket: &std::path::Path) -> Client {
@@ -37,7 +39,9 @@ impl Client {
         loop {
             let line = tokio::time::timeout(Duration::from_secs(5), self.lines.next_line()).await.expect("an answer").unwrap().unwrap();
             let reply: Value = serde_json::from_str(&line).unwrap();
-            if reply["id"] == request["id"] { return reply }
+            if reply["id"] == request["id"] {
+                return reply;
+            }
         }
     }
 }
@@ -48,13 +52,28 @@ async fn zerod(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     let runtime: zerod::daemon::Runtime = Arc::new(|_, _, _| Err(std::io::Error::other("no runtime here")));
     let daemon = Daemon::open(&home, runtime).unwrap();
     let integrations = zerod::integrations::Integrations::open(&home, Arc::new(zerod::integrations::Commands::default()));
-    tokio::spawn(zerod::server::serve(zerod::server::Zerod {
-        daemon, inbox: zerod::inbox::Inbox::open(None, vec![]), drops: None, integrations: integrations.clone(),
-        following: zerod::following::Following::open(&home, Arc::new(zerod::integrations::Commands::default()), integrations),
-        pads: Arc::new(zerod::pads::Pads::open(&home.join("scratchpads"))), later: Arc::new(zerod::later::Later::open(&home.join("later"))), loops: Arc::new(zerod::loops::Loops::open(&home.join("loops"))),
-        browsers: zerod::browser::Browsers::open(&home), places: Default::default(), notices: tokio::sync::broadcast::channel(64).0,
-    }, socket.clone()));
-    for _ in 0..50 { if socket.exists() { break } tokio::time::sleep(Duration::from_millis(10)).await }
+    tokio::spawn(zerod::server::serve(
+        zerod::server::Zerod {
+            daemon,
+            inbox: zerod::inbox::Inbox::open(None, vec![]),
+            drops: None,
+            integrations: integrations.clone(),
+            following: zerod::following::Following::open(&home, Arc::new(zerod::integrations::Commands::default()), integrations),
+            pads: Arc::new(zerod::pads::Pads::open(&home.join("scratchpads"))),
+            later: Arc::new(zerod::later::Later::open(&home.join("later"))),
+            loops: Arc::new(zerod::loops::Loops::open(&home.join("loops"))),
+            browsers: zerod::browser::Browsers::open(&home),
+            places: Default::default(),
+            notices: tokio::sync::broadcast::channel(64).0,
+        },
+        socket.clone(),
+    ));
+    for _ in 0..50 {
+        if socket.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await
+    }
     (home, socket)
 }
 
@@ -71,7 +90,10 @@ async fn a_tasks_call_reaches_the_extension_and_its_answer_comes_back() {
     // Connected, the browser is listed.
     for _ in 0..50 {
         let listed = client.call(json!({"id": "l", "op": "browsers"})).await;
-        if listed["result"].as_array().is_some_and(|b| !b.is_empty()) { assert_eq!(listed["result"][0]["name"], "Chrome"); break }
+        if listed["result"].as_array().is_some_and(|b| !b.is_empty()) {
+            assert_eq!(listed["result"][0]["name"], "Chrome");
+            break;
+        }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     let asked = tokio::spawn(async move {
@@ -79,15 +101,22 @@ async fn a_tasks_call_reaches_the_extension_and_its_answer_comes_back() {
         (client, reply)
     });
     let call = unframe(&mut extension).await;
-    assert_eq!((call["type"].as_str(), call["tool"].as_str(), call["args"]["url"].as_str()), (Some("call"), Some("browser_navigate"), Some("example.com")));
+    assert_eq!(
+        (call["type"].as_str(), call["tool"].as_str(), call["args"]["url"].as_str()),
+        (Some("call"), Some("browser_navigate"), Some("example.com"))
+    );
     assert_eq!(call["task"]["blocked"], json!(["*.bank.example"]), "the user's blocked sites go with every call");
     assert_eq!(call["task"]["group"], "zero", "outside a task, Zero's own group");
-    frame(&mut extension, json!({"type": "answer", "call": call["call"], "result": {"content": [{"type": "text", "text": "Navigated"}]}})).await;
+    frame(&mut extension, json!({"type": "answer", "call": call["call"], "result": {"content": [{"type": "text", "text": "Navigated"}]}}))
+        .await;
     let (mut client, reply) = asked.await.unwrap();
     assert_eq!(reply["result"]["content"][0]["text"], "Navigated");
 
     // A refusal comes back as an error.
-    let asked = tokio::spawn(async move { let r = client.call(json!({"id": 2, "op": "browserCall", "tool": "browser_read", "args": {"tabId": 9}})).await; (client, r) });
+    let asked = tokio::spawn(async move {
+        let r = client.call(json!({"id": 2, "op": "browserCall", "tool": "browser_read", "args": {"tabId": 9}})).await;
+        (client, r)
+    });
     let call = unframe(&mut extension).await;
     frame(&mut extension, json!({"type": "answer", "call": call["call"], "error": "Tab 9 isn't this task's"})).await;
     let (mut client, reply) = asked.await.unwrap();
@@ -99,7 +128,10 @@ async fn a_tasks_call_reaches_the_extension_and_its_answer_comes_back() {
     assert_eq!((reply["type"].as_str(), reply["id"].as_i64(), reply["ok"].as_bool()), (Some("reply"), Some(7), Some(true)));
 
     // Chrome gone: a call waiting is told so, and so is the next.
-    let asked = tokio::spawn(async move { let r = client.call(json!({"id": 3, "op": "browserCall", "tool": "browser_tabs", "args": {}})).await; (client, r) });
+    let asked = tokio::spawn(async move {
+        let r = client.call(json!({"id": 3, "op": "browserCall", "tool": "browser_tabs", "args": {}})).await;
+        (client, r)
+    });
     let _ = unframe(&mut extension).await;
     drop(extension);
     let _ = tokio::time::timeout(Duration::from_secs(5), host).await;
@@ -113,8 +145,27 @@ async fn a_tasks_call_reaches_the_extension_and_its_answer_comes_back() {
 fn every_tool_is_offered_to_agents_with_claude_in_chromes_inputs() {
     let tools = zerod::browser::tools();
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-    for name in ["browser_tabs", "browser_tab_new", "browser_tab_close", "browser_navigate", "browser_computer", "browser_read", "browser_find", "browser_text",
-                 "browser_form", "browser_js", "browser_console", "browser_network", "browser_resize", "browser_upload", "browser_record", "browser_dialog", "browser_batch", "browser_list", "browser_select"] {
+    for name in [
+        "browser_tabs",
+        "browser_tab_new",
+        "browser_tab_close",
+        "browser_navigate",
+        "browser_computer",
+        "browser_read",
+        "browser_find",
+        "browser_text",
+        "browser_form",
+        "browser_js",
+        "browser_console",
+        "browser_network",
+        "browser_resize",
+        "browser_upload",
+        "browser_record",
+        "browser_dialog",
+        "browser_batch",
+        "browser_list",
+        "browser_select",
+    ] {
         assert!(names.contains(&name), "{name} is missing");
     }
     let computer = tools.iter().find(|t| t["name"] == "browser_computer").unwrap();
@@ -133,7 +184,7 @@ fn the_host_manifest_names_zerod_and_only_zeros_extension() {
 
 #[test]
 fn in_auto_mode_a_new_site_gets_a_reviewers_opinion_first() {
-    use zerod::browser::{review_command, verdict, site};
+    use zerod::browser::{review_command, site, verdict};
     use zerod::model::Provider;
     // The task's own CLI, run once, on a small model where there's one to pick.
     let claude = review_command(Provider::Claude, "Is it fine?");
@@ -179,8 +230,17 @@ fn a_tasks_state_is_a_light_for_its_tab_group() {
     use zerod::board::State::*;
     use zerod::browser::light;
     // Chrome's own four: working, needs you (a question, an approval, an alert), blocked, done; nothing more.
-    for (state, expected) in [(NeedsYou, "needs"), (Trouble, "blocked"), (Waiting, "blocked"), (Working, "working"), (Handed, "done"), (Answered, "done"),
-                              (Done, "done"), (Idle, "done"), (Offline, "done")] {
+    for (state, expected) in [
+        (NeedsYou, "needs"),
+        (Trouble, "blocked"),
+        (Waiting, "blocked"),
+        (Working, "working"),
+        (Handed, "done"),
+        (Answered, "done"),
+        (Done, "done"),
+        (Idle, "done"),
+        (Offline, "done"),
+    ] {
         assert_eq!(light(state), expected, "{state:?}");
     }
 }
@@ -194,7 +254,9 @@ async fn chrome_hears_when_a_tasks_state_changes() {
     frame(&mut extension, json!({"type": "hello", "name": "Chrome"})).await;
     let mut client = Client::connect(&socket).await;
     for _ in 0..50 {
-        if client.call(json!({"id": "l", "op": "browsers"})).await["result"].as_array().is_some_and(|b| !b.is_empty()) { break }
+        if client.call(json!({"id": "l", "op": "browsers"})).await["result"].as_array().is_some_and(|b| !b.is_empty()) {
+            break;
+        }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     // What zerod's follower says when a session's light changes, as it would.
@@ -233,13 +295,17 @@ async fn a_call_with_chrome_closed_opens_it_and_goes_on() {
         let (opener, send) = (opener.clone(), chrome.lock().unwrap().take());
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(150)).await;
-            if let Some(send) = send { opener.attach(&json!({"id": "c1", "name": "Chrome"}), send); }
+            if let Some(send) = send {
+                opener.attach(&json!({"id": "c1", "name": "Chrome"}), send);
+            }
         });
     }));
     let answerer = browsers.clone();
     tokio::spawn(async move {
         while let Some(message) = calls.recv().await {
-            if message["event"] == "browserCall" { answerer.answer(&json!({"call": message["call"], "result": {"content": [{"type": "text", "text": "tabs"}]}})) }
+            if message["event"] == "browserCall" {
+                answerer.answer(&json!({"call": message["call"], "result": {"content": [{"type": "text", "text": "tabs"}]}}))
+            }
         }
     });
     let answer = browsers.call(Some("s1"), json!({}), "browser_tabs", json!({})).await.unwrap();
@@ -254,8 +320,15 @@ async fn a_call_with_chrome_closed_opens_it_and_goes_on() {
 #[test]
 fn a_blocked_site_is_matched_as_the_extension_matches_it() {
     let patterns = ["*.bank.example".to_string(), "https://mail.example/inbox".to_string()];
-    for (url, blocked) in [("https://bank.example/login", true), ("https://www.bank.example", true), ("https://mail.example", true),
-                           ("https://sub.mail.example/x", true), ("https://notbank.example", false), ("https://example.com", false), ("not a url", false)] {
+    for (url, blocked) in [
+        ("https://bank.example/login", true),
+        ("https://www.bank.example", true),
+        ("https://mail.example", true),
+        ("https://sub.mail.example/x", true),
+        ("https://notbank.example", false),
+        ("https://example.com", false),
+        ("not a url", false),
+    ] {
         assert_eq!(zerod::browser::blocked(url, &patterns), blocked, "{url}");
     }
 }

@@ -3,7 +3,6 @@
 //! freshly built test program costs seconds to start the first time (macOS checks it), and cargo runs them one after
 //! another, so 46 of them spent minutes before any test ran.
 
-mod common;
 mod adopt;
 mod attributes;
 mod board;
@@ -14,15 +13,14 @@ mod claude_login;
 mod cli;
 mod codex;
 mod codex_login;
-mod firefox;
+mod common;
 mod compare;
 mod coordination;
-mod schedules;
-mod replies;
-mod endings;
 mod drops;
 mod e2e;
+mod endings;
 mod events;
+mod firefox;
 mod following;
 mod git;
 mod health;
@@ -44,9 +42,11 @@ mod parked;
 mod parking;
 mod pause;
 mod process;
+mod replies;
 mod restart;
 mod rewind;
 mod runtimes;
+mod schedules;
 mod server;
 mod session;
 mod signins;

@@ -2,7 +2,6 @@
 //! door to what only that provider has. The terminal takes over the task's own thread (Zero stops its headless process
 //! first); back in Zero, what happened there joins the task's record, so nothing is lost and switching still works.
 
-
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -20,19 +19,61 @@ fn each_provider_opens_its_own_terminal_on_the_tasks_thread() {
     claude.model = Some("opus".into());
     // The providers' own browsers are off in Zero, whatever the user's own settings: agents use Zero for Chrome.
     // Their own subagents too, unless the user allows them: work for another agent goes to a Zero worker.
-    assert_eq!(Provider::Claude.terminal(&claude).unwrap()[4..], ["claude", "--resume", "3f1c", "--permission-mode", "auto", "--no-chrome",
-        "--settings", r#"{"idleCompaction":false}"#, "--disallowed-tools=Agent", "--model", "opus"]);
+    assert_eq!(
+        Provider::Claude.terminal(&claude).unwrap()[4..],
+        [
+            "claude",
+            "--resume",
+            "3f1c",
+            "--permission-mode",
+            "auto",
+            "--no-chrome",
+            "--settings",
+            r#"{"idleCompaction":false}"#,
+            "--disallowed-tools=Agent",
+            "--model",
+            "opus"
+        ]
+    );
     let mut codex = Conversation::new("s", Provider::Codex, "/w");
     codex.thread = Some("01a1".into());
     codex.permissions = Permissions::Unrestricted;
-    assert_eq!(Provider::Codex.terminal(&codex).unwrap()[4..], ["codex", "resume", "01a1", "--no-daemon", "--dangerously-bypass-approvals-and-sandbox",
-        "-c", "plugins.chrome@openai-bundled.enabled=false", "-c", "plugins.browser@openai-bundled.enabled=false", "-c", "features.multi_agent=false"]);
-    assert_eq!(Provider::Codex.command(&codex, true, None, None)[4..], ["codex", "app-server",
-        "-c", "plugins.chrome@openai-bundled.enabled=false", "-c", "plugins.browser@openai-bundled.enabled=false", "-c", "features.multi_agent=false"]);
+    assert_eq!(
+        Provider::Codex.terminal(&codex).unwrap()[4..],
+        [
+            "codex",
+            "resume",
+            "01a1",
+            "--no-daemon",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "-c",
+            "plugins.chrome@openai-bundled.enabled=false",
+            "-c",
+            "plugins.browser@openai-bundled.enabled=false",
+            "-c",
+            "features.multi_agent=false"
+        ]
+    );
+    assert_eq!(
+        Provider::Codex.command(&codex, true, None, None)[4..],
+        [
+            "codex",
+            "app-server",
+            "-c",
+            "plugins.chrome@openai-bundled.enabled=false",
+            "-c",
+            "plugins.browser@openai-bundled.enabled=false",
+            "-c",
+            "features.multi_agent=false"
+        ]
+    );
     let mut opencode = Conversation::new("s", Provider::Opencode, "/w");
     opencode.thread = Some("ses_9".into());
     assert_eq!(Provider::Opencode.terminal(&opencode).unwrap()[4..], ["opencode", "--session", "ses_9"]);
-    assert_eq!(Provider::Codex.terminal(&Conversation::new("s", Provider::Codex, "/w")).unwrap_err(), "Codex hasn't started this task's thread yet");
+    assert_eq!(
+        Provider::Codex.terminal(&Conversation::new("s", Provider::Codex, "/w")).unwrap_err(),
+        "Codex hasn't started this task's thread yet"
+    );
 }
 
 /// What Claude Code writes to its session file as you work in its terminal.
@@ -54,13 +95,17 @@ fn claude_turn() -> Vec<Value> {
 #[test]
 fn claude_codes_session_file_comes_back_as_the_tasks_items() {
     let kinds: Vec<ItemKind> = zerod::handoff::from_claude_session(&claude_turn()).into_iter().map(|i| i.kind).collect();
-    assert_eq!(kinds, [
-        ItemKind::User { text: "List the files".into(), images: vec![] },
-        ItemKind::Agent { text: "Listing them.".into(), final_answer: false },
-        ItemKind::Command { command: "ls".into(), cwd: String::new(), output: "a.txt".into(), exit_code: Some(0), duration_ms: None },
-        ItemKind::Tool { name: "Read".into(), detail: "/w/a.txt".into() },
-        ItemKind::Agent { text: "There is one file, a.txt.".into(), final_answer: true },
-    ], "what was said and done, in order; Claude's own bookkeeping and thinking left out, the turn's last words its answer");
+    assert_eq!(
+        kinds,
+        [
+            ItemKind::User { text: "List the files".into(), images: vec![] },
+            ItemKind::Agent { text: "Listing them.".into(), final_answer: false },
+            ItemKind::Command { command: "ls".into(), cwd: String::new(), output: "a.txt".into(), exit_code: Some(0), duration_ms: None },
+            ItemKind::Tool { name: "Read".into(), detail: "/w/a.txt".into() },
+            ItemKind::Agent { text: "There is one file, a.txt.".into(), final_answer: true },
+        ],
+        "what was said and done, in order; Claude's own bookkeeping and thinking left out, the turn's last words its answer"
+    );
 }
 
 #[test]
@@ -100,14 +145,20 @@ async fn fake_host(dir: &Path, answers: Value) -> (std::path::PathBuf, Arc<Mutex
 async fn a_task_goes_to_its_terminal_and_comes_back_with_what_happened_there() {
     let home = temp_dir("terminal-flow");
     let user = home.join("user");
-    let (socket, seen) = fake_host(&home, json!({
-        "hello": {"ok": true}, "spawn": {"ok": true, "terminal": {"id": "term-1", "running": true}},
-        "state": {"ok": true, "terminal": {"id": "term-1", "running": true}}, "close": {"ok": true},
-    })).await;
+    let (socket, seen) = fake_host(
+        &home,
+        json!({
+            "hello": {"ok": true}, "spawn": {"ok": true, "terminal": {"id": "term-1", "running": true}},
+            "state": {"ok": true, "terminal": {"id": "term-1", "running": true}}, "close": {"ok": true},
+        }),
+    )
+    .await;
     let runtime: Runtime = Arc::new(|_, _, _| Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())));
     let daemon = Daemon::open(&home.join("zerod"), runtime).unwrap();
     daemon.place(&user, &socket);
-    let id = daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    let id = daemon
+        .start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() })
+        .unwrap();
     let session = daemon.session(&id).unwrap();
     until(&session, |c| c.status == Status::Offline).await;
     let thread = session.snapshot().thread.unwrap();
@@ -119,21 +170,38 @@ async fn a_task_goes_to_its_terminal_and_comes_back_with_what_happened_there() {
     let spawned = seen.lock().unwrap().iter().find(|r| r["op"] == "spawn").cloned().unwrap();
     assert_eq!(spawned["cwd"], home.to_str().unwrap());
     assert!(spawned["argv"].as_array().unwrap().windows(2).any(|w| w[0] == "--resume" && w[1] == thread.as_str()), "{spawned}");
-    assert_eq!(session.snapshot().terminal, Some(Opened { id: "term-1".into(), mark: 1 }), "what the file held before is already in the record");
-    assert_eq!(daemon.send(&id, zerod::session::Message::text("from Zero"), Default::default()).await.unwrap_err(), "Claude Code is open in its terminal; type there, or go back to Zero");
+    assert_eq!(
+        session.snapshot().terminal,
+        Some(Opened { id: "term-1".into(), mark: 1 }),
+        "what the file held before is already in the record"
+    );
+    assert_eq!(
+        daemon.send(&id, zerod::session::Message::text("from Zero"), Default::default()).await.unwrap_err(),
+        "Claude Code is open in its terminal; type there, or go back to Zero"
+    );
 
     let mut written = std::fs::read_to_string(&file).unwrap();
-    for record in claude_turn() { written += &(record.to_string() + "\n") }
+    for record in claude_turn() {
+        written += &(record.to_string() + "\n")
+    }
     std::fs::write(&file, written).unwrap();
     daemon.close_terminal(&id).await.unwrap();
     assert!(seen.lock().unwrap().iter().any(|r| r["op"] == "close" && r["id"] == "term-1"));
     let conversation = session.snapshot();
     assert_eq!(conversation.terminal, None);
-    let texts: Vec<String> = conversation.items.iter().filter_map(|i| match &i.kind {
-        ItemKind::User { text, .. } | ItemKind::Agent { text, .. } => Some(text.clone()),
-        _ => None,
-    }).collect();
-    assert_eq!(texts, ["hi", "List the files", "Listing them.", "There is one file, a.txt."], "the terminal's turn joins the record, the earlier one isn't repeated");
+    let texts: Vec<String> = conversation
+        .items
+        .iter()
+        .filter_map(|i| match &i.kind {
+            ItemKind::User { text, .. } | ItemKind::Agent { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        texts,
+        ["hi", "List the files", "Listing them.", "There is one file, a.txt."],
+        "the terminal's turn joins the record, the earlier one isn't repeated"
+    );
     // Kept across a restart: the record took it in as changes in the transcript.
     drop(daemon);
     let runtime: Runtime = Arc::new(|_, _, _| Err(std::io::Error::other("not started")));
@@ -150,9 +218,11 @@ async fn a_resume_that_fails_lets_go_of_the_process_it_started() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("meta.json"), r#"{"id":"01a100000000000a","provider":"codex","cwd":"/work","thread":"t1"}"#).unwrap();
     let script = vec![
-        json!({"out": {"id": "z1", "method": "initialize"}}), json!({"in": {"id": "z1", "result": {}}}),
+        json!({"out": {"id": "z1", "method": "initialize"}}),
+        json!({"in": {"id": "z1", "result": {}}}),
         json!({"out": {"method": "initialized"}}),
-        json!({"out": {"id": "z2", "method": "thread/resume"}}), json!({"in": {"id": "z2", "error": {"code": -1, "message": "thread t1 already has an active writer"}}}),
+        json!({"out": {"id": "z2", "method": "thread/resume"}}),
+        json!({"in": {"id": "z2", "error": {"code": -1, "message": "thread t1 already has an active writer"}}}),
     ];
     let script = Mutex::new(Some(script));
     let runtime: Runtime = Arc::new(move |_, _, _| Ok(crate::common::play(script.lock().unwrap().take().unwrap()).0));
@@ -169,21 +239,33 @@ async fn a_terminal_left_idle_is_closed_and_its_task_comes_back_to_zero() {
     let home = temp_dir("terminal-park");
     let user = home.join("user");
     // zero-host says the terminal has had nothing written or typed for 16 minutes.
-    let (socket, seen) = fake_host(&home, json!({
-        "hello": {"ok": true}, "spawn": {"ok": true, "terminal": {"id": "term-1", "running": true}},
-        "state": {"ok": true, "terminal": {"id": "term-1", "running": true, "idle": 16 * 60}}, "close": {"ok": true},
-    })).await;
+    let (socket, seen) = fake_host(
+        &home,
+        json!({
+            "hello": {"ok": true}, "spawn": {"ok": true, "terminal": {"id": "term-1", "running": true}},
+            "state": {"ok": true, "terminal": {"id": "term-1", "running": true, "idle": 16 * 60}}, "close": {"ok": true},
+        }),
+    )
+    .await;
     let runtime: Runtime = Arc::new(|_, _, _| Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())));
     let daemon = Daemon::open(&home.join("zerod"), runtime).unwrap();
     daemon.place(&user, &socket);
-    let id = daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    let id = daemon
+        .start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() })
+        .unwrap();
     let session = daemon.session(&id).unwrap();
     until(&session, |c| c.status == Status::Offline).await;
     let file = zerod::handoff::claude_folder(&user, home.to_str().unwrap()).join(format!("{}.jsonl", session.snapshot().thread.unwrap()));
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     std::fs::write(&file, "").unwrap();
     daemon.open_terminal(&id).await.unwrap();
-    for _ in 0..12 { tokio::time::sleep(std::time::Duration::from_secs(15)).await }
-    assert!(seen.lock().unwrap().iter().any(|r| r["op"] == "close" && r["id"] == "term-1"), "closed once idle for {:?}", zerod::daemon::TERMINAL_PARK_AFTER);
+    for _ in 0..12 {
+        tokio::time::sleep(std::time::Duration::from_secs(15)).await
+    }
+    assert!(
+        seen.lock().unwrap().iter().any(|r| r["op"] == "close" && r["id"] == "term-1"),
+        "closed once idle for {:?}",
+        zerod::daemon::TERMINAL_PARK_AFTER
+    );
     assert_eq!(session.snapshot().terminal, None);
 }

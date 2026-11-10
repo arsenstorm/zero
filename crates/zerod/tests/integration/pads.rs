@@ -2,7 +2,6 @@
 //! by (zero://pad/<id>, or zero://pad/<id>#<section> for one heading's part), and a revision that guards a write
 //! against one made since it was read.
 
-
 use crate::common::temp_dir;
 use zerod::pads::*;
 
@@ -46,8 +45,11 @@ fn files_added_outside_zero_get_ids_and_removed_ones_go() {
 fn sections_are_its_headings_with_links_of_their_own() {
     let outline = sections(PLAN);
     let slugs: Vec<(&str, u8, &str)> = outline.iter().map(|s| (s.slug.as_str(), s.level, s.title.as_str())).collect();
-    assert_eq!(slugs, [("release-plan", 1, "Release plan"), ("plan", 2, "Plan"), ("risks", 3, "Risks"), ("notes", 2, "Notes"), ("plan-1", 2, "Plan")],
-               "a heading in a code block isn't one; a repeated one gets a number, as GitHub's anchors do");
+    assert_eq!(
+        slugs,
+        [("release-plan", 1, "Release plan"), ("plan", 2, "Plan"), ("risks", 3, "Risks"), ("notes", 2, "Notes"), ("plan-1", 2, "Plan")],
+        "a heading in a code block isn't one; a repeated one gets a number, as GitHub's anchors do"
+    );
     let pads = Pads::open(&temp_dir("pads-sections"));
     let pad = pads.create("Release plan", "", PLAN).unwrap();
     // A section runs to the next heading as high as its own, so it holds its subsections.
@@ -63,8 +65,10 @@ fn a_write_from_an_old_revision_is_refused() {
     let pad = pads.create("Notes", "", "one\n").unwrap();
     let written = pads.write(&pad.id, "two\n", Some(&pad.revision)).unwrap();
     assert_ne!(written.revision, pad.revision);
-    assert_eq!(pads.write(&pad.id, "three\n", Some(&pad.revision)).unwrap_err(),
-               format!("Notes changed since revision {}; read it again (it's at {} now)", pad.revision, written.revision));
+    assert_eq!(
+        pads.write(&pad.id, "three\n", Some(&pad.revision)).unwrap_err(),
+        format!("Notes changed since revision {}; read it again (it's at {} now)", pad.revision, written.revision)
+    );
     assert_eq!(pads.write(&pad.id, "three\n", None).unwrap().content, "three\n", "no revision: written over");
 }
 
@@ -91,7 +95,10 @@ fn pads_are_found_by_title_and_by_their_text() {
     assert_eq!(pads.list(Some("release")).iter().map(|p| p.title.as_str()).collect::<Vec<_>>(), ["Release plan"]);
     let found = pads.find("SHIP");
     assert_eq!(found.len(), 1);
-    assert_eq!((found[0].id.as_str(), found[0].section.as_deref(), found[0].line, found[0].text.as_str()), (plan.id.as_str(), Some("plan"), 7, "- ship it"));
+    assert_eq!(
+        (found[0].id.as_str(), found[0].section.as_deref(), found[0].line, found[0].text.as_str()),
+        (plan.id.as_str(), Some("plan"), 7, "- ship it")
+    );
 }
 
 #[test]

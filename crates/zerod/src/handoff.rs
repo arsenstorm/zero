@@ -44,7 +44,8 @@ pub fn claude_session(conversation: &Conversation, session: &str) -> String {
             ItemKind::Tool { name, detail } => {
                 chain.calls += 1;
                 let call = format!("toolu_zero_{}", chain.calls);
-                let input = serde_json::from_str::<Value>(detail).ok().filter(Value::is_object).unwrap_or_else(|| json!({"detail": detail}));
+                let input =
+                    serde_json::from_str::<Value>(detail).ok().filter(Value::is_object).unwrap_or_else(|| json!({"detail": detail}));
                 chain.add("assistant", json!([{"type": "tool_use", "id": call, "name": name, "input": input}]));
                 chain.add("user", json!([{"type": "tool_result", "tool_use_id": call, "content": "Its result isn't in Zero's record.", "is_error": false}]));
             }
@@ -57,13 +58,20 @@ pub fn claude_session(conversation: &Conversation, session: &str) -> String {
 /// The conversation as plain text, for a provider that can't be handed one (OpenCode): what each said, and the
 /// commands run, in order.
 pub fn context(conversation: &Conversation) -> String {
-    let lines: Vec<String> = conversation.items.iter().filter_map(|item| match &item.kind {
-        ItemKind::User { text, .. } => Some(format!("User: {text}")),
-        ItemKind::Agent { text, .. } if !text.trim().is_empty() => Some(format!("You: {text}")),
-        ItemKind::Command { command, .. } => Some(format!("You ran: {command}")),
-        _ => None,
-    }).collect();
-    format!("This conversation goes on from an earlier session; here is what was said before, for context. Carry on from it.\n\n{}", lines.join("\n\n"))
+    let lines: Vec<String> = conversation
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ItemKind::User { text, .. } => Some(format!("User: {text}")),
+            ItemKind::Agent { text, .. } if !text.trim().is_empty() => Some(format!("You: {text}")),
+            ItemKind::Command { command, .. } => Some(format!("You ran: {command}")),
+            _ => None,
+        })
+        .collect();
+    format!(
+        "This conversation goes on from an earlier session; here is what was said before, for context. Carry on from it.\n\n{}",
+        lines.join("\n\n")
+    )
 }
 
 /// What a stretch of Claude Code's session file says, as the task's items: what was typed, said and run. Its own
@@ -73,16 +81,21 @@ pub fn from_claude_session(records: &[Value]) -> Vec<Item> {
     let mut items: Vec<Item> = vec![];
     for record in records {
         let uuid = record["uuid"].as_str().unwrap_or("");
-        if record["isMeta"] == true { continue }
+        if record["isMeta"] == true {
+            continue;
+        }
         let before = items.len();
         let content = &record["message"]["content"];
         match (record["type"].as_str(), content) {
-            (Some("user"), Value::String(text)) if !text.starts_with('<') => items.push(item(uuid, 0, ItemKind::User { text: text.clone(), images: vec![] })),
+            (Some("user"), Value::String(text)) if !text.starts_with('<') => {
+                items.push(item(uuid, 0, ItemKind::User { text: text.clone(), images: vec![] }))
+            }
             (Some("user"), Value::Array(blocks)) => {
                 for (n, block) in blocks.iter().enumerate() {
                     match block["type"].as_str() {
-                        Some("text") if !block["text"].as_str().unwrap_or("").starts_with('<') =>
-                            items.push(item(uuid, n, ItemKind::User { text: block["text"].as_str().unwrap_or("").into(), images: vec![] })),
+                        Some("text") if !block["text"].as_str().unwrap_or("").starts_with('<') => {
+                            items.push(item(uuid, n, ItemKind::User { text: block["text"].as_str().unwrap_or("").into(), images: vec![] }))
+                        }
                         Some("tool_result") => {
                             let output = match &block["content"] {
                                 Value::String(text) => text.clone(),
@@ -91,7 +104,8 @@ pub fn from_claude_session(records: &[Value]) -> Vec<Item> {
                             };
                             let call = format!("claude-call-{}", block["tool_use_id"].as_str().unwrap_or(""));
                             if let Some(ran) = items.iter_mut().find(|i| i.id == call)
-                                && let ItemKind::Command { output: out, exit_code, .. } = &mut ran.kind {
+                                && let ItemKind::Command { output: out, exit_code, .. } = &mut ran.kind
+                            {
                                 *out = output;
                                 *exit_code = Some(if block["is_error"] == true { 1 } else { 0 });
                             }
@@ -103,15 +117,28 @@ pub fn from_claude_session(records: &[Value]) -> Vec<Item> {
             (Some("assistant"), Value::Array(blocks)) => {
                 for (n, block) in blocks.iter().enumerate() {
                     match block["type"].as_str() {
-                        Some("text") if !block["text"].as_str().unwrap_or("").trim().is_empty() =>
-                            items.push(item(uuid, n, ItemKind::Agent { text: block["text"].as_str().unwrap_or("").into(), final_answer: false })),
+                        Some("text") if !block["text"].as_str().unwrap_or("").trim().is_empty() => items.push(item(
+                            uuid,
+                            n,
+                            ItemKind::Agent { text: block["text"].as_str().unwrap_or("").into(), final_answer: false },
+                        )),
                         Some("tool_use") => {
                             let input = &block["input"];
-                            let mut used = item(uuid, n, if block["name"] == "Bash" {
-                                ItemKind::Command { command: input["command"].as_str().unwrap_or("").into(), cwd: String::new(), output: String::new(), exit_code: None, duration_ms: None }
-                            } else {
-                                ItemKind::Tool { name: block["name"].as_str().unwrap_or("tool").into(), detail: detail(input) }
-                            });
+                            let mut used = item(
+                                uuid,
+                                n,
+                                if block["name"] == "Bash" {
+                                    ItemKind::Command {
+                                        command: input["command"].as_str().unwrap_or("").into(),
+                                        cwd: String::new(),
+                                        output: String::new(),
+                                        exit_code: None,
+                                        duration_ms: None,
+                                    }
+                                } else {
+                                    ItemKind::Tool { name: block["name"].as_str().unwrap_or("tool").into(), detail: detail(input) }
+                                },
+                            );
                             used.id = format!("claude-call-{}", block["id"].as_str().unwrap_or(uuid));
                             items.push(used);
                         }
@@ -133,7 +160,10 @@ fn answers(items: &mut [Item]) {
     for item in items.iter_mut().rev() {
         match &mut item.kind {
             ItemKind::User { .. } => answered = false,
-            ItemKind::Agent { final_answer, .. } if !answered => { *final_answer = true; answered = true }
+            ItemKind::Agent { final_answer, .. } if !answered => {
+                *final_answer = true;
+                answered = true
+            }
             _ => {}
         }
     }
@@ -153,16 +183,29 @@ pub fn from_codex_rollout(records: &[Value]) -> Option<(String, Vec<Item>)> {
             Some("CommandExecution") => {
                 // The shell's own wrapper (zsh -lc 'the command') left off: the command as it was given.
                 let argv: Vec<&str> = it["command"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
-                let command = match argv.as_slice() { [_, "-lc" | "-c", command] => command.to_string(), _ => argv.join(" ") };
+                let command = match argv.as_slice() {
+                    [_, "-lc" | "-c", command] => command.to_string(),
+                    _ => argv.join(" "),
+                };
                 let exit_code = it["exit_code"].as_i64().or_else(|| it["exit_code"].as_str()?.parse().ok());
-                let duration_ms = it["duration"]["secs"].as_i64().map(|s| s * 1000 + it["duration"]["nanos"].as_i64().unwrap_or(0) / 1_000_000);
-                ItemKind::Command { command, cwd: it["cwd"].as_str().unwrap_or("").trim_start_matches("file://").into(),
-                                    output: it["aggregated_output"].as_str().unwrap_or("").into(), exit_code, duration_ms }
+                let duration_ms =
+                    it["duration"]["secs"].as_i64().map(|s| s * 1000 + it["duration"]["nanos"].as_i64().unwrap_or(0) / 1_000_000);
+                ItemKind::Command {
+                    command,
+                    cwd: it["cwd"].as_str().unwrap_or("").trim_start_matches("file://").into(),
+                    output: it["aggregated_output"].as_str().unwrap_or("").into(),
+                    exit_code,
+                    duration_ms,
+                }
             }
-            Some("McpToolCall") => ItemKind::Tool { name: format!("{}.{}", it["server"].as_str().unwrap_or("mcp"), it["tool"].as_str().unwrap_or("tool")), detail: detail(&it["arguments"]) },
+            Some("McpToolCall") => ItemKind::Tool {
+                name: format!("{}.{}", it["server"].as_str().unwrap_or("mcp"), it["tool"].as_str().unwrap_or("tool")),
+                detail: detail(&it["arguments"]),
+            },
             _ => continue,
         };
-        let mut taken = Item { id: format!("codex-{}", it["id"].as_str().unwrap_or("")), turn: None, kind, status: ItemStatus::Done, at: None };
+        let mut taken =
+            Item { id: format!("codex-{}", it["id"].as_str().unwrap_or("")), turn: None, kind, status: ItemStatus::Done, at: None };
         taken.at = record["timestamp"].as_str().and_then(millis);
         items.push(taken);
     }
@@ -177,21 +220,41 @@ pub fn from_opencode_export(export: &Value) -> Option<(String, Vec<Item>)> {
     let mut items = vec![];
     for message in export["messages"].as_array().into_iter().flatten() {
         let (id, at) = (message["id"].as_str().unwrap_or(""), message["time"]["created"].as_i64());
-        let mut push = |n: usize, kind: ItemKind| items.push(Item { id: format!("opencode-{id}-{n}"), turn: None, kind, status: ItemStatus::Done, at });
+        let mut push = |n: usize, kind: ItemKind| {
+            items.push(Item { id: format!("opencode-{id}-{n}"), turn: None, kind, status: ItemStatus::Done, at })
+        };
         match message["type"].as_str() {
             Some("user") => push(0, ItemKind::User { text: message["text"].as_str().unwrap_or("").into(), images: vec![] }),
-            Some("assistant") => for (n, part) in message["content"].as_array().into_iter().flatten().enumerate() {
-                let state = &part["state"];
-                match (part["type"].as_str(), part["name"].as_str()) {
-                    (Some("text"), _) if !part["text"].as_str().unwrap_or("").trim().is_empty() => push(n, ItemKind::Agent { text: part["text"].as_str().unwrap_or("").into(), final_answer: false }),
-                    (Some("tool"), Some("bash")) => push(n, ItemKind::Command {
-                        command: state["input"]["command"].as_str().unwrap_or("").into(), cwd: String::new(),
-                        output: state["content"].as_array().into_iter().flatten().filter_map(|c| c["text"].as_str()).collect::<Vec<_>>().join("\n"),
-                        exit_code: None, duration_ms: None }),
-                    (Some("tool"), name) => push(n, ItemKind::Tool { name: name.unwrap_or("tool").into(), detail: detail(&state["input"]) }),
-                    _ => {}
+            Some("assistant") => {
+                for (n, part) in message["content"].as_array().into_iter().flatten().enumerate() {
+                    let state = &part["state"];
+                    match (part["type"].as_str(), part["name"].as_str()) {
+                        (Some("text"), _) if !part["text"].as_str().unwrap_or("").trim().is_empty() => {
+                            push(n, ItemKind::Agent { text: part["text"].as_str().unwrap_or("").into(), final_answer: false })
+                        }
+                        (Some("tool"), Some("bash")) => push(
+                            n,
+                            ItemKind::Command {
+                                command: state["input"]["command"].as_str().unwrap_or("").into(),
+                                cwd: String::new(),
+                                output: state["content"]
+                                    .as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(|c| c["text"].as_str())
+                                    .collect::<Vec<_>>()
+                                    .join("\n"),
+                                exit_code: None,
+                                duration_ms: None,
+                            },
+                        ),
+                        (Some("tool"), name) => {
+                            push(n, ItemKind::Tool { name: name.unwrap_or("tool").into(), detail: detail(&state["input"]) })
+                        }
+                        _ => {}
+                    }
                 }
-            },
+            }
             _ => {}
         }
     }
@@ -206,7 +269,9 @@ fn item(uuid: &str, n: usize, kind: ItemKind) -> Item {
 /// The record's own time ("2026-10-27T12:23:52.151Z") on the items made from it, those from `from` on.
 fn stamp_from(record: &Value, items: &mut [Item], from: usize) {
     let Some(at) = record["timestamp"].as_str().and_then(millis) else { return };
-    for item in &mut items[from..] { item.at = Some(at) }
+    for item in &mut items[from..] {
+        item.at = Some(at)
+    }
 }
 
 /// An RFC 3339 UTC time in milliseconds since 1970.
@@ -230,8 +295,14 @@ fn millis(text: &str) -> Option<i64> {
 
 /// What a tool was pointed at: its file, pattern, address or description, else its input in brief.
 fn detail(input: &Value) -> String {
-    ["file_path", "path", "pattern", "url", "query", "description", "prompt"].iter().find_map(|k| input[*k].as_str()).map(String::from)
-        .unwrap_or_else(|| { let text = input.to_string(); text.chars().take(120).collect() })
+    ["file_path", "path", "pattern", "url", "query", "description", "prompt"]
+        .iter()
+        .find_map(|k| input[*k].as_str())
+        .map(String::from)
+        .unwrap_or_else(|| {
+            let text = input.to_string();
+            text.chars().take(120).collect()
+        })
 }
 
 struct Chain<'a> {

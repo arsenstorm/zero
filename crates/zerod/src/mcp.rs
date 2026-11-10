@@ -58,23 +58,66 @@ type Arg = (&'static str, &'static str, bool);
 
 /// Each tool: its name after scratchpad_, what it does, its arguments.
 const TOOLS: &[(&str, &str, &[Arg])] = &[
-    ("list", "Every scratchpad, the latest changed first, and the folders. Each pad has an id and a zero://pad/ link.",
-     &[("query", "Only pads whose title or text has this.", false),
-       ("folder", "Only this folder's pads. Tasks' own pads (Tasks/<issue>) are listed only this way.", false)]),
-    ("read", "A pad's Markdown, or one section of it, with its revision and its sections' anchors.",
-     &[("pad", "Its id or zero://pad/ link; a link with #section reads that section.", true), ("section", "A section's anchor, to read that part alone.", false)]),
-    ("create", "A new pad. Its title is a file name, so no slashes.",
-     &[("title", "Its title; left out, the content's first heading's.", false), ("folder", "Its folder, like Work/2026; left out, the top.", false), ("content", "Its Markdown.", false)]),
-    ("write", "Replaces a pad's whole text.",
-     &[("pad", "Its id or link.", true), ("content", "The new Markdown.", true), ("revision", "The revision you read; refused if it has changed since.", true)]),
-    ("append", "Adds Markdown at the end of a pad, or of one of its sections.",
-     &[("pad", "Its id or link.", true), ("content", "The Markdown to add.", true), ("section", "The section's anchor, to add at its end.", false)]),
-    ("edit", "Replaces one section (its heading to the next as high). Content without a heading goes under the section's own.",
-     &[("pad", "Its id or link.", true), ("section", "The section's anchor.", true), ("content", "The section's new Markdown.", true),
-       ("revision", "The revision you read; refused if it has changed since.", true)]),
+    (
+        "list",
+        "Every scratchpad, the latest changed first, and the folders. Each pad has an id and a zero://pad/ link.",
+        &[
+            ("query", "Only pads whose title or text has this.", false),
+            ("folder", "Only this folder's pads. Tasks' own pads (Tasks/<issue>) are listed only this way.", false),
+        ],
+    ),
+    (
+        "read",
+        "A pad's Markdown, or one section of it, with its revision and its sections' anchors.",
+        &[
+            ("pad", "Its id or zero://pad/ link; a link with #section reads that section.", true),
+            ("section", "A section's anchor, to read that part alone.", false),
+        ],
+    ),
+    (
+        "create",
+        "A new pad. Its title is a file name, so no slashes.",
+        &[
+            ("title", "Its title; left out, the content's first heading's.", false),
+            ("folder", "Its folder, like Work/2026; left out, the top.", false),
+            ("content", "Its Markdown.", false),
+        ],
+    ),
+    (
+        "write",
+        "Replaces a pad's whole text.",
+        &[
+            ("pad", "Its id or link.", true),
+            ("content", "The new Markdown.", true),
+            ("revision", "The revision you read; refused if it has changed since.", true),
+        ],
+    ),
+    (
+        "append",
+        "Adds Markdown at the end of a pad, or of one of its sections.",
+        &[
+            ("pad", "Its id or link.", true),
+            ("content", "The Markdown to add.", true),
+            ("section", "The section's anchor, to add at its end.", false),
+        ],
+    ),
+    (
+        "edit",
+        "Replaces one section (its heading to the next as high). Content without a heading goes under the section's own.",
+        &[
+            ("pad", "Its id or link.", true),
+            ("section", "The section's anchor.", true),
+            ("content", "The section's new Markdown.", true),
+            ("revision", "The revision you read; refused if it has changed since.", true),
+        ],
+    ),
     ("find", "Lines with this text across every pad, with the pad, section and line.", &[("query", "The text, case aside.", true)]),
     ("rename", "Gives a pad a new title.", &[("pad", "Its id or link.", true), ("title", "The new title.", true)]),
-    ("move", "Moves a pad to another folder; its link stays the same.", &[("pad", "Its id or link.", true), ("folder", "The folder; empty for the top.", true)]),
+    (
+        "move",
+        "Moves a pad to another folder; its link stays the same.",
+        &[("pad", "Its id or link.", true), ("folder", "The folder; empty for the top.", true)],
+    ),
     ("delete", "Moves a pad to the scratchpads' trash.", &[("pad", "Its id or link.", true)]),
     ("folder", "Makes a folder.", &[("folder", "Its path, like Work/2026.", true)]),
 ];
@@ -116,8 +159,12 @@ where
             let note = name == "zero_note" || name == "zero_issue";
             match call(name, params["arguments"].clone()).await {
                 Ok(_) if note => json!({"content": [{"type": "text", "text": "Noted."}], "isError": false}),
-                Ok(made) if made["done"] == true => json!({"content": [{"type": "text", "text": "Marked done. End your turn with [zero: done]."}], "isError": false}),
-                Ok(made) if made["blocked"] == true => json!({"content": [{"type": "text", "text": "Marked blocked. End your turn with [zero: blocked]."}], "isError": false}),
+                Ok(made) if made["done"] == true => {
+                    json!({"content": [{"type": "text", "text": "Marked done. End your turn with [zero: done]."}], "isError": false})
+                }
+                Ok(made) if made["blocked"] == true => {
+                    json!({"content": [{"type": "text", "text": "Marked blocked. End your turn with [zero: blocked]."}], "isError": false})
+                }
                 Ok(made) => {
                     let id = made["id"].as_str().unwrap_or_default();
                     json!({"content": [{"type": "text", "text": format!("Asked as {id}. End your turn with [zero: asked {id}]; the answer comes to you as a message.")}], "isError": false})
@@ -145,8 +192,14 @@ where
 fn shown(pad: &Value) -> String {
     let folder = pad["folder"].as_str().filter(|f| !f.is_empty()).map(|f| format!(" · {f}")).unwrap_or_default();
     let sections: Vec<&str> = pad["sections"].as_array().into_iter().flatten().filter_map(|s| s["slug"].as_str()).collect();
-    format!("<!-- {}{folder} · id {} · revision {} · sections: {} -->\n{}", pad["title"].as_str().unwrap_or_default(), pad["id"].as_str().unwrap_or_default(),
-            pad["revision"].as_str().unwrap_or_default(), sections.join(", "), pad["content"].as_str().unwrap_or_default())
+    format!(
+        "<!-- {}{folder} · id {} · revision {} · sections: {} -->\n{}",
+        pad["title"].as_str().unwrap_or_default(),
+        pad["id"].as_str().unwrap_or_default(),
+        pad["revision"].as_str().unwrap_or_default(),
+        sections.join(", "),
+        pad["content"].as_str().unwrap_or_default()
+    )
 }
 
 /// Serves stdin and stdout until stdin closes, each call through zerod's socket.
@@ -158,20 +211,30 @@ pub async fn serve(socket: &Path) {
         if let Some(answer) = respond(&message, |tool, args| through(socket, tool, args)).await {
             let mut text = answer.to_string();
             text.push('\n');
-            if out.write_all(text.as_bytes()).await.is_err() || out.flush().await.is_err() { return }
+            if out.write_all(text.as_bytes()).await.is_err() || out.flush().await.is_err() {
+                return;
+            }
         }
     }
 }
 
 /// zerod's socket; zerod is started (this same program) if nothing answers.
 pub async fn connect(socket: &Path) -> Result<tokio::net::UnixStream, String> {
-    if let Ok(stream) = tokio::net::UnixStream::connect(socket).await { return Ok(stream) }
+    if let Ok(stream) = tokio::net::UnixStream::connect(socket).await {
+        return Ok(stream);
+    }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    std::process::Command::new(exe).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
-        .spawn().map_err(|e| format!("Zero isn't running and didn't start: {e}"))?;
+    std::process::Command::new(exe)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Zero isn't running and didn't start: {e}"))?;
     for _ in 0..50 {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        if let Ok(stream) = tokio::net::UnixStream::connect(socket).await { return Ok(stream) }
+        if let Ok(stream) = tokio::net::UnixStream::connect(socket).await {
+            return Ok(stream);
+        }
     }
     Err("Zero isn't running".into())
 }
@@ -196,8 +259,14 @@ async fn through(socket: &Path, tool: String, args: Value) -> Result<Value, Stri
     let mut lines = BufReader::new(stream).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let reply: Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
-        if reply["id"] != 1 { continue }
-        return if reply["ok"] == true { Ok(reply["result"].clone()) } else { Err(reply["error"].as_str().unwrap_or("zerod refused").to_string()) };
+        if reply["id"] != 1 {
+            continue;
+        }
+        return if reply["ok"] == true {
+            Ok(reply["result"].clone())
+        } else {
+            Err(reply["error"].as_str().unwrap_or("zerod refused").to_string())
+        };
     }
     Err("zerod closed the connection".into())
 }

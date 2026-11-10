@@ -1,13 +1,21 @@
 //! MCP servers set up once in Zero and given to every task's CLI as it starts: each for every workspace, or only the
 //! workspaces it's put in; a secret from the Keychain, the server's own command, or Zero's file.
 
-
 use crate::common::temp_dir;
 use zerod::mcp_servers::*;
 
 fn server(name: &str, workspaces: &[&str]) -> McpServer {
-    McpServer { id: String::new(), name: name.into(), command: Some("cve-mcp".into()), args: vec!["--stdio".into()], url: None,
-                env: vec![], headers: vec![], workspaces: workspaces.iter().map(|w| w.to_string()).collect(), enabled: true }
+    McpServer {
+        id: String::new(),
+        name: name.into(),
+        command: Some("cve-mcp".into()),
+        args: vec!["--stdio".into()],
+        url: None,
+        env: vec![],
+        headers: vec![],
+        workspaces: workspaces.iter().map(|w| w.to_string()).collect(),
+        enabled: true,
+    }
 }
 
 #[test]
@@ -23,10 +31,17 @@ fn servers_are_kept_and_each_workspace_gets_its_own_and_everyones() {
     let names = |ws: &str| servers.for_workspace(ws).into_iter().map(|s| s.name).collect::<Vec<_>>();
     assert_eq!(names("cybersecurity"), ["Docs", "CVE lookup"]);
     assert_eq!(names("zero"), ["Docs"], "a workspace's server isn't anyone else's; one turned off is no one's");
-    assert_eq!(servers.save(McpServer { command: None, url: None, ..server("Nothing", &[]) }).unwrap_err(), "A server runs a command or is at a URL");
+    assert_eq!(
+        servers.save(McpServer { command: None, url: None, ..server("Nothing", &[]) }).unwrap_err(),
+        "A server runs a command or is at a URL"
+    );
     assert_eq!(servers.save(server("  ", &[])).unwrap_err(), "A server needs a name");
     servers.delete("docs").unwrap();
-    assert_eq!(McpServers::open(&home).list().iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["cve-lookup", "off"], "kept across restarts");
+    assert_eq!(
+        McpServers::open(&home).list().iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+        ["cve-lookup", "off"],
+        "kept across restarts"
+    );
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -59,10 +74,24 @@ fn a_secret_comes_from_where_it_is_kept() {
 
 fn resolved() -> Vec<Resolved> {
     vec![
-        Resolved { id: "cve-lookup".into(), name: "CVE lookup".into(), command: Some("cve-mcp".into()), args: vec!["--stdio".into()], url: None,
-                   env: vec![("API_KEY".into(), "k-123".into())], headers: vec![] },
-        Resolved { id: "docs".into(), name: "Docs".into(), command: None, args: vec![], url: Some("https://docs.example/mcp".into()),
-                   env: vec![], headers: vec![("Authorization".into(), "Bearer t".into())] },
+        Resolved {
+            id: "cve-lookup".into(),
+            name: "CVE lookup".into(),
+            command: Some("cve-mcp".into()),
+            args: vec!["--stdio".into()],
+            url: None,
+            env: vec![("API_KEY".into(), "k-123".into())],
+            headers: vec![],
+        },
+        Resolved {
+            id: "docs".into(),
+            name: "Docs".into(),
+            command: None,
+            args: vec![],
+            url: Some("https://docs.example/mcp".into()),
+            env: vec![],
+            headers: vec![("Authorization".into(), "Bearer t".into())],
+        },
     ]
 }
 
@@ -75,7 +104,10 @@ fn claude_is_given_them_on_its_command_line_with_the_values_in_its_environment()
     assert_eq!(parsed["mcpServers"]["docs"]["type"], "http");
     assert_eq!(parsed["mcpServers"]["docs"]["headers"]["Authorization"], "${ZERO_MCP_DOCS_AUTHORIZATION}");
     assert!(!config.contains("k-123") && !config.contains("Bearer t"), "no value on the command line");
-    assert_eq!(env, [("ZERO_MCP_CVE_LOOKUP_API_KEY".to_string(), "k-123".to_string()), ("ZERO_MCP_DOCS_AUTHORIZATION".into(), "Bearer t".into())]);
+    assert_eq!(
+        env,
+        [("ZERO_MCP_CVE_LOOKUP_API_KEY".to_string(), "k-123".to_string()), ("ZERO_MCP_DOCS_AUTHORIZATION".into(), "Bearer t".into())]
+    );
     assert!(zerod::claude::mcp_config(&[]).is_none());
 }
 
@@ -87,6 +119,12 @@ fn codex_and_opencode_are_given_them_with_their_thread() {
     assert_eq!(codex["mcp_servers.docs"]["url"], "https://docs.example/mcp");
     assert_eq!(codex["mcp_servers.docs"]["http_headers"]["Authorization"], "Bearer t");
     let acp = zerod::acp::mcp_servers(&resolved());
-    assert_eq!(acp[0], serde_json::json!({"name": "cve-lookup", "command": "cve-mcp", "args": ["--stdio"], "env": [{"name": "API_KEY", "value": "k-123"}]}));
-    assert_eq!(acp[1], serde_json::json!({"type": "http", "name": "docs", "url": "https://docs.example/mcp", "headers": [{"name": "Authorization", "value": "Bearer t"}]}));
+    assert_eq!(
+        acp[0],
+        serde_json::json!({"name": "cve-lookup", "command": "cve-mcp", "args": ["--stdio"], "env": [{"name": "API_KEY", "value": "k-123"}]})
+    );
+    assert_eq!(
+        acp[1],
+        serde_json::json!({"type": "http", "name": "docs", "url": "https://docs.example/mcp", "headers": [{"name": "Authorization", "value": "Bearer t"}]})
+    );
 }

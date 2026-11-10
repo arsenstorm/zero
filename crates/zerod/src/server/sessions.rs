@@ -3,8 +3,8 @@
 use serde_json::{Value, json};
 
 use super::{RECENT, Request, VERSION, Zerod, unknown};
-use crate::model::{Conversation, Permissions, Provider};
 use crate::daemon::Rewind;
+use crate::model::{Conversation, Permissions, Provider};
 use crate::session::Message;
 
 /// Tasks started, taken in, let go and archived, and zerod restarted under them.
@@ -14,17 +14,36 @@ pub(super) async fn lifecycle(zerod: &Zerod, request: Request) -> Result<Value, 
         "start" => start(zerod, &request),
         "spawn" => spawn(zerod, &request),
         // From a session: the task or Claude Code session becomes its worker.
-        "adopt" if request.session.is_some() => daemon.adopt_into(&request.session()?, request.thread.as_deref().ok_or("Which task or session?")?).map(|id| json!({"session": id})),
+        "adopt" if request.session.is_some() => daemon
+            .adopt_into(&request.session()?, request.thread.as_deref().ok_or("Which task or session?")?)
+            .map(|id| json!({"session": id})),
         "adopt" => {
-            let options = crate::daemon::Options { workspace: None, label: request.label.clone(), ticket: request.ticket.clone(), permissions: request.permissions, ..Default::default() };
-            daemon.adopt(request.provider.unwrap_or(Provider::Claude), request.thread.as_deref().ok_or("Which session?")?,
-                         request.cwd.as_deref().ok_or("Which folder?")?, options).map(|id| json!({"session": id}))
+            let options = crate::daemon::Options {
+                workspace: None,
+                label: request.label.clone(),
+                ticket: request.ticket.clone(),
+                permissions: request.permissions,
+                ..Default::default()
+            };
+            daemon
+                .adopt(
+                    request.provider.unwrap_or(Provider::Claude),
+                    request.thread.as_deref().ok_or("Which session?")?,
+                    request.cwd.as_deref().ok_or("Which folder?")?,
+                    options,
+                )
+                .map(|id| json!({"session": id}))
         }
         // A worker let go of its lead: a task of its own.
         "detach" => daemon.detach(request.thread.as_deref().ok_or("Which worker? Its task's id")?).map(|_| Value::Null),
         // A Claude Code, Codex or OpenCode session from outside Zero, by its id: a task, offline, not opened.
         "migrate" => {
-            let options = crate::daemon::Options { workspace: request.workspace_id(), label: request.label.clone(), ticket: request.ticket.clone(), ..Default::default() };
+            let options = crate::daemon::Options {
+                workspace: request.workspace_id(),
+                label: request.label.clone(),
+                ticket: request.ticket.clone(),
+                ..Default::default()
+            };
             daemon.migrate(request.thread.as_deref().ok_or("Which session? Its id")?, options).map(|id| json!({"session": id}))
         }
         "archive" => daemon.archive(&request.session()?).await.map(|_| Value::Null),
@@ -95,11 +114,21 @@ pub(super) async fn messages(zerod: &Zerod, request: Request) -> Result<Value, S
             let (id, text, images) = message(zerod, &request, "Queue needs text")?;
             daemon.queue(&id, &text, &images).map(|queued| json!(queued))
         }
-        "unqueue" => daemon.unqueue(&request.session()?, request.item.as_ref().and_then(Value::as_str).ok_or("Which queued message?")?).map(|queued| json!(queued)),
+        "unqueue" => daemon
+            .unqueue(&request.session()?, request.item.as_ref().and_then(Value::as_str).ok_or("Which queued message?")?)
+            .map(|queued| json!(queued)),
         // From another task when `from` says which: marked as its words.
-        "notify" => daemon.notify_from(&daemon.resolve(&request.session()?)?, request.from.as_deref().unwrap_or("zero"), request.text.as_deref().ok_or("Notify with text")?).map(|_| Value::Null),
+        "notify" => daemon
+            .notify_from(
+                &daemon.resolve(&request.session()?)?,
+                request.from.as_deref().unwrap_or("zero"),
+                request.text.as_deref().ok_or("Notify with text")?,
+            )
+            .map(|_| Value::Null),
         // The user asks two tasks to work together.
-        "introduce" => daemon.introduce(&request.session()?, request.args.as_ref().and_then(|a| a["other"].as_str()).ok_or("Introduce to which task?")?).map(|_| Value::Null),
+        "introduce" => daemon
+            .introduce(&request.session()?, request.args.as_ref().and_then(|a| a["other"].as_str()).ok_or("Introduce to which task?")?)
+            .map(|_| Value::Null),
         "decide" => {
             let approval = request.approval.as_deref().ok_or("Which approval?")?;
             let choice = request.choice.as_deref().ok_or("Which choice?")?;
@@ -121,16 +150,38 @@ pub(super) async fn properties(zerod: &Zerod, request: Request) -> Result<Value,
     let daemon = &zerod.daemon;
     match request.op.as_str() {
         "label" => daemon.label(&request.session()?, request.label.as_deref(), request.ticket.as_deref()).map(|_| Value::Null),
-        "setPermissions" => daemon.set_permissions(&request.session()?, request.permissions.ok_or("Which permissions: auto or unrestricted?")?).await.map(|_| Value::Null),
+        "setPermissions" => daemon
+            .set_permissions(&request.session()?, request.permissions.ok_or("Which permissions: auto or unrestricted?")?)
+            .await
+            .map(|_| Value::Null),
         "placeInWorkspace" => daemon.place_in_workspace(&request.session()?, request.workspace_id().as_deref()).map(|_| Value::Null),
         // One of the issues the task drives, its row set: who has it, and what it needs, where it stands or why parked.
         "issue" => {
-            let state = request.state.as_deref().and_then(crate::model::IssueState::named)
+            let state = request
+                .state
+                .as_deref()
+                .and_then(crate::model::IssueState::named)
                 .ok_or("An issue's state is one of you, working, waiting, parked or done")?;
-            daemon.set_issue(&request.session()?, request.ticket.as_deref().ok_or("Which issue? Its ticket")?, state, request.text.as_deref().unwrap_or("")).map(|_| Value::Null)
+            daemon
+                .set_issue(
+                    &request.session()?,
+                    request.ticket.as_deref().ok_or("Which issue? Its ticket")?,
+                    state,
+                    request.text.as_deref().unwrap_or(""),
+                )
+                .map(|_| Value::Null)
         }
-        "attr" => daemon.set_attribute(&request.session()?, request.name.as_deref().ok_or("Which attribute?")?, request.value.as_deref()).map(|_| Value::Null),
-        "table" => daemon.table(&request.session()?, request.title.as_deref().unwrap_or(""), request.columns.clone().unwrap_or_default(), request.rows.clone().unwrap_or_default()).map(|_| Value::Null),
+        "attr" => daemon
+            .set_attribute(&request.session()?, request.name.as_deref().ok_or("Which attribute?")?, request.value.as_deref())
+            .map(|_| Value::Null),
+        "table" => daemon
+            .table(
+                &request.session()?,
+                request.title.as_deref().unwrap_or(""),
+                request.columns.clone().unwrap_or_default(),
+                request.rows.clone().unwrap_or_default(),
+            )
+            .map(|_| Value::Null),
         "place" => daemon.set_place(&request.session()?, request.place.as_deref()).map(|_| Value::Null),
         other => unknown(other),
     }
@@ -142,14 +193,26 @@ pub(super) async fn reads(zerod: &Zerod, request: Request) -> Result<Value, Stri
     match request.op.as_str() {
         "hello" => Ok(json!({"version": VERSION, "pid": std::process::id()})),
         "list" => Ok(json!(daemon.sessions().iter().map(|s| summary(&s.summary())).collect::<Vec<_>>())),
-        "get" => daemon.get(&request.session()?).map(|c| json!(c)).ok_or_else(|| format!("No session {}", request.session.unwrap_or_default())),
+        "get" => {
+            daemon.get(&request.session()?).map(|c| json!(c)).ok_or_else(|| format!("No session {}", request.session.unwrap_or_default()))
+        }
         "workers" => {
             let lead = request.session()?;
-            Ok(json!(daemon.sessions().iter().map(|s| s.summary()).filter(|c| c.parent.as_deref() == Some(lead.as_str())).map(|c| summary(&c)).collect::<Vec<_>>()))
+            Ok(json!(
+                daemon
+                    .sessions()
+                    .iter()
+                    .map(|s| s.summary())
+                    .filter(|c| c.parent.as_deref() == Some(lead.as_str()))
+                    .map(|c| summary(&c))
+                    .collect::<Vec<_>>()
+            ))
         }
         "result" => Ok(json!({"answer": daemon.last_answer(&request.session()?)})),
         "wait" => wait(zerod, &request).await,
-        "usage" => Ok(json!(daemon.usage().into_iter().map(|(provider, usage)| json!({"provider": provider, "usage": usage})).collect::<Vec<_>>())),
+        "usage" => {
+            Ok(json!(daemon.usage().into_iter().map(|(provider, usage)| json!({"provider": provider, "usage": usage})).collect::<Vec<_>>()))
+        }
         // Whole sessions, not the list's: a row falls back on its lead's last answer.
         // Each session as a summary: its latest answer for Now, not its whole conversation.
         "board" => Ok(json!(zerod.board())),
@@ -158,9 +221,14 @@ pub(super) async fn reads(zerod: &Zerod, request: Request) -> Result<Value, Stri
             let (conversation, earlier) = daemon.session(&request.session()?)?.recent(RECENT);
             Ok(json!({"conversation": conversation, "earlier": earlier}))
         }
-        "items" => Ok(json!(daemon.session(&request.session()?)?.items(request.before.as_deref(), request.from.as_deref(), request.limit.unwrap_or(60)))),
+        "items" => Ok(json!(daemon.session(&request.session()?)?.items(
+            request.before.as_deref(),
+            request.from.as_deref(),
+            request.limit.unwrap_or(60)
+        ))),
         "window" => {
-            let (items, earlier, later) = daemon.session(&request.session()?)?.window(request.from.as_deref(), request.after.as_deref(), request.limit.unwrap_or(60));
+            let (items, earlier, later) =
+                daemon.session(&request.session()?)?.window(request.from.as_deref(), request.after.as_deref(), request.limit.unwrap_or(60));
             Ok(json!({"items": items, "earlier": earlier, "later": later}))
         }
         "outline" => Ok(daemon.session(&request.session()?)?.outline()),
@@ -175,27 +243,42 @@ fn start(zerod: &Zerod, request: &Request) -> Result<Value, String> {
     let options = options(request, Some(cwd.into()), Some(request.permissions.unwrap_or_default()));
     let (prompt, loops) = zerod.loops.expand(request.prompt.as_deref().unwrap_or(""));
     let id = zerod.daemon.start(provider, &prompt, options)?;
-    for name in &loops { zerod.loops.record(name, &id, "lead") }
+    for name in &loops {
+        zerod.loops.record(name, &id, "lead")
+    }
     Ok(json!({"session": id}))
 }
 
 /// A worker for the session, on its lead's provider unless the request names one.
 fn spawn(zerod: &Zerod, request: &Request) -> Result<Value, String> {
     let lead = request.session()?;
-    let provider = match request.provider { Some(provider) => provider, None => zerod.daemon.get(&lead).ok_or_else(|| format!("No session {lead}"))?.provider };
+    let provider = match request.provider {
+        Some(provider) => provider,
+        None => zerod.daemon.get(&lead).ok_or_else(|| format!("No session {lead}"))?.provider,
+    };
     let options = options(request, request.cwd.clone(), request.permissions);
     let (prompt, loops) = zerod.loops.expand(request.prompt.as_deref().unwrap_or(""));
     let id = zerod.daemon.spawn(&lead, provider, &prompt, options)?;
-    for name in &loops { zerod.loops.record(name, &id, "worker") }
+    for name in &loops {
+        zerod.loops.record(name, &id, "worker")
+    }
     Ok(json!({"session": id}))
 }
 
 /// A new task's options as the request gives them, with its folder and permissions.
 fn options(request: &Request, cwd: Option<String>, permissions: Option<Permissions>) -> crate::daemon::Options {
     crate::daemon::Options {
-        cwd, workspace: request.workspace_id(), model: request.model.clone(), effort: request.effort.clone(), permissions,
-        label: request.label.clone(), ticket: request.ticket.clone(), force: request.force.unwrap_or(false),
-        images: request.images.clone().unwrap_or_default(), signin: request.signin.as_ref().and_then(Value::as_str).map(String::from), parent: None,
+        cwd,
+        workspace: request.workspace_id(),
+        model: request.model.clone(),
+        effort: request.effort.clone(),
+        permissions,
+        label: request.label.clone(),
+        ticket: request.ticket.clone(),
+        force: request.force.unwrap_or(false),
+        images: request.images.clone().unwrap_or_default(),
+        signin: request.signin.as_ref().and_then(Value::as_str).map(String::from),
+        parent: None,
     }
 }
 
@@ -208,7 +291,9 @@ fn message(zerod: &Zerod, request: &Request, needs: &'static str) -> Result<(Str
     // By its name too, when one task has it.
     let id = zerod.daemon.resolve(&request.session()?)?;
     let role = if zerod.daemon.get(&id).is_some_and(|c| c.parent.is_some()) { "worker" } else { "lead" };
-    for name in &loops { zerod.loops.record(name, &id, role) }
+    for name in &loops {
+        zerod.loops.record(name, &id, role)
+    }
     Ok((id, text, images))
 }
 
@@ -219,11 +304,25 @@ fn message(zerod: &Zerod, request: &Request, needs: &'static str) -> Result<(Str
 /// note_with), the queue keeping the user's own words.
 pub(super) fn with_open_asks(inbox: &crate::inbox::Inbox, id: &str, text: String) -> String {
     use crate::ask::AskKind;
-    let open: Vec<_> = inbox.asks().into_iter().filter(|a| !a.state.is_final() && a.request.is_none()
-        && !matches!(a.kind, AskKind::Note | AskKind::Message) && a.agent.runtime.as_deref() == Some("zerod") && a.agent.reference.as_deref() == Some(id)).collect();
-    if open.is_empty() { return text }
+    let open: Vec<_> = inbox
+        .asks()
+        .into_iter()
+        .filter(|a| {
+            !a.state.is_final()
+                && a.request.is_none()
+                && !matches!(a.kind, AskKind::Note | AskKind::Message)
+                && a.agent.runtime.as_deref() == Some("zerod")
+                && a.agent.reference.as_deref() == Some(id)
+        })
+        .collect();
+    if open.is_empty() {
+        return text;
+    }
     let which = open.iter().map(|a| format!("{} (\"{}\")", a.id, a.title)).collect::<Vec<_>>().join(", ");
-    format!("{text}\n\n{} {which}. If the user's words answer one, withdraw it with `zero withdraw <id>`; leave the rest for them.)", crate::daemon::OPEN_ASKS_MARK)
+    format!(
+        "{text}\n\n{} {which}. If the user's words answer one, withdraw it with `zero withdraw <id>`; leave the rest for them.)",
+        crate::daemon::OPEN_ASKS_MARK
+    )
 }
 
 /// A new build is on disk: turns under way pause between steps, then zerod becomes the new one, which carries them on.
@@ -235,7 +334,11 @@ fn restart(zerod: &Zerod) -> Value {
     tokio::spawn(async move {
         let handed = daemon.hand_off().await;
         let paused = daemon.pause_for_restart().await;
-        eprintln!("zerod: restarting as the new build; {} process(es) handed over, {} turn(s) paused to carry on", handed.len(), paused.len());
+        eprintln!(
+            "zerod: restarting as the new build; {} process(es) handed over, {} turn(s) paused to carry on",
+            handed.len(),
+            paused.len()
+        );
         crate::process::replace_self();
     });
     json!({"restarting": true})
@@ -246,10 +349,15 @@ async fn wait(zerod: &Zerod, request: &Request) -> Result<Value, String> {
     let ids = request.sessions.clone().ok_or("Wait on which sessions?")?;
     let timeout = std::time::Duration::from_secs(request.timeout.unwrap_or(30 * 60));
     let settled = zerod.daemon.wait(&ids, request.any.unwrap_or(false), timeout).await?;
-    Ok(json!(settled.iter().map(|c| json!({
-        "id": c.id, "label": c.label, "ticket": c.ticket, "attention": c.attention(), "answer": c.answer(),
-        "error": c.failure.as_ref().map(|f| &f.message), "stalled": c.stalled,
-    })).collect::<Vec<_>>()))
+    Ok(json!(
+        settled
+            .iter()
+            .map(|c| json!({
+                "id": c.id, "label": c.label, "ticket": c.ticket, "attention": c.attention(), "answer": c.answer(),
+                "error": c.failure.as_ref().map(|f| &f.message), "stalled": c.stalled,
+            }))
+            .collect::<Vec<_>>()
+    ))
 }
 
 /// A session for a list: everything but its items, and how it's doing, which can't be told without them.
@@ -267,8 +375,16 @@ fn save_for_later(zerod: &Zerod, id: &str) -> Result<Value, String> {
     let name = crate::bridge::label(&task);
     let note: String = name.chars().take(crate::later::NOTE).collect();
     let artifact = task.answer().map(crate::board::without_ending).unwrap_or_default().to_string();
-    let item = zerod.later.save(crate::later::New { note, artifact, from: Some(id.into()), task: Some(name), workspace: Some(daemon.workspace_of(&task)),
-        asked: true, resume: Some(id.into()), ..Default::default() })?;
+    let item = zerod.later.save(crate::later::New {
+        note,
+        artifact,
+        from: Some(id.into()),
+        task: Some(name),
+        workspace: Some(daemon.workspace_of(&task)),
+        asked: true,
+        resume: Some(id.into()),
+        ..Default::default()
+    })?;
     daemon.save_for_later(id)?;
     let _ = zerod.notices.send("later");
     Ok(json!(item))

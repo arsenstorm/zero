@@ -1,7 +1,6 @@
 //! The daemon over its socket, as Zero's apps use it: requests answered by id, and a subscription that sends
 //! each session's snapshot and then every change after it.
 
-
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -35,8 +34,10 @@ fn runtime(seen: Arc<Mutex<Vec<Seen>>>, commands: Arc<Mutex<Vec<Vec<String>>>>) 
             _ => {
                 let thread = "01a177f4-5525-7141-bfb3-f350d91476d6";
                 vec![
-                    json!({"out": {"id": "a", "method": "initialize"}}), json!({"in": {"id": "a", "result": {}}}),
-                    json!({"out": {"id": "b", "method": "thread/resume"}}), json!({"in": {"id": "b", "result": {"thread": {"id": thread}, "model": "gpt-6-sol"}}}),
+                    json!({"out": {"id": "a", "method": "initialize"}}),
+                    json!({"in": {"id": "a", "result": {}}}),
+                    json!({"out": {"id": "b", "method": "thread/resume"}}),
+                    json!({"in": {"id": "b", "result": {"thread": {"id": thread}, "model": "gpt-6-sol"}}}),
                 ]
             }
         };
@@ -53,14 +54,30 @@ async fn harness(name: &str) -> Harness {
     let socket = home.join("zerod.sock");
     let (seen, commands) = (Arc::new(Mutex::new(vec![])), Arc::new(Mutex::new(vec![])));
     let daemon = Daemon::open(&home, runtime(seen.clone(), commands.clone())).unwrap();
-    tokio::spawn(zerod::server::serve(zerod::server::Zerod { daemon, inbox: zerod::inbox::Inbox::open(None, vec![]), drops: None,
-        integrations: zerod::integrations::Integrations::open(&home, Arc::new(zerod::integrations::Commands::default())),
-        following: zerod::following::Following::open(&home, Arc::new(zerod::integrations::Commands::default()), zerod::integrations::Integrations::open(&home, Arc::new(zerod::integrations::Commands::default()))),
-        browsers: zerod::browser::Browsers::open(&home),
-        pads: Arc::new(zerod::pads::Pads::open(&home.join("scratchpads"))), later: Arc::new(zerod::later::Later::open(&home.join("later"))), loops: Arc::new(zerod::loops::Loops::open(&home.join("loops"))),
-        places: Default::default(), notices: tokio::sync::broadcast::channel(64).0 }, socket.clone()));
+    tokio::spawn(zerod::server::serve(
+        zerod::server::Zerod {
+            daemon,
+            inbox: zerod::inbox::Inbox::open(None, vec![]),
+            drops: None,
+            integrations: zerod::integrations::Integrations::open(&home, Arc::new(zerod::integrations::Commands::default())),
+            following: zerod::following::Following::open(
+                &home,
+                Arc::new(zerod::integrations::Commands::default()),
+                zerod::integrations::Integrations::open(&home, Arc::new(zerod::integrations::Commands::default())),
+            ),
+            browsers: zerod::browser::Browsers::open(&home),
+            pads: Arc::new(zerod::pads::Pads::open(&home.join("scratchpads"))),
+            later: Arc::new(zerod::later::Later::open(&home.join("later"))),
+            loops: Arc::new(zerod::loops::Loops::open(&home.join("loops"))),
+            places: Default::default(),
+            notices: tokio::sync::broadcast::channel(64).0,
+        },
+        socket.clone(),
+    ));
     for _ in 0..100 {
-        if UnixStream::connect(&socket).await.is_ok() { break }
+        if UnixStream::connect(&socket).await.is_ok() {
+            break;
+        }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     Harness { home, socket, project, seen, commands }
@@ -85,7 +102,11 @@ impl Client {
     }
 
     async fn next_line(&mut self) -> Value {
-        let line = tokio::time::timeout(std::time::Duration::from_secs(5), self.lines.next_line()).await.expect("the daemon answered").unwrap().unwrap();
+        let line = tokio::time::timeout(std::time::Duration::from_secs(5), self.lines.next_line())
+            .await
+            .expect("the daemon answered")
+            .unwrap()
+            .unwrap();
         serde_json::from_str(&line).unwrap()
     }
 
@@ -96,24 +117,35 @@ impl Client {
         self.raw(&request.to_string()).await;
         loop {
             let message = self.next_line().await;
-            if message.get("event").is_some() { self.events.push(message); continue }
+            if message.get("event").is_some() {
+                self.events.push(message);
+                continue;
+            }
             assert_eq!(message["id"], json!(self.next));
             return message;
         }
     }
 
     async fn event(&mut self) -> Value {
-        if !self.events.is_empty() { return self.events.remove(0) }
+        if !self.events.is_empty() {
+            return self.events.remove(0);
+        }
         loop {
             let message = self.next_line().await;
-            if message.get("event").is_some() { return message }
+            if message.get("event").is_some() {
+                return message;
+            }
         }
     }
 
     /// Applies events to local copies until `test` holds for the session.
     async fn follow(&mut self, mirror: &mut Vec<Conversation>, session: &str, test: impl Fn(&Conversation) -> bool) -> Conversation {
         loop {
-            if let Some(found) = mirror.iter().find(|c| c.id == session) && test(found) { return found.clone() }
+            if let Some(found) = mirror.iter().find(|c| c.id == session)
+                && test(found)
+            {
+                return found.clone();
+            }
             let event = self.event().await;
             match event["event"].as_str().unwrap() {
                 "session" => {
@@ -164,7 +196,8 @@ async fn a_session_starts_streams_to_subscribers_and_takes_decisions_over_the_so
     let mut mirror = vec![];
     let waiting = watcher.follow(&mut mirror, &session, |c| !c.approvals.is_empty()).await;
     let approval = &waiting.approvals[0];
-    let decided = control.call(json!({"op": "decide", "session": session, "approval": approval.id, "choice": approval.choices[0].id})).await;
+    let decided =
+        control.call(json!({"op": "decide", "session": session, "approval": approval.id, "choice": approval.choices[0].id})).await;
     assert_eq!(decided["ok"], true, "{decided}");
     let done = watcher.follow(&mut mirror, &session, |c| c.status == Status::Idle && c.turn.is_none() && c.approvals.is_empty()).await;
 
@@ -231,27 +264,49 @@ async fn sessions_survive_a_daemon_restart_and_a_message_resumes_one() {
     let h = harness("server-restart").await;
     let mut client = Client::connect(&h.socket).await;
     client.call(json!({"op": "subscribe"})).await;
-    let session = client.call(json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": "ls"})).await["result"]["session"].as_str().unwrap().to_string();
+    let session = client.call(json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": "ls"})).await["result"]["session"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let mut mirror = vec![];
     let waiting = client.follow(&mut mirror, &session, |c| !c.approvals.is_empty()).await;
-    client.call(json!({"op": "decide", "session": session, "approval": waiting.approvals[0].id, "choice": waiting.approvals[0].choices[0].id})).await;
+    client
+        .call(
+            json!({"op": "decide", "session": session, "approval": waiting.approvals[0].id, "choice": waiting.approvals[0].choices[0].id}),
+        )
+        .await;
     let before = client.follow(&mut mirror, &session, |c| c.status == Status::Idle && c.turn.is_none()).await;
 
     // Another daemon on the same home: the session is there, offline, with its history.
     let socket = h.home.join("again.sock");
     let daemon = Daemon::open(&h.home, runtime(h.seen.clone(), h.commands.clone())).unwrap();
-    tokio::spawn(zerod::server::serve(zerod::server::Zerod { daemon, inbox: zerod::inbox::Inbox::open(None, vec![]), drops: None,
-        integrations: zerod::integrations::Integrations::open(&h.home, Arc::new(zerod::integrations::Commands::default())),
-        following: zerod::following::Following::open(&h.home, Arc::new(zerod::integrations::Commands::default()), zerod::integrations::Integrations::open(&h.home, Arc::new(zerod::integrations::Commands::default()))),
-        browsers: zerod::browser::Browsers::open(&h.home),
-        pads: Arc::new(zerod::pads::Pads::open(&h.home.join("scratchpads"))), later: Arc::new(zerod::later::Later::open(&h.home.join("later"))), loops: Arc::new(zerod::loops::Loops::open(&h.home.join("loops"))),
-        places: Default::default(), notices: tokio::sync::broadcast::channel(64).0 }, socket.clone()));
+    tokio::spawn(zerod::server::serve(
+        zerod::server::Zerod {
+            daemon,
+            inbox: zerod::inbox::Inbox::open(None, vec![]),
+            drops: None,
+            integrations: zerod::integrations::Integrations::open(&h.home, Arc::new(zerod::integrations::Commands::default())),
+            following: zerod::following::Following::open(
+                &h.home,
+                Arc::new(zerod::integrations::Commands::default()),
+                zerod::integrations::Integrations::open(&h.home, Arc::new(zerod::integrations::Commands::default())),
+            ),
+            browsers: zerod::browser::Browsers::open(&h.home),
+            pads: Arc::new(zerod::pads::Pads::open(&h.home.join("scratchpads"))),
+            later: Arc::new(zerod::later::Later::open(&h.home.join("later"))),
+            loops: Arc::new(zerod::loops::Loops::open(&h.home.join("loops"))),
+            places: Default::default(),
+            notices: tokio::sync::broadcast::channel(64).0,
+        },
+        socket.clone(),
+    ));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let mut again = Client::connect(&socket).await;
     let listed = again.call(json!({"op": "list"})).await;
     assert_eq!(listed["result"][0]["id"], session);
     assert_eq!(listed["result"][0]["status"], "offline");
-    let reloaded: Conversation = serde_json::from_value(again.call(json!({"op": "get", "session": session})).await["result"].clone()).unwrap();
+    let reloaded: Conversation =
+        serde_json::from_value(again.call(json!({"op": "get", "session": session})).await["result"].clone()).unwrap();
     assert_eq!(reloaded.items, before.items);
 
     let sent = again.call(json!({"op": "send", "session": session, "text": "and again"})).await;
@@ -279,10 +334,12 @@ async fn a_claude_session_starts_on_a_session_id_of_zeros_and_answers_through_th
 async fn a_session_can_start_unrestricted_and_keeps_it_across_a_restart() {
     let h = harness("server-unrestricted").await;
     let mut client = Client::connect(&h.socket).await;
-    let started = client.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "uname", "permissions": "unrestricted"})).await;
+    let started =
+        client.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "uname", "permissions": "unrestricted"})).await;
     let session = started["result"]["session"].as_str().unwrap().to_string();
     assert!(h.commands.lock().unwrap()[0].join(" ").contains("--permission-mode bypassPermissions"));
-    let refused = client.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "uname", "permissions": "yolo"})).await;
+    let refused =
+        client.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "uname", "permissions": "yolo"})).await;
     assert_eq!(refused["ok"], false);
 
     let daemon = Daemon::open(&h.home, runtime(h.seen.clone(), h.commands.clone())).unwrap();
@@ -293,9 +350,12 @@ async fn a_session_can_start_unrestricted_and_keeps_it_across_a_restart() {
 async fn a_lead_spawns_names_waits_on_and_reads_a_worker_over_the_socket() {
     let h = harness("server-leads").await;
     let mut client = Client::connect(&h.socket).await;
-    let lead = client.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "lead", "permissions": "unrestricted"})).await;
+    let lead =
+        client.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "lead", "permissions": "unrestricted"})).await;
     let lead = lead["result"]["session"].as_str().unwrap().to_string();
-    let spawned = client.call(json!({"op": "spawn", "session": lead, "provider": "codex", "prompt": "ls", "label": "Listing", "ticket": "WEB-7"})).await;
+    let spawned = client
+        .call(json!({"op": "spawn", "session": lead, "provider": "codex", "prompt": "ls", "label": "Listing", "ticket": "WEB-7"}))
+        .await;
     assert_eq!(spawned["ok"], true, "{spawned}");
     let worker = spawned["result"]["session"].as_str().unwrap().to_string();
     let workers = client.call(json!({"op": "workers", "session": lead})).await;
@@ -340,13 +400,18 @@ async fn the_inbox_is_followed_and_answered_over_the_socket() {
     client.call(json!({"op": "choose", "ask": id, "option": 0})).await;
     loop {
         let event = client.event().await;
-        if event["ask"]["state"] == "answered" { assert_eq!(event["ask"]["answer"], "Yes"); break }
+        if event["ask"]["state"] == "answered" {
+            assert_eq!(event["ask"]["answer"], "Yes");
+            break;
+        }
     }
     assert_eq!(client.call(json!({"op": "choose", "ask": id})).await["error"], "Which option?");
     assert_eq!(client.call(json!({"op": "board"})).await["result"], json!([]), "no sessions, no rows");
     let integrations = client.call(json!({"op": "setIntegration", "integration": "github", "enabled": true})).await["result"].clone();
     assert_eq!((integrations["settings"]["github"]["enabled"].clone(), integrations["linear"].clone()), (json!(true), Value::Null));
-    let saved = client.call(json!({"op": "saveView", "integration": "github", "view": {"name": "Ours", "query": "is:pr org:acme"}})).await["result"].clone();
+    let saved = client.call(json!({"op": "saveView", "integration": "github", "view": {"name": "Ours", "query": "is:pr org:acme"}})).await
+        ["result"]
+        .clone();
     assert_eq!(saved["settings"]["github"]["views"][2]["name"], "Ours");
     assert_eq!(client.call(json!({"op": "viewItems", "integration": "github", "view": "nope"})).await["error"], "No view nope");
 }
@@ -367,8 +432,10 @@ async fn scratchpads_are_reached_through_the_pad_op() {
 async fn an_issue_starts_one_task_with_a_state_pad_of_its_own() {
     let h = harness("server-start-task").await;
     let mut client = Client::connect(&h.socket).await;
-    let saved = client.call(json!({"op": "saveView", "integration": "linear", "view": {"id": "mine", "name": "My issues", "assignee": "me",
-        "start": {"cwd": h.project, "prompt": "Supervise {key}: {title}", "provider": "codex"}}})).await;
+    let saved = client
+        .call(json!({"op": "saveView", "integration": "linear", "view": {"id": "mine", "name": "My issues", "assignee": "me",
+        "start": {"cwd": h.project, "prompt": "Supervise {key}: {title}", "provider": "codex"}}}))
+        .await;
     assert_eq!(saved["ok"], true, "{saved}");
     let item = json!({"id": "i1", "key": "ENG-1", "title": "Fix it", "url": "u", "place": "ENG", "state": "Plan", "updated": "t"});
     let started = client.call(json!({"op": "startTask", "integration": "linear", "view": "mine", "item": item})).await;
@@ -379,7 +446,11 @@ async fn an_issue_starts_one_task_with_a_state_pad_of_its_own() {
     let pad = client.call(json!({"op": "pad", "tool": "read", "args": {"pad": started["result"]["pad"]}})).await;
     assert_eq!((pad["result"]["title"].as_str(), pad["result"]["folder"].as_str()), (Some("State"), Some("Tasks/ENG-1")));
     let again = client.call(json!({"op": "startTask", "integration": "linear", "view": "mine", "item": item})).await;
-    assert_eq!((again["result"]["session"].as_str(), again["result"]["existing"].as_bool()), (Some(session.as_str()), Some(true)), "one task per issue");
+    assert_eq!(
+        (again["result"]["session"].as_str(), again["result"]["existing"].as_bool()),
+        (Some(session.as_str()), Some(true)),
+        "one task per issue"
+    );
     let pr = json!({"id": "PR_5", "key": "#5", "title": "Docs", "url": "u", "place": "o/r", "state": "Open", "updated": "t"});
     let unset = client.call(json!({"op": "startTask", "integration": "github", "view": "mine", "item": pr})).await;
     assert_eq!(unset["error"], "My pull requests doesn't start tasks yet: give it a folder and a prompt in Integrations");
@@ -390,11 +461,20 @@ async fn a_subscriber_is_sent_the_board_and_told_when_pads_change() {
     let h = harness("server-feed").await;
     let mut watcher = Client::connect(&h.socket).await;
     assert_eq!(watcher.call(json!({"op": "subscribe"})).await["ok"], true);
-    let board = loop { let event = watcher.event().await; if event["event"] == "board" { break event } };
+    let board = loop {
+        let event = watcher.event().await;
+        if event["event"] == "board" {
+            break event;
+        }
+    };
     assert_eq!(board["rows"], json!([]), "pushed at once, no polling");
     let mut writer = Client::connect(&h.socket).await;
     writer.call(json!({"op": "pad", "tool": "create", "args": {"title": "Notes"}})).await;
-    loop { if watcher.event().await["event"] == "pads" { break } }
+    loop {
+        if watcher.event().await["event"] == "pads" {
+            break;
+        }
+    }
     writer.call(json!({"op": "pad", "tool": "list"})).await;
     // Reading isn't a change.
     let quiet = tokio::time::timeout(std::time::Duration::from_millis(300), watcher.event()).await;
@@ -410,12 +490,20 @@ async fn later_is_reached_through_its_op_and_knows_the_task_it_came_from() {
     let started = client.call(json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": "ls"})).await;
     let session = started["result"]["session"].as_str().unwrap().to_string();
     client.call(json!({"op": "label", "session": session, "label": "Login bug"})).await;
-    let saved = client.call(json!({"op": "later", "tool": "save", "session": session, "args": {"note": "Fix the race", "artifact": "In full"}})).await;
+    let saved = client
+        .call(json!({"op": "later", "tool": "save", "session": session, "args": {"note": "Fix the race", "artifact": "In full"}}))
+        .await;
     assert_eq!(saved["ok"], true, "{saved}");
-    assert_eq!((saved["result"]["from"].as_str(), saved["result"]["task"].as_str(), saved["result"]["workspace"].as_str()),
-               (Some(session.as_str()), Some("Login bug"), Some("zero")));
+    assert_eq!(
+        (saved["result"]["from"].as_str(), saved["result"]["task"].as_str(), saved["result"]["workspace"].as_str()),
+        (Some(session.as_str()), Some("Login bug"), Some("zero"))
+    );
     assert!(h.home.join("later").join(saved["result"]["id"].as_str().unwrap()).join("artifact.md").exists());
-    loop { if watcher.event().await["event"] == "later" { break } }
+    loop {
+        if watcher.event().await["event"] == "later" {
+            break;
+        }
+    }
     assert_eq!(client.call(json!({"op": "later", "tool": "list"})).await["result"][0]["note"], "Fix the race");
 }
 
@@ -439,18 +527,34 @@ async fn a_task_started_in_a_workspace_is_still_there_after_a_restart() {
     client.call(json!({"op": "saveWorkspace", "workspace": {"id": "", "name": "Personal", "glyph": "", "folders": []}})).await;
     let started = client.call(json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": "ls", "workspace": "personal"})).await;
     let session = started["result"]["session"].as_str().unwrap_or_else(|| panic!("{started}")).to_string();
-    let row = |board: &Value| board["result"].as_array().unwrap().iter().find(|r| r["session"] == session.as_str()).map(|r| r["workspace"].clone());
+    let row = |board: &Value| {
+        board["result"].as_array().unwrap().iter().find(|r| r["session"] == session.as_str()).map(|r| r["workspace"].clone())
+    };
     assert_eq!(row(&client.call(json!({"op": "board"})).await), Some(json!("personal")));
 
     // Another daemon on the same home, as after a restart: the task is where it was started, not back in Zero.
     let socket = h.home.join("again.sock");
     let daemon = Daemon::open(&h.home, runtime(h.seen.clone(), h.commands.clone())).unwrap();
-    tokio::spawn(zerod::server::serve(zerod::server::Zerod { daemon, inbox: zerod::inbox::Inbox::open(None, vec![]), drops: None,
-        integrations: zerod::integrations::Integrations::open(&h.home, Arc::new(zerod::integrations::Commands::default())),
-        following: zerod::following::Following::open(&h.home, Arc::new(zerod::integrations::Commands::default()), zerod::integrations::Integrations::open(&h.home, Arc::new(zerod::integrations::Commands::default()))),
-        browsers: zerod::browser::Browsers::open(&h.home),
-        pads: Arc::new(zerod::pads::Pads::open(&h.home.join("scratchpads"))), later: Arc::new(zerod::later::Later::open(&h.home.join("later"))), loops: Arc::new(zerod::loops::Loops::open(&h.home.join("loops"))),
-        places: Default::default(), notices: tokio::sync::broadcast::channel(64).0 }, socket.clone()));
+    tokio::spawn(zerod::server::serve(
+        zerod::server::Zerod {
+            daemon,
+            inbox: zerod::inbox::Inbox::open(None, vec![]),
+            drops: None,
+            integrations: zerod::integrations::Integrations::open(&h.home, Arc::new(zerod::integrations::Commands::default())),
+            following: zerod::following::Following::open(
+                &h.home,
+                Arc::new(zerod::integrations::Commands::default()),
+                zerod::integrations::Integrations::open(&h.home, Arc::new(zerod::integrations::Commands::default())),
+            ),
+            browsers: zerod::browser::Browsers::open(&h.home),
+            pads: Arc::new(zerod::pads::Pads::open(&h.home.join("scratchpads"))),
+            later: Arc::new(zerod::later::Later::open(&h.home.join("later"))),
+            loops: Arc::new(zerod::loops::Loops::open(&h.home.join("loops"))),
+            places: Default::default(),
+            notices: tokio::sync::broadcast::channel(64).0,
+        },
+        socket.clone(),
+    ));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let mut again = Client::connect(&socket).await;
     assert_eq!(row(&again.call(json!({"op": "board"})).await), Some(json!("personal")));
@@ -469,8 +573,10 @@ async fn a_task_saved_for_later_leaves_the_board_paused_and_comes_back_from_late
 
     let saved = client.call(json!({"op": "saveForLater", "session": session})).await;
     assert_eq!(saved["ok"], true, "{saved}");
-    assert_eq!((saved["result"]["resume"].as_str(), saved["result"]["note"].as_str(), saved["result"]["suggested"].as_bool()),
-               (Some(session.as_str()), Some("Login bug"), Some(false)));
+    assert_eq!(
+        (saved["result"]["resume"].as_str(), saved["result"]["note"].as_str(), saved["result"]["suggested"].as_bool()),
+        (Some(session.as_str()), Some("Login bug"), Some(false))
+    );
     assert!(!on_board(&client.call(json!({"op": "board"})).await), "off the board");
     assert_eq!(client.call(json!({"op": "get", "session": session})).await["ok"], true, "not archived");
     assert!(client.call(json!({"op": "archived"})).await["result"].as_array().unwrap().is_empty());
@@ -488,19 +594,22 @@ async fn a_task_saved_for_later_leaves_the_board_paused_and_comes_back_from_late
 async fn a_lead_unarchived_brings_back_the_workers_archived_with_it_and_no_others() {
     let h = harness("server-unarchive").await;
     let mut client = Client::connect(&h.socket).await;
-    let lead = client.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "lead", "permissions": "unrestricted"})).await;
+    let lead =
+        client.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "lead", "permissions": "unrestricted"})).await;
     let lead = lead["result"]["session"].as_str().unwrap().to_string();
     let worker = |label: &'static str| json!({"op": "spawn", "session": lead, "provider": "codex", "prompt": "ls", "label": label});
     let one = client.call(worker("One")).await["result"]["session"].as_str().unwrap().to_string();
     let two = client.call(worker("Two")).await["result"]["session"].as_str().unwrap().to_string();
-    let ids = |listed: &Value| listed["result"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    let ids =
+        |listed: &Value| listed["result"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
 
     // Child one put away on its own; then the lead, which takes child two with it.
     assert_eq!(client.call(json!({"op": "archive", "session": one})).await["ok"], true);
     assert_eq!(client.call(json!({"op": "archive", "session": lead})).await["ok"], true);
     assert!(ids(&client.call(json!({"op": "list"})).await).is_empty(), "the lead and child two went together");
     let archived = client.call(json!({"op": "archived"})).await;
-    let roots: Vec<(String, u64)> = archived["result"].as_array().unwrap().iter().map(|a| (a["id"].as_str().unwrap().into(), a["workers"].as_u64().unwrap())).collect();
+    let roots: Vec<(String, u64)> =
+        archived["result"].as_array().unwrap().iter().map(|a| (a["id"].as_str().unwrap().into(), a["workers"].as_u64().unwrap())).collect();
     assert_eq!(roots, [(lead.clone(), 1), (one.clone(), 0)], "newest first: the lead with the one worker it took, child one on its own");
     assert_eq!(archived["result"][1]["parent"], lead.as_str(), "child one says whose it is, to be shown under its lead");
     assert_eq!(archived["result"][0]["parent"], Value::Null);
@@ -523,16 +632,19 @@ async fn a_task_gets_its_workspaces_mcp_servers_when_it_starts() {
     let h = harness("server-mcp").await;
     let mut client = Client::connect(&h.socket).await;
     client.call(json!({"op": "saveWorkspace", "workspace": {"id": "", "name": "Cybersecurity", "glyph": "", "folders": []}})).await;
-    let saved = client.call(json!({"op": "saveMcpServer", "server": {"name": "CVE lookup", "command": "cve-mcp", "workspaces": ["cybersecurity"],
-        "env": [{"name": "REGION", "value": "eu", "from": "file"}]}})).await;
+    let saved = client
+        .call(json!({"op": "saveMcpServer", "server": {"name": "CVE lookup", "command": "cve-mcp", "workspaces": ["cybersecurity"],
+        "env": [{"name": "REGION", "value": "eu", "from": "file"}]}}))
+        .await;
     assert_eq!(saved["result"]["id"], "cve-lookup", "{saved}");
     assert_eq!(client.call(json!({"op": "mcpServers"})).await["result"][0]["name"], "CVE lookup");
-    let start = |workspace: Option<&str>| json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": "ls", "workspace": workspace});
+    let start =
+        |workspace: Option<&str>| json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": "ls", "workspace": workspace});
     client.call(start(Some("cybersecurity"))).await;
     client.call(start(None)).await;
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    let configs: Vec<serde_json::Value> = h.seen.lock().unwrap().iter()
-        .filter_map(|seen| seen.first("thread/start").map(|m| m["params"]["config"].clone())).collect();
+    let configs: Vec<serde_json::Value> =
+        h.seen.lock().unwrap().iter().filter_map(|seen| seen.first("thread/start").map(|m| m["params"]["config"].clone())).collect();
     assert_eq!(configs.len(), 2, "{configs:?}");
     assert_eq!(configs[0]["mcp_servers.cve-lookup"]["env"]["REGION"], "eu", "the Cybersecurity task has its server");
     assert!(configs[1].get("mcp_servers.cve-lookup").is_none(), "Zero's doesn't: {}", configs[1]);
@@ -561,14 +673,23 @@ async fn a_task_asks_runs_and_notes_through_zeros_tools_whatever_sandbox_its_age
     let mut control = Client::connect(&h.socket).await;
     let started = control.call(json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": "ls"})).await;
     let session = started["result"]["session"].as_str().unwrap().to_string();
-    let asked = control.call(json!({"op": "agentAsk", "session": session, "args": {"tool": "ask", "question": "Start the check, or wait for Dana?",
-                                                                                     "options": ["Start it", "Wait for Dana"]}})).await;
+    let asked = control
+        .call(json!({"op": "agentAsk", "session": session, "args": {"tool": "ask", "question": "Start the check, or wait for Dana?",
+                                                                                     "options": ["Start it", "Wait for Dana"]}}))
+        .await;
     assert_eq!(asked["ok"], true, "{asked}");
     let id = asked["result"]["id"].as_str().unwrap().to_string();
-    let ran = control.call(json!({"op": "agentAsk", "session": session, "args": {"tool": "run", "command": "bin/prod-check", "why": "the counts"}})).await;
+    let ran = control
+        .call(json!({"op": "agentAsk", "session": session, "args": {"tool": "run", "command": "bin/prod-check", "why": "the counts"}}))
+        .await;
     assert_eq!(ran["ok"], true, "{ran}");
-    control.call(json!({"op": "agentAsk", "session": session, "args": {"tool": "note", "text": "Waiting on QA", "state": "waiting"}})).await;
-    assert!(control.call(json!({"op": "agentAsk", "session": session, "args": {"tool": "run", "command": "x"}})).await["ok"] == false, "a run says why");
+    control
+        .call(json!({"op": "agentAsk", "session": session, "args": {"tool": "note", "text": "Waiting on QA", "state": "waiting"}}))
+        .await;
+    assert!(
+        control.call(json!({"op": "agentAsk", "session": session, "args": {"tool": "run", "command": "x"}})).await["ok"] == false,
+        "a run says why"
+    );
     let asks = control.call(json!({"op": "asks"})).await["result"].as_array().unwrap().clone();
     let question = asks.iter().find(|a| a["id"] == id.as_str()).unwrap();
     assert_eq!((question["kind"].as_str(), question["title"].as_str()), (Some("choice"), Some("Start the check, or wait for Dana?")));
@@ -610,11 +731,15 @@ async fn writing_in_the_chat_tells_the_agent_which_of_its_asks_are_still_open() 
     let session = started["result"]["session"].as_str().unwrap().to_string();
     let asked = control.call(json!({"op": "agentAsk", "session": session, "args": {"tool": "ask", "question": "Which piece first?", "options": ["Formatters", "Docs"]}})).await;
     let question = asked["result"]["id"].as_str().unwrap().to_string();
-    let ran = control.call(json!({"op": "agentAsk", "session": session, "args": {"tool": "run", "command": "bin/prod-check", "why": "the counts"}})).await;
+    let ran = control
+        .call(json!({"op": "agentAsk", "session": session, "args": {"tool": "run", "command": "bin/prod-check", "why": "the counts"}}))
+        .await;
     let run = ran["result"]["id"].as_str().unwrap().to_string();
     // Sent once the agent is up (still starting, a send is turned away).
     for _ in 0..60 {
-        if control.call(json!({"op": "send", "session": session, "text": "let's talk about the formatters"})).await["error"].is_null() { break }
+        if control.call(json!({"op": "send", "session": session, "text": "let's talk about the formatters"})).await["error"].is_null() {
+            break;
+        }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     let asks = control.call(json!({"op": "asks"})).await["result"].as_array().unwrap().clone();
@@ -625,7 +750,9 @@ async fn writing_in_the_chat_tells_the_agent_which_of_its_asks_are_still_open() 
     let mut given = String::new();
     for _ in 0..60 {
         given = h.seen.lock().unwrap().iter().flat_map(|s| s.all()).map(|m| m.to_string()).collect::<String>();
-        if given.contains(zerod::daemon::OPEN_ASKS_MARK) { break }
+        if given.contains(zerod::daemon::OPEN_ASKS_MARK) {
+            break;
+        }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     assert!(given.contains("let's talk about the formatters") && given.contains(zerod::daemon::OPEN_ASKS_MARK), "{given}");
@@ -652,14 +779,27 @@ async fn a_lead_sets_its_issues_rows_and_the_board_shows_them() {
     let mut control = Client::connect(&h.socket).await;
     let started = control.call(json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": "lead these"})).await;
     let session = started["result"]["session"].as_str().unwrap().to_string();
-    let set = |ticket: &str, state: &str, text: &str| json!({"op": "issue", "session": session, "ticket": ticket, "state": state, "text": text});
+    let set =
+        |ticket: &str, state: &str, text: &str| json!({"op": "issue", "session": session, "ticket": ticket, "state": state, "text": text});
     assert_eq!(control.call(set("ENG-1", "you", "merge decision")).await["ok"], true);
     assert_eq!(control.call(set("ENG-2", "waiting", "CI on app#12")).await["ok"], true);
     let refused = control.call(set("ENG-3", "dancing", "")).await;
     assert!(refused["error"].as_str().unwrap().contains("you, working, waiting, parked or done"), "{refused}");
     let board = control.call(json!({"op": "board"})).await;
-    let row = board["result"]["rows"].as_array().or(board["result"].as_array()).unwrap().iter().find(|r| r["session"] == session.as_str()).unwrap().clone();
-    let issues: Vec<(String, String)> = row["issues"].as_array().unwrap().iter().map(|i| (i["ticket"].as_str().unwrap().into(), i["state"].as_str().unwrap().into())).collect();
+    let row = board["result"]["rows"]
+        .as_array()
+        .or(board["result"].as_array())
+        .unwrap()
+        .iter()
+        .find(|r| r["session"] == session.as_str())
+        .unwrap()
+        .clone();
+    let issues: Vec<(String, String)> = row["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| (i["ticket"].as_str().unwrap().into(), i["state"].as_str().unwrap().into()))
+        .collect();
     assert_eq!(issues, [("ENG-1".to_string(), "you".to_string()), ("ENG-2".into(), "waiting".into())]);
     assert_eq!(row["state"], "needsYou");
     // Kept: another zerod, rebuilt from the transcript, has the rows.

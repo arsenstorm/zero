@@ -19,13 +19,20 @@ pub fn listening(sent: Arc<std::sync::Mutex<String>>) -> Runtime {
         tokio::spawn(async move {
             use tokio::io::AsyncReadExt;
             let mut buffer = vec![0u8; 1 << 16];
-            while let Ok(n) = reader.read(&mut buffer).await { if n == 0 { break } sent.lock().unwrap().push_str(&String::from_utf8_lossy(&buffer[..n])) }
+            while let Ok(n) = reader.read(&mut buffer).await {
+                if n == 0 {
+                    break;
+                }
+                sent.lock().unwrap().push_str(&String::from_utf8_lossy(&buffer[..n]))
+            }
         });
         Ok(zerod::session::Transport::new(ours, writer))
     })
 }
 
-fn item(id: &str, kind: ItemKind) -> Change { Change::Item { item: Item { at: None, id: id.into(), turn: None, kind, status: ItemStatus::Done } } }
+fn item(id: &str, kind: ItemKind) -> Change {
+    Change::Item { item: Item { at: None, id: id.into(), turn: None, kind, status: ItemStatus::Done } }
+}
 
 /// A turn: the user's message (or Zero's), the agent's answer, between turns again.
 async fn turn(session: &zerod::session::Session, n: usize, said: &str, answer: &str) {
@@ -38,16 +45,21 @@ async fn turn(session: &zerod::session::Session, n: usize, said: &str, answer: &
 }
 
 /// Words Zero gave the task (an event, a report): a turn the user isn't in.
-fn zeros(text: &str) -> String { zerod::model::from_line("zero", text) }
+fn zeros(text: &str) -> String {
+    zerod::model::from_line("zero", text)
+}
 
 /// How many times the agent has been sent back to end its turn properly.
-fn sent_back(sent: &Arc<std::sync::Mutex<String>>) -> usize { sent.lock().unwrap().matches(zerod::daemon::END_YOUR_TURN_MARK).count() }
+fn sent_back(sent: &Arc<std::sync::Mutex<String>>) -> usize {
+    sent.lock().unwrap().matches(zerod::daemon::END_YOUR_TURN_MARK).count()
+}
 
 async fn task(home: &std::path::Path, provider: Provider) -> (Arc<Daemon>, String, Arc<std::sync::Mutex<String>>) {
     let sent = Arc::new(std::sync::Mutex::new(String::new()));
     let daemon = Daemon::open(&home.join("zerod"), listening(sent.clone())).unwrap();
     daemon.require_endings();
-    let id = daemon.start(provider, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    let id =
+        daemon.start(provider, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     (daemon, id, sent)
 }
@@ -66,7 +78,13 @@ async fn a_question_it_never_asked_is_sent_back_even_with_an_ending() {
     let home = temp_dir("endings-question");
     let (daemon, id, sent) = task(&home, Provider::Claude).await;
     let session = daemon.session(&id).unwrap();
-    turn(&session, 1, &zeros("1 new event on what you follow"), "The deploy finished.\n\nShould I start the check, or wait for Dana?\n\n[zero: working]").await;
+    turn(
+        &session,
+        1,
+        &zeros("1 new event on what you follow"),
+        "The deploy finished.\n\nShould I start the check, or wait for Dana?\n\n[zero: working]",
+    )
+    .await;
     assert_eq!(sent_back(&sent), 1);
 }
 
@@ -104,7 +122,12 @@ async fn a_worker_ends_its_turn_as_a_task_does_and_its_lead_hears_once() {
     };
     assert_eq!(reports(), 0, "its lead hears nothing of the turn it was sent back from");
     turn(&session, 2, &zeros("end it"), "Blocked: the dump needs production.\n\n[zero: blocked]").await;
-    for _ in 0..50 { if reports() > 0 { break } tokio::time::sleep(Duration::from_millis(20)).await }
+    for _ in 0..50 {
+        if reports() > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await
+    }
     assert_eq!((reports(), sent_back(&sent)), (1, 1), "then its lead hears once, and it isn't sent back again");
     turn(&session, 3, &zeros("carry on"), "All green.\n\n[zero: done]").await;
     assert_eq!(sent_back(&sent), 1, "a worker's proper ending passes");
@@ -163,14 +186,28 @@ async fn a_lead_told_of_an_issue_that_leaves_its_row_alone_is_reminded_once() {
     // a turn that heard the report and didn't set the row is told, once.
     let home = temp_dir("issue-rows");
     let (daemon, lead, sent) = task(&home, Provider::Claude).await;
-    let worker = daemon.spawn(&lead, Provider::Claude, "fix ENG-7", zerod::daemon::Options { ticket: Some("ENG-7".into()), ..Default::default() }).unwrap();
+    let worker = daemon
+        .spawn(&lead, Provider::Claude, "fix ENG-7", zerod::daemon::Options { ticket: Some("ENG-7".into()), ..Default::default() })
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     let reminded = |sent: &Arc<std::sync::Mutex<String>>| sent.lock().unwrap().matches(zerod::daemon::ISSUE_ROW_MARK).count();
     let session = daemon.session(&lead).unwrap();
-    turn(&session, 1, &zerod::model::from_line(&worker, "Worker ENG-7 finished: CI green, ready to merge."), "ENG-7 is ready to merge.\n\n[zero: done]").await;
+    turn(
+        &session,
+        1,
+        &zerod::model::from_line(&worker, "Worker ENG-7 finished: CI green, ready to merge."),
+        "ENG-7 is ready to merge.\n\n[zero: done]",
+    )
+    .await;
     assert_eq!(reminded(&sent), 1, "{}", sent.lock().unwrap());
     // Reminded already, and the row still not set: not again, however many reports come.
-    turn(&session, 9, &zerod::model::from_line(&worker, "Worker ENG-7 is waiting: CI is still running."), "Nothing new on ENG-7.\n\n[zero: waiting]").await;
+    turn(
+        &session,
+        9,
+        &zerod::model::from_line(&worker, "Worker ENG-7 is waiting: CI is still running."),
+        "Nothing new on ENG-7.\n\n[zero: waiting]",
+    )
+    .await;
     assert_eq!(reminded(&sent), 1, "once per ticket until it's set");
     // Set during the turn: nothing to remind.
     session.change(Change::Status { status: Status::Working, turn: Some("t2".into()), error: None });
@@ -184,7 +221,10 @@ async fn a_lead_told_of_an_issue_that_leaves_its_row_alone_is_reminded_once() {
     // A turn that failed (out of usage, say) had no chance to set it: nothing to remind.
     session.change(Change::Status { status: Status::Working, turn: Some("t3".into()), error: None });
     tokio::time::sleep(Duration::from_millis(100)).await;
-    session.change(item("u3", ItemKind::User { text: zerod::model::from_line(&worker, "Worker ENG-7 failed: API Error: 500"), images: vec![] }));
+    session.change(item(
+        "u3",
+        ItemKind::User { text: zerod::model::from_line(&worker, "Worker ENG-7 failed: API Error: 500"), images: vec![] },
+    ));
     session.change(Change::Failed { failure: Some(Failure { kind: FailureKind::Other, message: "Something odd".into() }) });
     session.change(Change::Status { status: Status::Idle, turn: None, error: Some("Something odd".into()) });
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -196,12 +236,20 @@ async fn a_report_that_changes_nothing_needs_no_new_row_while_the_row_is_fresh()
     // A worker saying it still waits on CI changes nothing for the user: a row set minutes ago still says it all.
     let home = temp_dir("issue-rows-fresh");
     let (daemon, lead, sent) = task(&home, Provider::Claude).await;
-    let worker = daemon.spawn(&lead, Provider::Claude, "fix ENG-8", zerod::daemon::Options { ticket: Some("ENG-8".into()), ..Default::default() }).unwrap();
+    let worker = daemon
+        .spawn(&lead, Provider::Claude, "fix ENG-8", zerod::daemon::Options { ticket: Some("ENG-8".into()), ..Default::default() })
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     daemon.set_issue(&lead, "ENG-8", zerod::model::IssueState::Working, "CI running").unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
     let session = daemon.session(&lead).unwrap();
-    turn(&session, 1, &zerod::model::from_line(&worker, "Worker ENG-8 is waiting: CI is still running."), "Nothing new on ENG-8.\n\n[zero: waiting]").await;
+    turn(
+        &session,
+        1,
+        &zerod::model::from_line(&worker, "Worker ENG-8 is waiting: CI is still running."),
+        "Nothing new on ENG-8.\n\n[zero: waiting]",
+    )
+    .await;
     let told = sent.lock().unwrap().clone();
     assert_eq!(told.matches(zerod::daemon::ISSUE_ROW_MARK).count(), 0, "{told}");
 }
@@ -218,7 +266,12 @@ async fn a_done_worker_leaves_once_its_lead_has_its_report() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     turn(&daemon.session(&waiting).unwrap(), 1, "watch CI", "CI is still running.\n\n[zero: waiting]").await;
     turn(&daemon.session(&done).unwrap(), 1, "check it", "Checked: merged, deployed, all green.\n\n[zero: done]").await;
-    for _ in 0..50 { if daemon.session(&done).is_err() { break } tokio::time::sleep(Duration::from_millis(100)).await }
+    for _ in 0..50 {
+        if daemon.session(&done).is_err() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await
+    }
     assert!(sent.lock().unwrap().contains("merged, deployed, all green"), "the lead had its report first");
     assert!(daemon.session(&done).is_err(), "done: it left the lead's tree");
     assert!(daemon.session(&waiting).is_ok(), "waiting on CI: it stays");

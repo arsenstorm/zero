@@ -1,7 +1,6 @@
 //! When each step happened: an item is stamped the first time zerod sees it and keeps that time as it updates, so the
 //! app can say when a message was sent and how long a turn worked. The times are kept, and a restart replays them.
 
-
 use crate::common::temp_dir;
 use serde_json::json;
 use tokio::sync::broadcast;
@@ -20,7 +19,10 @@ fn an_item_keeps_the_time_it_was_first_seen() {
     core.change(Change::Item { item: item("a", ItemStatus::Running) });
     core.at(5_000);
     let updated = core.change(Change::Item { item: item("a", ItemStatus::Done) });
-    assert!(matches!(&updated, Change::Item { item } if item.at == Some(1_000)), "the update carries the first time to clients: {updated:?}");
+    assert!(
+        matches!(&updated, Change::Item { item } if item.at == Some(1_000)),
+        "the update carries the first time to clients: {updated:?}"
+    );
     core.change(Change::Item { item: item("b", ItemStatus::Done) });
     let times: Vec<Option<i64>> = core.conversation().items.iter().map(|i| i.at).collect();
     assert_eq!(times, [Some(1_000), Some(5_000)]);

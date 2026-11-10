@@ -8,7 +8,9 @@ impl Daemon {
     pub async fn open_terminal(&self, id: &str) -> Result<String, String> {
         let session = self.session(id)?;
         let conversation = session.snapshot();
-        if let Some(open) = &conversation.terminal { return Ok(open.id.clone()) }
+        if let Some(open) = &conversation.terminal {
+            return Ok(open.id.clone());
+        }
         if matches!(conversation.status, Status::Working | Status::Waiting) {
             return Err(format!("{} is working; stop its turn first", conversation.provider.title()));
         }
@@ -25,9 +27,16 @@ impl Daemon {
             loop {
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 let Some(daemon) = weak.upgrade() else { return };
-                if daemon.get(&task).and_then(|c| c.terminal).map(|t| t.id) != Some(watched.clone()) { return }
-                if matches!(crate::terminal::Terminal::state(&daemon.host(), &watched).await, crate::terminal::State::Exited | crate::terminal::State::Missing) {
-                    if let Err(error) = daemon.close_terminal(&task).await { eprintln!("zerod: {task} came back from its terminal badly: {error}") }
+                if daemon.get(&task).and_then(|c| c.terminal).map(|t| t.id) != Some(watched.clone()) {
+                    return;
+                }
+                if matches!(
+                    crate::terminal::Terminal::state(&daemon.host(), &watched).await,
+                    crate::terminal::State::Exited | crate::terminal::State::Missing
+                ) {
+                    if let Err(error) = daemon.close_terminal(&task).await {
+                        eprintln!("zerod: {task} came back from its terminal badly: {error}")
+                    }
                     return;
                 }
             }
@@ -46,8 +55,11 @@ impl Daemon {
         match conversation.provider {
             Provider::Claude => {
                 let text = std::fs::read_to_string(self.claude_file(&conversation)).unwrap_or_default();
-                let records: Vec<serde_json::Value> = text.lines().skip(open.mark).filter_map(|line| serde_json::from_str(line).ok()).collect();
-                for item in crate::handoff::from_claude_session(&records) { session.change(Change::Item { item }) }
+                let records: Vec<serde_json::Value> =
+                    text.lines().skip(open.mark).filter_map(|line| serde_json::from_str(line).ok()).collect();
+                for item in crate::handoff::from_claude_session(&records) {
+                    session.change(Change::Item { item })
+                }
             }
             Provider::Codex => {
                 // Codex lets go of the thread once its terminal's program has exited, a moment after it's told to.
@@ -56,7 +68,10 @@ impl Daemon {
                 let mut tries = 0;
                 loop {
                     match self.resume(id).await {
-                        Err(error) if error.contains("active writer") && tries < 2 => { tries += 1; tokio::time::sleep(Duration::from_secs(2)).await }
+                        Err(error) if error.contains("active writer") && tries < 2 => {
+                            tries += 1;
+                            tokio::time::sleep(Duration::from_secs(2)).await
+                        }
                         resumed => break resumed?,
                     }
                 }

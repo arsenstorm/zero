@@ -14,8 +14,12 @@ use serde::{Deserialize, Serialize};
 static POLL_MS: AtomicU64 = AtomicU64::new(2000);
 
 /// How often watched files are read; quicker in tests.
-pub fn poll_every(every: Duration) { POLL_MS.store(every.as_millis() as u64, Ordering::Relaxed) }
-pub fn poll() -> Duration { Duration::from_millis(POLL_MS.load(Ordering::Relaxed)) }
+pub fn poll_every(every: Duration) {
+    POLL_MS.store(every.as_millis() as u64, Ordering::Relaxed)
+}
+pub fn poll() -> Duration {
+    Duration::from_millis(POLL_MS.load(Ordering::Relaxed))
+}
 
 /// The lines told before each match: what led up to it.
 const BEFORE: usize = 3;
@@ -49,28 +53,47 @@ pub struct Watch {
 }
 
 impl Watch {
-    pub fn name(&self) -> String { self.file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| self.file.display().to_string()) }
+    pub fn name(&self) -> String {
+        self.file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| self.file.display().to_string())
+    }
 
     /// Its first line is what the app shows folded: which file, and the line that matched last.
     pub fn alert(&self, hits: &[String], latest: Option<&str>) -> String {
         let watched = self.alerts.iter().map(|a| format!("`{a}`")).collect::<Vec<_>>().join(", ");
         let last = hits.last().map(|l| l.trim()).unwrap_or_default();
-        let latest = latest.filter(|l| hits.last().map(String::as_str) != Some(*l)).map(|l| format!("\nIts latest line: `{l}`")).unwrap_or_default();
-        format!("Watch: `{}` printed `{last}`\n```\n{}\n```\nWatched for {watched}.{latest}\nThe watch goes on; `zero watch stop {}` ends it.", self.name(), hits.join("\n"), self.id)
+        let latest =
+            latest.filter(|l| hits.last().map(String::as_str) != Some(*l)).map(|l| format!("\nIts latest line: `{l}`")).unwrap_or_default();
+        format!(
+            "Watch: `{}` printed `{last}`\n```\n{}\n```\nWatched for {watched}.{latest}\nThe watch goes on; `zero watch stop {}` ends it.",
+            self.name(),
+            hits.join("\n"),
+            self.id
+        )
     }
 
     pub fn finished(&self, line: &str) -> String {
-        format!("Watch: `{}` is done (it printed `{}`), so the watch has ended.\n```\n{line}\n```", self.name(), self.done.as_deref().unwrap_or(""))
+        format!(
+            "Watch: `{}` is done (it printed `{}`), so the watch has ended.\n```\n{line}\n```",
+            self.name(),
+            self.done.as_deref().unwrap_or("")
+        )
     }
 
     pub fn quieted(&self, latest: Option<&str>) -> String {
-        format!("Watch: `{}` hasn't grown for {} minutes: it may have hung or stopped.{}", self.name(), self.quiet.unwrap_or(0),
-                latest.map(|l| format!(" Its latest line: `{l}`")).unwrap_or_default())
+        format!(
+            "Watch: `{}` hasn't grown for {} minutes: it may have hung or stopped.{}",
+            self.name(),
+            self.quiet.unwrap_or(0),
+            latest.map(|l| format!(" Its latest line: `{l}`")).unwrap_or_default()
+        )
     }
 }
 
 /// What a line is looked for by: text, or a pattern between slashes.
-enum Pattern { Text(String), Regex(regex::Regex) }
+enum Pattern {
+    Text(String),
+    Regex(regex::Regex),
+}
 
 impl Pattern {
     fn of(text: &str) -> Result<Pattern, String> {
@@ -80,7 +103,10 @@ impl Pattern {
         }
     }
     fn finds(&self, line: &str) -> bool {
-        match self { Pattern::Text(text) => line.contains(text.as_str()), Pattern::Regex(regex) => regex.is_match(line) }
+        match self {
+            Pattern::Text(text) => line.contains(text.as_str()),
+            Pattern::Regex(regex) => regex.is_match(line),
+        }
     }
 }
 
@@ -98,8 +124,15 @@ pub struct Reading {
 impl Reading {
     /// For `watch`: its patterns read once; one that isn't a pattern is an error.
     pub fn new(watch: &Watch) -> Result<Reading, String> {
-        Ok(Reading { alerts: watch.alerts.iter().map(|a| Pattern::of(a)).collect::<Result<_, _>>()?, until: watch.done.as_deref().map(Pattern::of).transpose()?,
-                     partial: String::new(), recent: VecDeque::new(), hits: vec![], done: None, latest: None })
+        Ok(Reading {
+            alerts: watch.alerts.iter().map(|a| Pattern::of(a)).collect::<Result<_, _>>()?,
+            until: watch.done.as_deref().map(Pattern::of).transpose()?,
+            partial: String::new(),
+            recent: VecDeque::new(),
+            hits: vec![],
+            done: None,
+            latest: None,
+        })
     }
 
     /// The next of what the file has: its lines, a line not yet ended kept for the next read.
@@ -111,17 +144,26 @@ impl Reading {
             self.line(line);
         }
         // ponytail: a "line" that never ends (a progress bar's carriage returns) is let go past 1 MB.
-        if self.partial.len() > 1 << 20 { self.partial.clear() }
+        if self.partial.len() > 1 << 20 {
+            self.partial.clear()
+        }
     }
 
     fn line(&mut self, line: String) {
-        if self.until.as_ref().is_some_and(|until| until.finds(&line)) { self.done = Some(line.clone()) }
+        if self.until.as_ref().is_some_and(|until| until.finds(&line)) {
+            self.done = Some(line.clone())
+        }
         if self.alerts.iter().any(|alert| alert.finds(&line)) {
-            if self.hits.len() < MOST { self.hits.extend(self.recent.drain(..)); self.hits.push(line.clone()) }
+            if self.hits.len() < MOST {
+                self.hits.extend(self.recent.drain(..));
+                self.hits.push(line.clone())
+            }
             self.recent.clear();
         } else {
             self.recent.push_back(line.clone());
-            if self.recent.len() > BEFORE { self.recent.pop_front(); }
+            if self.recent.len() > BEFORE {
+                self.recent.pop_front();
+            }
         }
         self.latest = Some(line);
     }
@@ -133,5 +175,7 @@ pub fn load(home: &Path) -> Vec<Watch> {
 }
 
 pub fn keep(home: &Path, watches: &[Watch]) {
-    if let Ok(data) = serde_json::to_vec_pretty(watches) { let _ = std::fs::write(home.join("watches.json"), data); }
+    if let Ok(data) = serde_json::to_vec_pretty(watches) {
+        let _ = std::fs::write(home.join("watches.json"), data);
+    }
 }

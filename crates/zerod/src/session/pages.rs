@@ -35,8 +35,14 @@ impl Session {
         let items = &inner.core().conversation().items;
         let find = |id: &str| items.iter().position(|i| i.id == id);
         let start = match (from, after) {
-            (Some(id), _) => match find(id) { Some(at) => at, None => return (vec![], 0, 0) },
-            (None, Some(id)) => match find(id) { Some(at) => at + 1, None => return (vec![], 0, 0) },
+            (Some(id), _) => match find(id) {
+                Some(at) => at,
+                None => return (vec![], 0, 0),
+            },
+            (None, Some(id)) => match find(id) {
+                Some(at) => at + 1,
+                None => return (vec![], 0, 0),
+            },
             (None, None) => turn_start(items, items.len().saturating_sub(limit)),
         };
         let end = if from.is_none() && after.is_none() { items.len() } else { (start + limit).min(items.len()) };
@@ -52,9 +58,13 @@ impl Session {
         for (index, item) in items.iter().enumerate() {
             // Yours only: what Zero gave the session (a worker's report) isn't a mark of yours.
             let ItemKind::User { text, .. } = &item.kind else { continue };
-            if crate::model::from(text).is_some() { continue }
-            let answer = items[index + 1..].iter().take_while(|i| !matches!(i.kind, ItemKind::User { .. }))
-                .find_map(|i| match &i.kind { ItemKind::Agent { text, final_answer: true } => Some(text.chars().take(400).collect::<String>()), _ => None });
+            if crate::model::from(text).is_some() {
+                continue;
+            }
+            let answer = items[index + 1..].iter().take_while(|i| !matches!(i.kind, ItemKind::User { .. })).find_map(|i| match &i.kind {
+                ItemKind::Agent { text, final_answer: true } => Some(text.chars().take(400).collect::<String>()),
+                _ => None,
+            });
             marks.push(json!({"id": item.id, "text": text.chars().take(300).collect::<String>(), "answer": answer}));
         }
         Value::Array(marks)
@@ -64,6 +74,8 @@ impl Session {
 /// Where the turn holding `items[start]` begins (the message of yours it answers), so a page never splits a turn: the
 /// app folds a turn into one row, and half of one shows the wrong time.
 pub(super) fn turn_start(items: &[Item], start: usize) -> usize {
-    if start >= items.len() { return start }
+    if start >= items.len() {
+        return start;
+    }
     items[..=start].iter().rposition(|i| matches!(i.kind, ItemKind::User { .. })).unwrap_or(0)
 }

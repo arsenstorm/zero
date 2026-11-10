@@ -23,52 +23,84 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    fn zero() -> Workspace { Workspace { id: DEFAULT.into(), name: "Zero".into(), glyph: String::new() } }
+    fn zero() -> Workspace {
+        Workspace { id: DEFAULT.into(), name: "Zero".into(), glyph: String::new() }
+    }
 }
 
-pub struct Workspaces { file: PathBuf, list: Mutex<Vec<Workspace>> }
+pub struct Workspaces {
+    file: PathBuf,
+    list: Mutex<Vec<Workspace>>,
+}
 
 impl Workspaces {
     pub fn open(home: &Path) -> Workspaces {
         let file = home.join("workspaces.json");
         let mut list: Vec<Workspace> = std::fs::read(&file).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default();
-        if !list.iter().any(|w| w.id == DEFAULT) { list.insert(0, Workspace::zero()) }
+        if !list.iter().any(|w| w.id == DEFAULT) {
+            list.insert(0, Workspace::zero())
+        }
         Workspaces { file, list: Mutex::new(list) }
     }
 
     /// Zero first, then the others as made.
-    pub fn list(&self) -> Vec<Workspace> { self.list.lock().unwrap().clone() }
+    pub fn list(&self) -> Vec<Workspace> {
+        self.list.lock().unwrap().clone()
+    }
 
     /// Adds a workspace (no id: one from its name), or changes the one with its id. Zero keeps its name.
     pub fn save(&self, mut workspace: Workspace) -> Result<Workspace, String> {
         workspace.name = workspace.name.trim().to_string();
-        if workspace.name.is_empty() { return Err("A workspace needs a name".into()) }
+        if workspace.name.is_empty() {
+            return Err("A workspace needs a name".into());
+        }
         let mut list = self.list.lock().unwrap();
         if workspace.id.is_empty() {
-            let base: String = workspace.name.to_lowercase().chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect::<String>().trim_matches('-').to_string();
+            let base: String = workspace
+                .name
+                .to_lowercase()
+                .chars()
+                .map(|c| if c.is_alphanumeric() { c } else { '-' })
+                .collect::<String>()
+                .trim_matches('-')
+                .to_string();
             let base = if base.is_empty() { "workspace".to_string() } else { base };
             let mut id = base.clone();
             let mut n = 2;
-            while list.iter().any(|w| w.id == id) { id = format!("{base}-{n}"); n += 1; }
+            while list.iter().any(|w| w.id == id) {
+                id = format!("{base}-{n}");
+                n += 1;
+            }
             workspace.id = id;
         }
-        if workspace.id == DEFAULT { workspace.name = "Zero".into() }
-        match list.iter_mut().position(|w| w.id == workspace.id) { Some(i) => list[i] = workspace.clone(), None => list.push(workspace.clone()) }
+        if workspace.id == DEFAULT {
+            workspace.name = "Zero".into()
+        }
+        match list.iter_mut().position(|w| w.id == workspace.id) {
+            Some(i) => list[i] = workspace.clone(),
+            None => list.push(workspace.clone()),
+        }
         self.keep(&list)?;
         Ok(workspace)
     }
 
     /// Removes a workspace; its tasks are Zero's again (they keep no record of it). Zero stays.
     pub fn delete(&self, id: &str) -> Result<(), String> {
-        if id == DEFAULT { return Err("Zero is always there".into()) }
+        if id == DEFAULT {
+            return Err("Zero is always there".into());
+        }
         let mut list = self.list.lock().unwrap();
         let before = list.len();
         list.retain(|w| w.id != id);
-        if list.len() == before { return Err(format!("No workspace {id}")) }
+        if list.len() == before {
+            return Err(format!("No workspace {id}"));
+        }
         self.keep(&list)
     }
 
-    pub fn exists(&self, id: &str) -> bool { self.list.lock().unwrap().iter().any(|w| w.id == id) }
+    pub fn exists(&self, id: &str) -> bool {
+        self.list.lock().unwrap().iter().any(|w| w.id == id)
+    }
 
     /// Which workspace a task is in: the one it was put in, if that still exists; else Zero.
     pub fn of(&self, placed: Option<&str>) -> String {

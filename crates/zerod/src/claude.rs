@@ -7,11 +7,13 @@ use std::collections::HashMap;
 
 use serde_json::{Value, json};
 
+use crate::adapter::INSTRUCTIONS;
 use crate::adapter::{Adapter, Answers, Effects, after_approval, login_shell};
 use crate::codex::file_title;
-use crate::adapter::INSTRUCTIONS;
-use crate::model::{Approval, ApprovalKind, Change, Choice, ChoiceKind, Conversation, Field, FileChange, Item, ItemKind, ItemStatus, Permissions, Question,
-                   QuestionOption, Status};
+use crate::model::{
+    Approval, ApprovalKind, Change, Choice, ChoiceKind, Conversation, Field, FileChange, Item, ItemKind, ItemStatus, Permissions, Question,
+    QuestionOption, Status,
+};
 use crate::session::{Session, Transport};
 
 #[derive(Default)]
@@ -49,34 +51,67 @@ pub const NO_IDLE_COMPACTION: &str = r#"{"idleCompaction":false}"#;
 pub const NO_SUBAGENTS: &[&str] = &["--disallowed-tools=Agent"];
 
 pub fn command(conversation: &Conversation, resume: bool, model: Option<&str>, effort: Option<&str>, subagents: bool) -> Vec<String> {
-    let mut args = vec!["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-                        // Claude in Chrome's tools: in print mode they come only with the flag (the user's own default
-                        // applies to terminal sessions alone); Claude connects to the extension if Chrome has it.
-                        "--include-partial-messages", "--no-chrome", "--permission-prompt-tool", "stdio", "--permission-mode",
-                        match conversation.permissions { Permissions::Auto => "auto", Permissions::Unrestricted => "bypassPermissions" },
-                        "--append-system-prompt", INSTRUCTIONS, "--settings", NO_IDLE_COMPACTION];
-    if !subagents { args.extend(NO_SUBAGENTS) }
-    if let Some(thread) = conversation.thread.as_deref() { args.extend([if resume { "--resume" } else { "--session-id" }, thread]) }
-    if let Some(model) = model { args.extend(["--model", model]) }
-    if let Some(effort) = effort { args.extend(["--effort", effort]) }
+    let mut args = vec![
+        "claude",
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        // Claude in Chrome's tools: in print mode they come only with the flag (the user's own default
+        // applies to terminal sessions alone); Claude connects to the extension if Chrome has it.
+        "--include-partial-messages",
+        "--no-chrome",
+        "--permission-prompt-tool",
+        "stdio",
+        "--permission-mode",
+        match conversation.permissions {
+            Permissions::Auto => "auto",
+            Permissions::Unrestricted => "bypassPermissions",
+        },
+        "--append-system-prompt",
+        INSTRUCTIONS,
+        "--settings",
+        NO_IDLE_COMPACTION,
+    ];
+    if !subagents {
+        args.extend(NO_SUBAGENTS)
+    }
+    if let Some(thread) = conversation.thread.as_deref() {
+        args.extend([if resume { "--resume" } else { "--session-id" }, thread])
+    }
+    if let Some(model) = model {
+        args.extend(["--model", model])
+    }
+    if let Some(effort) = effort {
+        args.extend(["--effort", effort])
+    }
     let config = mcp_config(&conversation.mcp).map(|(config, _)| config);
-    if let Some(config) = &config { args.extend(["--mcp-config", config]) }
+    if let Some(config) = &config {
+        args.extend(["--mcp-config", config])
+    }
     login_shell(&args)
 }
 
 /// Zero's MCP servers as `--mcp-config` takes them, on top of the user's own; each value a `${…}` that Claude expands
 /// from its environment, where zerod puts the value (the pairs given back), so no secret is on the command line.
 pub fn mcp_config(servers: &[crate::mcp_servers::Resolved]) -> Option<(String, Vec<(String, String)>)> {
-    if servers.is_empty() { return None }
+    if servers.is_empty() {
+        return None;
+    }
     let mut env = vec![];
     let mut config = serde_json::Map::new();
     for server in servers {
         let mut refer = |values: &[(String, String)]| -> serde_json::Map<String, Value> {
-            values.iter().map(|(name, value)| {
-                let var = format!("ZERO_MCP_{}_{}", variable(&server.id), variable(name));
-                env.push((var.clone(), value.clone()));
-                (name.clone(), json!(format!("${{{var}}}")))
-            }).collect()
+            values
+                .iter()
+                .map(|(name, value)| {
+                    let var = format!("ZERO_MCP_{}_{}", variable(&server.id), variable(name));
+                    env.push((var.clone(), value.clone()));
+                    (name.clone(), json!(format!("${{{var}}}")))
+                })
+                .collect()
         };
         let entry = match (&server.command, &server.url) {
             (Some(command), _) => json!({"command": command, "args": server.args, "env": refer(&server.env)}),
@@ -88,12 +123,16 @@ pub fn mcp_config(servers: &[crate::mcp_servers::Resolved]) -> Option<(String, V
     Some((json!({"mcpServers": config}).to_string(), env))
 }
 
-fn variable(name: &str) -> String { name.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' }).collect() }
+fn variable(name: &str) -> String {
+    name.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' }).collect()
+}
 
 /// A fresh conversation id for a new Claude session, a UUID as `--session-id` wants.
 pub fn new_session_id() -> String {
     let mut bytes = [0u8; 16];
-    if let Ok(mut random) = std::fs::File::open("/dev/urandom") { let _ = std::io::Read::read_exact(&mut random, &mut bytes); }
+    if let Ok(mut random) = std::fs::File::open("/dev/urandom") {
+        let _ = std::io::Read::read_exact(&mut random, &mut bytes);
+    }
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
@@ -102,12 +141,17 @@ pub fn new_session_id() -> String {
 
 /// Your words as Claude Code's stream takes them, each image as data where its token stands (images.rs).
 pub fn user_message(text: &str, images: &[String]) -> Value {
-    if images.is_empty() { return json!({"type": "user", "message": {"role": "user", "content": text}}) }
-    let content: Vec<Value> = crate::images::parts(text, images).into_iter().filter_map(|part| match part {
-        crate::images::Part::Text(text) => Some(json!({"type": "text", "text": text})),
-        crate::images::Part::Image(path) => crate::images::data(path)
-            .map(|(mime, data)| json!({"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}})),
-    }).collect();
+    if images.is_empty() {
+        return json!({"type": "user", "message": {"role": "user", "content": text}});
+    }
+    let content: Vec<Value> = crate::images::parts(text, images)
+        .into_iter()
+        .filter_map(|part| match part {
+            crate::images::Part::Text(text) => Some(json!({"type": "text", "text": text})),
+            crate::images::Part::Image(path) => crate::images::data(path)
+                .map(|(mime, data)| json!({"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}})),
+        })
+        .collect();
     json!({"type": "user", "message": {"role": "user", "content": content}})
 }
 
@@ -120,7 +164,15 @@ impl Adapter for Claude {
                     Value::Array(blocks) => blocks.iter().filter_map(|b| b["text"].as_str()).collect(),
                     content => content.as_str().unwrap_or("").to_string(),
                 };
-                let mut changes = vec![Change::Item { item: Item { at: None, id: format!("user-{}", conversation.seq + 1), turn: conversation.turn.clone(), kind: ItemKind::User { text, images: vec![] }, status: ItemStatus::Done } }];
+                let mut changes = vec![Change::Item {
+                    item: Item {
+                        at: None,
+                        id: format!("user-{}", conversation.seq + 1),
+                        turn: conversation.turn.clone(),
+                        kind: ItemKind::User { text, images: vec![] },
+                        status: ItemStatus::Done,
+                    },
+                }];
                 if self.queued == 0 {
                     self.turns += 1;
                     changes.push(Change::Status { status: Status::Working, turn: Some(format!("turn-{}", self.turns)), error: None });
@@ -134,8 +186,14 @@ impl Adapter for Claude {
             }
             Some("control_response") => {
                 let id = message["response"]["request_id"].as_str().unwrap_or("");
-                if self.requests.remove(id).is_none() { return vec![] }
-                let settled = if conversation.questions.iter().any(|q| q.id == id) { Change::Answered { question: id.into() } } else { Change::Resolved { approval: id.into() } };
+                if self.requests.remove(id).is_none() {
+                    return vec![];
+                }
+                let settled = if conversation.questions.iter().any(|q| q.id == id) {
+                    Change::Answered { question: id.into() }
+                } else {
+                    Change::Resolved { approval: id.into() }
+                };
                 vec![settled, after_approval(conversation, id)]
             }
             _ => vec![],
@@ -149,7 +207,10 @@ impl Adapter for Claude {
         // Its results still end the steps they answer (calls it made while the turn ran, shown then): a result starts
         // no turn.
         let between_turns = matches!(conversation.status, Status::Idle | Status::Offline);
-        if between_turns && message["parent_tool_use_id"].is_string() && matches!(message["type"].as_str(), Some("assistant" | "stream_event")) {
+        if between_turns
+            && message["parent_tool_use_id"].is_string()
+            && matches!(message["type"].as_str(), Some("assistant" | "stream_event"))
+        {
             return effects;
         }
         match message["type"].as_str() {
@@ -164,17 +225,29 @@ impl Adapter for Claude {
             }
             Some("system") if message["subtype"] == "init" => {
                 if let Some(thread) = message["session_id"].as_str() {
-                    effects.changes.push(Change::Thread { thread: thread.into(), model: message["model"].as_str().map(Into::into), effort: None });
+                    effects.changes.push(Change::Thread {
+                        thread: thread.into(),
+                        model: message["model"].as_str().map(Into::into),
+                        effort: None,
+                    });
                 }
                 // A server of Zero's that wants signing in: Claude's own sign-in for it, its link for the user.
                 for server in message["mcp_servers"].as_array().into_iter().flatten().filter(|s| s["status"] == "needs-auth") {
-                    if let Some(name) = server["name"].as_str() && crate::mcp_servers::signs_in(conversation, name).is_some() && self.signing_in.insert(name.into()) {
-                        effects.replies.push(json!({"type": "control_request", "request_id": format!("{}{name}", crate::mcp_servers::SIGN_IN),
+                    if let Some(name) = server["name"].as_str()
+                        && crate::mcp_servers::signs_in(conversation, name).is_some()
+                        && self.signing_in.insert(name.into())
+                    {
+                        effects
+                            .replies
+                            .push(json!({"type": "control_request", "request_id": format!("{}{name}", crate::mcp_servers::SIGN_IN),
                                                     "request": {"subtype": "mcp_authenticate", "serverName": name}}));
                     }
                 }
             }
-            Some("control_response") if let Some(name) = message["response"]["request_id"].as_str().and_then(|id| id.strip_prefix(crate::mcp_servers::SIGN_IN)) => {
+            Some("control_response")
+                if let Some(name) =
+                    message["response"]["request_id"].as_str().and_then(|id| id.strip_prefix(crate::mcp_servers::SIGN_IN)) =>
+            {
                 let response = &message["response"];
                 let url = response["response"]["authUrl"].as_str();
                 let error = (response["subtype"] != "success").then(|| response["error"].as_str().unwrap_or("Claude refused"));
@@ -184,30 +257,54 @@ impl Adapter for Claude {
                 if self.compacting.is_none() {
                     let id = format!("{}{}", crate::adapter::COMPACTED, conversation.seq + 1 + effects.changes.len() as u64);
                     self.compacting = Some(id.clone());
-                    let item = Item { at: None, id, turn: conversation.turn.clone(), kind: ItemKind::Notice { text: "Compacting the conversation…".into(), error: false },
-                                      status: ItemStatus::Running };
+                    let item = Item {
+                        at: None,
+                        id,
+                        turn: conversation.turn.clone(),
+                        kind: ItemKind::Notice { text: "Compacting the conversation…".into(), error: false },
+                        status: ItemStatus::Running,
+                    };
                     effects.changes.push(Change::Item { item });
                 }
             }
-            Some("system") if message["subtype"] == "status" && let Some(id) = self.compacting.take() => {
+            Some("system")
+                if message["subtype"] == "status"
+                    && let Some(id) = self.compacting.take() =>
+            {
                 let failed = message["compact_result"] == "failed";
                 let text = if failed { "Couldn't compact the conversation" } else { "Conversation compacted" };
-                let item = Item { at: None, id, turn: conversation.turn.clone(), kind: ItemKind::Notice { text: text.into(), error: false },
-                                  status: if failed { ItemStatus::Failed } else { ItemStatus::Done } };
+                let item = Item {
+                    at: None,
+                    id,
+                    turn: conversation.turn.clone(),
+                    kind: ItemKind::Notice { text: text.into(), error: false },
+                    status: if failed { ItemStatus::Failed } else { ItemStatus::Done },
+                };
                 effects.changes.push(Change::Item { item });
             }
             Some("system") if message["subtype"] == "task_started" && message["is_backgrounded"] == true => {
-                if let Some(id) = message["tool_use_id"].as_str() { self.background.insert(id.into()); }
-                if let Some(task) = message["task_id"].as_str() { self.tasks.insert(task.into()); }
+                if let Some(id) = message["tool_use_id"].as_str() {
+                    self.background.insert(id.into());
+                }
+                if let Some(task) = message["task_id"].as_str() {
+                    self.tasks.insert(task.into());
+                }
             }
             // A task at work, backgrounded or not: running until its notification.
             Some("system") if message["subtype"] == "task_progress" => {
-                if let Some(task) = message["task_id"].as_str() { self.tasks.insert(task.into()); }
+                if let Some(task) = message["task_id"].as_str() {
+                    self.tasks.insert(task.into());
+                }
             }
             // A background task's end: its tool's step ends now, as the task did (not when it was started).
             Some("system") if message["subtype"] == "task_notification" => {
-                if let Some(task) = message["task_id"].as_str() { self.tasks.remove(task); }
-                if let Some(id) = message["tool_use_id"].as_str() && self.background.remove(id) && let Some(mut item) = conversation.item(id).cloned() {
+                if let Some(task) = message["task_id"].as_str() {
+                    self.tasks.remove(task);
+                }
+                if let Some(id) = message["tool_use_id"].as_str()
+                    && self.background.remove(id)
+                    && let Some(mut item) = conversation.item(id).cloned()
+                {
                     item.status = if message["status"] == "completed" { ItemStatus::Done } else { ItemStatus::Failed };
                     effects.changes.push(Change::Item { item });
                 }
@@ -222,7 +319,11 @@ impl Adapter for Claude {
             Some("control_cancel_request") => {
                 let id = message["request_id"].as_str().unwrap_or("");
                 if self.requests.remove(id).is_some() {
-                    let settled = if conversation.questions.iter().any(|q| q.id == id) { Change::Answered { question: id.into() } } else { Change::Resolved { approval: id.into() } };
+                    let settled = if conversation.questions.iter().any(|q| q.id == id) {
+                        Change::Answered { question: id.into() }
+                    } else {
+                        Change::Resolved { approval: id.into() }
+                    };
                     effects.changes.push(settled);
                     effects.changes.push(after_approval(conversation, id));
                 }
@@ -236,7 +337,9 @@ impl Adapter for Claude {
     }
 
     fn answers(&self, message: &Value) -> Option<(String, Result<Value, String>)> {
-        if message["type"] != "control_response" { return None }
+        if message["type"] != "control_response" {
+            return None;
+        }
         let response = &message["response"];
         let outcome = match response["subtype"].as_str() {
             Some("success") => Ok(response["response"].clone()),
@@ -246,7 +349,8 @@ impl Adapter for Claude {
     }
 
     fn answer(&self, approval: &Approval, choice: &str) -> Result<Value, String> {
-        let (input, suggestions) = self.requests.get(&approval.id).ok_or_else(|| format!("Claude isn't waiting on \"{}\" any more", approval.title))?;
+        let (input, suggestions) =
+            self.requests.get(&approval.id).ok_or_else(|| format!("Claude isn't waiting on \"{}\" any more", approval.title))?;
         let response = match choice {
             "allow" => json!({"behavior": "allow", "updatedInput": input}),
             "always" | "session" => json!({"behavior": "allow", "updatedInput": input, "updatedPermissions": suggestions}),
@@ -261,8 +365,15 @@ impl Adapter for Claude {
         let (input, _) = self.requests.get(&question.id).ok_or("Claude isn't waiting on that question any more")?;
         // AskUserQuestion's answers ride back in its input, keyed by each question's text; several picks, comma-joined.
         let mut input = input.clone();
-        input["answers"] = question.fields.iter().map(|field| (field.question.clone(), Value::String(answers[&field.id].join(", ")))).collect::<serde_json::Map<_, _>>().into();
-        Ok(json!({"type": "control_response", "response": {"subtype": "success", "request_id": question.id, "response": {"behavior": "allow", "updatedInput": input}}}))
+        input["answers"] = question
+            .fields
+            .iter()
+            .map(|field| (field.question.clone(), Value::String(answers[&field.id].join(", "))))
+            .collect::<serde_json::Map<_, _>>()
+            .into();
+        Ok(
+            json!({"type": "control_response", "response": {"subtype": "success", "request_id": question.id, "response": {"behavior": "allow", "updatedInput": input}}}),
+        )
     }
 
     fn stops(&self) -> Vec<Value> {
@@ -286,7 +397,9 @@ impl Claude {
     /// The turn Claude is speaking in. Idle, its words are a turn of their own (a message that reached it as the last
     /// turn ended), so the session reads as working until that turn's result.
     fn speaking(&mut self, conversation: &Conversation, effects: &mut Effects) -> Option<String> {
-        if conversation.status != Status::Idle && conversation.status != Status::Offline { return conversation.turn.clone() }
+        if conversation.status != Status::Idle && conversation.status != Status::Offline {
+            return conversation.turn.clone();
+        }
         self.turns += 1;
         let turn = format!("turn-{}", self.turns);
         effects.changes.push(Change::Status { status: Status::Working, turn: Some(turn.clone()), error: None });
@@ -336,7 +449,11 @@ impl Claude {
                     Some(text) => (format!("{msg}:thinking"), ItemKind::Reasoning { text: text.into() }, ItemStatus::Done),
                     None => continue,
                 },
-                Some("tool_use") => (block["id"].as_str().unwrap_or("tool").into(), tool(conversation, &block["name"], &block["input"]), ItemStatus::Running),
+                Some("tool_use") => (
+                    block["id"].as_str().unwrap_or("tool").into(),
+                    tool(conversation, &block["name"], &block["input"]),
+                    ItemStatus::Running,
+                ),
                 _ => continue,
             };
             effects.changes.push(Change::Item { item: Item { at: None, id, turn: turn.clone(), kind, status } });
@@ -354,21 +471,40 @@ impl Claude {
         }
         let (name, input) = (request["tool_name"].as_str().unwrap_or("a tool"), &request["input"]);
         if name == "AskUserQuestion" {
-            let fields = input["questions"].as_array().cloned().unwrap_or_default().iter().enumerate().map(|(i, q)| Field {
-                id: i.to_string(),
-                header: q["header"].as_str().map(String::from),
-                question: q["question"].as_str().unwrap_or("").into(),
-                options: q["options"].as_array().cloned().unwrap_or_default().iter().map(|o| QuestionOption {
-                    label: o["label"].as_str().unwrap_or("").into(),
-                    description: o["description"].as_str().filter(|d| !d.is_empty()).map(String::from),
-                }).collect(),
-                multiple: q["multiSelect"] == true,
-                other: true,
-                secret: false,
-            }).collect();
+            let fields = input["questions"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .enumerate()
+                .map(|(i, q)| Field {
+                    id: i.to_string(),
+                    header: q["header"].as_str().map(String::from),
+                    question: q["question"].as_str().unwrap_or("").into(),
+                    options: q["options"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|o| QuestionOption {
+                            label: o["label"].as_str().unwrap_or("").into(),
+                            description: o["description"].as_str().filter(|d| !d.is_empty()).map(String::from),
+                        })
+                        .collect(),
+                    multiple: q["multiSelect"] == true,
+                    other: true,
+                    secret: false,
+                })
+                .collect();
             self.requests.insert(id.clone(), (input.clone(), Value::Null));
-            effects.changes.push(Change::Question { question: Question { id, item: request["tool_use_id"].as_str().map(Into::into), fields } });
-            effects.changes.push(Change::Status { status: Status::Waiting, turn: conversation.turn.clone(), error: conversation.error.clone() });
+            effects
+                .changes
+                .push(Change::Question { question: Question { id, item: request["tool_use_id"].as_str().map(Into::into), fields } });
+            effects.changes.push(Change::Status {
+                status: Status::Waiting,
+                turn: conversation.turn.clone(),
+                error: conversation.error.clone(),
+            });
             return;
         }
         let reason = request["description"].as_str().or(input["description"].as_str()).map(String::from);
@@ -382,16 +518,23 @@ impl Claude {
         };
         let suggestions = request["permission_suggestions"].clone();
         let mut choices = vec![Choice { id: "allow".into(), label: "Allow".into(), kind: ChoiceKind::Allow }];
-        if let Some(choice) = remember(&suggestions) { choices.push(choice) }
+        if let Some(choice) = remember(&suggestions) {
+            choices.push(choice)
+        }
         choices.push(Choice { id: "deny".into(), label: "Deny".into(), kind: ChoiceKind::Deny });
         choices.push(Choice { id: "stop".into(), label: "Deny and stop".into(), kind: ChoiceKind::Stop });
         self.requests.insert(id.clone(), (input.clone(), suggestions));
-        let approval = Approval { id, item: request["tool_use_id"].as_str().map(Into::into), kind, title, command, cwd, reason, changes, choices };
+        let approval =
+            Approval { id, item: request["tool_use_id"].as_str().map(Into::into), kind, title, command, cwd, reason, changes, choices };
         effects.changes.push(Change::Approval { approval });
         // Within a turn, the turn waits on it. Between turns (a background subagent asking), no turn of the lead's
         // starts: the approval alone makes it need the user, and the subagent's words stay its own.
         if conversation.turn.is_some() {
-            effects.changes.push(Change::Status { status: Status::Waiting, turn: conversation.turn.clone(), error: conversation.error.clone() });
+            effects.changes.push(Change::Status {
+                status: Status::Waiting,
+                turn: conversation.turn.clone(),
+                error: conversation.error.clone(),
+            });
         }
     }
 
@@ -407,8 +550,12 @@ impl Claude {
             effects.notice(conversation, &text, true);
             error = Some(text);
         }
-        if let Some(id) = self.said.take() && let Some(mut item) = conversation.item(&id).cloned() {
-            if let ItemKind::Agent { final_answer, .. } = &mut item.kind { *final_answer = true }
+        if let Some(id) = self.said.take()
+            && let Some(mut item) = conversation.item(&id).cloned()
+        {
+            if let ItemKind::Agent { final_answer, .. } = &mut item.kind {
+                *final_answer = true
+            }
             item.status = ItemStatus::Done;
             effects.changes.push(Change::Item { item });
         }
@@ -420,16 +567,25 @@ impl Claude {
 fn results(conversation: &Conversation, message: &Value, effects: &mut Effects, background: &std::collections::HashSet<String>) {
     let outcome = &message["tool_use_result"];
     for block in message["message"]["content"].as_array().cloned().unwrap_or_default() {
-        if block["type"] != "tool_result" { continue }
+        if block["type"] != "tool_result" {
+            continue;
+        }
         // Started in the background: this result only says so; the step runs on until its task notification.
-        if block["tool_use_id"].as_str().is_some_and(|id| background.contains(id)) { continue }
+        if block["tool_use_id"].as_str().is_some_and(|id| background.contains(id)) {
+            continue;
+        }
         let Some(mut item) = block["tool_use_id"].as_str().and_then(|id| conversation.item(id)).cloned() else { continue };
         item.status = if block["is_error"] == true { ItemStatus::Failed } else { ItemStatus::Done };
         match &mut item.kind {
             ItemKind::Command { output, .. } => {
                 *output = match outcome["stdout"].as_str() {
                     // Claude's "(Bash completed with no output)" is its note to itself, not output.
-                    Some(stdout) => [stdout, outcome["stderr"].as_str().unwrap_or("")].iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join("\n"),
+                    Some(stdout) => [stdout, outcome["stderr"].as_str().unwrap_or("")]
+                        .iter()
+                        .filter(|s| !s.is_empty())
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join("\n"),
                     None => text(&block["content"]),
                 };
             }
@@ -448,16 +604,39 @@ fn results(conversation: &Conversation, message: &Value, effects: &mut Effects, 
 fn tool(conversation: &Conversation, name: &Value, input: &Value) -> ItemKind {
     let field = |key: &str| input[key].as_str().unwrap_or("").to_string();
     match name.as_str().unwrap_or("") {
-        "Bash" => ItemKind::Command { command: field("command"), cwd: conversation.cwd.clone(), output: String::new(), exit_code: None, duration_ms: None },
-        "Write" => ItemKind::FileChange { changes: vec![FileChange { path: field("file_path"), kind: "add".into(), move_path: None, diff: field("content") }] },
-        "Edit" => ItemKind::FileChange { changes: vec![FileChange { path: field("file_path"), kind: "update".into(), move_path: None, diff: replaced(&field("old_string"), &field("new_string")) }] },
+        "Bash" => ItemKind::Command {
+            command: field("command"),
+            cwd: conversation.cwd.clone(),
+            output: String::new(),
+            exit_code: None,
+            duration_ms: None,
+        },
+        "Write" => ItemKind::FileChange {
+            changes: vec![FileChange { path: field("file_path"), kind: "add".into(), move_path: None, diff: field("content") }],
+        },
+        "Edit" => ItemKind::FileChange {
+            changes: vec![FileChange {
+                path: field("file_path"),
+                kind: "update".into(),
+                move_path: None,
+                diff: replaced(&field("old_string"), &field("new_string")),
+            }],
+        },
         "MultiEdit" => {
-            let diff = input["edits"].as_array().cloned().unwrap_or_default().iter()
-                .map(|edit| replaced(edit["old_string"].as_str().unwrap_or(""), edit["new_string"].as_str().unwrap_or(""))).collect();
+            let diff = input["edits"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .map(|edit| replaced(edit["old_string"].as_str().unwrap_or(""), edit["new_string"].as_str().unwrap_or("")))
+                .collect();
             ItemKind::FileChange { changes: vec![FileChange { path: field("file_path"), kind: "update".into(), move_path: None, diff }] }
         }
         other => {
-            let detail = ["file_path", "pattern", "url", "query", "description", "notebook_path"].iter().find_map(|key| input[key].as_str()).map(String::from)
+            let detail = ["file_path", "pattern", "url", "query", "description", "notebook_path"]
+                .iter()
+                .find_map(|key| input[key].as_str())
+                .map(String::from)
                 .unwrap_or_else(|| input.to_string());
             ItemKind::Tool { name: other.into(), detail }
         }
@@ -467,21 +646,30 @@ fn tool(conversation: &Conversation, name: &Value, input: &Value) -> ItemKind {
 /// `old` replaced by `new`, as diff lines.
 fn replaced(old: &str, new: &str) -> String {
     let mut diff = String::new();
-    for line in old.lines() { diff += &format!("-{line}\n") }
-    for line in new.lines() { diff += &format!("+{line}\n") }
+    for line in old.lines() {
+        diff += &format!("-{line}\n")
+    }
+    for line in new.lines() {
+        diff += &format!("+{line}\n")
+    }
     diff
 }
 
 /// The choice that keeps Claude's suggested rule: rules to allow from now on, or a mode for this session.
 fn remember(suggestions: &Value) -> Option<Choice> {
     let suggestions = suggestions.as_array().filter(|s| !s.is_empty())?;
-    let rules: Vec<String> = suggestions.iter().filter(|s| s["type"] == "addRules" && s["behavior"] == "allow")
+    let rules: Vec<String> = suggestions
+        .iter()
+        .filter(|s| s["type"] == "addRules" && s["behavior"] == "allow")
         .flat_map(|s| s["rules"].as_array().cloned().unwrap_or_default())
         .map(|rule| match rule["ruleContent"].as_str() {
             Some(content) => format!("{}({content})", rule["toolName"].as_str().unwrap_or("")),
             None => rule["toolName"].as_str().unwrap_or("").to_string(),
-        }).collect();
-    if !rules.is_empty() { return Some(Choice { id: "always".into(), label: format!("Always allow {}", rules.join(", ")), kind: ChoiceKind::AllowAlways }) }
+        })
+        .collect();
+    if !rules.is_empty() {
+        return Some(Choice { id: "always".into(), label: format!("Always allow {}", rules.join(", ")), kind: ChoiceKind::AllowAlways });
+    }
     if suggestions.iter().any(|s| s["type"] == "setMode" && s["mode"] == "acceptEdits") {
         return Some(Choice { id: "session".into(), label: "Allow all edits this session".into(), kind: ChoiceKind::AllowSession });
     }
@@ -491,11 +679,23 @@ fn remember(suggestions: &Value) -> Option<Choice> {
 /// Claude's own report of the account's limits: a status, and the use of each window.
 fn usage(info: &Value) -> crate::model::Usage {
     let limited = info["status"] == "rejected";
-    let windows = info["unifiedWindows"].as_object().map(|windows| windows.iter().map(|(key, window)| crate::model::UsageWindow {
-        name: match key.as_str() { "five_hour" => "5 hours".into(), "seven_day" => "7 days".into(), other => other.replace('_', " ") },
-        used: window["utilization"].as_f64().unwrap_or(0.0),
-        resets_at: window["resetsAt"].as_i64(),
-    }).collect()).unwrap_or_default();
+    let windows = info["unifiedWindows"]
+        .as_object()
+        .map(|windows| {
+            windows
+                .iter()
+                .map(|(key, window)| crate::model::UsageWindow {
+                    name: match key.as_str() {
+                        "five_hour" => "5 hours".into(),
+                        "seven_day" => "7 days".into(),
+                        other => other.replace('_', " "),
+                    },
+                    used: window["utilization"].as_f64().unwrap_or(0.0),
+                    resets_at: window["resetsAt"].as_i64(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     crate::model::Usage { limited, resets_at: if limited { info["resetsAt"].as_i64() } else { None }, windows }
 }
 
@@ -529,7 +729,9 @@ pub async fn resume(session: &Session, transport: Transport) -> Result<(), Strin
 /// A message: Claude takes it now or queues it behind the turn in progress. A new model switches first; effort
 /// is set at start (`--effort`) and stays.
 pub async fn send(session: &Session, text: &str, images: &[String], model: Option<&str>) -> Result<(), String> {
-    if let Some(model) = model { set_model(session, model).await? }
+    if let Some(model) = model {
+        set_model(session, model).await?
+    }
     // Claude reads nothing more until its own question is answered: the user writing in the chat instead answers it.
     for question in session.snapshot().questions {
         session.write(json!({"type": "control_response", "response": {"subtype": "success", "request_id": question.id,
@@ -540,7 +742,9 @@ pub async fn send(session: &Session, text: &str, images: &[String], model: Optio
 
 /// The model from here on: Claude Code switches at once.
 pub async fn set_model(session: &Session, model: &str) -> Result<(), String> {
-    if session.snapshot().model.as_deref() == Some(model) { return Ok(()) }
+    if session.snapshot().model.as_deref() == Some(model) {
+        return Ok(());
+    }
     session.request(|id| json!({"type": "control_request", "request_id": id, "request": {"subtype": "set_model", "model": model}})).await?;
     let thread = session.snapshot().thread.unwrap_or_default();
     session.change(Change::Thread { thread, model: Some(model.into()), effort: None });
@@ -550,8 +754,12 @@ pub async fn set_model(session: &Session, model: &str) -> Result<(), String> {
 /// Stops what runs: the turn, and every task in the background (a subagent left running, a long command), which an
 /// interrupt of the turn alone leaves going.
 pub async fn interrupt(session: &Session) -> Result<(), String> {
-    for stop in session.stops() { let _ = session.write(stop); }
-    if session.snapshot().turn.is_none() { return Ok(()) }
+    for stop in session.stops() {
+        let _ = session.write(stop);
+    }
+    if session.snapshot().turn.is_none() {
+        return Ok(());
+    }
     session.request(|id| json!({"type": "control_request", "request_id": id, "request": {"subtype": "interrupt"}})).await.map(|_| ())
 }
 

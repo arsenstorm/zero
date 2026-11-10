@@ -2,7 +2,6 @@
 //! it when it ends, a reminder wakes it later, and a session stopped by a usage limit is told to go on once the limit
 //! resets. Plus what each provider last said about its limits, so no one starts more agents into one.
 
-
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -26,7 +25,9 @@ fn world(name: &str) -> World {
     let seen = claude.clone();
     let runtime: Runtime = Arc::new(move |conversation: &Conversation, _: &std::path::Path, _: &[String]| {
         let (transport, recorder) = play(if conversation.provider == Provider::Codex { fixture("codex-command") } else { vec![] });
-        if conversation.provider == Provider::Claude { seen.lock().unwrap().push(recorder) }
+        if conversation.provider == Provider::Claude {
+            seen.lock().unwrap().push(recorder)
+        }
         Ok(transport)
     });
     World { daemon: Daemon::open(&home, runtime).unwrap(), project, claude }
@@ -34,7 +35,11 @@ fn world(name: &str) -> World {
 
 async fn until(daemon: &Daemon, session: &str, test: impl Fn(&Conversation) -> bool) -> Conversation {
     for _ in 0..1000 {
-        if let Some(now) = daemon.get(session) && test(&now) { return now }
+        if let Some(now) = daemon.get(session)
+            && test(&now)
+        {
+            return now;
+        }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("timed out: {:#?}", daemon.get(session));
@@ -42,10 +47,16 @@ async fn until(daemon: &Daemon, session: &str, test: impl Fn(&Conversation) -> b
 
 /// A Claude session that has finished its first turn and sits idle, and what its runtime hears.
 async fn idle_claude(w: &World) -> (String, Seen) {
-    let id = w.daemon.start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(w.project.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    let id = w
+        .daemon
+        .start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(w.project.to_str().unwrap().into()), ..Default::default() })
+        .unwrap();
     let mut seen = None;
     for _ in 0..500 {
-        if let Some(found) = w.claude.lock().unwrap().last().cloned() { seen = Some(found); break }
+        if let Some(found) = w.claude.lock().unwrap().last().cloned() {
+            seen = Some(found);
+            break;
+        }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     let seen = seen.expect("Claude started");
@@ -64,7 +75,11 @@ async fn anything_can_tell_a_session_something() {
     let w = world("events-notify");
     let (id, seen) = idle_claude(&w).await;
     w.daemon.notify(&id, "CI on #42 passed").unwrap();
-    assert_eq!(seen.said("user", 2).await[1]["message"]["content"], zerod::model::from_line("zero", "CI on #42 passed"), "marked as Zero's word, not the user's");
+    assert_eq!(
+        seen.said("user", 2).await[1]["message"]["content"],
+        zerod::model::from_line("zero", "CI on #42 passed"),
+        "marked as Zero's word, not the user's"
+    );
     assert!(w.daemon.notify("nope", "x").is_err());
     // Another task's words (`zero send` from inside one): marked as that task's, never the user's.
     w.daemon.notify_from(&id, "01a1worker", "Fix pushed; CI running").unwrap();
@@ -78,7 +93,10 @@ async fn a_watched_command_wakes_its_session_with_how_it_ended() {
     let (id, seen) = idle_claude(&w).await;
     w.daemon.watch(&id, "echo checks done; echo all green; exit 3").unwrap();
     let words = seen.said("user", 2).await[1]["message"]["content"].as_str().unwrap().to_string();
-    assert!(words.starts_with("<!-- from: zero -->\n`echo checks done; echo all green; exit 3` finished with exit 3"), "Zero's word, not the user's: {words}");
+    assert!(
+        words.starts_with("<!-- from: zero -->\n`echo checks done; echo all green; exit 3` finished with exit 3"),
+        "Zero's word, not the user's: {words}"
+    );
     assert!(words.contains("checks done\nall green"), "{words}");
 }
 
@@ -146,7 +164,13 @@ async fn an_async_ask_from_a_zerod_session_is_answered_into_that_session() {
     let (id, seen) = idle_claude(&w).await;
     let inbox = zerod::inbox::Inbox::open(None, vec![std::sync::Arc::new(zerod::daemon::Sessions::of(&w.daemon))]);
     inbox.configure(Duration::from_millis(20), 3600);
-    let agent = zerod::ask::AgentIdentity { name: format!("zerod-{id}"), host: "mac".into(), runtime: Some("zerod".into()), reference: Some(id.clone()), ..Default::default() };
+    let agent = zerod::ask::AgentIdentity {
+        name: format!("zerod-{id}"),
+        host: "mac".into(),
+        runtime: Some("zerod".into()),
+        reference: Some(id.clone()),
+        ..Default::default()
+    };
     let mut ask = zerod::ask::Ask::new(zerod::ask::AskKind::Choice, "Ship it?", agent, 3600);
     ask.options = vec!["Yes".into(), "No".into()];
     ask.waits = Some(false);
@@ -167,7 +191,15 @@ async fn after_compacting_the_agent_hears_zeros_record_word_for_word_not_only_it
     ask.waits = Some(false);
     let ask = inbox.create(ask, false);
     let session = w.daemon.session(&id).unwrap();
-    let user = |id: &str, text: &str| Change::Item { item: Item { at: None, id: id.into(), turn: None, kind: ItemKind::User { text: text.into(), images: vec![] }, status: ItemStatus::Done } };
+    let user = |id: &str, text: &str| Change::Item {
+        item: Item {
+            at: None,
+            id: id.into(),
+            turn: None,
+            kind: ItemKind::User { text: text.into(), images: vec![] },
+            status: ItemStatus::Done,
+        },
+    };
     session.change(user("u2", "Fix the login bug, and keep the old cookie name"));
     session.change(user("u3", &zerod::model::from_line("zero", "A schedule came due")));
     let state = zerod::model::IssueState::named("working").unwrap();
@@ -192,7 +224,13 @@ async fn a_blocking_ask_holds_what_else_comes_for_the_task_until_the_user_answer
     let inbox = zerod::inbox::Inbox::open(None, vec![std::sync::Arc::new(zerod::daemon::Sessions::of(&w.daemon))]);
     inbox.configure(Duration::from_millis(20), 3600);
     zerod::server::hold_while_blocked(&w.daemon, &inbox);
-    let agent = zerod::ask::AgentIdentity { name: format!("zerod-{id}"), host: "mac".into(), runtime: Some("zerod".into()), reference: Some(id.clone()), ..Default::default() };
+    let agent = zerod::ask::AgentIdentity {
+        name: format!("zerod-{id}"),
+        host: "mac".into(),
+        runtime: Some("zerod".into()),
+        reference: Some(id.clone()),
+        ..Default::default()
+    };
     let mut ask = zerod::ask::Ask::new(zerod::ask::AskKind::Choice, "Merge it?", agent, 3600);
     ask.options = vec!["Yes".into(), "No".into()];
     ask.waits = Some(false);

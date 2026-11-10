@@ -1,7 +1,6 @@
 //! Pausing tasks: the user puts a task (a lead and its workers) or every task on hold, and picks them up later. A
 //! paused session is parked and stays parked whatever arrives for it; those words wait until it's resumed.
 
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -29,9 +28,12 @@ async fn a_paused_task_is_parked_with_its_workers_and_stays_paused_across_a_rest
     let cwd = home.to_str().unwrap();
     let lead = daemon.start(Provider::Claude, "lead it", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
     let worker = daemon.spawn(&lead, Provider::Claude, "work", zerod::daemon::Options::default()).unwrap();
-    let other = daemon.start(Provider::Claude, "something else", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
+    let other =
+        daemon.start(Provider::Claude, "something else", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await; // their processes connect
-    for id in [&lead, &worker, &other] { idle(&daemon, id) }
+    for id in [&lead, &worker, &other] {
+        idle(&daemon, id)
+    }
 
     let mut paused = daemon.pause(std::slice::from_ref(&lead), Duration::from_secs(1)).await;
     paused.sort();
@@ -54,7 +56,9 @@ async fn pausing_nothing_in_particular_pauses_every_task() {
     let one = daemon.start(Provider::Claude, "one task", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
     let two = daemon.start(Provider::Claude, "two tasks", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
-    for id in [&one, &two] { idle(&daemon, id) }
+    for id in [&one, &two] {
+        idle(&daemon, id)
+    }
     assert_eq!(daemon.pause(&[], Duration::from_secs(1)).await.len(), 2);
     assert!(daemon.is_paused(&one) && daemon.is_paused(&two));
     assert_eq!(daemon.unpause(&[]).await.len(), 2, "and resuming nothing in particular resumes them all");
@@ -65,7 +69,9 @@ async fn pausing_nothing_in_particular_pauses_every_task() {
 async fn words_for_a_paused_task_wait_until_it_is_resumed() {
     let home = temp_dir("pause-words");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
-    let id = daemon.start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    let id = daemon
+        .start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() })
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     idle(&daemon, &id);
     daemon.pause(std::slice::from_ref(&id), Duration::from_secs(1)).await;
@@ -84,7 +90,9 @@ async fn words_for_a_paused_task_wait_until_it_is_resumed() {
 async fn a_paused_task_with_nothing_waiting_stays_parked_when_resumed() {
     let home = temp_dir("pause-nothing");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
-    let id = daemon.start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    let id = daemon
+        .start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() })
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     idle(&daemon, &id);
     daemon.pause(std::slice::from_ref(&id), Duration::from_secs(1)).await;
@@ -97,11 +105,14 @@ async fn a_paused_task_with_nothing_waiting_stays_parked_when_resumed() {
 async fn the_users_message_resumes_a_paused_task() {
     let home = temp_dir("pause-message");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
-    let id = daemon.start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    let id = daemon
+        .start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() })
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     idle(&daemon, &id);
     daemon.pause(std::slice::from_ref(&id), Duration::from_secs(1)).await;
-    let _ = tokio::time::timeout(Duration::from_secs(2), daemon.send(&id, zerod::session::Message::text("back again"), Default::default())).await;
+    let _ = tokio::time::timeout(Duration::from_secs(2), daemon.send(&id, zerod::session::Message::text("back again"), Default::default()))
+        .await;
     assert!(!daemon.is_paused(&id));
 }
 
@@ -120,7 +131,8 @@ async fn a_working_task_is_asked_to_wrap_up_then_stopped_and_told_to_carry_on_wh
 
     // Its wait runs out with the turn still going (this agent never answers): it's stopped (the interrupt goes
     // unanswered here: 5 s).
-    let paused = tokio::time::timeout(Duration::from_secs(15), daemon.pause(std::slice::from_ref(&lead), Duration::from_millis(300))).await.unwrap();
+    let paused =
+        tokio::time::timeout(Duration::from_secs(15), daemon.pause(std::slice::from_ref(&lead), Duration::from_millis(300))).await.unwrap();
     assert_eq!(paused.len(), 2);
     assert!(!session.is_attached());
     let told = session.snapshot().items.iter().any(|i| matches!(&i.kind, ItemKind::User { text, .. } if text.contains("pausing")));
@@ -140,11 +152,16 @@ async fn a_paused_task_shows_as_paused_on_the_board() {
     let lead = daemon.start(Provider::Claude, "lead it", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
     let worker = daemon.spawn(&lead, Provider::Claude, "work", zerod::daemon::Options::default()).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
-    for id in [&lead, &worker] { idle(&daemon, id) }
+    for id in [&lead, &worker] {
+        idle(&daemon, id)
+    }
     daemon.pause(std::slice::from_ref(&lead), Duration::from_secs(1)).await;
     let conversations: Vec<Conversation> = daemon.sessions().iter().map(|s| s.summary()).collect();
     let mut rows = zerod::board::board(&conversations, &[]);
     zerod::board::mark_paused(&mut rows, &|id| daemon.is_paused(id));
     let row = rows.iter().find(|r| r.session == lead).unwrap();
-    assert_eq!((row.state, row.own, row.team[0].state), (zerod::board::State::Paused, zerod::board::State::Paused, zerod::board::State::Paused));
+    assert_eq!(
+        (row.state, row.own, row.team[0].state),
+        (zerod::board::State::Paused, zerod::board::State::Paused, zerod::board::State::Paused)
+    );
 }

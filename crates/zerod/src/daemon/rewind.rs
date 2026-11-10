@@ -17,7 +17,9 @@ impl Daemon {
         yours(&conversation, item)?;
         let since = conversation.snapshots.get(item).and_then(|commit| crate::snapshots::preview(Path::new(&conversation.cwd), commit));
         Ok(match since {
-            Some(diff) => serde_json::json!({"snapshot": true, "files": diff.files, "insertions": diff.insertions, "deletions": diff.deletions}),
+            Some(diff) => {
+                serde_json::json!({"snapshot": true, "files": diff.files, "insertions": diff.insertions, "deletions": diff.deletions})
+            }
             None => serde_json::json!({"snapshot": false}),
         })
     }
@@ -28,13 +30,23 @@ impl Daemon {
         let session = self.session(id)?;
         let current = session.snapshot();
         let (_, text, images) = yours(&current, item)?;
-        if current.terminal.is_some() { return Err(format!("{} is open in its terminal; go back to Zero first", current.provider.title())) }
-        if matches!(current.status, Status::Working | Status::Waiting) { return Err(format!("{} is working; stop its turn first", current.provider.title())) }
+        if current.terminal.is_some() {
+            return Err(format!("{} is open in its terminal; go back to Zero first", current.provider.title()));
+        }
+        if matches!(current.status, Status::Working | Status::Waiting) {
+            return Err(format!("{} is working; stop its turn first", current.provider.title()));
+        }
         let mut restored = serde_json::Value::Null;
         if matches!(what, Rewind::Code | Rewind::Both) {
-            let commit = current.snapshots.get(item).cloned().ok_or("Zero didn't keep the folder for that message, so its code can't be brought back")?;
+            let commit = current
+                .snapshots
+                .get(item)
+                .cloned()
+                .ok_or("Zero didn't keep the folder for that message, so its code can't be brought back")?;
             let (cwd, point) = (current.cwd.clone(), format!("{id}/restore-{}", now_ms()));
-            let diff = tokio::task::spawn_blocking(move || crate::snapshots::restore(Path::new(&cwd), &commit, &point)).await.map_err(|e| e.to_string())??;
+            let diff = tokio::task::spawn_blocking(move || crate::snapshots::restore(Path::new(&cwd), &commit, &point))
+                .await
+                .map_err(|e| e.to_string())??;
             restored = serde_json::json!(diff);
         }
         if matches!(what, Rewind::Conversation | Rewind::Both) {
@@ -55,13 +67,21 @@ impl Daemon {
         conversation.permissions = original.permissions;
         conversation.parent = original.parent.clone();
         conversation.branch = original.branch.clone();
-        let session = Session::new(conversation, Some(self.home.join("sessions").join(&branch)), self.events.clone()).map_err(|e| e.to_string())?;
+        let session =
+            Session::new(conversation, Some(self.home.join("sessions").join(&branch)), self.events.clone()).map_err(|e| e.to_string())?;
         session.change(Change::Status { status: Status::Offline, turn: None, error: None });
-        for kept in &original.items[..at] { session.change(Change::Item { item: kept.clone() }) }
         for kept in &original.items[..at] {
-            if let Some(commit) = original.snapshots.get(&kept.id) { session.change(Change::Snapshot { item: kept.id.clone(), commit: commit.clone() }) }
+            session.change(Change::Item { item: kept.clone() })
         }
-        session.change(Change::Named { label: Some(format!("{} (branch)", crate::bridge::label(&original))), ticket: original.ticket.clone() });
+        for kept in &original.items[..at] {
+            if let Some(commit) = original.snapshots.get(&kept.id) {
+                session.change(Change::Snapshot { item: kept.id.clone(), commit: commit.clone() })
+            }
+        }
+        session.change(Change::Named {
+            label: Some(format!("{} (branch)", crate::bridge::label(&original))),
+            ticket: original.ticket.clone(),
+        });
         self.rethread(&session)?;
         self.attention.lock().unwrap().insert(branch.clone(), Attention::Offline);
         self.sessions.lock().unwrap().push(session.clone());

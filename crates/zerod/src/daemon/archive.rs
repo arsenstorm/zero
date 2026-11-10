@@ -20,19 +20,27 @@ impl Daemon {
             }
             i += 1;
         }
-        for member in team.iter().rev() { self.archive_one(member, Some(id)).await? }
+        for member in team.iter().rev() {
+            self.archive_one(member, Some(id)).await?
+        }
         let workspace = self.workspace_of(&root);
         self.archive_one(id, None).await?;
-        let _ = std::fs::write(self.home.join("archive").join(id).join(ARCHIVED), serde_json::to_vec(&serde_json::json!({
-            "with": null, "at": archived_at(), "task": crate::bridge::label(&root), "workspace": workspace, "workers": team.len(),
-        })).unwrap_or_default());
+        let _ = std::fs::write(
+            self.home.join("archive").join(id).join(ARCHIVED),
+            serde_json::to_vec(&serde_json::json!({
+                "with": null, "at": archived_at(), "task": crate::bridge::label(&root), "workspace": workspace, "workers": team.len(),
+            }))
+            .unwrap_or_default(),
+        );
         self.reindex(id);
         Ok(())
     }
 
     async fn archive_one(&self, id: &str, with: Option<&str>) -> Result<(), String> {
         let session = self.session(id)?;
-        if session.summary().terminal.is_some() { self.close_terminal(id).await? }
+        if session.summary().terminal.is_some() {
+            self.close_terminal(id).await?
+        }
         self.archiving.lock().unwrap().insert(id.into());
         self.take_offline(&session).await;
         self.archiving.lock().unwrap().remove(id);
@@ -46,7 +54,10 @@ impl Daemon {
         std::fs::create_dir_all(&archive).map_err(|e| e.to_string())?;
         std::fs::rename(self.home.join("sessions").join(id), archive.join(id)).map_err(|e| e.to_string())?;
         if let Some(with) = with {
-            let _ = std::fs::write(archive.join(id).join(ARCHIVED), serde_json::to_vec(&serde_json::json!({"with": with, "at": archived_at()})).unwrap_or_default());
+            let _ = std::fs::write(
+                archive.join(id).join(ARCHIVED),
+                serde_json::to_vec(&serde_json::json!({"with": with, "at": archived_at()})).unwrap_or_default(),
+            );
         }
         self.reindex(id);
         let _ = self.events.send(Event { session: id.into(), seq: seq + 1, change: Change::Archived });
@@ -56,9 +67,14 @@ impl Daemon {
     /// Brings a task back from the archive, and the workers that went with it: offline, as they were, under it.
     pub fn unarchive(&self, id: &str) -> Result<Vec<String>, String> {
         let archive = self.home.join("archive");
-        if !archive.join(id).join("meta.json").exists() { return Err(format!("Nothing archived as {id}")) }
-        if self.session(id).is_ok() { return Err(format!("{id} isn't archived")) }
-        let with: Vec<String> = self.archive_index(|index| index.iter().filter(|a| a.with.as_deref() == Some(id)).map(|a| a.id.clone()).collect());
+        if !archive.join(id).join("meta.json").exists() {
+            return Err(format!("Nothing archived as {id}"));
+        }
+        if self.session(id).is_ok() {
+            return Err(format!("{id} isn't archived"));
+        }
+        let with: Vec<String> =
+            self.archive_index(|index| index.iter().filter(|a| a.with.as_deref() == Some(id)).map(|a| a.id.clone()).collect());
         let mut back = vec![];
         for member in std::iter::once(id.to_string()).chain(with) {
             let (from, to) = (archive.join(&member), self.home.join("sessions").join(&member));
@@ -78,7 +94,9 @@ impl Daemon {
         }
         let _ = self.queues.send(());
         // The board and the apps hear of it: the task's back, its workers under it.
-        if let Ok(session) = self.session(id) { session.announce() }
+        if let Ok(session) = self.session(id) {
+            session.announce()
+        }
         Ok(back)
     }
 
@@ -87,11 +105,19 @@ impl Daemon {
     pub fn archived(&self, limit: usize) -> Vec<serde_json::Value> {
         self.archive_index(|index| {
             let mut counts: HashMap<&str, usize> = HashMap::new();
-            for with in index.iter().filter_map(|a| a.with.as_deref()) { *counts.entry(with).or_insert(0) += 1 }
+            for with in index.iter().filter_map(|a| a.with.as_deref()) {
+                *counts.entry(with).or_insert(0) += 1
+            }
             let mut roots: Vec<&Archived> = index.iter().filter(|a| a.with.is_none()).collect();
             roots.sort_by_key(|a| std::cmp::Reverse(a.at));
-            roots.into_iter().take(limit).map(|a| serde_json::json!({"id": a.id, "task": a.task, "at": a.at, "workspace": a.workspace,
-                "workers": counts.get(a.id.as_str()).copied().unwrap_or(0), "parent": a.parent})).collect()
+            roots
+                .into_iter()
+                .take(limit)
+                .map(|a| {
+                    serde_json::json!({"id": a.id, "task": a.task, "at": a.at, "workspace": a.workspace,
+                "workers": counts.get(a.id.as_str()).copied().unwrap_or(0), "parent": a.parent})
+                })
+                .collect()
         })
     }
 
@@ -102,8 +128,11 @@ impl Daemon {
             let (file, archive) = (self.home.join(INDEX), self.home.join("archive"));
             let modified = |path: &Path| std::fs::metadata(path).and_then(|m| m.modified()).ok();
             let fresh = modified(&file).is_some_and(|kept| modified(&archive).is_none_or(|changed| kept >= changed));
-            if fresh && let Some(index) = std::fs::read(&file).ok().and_then(|data| serde_json::from_slice(&data).ok()) { return index }
-            let index: Vec<Archived> = std::fs::read_dir(&archive).into_iter().flatten().flatten().filter_map(|e| Archived::of(&e.path())).collect();
+            if fresh && let Some(index) = std::fs::read(&file).ok().and_then(|data| serde_json::from_slice(&data).ok()) {
+                return index;
+            }
+            let index: Vec<Archived> =
+                std::fs::read_dir(&archive).into_iter().flatten().flatten().filter_map(|e| Archived::of(&e.path())).collect();
             write_index(&self.home, &index);
             index
         }))
@@ -122,19 +151,30 @@ impl Daemon {
     pub(super) fn park(&self) {
         let pending = self.pending.lock().unwrap().clone();
         for session in self.sessions() {
-            if session.unwanted_for().is_some_and(|unwanted| unwanted >= UNLOAD_AFTER) { session.unload(); }
-            if !session.is_loaded() { continue }
+            if session.unwanted_for().is_some_and(|unwanted| unwanted >= UNLOAD_AFTER) {
+                session.unload();
+            }
+            if !session.is_loaded() {
+                continue;
+            }
             let conversation = session.summary();
             if let Some(open) = conversation.terminal {
                 let (Some(daemon), id) = (self.me.upgrade(), conversation.id.clone()) else { continue };
                 tokio::spawn(async move {
                     if daemon.host().idle(&open.id).await.is_some_and(|idle| idle >= TERMINAL_PARK_AFTER)
-                        && let Err(error) = daemon.close_terminal(&id).await { eprintln!("zerod: couldn't close {id}'s idle terminal: {error}") }
+                        && let Err(error) = daemon.close_terminal(&id).await
+                    {
+                        eprintln!("zerod: couldn't close {id}'s idle terminal: {error}")
+                    }
                 });
                 continue;
             }
-            if pending.get(&conversation.id).is_some_and(|words| !words.is_empty()) { continue }
-            if session.idle_for().is_some_and(|idle| idle >= PARK_AFTER) { session.stop() }
+            if pending.get(&conversation.id).is_some_and(|words| !words.is_empty()) {
+                continue;
+            }
+            if session.idle_for().is_some_and(|idle| idle >= PARK_AFTER) {
+                session.stop()
+            }
         }
     }
 }
@@ -159,7 +199,9 @@ fn marker(dir: &Path) -> Option<serde_json::Value> {
 }
 
 /// The lead an archived task went with, if it went with one.
-pub(super) fn archived_with(dir: &Path) -> Option<String> { marker(dir).and_then(|m| m["with"].as_str().map(String::from)) }
+pub(super) fn archived_with(dir: &Path) -> Option<String> {
+    marker(dir).and_then(|m| m["with"].as_str().map(String::from))
+}
 
 const INDEX: &str = "archive.json";
 
@@ -184,7 +226,10 @@ impl Archived {
         Some(Archived {
             task: field("task").or_else(|| parked_label(dir)).unwrap_or_else(|| id.clone()),
             at: kept.as_ref().and_then(|m| m["at"].as_i64()).unwrap_or_else(|| modified_ms(dir)),
-            workspace: field("workspace"), with: field("with"), parent: meta["parent"].as_str().map(String::from), id,
+            workspace: field("workspace"),
+            with: field("with"),
+            parent: meta["parent"].as_str().map(String::from),
+            id,
         })
     }
 }
@@ -192,11 +237,18 @@ impl Archived {
 /// Written whole, through a file beside it: read half-written, it would be rebuilt rather than trusted.
 fn write_index(home: &Path, index: &[Archived]) {
     let (file, partial) = (home.join(INDEX), home.join("archive.json.partial"));
-    if std::fs::write(&partial, serde_json::to_vec(index).unwrap_or_default()).is_ok() { let _ = std::fs::rename(&partial, &file); }
+    if std::fs::write(&partial, serde_json::to_vec(index).unwrap_or_default()).is_ok() {
+        let _ = std::fs::rename(&partial, &file);
+    }
 }
 
 fn modified_ms(path: &Path) -> i64 {
-    std::fs::metadata(path).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0)
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 /// An archived task's name from its parked summary (archived before archive markers were kept).

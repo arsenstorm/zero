@@ -27,12 +27,20 @@ impl Session {
         let generation = {
             let mut inner = self.lock();
             // Taken over from the zerod before: no handle on it, its group by pid.
-            if inner.child.is_none() && inner.out.is_some() && let Some(pid) = inner.pid { kill(-pid, SIGKILL); return }
+            if inner.child.is_none()
+                && inner.out.is_some()
+                && let Some(pid) = inner.pid
+            {
+                kill(-pid, SIGKILL);
+                return;
+            }
             match inner.child.as_mut() {
                 // Its output ends when it and everything it started (its process group) are gone, and that takes the
                 // session offline.
                 Some(child) => {
-                    if let Some(pid) = child.id().and_then(|pid| i32::try_from(pid).ok()) { kill(-pid, SIGKILL); }
+                    if let Some(pid) = child.id().and_then(|pid| i32::try_from(pid).ok()) {
+                        kill(-pid, SIGKILL);
+                    }
                     let _ = child.start_kill();
                     return;
                 }
@@ -52,7 +60,9 @@ impl Session {
             while let Some(message) = lines_out.recv().await {
                 let mut line = serde_json::to_vec(&message).unwrap_or_default();
                 line.push(b'\n');
-                if writer.write_all(&line).await.is_err() || writer.flush().await.is_err() { break }
+                if writer.write_all(&line).await.is_err() || writer.flush().await.is_err() {
+                    break;
+                }
             }
         });
         let generation = {
@@ -72,7 +82,9 @@ impl Session {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(WATCH_EVERY).await;
-                if !watched.watch(generation) { break }
+                if !watched.watch(generation) {
+                    break;
+                }
             }
         });
         let session = self.clone();
@@ -84,7 +96,9 @@ impl Session {
                 while let Some(end) = pending.iter().position(|b| *b == b'\n') {
                     let line: Vec<u8> = pending.drain(..=end).collect();
                     // Anything that isn't JSON (a shell's greeting before the runtime starts) is not the runtime speaking.
-                    if let Ok(message) = serde_json::from_slice::<Value>(&line) { session.receive(message) }
+                    if let Ok(message) = serde_json::from_slice::<Value>(&line) {
+                        session.receive(message)
+                    }
                 }
                 tokio::select! {
                     read = reader.read(&mut chunk) => match read {
@@ -107,14 +121,18 @@ impl Session {
             let (Some(pid), Some((stdin, stdout)), true) = (inner.pid, inner.fds, inner.out.is_some()) else { return None };
             // Duplicated first: the writer and reader close their own as they finish.
             let fds = (dup(stdin), dup(stdout));
-            if fds.0 < 0 || fds.1 < 0 { return None }
+            if fds.0 < 0 || fds.1 < 0 {
+                return None;
+            }
             // Nothing more goes to it from here, and the end of this attach is no longer its end.
             inner.out = None;
             inner.generation += 1;
             (inner.stop_reading.take()?, inner.writing.take(), pid, fds, inner.core().conversation().id.clone())
         };
         // What was on its way to it goes first: the channel closed, the writer finishes the lines in it.
-        if let Some(writing) = writing { let _ = writing.await; }
+        if let Some(writing) = writing {
+            let _ = writing.await;
+        }
         let (give, given) = oneshot::channel();
         stop.send(give).ok()?;
         let leftover = given.await.ok()?;
@@ -131,46 +149,78 @@ impl Session {
         // fresh uuid and socket. Replay needs only the latest, and that's the same.
         let repeated = message["type"] == "system" && message["subtype"] == "init" && {
             let mut said = message.clone();
-            if let Some(fields) = said.as_object_mut() { fields.remove("uuid"); fields.remove("messaging_socket_path"); }
+            if let Some(fields) = said.as_object_mut() {
+                fields.remove("uuid");
+                fields.remove("messaging_socket_path");
+            }
             let mut hasher = std::hash::DefaultHasher::new();
             std::hash::Hash::hash(&said.to_string(), &mut hasher);
             let said = std::hash::Hasher::finish(&hasher);
-            inner.init == Some(said) || { inner.init = Some(said); false }
+            inner.init == Some(said) || {
+                inner.init = Some(said);
+                false
+            }
         };
-        if !piece && !repeated { inner.record(json!({"in": message, "at": at})); }
+        if !piece && !repeated {
+            inner.record(json!({"in": message, "at": at}));
+        }
         inner.core().at(at);
         inner.heard = Instant::now();
         let effects = inner.core().receive(&message);
         for change in &effects.changes {
             if let Change::Item { item } = change {
-                if item.status == ItemStatus::Running && matches!(item.kind, ItemKind::Command { .. }) { inner.running.entry(item.id.clone()).or_insert_with(Instant::now); }
-                else { inner.running.remove(&item.id); }
+                if item.status == ItemStatus::Running && matches!(item.kind, ItemKind::Command { .. }) {
+                    inner.running.entry(item.id.clone()).or_insert_with(Instant::now);
+                } else {
+                    inner.running.remove(&item.id);
+                }
             }
         }
         for change in &effects.changes {
-            if let Change::Resolved { approval: id } | Change::Answered { question: id } = change { inner.answered.remove(id); }
+            if let Change::Resolved { approval: id } | Change::Answered { question: id } = change {
+                inner.answered.remove(id);
+            }
         }
-        let asked: Vec<_> = effects.changes.iter().filter_map(|c| match c { Change::Approval { approval } => Some(approval.clone()), _ => None }).collect();
+        let asked: Vec<_> = effects
+            .changes
+            .iter()
+            .filter_map(|c| match c {
+                Change::Approval { approval } => Some(approval.clone()),
+                _ => None,
+            })
+            .collect();
         inner.broadcast(effects.changes);
         if inner.core().conversation().permissions == Permissions::Unrestricted {
-            for approval in asked { inner.allow(&approval); }
+            for approval in asked {
+                inner.allow(&approval);
+            }
         }
-        if let Some((id, outcome)) = inner.core().answers(&message) && let Some(waiter) = inner.waiting.remove(&id) {
+        if let Some((id, outcome)) = inner.core().answers(&message)
+            && let Some(waiter) = inner.waiting.remove(&id)
+        {
             let _ = waiter.send(outcome);
         }
-        for reply in effects.replies { let _ = inner.send(reply); }
+        for reply in effects.replies {
+            let _ = inner.send(reply);
+        }
     }
 
     /// The runtime's output ended: its process is gone, and so is everything waiting on it.
     fn ended(&self, generation: u64) {
         let mut inner = self.lock();
-        if inner.generation != generation { return }
+        if inner.generation != generation {
+            return;
+        }
         inner.out = None;
         // Taken over from the zerod before, it's this zerod's child with no handle to reap it by: reaped by pid.
-        if inner.child.is_none() && let Some(pid) = inner.pid.take() {
+        if inner.child.is_none()
+            && let Some(pid) = inner.pid.take()
+        {
             tokio::spawn(async move {
                 for _ in 0..120 {
-                    if waitpid(pid, std::ptr::null_mut(), WNOHANG) != 0 { return }
+                    if waitpid(pid, std::ptr::null_mut(), WNOHANG) != 0 {
+                        return;
+                    }
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }
             });
@@ -179,7 +229,9 @@ impl Session {
         inner.fds = None;
         inner.child = None;
         let provider = inner.core().conversation().provider.title();
-        for (_, waiter) in inner.waiting.drain() { let _ = waiter.send(Err(format!("{provider} stopped"))); }
+        for (_, waiter) in inner.waiting.drain() {
+            let _ = waiter.send(Err(format!("{provider} stopped")));
+        }
         inner.record(json!({"offline": true}));
         let changes = inner.core().offline();
         inner.broadcast(changes);
@@ -189,18 +241,33 @@ impl Session {
     /// process it watched is gone.
     fn watch(&self, generation: u64) -> bool {
         let mut inner = self.lock();
-        if inner.generation != generation || inner.out.is_none() { return false }
+        if inner.generation != generation || inner.out.is_none() {
+            return false;
+        }
         let Some(core) = inner.core.as_ref() else { return true };
         let conversation = core.conversation();
-        let reason = if conversation.status != crate::model::Status::Working { None } else {
-            let longest = inner.running.iter().filter_map(|(id, started)| {
-                let elapsed = started.elapsed();
-                let command = match conversation.item(id).map(|i| &i.kind) { Some(ItemKind::Command { command, .. }) => command.clone(), _ => return None };
-                (elapsed >= LONG_COMMAND).then(|| format!("{command} has been running for {} minutes", elapsed.as_secs() / 60))
-            }).next();
+        let reason = if conversation.status != crate::model::Status::Working {
+            None
+        } else {
+            let longest = inner
+                .running
+                .iter()
+                .filter_map(|(id, started)| {
+                    let elapsed = started.elapsed();
+                    let command = match conversation.item(id).map(|i| &i.kind) {
+                        Some(ItemKind::Command { command, .. }) => command.clone(),
+                        _ => return None,
+                    };
+                    (elapsed >= LONG_COMMAND).then(|| format!("{command} has been running for {} minutes", elapsed.as_secs() / 60))
+                })
+                .next();
             // The same command again and again with nothing else between: counted in full, so the number grows as it goes
             // on. Another step between (a different tool, a file changed) is work, not a loop.
-            let steps = conversation.items.iter().rev().take_while(|i| i.turn == conversation.turn || conversation.turn.is_none())
+            let steps = conversation
+                .items
+                .iter()
+                .rev()
+                .take_while(|i| i.turn == conversation.turn || conversation.turn.is_none())
                 .filter(|i| !matches!(i.kind, ItemKind::Reasoning { .. } | ItemKind::Agent { .. }));
             let mut run: Option<(&str, usize)> = None;
             for step in steps {
@@ -211,7 +278,8 @@ impl Session {
                 }
             }
             let repeated = run.filter(|(_, n)| *n >= REPEATS).map(|(command, n)| format!("Ran {command} {n} times in a row"));
-            let silent = (inner.heard.elapsed() >= SILENT).then(|| format!("No word from {} for {} minutes", conversation.provider.title(), SILENT.as_secs() / 60));
+            let silent = (inner.heard.elapsed() >= SILENT)
+                .then(|| format!("No word from {} for {} minutes", conversation.provider.title(), SILENT.as_secs() / 60));
             longest.or(repeated).or(silent)
         };
         if reason != conversation.stalled {
@@ -309,7 +377,14 @@ impl Transport {
         let writer = pipe::Sender::from_owned_fd(unsafe { OwnedFd::from_raw_fd(handoff.stdin) })?;
         let reader = pipe::Receiver::from_owned_fd(unsafe { OwnedFd::from_raw_fd(handoff.stdout) })?;
         let fds = (writer.as_raw_fd(), reader.as_raw_fd());
-        Ok(Transport { reader: Box::new(reader), writer: Box::new(writer), child: None, pid: Some(handoff.pid), fds: Some(fds), leftover: handoff.leftover })
+        Ok(Transport {
+            reader: Box::new(reader),
+            writer: Box::new(writer),
+            child: None,
+            pid: Some(handoff.pid),
+            fds: Some(fds),
+            leftover: handoff.leftover,
+        })
     }
 }
 

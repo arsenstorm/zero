@@ -17,7 +17,9 @@ impl Session {
 
     /// The images go on the next message of yours, now and on replay.
     fn keep_images(&self, images: &[String]) {
-        if images.is_empty() { return }
+        if images.is_empty() {
+            return;
+        }
         let mut inner = self.lock();
         inner.record(json!({"attach": images}));
         inner.core().attach(images.to_vec());
@@ -36,13 +38,21 @@ impl Session {
     /// that (Claude Code, OpenCode), and kept so the next turn carries it (Codex) and a restart starts with it.
     pub async fn set_model(&self, choice: ModelChoice<'_>) -> Result<(), String> {
         let ModelChoice { model, effort } = choice;
-        if model.is_none() && effort.is_none() { return Ok(()) }
+        if model.is_none() && effort.is_none() {
+            return Ok(());
+        }
         let conversation = self.snapshot();
-        let thread = conversation.thread.clone()
+        let thread = conversation
+            .thread
+            .clone()
             .ok_or_else(|| format!("{} hasn't started yet: pick the model with your next message", conversation.provider.title()))?;
         if self.is_attached() {
             match conversation.provider {
-                Provider::Claude => if let Some(model) = model { claude::set_model(self, model).await? },
+                Provider::Claude => {
+                    if let Some(model) = model {
+                        claude::set_model(self, model).await?
+                    }
+                }
                 Provider::Opencode => acp::configure(self, choice).await?,
                 Provider::Codex => {}
             }
@@ -55,7 +65,9 @@ impl Session {
     /// Their images (files) are kept in the transcript first, so the message keeps them on replay.
     pub async fn send(&self, message: Message<'_>, choice: ModelChoice<'_>) -> Result<(), String> {
         let conversation = self.snapshot();
-        if !self.is_attached() { return Err(format!("{} is offline; resume it first", conversation.id)) }
+        if !self.is_attached() {
+            return Err(format!("{} is offline; resume it first", conversation.id));
+        }
         self.keep_images(message.images);
         match conversation.provider {
             Provider::Codex => codex::send(self, message.text, message.images, choice.model, choice.effort).await,
@@ -75,7 +87,9 @@ impl Session {
     /// Answers an open approval with one of the choices it offers, once.
     pub async fn decide(&self, approval: &str, choice: &str) -> Result<(), String> {
         let mut inner = self.lock();
-        if inner.answered.contains(approval) { return Err(format!("{approval} was already answered")) }
+        if inner.answered.contains(approval) {
+            return Err(format!("{approval} was already answered"));
+        }
         let line = inner.core().answer(approval, choice)?;
         inner.send(line)?;
         inner.answered.insert(approval.into());
@@ -85,7 +99,9 @@ impl Session {
     /// Answers an open question, every field of it, once.
     pub async fn answer(&self, question: &str, answers: &crate::adapter::Answers) -> Result<(), String> {
         let mut inner = self.lock();
-        if inner.answered.contains(question) { return Err(format!("{question} was already answered")) }
+        if inner.answered.contains(question) {
+            return Err(format!("{question} was already answered"));
+        }
         let line = inner.core().reply(question, answers)?;
         inner.send(line)?;
         inner.answered.insert(question.into());
@@ -104,7 +120,9 @@ pub struct Message<'a> {
 
 impl<'a> Message<'a> {
     /// Words alone.
-    pub fn text(text: &'a str) -> Self { Message { text, ..Default::default() } }
+    pub fn text(text: &'a str) -> Self {
+        Message { text, ..Default::default() }
+    }
 }
 
 /// The model and effort a turn runs on; none, the session's own.

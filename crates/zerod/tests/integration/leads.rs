@@ -1,7 +1,6 @@
 //! Sessions that start sessions: a lead spawns workers, gives them names and references, waits on them, and hears
 //! from each one when it finishes, without polling. Driven through the daemon as the `zero` CLI drives it.
 
-
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -27,7 +26,9 @@ fn runtime(claude: Arc<Mutex<Vec<Seen>>>) -> Runtime {
             _ => vec![],
         };
         let (transport, seen) = play(script);
-        if conversation.provider == Provider::Claude { claude.lock().unwrap().push(seen) }
+        if conversation.provider == Provider::Claude {
+            claude.lock().unwrap().push(seen)
+        }
         Ok(transport)
     })
 }
@@ -43,7 +44,11 @@ fn world(name: &str) -> World {
 
 async fn until(daemon: &Daemon, session: &str, test: impl Fn(&Conversation) -> bool) -> Conversation {
     for _ in 0..500 {
-        if let Some(now) = daemon.get(session) && test(&now) { return now }
+        if let Some(now) = daemon.get(session)
+            && test(&now)
+        {
+            return now;
+        }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("timed out: {:#?}", daemon.get(session));
@@ -65,7 +70,9 @@ fn turn_ends() -> serde_json::Value {
 /// The lead's runtime, once it has started.
 async fn lead_runtime(w: &World) -> Seen {
     for _ in 0..500 {
-        if let Some(seen) = w.claude.lock().unwrap().first().cloned() { return seen }
+        if let Some(seen) = w.claude.lock().unwrap().first().cloned() {
+            return seen;
+        }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("the lead never started");
@@ -83,7 +90,18 @@ async fn finished_worker(w: &World, lead: &str) -> String {
 #[tokio::test]
 async fn a_worker_knows_its_lead_and_runs_in_its_folder_with_its_permissions() {
     let w = world("leads-spawn");
-    let lead = w.daemon.start(Provider::Claude, "lead the work", zerod::daemon::Options { cwd: Some(w.project.to_str().unwrap().into()), permissions: Some(Permissions::Unrestricted), ..Default::default() }).unwrap();
+    let lead = w
+        .daemon
+        .start(
+            Provider::Claude,
+            "lead the work",
+            zerod::daemon::Options {
+                cwd: Some(w.project.to_str().unwrap().into()),
+                permissions: Some(Permissions::Unrestricted),
+                ..Default::default()
+            },
+        )
+        .unwrap();
     let worker = w.daemon.spawn(&lead, Provider::Codex, "list the files", named("Listing", Some("WEB-7"))).unwrap();
     let conversation = w.daemon.get(&worker).unwrap();
     assert_eq!(conversation.parent.as_deref(), Some(lead.as_str()));
@@ -93,7 +111,10 @@ async fn a_worker_knows_its_lead_and_runs_in_its_folder_with_its_permissions() {
     assert!(w.daemon.spawn("no-such-lead", Provider::Codex, "x", Options::default()).is_err());
     let elsewhere = w.home.join("elsewhere");
     std::fs::create_dir_all(&elsewhere).unwrap();
-    let other = w.daemon.spawn(&lead, Provider::Codex, "x", Options { cwd: Some(elsewhere.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    let other = w
+        .daemon
+        .spawn(&lead, Provider::Codex, "x", Options { cwd: Some(elsewhere.to_str().unwrap().into()), ..Default::default() })
+        .unwrap();
     assert_eq!(w.daemon.get(&other).unwrap().cwd, elsewhere.to_str().unwrap());
 }
 
@@ -108,7 +129,10 @@ async fn a_finished_worker_tells_its_lead_what_it_found() {
     finished_worker(&w, &lead).await;
     let told = seen.said("user", 2).await;
     let text = told[1]["message"]["content"].as_str().unwrap();
-    assert!(text.starts_with("<!-- from: ") && text.contains("-->\nWorker Listing (WEB-7) finished:"), "marked as the worker's, then its report: {text}");
+    assert!(
+        text.starts_with("<!-- from: ") && text.contains("-->\nWorker Listing (WEB-7) finished:"),
+        "marked as the worker's, then its report: {text}"
+    );
     assert!(text.contains("The directory is empty"), "{text}");
 }
 
@@ -144,7 +168,10 @@ async fn a_lead_can_wait_on_its_workers_and_read_their_answers() {
     let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
     let worker = w.daemon.spawn(&lead, Provider::Codex, "list the files", named("Listing", None)).unwrap();
     let daemon = w.daemon.clone();
-    let waited = tokio::spawn({ let worker = worker.clone(); async move { daemon.wait(&[worker], false, Duration::from_secs(5)).await } });
+    let waited = tokio::spawn({
+        let worker = worker.clone();
+        async move { daemon.wait(&[worker], false, Duration::from_secs(5)).await }
+    });
     let waiting = until(&w.daemon, &worker, |c| !c.approvals.is_empty()).await;
     let early = waited.await.unwrap().unwrap();
     assert_eq!(early[0].attention(), Attention::NeedsYou, "a worker waiting on the user stops the wait too");
@@ -179,8 +206,18 @@ async fn a_model_switched_mid_session_is_still_the_model_after_a_restart() {
     let session = start(&w.daemon, Provider::Codex, &w.project, "ls");
     let waiting = until(&w.daemon, &session, |c| !c.approvals.is_empty()).await;
     w.daemon.decide(&session, &waiting.approvals[0].id, &waiting.approvals[0].choices[0].id).await.unwrap();
-    until(&w.daemon, &session, |c| matches!(c.attention(), Attention::Idle | Attention::Answered | Attention::Done) && c.answer().is_some()).await;
-    w.daemon.send(&session, zerod::session::Message::text("again, on luna"), zerod::session::ModelChoice { model: Some("gpt-6-luna"), effort: None }).await.unwrap();
+    until(&w.daemon, &session, |c| {
+        matches!(c.attention(), Attention::Idle | Attention::Answered | Attention::Done) && c.answer().is_some()
+    })
+    .await;
+    w.daemon
+        .send(
+            &session,
+            zerod::session::Message::text("again, on luna"),
+            zerod::session::ModelChoice { model: Some("gpt-6-luna"), effort: None },
+        )
+        .await
+        .unwrap();
     assert_eq!(w.daemon.get(&session).unwrap().model.as_deref(), Some("gpt-6-luna"));
     let again = Daemon::open(&w.home, runtime(w.claude.clone())).unwrap();
     assert_eq!(again.get(&session).unwrap().model.as_deref(), Some("gpt-6-luna"));
@@ -217,7 +254,11 @@ async fn queued_messages_go_one_turn_each_and_never_with_a_report() {
     finished_worker(&w, &lead).await;
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(given(&seen).len(), 1, "nothing goes mid-turn");
-    assert_eq!(w.daemon.queued(&lead).0.iter().map(|q| q.text.as_str()).collect::<Vec<_>>(), ["first follow-up", "second follow-up"], "the user's, not the report");
+    assert_eq!(
+        w.daemon.queued(&lead).0.iter().map(|q| q.text.as_str()).collect::<Vec<_>>(),
+        ["first follow-up", "second follow-up"],
+        "the user's, not the report"
+    );
     seen.say(turn_ends());
     assert_eq!(seen.said("user", 2).await[1]["message"]["content"], "first follow-up");
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -252,7 +293,9 @@ async fn stopping_the_agent_holds_its_queue_until_released() {
     w.daemon.queue(&lead, "after this", &[]).unwrap();
     let daemon = w.daemon.clone();
     let id = lead.clone();
-    tokio::spawn(async move { let _ = daemon.interrupt(&id).await; });
+    tokio::spawn(async move {
+        let _ = daemon.interrupt(&id).await;
+    });
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(w.daemon.queued(&lead).1, "held once stopped");
     seen.say(turn_ends());
@@ -285,7 +328,9 @@ async fn a_held_queue_stays_held_across_a_restart() {
     w.daemon.queue(&lead, "after this", &[]).unwrap();
     let daemon = w.daemon.clone();
     let id = lead.clone();
-    tokio::spawn(async move { let _ = daemon.interrupt(&id).await; });
+    tokio::spawn(async move {
+        let _ = daemon.interrupt(&id).await;
+    });
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(w.daemon.queued(&lead).1);
     let again = Daemon::open(&w.home, runtime(w.claude.clone())).unwrap();
@@ -301,12 +346,37 @@ async fn a_worker_is_in_its_leads_workspace_wherever_it_runs() {
     let elsewhere = w.home.join("elsewhere");
     std::fs::create_dir_all(&elsewhere).unwrap();
     // Started from Zero into Acme: the lead is there, and its worker in another folder is too.
-    let lead = w.daemon.start(Provider::Claude, "lead", Options { cwd: Some(w.project.to_str().unwrap().into()), workspace: Some("work".into()), ..Default::default() }).unwrap();
-    let worker = w.daemon.spawn(&lead, Provider::Claude, "work", Options { cwd: Some(elsewhere.to_str().unwrap().into()), ..Default::default() }).unwrap();
-    let rows = zerod::board::board_in(&w.daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(), &[], &Default::default(), &Default::default(), &|c| w.daemon.workspace_of(c));
+    let lead = w
+        .daemon
+        .start(
+            Provider::Claude,
+            "lead",
+            Options { cwd: Some(w.project.to_str().unwrap().into()), workspace: Some("work".into()), ..Default::default() },
+        )
+        .unwrap();
+    let worker = w
+        .daemon
+        .spawn(&lead, Provider::Claude, "work", Options { cwd: Some(elsewhere.to_str().unwrap().into()), ..Default::default() })
+        .unwrap();
+    let rows = zerod::board::board_in(
+        &w.daemon.sessions().iter().map(|s| s.summary()).collect::<Vec<_>>(),
+        &[],
+        &Default::default(),
+        &Default::default(),
+        &|c| w.daemon.workspace_of(c),
+    );
     assert_eq!(rows.iter().map(|r| (r.session.as_str(), r.workspace.as_str())).collect::<Vec<_>>(), [(lead.as_str(), "work")]);
     assert_eq!(w.daemon.workspace_of(&w.daemon.get(&worker).unwrap()), "work");
-    assert_eq!(w.daemon.start(Provider::Claude, "x", Options { cwd: Some(w.project.to_str().unwrap().into()), workspace: Some("nope".into()), ..Default::default() }).unwrap_err(), "No workspace nope");
+    assert_eq!(
+        w.daemon
+            .start(
+                Provider::Claude,
+                "x",
+                Options { cwd: Some(w.project.to_str().unwrap().into()), workspace: Some("nope".into()), ..Default::default() }
+            )
+            .unwrap_err(),
+        "No workspace nope"
+    );
     // Moved, and moved back to its folder's: Zero's.
     w.daemon.place_in_workspace(&lead, None).unwrap();
     assert_eq!(w.daemon.workspace_of(&w.daemon.get(&lead).unwrap()), "zero");
@@ -320,8 +390,13 @@ fn a_workers_report_says_how_it_ended_its_turn() {
     let worker = |answer: &str| {
         let mut c = Conversation::new("w1", Provider::Claude, "/w");
         c.label = Some("Listing".into());
-        c.items.push(zerod::model::Item { at: None, id: "a".into(), turn: None, status: zerod::model::ItemStatus::Done,
-            kind: zerod::model::ItemKind::Agent { text: answer.into(), final_answer: true } });
+        c.items.push(zerod::model::Item {
+            at: None,
+            id: "a".into(),
+            turn: None,
+            status: zerod::model::ItemStatus::Done,
+            kind: zerod::model::ItemKind::Agent { text: answer.into(), final_answer: true },
+        });
         c
     };
     let asked = zerod::daemon::report(&worker("Asked which colour.\n[zero: asked n25cmk]"), Attention::Done);
@@ -338,8 +413,20 @@ async fn a_task_at_its_accounts_limit_carries_on_as_another_account() {
     let dot = w.home.join("dot-claude");
     std::fs::create_dir_all(&dot).unwrap();
     w.daemon.signins.set_claude_dir(dot);
-    let account = |label: &str| w.daemon.signins.save(zerod::signins::SignIn { id: String::new(), cli: Provider::Claude, kind: zerod::signins::Kind::ClaudeHome,
-                                                                              label: label.into(), plan: None, variable: None, pending: false }).unwrap();
+    let account = |label: &str| {
+        w.daemon
+            .signins
+            .save(zerod::signins::SignIn {
+                id: String::new(),
+                cli: Provider::Claude,
+                kind: zerod::signins::Kind::ClaudeHome,
+                label: label.into(),
+                plan: None,
+                variable: None,
+                pending: false,
+            })
+            .unwrap()
+    };
     let (first, second) = (account("a@example.com"), account("b@example.com"));
     let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
     assert_eq!(w.daemon.get(&lead).unwrap().signin.as_deref(), Some(first.id.as_str()));
@@ -352,7 +439,12 @@ async fn a_task_at_its_accounts_limit_carries_on_as_another_account() {
     until(&w.daemon, &lead, |c| c.signin.as_deref() == Some(second.id.as_str())).await;
     assert!(w.daemon.signins.usage(&first.id).is_some_and(|u| u.limited), "the first account's limit is known, for choosing later");
     // Its agent started again as the second account, and told to carry on.
-    for _ in 0..200 { if w.claude.lock().unwrap().len() > 1 { break } tokio::time::sleep(Duration::from_millis(10)).await }
+    for _ in 0..200 {
+        if w.claude.lock().unwrap().len() > 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await
+    }
     let again = w.claude.lock().unwrap()[1].clone();
     assert!(again.said("user", 1).await[0]["message"]["content"].as_str().unwrap().contains("another account"));
 }
@@ -365,8 +457,20 @@ async fn a_task_whose_cli_only_says_it_hit_its_limit_carries_on_as_another_accou
     let dot = w.home.join("dot-claude");
     std::fs::create_dir_all(&dot).unwrap();
     w.daemon.signins.set_claude_dir(dot);
-    let account = |label: &str| w.daemon.signins.save(zerod::signins::SignIn { id: String::new(), cli: Provider::Claude, kind: zerod::signins::Kind::ClaudeHome,
-                                                                              label: label.into(), plan: None, variable: None, pending: false }).unwrap();
+    let account = |label: &str| {
+        w.daemon
+            .signins
+            .save(zerod::signins::SignIn {
+                id: String::new(),
+                cli: Provider::Claude,
+                kind: zerod::signins::Kind::ClaudeHome,
+                label: label.into(),
+                plan: None,
+                variable: None,
+                pending: false,
+            })
+            .unwrap()
+    };
     let (first, second) = (account("a@example.com"), account("b@example.com"));
     let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
     let seen = lead_runtime(&w).await;
@@ -385,15 +489,31 @@ async fn a_finished_turn_counts_for_its_account() {
     let dot = w.home.join("dot-claude");
     std::fs::create_dir_all(&dot).unwrap();
     w.daemon.signins.set_claude_dir(dot);
-    let first = w.daemon.signins.save(zerod::signins::SignIn { id: String::new(), cli: Provider::Claude, kind: zerod::signins::Kind::ClaudeHome,
-                                                               label: "a@example.com".into(), plan: None, variable: None, pending: false }).unwrap();
+    let first = w
+        .daemon
+        .signins
+        .save(zerod::signins::SignIn {
+            id: String::new(),
+            cli: Provider::Claude,
+            kind: zerod::signins::Kind::ClaudeHome,
+            label: "a@example.com".into(),
+            plan: None,
+            variable: None,
+            pending: false,
+        })
+        .unwrap();
     let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
     let seen = lead_runtime(&w).await;
     seen.said("user", 1).await;
     seen.say(json!({"type": "assistant", "message": {"id": "m1", "role": "assistant", "content": [{"type": "text", "text": "Done."}]}}));
     seen.say(json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."}));
     let counted = || w.daemon.signins.activity().get(&first.id).map_or(0, |h| h.values().sum::<u32>());
-    for _ in 0..300 { if counted() == 1 { break } tokio::time::sleep(Duration::from_millis(10)).await; }
+    for _ in 0..300 {
+        if counted() == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     assert_eq!(counted(), 1, "lead {lead}");
     // Its status going round again with no new answer (a restart, a resume, a wobble between steps) is no new turn: it
     // counted one turn as hundreds an hour.
@@ -414,10 +534,29 @@ async fn a_task_refused_its_model_carries_on_as_another_account() {
     let dot = w.home.join("dot-claude");
     std::fs::create_dir_all(&dot).unwrap();
     w.daemon.signins.set_claude_dir(dot);
-    let account = |label: &str| w.daemon.signins.save(zerod::signins::SignIn { id: String::new(), cli: Provider::Claude, kind: zerod::signins::Kind::ClaudeHome,
-                                                                              label: label.into(), plan: None, variable: None, pending: false }).unwrap();
+    let account = |label: &str| {
+        w.daemon
+            .signins
+            .save(zerod::signins::SignIn {
+                id: String::new(),
+                cli: Provider::Claude,
+                kind: zerod::signins::Kind::ClaudeHome,
+                label: label.into(),
+                plan: None,
+                variable: None,
+                pending: false,
+            })
+            .unwrap()
+    };
     let (first, second) = (account("a@example.com"), account("b@example.com"));
-    let lead = w.daemon.start(Provider::Claude, "lead the work", Options { cwd: Some(w.project.to_str().unwrap().into()), model: Some("claude-mythos-5-2".into()), ..Default::default() }).unwrap();
+    let lead = w
+        .daemon
+        .start(
+            Provider::Claude,
+            "lead the work",
+            Options { cwd: Some(w.project.to_str().unwrap().into()), model: Some("claude-mythos-5-2".into()), ..Default::default() },
+        )
+        .unwrap();
     assert_eq!(w.daemon.get(&lead).unwrap().signin.as_deref(), Some(first.id.as_str()));
     let seen = lead_runtime(&w).await;
     seen.said("user", 1).await;
@@ -425,24 +564,40 @@ async fn a_task_refused_its_model_carries_on_as_another_account() {
                     "result": "There's an issue with the selected model (claude-mythos-5-2). It may not exist or you may not have access to it."}));
     until(&w.daemon, &lead, |c| c.signin.as_deref() == Some(second.id.as_str())).await;
     assert_eq!(w.daemon.signins.refused(&first.id), ["claude-mythos-5-2"]);
-    for _ in 0..200 { if w.claude.lock().unwrap().len() > 1 { break } tokio::time::sleep(Duration::from_millis(10)).await }
+    for _ in 0..200 {
+        if w.claude.lock().unwrap().len() > 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await
+    }
     let again = w.claude.lock().unwrap()[1].clone();
     assert!(again.said("user", 1).await[0]["message"]["content"].as_str().unwrap().contains("can't use"));
     // A new task on that model starts as the account that can.
-    let next = w.daemon.start(Provider::Claude, "more", Options { cwd: Some(w.project.to_str().unwrap().into()), model: Some("claude-mythos-5-2".into()), ..Default::default() }).unwrap();
+    let next = w
+        .daemon
+        .start(
+            Provider::Claude,
+            "more",
+            Options { cwd: Some(w.project.to_str().unwrap().into()), model: Some("claude-mythos-5-2".into()), ..Default::default() },
+        )
+        .unwrap();
     assert_eq!(w.daemon.get(&next).unwrap().signin.as_deref(), Some(second.id.as_str()));
 }
 
 /// The nth Claude process started, once it has.
 async fn nth_runtime(w: &World, n: usize) -> Seen {
     for _ in 0..500 {
-        if let Some(seen) = w.claude.lock().unwrap().get(n).cloned() { return seen }
+        if let Some(seen) = w.claude.lock().unwrap().get(n).cloned() {
+            return seen;
+        }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("process {n} never started");
 }
 
-fn users(seen: &Seen) -> usize { seen.all().iter().filter(|m| m["type"] == "user").count() }
+fn users(seen: &Seen) -> usize {
+    seen.all().iter().filter(|m| m["type"] == "user").count()
+}
 
 /// A worker that ends a turn without an answer while workers of its own are still working is waiting on them, not
 /// stopped: its lead hears nothing until it does stop.
@@ -520,13 +675,20 @@ async fn a_transcript_keeps_the_finished_words_not_each_piece() {
     seen.say(json!({"type": "stream_event", "api_message_id": "m1", "event": {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}}));
     seen.say(piece("Hello "));
     seen.say(piece("there."));
-    seen.say(json!({"type": "assistant", "message": {"id": "m1", "role": "assistant", "content": [{"type": "text", "text": "Hello there."}]}}));
+    seen.say(
+        json!({"type": "assistant", "message": {"id": "m1", "role": "assistant", "content": [{"type": "text", "text": "Hello there."}]}}),
+    );
     seen.say(turn_ends());
     until(&w.daemon, &lead, |c| c.attention() != Attention::Working).await;
     let transcript = std::fs::read_to_string(w.home.join("sessions").join(&lead).join("transcript.jsonl")).unwrap();
     assert!(!transcript.contains("content_block_delta"), "{transcript}");
     let again = Daemon::open(&w.home, runtime(w.claude.clone())).unwrap();
-    let said = again.get(&lead).unwrap().items.iter().any(|i| matches!(&i.kind, zerod::model::ItemKind::Agent { text, .. } if text == "Hello there."));
+    let said = again
+        .get(&lead)
+        .unwrap()
+        .items
+        .iter()
+        .any(|i| matches!(&i.kind, zerod::model::ItemKind::Agent { text, .. } if text == "Hello there."));
     assert!(said, "replayed with its words");
 }
 
@@ -538,8 +700,10 @@ async fn a_transcript_keeps_claudes_init_only_when_it_changes() {
     let lead = start(&w.daemon, Provider::Claude, &w.project, "say hello");
     let seen = lead_runtime(&w).await;
     seen.said("user", 1).await;
-    let init = |session: &str, uuid: &str| json!({"type": "system", "subtype": "init", "session_id": session, "model": "claude-fable-5-1",
-                                                 "uuid": uuid, "messaging_socket_path": format!("/tmp/{uuid}.sock"), "tools": ["Bash", "Edit"]});
+    let init = |session: &str, uuid: &str| {
+        json!({"type": "system", "subtype": "init", "session_id": session, "model": "claude-fable-5-1",
+                                                 "uuid": uuid, "messaging_socket_path": format!("/tmp/{uuid}.sock"), "tools": ["Bash", "Edit"]})
+    };
     seen.say(init("t1", "u1"));
     seen.say(init("t1", "u2"));
     seen.say(init("t2", "u3"));

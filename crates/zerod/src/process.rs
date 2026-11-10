@@ -12,8 +12,8 @@ use crate::session::Transport;
 
 /// What another agent or terminal sets for the processes it runs: an agent inheriting it would think it is nested in
 /// Claude Code (and refuse to start), speak to Zero as another terminal's agent, or take a Codex sandbox for its own.
-const LEFT_OUT: [&str; 6] = ["ZERO_HOST_TERMINAL", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT",
-                             "CODEX_THREAD_ID", "CODEX_SANDBOX"];
+const LEFT_OUT: [&str; 6] =
+    ["ZERO_HOST_TERMINAL", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CODEX_THREAD_ID", "CODEX_SANDBOX"];
 
 /// Variables for one session's processes alone (its MCP servers' values, for Claude to expand): set by zerod before
 /// it starts the session's CLI, by session.
@@ -27,15 +27,18 @@ pub type Variables = Vec<(String, String)>;
 pub fn environment(login: impl Iterator<Item = (String, String)>, id: &str) -> Vec<(String, String)> {
     let ours = |key: &str| key == "PATH" || key == "TERM" || key.starts_with("ZERO_");
     let mut env: Vec<(String, String)> = login.filter(|(key, _)| !LEFT_OUT.contains(&key.as_str()) && !ours(key)).collect();
-    env.extend([
-        ("PATH", "/usr/bin:/bin:/usr/sbin:/sbin".to_string()),
-        ("TERM", "dumb".to_string()),
-        ("ZERO_SESSION", id.to_string()),
-        // The name its `zero` calls go by, the same the inbox shows its approvals under.
-        ("ZERO_AGENT", format!("zerod-{id}")),
-        // Zero's Claude Code plugin brings permission prompts to the inbox through hooks; zerod answers them itself.
-        ("ZERO_MANAGED", "0".to_string()),
-    ].map(|(k, v)| (k.to_string(), v)));
+    env.extend(
+        [
+            ("PATH", "/usr/bin:/bin:/usr/sbin:/sbin".to_string()),
+            ("TERM", "dumb".to_string()),
+            ("ZERO_SESSION", id.to_string()),
+            // The name its `zero` calls go by, the same the inbox shows its approvals under.
+            ("ZERO_AGENT", format!("zerod-{id}")),
+            // Zero's Claude Code plugin brings permission prompts to the inbox through hooks; zerod answers them itself.
+            ("ZERO_MANAGED", "0".to_string()),
+        ]
+        .map(|(k, v)| (k.to_string(), v)),
+    );
     env.extend(SESSION_ENV.lock().unwrap().get(id).cloned().unwrap_or_default());
     env
 }
@@ -44,7 +47,13 @@ pub fn environment(login: impl Iterator<Item = (String, String)>, id: &str) -> V
 /// code (None if it was killed) and the end of what it printed, stdout and stderr together.
 pub async fn run(command: &str, cwd: &Path, id: &str) -> (Option<i32>, String) {
     let mut shell = Command::new("/bin/zsh");
-    shell.args(["-lic", command]).current_dir(cwd).env_clear().envs(environment(std::env::vars(), id)).envs(crate::git::variables(cwd)).stdin(Stdio::null());
+    shell
+        .args(["-lic", command])
+        .current_dir(cwd)
+        .env_clear()
+        .envs(environment(std::env::vars(), id))
+        .envs(crate::git::variables(cwd))
+        .stdin(Stdio::null());
     match shell.output().await {
         Ok(output) => {
             let printed = String::from_utf8_lossy(&output.stdout).to_string() + &String::from_utf8_lossy(&output.stderr);
@@ -62,11 +71,22 @@ pub fn spawn(argv: &[String], cwd: &Path, id: &str, stderr: Option<&Path>) -> st
     // A group of its own, so stopping it stops what it started too (session.rs): the login shell may run the CLI as a
     // child rather than become it, and the CLI runs MCP servers, all holding its output open.
     // Settings › Git: the agents' own committer and signing key, where the user set them up.
-    command.args(arguments).current_dir(cwd).env_clear().envs(environment(std::env::vars(), id)).envs(crate::git::variables(cwd)).process_group(0)
-        .stdin(Stdio::piped()).stdout(Stdio::piped());
+    command
+        .args(arguments)
+        .current_dir(cwd)
+        .env_clear()
+        .envs(environment(std::env::vars(), id))
+        .envs(crate::git::variables(cwd))
+        .process_group(0)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped());
     match stderr {
-        Some(path) => { command.stderr(std::fs::OpenOptions::new().create(true).append(true).open(path)?); }
-        None => { command.stderr(Stdio::null()); }
+        Some(path) => {
+            command.stderr(std::fs::OpenOptions::new().create(true).append(true).open(path)?);
+        }
+        None => {
+            command.stderr(Stdio::null());
+        }
     }
     let mut child = command.spawn()?;
     let (Some(input), Some(output)) = (child.stdin.take(), child.stdout.take()) else { return Err(std::io::Error::other("no stdio")) };

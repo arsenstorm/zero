@@ -38,8 +38,12 @@ impl Core {
     fn stamp(&mut self, change: &mut Change) {
         let Change::Item { item } = change else { return };
         let known = self.conversation.item(&item.id);
-        if item.at.is_none() { item.at = known.and_then(|known| known.at).or(self.clock) }
-        if let ItemKind::User { images, .. } = &mut item.kind && images.is_empty() {
+        if item.at.is_none() {
+            item.at = known.and_then(|known| known.at).or(self.clock)
+        }
+        if let ItemKind::User { images, .. } = &mut item.kind
+            && images.is_empty()
+        {
             match known.map(|k| &k.kind) {
                 Some(ItemKind::User { images: kept, .. }) if !kept.is_empty() => *images = kept.clone(),
                 None if !self.attach.is_empty() => *images = std::mem::take(&mut self.attach),
@@ -74,7 +78,9 @@ impl Core {
 
     /// The line that answers an open approval with one of the choices it offers.
     /// What Stop sends to stop the provider's background work (Adapter::stops).
-    pub fn stops(&self) -> Vec<Value> { self.adapter.stops() }
+    pub fn stops(&self) -> Vec<Value> {
+        self.adapter.stops()
+    }
 
     pub fn answer(&self, approval: &str, choice: &str) -> Result<Value, String> {
         let open = self.conversation.approvals.iter().find(|a| a.id == approval).ok_or_else(|| format!("No open approval {approval}"))?;
@@ -96,17 +102,25 @@ impl Core {
     /// Applies a change Zero makes itself and returns it for the clients. A switch brings the new provider's adapter, so
     /// its lines are read its way from here on, live and on replay.
     /// The turn's being paused for Zero's update: its stop, as the agent notes it, says that.
-    pub fn pausing(&mut self, on: bool) { self.pausing = on }
+    pub fn pausing(&mut self, on: bool) {
+        self.pausing = on
+    }
 
     fn paused_for_update(&self, change: &mut Change) {
-        if self.pausing && let Change::Item { item } = change && let ItemKind::Notice { text, error: false } = &mut item.kind && text == "Interrupted" {
+        if self.pausing
+            && let Change::Item { item } = change
+            && let ItemKind::Notice { text, error: false } = &mut item.kind
+            && text == "Interrupted"
+        {
             *text = crate::daemon::PAUSED_FOR_UPDATE.into();
         }
     }
 
     pub fn change(&mut self, mut change: Change) -> Change {
         self.paused_for_update(&mut change);
-        if let Change::Switched { provider, .. } = &change { self.adapter = provider.adapter() }
+        if let Change::Switched { provider, .. } = &change {
+            self.adapter = provider.adapter()
+        }
         self.stamp(&mut change);
         self.conversation.apply(change.clone());
         change
@@ -118,7 +132,9 @@ impl Core {
         let mut changes: Vec<Change> = self.conversation.approvals.iter().map(|a| Change::Resolved { approval: a.id.clone() }).collect();
         changes.extend(self.conversation.questions.iter().map(|q| Change::Answered { question: q.id.clone() }));
         changes.push(Change::Status { status: Status::Offline, turn: None, error: self.conversation.error.clone() });
-        if self.conversation.stalled.is_some() { changes.push(Change::Stalled { reason: None }) }
+        if self.conversation.stalled.is_some() {
+            changes.push(Change::Stalled { reason: None })
+        }
         self.apply(changes)
     }
 
@@ -134,15 +150,28 @@ impl Core {
         // Zero's own words to the agent (the restart's carry-on) aren't a message of yours: no item for them.
         changes.retain_mut(|change| match change {
             Change::Item { item } => match &mut item.kind {
-                ItemKind::User { text, .. } => match without_carry_on(text) { Some(rest) => { *text = rest; true } None => false },
+                ItemKind::User { text, .. } => match without_carry_on(text) {
+                    Some(rest) => {
+                        *text = rest;
+                        true
+                    }
+                    None => false,
+                },
                 _ => true,
             },
             _ => true,
         });
-        for change in &mut changes { self.paused_for_update(change) }
+        for change in &mut changes {
+            self.paused_for_update(change)
+        }
         // A loop named in a message of yours: the agent got its words, the record keeps the name (loops.rs).
         for change in &mut changes {
-            if let Change::Item { item } = change && let ItemKind::User { text, .. } = &mut item.kind && text.contains("<!-- loop: ") { *text = crate::loops::collapse(text) }
+            if let Change::Item { item } = change
+                && let ItemKind::User { text, .. } = &mut item.kind
+                && text.contains("<!-- loop: ")
+            {
+                *text = crate::loops::collapse(text)
+            }
         }
         for change in &mut changes {
             self.stamp(change);
@@ -161,10 +190,15 @@ impl Core {
 /// A message's text without Zero's carry-on (delivered with what else was waiting, or more than once, it's still not
 /// the user's); none when nothing else is left.
 pub fn without_carry_on(text: &str) -> Option<String> {
-    let zeros = |part: &str| crate::daemon::CARRIES.contains(&part) || part.starts_with(crate::daemon::END_YOUR_TURN_MARK) || part.starts_with(crate::daemon::OPEN_ASKS_MARK);
-    if !text.split("\n\n").any(|part| zeros(part.trim())) { return Some(text.to_string()) }
-    let rest = text.split("\n\n").filter(|part| !zeros(part.trim()))
-        .collect::<Vec<_>>().join("\n\n");
+    let zeros = |part: &str| {
+        crate::daemon::CARRIES.contains(&part)
+            || part.starts_with(crate::daemon::END_YOUR_TURN_MARK)
+            || part.starts_with(crate::daemon::OPEN_ASKS_MARK)
+    };
+    if !text.split("\n\n").any(|part| zeros(part.trim())) {
+        return Some(text.to_string());
+    }
+    let rest = text.split("\n\n").filter(|part| !zeros(part.trim())).collect::<Vec<_>>().join("\n\n");
     let rest = rest.trim();
     (!rest.is_empty()).then(|| rest.to_string())
 }

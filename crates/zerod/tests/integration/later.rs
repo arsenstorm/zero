@@ -1,7 +1,6 @@
 //! Later: things to come back to. Each is a note in plain words and the artifact behind it (everything an agent worked
 //! out, in full), with the links and files that go with it, the task it came from, and every earlier version.
 
-
 use crate::common::temp_dir;
 use serde_json::json;
 use zerod::later::*;
@@ -10,9 +9,17 @@ use zerod::later::*;
 fn an_item_is_a_note_and_its_artifact_kept_as_files_of_its_own() {
     let root = temp_dir("later-files");
     let later = Later::open(&root);
-    let item = later.save(New { note: "Fix the flaky login test.".into(), artifact: "## Cause\n\nA race in `auth.rb:42`.".into(),
-        links: vec!["https://example.com/thread".into()], from: Some("s1".into()), task: Some("Login bug".into()), workspace: Some("zero".into()),
-        ..Default::default() }).unwrap();
+    let item = later
+        .save(New {
+            note: "Fix the flaky login test.".into(),
+            artifact: "## Cause\n\nA race in `auth.rb:42`.".into(),
+            links: vec!["https://example.com/thread".into()],
+            from: Some("s1".into()),
+            task: Some("Login bug".into()),
+            workspace: Some("zero".into()),
+            ..Default::default()
+        })
+        .unwrap();
     assert_eq!(item.link, format!("zero://later/{}", item.id));
     assert_eq!((item.version, item.done), (1, false));
     assert_eq!(std::fs::read_to_string(root.join(&item.id).join("artifact.md")).unwrap(), "## Cause\n\nA race in `auth.rb:42`.");
@@ -30,11 +37,17 @@ fn files_are_copied_in_and_kept_with_it() {
     let shot = root.join("shot.png");
     std::fs::write(&shot, b"png").unwrap();
     let later = Later::open(&root.join("later"));
-    let item = later.save(New { note: "Look at the layout".into(), files: vec![shot.to_string_lossy().into()], ..Default::default() }).unwrap();
+    let item =
+        later.save(New { note: "Look at the layout".into(), files: vec![shot.to_string_lossy().into()], ..Default::default() }).unwrap();
     assert_eq!(item.files.len(), 1);
     assert!(item.files[0].ends_with("/files/shot.png"));
     assert_eq!(std::fs::read(&item.files[0]).unwrap(), b"png");
-    assert!(later.save(New { note: "x".into(), files: vec!["/nowhere/at/all.png".into()], ..Default::default() }).unwrap_err().contains("all.png"));
+    assert!(
+        later
+            .save(New { note: "x".into(), files: vec!["/nowhere/at/all.png".into()], ..Default::default() })
+            .unwrap_err()
+            .contains("all.png")
+    );
 }
 
 #[test]
@@ -85,15 +98,21 @@ fn a_note_is_a_headline_and_the_rest_goes_in_the_artifact() {
     let long = "Ticket ideas from the production check: (1) the bell dropdown never closes on Escape; (2) a literal false class.";
     let refused = later.save(New { note: long.into(), from: Some("s1".into()), asked: true, ..Default::default() }).unwrap_err();
     assert!(refused.contains("100") && refused.contains("artifact"), "says how short, and where the rest goes: {refused}");
-    let item = later.save(New { note: "Two small bugs from a production check".into(), from: Some("s1".into()), asked: true, ..Default::default() }).unwrap();
-    assert!(later.edit(&item.id, Edit { note: Some(long.into()), by: Some("s1".into()), ..Default::default() }).is_err(), "an agent's edit too");
+    let item = later
+        .save(New { note: "Two small bugs from a production check".into(), from: Some("s1".into()), asked: true, ..Default::default() })
+        .unwrap();
+    assert!(
+        later.edit(&item.id, Edit { note: Some(long.into()), by: Some("s1".into()), ..Default::default() }).is_err(),
+        "an agent's edit too"
+    );
 }
 
 #[test]
 fn what_an_agent_saves_unasked_is_a_suggestion_a_few_per_task_gone_after_a_week() {
     let root = temp_dir("later-suggested");
     let later = Later::open(&root);
-    let save = |note: &str, from: &str, asked: bool| later.save(New { note: note.into(), from: Some(from.into()), asked, ..Default::default() });
+    let save =
+        |note: &str, from: &str, asked: bool| later.save(New { note: note.into(), from: Some(from.into()), asked, ..Default::default() });
     let asked = save("Asked for", "s1", true).unwrap();
     assert!(!asked.suggested, "the user asked for it");
     let first = save("One", "s1", false).unwrap();
@@ -115,7 +134,9 @@ fn what_an_agent_saves_unasked_is_a_suggestion_a_few_per_task_gone_after_a_week(
         std::fs::write(&file, item.to_string()).unwrap();
     };
     let gone = save("Old suggestion", "s3", false).unwrap();
-    for id in [&gone.id, &first.id, &asked.id] { old(id) }
+    for id in [&gone.id, &first.id, &asked.id] {
+        old(id)
+    }
     let left: Vec<String> = later.list(None).into_iter().map(|i| i.id).collect();
     assert!(!left.contains(&gone.id) && left.contains(&first.id) && left.contains(&asked.id));
 }

@@ -31,8 +31,12 @@ pub fn start(daemon: Arc<Daemon>, inbox: Arc<Inbox>) {
                 Err(RecvError::Closed) => return,
             };
             let Change::Item { item } = &event.change else { continue };
-            if !item.id.starts_with(COMPACTED) || item.status != ItemStatus::Done { continue }
-            if !given.lock().unwrap().insert((event.session.clone(), item.id.clone())) { continue }
+            if !item.id.starts_with(COMPACTED) || item.status != ItemStatus::Done {
+                continue;
+            }
+            if !given.lock().unwrap().insert((event.session.clone(), item.id.clone())) {
+                continue;
+            }
             let Some(daemon) = weak.upgrade() else { return };
             let (Ok(session), Some(conversation)) = (daemon.session(&event.session), daemon.get(&event.session)) else { continue };
             let asks: Vec<Ask> = inbox.open_asks().into_iter().filter(|a| a.agent.name == format!("zerod-{}", conversation.id)).collect();
@@ -47,13 +51,19 @@ pub fn start(daemon: Arc<Daemon>, inbox: Arc<Inbox>) {
 
 /// What Zero knows for certain about the task, as the agent reads it after compacting.
 pub fn text(conversation: &Conversation, workers: &[Conversation], asks: &[Ask], changed: &str) -> String {
-    let mut parts = vec!["Your conversation was just compacted. This is Zero's own record, not a summary: where your summary \
+    let mut parts = vec![
+        "Your conversation was just compacted. This is Zero's own record, not a summary: where your summary \
 says otherwise, this is right. Carry on with what you were doing."
-        .to_string()];
-    let said: Vec<&str> = conversation.items.iter().filter_map(|i| match &i.kind {
-        ItemKind::User { text, .. } if crate::model::from(text).is_none() => Some(text.as_str()),
-        _ => None,
-    }).collect();
+            .to_string(),
+    ];
+    let said: Vec<&str> = conversation
+        .items
+        .iter()
+        .filter_map(|i| match &i.kind {
+            ItemKind::User { text, .. } if crate::model::from(text).is_none() => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
     if !said.is_empty() {
         let latest = said[said.len().saturating_sub(MESSAGES)..].iter().map(|t| format!("> {}", clip(t).replace('\n', "\n> ")));
         parts.push(format!("The user's latest messages, oldest first, word for word:\n\n{}", latest.collect::<Vec<_>>().join("\n\n")));
@@ -73,12 +83,16 @@ says otherwise, this is right. Carry on with what you were doing."
         });
         parts.push(format!("Your workers:\n{}", rows.collect::<Vec<_>>().join("\n")));
     }
-    if !changed.is_empty() { parts.push(format!("`git status` in {} now:\n{changed}", conversation.cwd)) }
+    if !changed.is_empty() {
+        parts.push(format!("`git status` in {} now:\n{changed}", conversation.cwd))
+    }
     parts.join("\n\n")
 }
 
 fn clip(text: &str) -> String {
-    if text.chars().count() <= LONGEST { return text.to_string() }
+    if text.chars().count() <= LONGEST {
+        return text.to_string();
+    }
     format!("{}…", text.chars().take(LONGEST).collect::<String>())
 }
 
@@ -89,6 +103,8 @@ async fn git_status(cwd: &str) -> String {
     let text = String::from_utf8_lossy(&output.stdout);
     let lines: Vec<&str> = text.lines().collect();
     let mut shown = lines.iter().take(40).copied().collect::<Vec<_>>().join("\n");
-    if lines.len() > 40 { shown.push_str(&format!("\n… and {} more", lines.len() - 40)) }
+    if lines.len() > 40 {
+        shown.push_str(&format!("\n… and {} more", lines.len() - 40))
+    }
     shown
 }

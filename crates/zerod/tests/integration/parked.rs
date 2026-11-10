@@ -1,7 +1,6 @@
 //! Sessions kept on disk start parked: a summary and their latest items (parked.json beside the transcript), not the
 //! whole conversation replayed into memory. They load when something needs their conversation, and park again later.
 
-
 use crate::common::temp_dir;
 use tokio::sync::broadcast;
 use zerod::model::*;

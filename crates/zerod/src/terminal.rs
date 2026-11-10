@@ -15,7 +15,9 @@ use crate::ask::AgentIdentity;
 pub fn draft(screen: &str) -> Option<String> {
     let lines: Vec<&str> = screen.split('\n').collect();
     let index = lines.iter().rposition(|l| l.trim().starts_with('❯'))?;
-    if index == 0 || !lines[index - 1].contains("────") { return None }
+    if index == 0 || !lines[index - 1].contains("────") {
+        return None;
+    }
     let text = lines[index].trim().trim_start_matches('❯').trim();
     Some(if text.starts_with("Try \"") { String::new() } else { text.to_string() })
 }
@@ -32,16 +34,27 @@ pub fn last_reply(screen: &str, prompt: &str) -> Option<String> {
     let mut start = 0;
     for (i, line) in lines.iter().enumerate() {
         let t = line.trim();
-        if let Some(first) = t.chars().next() && "❯〉›>".contains(first) && t[first.len_utf8()..].trim().starts_with(&needle) { start = i + 1 }
+        if let Some(first) = t.chars().next()
+            && "❯〉›>".contains(first)
+            && t[first.len_utf8()..].trim().starts_with(&needle)
+        {
+            start = i + 1
+        }
     }
-    if start == 0 { return None }
+    if start == 0 {
+        return None;
+    }
     let mut blocks: Vec<Vec<String>> = vec![];
     let mut current: Option<Vec<String>> = None;
     for line in &lines[start..] {
         let t = line.trim();
-        if t.contains("· done") || t.chars().next().is_some_and(|c| "❯〉›─".contains(c)) { break }
+        if t.contains("· done") || t.chars().next().is_some_and(|c| "❯〉›─".contains(c)) {
+            break;
+        }
         if t.starts_with('⏺') || t.starts_with('●') {
-            if let Some(block) = current.take() { blocks.push(block) }
+            if let Some(block) = current.take() {
+                blocks.push(block)
+            }
             current = Some(vec![t.trim_start_matches(['⏺', '●']).trim().to_string()]);
         } else if t.starts_with('⎿') {
             current = None;
@@ -49,16 +62,22 @@ pub fn last_reply(screen: &str, prompt: &str) -> Option<String> {
             block.push(line.strip_prefix("  ").unwrap_or(line).to_string());
         }
     }
-    if let Some(block) = current { blocks.push(block) }
+    if let Some(block) = current {
+        blocks.push(block)
+    }
     let spoken = blocks.into_iter().rev().find(|b| b.first().is_some_and(|first| !is_tool_call(first)))?;
     let mut text = spoken.join("\n").trim().to_string();
-    while text.contains("\n\n\n") { text = text.replace("\n\n\n", "\n\n") }
+    while text.contains("\n\n\n") {
+        text = text.replace("\n\n\n", "\n\n")
+    }
     (!text.is_empty()).then_some(text)
 }
 
 fn is_tool_call(line: &str) -> bool {
     let mut chars = line.chars();
-    chars.next().is_some_and(|c| c.is_ascii_uppercase()) && line.split('(').next().is_some_and(|name| name.chars().all(|c| c.is_ascii_alphabetic())) && line.contains('(')
+    chars.next().is_some_and(|c| c.is_ascii_uppercase())
+        && line.split('(').next().is_some_and(|name| name.chars().all(|c| c.is_ascii_alphabetic()))
+        && line.contains('(')
 }
 
 /// Keys as bytes.
@@ -79,7 +98,12 @@ pub trait Terminal: Send + Sync {
 
 /// A terminal as it is now: its program running, exited (the terminal kept), gone, or its host unreachable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum State { Running, Exited, Missing, Unknown }
+pub enum State {
+    Running,
+    Exited,
+    Missing,
+    Unknown,
+}
 
 /// Types `text` and Enter, once the input box is empty: typing into a half-written prompt would join the user's words
 /// and Zero's into one message. Waits up to 23 looks for it.
@@ -88,13 +112,17 @@ pub async fn send(terminal: &dyn Terminal, text: &str, agent: &AgentIdentity) ->
     for attempt in 0..23 {
         match terminal.capture(reference).await.as_deref().and_then(draft) {
             Some(draft) if !draft.is_empty() => {
-                if attempt == 22 { return Err(format!("The user is typing in {}'s terminal", label(agent))) }
+                if attempt == 22 {
+                    return Err(format!("The user is typing in {}'s terminal", label(agent)));
+                }
                 tokio::time::sleep(terminal.poll()).await;
             }
             _ => break,
         }
     }
-    if !terminal.type_text(text, reference).await { return Err(format!("{} couldn't type into {}", terminal.name(), label(agent))) }
+    if !terminal.type_text(text, reference).await {
+        return Err(format!("{} couldn't type into {}", terminal.name(), label(agent)));
+    }
     tokio::time::sleep(Duration::from_millis(150).min(terminal.poll() * 15)).await;
     terminal.write(ENTER, reference).await;
     Ok(())
@@ -107,8 +135,12 @@ pub async fn reply(terminal: &dyn Terminal, agent: &AgentIdentity, text: &str) -
     for _ in 0..450 {
         tokio::time::sleep(terminal.poll()).await;
         let screen = terminal.capture(reference).await?;
-        if screen.contains("esc to interrupt") { continue }
-        if let Some(reply) = last_reply(&screen, text) { return Some(reply) }
+        if screen.contains("esc to interrupt") {
+            continue;
+        }
+        if let Some(reply) = last_reply(&screen, text) {
+            return Some(reply);
+        }
     }
     None
 }
@@ -124,7 +156,9 @@ pub async fn wait_until_ready(terminal: &dyn Terminal, reference: &str, name: &s
             terminal.write(if chosen { ENTER } else { DOWN }, reference).await;
             continue;
         }
-        if draft(&text).is_some() { return Ok(()) }
+        if draft(&text).is_some() {
+            return Ok(());
+        }
     }
     Err(format!("{name} didn't reach its prompt in {}", terminal.name()))
 }
@@ -142,7 +176,11 @@ pub async fn stop(terminal: &dyn Terminal, agent: &AgentIdentity) {
 pub fn resume_command(agent: &AgentIdentity) -> Result<Vec<String>, String> {
     let (Some(session), Some(launch)) = (&agent.session, &agent.launch) else { return Err(format!("{}'s session is gone", label(agent))) };
     let mut command = launch.clone();
-    if let Some(i) = command.iter().position(|a| a == "--resume") && i + 1 < command.len() { command.drain(i..=i + 1); }
+    if let Some(i) = command.iter().position(|a| a == "--resume")
+        && i + 1 < command.len()
+    {
+        command.drain(i..=i + 1);
+    }
     command.extend(["--resume".into(), session.clone()]);
     Ok(command)
 }
@@ -153,9 +191,13 @@ pub fn label(agent: &AgentIdentity) -> &str {
 
 /// Claude Code takes `/model <id>` and `/effort <level>`, each typed on its own once the last one is handled.
 pub async fn switch_model(terminal: &dyn Terminal, agent: &AgentIdentity, model: Option<&str>, level: Option<&str>) -> Result<(), String> {
-    if let Some(model) = model { send(terminal, &format!("/model {model}"), agent).await? }
+    if let Some(model) = model {
+        send(terminal, &format!("/model {model}"), agent).await?
+    }
     if let Some(level) = level.filter(|l| !l.is_empty()) {
-        if model.is_some() { tokio::time::sleep(Duration::from_millis(1500)).await }
+        if model.is_some() {
+            tokio::time::sleep(Duration::from_millis(1500)).await
+        }
         send(terminal, &format!("/effort {level}"), agent).await?;
     }
     Ok(())
@@ -166,7 +208,11 @@ pub async fn switch_model(terminal: &dyn Terminal, agent: &AgentIdentity, model:
 pub async fn states<T: Terminal + crate::inbox::Runtime>(terminal: &T, agents: &[AgentIdentity], wanted: State) -> HashSet<String> {
     let mut found = HashSet::new();
     for agent in agents.iter().filter(|a| terminal.can_reach(a)) {
-        if let Some(reference) = agent.reference.as_deref() && terminal.state(reference).await == wanted { found.insert(agent.name.clone()); }
+        if let Some(reference) = agent.reference.as_deref()
+            && terminal.state(reference).await == wanted
+        {
+            found.insert(agent.name.clone());
+        }
     }
     found
 }
@@ -193,11 +239,16 @@ impl ClaudeSessions {
     /// The newest session in `cwd` whose first user turn is exactly `prompt`.
     pub fn find(&self, prompt: &str, cwd: &str) -> Option<String> {
         let needle = format!("\"role\":\"user\",\"content\":{}", serde_json::to_string(prompt).ok()?);
-        let mut files: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(self.folder(cwd)).ok()?
-            .filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|e| e == "jsonl"))
-            .map(|p| (std::fs::metadata(&p).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH), p)).collect();
+        let mut files: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(self.folder(cwd))
+            .ok()?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|e| e == "jsonl"))
+            .map(|p| (std::fs::metadata(&p).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH), p))
+            .collect();
         files.sort_by_key(|f| std::cmp::Reverse(f.0));
-        files.into_iter().find(|(_, p)| std::fs::read_to_string(p).is_ok_and(|t| t.contains(&needle)))
+        files
+            .into_iter()
+            .find(|(_, p)| std::fs::read_to_string(p).is_ok_and(|t| t.contains(&needle)))
             .and_then(|(_, p)| p.file_stem().map(|s| s.to_string_lossy().to_string()))
     }
 
@@ -212,7 +263,8 @@ impl ClaudeSessions {
         let mut file = std::fs::File::open(&path).ok()?;
         let mut seen = SEEN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         // A file shorter than what was read was rewritten: read it again.
-        let (offset, known) = seen.get(&path).cloned().filter(|(offset, _)| file.metadata().is_ok_and(|m| m.len() >= *offset)).unwrap_or((0, None));
+        let (offset, known) =
+            seen.get(&path).cloned().filter(|(offset, _)| file.metadata().is_ok_and(|m| m.len() >= *offset)).unwrap_or((0, None));
         let mut added = vec![];
         file.seek(io::SeekFrom::Start(offset)).ok()?;
         file.read_to_end(&mut added).ok()?;
@@ -229,6 +281,8 @@ fn last_title(text: &str) -> Option<String> {
     let start = text.rfind("\"aiTitle\":\"")? + "\"aiTitle\":\"".len();
     let bytes = &text.as_bytes()[start..];
     let mut end = 0;
-    while end < bytes.len() && !(bytes[end] == b'"' && (end == 0 || bytes[end - 1] != b'\\')) { end += 1 }
+    while end < bytes.len() && !(bytes[end] == b'"' && (end == 0 || bytes[end - 1] != b'\\')) {
+        end += 1
+    }
     (end < bytes.len()).then(|| text[start..start + end].replace("\\\"", "\""))
 }

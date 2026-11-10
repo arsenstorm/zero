@@ -21,5 +21,9 @@ fn a_models_reply_becomes_a_short_name_or_none() {
     assert_eq!(clean("\"Review Zero's restart handoff.\"").as_deref(), Some("Review Zero's restart handoff"));
     assert_eq!(clean("Name: Ship the usage columns").as_deref(), Some("Ship the usage columns"));
     assert_eq!(clean(""), None);
-    assert_eq!(clean("I can't name this task without more information about what it involves and where it runs."), None, "a sentence is no name");
+    assert_eq!(
+        clean("I can't name this task without more information about what it involves and where it runs."),
+        None,
+        "a sentence is no name"
+    );
 }

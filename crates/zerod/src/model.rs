@@ -7,7 +7,13 @@ use serde::{Deserialize, Serialize};
 /// Who has an issue now: the user (what it needs from them), its agents, someone else, nobody for now, or no one ever.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "camelCase")]
-pub enum IssueState { You, Working, Waiting, Parked, Done }
+pub enum IssueState {
+    You,
+    Working,
+    Waiting,
+    Parked,
+    Done,
+}
 
 impl IssueState {
     pub fn named(word: &str) -> Option<IssueState> {
@@ -46,7 +52,9 @@ impl Issue {
         let same = previous.is_some_and(|p| p.state == state);
         let left_you = previous.filter(|p| p.state == IssueState::You && state != IssueState::You).map_or(0, |p| now - p.since);
         Issue {
-            ticket: ticket.into(), state, text: text.into(),
+            ticket: ticket.into(),
+            state,
+            text: text.into(),
             since: if same { previous.map_or(now, |p| p.since) } else { now },
             on_you_ms: previous.map_or(0, |p| p.on_you_ms) + left_you,
             updated: now,
@@ -195,19 +203,44 @@ pub enum ItemKind {
         images: Vec<String>,
     },
     /// `final_answer`: the turn's answer, as opposed to commentary while working.
-    Agent { text: String, final_answer: bool },
+    Agent {
+        text: String,
+        final_answer: bool,
+    },
     /// A summary of the model's reasoning, where the provider gives one.
-    Reasoning { text: String },
-    Plan { text: String },
-    Command { command: String, cwd: String, output: String, exit_code: Option<i64>, duration_ms: Option<i64> },
-    FileChange { changes: Vec<FileChange> },
+    Reasoning {
+        text: String,
+    },
+    Plan {
+        text: String,
+    },
+    Command {
+        command: String,
+        cwd: String,
+        output: String,
+        exit_code: Option<i64>,
+        duration_ms: Option<i64>,
+    },
+    FileChange {
+        changes: Vec<FileChange>,
+    },
     /// Any other tool: MCP, web search, the provider's own.
-    Tool { name: String, detail: String },
+    Tool {
+        name: String,
+        detail: String,
+    },
     /// Something to read that isn't the agent speaking: an error, an interruption, or a provider item Zero
     /// doesn't show yet (named by its provider type, so nothing silently disappears).
-    Notice { text: String, error: bool },
+    Notice {
+        text: String,
+        error: bool,
+    },
     /// A table the agent handed to Zero to draw (`zero table`): a title, columns, and rows of cells.
-    Table { title: String, columns: Vec<String>, rows: Vec<Vec<String>> },
+    Table {
+        title: String,
+        columns: Vec<String>,
+        rows: Vec<Vec<String>>,
+    },
 }
 
 /// Words given to a session by Zero rather than typed by the user (a worker's report to its lead, a watched command's
@@ -222,7 +255,9 @@ pub fn from(text: &str) -> Option<&str> {
     Some(&rest[..end])
 }
 
-pub fn from_line(who: &str, text: &str) -> String { format!("{FROM}{who} -->\n{text}") }
+pub fn from_line(who: &str, text: &str) -> String {
+    format!("{FROM}{who} -->\n{text}")
+}
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -350,12 +385,30 @@ impl FailureKind {
     pub fn of(message: &str) -> FailureKind {
         let text = message.to_lowercase();
         let any = |words: &[&str]| words.iter().any(|w| text.contains(w));
-        if any(&["usage limit", "rate limit", "limit reached", "hit your limit", "quota", "credit balance"]) { return FailureKind::Limit }
-        if any(&["not logged in", "/login", "unauthorized", "oauth", "401", "403", "sign in", "authentication"]) { return FailureKind::SignIn }
-        if any(&["overloaded", "529"]) || (text.contains("model") && any(&["not available", "unavailable", "not found", "does not exist"])) {
+        if any(&["usage limit", "rate limit", "limit reached", "hit your limit", "quota", "credit balance"]) {
+            return FailureKind::Limit;
+        }
+        if any(&["not logged in", "/login", "unauthorized", "oauth", "401", "403", "sign in", "authentication"]) {
+            return FailureKind::SignIn;
+        }
+        if any(&["overloaded", "529"]) || (text.contains("model") && any(&["not available", "unavailable", "not found", "does not exist"]))
+        {
             return FailureKind::Model;
         }
-        if any(&["enotfound", "network", "dns", "econnreset", "econnrefused", "timed out", "connection", "stream disconnected", "server error", "api error: 5"]) { return FailureKind::Network }
+        if any(&[
+            "enotfound",
+            "network",
+            "dns",
+            "econnreset",
+            "econnrefused",
+            "timed out",
+            "connection",
+            "stream disconnected",
+            "server error",
+            "api error: 5",
+        ]) {
+            return FailureKind::Network;
+        }
         FailureKind::Other
     }
 }
@@ -425,47 +478,107 @@ pub struct Queued {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Change {
-    Thread { thread: String, model: Option<String>, effort: Option<String> },
-    Title { title: Option<String> },
-    Named { label: Option<String>, ticket: Option<String> },
+    Thread {
+        thread: String,
+        model: Option<String>,
+        effort: Option<String>,
+    },
+    Title {
+        title: Option<String>,
+    },
+    Named {
+        label: Option<String>,
+        ticket: Option<String>,
+    },
     /// Put in a workspace (none: back to its folder's).
-    Placed { workspace: Option<String> },
+    Placed {
+        workspace: Option<String>,
+    },
     /// Runs as another sign-in from its next start (signins.rs): one of its CLI's accounts at its limit, say.
-    SignedIn { signin: Option<String> },
+    SignedIn {
+        signin: Option<String>,
+    },
     /// What the agent may do without asking, from its next start (set between turns).
-    Permitted { permissions: Permissions },
-    Status { status: Status, turn: Option<String>, error: Option<String> },
+    Permitted {
+        permissions: Permissions,
+    },
+    Status {
+        status: Status,
+        turn: Option<String>,
+        error: Option<String>,
+    },
     /// Adds the item, or replaces the one with its id.
-    Item { item: Item },
+    Item {
+        item: Item,
+    },
     /// Appends to an item's text (a command's output).
-    Delta { item: String, text: String },
-    Approval { approval: Approval },
-    Resolved { approval: String },
-    Question { question: Question },
-    Answered { question: String },
-    Usage { usage: Usage },
-    Failed { failure: Option<Failure> },
-    Stalled { reason: Option<String> },
-    Diff { diff: Option<String> },
+    Delta {
+        item: String,
+        text: String,
+    },
+    Approval {
+        approval: Approval,
+    },
+    Resolved {
+        approval: String,
+    },
+    Question {
+        question: Question,
+    },
+    Answered {
+        question: String,
+    },
+    Usage {
+        usage: Usage,
+    },
+    Failed {
+        failure: Option<Failure>,
+    },
+    Stalled {
+        reason: Option<String>,
+    },
+    Diff {
+        diff: Option<String>,
+    },
     /// The task moves to another provider: it starts a thread of its own there, from Zero's record (handoff.rs).
-    Switched { provider: Provider, model: Option<String>, effort: Option<String> },
+    Switched {
+        provider: Provider,
+        model: Option<String>,
+        effort: Option<String>,
+    },
     /// The task went to its provider's terminal, or came back from it.
-    Terminal { terminal: Option<Opened> },
+    Terminal {
+        terminal: Option<Opened>,
+    },
     /// The task was put away (zerod's archive/): clients drop it. Never kept in a transcript.
     Archived,
     /// Where the task runs, by name (a worktree, a machine), when its folder doesn't say.
-    Place { place: Option<String> },
+    Place {
+        place: Option<String>,
+    },
     /// The task became a worker of another (a lead adopting it), or a lead of its own again.
-    Parent { parent: Option<String> },
+    Parent {
+        parent: Option<String>,
+    },
     /// Its agent said something about the task (`zero attr`); no value takes it back.
-    Attribute { name: String, value: Option<String> },
+    Attribute {
+        name: String,
+        value: Option<String>,
+    },
     /// An issue's row set (`zero issue`): replaces the row for its ticket.
-    Issue { issue: Issue },
+    Issue {
+        issue: Issue,
+    },
     /// The folder was kept (snapshots.rs) as it was when this message of yours went.
-    Snapshot { item: String, commit: String },
+    Snapshot {
+        item: String,
+        commit: String,
+    },
     /// Back to just before this message of yours: it and everything after it go, and so does the provider's thread,
     /// which goes on from Zero's record up to here.
-    Rewound { before: String },
+    Rewound {
+        before: String,
+    },
 }
 
 /// A change as clients receive it: which session, and its place in that session's sequence.
@@ -479,9 +592,37 @@ pub struct Event {
 impl Conversation {
     pub fn new(id: &str, provider: Provider, cwd: &str) -> Self {
         Conversation {
-            id: id.into(), provider, cwd: cwd.into(), permissions: Permissions::Auto, label: None, ticket: None, place: None, branch: None, parent: None, workspace: None, signin: None, thread: None, title: None, model: None, effort: None,
-            status: Status::Starting, turn: None, error: None, items: vec![], snapshots: Default::default(), issues: vec![], attributes: Default::default(), approvals: vec![], questions: vec![], usage: None,
-            failure: None, stalled: None, diff: None, terminal: None, seq: 0, mcp: vec![],
+            id: id.into(),
+            provider,
+            cwd: cwd.into(),
+            permissions: Permissions::Auto,
+            label: None,
+            ticket: None,
+            place: None,
+            branch: None,
+            parent: None,
+            workspace: None,
+            signin: None,
+            thread: None,
+            title: None,
+            model: None,
+            effort: None,
+            status: Status::Starting,
+            turn: None,
+            error: None,
+            items: vec![],
+            snapshots: Default::default(),
+            issues: vec![],
+            attributes: Default::default(),
+            approvals: vec![],
+            questions: vec![],
+            usage: None,
+            failure: None,
+            stalled: None,
+            diff: None,
+            terminal: None,
+            seq: 0,
+            mcp: vec![],
         }
     }
 
@@ -493,11 +634,36 @@ impl Conversation {
     /// Everything but its items, without copying them: for lists, the board, and snapshots that send items in pages.
     pub fn with_items(&self, items: Vec<Item>) -> Conversation {
         Conversation {
-            id: self.id.clone(), provider: self.provider, cwd: self.cwd.clone(), permissions: self.permissions, label: self.label.clone(),
-            ticket: self.ticket.clone(), place: self.place.clone(), branch: self.branch.clone(), parent: self.parent.clone(), workspace: self.workspace.clone(), signin: self.signin.clone(), thread: self.thread.clone(),
-            title: self.title.clone(), model: self.model.clone(), effort: self.effort.clone(), status: self.status, turn: self.turn.clone(),
-            error: self.error.clone(), items, snapshots: self.snapshots.clone(), issues: self.issues.clone(), attributes: self.attributes.clone(), approvals: self.approvals.clone(), questions: self.questions.clone(), usage: self.usage.clone(),
-            failure: self.failure.clone(), stalled: self.stalled.clone(), diff: self.diff.clone(), terminal: self.terminal.clone(), seq: self.seq,
+            id: self.id.clone(),
+            provider: self.provider,
+            cwd: self.cwd.clone(),
+            permissions: self.permissions,
+            label: self.label.clone(),
+            ticket: self.ticket.clone(),
+            place: self.place.clone(),
+            branch: self.branch.clone(),
+            parent: self.parent.clone(),
+            workspace: self.workspace.clone(),
+            signin: self.signin.clone(),
+            thread: self.thread.clone(),
+            title: self.title.clone(),
+            model: self.model.clone(),
+            effort: self.effort.clone(),
+            status: self.status,
+            turn: self.turn.clone(),
+            error: self.error.clone(),
+            items,
+            snapshots: self.snapshots.clone(),
+            issues: self.issues.clone(),
+            attributes: self.attributes.clone(),
+            approvals: self.approvals.clone(),
+            questions: self.questions.clone(),
+            usage: self.usage.clone(),
+            failure: self.failure.clone(),
+            stalled: self.stalled.clone(),
+            diff: self.diff.clone(),
+            terminal: self.terminal.clone(),
+            seq: self.seq,
             mcp: self.mcp.clone(),
         }
     }
@@ -512,15 +678,24 @@ impl Conversation {
     /// Its last word was a plain answer to the user: no ending, no question; a lead's, since a worker's answer is its
     /// report. The app shows it as Replied until the user has seen it, parked or not.
     pub fn replied(&self) -> bool {
-        self.parent.is_none() && matches!(self.items.last().map(|i| &i.kind),
+        self.parent.is_none()
+            && matches!(self.items.last().map(|i| &i.kind),
             Some(ItemKind::Agent { text, final_answer: true }) if crate::board::ending(text).is_none() && !text.lines().any(|l| l.trim_end().ends_with('?')))
     }
 
     pub fn attention(&self) -> Attention {
-        if !self.approvals.is_empty() || !self.questions.is_empty() { return Attention::NeedsYou }
-        if self.usage.as_ref().is_some_and(|u| u.limited) || self.failure.as_ref().is_some_and(|f| f.kind == FailureKind::Limit) { return Attention::Limited }
-        if self.stalled.is_some() { return Attention::Stuck }
-        if self.failure.is_some() { return Attention::Failed }
+        if !self.approvals.is_empty() || !self.questions.is_empty() {
+            return Attention::NeedsYou;
+        }
+        if self.usage.as_ref().is_some_and(|u| u.limited) || self.failure.as_ref().is_some_and(|f| f.kind == FailureKind::Limit) {
+            return Attention::Limited;
+        }
+        if self.stalled.is_some() {
+            return Attention::Stuck;
+        }
+        if self.failure.is_some() {
+            return Attention::Failed;
+        }
         match self.status {
             Status::Working | Status::Waiting => Attention::Working,
             Status::Starting => Attention::Starting,
@@ -544,7 +719,11 @@ impl Conversation {
                 _ => Attention::Done,
             },
             // A question in its reply waits on the user, whatever its ending says (a conversation's turn ends so).
-            Some(ItemKind::Agent { text, final_answer: true }) if crate::board::ending(text) != Some("asked") && crate::board::asks_in_prose(text) => Attention::NeedsYou,
+            Some(ItemKind::Agent { text, final_answer: true })
+                if crate::board::ending(text) != Some("asked") && crate::board::asks_in_prose(text) =>
+            {
+                Attention::NeedsYou
+            }
             Some(ItemKind::Agent { text, final_answer: true }) => match crate::board::ending(text) {
                 Some("done") => Attention::Done,
                 Some("asked") => Attention::NeedsYou,
@@ -581,7 +760,9 @@ impl Conversation {
             Change::Archived => {}
             Change::Place { place } => self.place = place,
             Change::Parent { parent } => self.parent = parent,
-            Change::Snapshot { item, commit } => { self.snapshots.insert(item, commit); }
+            Change::Snapshot { item, commit } => {
+                self.snapshots.insert(item, commit);
+            }
             Change::Attribute { name, value } => self.set_attribute(name, value),
             Change::Issue { issue } => match self.issues.iter_mut().find(|i| i.ticket == issue.ticket) {
                 Some(row) => *row = issue,
@@ -595,15 +776,28 @@ impl Conversation {
     /// On its thread; the model and effort only when it says which.
     fn set_thread(&mut self, thread: String, model: Option<String>, effort: Option<String>) {
         self.thread = Some(thread);
-        if model.is_some() { self.model = model }
-        if effort.is_some() { self.effort = effort }
+        if model.is_some() {
+            self.model = model
+        }
+        if effort.is_some() {
+            self.effort = effort
+        }
     }
 
     /// New permissions, and a notice in the conversation of what they let the agent do.
     fn permit(&mut self, permissions: Permissions) {
         self.permissions = permissions;
-        let text = match permissions { Permissions::Auto => "Auto from here: it asks before what isn't safe", Permissions::Unrestricted => "Unrestricted from here: it acts without asking" };
-        self.items.push(Item { at: None, id: format!("permitted-{}", self.items.len()), turn: None, kind: ItemKind::Notice { text: text.into(), error: false }, status: ItemStatus::Done });
+        let text = match permissions {
+            Permissions::Auto => "Auto from here: it asks before what isn't safe",
+            Permissions::Unrestricted => "Unrestricted from here: it acts without asking",
+        };
+        self.items.push(Item {
+            at: None,
+            id: format!("permitted-{}", self.items.len()),
+            turn: None,
+            kind: ItemKind::Notice { text: text.into(), error: false },
+            status: ItemStatus::Done,
+        });
     }
 
     /// The item in place of the one with its id, where that one was; else last.
@@ -618,8 +812,11 @@ impl Conversation {
     fn append_to(&mut self, id: &str, text: &str) {
         let Some(item) = self.items.iter_mut().find(|existing| existing.id == id) else { return };
         match &mut item.kind {
-            ItemKind::User { text: body, .. } | ItemKind::Agent { text: body, .. } | ItemKind::Reasoning { text: body }
-            | ItemKind::Plan { text: body } | ItemKind::Notice { text: body, .. } => body.push_str(text),
+            ItemKind::User { text: body, .. }
+            | ItemKind::Agent { text: body, .. }
+            | ItemKind::Reasoning { text: body }
+            | ItemKind::Plan { text: body }
+            | ItemKind::Notice { text: body, .. } => body.push_str(text),
             ItemKind::Command { output, .. } => output.push_str(text),
             ItemKind::FileChange { .. } | ItemKind::Tool { .. } | ItemKind::Table { .. } => {}
         }
@@ -628,14 +825,20 @@ impl Conversation {
     /// An attribute set, or with no value taken back.
     fn set_attribute(&mut self, name: String, value: Option<String>) {
         match value {
-            Some(value) => { self.attributes.insert(name, value); }
-            None => { self.attributes.remove(&name); }
+            Some(value) => {
+                self.attributes.insert(name, value);
+            }
+            None => {
+                self.attributes.remove(&name);
+            }
         }
     }
 
     /// Back to just before the item `before`: what came from it on, and the thread, turn and what was pending, gone.
     fn rewind_to(&mut self, before: &str) {
-        if let Some(at) = self.items.iter().position(|i| i.id == before) { self.items.truncate(at) }
+        if let Some(at) = self.items.iter().position(|i| i.id == before) {
+            self.items.truncate(at)
+        }
         let kept: std::collections::HashSet<&str> = self.items.iter().map(|i| i.id.as_str()).collect();
         self.snapshots.retain(|item, _| kept.contains(item.as_str()));
         self.thread = None;
@@ -656,11 +859,20 @@ impl Conversation {
         self.effort = effort;
         // Where each provider took over, in the conversation itself (handoff.rs leaves notices out). Stopped
         // for the handover, the two are one line.
-        if let Some(last) = self.items.last_mut() && let ItemKind::Notice { text, error: false } = &mut last.kind && text == "Interrupted" {
+        if let Some(last) = self.items.last_mut()
+            && let ItemKind::Notice { text, error: false } = &mut last.kind
+            && text == "Interrupted"
+        {
             *text = format!("Interrupted and continued in {}", provider.title());
         } else {
             let id = format!("switched-{}", self.seq);
-            self.items.push(Item { at: None, id, turn: None, kind: ItemKind::Notice { text: format!("Continued in {}", provider.title()), error: false }, status: ItemStatus::Done });
+            self.items.push(Item {
+                at: None,
+                id,
+                turn: None,
+                kind: ItemKind::Notice { text: format!("Continued in {}", provider.title()), error: false },
+                status: ItemStatus::Done,
+            });
         }
     }
 }
@@ -677,7 +889,13 @@ mod tests {
     use super::*;
 
     fn agent(id: &str, text: &str) -> Item {
-        Item { at: None, id: id.into(), turn: None, kind: ItemKind::Agent { text: text.into(), final_answer: false }, status: ItemStatus::Running }
+        Item {
+            at: None,
+            id: id.into(),
+            turn: None,
+            kind: ItemKind::Agent { text: text.into(), final_answer: false },
+            status: ItemStatus::Running,
+        }
     }
 
     #[test]
@@ -693,8 +911,10 @@ mod tests {
     fn a_delta_appends_to_text_or_to_a_commands_output() {
         let mut conversation = Conversation::new("s", Provider::Codex, "/");
         conversation.apply(Change::Item { item: agent("a", "Hel") });
-        let command = ItemKind::Command { command: "ls".into(), cwd: "/".into(), output: String::new(), exit_code: None, duration_ms: None };
-        conversation.apply(Change::Item { item: Item { at: None, id: "c".into(), turn: None, kind: command, status: ItemStatus::Running } });
+        let command =
+            ItemKind::Command { command: "ls".into(), cwd: "/".into(), output: String::new(), exit_code: None, duration_ms: None };
+        conversation
+            .apply(Change::Item { item: Item { at: None, id: "c".into(), turn: None, kind: command, status: ItemStatus::Running } });
         conversation.apply(Change::Delta { item: "a".into(), text: "lo".into() });
         conversation.apply(Change::Delta { item: "c".into(), text: "total 0\n".into() });
         conversation.apply(Change::Delta { item: "missing".into(), text: "ignored".into() });
@@ -706,8 +926,17 @@ mod tests {
     #[test]
     fn changes_are_tagged_with_their_type_in_camel_case() {
         let change = Change::Status { status: Status::Waiting, turn: Some("u".into()), error: None };
-        assert_eq!(serde_json::to_value(change).unwrap(), serde_json::json!({"type": "status", "status": "waiting", "turn": "u", "error": null}));
-        let item = Item { at: None, id: "c".into(), turn: None, kind: ItemKind::Command { command: "ls".into(), cwd: "/".into(), output: "".into(), exit_code: Some(0), duration_ms: None }, status: ItemStatus::Done };
+        assert_eq!(
+            serde_json::to_value(change).unwrap(),
+            serde_json::json!({"type": "status", "status": "waiting", "turn": "u", "error": null})
+        );
+        let item = Item {
+            at: None,
+            id: "c".into(),
+            turn: None,
+            kind: ItemKind::Command { command: "ls".into(), cwd: "/".into(), output: "".into(), exit_code: Some(0), duration_ms: None },
+            status: ItemStatus::Done,
+        };
         let json = serde_json::to_value(item).unwrap();
         assert_eq!(json["kind"]["type"], "command");
         assert_eq!(json["kind"]["exitCode"], 0);
@@ -730,5 +959,7 @@ pub struct Next {
 }
 
 impl Next {
-    pub fn is_empty(&self) -> bool { *self == Next::default() }
+    pub fn is_empty(&self) -> bool {
+        *self == Next::default()
+    }
 }

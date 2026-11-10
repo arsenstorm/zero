@@ -18,7 +18,10 @@ use crate::inbox::{Inbox, InboxEvent};
 /// Serves until the listener fails. The socket is the owner's only: whoever can write to it runs agents.
 pub async fn serve(zerod: Zerod, socket: PathBuf) -> std::io::Result<()> {
     let inbox = Arc::downgrade(&zerod.inbox);
-    zerod.daemon.note_with(Box::new(move |id, text| match inbox.upgrade() { Some(inbox) => super::sessions::with_open_asks(&inbox, id, text), None => text }));
+    zerod.daemon.note_with(Box::new(move |id, text| match inbox.upgrade() {
+        Some(inbox) => super::sessions::with_open_asks(&inbox, id, text),
+        None => text,
+    }));
     let _ = std::fs::remove_file(&socket);
     let listener = UnixListener::bind(&socket)?;
     std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
@@ -35,7 +38,9 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
         while let Some(message) = lines_out.recv().await {
             let mut line = serde_json::to_vec(&message).unwrap_or_default();
             line.push(b'\n');
-            if write.write_all(&line).await.is_err() { break }
+            if write.write_all(&line).await.is_err() {
+                break;
+            }
         }
     });
     let (mut subscription, mut inbox, mut feed) = (None, None, None);
@@ -53,8 +58,12 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
             }
         };
         if request.op == "subscribe" {
-            if subscription.is_none() { subscription = Some(tokio::spawn(subscribe(zerod.daemon.clone(), out.clone(), request.lazy.unwrap_or(false)))) }
-            if feed.is_none() { feed = Some(tokio::spawn(self::feed(zerod.clone(), out.clone()))) }
+            if subscription.is_none() {
+                subscription = Some(tokio::spawn(subscribe(zerod.daemon.clone(), out.clone(), request.lazy.unwrap_or(false))))
+            }
+            if feed.is_none() {
+                feed = Some(tokio::spawn(self::feed(zerod.clone(), out.clone())))
+            }
             let _ = out.send(json!({"id": request.id, "ok": true, "result": null}));
             continue;
         }
@@ -68,11 +77,15 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
             continue;
         }
         if request.op == "browserAnswer" {
-            if let Some(answer) = &request.browser { zerod.browsers.answer(answer) }
+            if let Some(answer) = &request.browser {
+                zerod.browsers.answer(answer)
+            }
             continue;
         }
         if request.op == "inbox" {
-            if inbox.is_none() { inbox = Some(tokio::spawn(follow_inbox(zerod.inbox.clone(), out.clone()))) }
+            if inbox.is_none() {
+                inbox = Some(tokio::spawn(follow_inbox(zerod.inbox.clone(), out.clone())))
+            }
             let _ = out.send(json!({"id": request.id, "ok": true, "result": null}));
             continue;
         }
@@ -86,8 +99,12 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
             let _ = out.send(answer);
         });
     }
-    for task in [subscription, inbox, feed].into_iter().flatten() { task.abort() }
-    if let Some(browser) = browser { zerod.browsers.detach(&browser) }
+    for task in [subscription, inbox, feed].into_iter().flatten() {
+        task.abort()
+    }
+    if let Some(browser) = browser {
+        zerod.browsers.detach(&browser)
+    }
     drop(out);
     let _ = writer.await;
 }
@@ -96,13 +113,16 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
 /// four times a second while sessions change, and every half minute for what changes on its own, places and clocks),
 /// and each notice ("pads").
 async fn feed(zerod: Zerod, out: mpsc::UnboundedSender<Value>) {
-    let (mut sessions, mut asks, mut notices, mut queues) = (zerod.daemon.subscribe(), zerod.inbox.subscribe(), zerod.notices.subscribe(), zerod.daemon.subscribe_queues());
+    let (mut sessions, mut asks, mut notices, mut queues) =
+        (zerod.daemon.subscribe(), zerod.inbox.subscribe(), zerod.notices.subscribe(), zerod.daemon.subscribe_queues());
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
     let mut last: Option<Value> = None;
     loop {
         let rows = json!(zerod.shared_board());
         if last.as_ref() != Some(&rows) {
-            if out.send(json!({"event": "board", "rows": rows})).is_err() { return }
+            if out.send(json!({"event": "board", "rows": rows})).is_err() {
+                return;
+            }
             last = Some(rows);
         }
         tokio::select! {
@@ -138,7 +158,9 @@ async fn subscribe(daemon: Arc<Daemon>, out: mpsc::UnboundedSender<Value>, lazy:
         out.send(json!({"event": "session", "conversation": conversation, "earlier": earlier})).is_ok()
     };
     for session in daemon.sessions() {
-        if !lazy && !snapshot(&mut known, &session) { return }
+        if !lazy && !snapshot(&mut known, &session) {
+            return;
+        }
     }
     loop {
         let sent = match events.recv().await {
@@ -160,7 +182,9 @@ async fn subscribe(daemon: Arc<Daemon>, out: mpsc::UnboundedSender<Value>, lazy:
             }
             Err(broadcast::error::RecvError::Closed) => return,
         };
-        if !sent { return }
+        if !sent {
+            return;
+        }
     }
 }
 
@@ -171,16 +195,22 @@ async fn follow_inbox(inbox: Arc<Inbox>, out: mpsc::UnboundedSender<Value>) {
         let (offline, reachable) = inbox.agents();
         out.send(json!({"event": "asks", "asks": inbox.asks(), "offline": offline, "reachable": reachable})).is_ok()
     };
-    if !snapshot(&inbox) { return }
+    if !snapshot(&inbox) {
+        return;
+    }
     loop {
         let sent = match events.recv().await {
             Ok(InboxEvent::Ask(ask)) => out.send(json!({"event": "ask", "ask": ask})).is_ok(),
             Ok(InboxEvent::Output { id, chunk }) => out.send(json!({"event": "output", "ask": id, "chunk": chunk})).is_ok(),
             Ok(InboxEvent::Removed(id)) => out.send(json!({"event": "removed", "ask": id})).is_ok(),
-            Ok(InboxEvent::Agents { offline, reachable }) => out.send(json!({"event": "agents", "offline": offline, "reachable": reachable})).is_ok(),
+            Ok(InboxEvent::Agents { offline, reachable }) => {
+                out.send(json!({"event": "agents", "offline": offline, "reachable": reachable})).is_ok()
+            }
             Err(broadcast::error::RecvError::Lagged(_)) => snapshot(&inbox),
             Err(broadcast::error::RecvError::Closed) => return,
         };
-        if !sent { return }
+        if !sent {
+            return;
+        }
     }
 }

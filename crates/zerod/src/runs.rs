@@ -17,42 +17,72 @@ pub struct Runs {
 }
 
 impl Runs {
-    pub fn new(dir: PathBuf, host: Option<Host>) -> Runs { Runs { dir, host } }
+    pub fn new(dir: PathBuf, host: Option<Host>) -> Runs {
+        Runs { dir, host }
+    }
 
     /// Starts `command` for ask `id`, in `cwd`: the handle to find it by again ("host:<terminal>", "file:<id>").
     pub async fn start(&self, id: &str, command: &str, cwd: Option<&str>, label: &str) -> Result<String, String> {
         let shell = format!("export ZERO_ASK_ID={id}; {command}");
-        if let Some(host) = &self.host && host.version().await >= Some(2) {
-            let reply = host.request(json!({"op": "spawn", "cwd": cwd.unwrap_or("/"), "argv": ["/bin/zsh", "-lic", shell], "label": label, "record": true})).await
+        if let Some(host) = &self.host
+            && host.version().await >= Some(2)
+        {
+            let reply = host
+                .request(
+                    json!({"op": "spawn", "cwd": cwd.unwrap_or("/"), "argv": ["/bin/zsh", "-lic", shell], "label": label, "record": true}),
+                )
+                .await
                 .ok_or("Zero's terminal host didn't answer")?;
-            let terminal = reply["terminal"]["id"].as_str().ok_or_else(|| reply["error"].as_str().unwrap_or("zero-host started nothing").to_string())?;
+            let terminal = reply["terminal"]["id"]
+                .as_str()
+                .ok_or_else(|| reply["error"].as_str().unwrap_or("zero-host started nothing").to_string())?;
             return Ok(format!("host:{terminal}"));
         }
         std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
-        let (out, exit, pid) = (self.dir.join(format!("{id}.out")), self.dir.join(format!("{id}.exit")), self.dir.join(format!("{id}.pid")));
+        let (out, exit, pid) =
+            (self.dir.join(format!("{id}.out")), self.dir.join(format!("{id}.exit")), self.dir.join(format!("{id}.pid")));
         // The run in the background of a shell that exits at once: launchd takes it on, so nothing of zerod's ends it.
         // The exit code lands whole (written aside, then moved), so a half-written one is never read.
         let script = r#"( /bin/zsh -lic "$ZERO_RUN" < /dev/null > "$ZERO_OUT" 2>&1; echo $? > "$ZERO_EXIT.part"; mv "$ZERO_EXIT.part" "$ZERO_EXIT" ) & echo $! > "$ZERO_PID""#;
         let mut start = std::process::Command::new("/bin/sh");
-        start.args(["-c", script]).env("ZERO_RUN", &shell).env("ZERO_OUT", &out).env("ZERO_EXIT", &exit).env("ZERO_PID", &pid).env("TERM", "dumb")
-            .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
-        if let Some(cwd) = cwd.filter(|c| Path::new(c).is_dir()) { start.current_dir(cwd); }
+        start
+            .args(["-c", script])
+            .env("ZERO_RUN", &shell)
+            .env("ZERO_OUT", &out)
+            .env("ZERO_EXIT", &exit)
+            .env("ZERO_PID", &pid)
+            .env("TERM", "dumb")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        if let Some(cwd) = cwd.filter(|c| Path::new(c).is_dir()) {
+            start.current_dir(cwd);
+        }
         let started = start.status().map_err(|e| format!("The command didn't start: {e}"))?;
-        if !started.success() { return Err("The command didn't start".into()) }
+        if !started.success() {
+            return Err("The command didn't start".into());
+        }
         Ok(format!("file:{id}"))
     }
 
     /// The run's output file and the file its exit code lands in.
     pub fn files(&self, handle: &str) -> Option<(PathBuf, PathBuf)> {
         let (kind, name) = handle.split_once(':')?;
-        let dir = match kind { "host" => self.host.as_ref()?.runs_dir(), "file" => self.dir.clone(), _ => return None };
+        let dir = match kind {
+            "host" => self.host.as_ref()?.runs_dir(),
+            "file" => self.dir.clone(),
+            _ => return None,
+        };
         Some((dir.join(format!("{name}.out")), dir.join(format!("{name}.exit"))))
     }
 
     /// Whether something still runs it: false once it has ended, or nothing knows of it any more.
     pub async fn alive(&self, handle: &str) -> bool {
         match handle.split_once(':') {
-            Some(("host", terminal)) => match &self.host { Some(host) => host.running(terminal).await == Some(true), None => false },
+            Some(("host", terminal)) => match &self.host {
+                Some(host) => host.running(terminal).await == Some(true),
+                None => false,
+            },
             Some(("file", id)) => self.pid(id).is_some_and(|pid| signal(pid, "-0")),
             _ => false,
         }
@@ -61,24 +91,41 @@ impl Runs {
     /// Stops it: the user cancelled the run.
     pub async fn stop(&self, handle: &str) {
         match handle.split_once(':') {
-            Some(("host", terminal)) => if let Some(host) = &self.host { host.shut(terminal).await },
-            Some(("file", id)) => if let Some(pid) = self.pid(id) {
-                // Everything under it, held still so none goes on to what's next, asked to stop, then made to: its
-                // shell is an interactive one (`zsh -lic`), which ignores a polite stop, and signalled only it and its
-                // own children, the command's went on.
-                let tree = tree(pid);
-                for &p in &tree { signal(p, "-STOP"); }
-                for &p in &tree { signal(p, "-TERM"); signal(p, "-CONT"); }
-                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                for &p in &tree { if signal(p, "-0") { signal(p, "-KILL"); } }
-            },
+            Some(("host", terminal)) => {
+                if let Some(host) = &self.host {
+                    host.shut(terminal).await
+                }
+            }
+            Some(("file", id)) => {
+                if let Some(pid) = self.pid(id) {
+                    // Everything under it, held still so none goes on to what's next, asked to stop, then made to: its
+                    // shell is an interactive one (`zsh -lic`), which ignores a polite stop, and signalled only it and its
+                    // own children, the command's went on.
+                    let tree = tree(pid);
+                    for &p in &tree {
+                        signal(p, "-STOP");
+                    }
+                    for &p in &tree {
+                        signal(p, "-TERM");
+                        signal(p, "-CONT");
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                    for &p in &tree {
+                        if signal(p, "-0") {
+                            signal(p, "-KILL");
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
 
     /// Let go of, once its outcome is kept on its ask: its terminal closed (it has ended) and its files gone.
     pub async fn release(&self, handle: &str) {
-        if let (Some(("host", terminal)), Some(host)) = (handle.split_once(':'), &self.host) { host.shut(terminal).await }
+        if let (Some(("host", terminal)), Some(host)) = (handle.split_once(':'), &self.host) {
+            host.shut(terminal).await
+        }
         if let Some((out, exit)) = self.files(handle) {
             let _ = std::fs::remove_file(&out);
             let _ = std::fs::remove_file(&exit);
@@ -86,7 +133,9 @@ impl Runs {
         }
     }
 
-    fn pid(&self, id: &str) -> Option<u32> { std::fs::read_to_string(self.dir.join(format!("{id}.pid"))).ok()?.trim().parse().ok() }
+    fn pid(&self, id: &str) -> Option<u32> {
+        std::fs::read_to_string(self.dir.join(format!("{id}.pid"))).ok()?.trim().parse().ok()
+    }
 }
 
 /// A process and all under it.
@@ -103,8 +152,12 @@ fn tree(pid: u32) -> Vec<u32> {
 }
 
 fn signal(pid: u32, which: &str) -> bool {
-    std::process::Command::new("/bin/kill").args([which, &pid.to_string()]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
-        .status().is_ok_and(|s| s.success())
+    std::process::Command::new("/bin/kill")
+        .args([which, &pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 /// How often a run's files are read.
@@ -125,18 +178,27 @@ pub fn plain(carry: &mut Vec<u8>, bytes: &[u8]) -> String {
                     // CSI: parameters, then a final byte.
                     b'[' => input[i + 2..].iter().position(|b| (0x40..=0x7e).contains(b)).map(|at| i + 2 + at + 1),
                     // OSC: to BEL, or ESC \.
-                    b']' => (i + 2..input.len()).find(|&j| input[j] == 0x07 || (input[j] == 0x1b && input.get(j + 1) == Some(&b'\\')))
+                    b']' => (i + 2..input.len())
+                        .find(|&j| input[j] == 0x07 || (input[j] == 0x1b && input.get(j + 1) == Some(&b'\\')))
                         .map(|j| if input[j] == 0x07 { j + 1 } else { j + 2 }),
                     // A character set (ESC ( B) takes one more byte; anything else is the escape and its letter.
                     b'(' | b')' => (i + 2 < input.len()).then_some(i + 3),
                     _ => Some(i + 2),
                 };
-                match end { Some(end) => i = end, None => break }
+                match end {
+                    Some(end) => i = end,
+                    None => break,
+                }
                 continue;
             }
             b'\r' => {
-                if input.get(i + 1) == Some(&b'\n') { i += 1; continue }
-                if i + 1 == input.len() { break }
+                if input.get(i + 1) == Some(&b'\n') {
+                    i += 1;
+                    continue;
+                }
+                if i + 1 == input.len() {
+                    break;
+                }
                 out.push(b'\n');
             }
             b'\n' | b'\t' => out.push(input[i]),
@@ -147,7 +209,11 @@ pub fn plain(carry: &mut Vec<u8>, bytes: &[u8]) -> String {
     }
     carry.extend_from_slice(&input[i..]);
     // A character cut off at the end waits for the rest of it.
-    let whole = match std::str::from_utf8(&out) { Ok(_) => out.len(), Err(error) if error.error_len().is_none() => error.valid_up_to(), Err(_) => out.len() };
+    let whole = match std::str::from_utf8(&out) {
+        Ok(_) => out.len(),
+        Err(error) if error.error_len().is_none() => error.valid_up_to(),
+        Err(_) => out.len(),
+    };
     let mut rest = out.split_off(whole);
     rest.extend_from_slice(carry);
     *carry = rest;

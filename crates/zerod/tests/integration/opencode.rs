@@ -1,14 +1,19 @@
 //! OpenCode through the Agent Client Protocol (`opencode acp`), on real output (tests/fixtures/opencode-*,
 //! recorded from OpenCode 2.1.4 on opencode-go/beam-free; the approval run had a project config that asks).
 
-
 use crate::common::replay;
 use serde_json::json;
 use zerod::core::Core;
 use zerod::model::{ApprovalKind, Change, ChoiceKind, Conversation, ItemKind, ItemStatus, Provider, Status};
 
 fn approvals(changes: &[Change]) -> Vec<zerod::model::Approval> {
-    changes.iter().filter_map(|c| match c { Change::Approval { approval } => Some(approval.clone()), _ => None }).collect()
+    changes
+        .iter()
+        .filter_map(|c| match c {
+            Change::Approval { approval } => Some(approval.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 #[test]
@@ -46,12 +51,22 @@ fn permission_requests_offer_opencodes_own_options_and_show_the_change_first() {
     assert_eq!(file.kind, ApprovalKind::FileChange);
     assert_eq!(file.title, "Write hello.txt");
     assert_eq!(file.changes.len(), 1);
-    assert_eq!((file.changes[0].path.as_str(), file.changes[0].kind.as_str(), file.changes[0].diff.as_str()), ("/work/project/hello.txt", "add", "hello from zero"));
+    assert_eq!(
+        (file.changes[0].path.as_str(), file.changes[0].kind.as_str(), file.changes[0].diff.as_str()),
+        ("/work/project/hello.txt", "add", "hello from zero")
+    );
     assert_eq!(command.kind, ApprovalKind::Command);
     assert_eq!(command.title, "Run mkdir -p build && touch build/marker");
     assert_eq!(command.cwd.as_deref(), Some("/work/project"));
     let offered: Vec<_> = command.choices.iter().map(|c| (c.id.as_str(), c.label.as_str(), c.kind)).collect();
-    assert_eq!(offered, [("once", "Allow once", ChoiceKind::Allow), ("always", "Always allow", ChoiceKind::AllowAlways), ("reject", "Reject", ChoiceKind::Deny)]);
+    assert_eq!(
+        offered,
+        [
+            ("once", "Allow once", ChoiceKind::Allow),
+            ("always", "Always allow", ChoiceKind::AllowAlways),
+            ("reject", "Reject", ChoiceKind::Deny)
+        ]
+    );
     assert!(core.conversation().approvals.is_empty(), "both answered");
 }
 
@@ -62,7 +77,10 @@ fn a_choice_answers_with_its_option_id() {
         "toolCall": {"toolCallId": "c1", "title": "ls", "kind": "execute", "rawInput": {"command": "ls"}},
         "options": [{"optionId": "once", "kind": "allow_once", "name": "Allow once"}, {"optionId": "reject", "kind": "reject_once", "name": "Reject"}]}}));
     let approval = core.conversation().approvals[0].id.clone();
-    assert_eq!(core.answer(&approval, "reject").unwrap(), json!({"jsonrpc": "2.0", "id": 3, "result": {"outcome": {"outcome": "selected", "optionId": "reject"}}}));
+    assert_eq!(
+        core.answer(&approval, "reject").unwrap(),
+        json!({"jsonrpc": "2.0", "id": 3, "result": {"outcome": {"outcome": "selected", "optionId": "reject"}}})
+    );
 }
 
 #[test]

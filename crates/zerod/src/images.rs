@@ -4,7 +4,10 @@ use std::path::Path;
 
 /// A message's parts in order: its words, and each image where its "[Image #n]" (n counting from 1) stands in them.
 /// The token stays in the words, so the agent can call the image by its number; images never named come last.
-pub enum Part<'a> { Text(String), Image(&'a str) }
+pub enum Part<'a> {
+    Text(String),
+    Image(&'a str),
+}
 
 pub fn parts<'a>(text: &str, images: &'a [String]) -> Vec<Part<'a>> {
     const TOKEN: &str = "[Image #";
@@ -32,7 +35,9 @@ pub fn parts<'a>(text: &str, images: &'a [String]) -> Vec<Part<'a>> {
         }
     }
     words.push_str(rest);
-    if !words.trim().is_empty() { parts.push(Part::Text(words)) }
+    if !words.trim().is_empty() {
+        parts.push(Part::Text(words))
+    }
     parts.extend(images.iter().zip(placed).filter(|(_, placed)| !placed).map(|(path, _)| Part::Image(path)));
     parts
 }
@@ -68,14 +73,25 @@ pub fn base64(bytes: &[u8]) -> String {
 /// Standard base64 back to bytes; none when it isn't base64.
 pub fn unbase64(text: &str) -> Option<Vec<u8>> {
     let value = |c: u8| -> Option<u32> {
-        Some(match c { b'A'..=b'Z' => c - b'A', b'a'..=b'z' => c - b'a' + 26, b'0'..=b'9' => c - b'0' + 52, b'+' | b'-' => 62, b'/' | b'_' => 63, _ => return None } as u32)
+        Some(match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            _ => return None,
+        } as u32)
     };
     let digits: Vec<u8> = text.bytes().filter(|c| !c.is_ascii_whitespace() && *c != b'=').collect();
     let mut out = Vec::with_capacity(digits.len() * 3 / 4);
     for chunk in digits.chunks(4) {
-        if chunk.len() == 1 { return None }
+        if chunk.len() == 1 {
+            return None;
+        }
         let mut n = 0u32;
-        for (i, c) in chunk.iter().enumerate() { n |= value(*c)? << (18 - 6 * i) }
+        for (i, c) in chunk.iter().enumerate() {
+            n |= value(*c)? << (18 - 6 * i)
+        }
         out.extend_from_slice(&n.to_be_bytes()[1..chunk.len()]);
     }
     Some(out)

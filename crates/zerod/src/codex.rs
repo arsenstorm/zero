@@ -6,8 +6,10 @@ use std::collections::HashMap;
 use serde_json::{Value, json};
 
 use crate::adapter::{Adapter, Answers, Effects, INSTRUCTIONS, json_rpc_answer, key};
-use crate::model::{Approval, ApprovalKind, Change, Choice, ChoiceKind, Conversation, Field, FileChange, Item, ItemKind, ItemStatus, Permissions, Question,
-                   QuestionOption, Status};
+use crate::model::{
+    Approval, ApprovalKind, Change, Choice, ChoiceKind, Conversation, Field, FileChange, Item, ItemKind, ItemStatus, Permissions, Question,
+    QuestionOption, Status,
+};
 use crate::session::{Session, Transport};
 
 /// The approval policy and sandbox for a session's permissions. Auto is Codex's own "auto": edit and run in the
@@ -51,14 +53,16 @@ impl Adapter for Codex {
     }
 
     fn answer(&self, approval: &Approval, choice: &str) -> Result<Value, String> {
-        let (id, decisions) = self.requests.get(&approval.id).ok_or_else(|| format!("Codex isn't waiting on \"{}\" any more", approval.title))?;
+        let (id, decisions) =
+            self.requests.get(&approval.id).ok_or_else(|| format!("Codex isn't waiting on \"{}\" any more", approval.title))?;
         let decision = choice.parse::<usize>().ok().and_then(|i| decisions.get(i)).ok_or_else(|| format!("No choice {choice}"))?;
         Ok(json!({"id": id, "result": {"decision": decision}}))
     }
 
     fn reply(&self, question: &Question, answers: &Answers) -> Result<Value, String> {
         let (id, _) = self.requests.get(&question.id).ok_or("Codex isn't waiting on that question any more")?;
-        let answers: serde_json::Map<String, Value> = question.fields.iter().map(|f| (f.id.clone(), json!({"answers": answers[&f.id]}))).collect();
+        let answers: serde_json::Map<String, Value> =
+            question.fields.iter().map(|f| (f.id.clone(), json!({"answers": answers[&f.id]}))).collect();
         Ok(json!({"id": id, "result": {"answers": answers}}))
     }
 
@@ -81,13 +85,17 @@ impl Codex {
             return;
         }
         let result = &message["result"];
-        if (method == "thread/start" || method == "thread/resume") && let Some(thread) = result["thread"]["id"].as_str() {
+        if (method == "thread/start" || method == "thread/resume")
+            && let Some(thread) = result["thread"]["id"].as_str()
+        {
             effects.changes.push(Change::Thread {
                 thread: thread.into(),
                 model: result["model"].as_str().map(Into::into),
                 effort: result["reasoningEffort"].as_str().map(Into::into),
             });
-            if let Some(name) = result["thread"]["name"].as_str() { effects.changes.push(Change::Title { title: Some(name.into()) }) }
+            if let Some(name) = result["thread"]["name"].as_str() {
+                effects.changes.push(Change::Title { title: Some(name.into()) })
+            }
             // A new thread is still starting until its first turn does; a resumed one is waiting for the next.
             if method == "thread/resume" && matches!(conversation.status, Status::Starting | Status::Offline) {
                 effects.changes.push(Change::Status { status: Status::Idle, turn: None, error: None });
@@ -109,21 +117,39 @@ impl Codex {
                 (ApprovalKind::FileChange, file_title(&changes), None, None, changes)
             }
             "item/tool/requestUserInput" => {
-                let fields = params["questions"].as_array().cloned().unwrap_or_default().iter().map(|q| Field {
-                    id: q["id"].as_str().unwrap_or("").into(),
-                    header: q["header"].as_str().filter(|h| !h.is_empty()).map(String::from),
-                    question: q["question"].as_str().unwrap_or("").into(),
-                    options: q["options"].as_array().cloned().unwrap_or_default().iter().map(|o| QuestionOption {
-                        label: o["label"].as_str().unwrap_or("").into(),
-                        description: o["description"].as_str().filter(|d| !d.is_empty()).map(String::from),
-                    }).collect(),
-                    multiple: false,
-                    other: q["isOther"] == true,
-                    secret: q["isSecret"] == true,
-                }).collect();
+                let fields = params["questions"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|q| Field {
+                        id: q["id"].as_str().unwrap_or("").into(),
+                        header: q["header"].as_str().filter(|h| !h.is_empty()).map(String::from),
+                        question: q["question"].as_str().unwrap_or("").into(),
+                        options: q["options"]
+                            .as_array()
+                            .cloned()
+                            .unwrap_or_default()
+                            .iter()
+                            .map(|o| QuestionOption {
+                                label: o["label"].as_str().unwrap_or("").into(),
+                                description: o["description"].as_str().filter(|d| !d.is_empty()).map(String::from),
+                            })
+                            .collect(),
+                        multiple: false,
+                        other: q["isOther"] == true,
+                        secret: q["isSecret"] == true,
+                    })
+                    .collect();
                 self.requests.insert(key(id), (id.clone(), vec![]));
-                effects.changes.push(Change::Question { question: Question { id: key(id), item: params["itemId"].as_str().map(Into::into), fields } });
-                effects.changes.push(Change::Status { status: Status::Waiting, turn: conversation.turn.clone(), error: conversation.error.clone() });
+                effects
+                    .changes
+                    .push(Change::Question { question: Question { id: key(id), item: params["itemId"].as_str().map(Into::into), fields } });
+                effects.changes.push(Change::Status {
+                    status: Status::Waiting,
+                    turn: conversation.turn.clone(),
+                    error: conversation.error.clone(),
+                });
                 return;
             }
             _ => {
@@ -136,8 +162,15 @@ impl Codex {
         };
         let (choices, decisions): (Vec<Choice>, Vec<Value>) = offered(&params["availableDecisions"]).into_iter().unzip();
         let approval = Approval {
-            id: key(id), item: params["itemId"].as_str().map(Into::into), kind, title, command, cwd,
-            reason: params["reason"].as_str().map(Into::into), changes, choices,
+            id: key(id),
+            item: params["itemId"].as_str().map(Into::into),
+            kind,
+            title,
+            command,
+            cwd,
+            reason: params["reason"].as_str().map(Into::into),
+            changes,
+            choices,
         };
         self.requests.insert(approval.id.clone(), (id.clone(), decisions));
         effects.changes.push(Change::Approval { approval });
@@ -149,19 +182,32 @@ fn notification(conversation: &Conversation, method: &str, params: &Value, effec
     match method {
         // A server of Zero's that wants signing in: Codex's own sign-in for it, its link for the user.
         "mcpServer/startupStatus/updated" if params["failureReason"] == "reauthenticationRequired" => {
-            if let Some(name) = params["name"].as_str() && crate::mcp_servers::signs_in(conversation, name).is_some() {
+            if let Some(name) = params["name"].as_str()
+                && crate::mcp_servers::signs_in(conversation, name).is_some()
+            {
                 effects.replies.push(json!({"id": format!("{}{name}", crate::mcp_servers::SIGN_IN), "method": "mcpServer/oauth/login",
                                             "params": {"name": name, "threadId": params["threadId"]}}));
             }
         }
         "mcpServer/oauthLogin/completed" => {
-            if let Some(name) = params["name"].as_str() && let Some(server) = crate::mcp_servers::signs_in(conversation, name) {
-                if params["success"] == true { effects.notice(conversation, &format!("Signed in to {}", server.name), false) }
-                else { effects.notice(conversation, &format!("Couldn't sign in to {}: {}", server.name, params["error"].as_str().unwrap_or("no reason given")), true) }
+            if let Some(name) = params["name"].as_str()
+                && let Some(server) = crate::mcp_servers::signs_in(conversation, name)
+            {
+                if params["success"] == true {
+                    effects.notice(conversation, &format!("Signed in to {}", server.name), false)
+                } else {
+                    effects.notice(
+                        conversation,
+                        &format!("Couldn't sign in to {}: {}", server.name, params["error"].as_str().unwrap_or("no reason given")),
+                        true,
+                    )
+                }
             }
         }
         "thread/started" => {
-            if let Some(name) = params["thread"]["name"].as_str() { effects.changes.push(Change::Title { title: Some(name.into()) }) }
+            if let Some(name) = params["thread"]["name"].as_str() {
+                effects.changes.push(Change::Title { title: Some(name.into()) })
+            }
         }
         "thread/name/updated" => effects.changes.push(Change::Title { title: params["threadName"].as_str().map(Into::into) }),
         "thread/status/changed" => {
@@ -173,10 +219,18 @@ fn notification(conversation: &Conversation, method: &str, params: &Value, effec
                 Some("active") => Status::Working,
                 _ => return,
             };
-            let error = if params["status"]["type"] == "systemError" { Some("Codex had a system error".into()) } else { conversation.error.clone() };
+            let error = if params["status"]["type"] == "systemError" {
+                Some("Codex had a system error".into())
+            } else {
+                conversation.error.clone()
+            };
             effects.changes.push(Change::Status { status, turn: conversation.turn.clone(), error });
         }
-        "turn/started" => effects.changes.push(Change::Status { status: Status::Working, turn: params["turn"]["id"].as_str().map(Into::into), error: None }),
+        "turn/started" => effects.changes.push(Change::Status {
+            status: Status::Working,
+            turn: params["turn"]["id"].as_str().map(Into::into),
+            error: None,
+        }),
         "turn/completed" => {
             let finished = &params["turn"];
             let mut error = None;
@@ -205,19 +259,27 @@ fn notification(conversation: &Conversation, method: &str, params: &Value, effec
             // Reasoning only becomes an item once it says something.
             if method == "item/reasoning/summaryTextDelta" && conversation.item(item).is_none() {
                 let kind = ItemKind::Reasoning { text: String::new() };
-                effects.changes.push(Change::Item { item: Item { at: None, id: item.into(), turn: turn.map(Into::into), kind, status: ItemStatus::Running } });
+                effects.changes.push(Change::Item {
+                    item: Item { at: None, id: item.into(), turn: turn.map(Into::into), kind, status: ItemStatus::Running },
+                });
             }
             effects.changes.push(Change::Delta { item: item.into(), text: text.into() });
         }
         "turn/diff/updated" => effects.changes.push(Change::Diff { diff: params["diff"].as_str().map(Into::into) }),
         "turn/plan/updated" => {
             let steps = params["plan"].as_array().cloned().unwrap_or_default();
-            let text = steps.iter().map(|step| {
-                let mark = if step["status"] == "completed" { "[x]" } else { "[ ]" };
-                format!("- {mark} {}", step["step"].as_str().unwrap_or(""))
-            }).collect::<Vec<_>>().join("\n");
+            let text = steps
+                .iter()
+                .map(|step| {
+                    let mark = if step["status"] == "completed" { "[x]" } else { "[ ]" };
+                    format!("- {mark} {}", step["step"].as_str().unwrap_or(""))
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
             let id = format!("plan-{}", turn.unwrap_or("turn"));
-            effects.changes.push(Change::Item { item: Item { at: None, id, turn: turn.map(Into::into), kind: ItemKind::Plan { text }, status: ItemStatus::Running } });
+            effects.changes.push(Change::Item {
+                item: Item { at: None, id, turn: turn.map(Into::into), kind: ItemKind::Plan { text }, status: ItemStatus::Running },
+            });
         }
         "error" => {
             let retrying = params["willRetry"].as_bool() == Some(true);
@@ -228,8 +290,11 @@ fn notification(conversation: &Conversation, method: &str, params: &Value, effec
         "account/rateLimits/updated" => effects.changes.push(Change::Usage { usage: usage(&params["rateLimits"]) }),
         "serverRequest/resolved" => {
             let settled = key(&params["requestId"]);
-            if conversation.approvals.iter().any(|a| a.id == settled) { effects.changes.push(Change::Resolved { approval: settled }) }
-            else if conversation.questions.iter().any(|q| q.id == settled) { effects.changes.push(Change::Answered { question: settled }) }
+            if conversation.approvals.iter().any(|a| a.id == settled) {
+                effects.changes.push(Change::Resolved { approval: settled })
+            } else if conversation.questions.iter().any(|q| q.id == settled) {
+                effects.changes.push(Change::Answered { question: settled })
+            }
         }
         // Hooks, MCP start-up, token use, rate limits and the rest: kept in the transcript, not shown.
         _ => {}
@@ -238,21 +303,38 @@ fn notification(conversation: &Conversation, method: &str, params: &Value, effec
 
 /// Codex's rate limits (`account/rateLimits/*`): its primary and secondary windows, by their length.
 pub fn usage(limits: &Value) -> crate::model::Usage {
-    let windows: Vec<crate::model::UsageWindow> = ["primary", "secondary"].iter().filter_map(|key| {
-        let window = limits.get(*key).filter(|w| w.is_object())?;
-        let minutes = window["windowDurationMins"].as_i64().unwrap_or(0);
-        let name = match minutes { 300 => "5 hours".into(), 10080 => "7 days".into(), m if m % 1440 == 0 => format!("{} days", m / 1440), m => format!("{} hours", m / 60) };
-        Some(crate::model::UsageWindow { name, used: window["usedPercent"].as_f64().unwrap_or(0.0) / 100.0, resets_at: window["resetsAt"].as_i64() })
-    }).collect();
+    let windows: Vec<crate::model::UsageWindow> = ["primary", "secondary"]
+        .iter()
+        .filter_map(|key| {
+            let window = limits.get(*key).filter(|w| w.is_object())?;
+            let minutes = window["windowDurationMins"].as_i64().unwrap_or(0);
+            let name = match minutes {
+                300 => "5 hours".into(),
+                10080 => "7 days".into(),
+                m if m % 1440 == 0 => format!("{} days", m / 1440),
+                m => format!("{} hours", m / 60),
+            };
+            Some(crate::model::UsageWindow {
+                name,
+                used: window["usedPercent"].as_f64().unwrap_or(0.0) / 100.0,
+                resets_at: window["resetsAt"].as_i64(),
+            })
+        })
+        .collect();
     let full = windows.iter().find(|w| w.used >= 1.0);
     crate::model::Usage { limited: full.is_some(), resets_at: full.and_then(|w| w.resets_at), windows }
 }
 
 /// The items of the turns Zero doesn't know yet (those run in Codex's own terminal), from `thread/read`'s turns.
 pub fn new_turn_items(turns: &Value, known: &std::collections::HashSet<String>) -> Vec<Item> {
-    turns.as_array().into_iter().flatten()
+    turns
+        .as_array()
+        .into_iter()
+        .flatten()
         .filter(|turn| turn["id"].as_str().is_some_and(|id| !known.contains(id)))
-        .flat_map(|turn| turn["items"].as_array().into_iter().flatten().filter_map(|value| item(value, turn["id"].as_str())).collect::<Vec<_>>())
+        .flat_map(|turn| {
+            turn["items"].as_array().into_iter().flatten().filter_map(|value| item(value, turn["id"].as_str())).collect::<Vec<_>>()
+        })
         .collect()
 }
 
@@ -260,9 +342,12 @@ pub fn new_turn_items(turns: &Value, known: &std::collections::HashSet<String>) 
 pub async fn catch_up(session: &Session) -> Result<(), String> {
     let conversation = session.snapshot();
     let thread = conversation.thread.clone().ok_or("Codex has no thread to read")?;
-    let read = session.request(|id| json!({"id": id, "method": "thread/read", "params": {"threadId": thread, "includeTurns": true}})).await?;
+    let read =
+        session.request(|id| json!({"id": id, "method": "thread/read", "params": {"threadId": thread, "includeTurns": true}})).await?;
     let known: std::collections::HashSet<String> = conversation.items.iter().filter_map(|i| i.turn.clone()).collect();
-    for item in new_turn_items(&read["thread"]["turns"], &known) { session.change(Change::Item { item }) }
+    for item in new_turn_items(&read["thread"]["turns"], &known) {
+        session.change(Change::Item { item })
+    }
     Ok(())
 }
 
@@ -278,11 +363,15 @@ fn item(value: &Value, turn: Option<&str>) -> Option<Item> {
     let (kind, state) = match value["type"].as_str()? {
         "userMessage" => {
             let parts = value["content"].as_array().cloned().unwrap_or_default();
-            let text = parts.iter().map(|part| match part["type"].as_str() {
-                Some("text") => part["text"].as_str().unwrap_or("").to_string(),
-                Some(other) => format!("[{other}]"),
-                None => String::new(),
-            }).collect::<Vec<_>>().join("\n");
+            let text = parts
+                .iter()
+                .map(|part| match part["type"].as_str() {
+                    Some("text") => part["text"].as_str().unwrap_or("").to_string(),
+                    Some(other) => format!("[{other}]"),
+                    None => String::new(),
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
             (ItemKind::User { text, images: vec![] }, ItemStatus::Done)
         }
         "agentMessage" => {
@@ -291,34 +380,57 @@ fn item(value: &Value, turn: Option<&str>) -> Option<Item> {
             (ItemKind::Agent { text: text("text"), final_answer: value["phase"] == "final_answer" }, state)
         }
         "reasoning" => {
-            let summary = value["summary"].as_array().map(|parts| parts.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n\n")).unwrap_or_default();
-            if summary.is_empty() { return None }
+            let summary = value["summary"]
+                .as_array()
+                .map(|parts| parts.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n\n"))
+                .unwrap_or_default();
+            if summary.is_empty() {
+                return None;
+            }
             (ItemKind::Reasoning { text: summary }, ItemStatus::Done)
         }
         "plan" => (ItemKind::Plan { text: text("text") }, ItemStatus::Done),
         "commandExecution" => {
             let kind = ItemKind::Command {
-                command: actions(value).unwrap_or_else(|| unwrap_shell(&text("command"))), cwd: text("cwd"),
-                output: text("aggregatedOutput"), exit_code: value["exitCode"].as_i64(), duration_ms: value["durationMs"].as_i64(),
+                command: actions(value).unwrap_or_else(|| unwrap_shell(&text("command"))),
+                cwd: text("cwd"),
+                output: text("aggregatedOutput"),
+                exit_code: value["exitCode"].as_i64(),
+                duration_ms: value["durationMs"].as_i64(),
             };
             (kind, status("status"))
         }
         "fileChange" => {
-            let changes = value["changes"].as_array().cloned().unwrap_or_default().iter().map(|change| FileChange {
-                path: change["path"].as_str().unwrap_or("").into(),
-                kind: change["kind"]["type"].as_str().unwrap_or("update").into(),
-                move_path: change["kind"]["move_path"].as_str().map(Into::into),
-                diff: change["diff"].as_str().unwrap_or("").into(),
-            }).collect();
+            let changes = value["changes"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .map(|change| FileChange {
+                    path: change["path"].as_str().unwrap_or("").into(),
+                    kind: change["kind"]["type"].as_str().unwrap_or("update").into(),
+                    move_path: change["kind"]["move_path"].as_str().map(Into::into),
+                    diff: change["diff"].as_str().unwrap_or("").into(),
+                })
+                .collect();
             (ItemKind::FileChange { changes }, status("status"))
         }
-        "mcpToolCall" => (ItemKind::Tool { name: format!("{}.{}", text("server"), text("tool")), detail: value["arguments"].to_string() }, status("status")),
+        "mcpToolCall" => (
+            ItemKind::Tool { name: format!("{}.{}", text("server"), text("tool")), detail: value["arguments"].to_string() },
+            status("status"),
+        ),
         "dynamicToolCall" => (ItemKind::Tool { name: text("tool"), detail: value["arguments"].to_string() }, status("status")),
         "webSearch" => (ItemKind::Tool { name: "Web search".into(), detail: text("query") }, ItemStatus::Done),
         "imageView" => (ItemKind::Tool { name: "View image".into(), detail: text("path") }, ItemStatus::Done),
         "contextCompaction" => {
             let kind = ItemKind::Notice { text: "Conversation compacted".into(), error: false };
-            return Some(Item { at: None, id: format!("{}{id}", crate::adapter::COMPACTED), turn: turn.map(Into::into), kind, status: ItemStatus::Done });
+            return Some(Item {
+                at: None,
+                id: format!("{}{id}", crate::adapter::COMPACTED),
+                turn: turn.map(Into::into),
+                kind,
+                status: ItemStatus::Done,
+            });
         }
         // Codex's own bookkeeping: in the transcript, nothing to read.
         "hookPrompt" | "functionCallOutput" => return None,
@@ -338,7 +450,11 @@ pub fn file_title(changes: &[FileChange]) -> String {
     match changes {
         [] => "Change files".into(),
         [one] => {
-            let verb = match one.kind.as_str() { "add" => "Add", "delete" => "Delete", _ => "Edit" };
+            let verb = match one.kind.as_str() {
+                "add" => "Add",
+                "delete" => "Delete",
+                _ => "Edit",
+            };
             format!("{verb} {}", one.path.rsplit('/').next().unwrap_or(&one.path))
         }
         many => format!("Edit {} files", many.len()),
@@ -350,24 +466,28 @@ pub fn file_title(changes: &[FileChange]) -> String {
 fn offered(available: &Value) -> Vec<(Choice, Value)> {
     let fallback = json!(["accept", "acceptForSession", "decline", "cancel"]);
     let list = available.as_array().unwrap_or_else(|| fallback.as_array().unwrap());
-    list.iter().filter_map(|decision| {
-        let (label, kind) = match decision {
-            Value::String(name) => match name.as_str() {
-                "accept" => ("Allow".to_string(), ChoiceKind::Allow),
-                "acceptForSession" => ("Allow for this session".into(), ChoiceKind::AllowSession),
-                "decline" => ("Deny".into(), ChoiceKind::Deny),
-                "cancel" => ("Deny and stop".into(), ChoiceKind::Stop),
+    list.iter()
+        .filter_map(|decision| {
+            let (label, kind) = match decision {
+                Value::String(name) => match name.as_str() {
+                    "accept" => ("Allow".to_string(), ChoiceKind::Allow),
+                    "acceptForSession" => ("Allow for this session".into(), ChoiceKind::AllowSession),
+                    "decline" => ("Deny".into(), ChoiceKind::Deny),
+                    "cancel" => ("Deny and stop".into(), ChoiceKind::Stop),
+                    _ => return None,
+                },
+                Value::Object(fields) => {
+                    let rule = fields.get("acceptWithExecpolicyAmendment")?["execpolicy_amendment"].as_array()?;
+                    let words: Vec<&str> = rule.iter().filter_map(Value::as_str).collect();
+                    (format!("Always allow {}", words.join(" ")), ChoiceKind::AllowAlways)
+                }
                 _ => return None,
-            },
-            Value::Object(fields) => {
-                let rule = fields.get("acceptWithExecpolicyAmendment")?["execpolicy_amendment"].as_array()?;
-                let words: Vec<&str> = rule.iter().filter_map(Value::as_str).collect();
-                (format!("Always allow {}", words.join(" ")), ChoiceKind::AllowAlways)
-            }
-            _ => return None,
-        };
-        Some((label, kind, decision.clone()))
-    }).enumerate().map(|(i, (label, kind, decision))| (Choice { id: i.to_string(), label, kind }, decision)).collect()
+            };
+            Some((label, kind, decision.clone()))
+        })
+        .enumerate()
+        .map(|(i, (label, kind, decision))| (Choice { id: i.to_string(), label, kind }, decision))
+        .collect()
 }
 
 /// `/bin/zsh -lc 'ls -la'` reads `ls -la`: the shell Codex wraps commands in isn't what the agent asked for.
@@ -382,22 +502,31 @@ fn unwrap_shell(command: &str) -> String {
 
 /// Your words as Codex's turn input, each image as its file where its token stands (images.rs).
 pub fn input(text: &str, images: &[String]) -> Value {
-    if images.is_empty() { return json!([{"type": "text", "text": text, "text_elements": []}]) }
-    let parts: Vec<Value> = crate::images::parts(text, images).into_iter().map(|part| match part {
-        crate::images::Part::Text(text) => json!({"type": "text", "text": text, "text_elements": []}),
-        crate::images::Part::Image(path) => json!({"type": "localImage", "path": path}),
-    }).collect();
+    if images.is_empty() {
+        return json!([{"type": "text", "text": text, "text_elements": []}]);
+    }
+    let parts: Vec<Value> = crate::images::parts(text, images)
+        .into_iter()
+        .map(|part| match part {
+            crate::images::Part::Text(text) => json!({"type": "text", "text": text, "text_elements": []}),
+            crate::images::Part::Image(path) => json!({"type": "localImage", "path": path}),
+        })
+        .collect();
     Value::Array(parts)
 }
 
 // The session's side: what Zero says to Codex, in order.
 
-pub async fn start(session: &Session, transport: Transport, prompt: &str, images: &[String], model: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+pub async fn start(
+    session: &Session, transport: Transport, prompt: &str, images: &[String], model: Option<&str>, effort: Option<&str>,
+) -> Result<(), String> {
     handshake(session, transport).await?;
     let conversation = session.snapshot();
     let (approvals, sandbox) = policy(conversation.permissions);
     let mut params = json!({"cwd": conversation.cwd, "model": model, "approvalPolicy": approvals, "sandbox": sandbox, "developerInstructions": INSTRUCTIONS});
-    if !conversation.mcp.is_empty() { params["config"] = mcp_config(&conversation.mcp) }
+    if !conversation.mcp.is_empty() {
+        params["config"] = mcp_config(&conversation.mcp)
+    }
     session.request(|id| json!({"id": id, "method": "thread/start", "params": params})).await?;
     let thread = session.snapshot().thread.ok_or("Codex started no thread")?;
     turn(session, &thread, input(prompt, images), model, effort).await
@@ -419,22 +548,30 @@ pub async fn resume(session: &Session, transport: Transport) -> Result<(), Strin
     let (approvals, sandbox) = policy(conversation.permissions);
     let mut params = json!({"threadId": thread, "cwd": conversation.cwd, "approvalPolicy": approvals, "sandbox": sandbox,
                             "developerInstructions": INSTRUCTIONS, "excludeTurns": true});
-    if let Some(model) = &conversation.model { params["model"] = json!(model) }
-    if !conversation.mcp.is_empty() { params["config"] = mcp_config(&conversation.mcp) }
+    if let Some(model) = &conversation.model {
+        params["model"] = json!(model)
+    }
+    if !conversation.mcp.is_empty() {
+        params["config"] = mcp_config(&conversation.mcp)
+    }
     session.request(|id| json!({"id": id, "method": "thread/resume", "params": params})).await.map(|_| ())
 }
 
 /// Zero's MCP servers as config overrides for a thread (`mcp_servers.<id>`), over stdin: on top of the user's own.
 pub fn mcp_config(servers: &[crate::mcp_servers::Resolved]) -> Value {
-    let pairs = |values: &[(String, String)]| -> serde_json::Map<String, Value> { values.iter().map(|(k, v)| (k.clone(), json!(v))).collect() };
-    let config: serde_json::Map<String, Value> = servers.iter().filter_map(|server| {
-        let entry = match (&server.command, &server.url) {
-            (Some(command), _) => json!({"command": command, "args": server.args, "env": pairs(&server.env)}),
-            (None, Some(url)) => json!({"url": url, "http_headers": pairs(&server.headers)}),
-            (None, None) => return None,
-        };
-        Some((format!("mcp_servers.{}", server.id), entry))
-    }).collect();
+    let pairs =
+        |values: &[(String, String)]| -> serde_json::Map<String, Value> { values.iter().map(|(k, v)| (k.clone(), json!(v))).collect() };
+    let config: serde_json::Map<String, Value> = servers
+        .iter()
+        .filter_map(|server| {
+            let entry = match (&server.command, &server.url) {
+                (Some(command), _) => json!({"command": command, "args": server.args, "env": pairs(&server.env)}),
+                (None, Some(url)) => json!({"url": url, "http_headers": pairs(&server.headers)}),
+                (None, None) => return None,
+            };
+            Some((format!("mcp_servers.{}", server.id), entry))
+        })
+        .collect();
     Value::Object(config)
 }
 
@@ -445,7 +582,8 @@ async fn take_over(session: &Session, conversation: &Conversation) -> Result<Str
     let id = crate::claude::new_session_id();
     let folder = crate::handoff::claude_folder(&home, &conversation.cwd);
     let copy = folder.join(format!("{id}.jsonl"));
-    std::fs::create_dir_all(&folder).and_then(|_| std::fs::write(&copy, crate::handoff::claude_session(conversation, &id)))
+    std::fs::create_dir_all(&folder)
+        .and_then(|_| std::fs::write(&copy, crate::handoff::claude_session(conversation, &id)))
         .map_err(|e| format!("Couldn't write the conversation for Codex: {e}"))?;
     let imported = import(session, &copy.to_string_lossy()).await;
     let _ = std::fs::remove_file(&copy);
@@ -453,19 +591,31 @@ async fn take_over(session: &Session, conversation: &Conversation) -> Result<Str
 }
 
 async fn import(session: &Session, path: &str) -> Result<String, String> {
-    let detected = session.request(|id| json!({"id": id, "method": "externalAgentConfig/detect", "params": {"includeHome": true, "maxSessions": 20}})).await?;
-    let mut item = detected["items"].as_array().into_iter().flatten().find(|i| i["itemType"] == "SESSIONS").cloned()
+    let detected = session
+        .request(|id| json!({"id": id, "method": "externalAgentConfig/detect", "params": {"includeHome": true, "maxSessions": 20}}))
+        .await?;
+    let mut item = detected["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|i| i["itemType"] == "SESSIONS")
+        .cloned()
         .ok_or("Codex found no conversations to take over")?;
     let ours: Vec<Value> = item["details"]["sessions"].as_array().into_iter().flatten().filter(|s| s["path"] == path).cloned().collect();
-    if ours.is_empty() { return Err("Codex didn't find the conversation Zero wrote for it".into()) }
+    if ours.is_empty() {
+        return Err("Codex didn't find the conversation Zero wrote for it".into());
+    }
     item["details"]["sessions"] = Value::Array(ours);
-    let started = session.request(|id| json!({"id": id, "method": "externalAgentConfig/import", "params": {"migrationItems": [item]}})).await?;
+    let started =
+        session.request(|id| json!({"id": id, "method": "externalAgentConfig/import", "params": {"migrationItems": [item]}})).await?;
     let import = started["importId"].as_str().ok_or("Codex didn't start the import")?.to_string();
     // ponytail: polls its import history; the completed notification when the adapter can hand notifications to a waiter.
     for _ in 0..240 {
         let read = session.request(|id| json!({"id": id, "method": "externalAgentConfig/import/readHistories"})).await?;
         if let Some(done) = read["data"].as_array().into_iter().flatten().find(|h| h["importId"] == import.as_str()) {
-            if let Some(thread) = done["successes"].as_array().into_iter().flatten().find_map(|s| s["target"].as_str()) { return Ok(thread.into()) }
+            if let Some(thread) = done["successes"].as_array().into_iter().flatten().find_map(|s| s["target"].as_str()) {
+                return Ok(thread.into());
+            }
             let why = done["failures"][0]["message"].as_str().unwrap_or("no reason given");
             return Err(format!("Codex couldn't take over the conversation: {why}"));
         }
@@ -476,10 +626,14 @@ async fn import(session: &Session, path: &str) -> Result<String, String> {
 
 async fn handshake(session: &Session, transport: Transport) -> Result<(), String> {
     session.attach(transport);
-    session.request(|id| json!({"id": id, "method": "initialize", "params": {
-        "clientInfo": {"name": "zero", "title": "Zero", "version": env!("CARGO_PKG_VERSION")},
-        "capabilities": {"experimentalApi": false, "requestAttestation": false},
-    }})).await?;
+    session
+        .request(|id| {
+            json!({"id": id, "method": "initialize", "params": {
+                "clientInfo": {"name": "zero", "title": "Zero", "version": env!("CARGO_PKG_VERSION")},
+                "capabilities": {"experimentalApi": false, "requestAttestation": false},
+            }})
+        })
+        .await?;
     session.write(json!({"method": "initialized"}))
 }
 

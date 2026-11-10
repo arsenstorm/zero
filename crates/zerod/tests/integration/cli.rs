@@ -21,7 +21,9 @@ async fn serve(name: &str) -> (Arc<Inbox>, PathBuf) {
     inbox.configure(Duration::from_millis(50), 3600);
     tokio::spawn(zerod::cli::serve(inbox.clone(), socket.clone()));
     for _ in 0..100 {
-        if UnixStream::connect(&socket).await.is_ok() { break }
+        if UnixStream::connect(&socket).await.is_ok() {
+            break;
+        }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     (inbox, socket)
@@ -93,7 +95,10 @@ async fn a_run_streams_its_output_to_the_waiting_agent() {
         let message = cli.next().await.unwrap();
         match message["op"].as_str().unwrap() {
             "output" => streamed += message["chunk"].as_str().unwrap(),
-            "done" => { assert_eq!(message["ask"]["exitCode"], 4); break }
+            "done" => {
+                assert_eq!(message["ask"]["exitCode"], 4);
+                break;
+            }
             other => panic!("{other}"),
         }
     }
@@ -128,7 +133,10 @@ async fn status_list_withdraw_and_prompt_answer_as_the_app_did() {
     // Open ones only, when asked: `zero list` sent every ask ever made (hundreds of kilobytes) to show a few.
     Line::open(&socket, json!({"op": "create", "ask": ask("note", "Done a thing", &[]), "wait": false})).await.next().await.unwrap();
     let open = Line::open(&socket, json!({"op": "list", "open": true})).await.next().await.unwrap();
-    assert!(open["asks"].as_array().unwrap().iter().all(|a| a["state"] == "waiting" || a["state"] == "pending" || a["state"] == "running"), "{open}");
+    assert!(
+        open["asks"].as_array().unwrap().iter().all(|a| a["state"] == "waiting" || a["state"] == "pending" || a["state"] == "running"),
+        "{open}"
+    );
     assert_eq!(open["asks"][0]["id"], id.as_str());
     let prompt = json!({"op": "prompt", "ask": {"id": "", "kind": "message", "title": "Prompt", "body": "just merge it", "options": [],
         "agent": agent(), "createdAt": "2026-10-26T12:00:00Z", "expiresAt": "2026-10-26T12:00:00Z", "state": "waiting", "output": ""}});

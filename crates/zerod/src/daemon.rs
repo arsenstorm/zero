@@ -22,17 +22,17 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use tokio::sync::broadcast;
 
-use crate::{claude, now, now_ms};
 use crate::model::{Attention, Change, Conversation, Event, ItemKind, Opened, Permissions, Provider, Queued, Status};
 use crate::process;
 use crate::session::{Message, ModelChoice, Session, Transport};
+use crate::{claude, now, now_ms};
 
+use archive::archived_with;
 pub use heard::report;
 pub use inbox::Sessions;
 pub use rewind::Rewind;
-pub use terminals::terminal_command;
-use archive::archived_with;
 use send::kept_pending;
+pub use terminals::terminal_command;
 
 /// Starts a session's runtime process: its conversation, its folder in the daemon's home, and the command line
 /// its provider starts with.
@@ -216,7 +216,10 @@ fn park_every_minute(daemon: &Arc<Daemon>) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(60)).await;
-            match parker.upgrade() { Some(daemon) => daemon.park(), None => return }
+            match parker.upgrade() {
+                Some(daemon) => daemon.park(),
+                None => return,
+            }
         }
     });
 }
@@ -228,7 +231,10 @@ fn hear_sessions(daemon: &Arc<Daemon>) {
     tokio::spawn(async move {
         loop {
             match heard.recv().await {
-                Ok(event) => match weak.upgrade() { Some(daemon) => daemon.heard(&event.session), None => return },
+                Ok(event) => match weak.upgrade() {
+                    Some(daemon) => daemon.heard(&event.session),
+                    None => return,
+                },
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(broadcast::error::RecvError::Closed) => return,
             }
@@ -240,7 +246,9 @@ fn hear_sessions(daemon: &Arc<Daemon>) {
 /// however the turn ended, a question to the user in prose included (the user's queued words answer it). Out of usage,
 /// it waits for the reset, which tells it to go on.
 fn between_turns(conversation: &Conversation) -> bool {
-    conversation.status == Status::Idle && conversation.approvals.is_empty() && conversation.questions.is_empty()
+    conversation.status == Status::Idle
+        && conversation.approvals.is_empty()
+        && conversation.questions.is_empty()
         && conversation.attention() != Attention::Limited
 }
 
@@ -264,7 +272,8 @@ impl Daemon {
         std::fs::create_dir_all(&root)?;
         // ponytail: 4096 changes of slack per subscriber; one that falls further behind gets fresh snapshots.
         let (events, _) = broadcast::channel(4096);
-        let mut dirs: Vec<PathBuf> = std::fs::read_dir(&root)?.filter_map(|entry| entry.ok().map(|e| e.path())).filter(|p| p.is_dir()).collect();
+        let mut dirs: Vec<PathBuf> =
+            std::fs::read_dir(&root)?.filter_map(|entry| entry.ok().map(|e| e.path())).filter(|p| p.is_dir()).collect();
         dirs.sort(); // ids sort by when they were made
         let (mut sessions, mut attention, mut pending, mut held) = (vec![], HashMap::new(), HashMap::new(), HashSet::new());
         for dir in dirs {
@@ -273,24 +282,56 @@ impl Daemon {
                     let conversation = session.summary();
                     attention.insert(conversation.id.clone(), conversation.attention());
                     let words = kept_pending(&dir);
-                    if !words.is_empty() { pending.insert(conversation.id.clone(), words); }
-                    if dir.join(HELD).exists() { held.insert(conversation.id.clone()); }
+                    if !words.is_empty() {
+                        pending.insert(conversation.id.clone(), words);
+                    }
+                    if dir.join(HELD).exists() {
+                        held.insert(conversation.id.clone());
+                    }
                     sessions.push(session);
                 }
                 Err(error) => eprintln!("zerod: skipped {}: {error}", dir.display()),
             }
         }
         let daemon = Arc::new_cyclic(|me| Daemon {
-            home: home.into(), sessions: Mutex::new(sessions), events, runtime, attention: Mutex::new(attention), pending: Mutex::new(pending),
-            held: Mutex::new(held), delivering: Mutex::new(HashSet::new()), queues: broadcast::channel(64).0,
-            resets: Mutex::new(HashMap::new()), me: me.clone(), user: Mutex::new(user_places()), restarting: Default::default(), held_up: Mutex::default(), updating: Mutex::default(), sent_back: Mutex::default(), carried_on: Mutex::default(), counted: Mutex::default(), reminded_rows: Mutex::default(), leaving: Mutex::default(), archiving: Mutex::default(), archive_index: Mutex::default(), blocked: Default::default(), noted: Default::default(), crossed: Mutex::default(), crossing: Mutex::default(), naming: Default::default(), signed_out: Mutex::default(), endings: Default::default(),
+            home: home.into(),
+            sessions: Mutex::new(sessions),
+            events,
+            runtime,
+            attention: Mutex::new(attention),
+            pending: Mutex::new(pending),
+            held: Mutex::new(held),
+            delivering: Mutex::new(HashSet::new()),
+            queues: broadcast::channel(64).0,
+            resets: Mutex::new(HashMap::new()),
+            me: me.clone(),
+            user: Mutex::new(user_places()),
+            restarting: Default::default(),
+            held_up: Mutex::default(),
+            updating: Mutex::default(),
+            sent_back: Mutex::default(),
+            carried_on: Mutex::default(),
+            counted: Mutex::default(),
+            reminded_rows: Mutex::default(),
+            leaving: Mutex::default(),
+            archiving: Mutex::default(),
+            archive_index: Mutex::default(),
+            blocked: Default::default(),
+            noted: Default::default(),
+            crossed: Mutex::default(),
+            crossing: Mutex::default(),
+            naming: Default::default(),
+            signed_out: Mutex::default(),
+            endings: Default::default(),
             workspaces: crate::workspaces::Workspaces::open(home),
             mcp_servers: crate::mcp_servers::McpServers::open(home),
             signins: crate::signins::SignIns::open(home),
             resuming: Mutex::new(HashMap::new()),
             watches: Mutex::new(crate::watches::load(home).into_iter().map(|w| (w.id.clone(), w)).collect()),
             schedules: Mutex::new(crate::schedules::load(home)),
-            paused: Mutex::new(std::fs::read(home.join(PAUSED)).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default()),
+            paused: Mutex::new(
+                std::fs::read(home.join(PAUSED)).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default(),
+            ),
             saved: Mutex::new(std::fs::read(home.join(SAVED)).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default()),
             seen: Mutex::new(std::fs::read(home.join(SEEN)).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default()),
         });
@@ -333,12 +374,27 @@ impl Daemon {
 
     /// A table the agent hands to Zero to draw, as an item of its conversation where it stands in the turn.
     pub fn table(&self, id: &str, title: &str, columns: Vec<String>, rows: Vec<Vec<String>>) -> Result<(), String> {
-        if columns.is_empty() { return Err("A table needs columns".into()) }
+        if columns.is_empty() {
+            return Err("A table needs columns".into());
+        }
         let session = self.session(id)?;
         let conversation = session.snapshot();
-        let rows = rows.into_iter().map(|mut row| { row.resize(columns.len(), String::new()); row }).collect();
-        session.change(Change::Item { item: crate::model::Item { at: None, id: format!("table-{}", conversation.seq + 1), turn: conversation.turn.clone(),
-                                                                  kind: ItemKind::Table { title: title.into(), columns, rows }, status: crate::model::ItemStatus::Done } });
+        let rows = rows
+            .into_iter()
+            .map(|mut row| {
+                row.resize(columns.len(), String::new());
+                row
+            })
+            .collect();
+        session.change(Change::Item {
+            item: crate::model::Item {
+                at: None,
+                id: format!("table-{}", conversation.seq + 1),
+                turn: conversation.turn.clone(),
+                kind: ItemKind::Table { title: title.into(), columns, rows },
+                status: crate::model::ItemStatus::Done,
+            },
+        });
         Ok(())
     }
 
@@ -358,7 +414,9 @@ impl Daemon {
     /// Something its agent says about the task, by name (`zero attr PR <link>`); no value takes it back.
     pub fn set_attribute(&self, id: &str, name: &str, value: Option<&str>) -> Result<(), String> {
         let name = name.trim();
-        if name.is_empty() { return Err("An attribute needs a name".into()) }
+        if name.is_empty() {
+            return Err("An attribute needs a name".into());
+        }
         let value = value.map(str::trim).filter(|v| !v.is_empty()).map(String::from);
         self.session(id)?.change(Change::Attribute { name: name.into(), value });
         Ok(())
@@ -368,7 +426,9 @@ impl Daemon {
     /// doesn't change, and its time on the user is kept as it moves on.
     pub fn set_issue(&self, id: &str, ticket: &str, state: crate::model::IssueState, text: &str) -> Result<(), String> {
         let ticket = ticket.trim();
-        if ticket.is_empty() { return Err("An issue needs its ticket".into()) }
+        if ticket.is_empty() {
+            return Err("An issue needs its ticket".into());
+        }
         let session = self.session(id)?;
         let previous = session.summary().issues.into_iter().find(|i| i.ticket == ticket);
         let issue = crate::model::Issue::set(previous.as_ref(), ticket, state, text.trim(), crate::now_ms());
@@ -378,42 +438,67 @@ impl Daemon {
     }
 
     /// Which workspace a conversation is in: the one it was put in, else its folder's, else Zero.
-    pub fn workspace_of(&self, conversation: &Conversation) -> String { self.workspaces.of(conversation.workspace.as_deref()) }
+    pub fn workspace_of(&self, conversation: &Conversation) -> String {
+        self.workspaces.of(conversation.workspace.as_deref())
+    }
 
     /// Puts a session in a workspace (none: back to its folder's).
     pub fn place_in_workspace(&self, id: &str, workspace: Option<&str>) -> Result<(), String> {
-        if let Some(workspace) = workspace && !self.workspaces.exists(workspace) { return Err(format!("No workspace {workspace}")) }
+        if let Some(workspace) = workspace
+            && !self.workspaces.exists(workspace)
+        {
+            return Err(format!("No workspace {workspace}"));
+        }
         self.session(id)?.change(Change::Placed { workspace: workspace.map(Into::into) });
         Ok(())
     }
 
     /// How to tell a task has a blocking ask open: the inbox's, given once (server::hold_while_blocked).
-    pub fn hold_while(&self, blocked: Blocked) { let _ = self.blocked.set(blocked); }
+    pub fn hold_while(&self, blocked: Blocked) {
+        let _ = self.blocked.set(blocked);
+    }
 
     /// What's added to a user's queued words as they go to the agent.
-    pub fn note_with(&self, noted: Noted) { let _ = self.noted.set(noted); }
+    pub fn note_with(&self, noted: Noted) {
+        let _ = self.noted.set(noted);
+    }
 
-    pub(crate) fn noted(&self, id: &str, text: String) -> String { match self.noted.get() { Some(noted) => noted(id, text), None => text } }
+    pub(crate) fn noted(&self, id: &str, text: String) -> String {
+        match self.noted.get() {
+            Some(noted) => noted(id, text),
+            None => text,
+        }
+    }
 
-    pub(crate) fn blocked_by_ask(&self, id: &str) -> bool { self.blocked.get().is_some_and(|blocked| blocked(id)) }
+    pub(crate) fn blocked_by_ask(&self, id: &str) -> bool {
+        self.blocked.get().is_some_and(|blocked| blocked(id))
+    }
 
     /// A task by its id, or by its name (as the sidebar shows it, whatever the case) when only one task has it.
     pub fn resolve(&self, reference: &str) -> Result<String, String> {
         let reference = reference.trim();
-        if self.session(reference).is_ok() { return Ok(reference.to_string()) }
-        let named: Vec<Conversation> = self.list().into_iter().filter(|c| crate::bridge::label(c).eq_ignore_ascii_case(reference)).collect();
+        if self.session(reference).is_ok() {
+            return Ok(reference.to_string());
+        }
+        let named: Vec<Conversation> =
+            self.list().into_iter().filter(|c| crate::bridge::label(c).eq_ignore_ascii_case(reference)).collect();
         match named.as_slice() {
             [one] => Ok(one.id.clone()),
             [] => Err(format!("No task {reference}")),
-            several => Err(format!("{} tasks are called {reference}: say which by its id ({})", several.len(),
-                                   several.iter().map(|c| c.id.as_str()).collect::<Vec<_>>().join(", "))),
+            several => Err(format!(
+                "{} tasks are called {reference}: say which by its id ({})",
+                several.len(),
+                several.iter().map(|c| c.id.as_str()).collect::<Vec<_>>().join(", ")
+            )),
         }
     }
 
     /// The user asks two tasks to work together: each is told about the other (its name, folder and what it's on)
     /// and how to reach it.
     pub fn introduce(&self, a: &str, b: &str) -> Result<(), String> {
-        if a == b { return Err("A task can't be introduced to itself".into()) }
+        if a == b {
+            return Err("A task can't be introduced to itself".into());
+        }
         let (first, second) = (self.get(a).ok_or_else(|| format!("No task {a}"))?, self.get(b).ok_or_else(|| format!("No task {b}"))?);
         self.tell(a, crate::model::from_line("zero", &introduction(&second)));
         self.tell(b, crate::model::from_line("zero", &introduction(&first)));
@@ -447,9 +532,12 @@ impl Daemon {
         let mut events = self.events.subscribe();
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
-            let now: Vec<Conversation> = ids.iter().map(|id| self.get(id).ok_or_else(|| format!("No session {id}"))).collect::<Result<_, _>>()?;
+            let now: Vec<Conversation> =
+                ids.iter().map(|id| self.get(id).ok_or_else(|| format!("No session {id}"))).collect::<Result<_, _>>()?;
             let settled = |c: &Conversation| !busy(c.attention());
-            if if any { now.iter().any(settled) } else { now.iter().all(settled) } { return Ok(now) }
+            if if any { now.iter().any(settled) } else { now.iter().all(settled) } {
+                return Ok(now);
+            }
             if tokio::time::timeout_at(deadline, events.recv()).await.is_err() {
                 return Err(format!("Still working after {} minutes", timeout.as_secs() / 60));
             }
@@ -457,8 +545,9 @@ impl Daemon {
     }
 
     /// A task there, live or archived: done and put away, it still follows things, and hears of them (`notify`).
-    pub fn exists(&self, id: &str) -> bool { self.session(id).is_ok() || self.home.join("archive").join(id).join("meta.json").exists() }
-
+    pub fn exists(&self, id: &str) -> bool {
+        self.session(id).is_ok() || self.home.join("archive").join(id).join("meta.json").exists()
+    }
 }
 
 /// The user's home, and zero-host's socket in Zero's folder there.
@@ -470,8 +559,12 @@ fn user_places() -> (PathBuf, PathBuf) {
 
 /// The branch a folder's repository has checked out; none outside a repository.
 fn branch(folder: &Path) -> Option<String> {
-    let output = std::process::Command::new("git").args(["symbolic-ref", "--short", "HEAD"]).current_dir(folder)
-        .stderr(std::process::Stdio::null()).output().ok()?;
+    let output = std::process::Command::new("git")
+        .args(["symbolic-ref", "--short", "HEAD"])
+        .current_dir(folder)
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
     output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string()).filter(|b| !b.is_empty())
 }
 
@@ -485,20 +578,35 @@ fn new_id() -> String {
 fn attach_snapshot(session: &Session, commit: String) {
     let conversation = session.snapshot();
     let Some(item) = conversation.items.iter().rev().find(|i| matches!(i.kind, ItemKind::User { .. })) else { return };
-    if conversation.snapshots.contains_key(&item.id) { return }
+    if conversation.snapshots.contains_key(&item.id) {
+        return;
+    }
     session.change(Change::Snapshot { item: item.id.clone(), commit });
 }
 
 /// What a task is told of another it should work with: who it is, where, what it's on, and how to reach it.
 fn introduction(other: &Conversation) -> String {
-    let doing = other.answer().or_else(|| other.items.iter().find_map(|i| match &i.kind { ItemKind::User { text, .. } => Some(text.as_str()), _ => None }))
+    let doing = other
+        .answer()
+        .or_else(|| {
+            other.items.iter().find_map(|i| match &i.kind {
+                ItemKind::User { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+        })
         .and_then(|text| text.lines().map(str::trim).find(|l| !l.is_empty()))
-        .map(|line| format!(" Its latest: \"{}\".", line.chars().take(200).collect::<String>())).unwrap_or_default();
-    format!("The user wants you to work with another task: \"{}\" ({}), in {}.{doing} When your work touches its area, \
+        .map(|line| format!(" Its latest: \"{}\".", line.chars().take(200).collect::<String>()))
+        .unwrap_or_default();
+    format!(
+        "The user wants you to work with another task: \"{}\" ({}), in {}.{doing} When your work touches its area, \
 coordinate with it directly: `zero send {} \"…\"` (its name works too). Its replies come to you as messages from it. \
-Keep the user out of what you two can settle; ask them only for what's theirs to decide.", crate::bridge::label(other), other.id, other.cwd, other.id)
+Keep the user out of what you two can settle; ask them only for what's theirs to decide.",
+        crate::bridge::label(other),
+        other.id,
+        other.cwd,
+        other.id
+    )
 }
-
 
 #[cfg(test)]
 mod tests {

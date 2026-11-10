@@ -148,10 +148,35 @@ impl Ask {
     pub fn new(kind: AskKind, title: &str, agent: AgentIdentity, ttl_seconds: i64) -> Ask {
         let now = Time::now();
         Ask {
-            id: new_id(), kind, title: title.into(), body: String::new(), options: vec![], command: None, cwd: None, agent,
-            created_at: now, expires_at: Time(now.0 + ttl_seconds), state: AskState::Waiting, answer: None, output: String::new(),
-            exit_code: None, run: None, answered_at: None, status: None, choice: None, waits: None, delivery: None, detail: None, script: None,
-            same_as: None, request: None, needs: None, blocks: false, confirmed: false, done_check: false, allow: None,
+            id: new_id(),
+            kind,
+            title: title.into(),
+            body: String::new(),
+            options: vec![],
+            command: None,
+            cwd: None,
+            agent,
+            created_at: now,
+            expires_at: Time(now.0 + ttl_seconds),
+            state: AskState::Waiting,
+            answer: None,
+            output: String::new(),
+            exit_code: None,
+            run: None,
+            answered_at: None,
+            status: None,
+            choice: None,
+            waits: None,
+            delivery: None,
+            detail: None,
+            script: None,
+            same_as: None,
+            request: None,
+            needs: None,
+            blocks: false,
+            confirmed: false,
+            done_check: false,
+            allow: None,
         }
     }
 
@@ -165,7 +190,9 @@ impl Ask {
 pub fn new_id() -> String {
     const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
     let mut bytes = [0u8; 6];
-    if let Ok(mut random) = std::fs::File::open("/dev/urandom") { let _ = std::io::Read::read_exact(&mut random, &mut bytes); }
+    if let Ok(mut random) = std::fs::File::open("/dev/urandom") {
+        let _ = std::io::Read::read_exact(&mut random, &mut bytes);
+    }
     bytes.iter().map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char).collect()
 }
 
@@ -197,7 +224,9 @@ impl Time {
         let mut t = clock.split(':');
         let (hour, minute) = (t.next()?.parse::<i64>().ok()?, t.next()?.parse::<i64>().ok()?);
         let second = t.next().unwrap_or("0").split('.').next()?.parse::<i64>().ok()?;
-        let offset_seconds = if offset.is_empty() { 0 } else {
+        let offset_seconds = if offset.is_empty() {
+            0
+        } else {
             let sign = if offset.starts_with('-') { -1 } else { 1 };
             let mut o = offset[1..].split(':');
             sign * (o.next()?.parse::<i64>().ok()? * 3600 + o.next().unwrap_or("0").parse::<i64>().ok()? * 60)
