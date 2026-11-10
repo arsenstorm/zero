@@ -1,0 +1,36 @@
+# Deploys Zero's site (site/, with the docs from docs/guide/) to withzero.dev when either changes on main.
+# Needs the CLOUDFLARE_API_TOKEN secret: a Cloudflare API token that can edit Workers on the withzero.dev account.
+name: Deploy site
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", "docs/guide/**", ".github/workflows/deploy-site.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-site
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - name: Install
+        working-directory: site
+        run: bun install --frozen-lockfile
+      - name: Build
+        working-directory: site
+        run: bun run build
+      - name: Deploy
+        working-directory: site
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: bunx wrangler@4 deploy
