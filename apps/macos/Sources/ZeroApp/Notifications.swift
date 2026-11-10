@@ -49,8 +49,9 @@ import ZeroCore
     /// At the Mac in Zero: it's in front with its window up, the screen awake and unlocked, and the keyboard or mouse
     /// touched in the last two minutes. In front with nobody there is away: the phones hear.
     private var present: Bool { NSApp.isActive && windowShown() && atMac }
-    /// Someone at the Mac: the screen awake and unlocked, and an input in the last two minutes.
-    private var atMac: Bool { !screenOff && Self.idle < 120 }
+    /// Someone at the Mac: the screen awake and unlocked, an input in the last two minutes, and the Mac touched since
+    /// the phone was (on the phone instead, with the task still open on the Mac, the news goes to the phone).
+    private var atMac: Bool { !screenOff && Self.idle < 120 && PhoneUse.last < Date().addingTimeInterval(-Self.idle) }
 
     /// Seconds since the user last touched the keyboard, mouse or trackpad.
     private static var idle: TimeInterval { CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: UInt32.max)!) }
@@ -68,7 +69,7 @@ import ZeroCore
     /// What was only sounded and still stands, five minutes on, goes to the phones (and the Mac's notifications).
     private func catchUp() {
         guard !held.isEmpty, let rows = last else { return }
-        let front: String? = if case let .task(id) = navigation.place, NSApp.isActive, windowShown() { id } else { nil }
+        let front: String? = if case let .task(id) = navigation.place, NSApp.isActive, windowShown(), atMac { id } else { nil }
         let now = Date()
         for alert in TaskAlerts.due(held, rows: rows, now: now, front: front, lastInput: now.addingTimeInterval(-Self.idle)) {
             held[alert.session] = nil

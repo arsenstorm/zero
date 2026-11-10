@@ -339,6 +339,7 @@ import ZeroCore
                 Log.write("phone: refused, \(why)")
                 close()
             case .lines(let lines):
+                PhoneUse.touched()
                 for line in lines {
                     if let reply = answered(line) { toPhone(reply); continue }
                     if answeredLater(line) { continue }
@@ -489,4 +490,12 @@ enum APNs {
             if status != 200 { Log.write("push: \(status) \(error.map { "\($0)" } ?? String(decoding: data ?? Data(), as: UTF8.self))") }
         }.resume()
     }
+}
+
+/// When a phone last asked something of the Mac (its app open and in use: it asks nothing in the background).
+enum PhoneUse {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var at = Date.distantPast
+    static func touched() { lock.lock(); at = Date(); lock.unlock() }
+    static var last: Date { lock.lock(); defer { lock.unlock() }; return at }
 }
