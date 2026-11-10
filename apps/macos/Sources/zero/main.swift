@@ -25,7 +25,7 @@ func usage(help: Bool = false) -> Never {
       zero withdraw <id> [--reason "why"]   (take back an open ask that no longer needs the user)
       zero wait    <id>
       zero status  <id>
-      zero list
+      zero list    [--all]   (the asks still open; --all, every ask kept)
       zero attach  [agent]   (shows one of Zero's own agents' terminal here to watch or type in; ⌃] lets go. No agent: lists them)
       zero say     <agent> "text"   (sends the user's words to the agent through Zero, as the inbox's message box does)
       zero video   <file> [--frames N] [--at T,T…] [--from T --to T --every S] [--out DIR]

@@ -186,6 +186,8 @@ public struct Request: Codable, Sendable {
     /// For `message`: the agent's name and what to send it.
     public var agent: String?
     public var text: String?
+    /// For `list`: only the asks still open.
+    public var open: Bool?
     public init(op: String, ask: Ask? = nil, id: String? = nil, wait: Bool? = nil, agent: String? = nil, text: String? = nil) {
         self.op = op; self.ask = ask; self.id = id; self.wait = wait; self.agent = agent; self.text = text
     }

@@ -23,6 +23,8 @@ struct Request {
     wait: Option<bool>,
     agent: Option<String>,
     text: Option<String>,
+    /// For `list`: only the asks still open.
+    open: Option<bool>,
 }
 
 #[derive(Serialize, Default)]
@@ -113,7 +115,10 @@ async fn connection(inbox: Arc<Inbox>, stream: UnixStream) {
             let source = inbox.prompted(&ask.agent, &ask.body);
             send(&mut out, Response { op: "prompt", message: Some(source.into()), ..Default::default() }).await;
         }
-        "list" => { send(&mut out, Response { op: "asks", asks: Some(inbox.asks()), ..Default::default() }).await; }
+        "list" => {
+            let asks = if request.open == Some(true) { inbox.open_asks() } else { inbox.asks() };
+            send(&mut out, Response { op: "asks", asks: Some(asks), ..Default::default() }).await;
+        }
         "message" => {
             let (Some(agent), Some(text)) = (request.agent, request.text) else { send(&mut out, error("message needs an agent and text".into())).await; return };
             tokio::spawn(async move { let _ = inbox.message(&text, &agent).await; });

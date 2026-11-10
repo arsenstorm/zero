@@ -207,7 +207,10 @@ func reason(_ ask: Ask) -> String? {
 
 @MainActor func listCommand() {
     let socket = connect()
-    try? socket.send(Request(op: "list"))
+    // Open ones unless --all: every ask ever made is hundreds of kilobytes to decode.
+    var request = Request(op: "list")
+    request.open = flag("all") == nil ? true : nil
+    try? socket.send(request)
     guard let reply = socket.receive(Response.self), let asks = reply.asks else { fail("zero: no reply") }
     for ask in asks { print("\(ask.id)  \(ask.state.rawValue.padding(toLength: 8, withPad: " ", startingAt: 0))  \(ask.kind.rawValue.padding(toLength: 8, withPad: " ", startingAt: 0))  \(ask.agent.name)  \(ask.title)") }
 }

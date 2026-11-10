@@ -125,6 +125,11 @@ async fn status_list_withdraw_and_prompt_answer_as_the_app_did() {
     assert_eq!((&status["op"], &status["ask"]["state"]), (&json!("ask"), &json!("waiting")));
     let list = Line::open(&socket, json!({"op": "list"})).await.next().await.unwrap();
     assert_eq!(list["asks"][0]["id"], id.as_str());
+    // Open ones only, when asked: `zero list` sent every ask ever made (hundreds of kilobytes) to show a few.
+    Line::open(&socket, json!({"op": "create", "ask": ask("note", "Done a thing", &[]), "wait": false})).await.next().await.unwrap();
+    let open = Line::open(&socket, json!({"op": "list", "open": true})).await.next().await.unwrap();
+    assert!(open["asks"].as_array().unwrap().iter().all(|a| a["state"] == "waiting" || a["state"] == "pending" || a["state"] == "running"), "{open}");
+    assert_eq!(open["asks"][0]["id"], id.as_str());
     let prompt = json!({"op": "prompt", "ask": {"id": "", "kind": "message", "title": "Prompt", "body": "just merge it", "options": [],
         "agent": agent(), "createdAt": "2026-10-26T12:00:00Z", "expiresAt": "2026-10-26T12:00:00Z", "state": "waiting", "output": ""}});
     assert_eq!(Line::open(&socket, prompt).await.next().await.unwrap()["message"], "human");
