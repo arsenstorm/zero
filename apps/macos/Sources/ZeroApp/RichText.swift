@@ -458,7 +458,25 @@ final class RichTextView: NSTextView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil { Self.all.add(self) } else { Self.all.remove(self); if Self.selecting === self { Self.selecting = nil } }
+        if let scrolling { NotificationCenter.default.removeObserver(scrolling); self.scrolling = nil }
+        if window != nil, let clip = enclosingScrollView?.contentView {
+            clip.postsBoundsChangedNotifications = true
+            scrolling = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.keepDrawn() }
+            }
+        }
     }
+
+    /// Its drawing let go while it's far from the page (two screens away), drawn again before it comes back: a
+    /// conversation lays out all its messages, and each kept its whole drawing, a long one megabytes of it.
+    private func keepDrawn() {
+        guard let clip = enclosingScrollView?.contentView, let layer else { return }
+        let near = convert(bounds, to: clip).intersects(clip.bounds.insetBy(dx: 0, dy: -2 * clip.bounds.height))
+        if near, letGo { letGo = false; needsDisplay = true }
+        else if !near, !letGo { letGo = true; layer.contents = nil }
+    }
+    private var scrolling: NSObjectProtocol?
+    private var letGo = false
 
     /// This conversation's messages, top to bottom.
     private func peers() -> [RichTextView] {
@@ -808,12 +826,16 @@ final class RichTextView: NSTextView {
     override func setFrameSize(_ size: NSSize) {
         super.setFrameSize(size)
         if let container = textContainer, size.width > 0, container.size.width != size.width { _ = self.size(at: size.width) }
+        // Moved or resized without a scroll (steps above it folding, the window resized): looked at again, so one
+        // whose drawing was let go and has come near is drawn, never shown blank.
+        if letGo { keepDrawn() }
     }
 
     /// On whole pixels: text drawn at a fractional position is resampled, and blurs.
     override func setFrameOrigin(_ origin: NSPoint) {
         let scale = window?.backingScaleFactor ?? 2
         super.setFrameOrigin(NSPoint(x: (origin.x * scale).rounded() / scale, y: (origin.y * scale).rounded() / scale))
+        if letGo { keepDrawn() }
     }
 
     /// Scrolling goes to the conversation around it, not to a text view with nothing to scroll.
