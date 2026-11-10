@@ -35,12 +35,15 @@ const row = (current: boolean) => ["h-[30px] flex items-center gap-[9px] px-2.5 
       {groups.map((g, i) => (
         <>
           <p class:list={["h-8 flex items-center pl-2.5 text-[13px] text-muted", i > 0 && "mt-3"]}>{g.title}</p>
-          {g.pages.map((p) => (
-            <a href={docHref(p.id)} aria-current={p === page ? "page" : undefined} class:list={row(p === page)}>
-              <span class:list={["w-[18px] grid place-items-center shrink-0", p === page ? "text-ink" : "text-muted"]}><Icon name={docIcons[p.id] ?? "file-content"} fill={p === page ? "glyph" : "outline"} size={15} /></span>
-              <span class="truncate translate-y-[0.5px]">{p.data.title}</span>
-            </a>
-          ))}
+          {/* 2 px between rows, so the current page's fill and the one under the pointer never touch. */}
+          <div class="flex flex-col gap-0.5">
+            {g.pages.map((p) => (
+              <a href={docHref(p.id)} aria-current={p === page ? "page" : undefined} class:list={row(p === page)}>
+                <span class:list={["w-[18px] grid place-items-center shrink-0", p === page ? "text-ink" : "text-muted"]}><Icon name={docIcons[p.id] ?? "file-content"} fill={p === page ? "glyph" : "outline"} size={15} /></span>
+                <span class="truncate translate-y-[0.5px]">{p.data.title}</span>
+              </a>
+            ))}
+          </div>
         </>
       ))}
     </nav>
