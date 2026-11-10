@@ -130,11 +130,37 @@ public final class Workspace {
         if roster[id] != light { roster[id] = light }
         if let live = lives[id] {
             // Only a real change: an assignment redraws the conversation, the same session sent again included.
-            if live.conversation != full { live.conversation = full }
-            let earlier = mirror.earlier[id] ?? 0, later = mirror.later[id] ?? 0
-            if live.earlier != earlier { live.earlier = earlier }
-            if live.later != later { live.later = later }
+            show(id, in: live)
         }
+    }
+
+    /// A conversation redrawn at most every `redrawEvery`: an agent at work sends 30 changes a second (a word, a step,
+    /// its status), and each redrew every message in it, frames dropped as you scrolled. What comes in between waits,
+    /// and the latest is shown once the time is up.
+    @ObservationIgnored private var shownAt: [String: Date] = [:]
+    @ObservationIgnored private var showing: Set<String> = []
+    static let redrawEvery: TimeInterval = 0.1
+
+    private func show(_ id: String, in live: LiveConversation) {
+        let since = Date().timeIntervalSince(shownAt[id] ?? .distantPast)
+        guard since < Self.redrawEvery else { bringUp(id, live); return }
+        guard showing.insert(id).inserted else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.redrawEvery - since) { [weak self] in
+            guard let self else { return }
+            showing.remove(id)
+            if let live = lives[id] { bringUp(id, live) }
+        }
+    }
+
+    /// The live object brought up to the mirror: its items with the counts around them, together.
+    private func bringUp(_ id: String, _ live: LiveConversation) {
+        guard let full = mirror.conversations[id] else { return }
+        let earlier = mirror.earlier[id] ?? 0, later = mirror.later[id] ?? 0
+        guard live.conversation != full || live.earlier != earlier || live.later != later else { return }
+        shownAt[id] = Date()
+        if live.conversation != full { live.conversation = full }
+        if live.earlier != earlier { live.earlier = earlier }
+        if live.later != later { live.later = later }
     }
 
     /// Each provider's limits as last reported, from the session that heard last (zerod's own rule).
