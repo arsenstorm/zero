@@ -2,6 +2,7 @@ import AppKit
 import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
+import ZeroCore
 
 // Images sent with a message, as Codex has them: pasted (⌘V), dropped on the composer or picked with its +, shown as
 // tiles above what you're writing, sent with it, and shown with your message after. Each is kept as a file of Zero's
@@ -17,10 +18,13 @@ enum Attachments {
         return write(png, extension: "png")
     }
 
-    /// An image file copied in, its type kept.
+    /// An image or video file copied in, its type kept: Zero's own, so a message's attachment is there to open (and for
+    /// its agent to read) after the original is moved or deleted. A copy-on-write clone on APFS: instant, whatever
+    /// the size, and no room taken until either changes.
     static func copy(_ file: URL) -> URL? {
-        guard let data = try? Data(contentsOf: file) else { return nil }
-        return write(data, extension: file.pathExtension.isEmpty ? "png" : file.pathExtension.lowercased())
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let kept = folder.appendingPathComponent(UUID().uuidString.lowercased()).appendingPathExtension(file.pathExtension.isEmpty ? "png" : file.pathExtension.lowercased())
+        return (try? FileManager.default.copyItem(at: file, to: kept)) != nil ? kept : nil
     }
 
     private static func write(_ data: Data, extension ext: String) -> URL? {
@@ -30,12 +34,36 @@ enum Attachments {
     }
 
     static func isImage(_ url: URL) -> Bool { UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true }
+    static func isVideo(_ url: URL) -> Bool { UTType(filenameExtension: url.pathExtension)?.conforms(to: .movie) == true }
+
+    /// A video attached, as an agent will get it: a few stills through it, cut as it's attached (so sending waits on
+    /// nothing), with its length and size. By the video's path.
+    struct Video { let images: [String]; let times: [Double]; let info: VideoFrames.Info }
+    /// Observed: a video's tile shows its first still once it's cut.
+    @MainActor @Observable final class Cut { static let shared = Cut(); var videos: [String: Video] = [:] }
+    @MainActor static var videos: [String: Video] {
+        get { Cut.shared.videos }
+        set { Cut.shared.videos = newValue }
+    }
+
+    @MainActor static func prepare(_ video: URL, most: Int = 6) {
+        guard videos[video.path] == nil else { return }
+        Task { @MainActor in
+            guard let info = try? await VideoFrames.info(of: video), info.seconds > 0 else { return }
+            let times = VideoFrames.spread(min(most, max(1, Int(info.seconds.rounded(.up)))), over: info.seconds)
+            let frames = (try? await VideoFrames.frames(of: video, at: times, into: folder.appendingPathComponent(UUID().uuidString.lowercased()))) ?? []
+            videos[video.path] = Video(images: frames.map(\.path), times: frames.map(\.at), info: info)
+        }
+    }
+
+    /// Its first still, for its tile.
+    @MainActor static func poster(_ video: URL) -> String? { videos[video.path]?.images.first }
 
     /// What a paste would attach: image files copied in Finder, else an image on the clipboard with no words beside it.
     /// Nil leaves the paste to the text field.
     static func fromPasteboard(_ board: NSPasteboard = .general) -> [URL]? {
         if let files = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !files.isEmpty,
-           files.allSatisfy(isImage) {
+           files.allSatisfy({ isImage($0) || isVideo($0) }) {
             return files.compactMap(copy)
         }
         if board.string(forType: .string) == nil, let image = NSImage(pasteboard: board) { return save(image).map { [$0] } }
@@ -47,7 +75,8 @@ enum Attachments {
         for provider in providers {
             if provider.canLoadObject(ofClass: URL.self) {
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    guard let url, url.isFileURL, isImage(url), let copied = copy(url) else { return }
+                    guard let url, url.isFileURL else { return }
+                    guard isImage(url) || isVideo(url), let copied = copy(url) else { return }
                     Task { @MainActor in added([copied]) }
                 }
             } else if provider.canLoadObject(ofClass: NSImage.self) {
@@ -127,21 +156,23 @@ struct Thumbnail: View {
 /// a sentence is about (the token goes to it as written; zerod puts the image right after it). Drawn as a pill, "🖼️
 /// Image n", in the composer and in the sent message; a click opens the image.
 enum ImageToken {
-    private static let pattern = try! NSRegularExpression(pattern: "\\[Image #(\\d+)\\]")
-    private static let label = try! NSRegularExpression(pattern: "^Image #(\\d+)$")
+    private static let pattern = try! NSRegularExpression(pattern: "\\[(Image|Video) #(\\d+)\\]")
+    private static let label = try! NSRegularExpression(pattern: "^(Image|Video) #(\\d+)$")
 
-    static func text(_ number: Int) -> String { "[Image #\(number)]" }
+    static func text(_ number: Int, video: Bool = false) -> String { "[\(video ? "Video" : "Image") #\(number)]" }
 
     /// Each token in the text, with its number.
-    static func find(in text: String) -> [(range: NSRange, number: Int)] {
+    static func find(in text: String) -> [(range: NSRange, number: Int, video: Bool)] {
         let whole = text as NSString
-        return pattern.matches(in: text, range: NSRange(location: 0, length: whole.length)).map { ($0.range, Int(whole.substring(with: $0.range(at: 1))) ?? 0) }
+        return pattern.matches(in: text, range: NSRange(location: 0, length: whole.length))
+            .map { ($0.range, Int(whole.substring(with: $0.range(at: 2))) ?? 0, whole.substring(with: $0.range(at: 1)) == "Video") }
     }
 
     /// The number a link's words name ("Image #2"), if they do.
-    static func number(inLabel label: String) -> Int? {
-        guard let match = Self.label.firstMatch(in: label, range: NSRange(location: 0, length: (label as NSString).length)) else { return nil }
-        return Int((label as NSString).substring(with: match.range(at: 1)))
+    static func number(inLabel label: String) -> (number: Int, video: Bool)? {
+        guard let match = Self.label.firstMatch(in: label, range: NSRange(location: 0, length: (label as NSString).length)),
+              let number = Int((label as NSString).substring(with: match.range(at: 2))) else { return nil }
+        return (number, (label as NSString).substring(with: match.range(at: 1)) == "Video")
     }
 
     /// The text and images as sent: the images whose token is in the words, numbered 1… in their order, the rest left
@@ -151,24 +182,81 @@ enum ImageToken {
         let renumbered = Dictionary(uniqueKeysWithValues: kept.enumerated().map { ($0.element, $0.offset + 1) })
         let out = NSMutableString(string: text)
         for token in find(in: text).reversed() {
-            if let number = renumbered[token.number] { out.replaceCharacters(in: token.range, with: Self.text(number)) }
+            if let number = renumbered[token.number] { out.replaceCharacters(in: token.range, with: Self.text(number, video: token.video)) }
         }
         return (out as String, kept.map { images[$0 - 1] })
     }
 
-    /// The text with each token a Markdown link to its image, for a sent message: the renderer draws the pill.
-    static func linked(_ text: String, images: [String]) -> String {
+    /// What's sent: compacted, then its videos as an agent can take them.
+    @MainActor static func outgoing(_ text: String, images: [String]) -> (text: String, images: [String]) {
+        let (text, attached) = compact(text, images: images)
+        return withVideos(text, attachments: attached)
+    }
+
+    /// The text and attachments as an agent gets them: a video isn't something its CLI takes, so its token becomes
+    /// "[Video #n]" (numbered among the videos), the stills cut from it join the images, and a line after the words
+    /// says where it is, what the stills are, and that `zero video` cuts more. Images are numbered among the images.
+    @MainActor static func withVideos(_ text: String, attachments: [String]) -> (text: String, images: [String]) {
+        guard attachments.contains(where: { Attachments.isVideo(URL(fileURLWithPath: $0)) }) else { return (text, attachments) }
+        var images: [String] = [], number: [Int: Int] = [:], videos: [(path: String, index: Int)] = []
+        for (i, path) in attachments.enumerated() {
+            if Attachments.isVideo(URL(fileURLWithPath: path)) { videos.append((path, videos.count + 1)); number[i + 1] = videos.count }
+            else { images.append(path); number[i + 1] = images.count }
+        }
         let out = NSMutableString(string: text)
-        for token in find(in: text).reversed() where images.indices.contains(token.number - 1) {
-            out.replaceCharacters(in: token.range, with: "[Image #\(token.number)](\(URL(fileURLWithPath: images[token.number - 1]).absoluteString))")
+        for token in find(in: text).reversed() {
+            if let n = number[token.number] { out.replaceCharacters(in: token.range, with: Self.text(n, video: Attachments.isVideo(URL(fileURLWithPath: attachments[token.number - 1])))) }
+        }
+        for video in videos {
+            var line = "[Video #\(video.index): \(video.path)"
+            if let cut = Attachments.videos[video.path] {
+                line += ", \(VideoFrames.stamp(cut.info.seconds)) long, \(cut.info.width)×\(cut.info.height). Stills from it: "
+                line += zip(cut.images, cut.times).map { path, at in images.append(path); return "\(Self.text(images.count)) at \(VideoFrames.stamp(at))" }.joined(separator: ", ")
+            }
+            line += ". It's a video: cut the frames you need with `zero video \"\(video.path)\"`.]"
+            out.append("\n\n" + line)
+        }
+        return (out as String, images)
+    }
+
+    private static let videoLine = try! NSRegularExpression(pattern: "\\n*\\[Video #(\\d+): (.+?)(?:, \\d+:\\d|\\. It's a video)[^\\n]*\\]$", options: [.anchorsMatchLines])
+
+    /// What a sent message shows as its tiles: each video once (its first still, a play mark, the video itself on a
+    /// click), not the stills cut from it for the agent; the images as they are.
+    static func tiles(_ text: String, images: [String]) -> [(path: String, video: String?)] {
+        let whole = text as NSString
+        var stills = Set<Int>(), videos: [(path: String, video: String?)] = []
+        for match in videoLine.matches(in: text, range: NSRange(location: 0, length: whole.length)) {
+            let line = whole.substring(with: match.range)
+            let numbers = find(in: line).filter { !$0.video }.map(\.number)
+            stills.formUnion(numbers)
+            let poster = numbers.first.flatMap { images.indices.contains($0 - 1) ? images[$0 - 1] : nil }
+            videos.append((poster ?? "", whole.substring(with: match.range(at: 2))))
+        }
+        return videos + images.enumerated().filter { !stills.contains($0.offset + 1) }.map { ($0.element, nil) }
+    }
+
+    /// The text with each token a Markdown link to its image or video, for a sent message: the renderer draws the
+    /// pill. A video's line for the agent (withVideos) isn't shown: its pill is.
+    static func linked(_ text: String, images: [String]) -> String {
+        let whole = text as NSString
+        var videos: [Int: String] = [:]
+        for match in videoLine.matches(in: text, range: NSRange(location: 0, length: whole.length)) {
+            videos[Int(whole.substring(with: match.range(at: 1))) ?? 0] = whole.substring(with: match.range(at: 2))
+        }
+        let out = NSMutableString(string: videoLine.stringByReplacingMatches(in: text, range: NSRange(location: 0, length: whole.length), withTemplate: ""))
+        for token in find(in: out as String).reversed() {
+            let path = token.video ? videos[token.number] : (images.indices.contains(token.number - 1) ? images[token.number - 1] : nil)
+            guard let path else { continue }
+            out.replaceCharacters(in: token.range, with: "[\(token.video ? "Video" : "Image") #\(token.number)](\(URL(fileURLWithPath: path).absoluteString))")
         }
         return out as String
     }
 
     /// The pill, as one character of the text, on the line's baseline like a word.
-    static func attachment(_ number: Int, font: NSFont) -> NSAttributedString {
+    static func attachment(_ number: Int, font: NSFont, video: Bool = false) -> NSAttributedString {
         let attachment = NSTextAttachment()
-        attachment.attachmentCell = Cell(number: number, font: font)
+        attachment.attachmentCell = Cell(number: number, font: font, video: video)
         let token = NSMutableAttributedString(attachment: attachment)
         token.addAttributes([.font: font, .cursor: NSCursor.pointingHand], range: NSRange(location: 0, length: 1))
         return token
@@ -189,18 +277,20 @@ enum ImageToken {
     final class Cell: NSTextAttachmentCell {
         let number: Int
         let textFont: NSFont
+        let video: Bool
         private static let inset: CGFloat = 4
 
-        init(number: Int, font: NSFont) {
+        init(number: Int, font: NSFont, video: Bool = false) {
             self.number = number
             self.textFont = font
+            self.video = video
             super.init(textCell: "")
         }
         required init(coder: NSCoder) { fatalError("not kept") }
 
         /// The text's size, a step heavier than the words around it.
         private var words: NSAttributedString {
-            NSAttributedString(string: "\u{1F5BC}\u{FE0F} Image \(number)",
+            NSAttributedString(string: video ? "\u{1F3A5} Video \(number)" : "\u{1F5BC}\u{FE0F} Image \(number)",
                                attributes: [.font: NSFont.systemFont(ofSize: textFont.pointSize, weight: .medium), .foregroundColor: TokenTextView.tokenText])
         }
 

@@ -68,6 +68,9 @@ struct ComposeField: NSViewRepresentable {
     var highlightFiles = false
     /// A click on an image's pill: which image (counting from 1).
     var onImage: (Int) -> Void = { _ in }
+    /// Images and videos dropped on the words: attached, as a drop on the composer is (the field alone writes their
+    /// paths). Nil, the field's own way.
+    var onAttach: (([URL]) -> Void)?
     /// For edits from outside the view (ComposeHandle).
     var handle: ComposeHandle?
     /// Scrolled inside: whether there's more above, and more below, for a fade at that edge.
@@ -188,7 +191,7 @@ struct ComposeField: NSViewRepresentable {
             let out = NSMutableString(string: storage.string)
             storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length), options: [.reverse]) { value, range, _ in
                 guard let cell = (value as? NSTextAttachment)?.attachmentCell as? ImageToken.Cell else { return }
-                out.replaceCharacters(in: range, with: ImageToken.text(cell.number))
+                out.replaceCharacters(in: range, with: ImageToken.text(cell.number, video: cell.video))
             }
             return out as String
         }
@@ -203,7 +206,7 @@ struct ComposeField: NSViewRepresentable {
             guard let storage = view.textStorage else { return offset }
             var out = offset
             storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: min(offset, storage.length))) { value, _, _ in
-                if let cell = (value as? NSTextAttachment)?.attachmentCell as? ImageToken.Cell { out += (ImageToken.text(cell.number) as NSString).length - 1 }
+                if let cell = (value as? NSTextAttachment)?.attachmentCell as? ImageToken.Cell { out += (ImageToken.text(cell.number, video: cell.video) as NSString).length - 1 }
             }
             return out
         }
@@ -270,7 +273,7 @@ struct ComposeField: NSViewRepresentable {
             let shift = tokens.filter { NSMaxRange($0.range) <= caret.location }.reduce(0) { $0 + $1.range.length - 1 }
             storage.beginEditing()
             for token in tokens.reversed() {
-                storage.replaceCharacters(in: token.range, with: ImageToken.attachment(token.number, font: ComposeField.font))
+                storage.replaceCharacters(in: token.range, with: ImageToken.attachment(token.number, font: ComposeField.font, video: token.video))
             }
             let all = NSRange(location: 0, length: storage.length)
             storage.addAttributes([.font: ComposeField.font, .foregroundColor: view.isEditable ? NSColor.labelColor : NSColor.secondaryLabelColor], range: all)
@@ -304,6 +307,23 @@ final class TokenTextView: NSTextView {
 
     // ⌘⏎ comes as a key equivalent first; when nothing in the window takes it as one, as a key down to the first
     // responder. Either way it's ours.
+    /// Image and video files dropped here, when the field attaches them (onAttach).
+    private func attachable(_ info: NSDraggingInfo) -> [URL]? {
+        guard coordinator?.parent.onAttach != nil,
+              let files = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+              !files.isEmpty, files.allSatisfy({ Attachments.isImage($0) || Attachments.isVideo($0) }) else { return nil }
+        return files
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { attachable(sender) != nil ? .copy : super.draggingEntered(sender) }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { attachable(sender) != nil ? .copy : super.draggingUpdated(sender) }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let files = attachable(sender), let attach = coordinator?.parent.onAttach else { return super.performDragOperation(sender) }
+        attach(files.compactMap(Attachments.copy))
+        return true
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if isCommandReturn(event), let coordinator { coordinator.commandSubmit(); return true }
         return super.performKeyEquivalent(with: event)

@@ -79,7 +79,9 @@ struct Composer<Controls: View>: View {
                     HStack(spacing: 8) {
                         ForEach(attached, id: \.offset) { number, url in
                             // A click puts the image's token where the caret is; its pill opens the image.
-                            Thumbnail(path: url.path, tap: { insert(ImageToken.text(number + 1)) }, remove: { handle.remove(number + 1) })
+                            let video = Attachments.isVideo(url)
+                            Thumbnail(path: (video ? Attachments.poster(url) : nil) ?? url.path, tap: { insert(ImageToken.text(number + 1, video: video)) }, remove: { handle.remove(number + 1) })
+                                .overlay { if video { VideoBadge() } }
                         }
                     }
                 }
@@ -91,7 +93,13 @@ struct Composer<Controls: View>: View {
                          onSubmit: { if ready { (queue ?? send)() } },
                          onCommandSubmit: queue == nil ? nil : { if ready { send() } },
                          onTrigger: suggest, onKey: key, highlightFiles: suggestFiles,
-                         onImage: { number in if images.indices.contains(number - 1) { ImageViewer.shared.show(images[number - 1].path, among: images.map(\.path)) } },
+                         onImage: { number in
+                             guard images.indices.contains(number - 1) else { return }
+                             // A video's pill plays it, in the Mac's own player.
+                             if Attachments.isVideo(images[number - 1]) { NSWorkspace.shared.open(images[number - 1]); return }
+                             ImageViewer.shared.show(images[number - 1].path, among: images.map(\.path).filter { !Attachments.isVideo(URL(fileURLWithPath: $0)) })
+                         },
+                         onAttach: { attach($0) },
                          handle: handle, onEdges: { fades = (top: $0, bottom: $1) }, height: $fieldHeight)
                 .frame(height: fieldHeight)
                 .padding(.horizontal, -TokenTextView.inset.width) // the text still starts on the card's 14 pt
@@ -244,6 +252,8 @@ struct Composer<Controls: View>: View {
         var pictures: [URL] = []
         for url in panel.urls {
             if Attachments.isImage(url), let copied = Attachments.copy(url) { pictures.append(copied); continue }
+            // A video: one attachment, its pill "Video"; stills from it go with it when it's sent (ImageToken.withVideos).
+            if Attachments.isVideo(url), let copied = Attachments.copy(url) { pictures.append(copied); continue }
             var path = url.path
             if let folder, path.hasPrefix(folder + "/") { path = String(path.dropFirst(folder.count + 1)) }
             paths.append(path.contains(" ") ? "\"\(path)\"" : "@" + path)
@@ -258,7 +268,8 @@ struct Composer<Controls: View>: View {
         guard !urls.isEmpty else { return }
         let first = images.count + 1
         images += urls
-        insert((first..<first + urls.count).map(ImageToken.text).joined(separator: " "))
+        for url in urls where Attachments.isVideo(url) { Attachments.prepare(url) }
+        insert(urls.enumerated().map { ImageToken.text(first + $0.offset, video: Attachments.isVideo($0.element)) }.joined(separator: " "))
     }
 
     /// Words put in at the caret, through the field (undoable); it's focused after.
@@ -359,5 +370,13 @@ extension Composer where Controls == EmptyView {
     init(draft: Binding<String>, placeholder: String, canSend: Bool = true, folder: String? = nil, workspace: Workspace? = nil, images: Binding<[URL]>,
          stop: (() -> Void)? = nil, send: @escaping () -> Void) {
         self.init(draft: draft, placeholder: placeholder, canSend: canSend, folder: folder, workspace: workspace, images: images, stop: stop, send: send) { EmptyView() }
+    }
+}
+
+/// A video's tile: a play mark over its first still, so it reads as a video.
+struct VideoBadge: View {
+    var body: some View {
+        NucleoIcon("media-play", fill: "glyph", size: 13).foregroundStyle(.white)
+            .frame(width: 30, height: 30).background(.black.opacity(0.55), in: Circle()).allowsHitTesting(false)
     }
 }

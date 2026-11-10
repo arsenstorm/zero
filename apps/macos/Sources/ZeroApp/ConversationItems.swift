@@ -14,7 +14,17 @@ struct ItemView: View {
             VStack(alignment: .trailing, spacing: 6) {
                 if !images.isEmpty {
                     // In rows, from the right: many images wrap rather than widen the message past the page.
-                    WrappingStack(spacing: 6, trailing: true) { ForEach(images, id: \.self) { Thumbnail(path: $0, side: 88, among: images) } }
+                    let tiles = ImageToken.tiles(text, images: images)
+                    let pictures = tiles.filter { $0.video == nil }.map(\.path)
+                    WrappingStack(spacing: 6, trailing: true) {
+                        ForEach(tiles, id: \.path) { tile in
+                            if let video = tile.video {
+                                Thumbnail(path: tile.path, side: 88, tap: { NSWorkspace.shared.open(URL(fileURLWithPath: video)) }).overlay { VideoBadge() }
+                            } else {
+                                Thumbnail(path: tile.path, side: 88, among: pictures)
+                            }
+                        }
+                    }
                 }
                 if !text.isEmpty {
                     HStack {

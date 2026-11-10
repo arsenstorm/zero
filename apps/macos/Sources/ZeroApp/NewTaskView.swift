@@ -113,7 +113,7 @@ struct NewTaskView: View {
     private var models: [SpawnChoice] { ComposerRows.catalogue(chosen) }
 
     private func start() {
-        let (text, attached) = ImageToken.compact(prompt.trimmingCharacters(in: .whitespacesAndNewlines), images: images.map(\.path))
+        let (text, attached) = ImageToken.outgoing(prompt.trimmingCharacters(in: .whitespacesAndNewlines), images: images.map(\.path))
         guard !text.isEmpty || !attached.isEmpty, !starting else { return }
         starting = true
         Task {
