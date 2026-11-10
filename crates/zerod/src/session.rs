@@ -528,28 +528,33 @@ fn replay(dir: &Path, running: bool) -> io::Result<(Core, u64)> {
             lines += 1;
             // A line cut short by a crash is the last one; everything before it still counts.
             let Ok(entry) = serde_json::from_str::<Value>(&line?) else { continue };
-            if let Some(at) = entry["at"].as_i64() {
-                core.at(at)
-            }
-            if let Some(images) = entry["attach"].as_array() {
-                core.attach(images.iter().filter_map(|i| i.as_str().map(String::from)).collect())
-            }
-            if let Some(message) = entry.get("out") {
-                core.sent(message);
-            }
-            if let Some(message) = entry.get("in") {
-                core.receive(message);
-            }
-            if entry.get("offline").is_some() {
-                core.offline();
-            }
-            if let Some(change) = entry.get("change").and_then(|c| serde_json::from_value(c.clone()).ok()) {
-                core.change(change);
-            }
+            replay_entry(&mut core, &entry);
         }
     }
     if !running {
         core.offline();
     }
     Ok((core, lines))
+}
+
+/// One record of a transcript, read back into its session.
+pub fn replay_entry(core: &mut Core, entry: &Value) {
+    if let Some(at) = entry["at"].as_i64() {
+        core.at(at)
+    }
+    if let Some(images) = entry["attach"].as_array() {
+        core.attach(images.iter().filter_map(|i| i.as_str().map(String::from)).collect())
+    }
+    if let Some(message) = entry.get("out") {
+        core.sent(message);
+    }
+    if let Some(message) = entry.get("in") {
+        core.receive(message);
+    }
+    if entry.get("offline").is_some() {
+        core.offline();
+    }
+    if let Some(change) = entry.get("change").and_then(|c| serde_json::from_value(c.clone()).ok()) {
+        core.change(change);
+    }
 }

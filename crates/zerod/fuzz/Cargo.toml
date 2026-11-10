@@ -1,0 +1,45 @@
+[package]
+name = "zerod-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+zerod = { path = ".." }
+
+# Its own workspace: built on nightly with cargo-fuzz, never by the repository's `cargo test`.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "adapters"
+path = "fuzz_targets/adapters.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transcript"
+path = "fuzz_targets/transcript.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ending"
+path = "fuzz_targets/ending.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ask"
+path = "fuzz_targets/ask.rs"
+test = false
+doc = false
+bench = false
