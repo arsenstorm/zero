@@ -6,19 +6,35 @@ extension View {
     /// does. Codex's: a dark pill above the view (under it where the screen ends), with the view's shortcut as a key
     /// beside the words. Shown after a short rest, at once when moving on from another; gone when the pointer leaves
     /// or clicks. An empty text shows nothing.
-    func tip(_ text: String, shortcut: String? = nil) -> some View { background(TipAnchor(text: text, shortcut: shortcut)) }
+    func tip(_ text: String, shortcut: String? = nil) -> some View { modifier(Tipped(text: text, shortcut: shortcut)) }
+}
+
+/// The pointer on the view as SwiftUI sees it (its hover goes to what's on top, not to what's under a card or panel
+/// drawn over it), and the view's frame in AppKit's terms, for where the tip goes.
+private struct Tipped: ViewModifier {
+    let text: String
+    let shortcut: String?
+    @State private var anchor = Anchor()
+    final class Anchor { weak var view: TipView? }
+
+    func body(content: Content) -> some View {
+        content
+            .background(TipAnchor(text: text, shortcut: shortcut, anchor: anchor))
+            .onHover { [anchor] inside in if inside { anchor.view?.enter() } else { anchor.view?.leave() } }
+    }
 }
 
 private struct TipAnchor: NSViewRepresentable {
     let text: String
     let shortcut: String?
-    func makeNSView(context: Context) -> TipView { TipView() }
-    func updateNSView(_ view: TipView, context: Context) { view.shortcut = shortcut; view.text = text }
+    let anchor: Tipped.Anchor
+    func makeNSView(context: Context) -> TipView { let view = TipView(); anchor.view = view; return view }
+    func updateNSView(_ view: TipView, context: Context) { anchor.view = view; view.shortcut = shortcut; view.text = text }
     static func dismantleNSView(_ view: TipView, coordinator: ()) { view.leave() }
 }
 
-/// The view's frame, followed by a tracking area: tracking areas see the pointer whatever is drawn over them, so the
-/// view takes no clicks of its own.
+/// The view's frame, where the tip goes; told of the pointer by SwiftUI's hover. A tracking area saw the pointer
+/// whatever was drawn over the view, and showed its tip under a card or panel that has none of its own. Takes no clicks.
 final class TipView: NSView {
     var text = "" {
         didSet {
@@ -31,17 +47,11 @@ final class TipView: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        guard !text.isEmpty else { return }
-        // Under Zero's dialog, a tip behind it stays hidden: a tracking area sees the pointer through what's over it.
-        if let height = window?.contentView?.bounds.height,
-           !Dialogs.shared.allowsTip(at: CGPoint(x: event.locationInWindow.x, y: height - event.locationInWindow.y)) { return }
+    func enter() {
+        guard !text.isEmpty, let window else { return }
+        // Under Zero's dialog, a tip behind it stays hidden (the dialog is drawn in another layer of the window).
+        let at = window.mouseLocationOutsideOfEventStream
+        if let height = window.contentView?.bounds.height, !Dialogs.shared.allowsTip(at: CGPoint(x: at.x, y: height - at.y)) { return }
         pending?.cancel()
         let wait = TipPanel.shared.recently ? 0 : 600
         pending = Task { @MainActor [weak self] in
@@ -50,8 +60,6 @@ final class TipView: NSView {
             TipPanel.shared.show(self.text, shortcut: self.shortcut, over: self)
         }
     }
-
-    override func mouseExited(with event: NSEvent) { leave() }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()

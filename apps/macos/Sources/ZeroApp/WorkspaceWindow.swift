@@ -44,13 +44,22 @@ extension AppDelegate {
             window.toolbarStyle = .unifiedCompact
             window.titlebarSeparatorStyle = .none
             window.setContentSize(NSSize(width: 1100, height: 720))
+            // The window no narrower than its view lays out (WorkspaceView's 980 × 600): with sizing left to the window
+            // (sizingOptions), it could be dragged or tiled narrower, and the view, still 980 wide, was cut off at both
+            // sides.
+            window.contentMinSize = NSSize(width: 980, height: 600)
             window.isReleasedWhenClosed = false
             // Where it was last time, on whichever screen, at whatever size; centred only the first time ever. Zero's
             // own record, not AppKit's autosave: that one matches the saved screen's shape to the screens at launch,
             // and on a mismatch (a second display's menu bar or Dock still settling) moves the window to the main
             // screen and saves that in its place.
             let saved = UserDefaults.standard.string(forKey: Self.frameKey).map(NSRectFromString)
-            if let saved, !saved.isEmpty, NSScreen.screens.contains(where: { $0.frame.intersects(saved) }) { window.setFrame(saved, display: false) }
+            if var saved, !saved.isEmpty, NSScreen.screens.contains(where: { $0.frame.intersects(saved) }) {
+                // Kept from when it could be narrower: no smaller than it may be now.
+                let least = window.frameRect(forContentRect: NSRect(origin: .zero, size: window.contentMinSize)).size
+                saved.size = NSSize(width: max(saved.width, least.width), height: max(saved.height, least.height))
+                window.setFrame(saved, display: false)
+            }
             else { window.center() }
             for name in [NSWindow.didMoveNotification, NSWindow.didEndLiveResizeNotification, NSWindow.didResizeNotification] {
                 NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak window] _ in
