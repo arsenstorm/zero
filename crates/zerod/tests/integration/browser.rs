@@ -248,3 +248,14 @@ async fn a_call_with_chrome_closed_opens_it_and_goes_on() {
     browsers.call(Some("s1"), json!({}), "browser_tabs", json!({})).await.unwrap();
     assert_eq!(launched.load(std::sync::atomic::Ordering::Relaxed), 1, "open: not opened again");
 }
+
+/// The user's blocked sites, as the extension matches them ("bank.com" and "*.bank.com" both cover bank.com and its
+/// subdomains): what keeps Safari's automation window off them too, which gets no extension to refuse it.
+#[test]
+fn a_blocked_site_is_matched_as_the_extension_matches_it() {
+    let patterns = ["*.bank.example".to_string(), "https://mail.example/inbox".to_string()];
+    for (url, blocked) in [("https://bank.example/login", true), ("https://www.bank.example", true), ("https://mail.example", true),
+                           ("https://sub.mail.example/x", true), ("https://notbank.example", false), ("https://example.com", false), ("not a url", false)] {
+        assert_eq!(zerod::browser::blocked(url, &patterns), blocked, "{url}");
+    }
+}

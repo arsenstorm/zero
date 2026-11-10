@@ -157,9 +157,13 @@ impl Browsers {
         let step = crate::safari::Step::from(args)?;
         let wanted: Vec<String> = args["browsers"].as_array().map(|b| b.iter().filter_map(|n| n.as_str().map(str::to_lowercase)).collect())
             .unwrap_or_else(|| vec!["chrome".into(), "firefox".into(), "safari".into()]);
+        let patterns: Vec<String> = task["blocked"].as_array().into_iter().flatten().filter_map(|p| p.as_str().map(String::from)).collect();
         let one = async |name: String| -> (String, Result<Vec<Value>, String>) {
             let safari = self.safari.lock().unwrap().clone();
             let done = match name.as_str() {
+                // Safari's automation window has no extension to refuse a blocked site: refused here, as Chrome's and
+                // Firefox's extensions refuse one.
+                "safari" if step.url.as_deref().is_some_and(|url| blocked(url, &patterns)) => Err("That site is on the user's blocked sites".into()),
                 "safari" => match safari {
                     Some(safari) => safari.step(session.unwrap_or("zero"), &step).await,
                     None => Err("Safari isn't set up in Zero".into()),
@@ -563,4 +567,20 @@ async fn write_frame<W: AsyncWrite + Unpin>(to: &mut W, message: &Value) -> std:
     to.write_all(&(data.len() as u32).to_ne_bytes()).await?;
     to.write_all(&data).await?;
     to.flush().await
+}
+
+/// Whether the user blocked this URL's site, as Zero's extension matches it: "bank.com" and "*.bank.com" both cover
+/// bank.com and its subdomains; a pattern's scheme and path are ignored. Not a URL: not blocked.
+pub fn blocked(url: &str, patterns: &[String]) -> bool {
+    let Some((_, rest)) = url.split_once("://") else { return false };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority.rsplit('@').next().unwrap_or("").split(':').next().unwrap_or("").to_lowercase();
+    if host.is_empty() { return false }
+    patterns.iter().any(|pattern| {
+        let site = pattern.trim().to_lowercase();
+        let site = site.strip_prefix("*.").unwrap_or(&site);
+        let site = site.split_once("://").map_or(site, |(_, s)| s);
+        let site = site.split('/').next().unwrap_or("");
+        !site.is_empty() && (host == site || host.ends_with(&format!(".{site}")))
+    })
 }
