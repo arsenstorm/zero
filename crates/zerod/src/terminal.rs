@@ -1,9 +1,9 @@
-//! What reaching an agent through its terminal takes, wherever the terminal lives (Solo, Rex, Zero's own): reading the
-//! rendered screen for a half-typed draft and for the agent's reply, waiting until it sits at its prompt, and typing
-//! commands. Plus Claude Code's own record of its sessions, for resuming and titling them. ponytail: screen reading is the
-//! ceiling of these runtimes; zerod's own sessions speak their providers' protocols instead.
+//! What reaching an agent through its terminal takes (Zero's own, kept by zero-host): reading the rendered screen for a
+//! half-typed draft and for the agent's reply, waiting until it sits at its prompt, and typing commands. Plus Claude
+//! Code's own record of its sessions, for resuming and titling them. ponytail: screen reading is the ceiling of a
+//! terminal; zerod's own sessions speak their providers' protocols instead.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -149,6 +149,26 @@ pub fn resume_command(agent: &AgentIdentity) -> Result<Vec<String>, String> {
 
 pub fn label(agent: &AgentIdentity) -> &str {
     agent.label.as_deref().unwrap_or(&agent.name)
+}
+
+/// Claude Code takes `/model <id>` and `/effort <level>`, each typed on its own once the last one is handled.
+pub async fn switch_model(terminal: &dyn Terminal, agent: &AgentIdentity, model: Option<&str>, level: Option<&str>) -> Result<(), String> {
+    if let Some(model) = model { send(terminal, &format!("/model {model}"), agent).await? }
+    if let Some(level) = level.filter(|l| !l.is_empty()) {
+        if model.is_some() { tokio::time::sleep(Duration::from_millis(1500)).await }
+        send(terminal, &format!("/effort {level}"), agent).await?;
+    }
+    Ok(())
+}
+
+/// The names among `agents` on this runtime whose terminal is in `wanted`; a host that can't be reached says nothing
+/// either way.
+pub async fn states<T: Terminal + crate::inbox::Runtime>(terminal: &T, agents: &[AgentIdentity], wanted: State) -> HashSet<String> {
+    let mut found = HashSet::new();
+    for agent in agents.iter().filter(|a| terminal.can_reach(a)) {
+        if let Some(reference) = agent.reference.as_deref() && terminal.state(reference).await == wanted { found.insert(agent.name.clone()); }
+    }
+    found
 }
 
 /// Claude Code's own record of its sessions: one JSONL per session under ~/.claude/projects/<cwd>, holding the user's turns

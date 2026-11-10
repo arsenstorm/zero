@@ -51,11 +51,6 @@ pub struct AgentIdentity {
     pub host: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
-    #[serde(rename = "soloProcessID", default, skip_serializing_if = "Option::is_none")]
-    pub solo_process_id: Option<i64>,
-    /// Solo scopes its calls to a project; every call about the process carries this one.
-    #[serde(rename = "soloProjectID", default, skip_serializing_if = "Option::is_none")]
-    pub solo_project_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ticket: Option<String>,
     /// What to show for the agent (its session's title once it has one); `name` stays the key.
@@ -66,14 +61,12 @@ pub struct AgentIdentity {
     pub session: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
-    /// For runtimes other than Solo: which one ("rex", "zero" for Zero's own terminals, "zerod"), its id for the agent
-    /// there, the group it lives in, and the command line it was started with.
+    /// Which runtime runs it ("zero" for Zero's own terminals, "zerod"), its id for the agent
+    /// there, and the command line it was started with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<String>,
     #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
-    #[serde(rename = "refGroup", default, skip_serializing_if = "Option::is_none")]
-    pub ref_group: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch: Option<Vec<String>>,
 }

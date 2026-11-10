@@ -387,17 +387,6 @@ async fn a_kind_of_run_allowed_for_a_task_runs_without_asking_again() {
     until(&s, &rejected.id, |a| a.state == AskState::Declined).await;
 }
 
-#[tokio::test]
-async fn a_cli_call_joins_the_agent_zero_knows_on_the_same_process() {
-    let s = inbox();
-    let mut started = Ask::new(AskKind::Note, "Started", AgentIdentity { solo_process_id: Some(7), solo_project_id: Some(13), ..agent("claude-7") }, 3600);
-    started.status = Some("done".into());
-    s.create(started, false);
-    let note = s.create(Ask::new(AskKind::Note, "Update", AgentIdentity { solo_process_id: Some(7), ..agent("solo-7") }, 3600), false);
-    assert_eq!(note.agent.name, "claude-7");
-    assert_eq!(note.agent.solo_project_id, Some(13));
-}
-
 #[test]
 fn a_prompts_gist_is_its_first_five_words() {
     assert_eq!(Inbox::gist("fix the flaky checkout spec, then open a PR\nmore detail").as_deref(), Some("Fix the flaky checkout spec…"));
@@ -413,18 +402,23 @@ fn the_log_reads_and_writes_as_the_app_wrote_it() {
         "session":"s","account":"a@b","runtime":"zerod","ref":"01a1","refGroup":"g","launch":["claude","-p"]},"createdAt":"2026-10-26T12:44:00Z",
         "expiresAt":"2026-10-27T12:44:00Z","state":"answered","answer":"Allow","output":"","exitCode":0,"answeredAt":"2026-10-26T12:44:34Z",
         "status":"withdrawn","choice":0,"waits":false,"delivery":"delivered","detail":"d","script":"echo","sameAs":"abc123","request":"r1"}"#;
-    let parsed: serde_json::Value = serde_json::from_str(line).unwrap();
     let ask: Ask = serde_json::from_str(line).unwrap();
-    assert_eq!(serde_json::to_value(&ask).unwrap(), parsed);
+    assert_eq!(serde_json::to_value(&ask).unwrap(), without_retired(serde_json::from_str(line).unwrap()));
     // And the real log, where there is one: nothing in it may be lost on the way through zerod.
     let real = std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join(".zero/asks.jsonl");
     if let Ok(text) = std::fs::read_to_string(real) {
         for line in text.lines() {
-            let parsed: serde_json::Value = serde_json::from_str(line).unwrap();
             let ask: Ask = serde_json::from_str(line).unwrap_or_else(|e| panic!("{e}: {line}"));
-            assert_eq!(serde_json::to_value(&ask).unwrap(), parsed);
+            assert_eq!(serde_json::to_value(&ask).unwrap(), without_retired(serde_json::from_str(line).unwrap()));
         }
     }
+}
+
+/// A line as zerod writes it back: what an agent had from when Zero reached Solo and Rex (its Solo process and project,
+/// its Rex session) is read past.
+fn without_retired(mut line: serde_json::Value) -> serde_json::Value {
+    if let Some(agent) = line["agent"].as_object_mut() { for key in ["soloProcessID", "soloProjectID", "refGroup"] { agent.remove(key); } }
+    line
 }
 
 #[tokio::test]

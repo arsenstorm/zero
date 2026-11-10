@@ -511,7 +511,7 @@ fn the_board_stays_quick_with_thousands_of_gone_agents_in_the_inbox() {
     let mut by_name = note("s1", "Named only", Some("waiting"), None);
     by_name.agent.reference = None;
     let mut by_reference = note("s2", "Referenced only", Some("waiting"), None);
-    by_reference.agent.name = "solo-7".into();
+    by_reference.agent.name = "claude-7".into();
     asks.extend([by_name, by_reference]);
     let started = std::time::Instant::now();
     let rows = board(&sessions, &asks);

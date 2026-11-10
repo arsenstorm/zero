@@ -10,8 +10,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::ask::AgentIdentity;
 use crate::inbox::{Fut, Runtime};
-use crate::rex::{states, switch_model};
-use crate::terminal::{self, ClaudeSessions, State, Terminal};
+use crate::terminal::{self, ClaudeSessions, State, Terminal, states, switch_model};
 
 pub struct Host {
     pub socket: PathBuf,

@@ -84,8 +84,7 @@ fn open_daemon(home: &Path) -> Arc<zerod::daemon::Daemon> {
 /// The inbox with every runtime its agents run in, the drops feeding it, and the bridge from tasks to it.
 fn open_inbox(daemon: &Arc<zerod::daemon::Daemon>, args: &Args) -> (Arc<zerod::inbox::Inbox>, Arc<zerod::drops::Drops>) {
     let runtimes: Vec<Arc<dyn Runtime>> = vec![
-        Arc::new(zerod::daemon::Sessions::of(daemon)), Arc::new(zerod::solo::Solo::installed()),
-        Arc::new(zerod::rex::Rex::installed()), Arc::new(zerod::host::Host::installed()),
+        Arc::new(zerod::daemon::Sessions::of(daemon)), Arc::new(zerod::host::Host::installed()),
     ];
     let inbox = zerod::inbox::Inbox::open_with(Some(args.asks_log.clone()), runtimes, Some(zerod::host::Host::installed()));
     let drops = zerod::drops::Drops::new(inbox.clone(), args.resources.clone());

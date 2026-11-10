@@ -19,7 +19,7 @@ use crate::ask::{AgentIdentity, Ask, AskKind, AskState, Delivery, Time};
 
 pub type Fut<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// Somewhere agents run that the inbox can reach: Solo, Rex, Zero's own terminals, zerod's sessions. Only what an
+/// Somewhere agents run that the inbox can reach: Zero's own terminals, zerod's sessions. Only what an
 /// inbox needs: type into the agent's session, read what it replied, tell whether it still runs, stop it.
 pub trait Runtime: Send + Sync {
     fn name(&self) -> &str;
@@ -174,14 +174,11 @@ impl Inbox {
         ask.agent.name = resolve(&state.asks, &ask.agent);
         if let Some(known) = identity(&state.asks, &ask.agent.name) {
             let a = &mut ask.agent;
-            a.solo_process_id = a.solo_process_id.or(known.solo_process_id);
-            a.solo_project_id = a.solo_project_id.or(known.solo_project_id);
             a.session = a.session.clone().or(known.session);
             a.label = a.label.clone().or(known.label);
             a.account = a.account.clone().or(known.account);
             a.runtime = a.runtime.clone().or(known.runtime);
             a.reference = a.reference.clone().or(known.reference);
-            a.ref_group = a.ref_group.clone().or(known.ref_group);
             a.launch = a.launch.clone().or(known.launch);
         }
         // Saying where it is again within ten minutes, nothing else between, rewrites the last note.
@@ -747,7 +744,7 @@ impl Inbox {
         for runtime in &self.runtimes {
             for name in runtime.gone(&open).await { self.close_agent(&name, false) }
         }
-        for identity in all.iter().filter(|i| i.session.is_some() || (i.solo_process_id.is_some() && i.label.is_none())) { self.relabel(identity).await }
+        for identity in all.iter().filter(|i| i.session.is_some()) { self.relabel(identity).await }
         let agents = self.agents();
         if std::mem::replace(&mut self.lock().agents, agents.clone()) != agents {
             let _ = self.events.send(InboxEvent::Agents { offline: agents.0, reachable: agents.1 });
@@ -878,10 +875,9 @@ fn identity(asks: &[Ask], name: &str) -> Option<AgentIdentity> {
     asks.iter().rev().find(|a| a.agent.name == name).map(|a| a.agent.clone())
 }
 
-/// The name Zero knows an agent by: its own, or that of the agent on the same Solo process or runtime reference.
+/// The name Zero knows an agent by: its own, or that of the agent on the same runtime reference.
 fn resolve(asks: &[Ask], agent: &AgentIdentity) -> String {
     if identity(asks, &agent.name).is_some() { return agent.name.clone() }
-    if let Some(pid) = agent.solo_process_id && let Some(owner) = asks.iter().rev().find(|a| a.agent.solo_process_id == Some(pid)) { return owner.agent.name.clone() }
     if let Some(reference) = &agent.reference && let Some(owner) = asks.iter().rev().find(|a| a.agent.reference.as_ref() == Some(reference)) {
         return owner.agent.name.clone();
     }

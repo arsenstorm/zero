@@ -28,13 +28,13 @@ async fn a_runtime_runs_in_the_sessions_folder_with_its_own_name_for_zero() {
 
 #[test]
 fn a_runtime_gets_the_login_environment_but_not_who_started_zero() {
-    let login = [("HOME", "/Users/u"), ("CLIPROXY_API_KEY", "k"), ("PATH", "/opt/x/bin"), ("SOLO_PROCESS_ID", "7"), ("CLAUDECODE", "1"),
-                 ("CLAUDE_CODE_ENTRYPOINT", "cli"), ("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "9"), ("ZERO_AGENT", "solo-7"), ("CODEX_THREAD_ID", "t")];
+    let login = [("HOME", "/Users/u"), ("CLIPROXY_API_KEY", "k"), ("PATH", "/opt/x/bin"), ("ZERO_HOST_TERMINAL", "t1"), ("CLAUDECODE", "1"),
+                 ("CLAUDE_CODE_ENTRYPOINT", "cli"), ("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "9"), ("ZERO_AGENT", "claude-7"), ("CODEX_THREAD_ID", "t")];
     let env: std::collections::HashMap<String, String> = process::environment(login.iter().map(|(k, v)| (k.to_string(), v.to_string())), "s1").into_iter().collect();
     // As Codex gets it when run by hand: a provider's own settings (here a key for a custom model provider) come along.
     assert_eq!((env["HOME"].as_str(), env["CLIPROXY_API_KEY"].as_str(), env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"].as_str()), ("/Users/u", "k", "9"));
-    // Whatever started zerod (Solo, a Claude Code session, Codex) isn't the agent's parent: it isn't told it's nested in one.
-    for gone in ["SOLO_PROCESS_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CODEX_THREAD_ID"] { assert!(!env.contains_key(gone), "{gone}") }
+    // Whatever started zerod (a terminal, a Claude Code session, Codex) isn't the agent's parent: it isn't told it's nested in one.
+    for gone in ["ZERO_HOST_TERMINAL", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CODEX_THREAD_ID"] { assert!(!env.contains_key(gone), "{gone}") }
     assert_eq!((env["ZERO_AGENT"].as_str(), env["ZERO_SESSION"].as_str(), env["TERM"].as_str()), ("zerod-s1", "s1", "dumb"));
     assert_eq!(env["PATH"], "/usr/bin:/bin:/usr/sbin:/sbin", "the login shell builds the PATH from the user's profile");
 }

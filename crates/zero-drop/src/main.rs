@@ -25,10 +25,6 @@ struct Agent {
     name: String,
     host: String,
     cwd: Option<String>,
-    #[serde(rename = "soloProcessID")]
-    solo_process_id: Option<i64>,
-    #[serde(rename = "soloProjectID", default)]
-    solo_project_id: Option<i64>,
     ticket: Option<String>,
 }
 
@@ -168,8 +164,6 @@ impl Drop {
             .flag("agent")
             .cloned()
             .or_else(|| env::var("ZERO_AGENT").ok())
-            // An agent Solo runs on this Mac is known to Zero by its process, whichever folder it calls from.
-            .or_else(|| env::var("SOLO_PROCESS_ID").ok().map(|id| format!("solo-{id}")))
             .unwrap_or_else(|| {
                 let parent = self.root.parent();
                 let leaf = |p: Option<&Path>| p.and_then(Path::file_name).map(|n| n.to_string_lossy().to_string());
@@ -183,9 +177,6 @@ impl Drop {
             name,
             host: hostname(),
             cwd: env::current_dir().ok().map(|p| p.to_string_lossy().to_string()),
-            // Set when Solo started the agent on this Mac; Zero reaches its session through Solo.
-            solo_process_id: env::var("SOLO_PROCESS_ID").ok().and_then(|id| id.parse().ok()),
-            solo_project_id: env::var("SOLO_PROJECT_ID").ok().and_then(|id| id.parse().ok()),
             ticket: args.flag("ticket").cloned(),
         }
     }
