@@ -10,7 +10,7 @@ import { heroAsk } from "../lib/demo";
 interface Props { class?: string }
 const { class: className = "" } = Astro.props;
 // The bar's marks: every task on the board, workers included, in the sidebar's order, each with what the inbox shows
-// for it. The inbox control opens the ask waiting, as its task's mark does.
+// for it. The inbox control opens every ask waiting, one under another, to scroll through.
 const yesNo = ["Yes", "No", "Suggest something else…"];
 const peeks = [
   { id: "notes", task: "notes", title: "Release notes for 2.4", state: "needsYou", ask: "Ship the release notes as they are?", options: yesNo },
@@ -29,9 +29,24 @@ const peeks = [
     {/* Half Dome from Glacier Point: John Gibbons, CC0, https://commons.wikimedia.org/wiki/File:Half_Dome_Sunset_(Unsplash).jpg */}
     <img src="/yosemite.webp" alt="" loading="lazy" decoding="async" class="absolute inset-0 size-full object-cover pointer-events-none" />
     {/* Pointing at a mark opens its task in the inbox beside the bar (src/scripts/demo.ts). */}
-    <div data-peeks class="absolute right-[56px] top-1/2 -translate-y-1/2 w-[300px] rounded-[28px] bg-hover p-2.5 origin-right transition-[opacity,scale] duration-200 ease-out group-data-[closed]/desk:opacity-0 group-data-[closed]/desk:scale-[0.96] group-data-[closed]/desk:pointer-events-none">
-      {peeks.map((peek, i) => (
-        <div data-peek={peek.id} hidden={i !== 0}>
+    {/* The inbox panel, as InboxPanel.swift places it: 380 pt wide, 56 pt in from the edge, centred on the bar. In the
+        app it's as tall as the screen; here it's as tall as the stage shows when closed in on the bar, so its fading
+        top and bottom are in view. A task's mark shows its one card on the bar's centre line; the inbox control shows
+        every ask (InboxView.swift). */}
+    <div data-peeks class="absolute right-[56px] inset-y-[250px] w-[380px] origin-right transition-[opacity,scale] duration-200 ease-out group-data-[closed]/desk:opacity-0 group-data-[closed]/desk:scale-[0.96] group-data-[closed]/desk:pointer-events-none">
+      {/* The asks as InboxView lays them out: on one surface (10 pt in, 10 pt between cards), in a column that scrolls
+          the whole panel's height and dissolves into its top and bottom over 40 pt. Padding of half the panel less half
+          the bar above and below: scrolled to either end, the list stops level with the bar's top or bottom. The ask
+          you point at is the selected one; the others wait dimmed (CardView: 0.55). */}
+      <div data-peek="inbox" class="inbox-list absolute inset-0 overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div data-inbox-stack class="rounded-[28px] bg-hover p-2.5 flex flex-col gap-2.5">
+          {peeks.filter((peek) => "ask" in peek).map((peek) => (
+            <AskCard interactive task={peek.task} headline={peek.ask!} byline={peek.title} options={[...peek.options!]} />
+          ))}
+        </div>
+      </div>
+      {peeks.map((peek) => (
+        <div data-peek={peek.id} hidden class="absolute inset-x-0 top-1/2 -translate-y-1/2 rounded-[28px] bg-hover p-2.5">
           {peek.ask
             ? <AskCard interactive task={peek.task} headline={peek.ask} byline={peek.title} options={[...peek.options]} />
             : <AskCard headline={"note" in peek ? peek.note : ""} byline={peek.title} />}
@@ -43,7 +58,7 @@ const peeks = [
     <div data-bar-marks class="absolute right-0 top-1/2 -translate-y-1/2 flex flex-col items-center gap-0.5 py-2 px-1.5 rounded-l-[22px] bg-pill border border-r-0 border-stroke">
       <span aria-hidden="true" class="bar-fillet-top absolute -right-px -top-[11px] size-[11px]"></span>
       <span aria-hidden="true" class="bar-fillet-bottom absolute -right-px -bottom-[11px] size-[11px]"></span>
-      <button type="button" data-peek-open="notes" aria-label="Open asks" aria-pressed="false" class="bar-mark size-8 grid place-items-center relative">
+      <button type="button" data-peek-open="inbox" aria-label="Open asks" aria-pressed="false" class="bar-mark size-8 grid place-items-center relative">
         <Icon name="inbox" size={15} />
         <span class="absolute top-[6px] right-[6px] size-[7px] rounded-full bg-red"></span>
       </button>
@@ -82,7 +97,7 @@ const peeks = [
     function place(animate: boolean, ms = 1200) {
       const w = desk.clientWidth, h = desk.clientHeight;
       const fit = Math.max(w / SCREEN.width, h / SCREEN.height);
-      const close = Math.min(w / 420, h / 400, 1.15);
+      const close = Math.min(w / 470, h / 400, 1.15);
       const from = { s: fit, x: (w - SCREEN.width * fit) / 2, y: (h - SCREEN.height * fit) / 2 };
       const to = { s: close, x: w - SCREEN.width * close, y: h / 2 - (SCREEN.height / 2) * close };
       // The screen point drawn at the same stage point in both: x1 + s1·p = x2 + s2·p.
@@ -163,3 +178,52 @@ const peeks = [
     new ResizeObserver(() => place(false)).observe(desk);
   }
 </script>
+
+<style>
+  /* InboxView's softEdges: the list dissolves into the panel's top and bottom over 40 pt instead of being cut. */
+  .inbox-list { mask-image: linear-gradient(to bottom, transparent, #000 40px, #000 calc(100% - 40px), transparent); }
+  /* CardView's dimming: the asks you aren't on wait at 0.55, when more than one waits. */
+  .inbox-list [data-ask] { transition: opacity 150ms ease; }
+  .inbox-list [data-ask][data-dim] { opacity: 0.55; }
+</style>
+
+<script>
+  // The inbox list, as the app's: the selected ask sits on the bar's centre line; pointing at a waiting ask selects
+  // it; answered, the next waiting ask is selected and scrolls to the centre (InboxController.scheduleAdvance).
+  for (const desk of document.querySelectorAll<HTMLElement>("[data-bar]")) {
+    const list = desk.querySelector<HTMLElement>('[data-peek="inbox"]');
+    const bar = desk.querySelector<HTMLElement>("[data-bar-marks]");
+    if (!list || !bar) continue;
+    const cards = [...list.querySelectorAll<HTMLElement>("[data-ask]")];
+    let selected = cards[0];
+    const waiting = (card: HTMLElement) => !card.hasAttribute("data-decided");
+    function dim() {
+      const many = cards.filter(waiting).length > 1;
+      for (const card of cards) card.toggleAttribute("data-dim", many && waiting(card) && card !== selected);
+    }
+    // Half the panel less half the bar above and below, so either end of the list stops level with the bar's.
+    function pad() {
+      const room = Math.max(0, (list!.clientHeight - bar!.offsetHeight) / 2);
+      list!.style.paddingBlock = `${room}px`;
+    }
+    function center(card: HTMLElement, smooth: boolean) {
+      const top = card.offsetTop + card.offsetHeight / 2 - list!.clientHeight / 2;
+      list!.scrollTo({ top, behavior: smooth && !matchMedia("(prefers-reduced-motion: reduce)").matches ? "smooth" : "auto" });
+    }
+    for (const card of cards) card.addEventListener("pointerenter", () => { if (waiting(card)) { selected = card; dim(); } });
+    document.addEventListener("zero:answered", (event) => {
+      const card = cards.find((c) => c.dataset.headline === (event as CustomEvent).detail.headline);
+      if (!card) return;
+      if (card === selected) {
+        const next = cards.slice(cards.indexOf(card) + 1).find(waiting) ?? cards.find(waiting);
+        if (next) setTimeout(() => { selected = next; dim(); if (!list.hidden) center(next, true); }, 350);
+      }
+      dim();
+    });
+    // Shown (the inbox control pinned): laid out for its height, the selected ask centred at once.
+    new MutationObserver(() => { if (!list.hidden) { pad(); center(selected, false); } }).observe(list, { attributes: true, attributeFilter: ["hidden"] });
+    new ResizeObserver(() => { pad(); if (!list.hidden) center(selected, false); }).observe(list);
+    dim();
+  }
+</script>
+
