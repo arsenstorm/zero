@@ -1,0 +1,30 @@
+# Ghostty's terminal engine (apps/macos/Vendor/GhosttyVt.xcframework), which the Swift package links and git doesn't
+# keep: built with Zig by `make ghostty` at the commit the Makefile pins, and cached by that commit.
+name: Ghostty engine
+description: Builds or restores apps/macos/Vendor/GhosttyVt.xcframework
+
+runs:
+  using: composite
+  steps:
+    - name: Read the pinned Ghostty commit
+      id: pin
+      shell: bash
+      run: echo "commit=$(sed -n 's/^GHOSTTY_COMMIT *= *//p' Makefile)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore the engine
+      id: cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: apps/macos/Vendor/GhosttyVt.xcframework
+        key: ghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ steps.pin.outputs.commit }}
+
+    - name: Set up Zig
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+      with:
+        version: 0.17.0
+
+    - name: Build the engine
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: make ghostty

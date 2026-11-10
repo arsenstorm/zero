@@ -1,0 +1,13 @@
+rules:
+  dangerous-triggers:
+    # The CLA bot answers comments and pull requests from forks, so it needs their triggers; it never checks out or
+    # runs a pull request's code, only comments and records signatures.
+    ignore:
+      - cla.yml
+  archived-uses:
+    # contributor-assistant/github-action is archived but still works, pinned to a commit. To replace.
+    ignore:
+      - cla.yml
+  self-repository:
+    # Local actions (./.github/actions) are used after checkout, which every job here does first.
+    disable: true

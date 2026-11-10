@@ -1,0 +1,50 @@
+version: 2
+updates:
+  # Every ecosystem waits a week after an upstream release before proposing it: a compromised release is usually found
+  # and pulled within days.
+  - package-ecosystem: github-actions
+    directories: ["/", "/.github/actions/*"]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      cargo:
+        patterns: ["*"]
+
+  - package-ecosystem: swift
+    directory: /apps/macos
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      swift:
+        patterns: ["*"]
+
+  # The bun ecosystem updates bun.lock with package.json (the npm one doesn't, failing `bun install --frozen-lockfile`).
+  - package-ecosystem: bun
+    directories: ["/", "/site"]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      astro:
+        patterns: ["astro", "@astrojs/*"]
+      react:
+        patterns: ["react", "react-dom", "@types/react", "@types/react-dom"]
+      tailwind:
+        patterns: ["tailwindcss", "@tailwindcss/*"]
+      tooling:
+        patterns: ["@biomejs/*", "ultracite"]
