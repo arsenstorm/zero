@@ -58,6 +58,35 @@ async fn an_archived_task_leaves_the_list_and_keeps_its_files() {
     assert_eq!(daemon.archive(&id).await.unwrap_err(), format!("No session {id}"));
 }
 
+/// The archive is listed from an index (archive.json), kept as tasks go and come back, not by reading every archived
+/// folder: hundreds of them took tens of milliseconds a call. Missing, or older than the archive, it's rebuilt.
+#[tokio::test]
+async fn the_archive_is_listed_from_an_index_rebuilt_when_missing_or_stale() {
+    let home = temp_dir("archive-index");
+    let zerod = home.join("zerod");
+    let daemon = Daemon::open(&zerod, quiet()).unwrap();
+    let start = |prompt: &str| daemon.start(Provider::Claude, prompt, zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    let (one, two) = (start("one"), start("two"));
+    daemon.archive(&one).await.unwrap();
+    daemon.archive(&two).await.unwrap();
+    let ids = |daemon: &Daemon| daemon.archived(100).iter().map(|a| a["id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    assert_eq!(ids(&daemon), [two.clone(), one.clone()]);
+    let index: serde_json::Value = serde_json::from_slice(&std::fs::read(zerod.join("archive.json")).expect("the index is written as tasks are archived")).unwrap();
+    assert_eq!(index.as_array().map(Vec::len), Some(2), "{index}");
+
+    daemon.unarchive(&one).unwrap();
+    assert_eq!(ids(&daemon), vec![two.clone()], "brought back, it leaves the index");
+    assert_eq!(ids(&Daemon::open(&zerod, quiet()).unwrap()), vec![two.clone()], "another zerod reads the index");
+
+    // A folder archived by a zerod that kept no index: the archive is newer than the index, which is rebuilt.
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    std::fs::create_dir_all(zerod.join("archive/old")).unwrap();
+    std::fs::copy(zerod.join("archive").join(&two).join("meta.json"), zerod.join("archive/old/meta.json")).unwrap();
+    assert_eq!(ids(&Daemon::open(&zerod, quiet()).unwrap()).len(), 2, "the stale index is rebuilt from the folders");
+    std::fs::remove_file(zerod.join("archive.json")).unwrap();
+    assert_eq!(ids(&Daemon::open(&zerod, quiet()).unwrap()).len(), 2, "a missing one too");
+}
+
 #[tokio::test]
 async fn a_lead_adopts_tasks_and_claude_code_sessions_as_its_workers() {
     let home = temp_dir("adopt-workers");
