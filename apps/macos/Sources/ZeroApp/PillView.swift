@@ -271,10 +271,13 @@ struct PillView: View {
                     if let url = URL(string: "zero://task/" + id) { (NSApp.delegate as? AppDelegate)?.openZeroURL(url) }
                 }
                 rows.append([("open", "Open", "arrow-up-right", false, open)])
+                // Named, not inline in a ternary of tuples: CI's compiler found `Task` there ambiguous.
+                let paused = workspace.isPaused(id)
+                let toggle: () -> Void = {
+                    Task { if paused { await workspace.unpause([id]) } else { await workspace.pause([id]) } }
+                }
                 rows.append([
-                    workspace.isPaused(id)
-                        ? ("resume", "Resume", "media-play", false, { Task { await workspace.unpause([id]) } })
-                        : ("pause", "Pause", "circle-pause", false, { Task { await workspace.pause([id]) } }),
+                    (paused ? "resume" : "pause", paused ? "Resume" : "Pause", paused ? "media-play" : "circle-pause", false, toggle),
                     ("later", "Move to Later", "bookmark", false, { Task { await workspace.moveToLater(id) } }),
                 ])
                 rows.append([
