@@ -31,9 +31,9 @@ The website (site/), in the JavaScript and fonts it serves
 
 Nucleo icons (https://nucleoapp.com)
   apps/macos/Resources/nucleo, apps/ios/*/Assets.xcassets, site/src/icons
-  Not free software: Nucleo's icons are used under Nucleo's own licence (https://nucleoapp.com/license), held by
-  Zero's maintainer. They are not covered by the GPL, and that licence doesn't let you reuse them: to build on Zero,
-  get your own Nucleo licence or replace the icons.
+  Licensed to Zero's maintainer under Nucleo's licence (https://nucleoapp.com/license); not free software and not
+  covered by the GPL. That licence doesn't extend to you: to build on Zero, get your own Nucleo licence or replace
+  the icons.
 
 Provider marks
   The Claude, OpenAI and OpenCode marks in the apps and the site belong to their owners and are used to name the
