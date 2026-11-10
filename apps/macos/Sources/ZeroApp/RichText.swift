@@ -326,27 +326,21 @@ final class RichLayoutManager: NSLayoutManager {
                 guard picked.length > 0, used.minY < local.maxY, used.maxY > local.minY else { return }
                 let words = self.boundingRect(forGlyphRange: picked, in: container)
                 let style = self.textStorage?.attribute(.paragraphStyle, at: self.characterIndexForGlyph(at: picked.location), effectiveRange: nil) as? NSParagraphStyle
-                // Each line's own room, as AppKit lays it (one line's ends where the next's begins, so a paragraph's
-                // bands meet with no seam), moved up half its line spacing so the words sit in the middle of the band,
-                // and a body line tall (a bullet's line, taller for its larger glyph,
-                // keeps the bottom of its room, where its words are).
-                // A line of its prose's height: its smallest proportional font's (a bullet's larger glyph left out),
-                // or, a line of code alone, its own room (code's font measures taller than the line it sits on, and
-                // its band came out tall and low).
-                var prose: CGFloat?
+                // Around its words, from their baseline: their tallest ascender above and deepest descender below (a
+                // bullet, larger and raised, left out), and half the line spacing either side, so one line's band meets
+                // the next's, and a paragraph's last line, or the text's, is as tall as any other. Laid on each line's
+                // room instead, AppKit's room after a paragraph (there, but not at the text's end) and code's taller
+                // font put bands low or high.
                 let lineChars = self.characterRange(forGlyphRange: lineGlyphs, actualGlyphRange: nil)
-                self.textStorage?.enumerateAttribute(.font, in: lineChars) { value, _, _ in
-                    guard let face = value as? NSFont, !face.fontDescriptor.symbolicTraits.contains(.monoSpace) else { return }
-                    prose = min(prose ?? .infinity, self.defaultLineHeight(for: face))
+                var ascent: CGFloat = 0, descent: CGFloat = 0
+                self.textStorage?.enumerateAttributes(in: lineChars) { attributes, _, _ in
+                    guard let face = attributes[.font] as? NSFont, (attributes[.baselineOffset] as? CGFloat ?? 0) == 0 else { return }
+                    ascent = max(ascent, face.ascender); descent = max(descent, -face.descender)
                 }
-                let isLast = NSMaxRange(lineGlyphs) >= self.numberOfGlyphs
-                let pitch = prose.map { $0 + (style?.lineSpacing ?? 0) } ?? (fragment.height + (isLast ? (style?.lineSpacing ?? 0) : 0))
-                // (A paragraph's room after it isn't in its last line's: taking it off put that line's band up on the
-                // line above.)
-                // The text's last line has no line spacing after it (AppKit adds none there): its room is short by that,
-                // and the band, laid on it, ended at the baseline, a "g"'s tail left out.
-                let maxY = fragment.maxY - (style?.lineSpacing ?? 0) / 2 + max(0, pitch - fragment.height)
-                let minY = maxY - pitch
+                let spacing = style?.lineSpacing ?? 0
+                let baseline = fragment.minY + self.location(forGlyphAt: NSMaxRange(picked) - 1).y
+                let minY = ascent > 0 ? baseline - ascent - spacing / 2 : used.minY
+                let maxY = ascent > 0 ? baseline + descent + spacing / 2 : used.maxY
                 let minX = words.minX, maxX = words.maxX
                 guard maxX - minX > 0.5, maxY > minY else { return }
                 placed.append(NSRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY).offsetBy(dx: self.drawnAt.x, dy: self.drawnAt.y))
