@@ -52,6 +52,13 @@ public enum TaskAlerts {
         return state.rawValue + ":" + asked + "#" + issues
     }
 
+    /// What the tasks stand at when Zero opens, as if announced: what was news before it reopened isn't news again.
+    public static func announced(_ rows: [BoardRow]) -> [String: String] {
+        var announced: [String: String] = [:]
+        for row in rows { if let now = standing(row), !now.worker { announced[row.session] = announcement(row, now.state) } }
+        return announced
+    }
+
     /// As above, `announced` keeping what each task was last announced as (the notifier's, across boards).
     public static func changes(from old: [BoardRow], to new: [BoardRow], announced: inout [String: String]) -> (alerts: [TaskAlert], cleared: [String]) {
         var alerts: [TaskAlert] = [], cleared: [String] = []

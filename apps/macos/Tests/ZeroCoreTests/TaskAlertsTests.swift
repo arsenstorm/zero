@@ -145,3 +145,14 @@ private func row(_ id: String, state: String, own: String? = nil, worker: String
     let asked = TaskAlerts.changes(from: [row("1", state: "working", onYou: issue)], to: [row("1", state: "needsYou", now: "Opened #3.", asks: ["Merge #3?"], onYou: issue)], announced: &announced)
     #expect(asked.alerts.count == 1)
 }
+
+@Test func whatStandsAtLaunchIsNotNewsOnceTheTaskMovesAndComesBack() {
+    // Zero reopened (an update): the issue already on the user isn't announced again the first time the lead works on
+    // something else and comes back to it.
+    let issue = [("ENG-1", "Live in production; move it to PM review")]
+    let atLaunch = [row("1", state: "needsYou", now: "Merged #1.", onYou: issue)]
+    var announced = TaskAlerts.announced(atLaunch)
+    _ = TaskAlerts.changes(from: atLaunch, to: [row("1", state: "working", onYou: issue)], announced: &announced)
+    let back = TaskAlerts.changes(from: [row("1", state: "working", onYou: issue)], to: [row("1", state: "needsYou", now: "Opened #2.", onYou: issue)], announced: &announced)
+    #expect(back.alerts.isEmpty)
+}

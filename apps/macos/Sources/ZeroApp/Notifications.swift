@@ -80,7 +80,7 @@ import ZeroCore
 
     func board(_ rows: [BoardRow]) {
         NSApp.dockTile.badgeLabel = TaskAlerts.needingYou(rows).nonZero.map(String.init)
-        guard let last else { self.last = rows; return }
+        guard let last else { self.last = rows; announced = TaskAlerts.announced(rows); return }
         self.last = rows
         let (alerts, cleared) = TaskAlerts.changes(from: last, to: rows, announced: &announced)
         if !cleared.isEmpty { center.removeDeliveredNotifications(withIdentifiers: cleared); Phones.shared.clear(cleared); for id in cleared { held[id] = nil } }
