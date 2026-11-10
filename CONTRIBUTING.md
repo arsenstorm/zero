@@ -17,9 +17,23 @@ it (section 4 of the agreement).
 
 ## Working on Zero
 
-[README.md](README.md) explains how to build Zero and how its tests are laid out. In short:
+[README.md](README.md) explains how to build Zero and how its tests are laid out. Once per clone, run
+
+```sh
+make setup
+```
+
+It sets up the pre-commit hook in `.githooks/`, which formats what you stage (Rust with rustfmt, Swift with
+swift-format, the site, relay and browser extension with Biome) and stages the result, and installs Biome (needs
+[Bun](https://bun.sh)). `make format` formats everything at once. For `git blame` to skip the commits that only
+reformatted the code, also run `git config blame.ignoreRevsFile .git-blame-ignore-revs`.
+
+In short:
 
 - Changes to the daemon (`crates/zerod`) start with a failing test in `crates/zerod/tests/integration/`.
-- Before opening a pull request, run `cargo test -p zerod`, `cargo clippy -p zerod --all-targets` (no warnings) and
-  `swift test --package-path apps/macos`.
+- Before opening a pull request, run `make lint` (formatting, and `cargo clippy` with no warnings),
+  `cargo test -p zerod` and `swift test --package-path apps/macos`. CI runs the same.
 - Commit messages are one line: `type(scope): message`, under 72 characters.
+
+Found a security issue? Don't open an issue: [SECURITY.md](SECURITY.md) explains how to report it privately. Everyone
+taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).

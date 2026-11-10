@@ -1,0 +1,7 @@
+* text=auto eol=lf
+
+# Generated: collapsed in GitHub's diffs and left out of its language stats.
+Cargo.lock linguist-generated=true
+**/bun.lock linguist-generated=true
+apps/ios/Zero.xcodeproj/project.pbxproj linguist-generated=true
+crates/zerod/tests/fixtures/** linguist-generated=true

@@ -1,0 +1,20 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# Formatted by Biome (biome.jsonc) at two spaces; YAML and the iPhone project likewise.
+[*.{js,mjs,ts,tsx,astro,json,jsonc,css,html,yml,yaml}]
+indent_size = 2
+
+[Makefile]
+indent_style = tab
+
+# Two trailing spaces are a line break in Markdown.
+[*.md]
+trim_trailing_whitespace = false

@@ -1,0 +1,33 @@
+#!/bin/sh
+# Zero's pre-commit hook, set up by `make setup` (git config core.hooksPath .githooks).
+set -e
+
+# A lockfile names the registry each package came from when it isn't the public one (a company's npm proxy, say): that
+# address isn't for a public repo. Refuse a staged bun.lock with one; set those entries to "" (the default registry).
+if git diff --cached -U0 -- '*bun.lock' | grep -E '^\+' | grep -o -E '"https?://[^"]+\.tgz"' | grep -v -E '^"https://registry\.npmjs\.org/' >/dev/null; then
+  echo "pre-commit: a staged bun.lock names a registry other than npm's. Set those package addresses to \"\" first." >&2
+  exit 1
+fi
+
+# Format what's staged, each language with its own formatter, and stage the result. (A file staged in part is staged
+# whole once formatted.)
+staged() { git diff --cached --name-only --diff-filter=ACMR | grep -E "$1" || true; }
+restage() { echo "$1" | while IFS= read -r file; do if [ -f "$file" ]; then git add -- "$file"; fi; done; }
+
+rust=$(staged '\.rs$')
+if [ -n "$rust" ]; then
+  echo "$rust" | tr '\n' '\0' | xargs -0 rustfmt
+  restage "$rust"
+fi
+
+swift=$(staged '^apps/(macos|ios)/.*\.swift$')
+if [ -n "$swift" ]; then
+  echo "$swift" | tr '\n' '\0' | xargs -0 swift format --in-place
+  restage "$swift"
+fi
+
+web=$(staged '^(site/|apps/relay/|apps/chrome/|[^/]+\.jsonc?$|\.vscode/).*')
+if [ -n "$web" ]; then
+  echo "$web" | tr '\n' '\0' | xargs -0 bun x biome format --write --no-errors-on-unmatched --files-ignore-unknown=true
+  restage "$web"
+fi

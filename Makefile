@@ -83,4 +83,24 @@ test:
 	cargo test --workspace
 	swift test --package-path $(MACOS)
 
-.PHONY: build zerod ghostty drop bundle install release run test
+# Once per clone: the pre-commit hook (.githooks: formats what's staged) and the JavaScript formatter.
+setup:
+	git config core.hooksPath .githooks
+	bun install
+
+SWIFT_SOURCES = $(MACOS)/Package.swift $(MACOS)/Sources $(MACOS)/Tests $(MACOS)/scripts apps/ios
+
+# Formats everything: Rust (rustfmt.toml), Swift (.swift-format), the site, relay and extension (biome.jsonc).
+format:
+	cargo fmt --all
+	swift format --in-place --recursive --parallel $(SWIFT_SOURCES)
+	bun run format
+
+# What CI checks, short of the tests.
+lint:
+	cargo fmt --all --check
+	cargo clippy -p zerod --all-targets -- -D warnings
+	swift format lint --strict --recursive --parallel $(SWIFT_SOURCES)
+	bun run format:check
+
+.PHONY: build zerod ghostty drop bundle install release run test setup format lint

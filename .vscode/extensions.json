@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "rust-lang.rust-analyzer",
+    "swiftlang.swift-vscode",
+    "biomejs.biome",
+    "editorconfig.editorconfig"
+  ]
+}
