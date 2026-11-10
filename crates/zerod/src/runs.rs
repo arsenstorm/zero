@@ -105,7 +105,15 @@ impl Runs {
                     for &p in &tree {
                         signal(p, "-STOP");
                     }
-                    for &p in &tree {
+                    // The shells (whatever has a process under it) go at once: asked politely, an interactive one ignored
+                    // it, and as soon as the command under it ended it went on to the next one (`sleep 3; touch x`
+                    // touched x before the KILL below came). Then the commands themselves are asked to stop.
+                    let parents: Vec<u32> =
+                        tree.iter().copied().filter(|&p| tree.iter().any(|&c| c != p && parent_of(c) == Some(p))).collect();
+                    for &p in &parents {
+                        signal(p, "-KILL");
+                    }
+                    for &p in tree.iter().filter(|p| !parents.contains(p)) {
                         signal(p, "-TERM");
                         signal(p, "-CONT");
                     }
@@ -136,6 +144,12 @@ impl Runs {
     fn pid(&self, id: &str) -> Option<u32> {
         std::fs::read_to_string(self.dir.join(format!("{id}.pid"))).ok()?.trim().parse().ok()
     }
+}
+
+/// A process's parent, by `ps`.
+fn parent_of(pid: u32) -> Option<u32> {
+    let out = std::process::Command::new("/bin/ps").args(["-o", "ppid=", "-p", &pid.to_string()]).output().ok()?;
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
 /// A process and all under it.
