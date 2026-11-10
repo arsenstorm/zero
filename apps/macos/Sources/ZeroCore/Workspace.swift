@@ -32,7 +32,9 @@ public final class Workspace {
     public var archiving: String?
 
     /// GitHub and Linear: their settings and views, and what each view showed last ("github/<view>"), or why not.
-    public private(set) var integrations: IntegrationState? { didSet { if integrations?.slack != oldValue?.slack { Slack.shared.apply(integrations?.slack ?? []) } } }
+    public private(set) var integrations: IntegrationState? {
+        didSet { if integrations?.slack != oldValue?.slack { Slack.shared.apply(integrations?.slack ?? []) } }
+    }
     public private(set) var items: [String: [IntegrationItem]] = [:]
     public private(set) var itemErrors: [String: String] = [:]
     /// Bumped whenever zerod says a scratchpad changed: what shows pads reads them again.
@@ -118,7 +120,9 @@ public final class Workspace {
         if !order.contains(id) { order = mirror.order.filter { mirror.conversations[$0] != nil } }
         // Its first message of yours (its name) and its latest answer (how its last turn ended: its state).
         var light = full
-        let first = full.items.first { if case .user = $0.kind { true } else { false } } ?? roster[id]?.items.first { if case .user = $0.kind { true } else { false } }
+        let first =
+            full.items.first { if case .user = $0.kind { true } else { false } }
+            ?? roster[id]?.items.first { if case .user = $0.kind { true } else { false } }
         // Only once its turn has ended, so words streaming into it don't change the roster; nor does the turn's diff.
         let isAnswer = { (item: ConversationItem) in if case .agent(_, true) = item.kind { true } else { false } }
         // A window short of the end has an old answer last: the one already known stays.
@@ -211,7 +215,11 @@ public final class Workspace {
                         }
                     }
                 }
-                fresh.onClose = { [weak self] in Task { @MainActor in self?.link = nil; self?.connected = false; Log.write("zerod connection closed") } }
+                fresh.onClose = { [weak self] in
+                    Task { @MainActor in
+                        self?.link = nil; self?.connected = false; Log.write("zerod connection closed")
+                    }
+                }
                 link = fresh
                 if (try? await fresh.subscribe()) != nil {
                     connected = true
@@ -346,7 +354,8 @@ public final class Workspace {
     /// The page after what's loaded, when the window stops short of the end.
     public func loadNewer(_ session: String) async {
         guard (mirror.later[session] ?? 0) > 0, let last = mirror.conversations[session]?.items.last?.id,
-              let page = try? await link?.window(session: session, after: last, limit: 60) else { return }
+            let page = try? await link?.window(session: session, after: last, limit: 60)
+        else { return }
         mirror.append(session, items: page.items, later: page.later)
         sync(session)
     }
@@ -396,7 +405,9 @@ public final class Workspace {
         if list != later { later = list }
     }
 
-    public func laterItem(_ id: String, version: Int? = nil) async -> ZerodLink.LaterItem? { try? await link?.laterItem(id, version: version) }
+    public func laterItem(_ id: String, version: Int? = nil) async -> ZerodLink.LaterItem? {
+        try? await link?.laterItem(id, version: version)
+    }
 
     public func editLater(_ id: String, _ fields: [String: Any]) async {
         _ = await attempt { try await $0.editLater(id, fields) }
@@ -460,7 +471,9 @@ public final class Workspace {
     /// Saved, or why not (a name that isn't one, a child that leads back to it).
     public func saveLoop(_ name: String, description: String, body: String) async -> String? {
         guard let link = await linked() else { return "Zero's daemon isn't running" }
-        do { _ = try await link.saveLoop(name, description: description, body: body); await loadLoops(); return nil } catch { return error.localizedDescription }
+        do { _ = try await link.saveLoop(name, description: description, body: body); await loadLoops(); return nil } catch {
+            return error.localizedDescription
+        }
     }
 
     public func loadWorkspaces() async {
@@ -624,7 +637,12 @@ public final class Workspace {
 
     /// Slack's channels again, hourly while Zero runs.
     public func keepSlackFresh() {
-        Task { while true { try? await Task.sleep(for: .seconds(3600)); if !(integrations?.slack ?? []).isEmpty, let state = try? await link?.refreshSlack() { integrations = state } } }
+        Task {
+            while true {
+                try? await Task.sleep(for: .seconds(3600));
+                if !(integrations?.slack ?? []).isEmpty, let state = try? await link?.refreshSlack() { integrations = state }
+            }
+        }
     }
 
     public func setIntegration(_ integration: String, enabled: Bool) async {
@@ -680,9 +698,16 @@ public final class Workspace {
         if rows != rawBoard { rawBoard = rows; resettle() }
     }
 
-    public func start(provider: Provider, cwd: String, prompt: String, images: [String] = [], model: String?, effort: String?, permissions: Permissions = .auto,
-                      workspace: String? = nil) async -> String? {
-        await attempt { try await $0.start(provider: provider, cwd: cwd, prompt: prompt, images: images, model: model, effort: effort, permissions: permissions, workspace: workspace) }
+    public func start(
+        provider: Provider, cwd: String, prompt: String, images: [String] = [], model: String?, effort: String?,
+        permissions: Permissions = .auto,
+        workspace: String? = nil
+    ) async -> String? {
+        await attempt {
+            try await $0.start(
+                provider: provider, cwd: cwd, prompt: prompt, images: images, model: model, effort: effort, permissions: permissions,
+                workspace: workspace)
+        }
     }
 
     /// Whether it went (or is queued): false, and the words are for the box again.
@@ -708,10 +733,14 @@ public final class Workspace {
             settle(echo, in: session, sent: false)
             return false
         }
-        let sent = await attempt { try await $0.send(session: session, text: item.text, images: item.images ?? [], model: nil, effort: nil) } != nil
+        let sent =
+            await attempt { try await $0.send(session: session, text: item.text, images: item.images ?? [], model: nil, effort: nil) }
+            != nil
         settle(echo, in: session, sent: sent)
         // Out of the queue once zerod's board has had a moment to drop it too.
-        Task { [weak self] in try? await Task.sleep(for: .seconds(3)); self?.steering.remove(item.id) }
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3)); self?.steering.remove(item.id)
+        }
         return sent
     }
 
@@ -749,8 +778,9 @@ public final class Workspace {
         // back, for up to five minutes. Refused for a reason of its own, it says why and goes.
         for _ in 0..<300 {
             if let link = await linked() {
-                do { _ = try await link.queue(session: session, text: text, images: images); break }
-                catch { if updating == nil { lastError = error.localizedDescription; break } }
+                do { _ = try await link.queue(session: session, text: text, images: images); break } catch {
+                    if updating == nil { lastError = error.localizedDescription; break }
+                }
             }
             try? await Task.sleep(for: .seconds(1))
         }
@@ -760,9 +790,13 @@ public final class Workspace {
             self?.queuing[session]?.removeAll { $0.id == echo.id }
         }
     }
-    public func unqueue(_ session: String, item: String) async -> Bool { await attempt { try await $0.unqueue(session: session, item: item) } != nil }
+    public func unqueue(_ session: String, item: String) async -> Bool {
+        await attempt { try await $0.unqueue(session: session, item: item) } != nil
+    }
     public func release(_ session: String) async { _ = await attempt { try await $0.release(session: session) } }
-    public func introduce(_ session: String, to other: String) async { _ = await attempt { try await $0.introduce(session: session, to: other) } }
+    public func introduce(_ session: String, to other: String) async {
+        _ = await attempt { try await $0.introduce(session: session, to: other) }
+    }
     public func interrupt(_ session: String) async { _ = await attempt { try await $0.interrupt(session: session) } }
     public func stop(_ session: String) async { _ = await attempt { try await $0.stop(session: session) } }
     public func resume(_ session: String) async { _ = await attempt { try await $0.resume(session: session) } }
@@ -770,7 +804,9 @@ public final class Workspace {
     /// Being written to while its agent has stopped (parked after a while idle): its agent started in the background,
     /// at most once a minute, so the message doesn't wait for it to start. Never for a task the user has paused.
     public func warm(_ session: String) {
-        guard roster[session]?.status == .offline, !isPaused(session), Date().timeIntervalSince(warmed[session] ?? .distantPast) > 60 else { return }
+        guard roster[session]?.status == .offline, !isPaused(session), Date().timeIntervalSince(warmed[session] ?? .distantPast) > 60 else {
+            return
+        }
         warmed[session] = Date()
         Task { _ = try? await link?.resume(session: session) }
     }
@@ -780,7 +816,9 @@ public final class Workspace {
     public func unpause(_ sessions: [String]) async { _ = await attempt { try await $0.unpause(sessions: sessions) } }
     /// A task (a lead, or a worker on its lead's row) the user put on hold.
     public func isPaused(_ session: String) -> Bool {
-        board.contains { $0.session == session ? $0.ownState == .paused : $0.team?.contains { $0.session == session && $0.state == .paused } == true }
+        board.contains {
+            $0.session == session ? $0.ownState == .paused : $0.team?.contains { $0.session == session && $0.state == .paused } == true
+        }
     }
 
     public func openTerminal(_ session: String) async { _ = await attempt { try await $0.openTerminal(session: session) } }
@@ -843,7 +881,9 @@ public final class Workspace {
 
     private func attempt<T>(_ request: (ZerodLink) async throws -> T) async -> T? {
         guard let link = await linked() else {
-            lastError = updating != nil ? "Zero is restarting for an update: try again in a moment" : "Zero's daemon isn't running"; Log.write("request with zerod not running"); return nil }
+            lastError = updating != nil ? "Zero is restarting for an update: try again in a moment" : "Zero's daemon isn't running";
+            Log.write("request with zerod not running"); return nil
+        }
         do {
             let result = try await request(link)
             lastError = nil

@@ -4,20 +4,20 @@ import Testing
 /// zerod's words for the agent about what it follows, read back as things and their events for the conversation.
 @Test func eventsReadAsThingsAndTheirEvents() {
     let text = """
-    2 new events on what you follow:
+        2 new events on what you follow:
 
-    github/acme/web/19269  —  ENG-9378 [Opus 5.5] Search shows an incident's linked tickets (open, draft)
-    https://github.com/acme/web/pull/19269
-      CI success: 25 passed, 0 failed, 25 total
-        https://github.com/acme/web/pull/19269/checks
-      review by dana (you: possibly your own action echoing back)
-        Looks good.
-        Ship it.
-        https://github.com/acme/web/pull/19269#review-1
+        github/acme/web/19269  —  ENG-9378 [Opus 5.5] Search shows an incident's linked tickets (open, draft)
+        https://github.com/acme/web/pull/19269
+          CI success: 25 passed, 0 failed, 25 total
+            https://github.com/acme/web/pull/19269/checks
+          review by dana (you: possibly your own action echoing back)
+            Looks good.
+            Ship it.
+            https://github.com/acme/web/pull/19269#review-1
 
-    slack/C01
-      new message
-    """
+        slack/C01
+          new message
+        """
     let groups = FollowEvents.parse(text)
     #expect(groups.count == 2)
     #expect(groups[0].name == "web#19269")

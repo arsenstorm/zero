@@ -32,7 +32,6 @@ import ZeroCore
 
     func useHostedRelay() { UserDefaults.standard.removeObject(forKey: "relay"); reconnect() }
 
-
     @ObservationIgnored private let host: Tunnel.Host
     @ObservationIgnored private let mac: String
     @ObservationIgnored private let token: String
@@ -50,26 +49,33 @@ import ZeroCore
 
     private init() {
         // Through macOS's `security` tool (ZeroCore's Keychain), so a rebuilt Zero reads them without the password.
-        let key = Keychain.loadString(service: "Zero tunnel", account: "key").flatMap { Data(base64Encoded: $0) }
-            .flatMap { try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: $0) } ?? {
+        let key =
+            Keychain.loadString(service: "Zero tunnel", account: "key").flatMap { Data(base64Encoded: $0) }
+            .flatMap { try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: $0) }
+            ?? {
                 let fresh = Curve25519.KeyAgreement.PrivateKey()
                 Keychain.saveString(fresh.rawRepresentation.base64EncodedString(), service: "Zero tunnel", account: "key")
                 return fresh
             }()
         let kept = Keychain.loadString(service: "Zero tunnel", account: "token")
-        token = kept ?? {
-            let fresh = Self.random(32)
-            Keychain.saveString(fresh, service: "Zero tunnel", account: "token")
-            return fresh
-        }()
+        token =
+            kept
+            ?? {
+                let fresh = Self.random(32)
+                Keychain.saveString(fresh, service: "Zero tunnel", account: "token")
+                return fresh
+            }()
         // A new token is a new Mac to the relay, which takes only the first token it saw for an id.
         if kept == nil { UserDefaults.standard.removeObject(forKey: "tunnel.mac") }
-        mac = UserDefaults.standard.string(forKey: "tunnel.mac") ?? {
-            let fresh = Self.random(16)
-            UserDefaults.standard.set(fresh, forKey: "tunnel.mac")
-            return fresh
-        }()
-        let paired = UserDefaults.standard.data(forKey: "tunnel.devices").flatMap { try? JSONDecoder().decode([Tunnel.Device].self, from: $0) } ?? []
+        mac =
+            UserDefaults.standard.string(forKey: "tunnel.mac")
+            ?? {
+                let fresh = Self.random(16)
+                UserDefaults.standard.set(fresh, forKey: "tunnel.mac")
+                return fresh
+            }()
+        let paired =
+            UserDefaults.standard.data(forKey: "tunnel.devices").flatMap { try? JSONDecoder().decode([Tunnel.Device].self, from: $0) } ?? []
         host = Tunnel.Host(key: key, devices: paired)
         devices = paired
         host.onChange = { [weak self] devices in
@@ -94,7 +100,8 @@ import ZeroCore
     @ObservationIgnored private var wakeWatch: Any?
     private func watchWake() {
         guard wakeWatch == nil else { return }
-        wakeWatch = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+        wakeWatch = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) {
+            [weak self] _ in
             MainActor.assumeIsolated { self?.check() }
         }
     }
@@ -126,7 +133,8 @@ import ZeroCore
     func push(_ alert: TaskAlert, sound: String) {
         for device in devices {
             guard let token = device.push, let note = try? JSONEncoder().encode(["title": alert.title, "body": alert.body]),
-                  let sealed = try? host.seal(note, for: device) else { continue }
+                let sealed = try? host.seal(note, for: device)
+            else { continue }
             var aps: [String: Any] = ["alert": ["title": "Zero", "body": "A task has news"], "mutable-content": 1]
             if !sound.isEmpty { aps["sound"] = sound + ".aiff" }
             APNs.send(["aps": aps, "zero": sealed.base64EncodedString()], to: token, collapse: alert.session)
@@ -141,7 +149,9 @@ import ZeroCore
         let ids = ids.filter { pushed.contains($0) }
         guard !ids.isEmpty else { return }
         pushed.subtract(ids)
-        for token in devices.compactMap(\.push) { APNs.send(["aps": ["content-available": 1], "clear": ids], to: token, collapse: nil, quiet: true) }
+        for token in devices.compactMap(\.push) {
+            APNs.send(["aps": ["content-available": 1], "clear": ids], to: token, collapse: nil, quiet: true)
+        }
     }
 
     func remove(_ device: Tunnel.Device) {
@@ -168,7 +178,8 @@ import ZeroCore
         var request = URLRequest(url: url, timeoutInterval: 8)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         guard let (data, _) = try? await URLSession.shared.data(for: request),
-              let said = try? JSONSerialization.jsonObject(with: data) as? [String: Any], said["open"] as? Bool == false else { return nil }
+            let said = try? JSONSerialization.jsonObject(with: data) as? [String: Any], said["open"] as? Bool == false
+        else { return nil }
         return said["message"] as? String ?? "This relay has closed."
     }
 
@@ -188,8 +199,11 @@ import ZeroCore
     }
 
     private func open() {
-        guard let url = URL(string: relay.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "https://", with: "wss://")
-                                .trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/mac/" + mac) else {
+        guard
+            let url = URL(
+                string: relay.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "https://", with: "wss://")
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/mac/" + mac)
+        else {
             status = .failed("That isn't a relay's address")
             return
         }
@@ -212,7 +226,8 @@ import ZeroCore
                     task.cancel(with: .goingAway, reason: nil)
                     return
                 }
-                task.sendPing { [weak self] error in Task { @MainActor in if error == nil, task === self?.socket { self?.heardAt = .now } } }
+                task.sendPing { [weak self] error in Task { @MainActor in if error == nil, task === self?.socket { self?.heardAt = .now } }
+                }
             }
         }
     }
@@ -257,11 +272,15 @@ import ZeroCore
     private struct Frame: Codable { var conn: String; var open: Bool?; var data: String?; var close: Bool? }
 
     private func heard(_ text: String) {
-        guard let frame = try? JSONDecoder().decode(Frame.self, from: Data(text.utf8)) else { Log.write("phones: unreadable frame"); return }
+        guard let frame = try? JSONDecoder().decode(Frame.self, from: Data(text.utf8)) else {
+            Log.write("phones: unreadable frame"); return
+        }
         if frame.open == true {
             Log.write("phones: a phone opened \(frame.conn.prefix(8))")
-            bridges[frame.conn] = Bridge(link: host.link(), send: { [weak self] data in self?.send(data, to: frame.conn) }, close: { [weak self] in self?.close(frame.conn) },
-                                         pushToken: { [weak self] token, device in self?.host.setPush(token, for: device) })
+            bridges[frame.conn] = Bridge(
+                link: host.link(), send: { [weak self] data in self?.send(data, to: frame.conn) },
+                close: { [weak self] in self?.close(frame.conn) },
+                pushToken: { [weak self] token, device in self?.host.setPush(token, for: device) })
         } else if frame.close == true {
             bridges.removeValue(forKey: frame.conn)?.end()
         } else if let data = frame.data.flatMap({ Data(base64Encoded: $0) }) {
@@ -270,13 +289,16 @@ import ZeroCore
     }
 
     private func send(_ data: Data, to conn: String) {
-        guard let text = try? String(data: JSONEncoder().encode(Frame(conn: conn, data: data.base64EncodedString())), encoding: .utf8) else { return }
+        guard let text = try? String(data: JSONEncoder().encode(Frame(conn: conn, data: data.base64EncodedString())), encoding: .utf8)
+        else { return }
         socket?.send(.string(text)) { error in if let error { Log.write("phones: couldn't send, \(error)") } }
     }
 
     private func close(_ conn: String) {
         bridges.removeValue(forKey: conn)?.end()
-        if let text = try? String(data: JSONEncoder().encode(Frame(conn: conn, close: true)), encoding: .utf8) { socket?.send(.string(text)) { _ in } }
+        if let text = try? String(data: JSONEncoder().encode(Frame(conn: conn, close: true)), encoding: .utf8) {
+            socket?.send(.string(text)) { _ in }
+        }
     }
 }
 
@@ -300,7 +322,9 @@ import ZeroCore
     /// The phone's own requests, answered here rather than by zerod: where its pushes go, an image it sends (kept
     /// where zerod can read it, its path given back), and the projects a new task can start in.
     private func answered(_ line: Data) -> Data? {
-        guard let request = try? JSONSerialization.jsonObject(with: line) as? [String: Any], let op = request["op"] as? String else { return nil }
+        guard let request = try? JSONSerialization.jsonObject(with: line) as? [String: Any], let op = request["op"] as? String else {
+            return nil
+        }
         let result: Any
         switch op {
         case "pushToken":
@@ -324,10 +348,16 @@ import ZeroCore
             // An image in a message (an upload, a screenshot): a JPEG of it no bigger than asked, for the phone to show.
             // Only images: anything else isn't read.
             guard let path = request["path"] as? String, let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
-                  let type = CGImageSourceGetType(source) as String?, UTType(type)?.conforms(to: .image) == true,
-                  let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
-                      kCGImageSourceThumbnailMaxPixelSize: min(request["side"] as? Int ?? 600, 2400), kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary),
-                  let jpeg = NSBitmapImageRep(cgImage: image).representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else { return nil }
+                let type = CGImageSourceGetType(source) as String?, UTType(type)?.conforms(to: .image) == true,
+                let image = CGImageSourceCreateThumbnailAtIndex(
+                    source, 0,
+                    [
+                        kCGImageSourceCreateThumbnailFromImageAlways: true,
+                        kCGImageSourceThumbnailMaxPixelSize: min(request["side"] as? Int ?? 600, 2400),
+                        kCGImageSourceCreateThumbnailWithTransform: true,
+                    ] as CFDictionary),
+                let jpeg = NSBitmapImageRep(cgImage: image).representation(using: .jpeg, properties: [.compressionFactor: 0.8])
+            else { return nil }
             result = jpeg.base64EncodedString()
         case "looked":
             // A task opened on the phone: its notification goes from the Mac (and the other phones) too.
@@ -339,14 +369,20 @@ import ZeroCore
             // How the Mac's sidebar orders tasks, for the phone to order them the same way. Which workspace each shows
             // is its own: one task watched on the phone, another worked on at the Mac.
             let defaults = UserDefaults.standard
-            result = ["sort": defaults.string(forKey: "taskSort") ?? BoardRow.Sort.state.rawValue, "order": defaults.string(forKey: "taskOrder") ?? ""]
+            result = [
+                "sort": defaults.string(forKey: "taskSort") ?? BoardRow.Sort.state.rawValue,
+                "order": defaults.string(forKey: "taskOrder") ?? "",
+            ]
         case "models":
             // A provider's models as the Mac's selector offers them, from its CLI's own cache.
             guard let provider = (request["provider"] as? String).flatMap(Provider.init(rawValue:)) else { return nil }
             result = ComposerRows.catalogue(provider).map { model in
-                ["id": model.id, "name": model.name, "defaultLevel": model.defaultLevel ?? "",
-                 "detail": model.detail ?? "", "context": model.context ?? "", "provider": model.provider ?? "", "icon": model.icon ?? "",
-                 "levels": model.levels.map { ["id": $0.id, "name": $0.name] }] as [String: Any]
+                [
+                    "id": model.id, "name": model.name, "defaultLevel": model.defaultLevel ?? "",
+                    "detail": model.detail ?? "", "context": model.context ?? "", "provider": model.provider ?? "",
+                    "icon": model.icon ?? "",
+                    "levels": model.levels.map { ["id": $0.id, "name": $0.name] },
+                ] as [String: Any]
             }
         default:
             return nil
@@ -356,10 +392,14 @@ import ZeroCore
 
     /// The phone's requests answered once the Mac has looked: the MCP servers (zerod's own list has their values).
     private func answeredLater(_ line: Data) -> Bool {
-        guard let request = try? JSONSerialization.jsonObject(with: line) as? [String: Any], request["op"] as? String == "mcpServers" else { return false }
+        guard let request = try? JSONSerialization.jsonObject(with: line) as? [String: Any], request["op"] as? String == "mcpServers" else {
+            return false
+        }
         Task {
             let servers = await Phones.shared.mcpServers?() ?? []
-            if let reply = try? JSONSerialization.data(withJSONObject: ["id": request["id"] ?? NSNull(), "ok": true, "result": servers]) { toPhone(reply) }
+            if let reply = try? JSONSerialization.data(withJSONObject: ["id": request["id"] ?? NSNull(), "ok": true, "result": servers]) {
+                toPhone(reply)
+            }
         }
         return true
     }
@@ -429,19 +469,27 @@ struct DevicesPage: View {
                 Rows {
                     // Which relay and how it's doing, in one row: Zero's own chip on the right, not a text box.
                     SettingRow(title: "Relay", detail: statusDetail) {
-                        SettingChoice(id: "phones.relay", choices: relayChoices, selection: Binding(
-                            get: { phones.relay == Phones.hosted ? "hosted" : "own" },
-                            set: { picked in
-                                if picked == "hosted" { phones.useHostedRelay() } else if picked == "edit" { editing = true }
-                            }))
+                        SettingChoice(
+                            id: "phones.relay", choices: relayChoices,
+                            selection: Binding(
+                                get: { phones.relay == Phones.hosted ? "hosted" : "own" },
+                                set: { picked in
+                                    if picked == "hosted" { phones.useHostedRelay() } else if picked == "edit" { editing = true }
+                                }))
                     }
                 }
-                Text("It passes your phone's messages to this Mac, end-to-end encrypted: it can't read them. You can run your own from apps/relay.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(
+                    "It passes your phone's messages to this Mac, end-to-end encrypted: it can't read them. You can run your own from apps/relay."
+                )
+                .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             // Pairing as Accounts adds an account: a quiet button by the heading, its steps in a dialog.
-            SettingsSection(title: "Phones", accessory: AnyView(GhostButton(title: "Pair phone", icon: "plus", open: pairing) { pairing = true }
-                                                                 .disabled(phones.relay.isEmpty))) {
+            SettingsSection(
+                title: "Phones",
+                accessory: AnyView(
+                    GhostButton(title: "Pair phone", icon: "plus", open: pairing) { pairing = true }
+                        .disabled(phones.relay.isEmpty))
+            ) {
                 Rows {
                     ForEach(phones.devices) { device in
                         SettingRow(title: device.name, detail: "Paired \(device.added.formatted(date: .abbreviated, time: .omitted))") {
@@ -449,8 +497,10 @@ struct DevicesPage: View {
                         }
                     }
                     if phones.devices.isEmpty {
-                        Text("None yet. Pair your iPhone, and your tasks come with you.").font(.system(size: 13)).foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 14)
+                        Text("None yet. Pair your iPhone, and your tasks come with you.").font(.system(size: 13)).foregroundStyle(
+                            .secondary
+                        )
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 14)
                     }
                 }
             }
@@ -461,7 +511,10 @@ struct DevicesPage: View {
 
     private var relayChoices: [[(title: String, value: String)]] {
         let own = phones.relay == Phones.hosted ? nil : URL(string: phones.relay)?.host ?? phones.relay
-        return [[("Zero's relay", "hosted")] + (own.map { [($0, "own")] } ?? []), [(own == nil ? "Your own relay…" : "Change address…", "edit")]]
+        return [
+            [("Zero's relay", "hosted")] + (own.map { [($0, "own")] } ?? []),
+            [(own == nil ? "Your own relay…" : "Change address…", "edit")],
+        ]
     }
 
     private var statusDetail: String {
@@ -500,9 +553,15 @@ enum APNs {
         if let made, Date().timeIntervalSince(made.at) < 50 * 60 { return made.jwt }
         let kept = { (account: String) in Keychain.loadString(service: "Zero tunnel", account: account) }
         guard let pem = kept("apns.key").flatMap({ Data(base64Encoded: $0) }).flatMap({ String(data: $0, encoding: .utf8) }),
-              let key = try? P256.Signing.PrivateKey(pemRepresentation: pem), let id = kept("apns.keyid"), let team = kept("apns.team") else { return nil }
-        let url = { (data: Data) in data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "") }
-        let input = url(Data(#"{"alg":"ES256","kid":"\#(id)"}"#.utf8)) + "." + url(Data(#"{"iss":"\#(team)","iat":\#(Int(Date().timeIntervalSince1970))}"#.utf8))
+            let key = try? P256.Signing.PrivateKey(pemRepresentation: pem), let id = kept("apns.keyid"), let team = kept("apns.team")
+        else { return nil }
+        let url = { (data: Data) in
+            data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+                .replacingOccurrences(of: "=", with: "")
+        }
+        let input =
+            url(Data(#"{"alg":"ES256","kid":"\#(id)"}"#.utf8)) + "."
+            + url(Data(#"{"iss":"\#(team)","iat":\#(Int(Date().timeIntervalSince1970))}"#.utf8))
         guard let signature = try? key.signature(for: Data(input.utf8)) else { return nil }
         let jwt = input + "." + url(signature.rawRepresentation)
         made = (jwt, Date())
@@ -559,7 +618,9 @@ private struct RelaySheet: View {
             HStack {
                 Spacer()
                 DialogButton(title: "Cancel") { dismiss() }
-                DialogButton(title: "Use it", kind: .primary, enabled: address.trimmingCharacters(in: .whitespaces).hasPrefix("wss://"), action: save)
+                DialogButton(
+                    title: "Use it", kind: .primary, enabled: address.trimmingCharacters(in: .whitespaces).hasPrefix("wss://"), action: save
+                )
             }
         }
         .frame(width: 400)
@@ -572,7 +633,6 @@ private struct RelaySheet: View {
         dismiss()
     }
 }
-
 
 /// Pairing a phone, step by step: Zero on the iPhone, then this Mac's code to scan (it lasts five minutes), then the
 /// phone that paired. Moves on to the last step by itself once the phone has.
@@ -608,7 +668,9 @@ private struct PairPhone: View {
                 switch step {
                 case 0:
                     DialogButton(title: "Cancel") { close() }
-                    DialogButton(title: "Next", kind: .primary) { newCode(); step = 1 }
+                    DialogButton(title: "Next", kind: .primary) {
+                        newCode(); step = 1
+                    }
                 case 1:
                     DialogButton(title: "Cancel") { close() }
                 default:
@@ -624,8 +686,10 @@ private struct PairPhone: View {
     private var getZero: some View {
         VStack(alignment: .leading, spacing: 8) {
             DialogTitle(text: "Get Zero on your iPhone")
-            Text("Your tasks and questions come with you: answer what's waiting, write to a task, and get notified when something needs you.")
-                .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(
+                "Your tasks and questions come with you: answer what's waiting, write to a task, and get notified when something needs you."
+            )
+            .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Text("Install Zero on your iPhone, open it, and choose Next here when it shows Scan the code.")
                 .font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true).padding(.top, 6)
         }

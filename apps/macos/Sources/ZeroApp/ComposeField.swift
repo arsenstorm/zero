@@ -24,7 +24,9 @@ enum ComposeKey { case up, down, accept, dismiss }
         let whole = view.string as NSString
         let at = view.selectedRange()
         let before = whole.substring(to: at.location), after = whole.substring(from: NSMaxRange(at))
-        let piece = (before.isEmpty || before.hasSuffix(" ") || before.hasSuffix("\n") ? "" : " ") + text + (after.hasPrefix(" ") || after.hasPrefix("\n") ? "" : " ")
+        let piece =
+            (before.isEmpty || before.hasSuffix(" ") || before.hasSuffix("\n") ? "" : " ") + text
+            + (after.hasPrefix(" ") || after.hasPrefix("\n") ? "" : " ")
         view.insertText(piece, replacementRange: at)
         view.window?.makeFirstResponder(view)
     }
@@ -112,14 +114,16 @@ struct ComposeField: NSViewRepresentable {
         // Scrolled inside (past eight lines): which edges have more beyond them.
         scroll.contentView.postsBoundsChangedNotifications = true
         let coordinator = context.coordinator
-        NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main) { [weak scroll] _ in
+        NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main) {
+            [weak scroll] _ in
             if let scroll { coordinator.edges(scroll) }
         }
         // Grown or shrunk (a paste): the edges again once the new size is laid out, not from the old one.
         scroll.contentView.postsFrameChangedNotifications = true
         view.postsFrameChangedNotifications = true
         for watched in [scroll.contentView as NSView, view] {
-            NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: watched, queue: .main) { [weak scroll] _ in
+            NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: watched, queue: .main) {
+                [weak scroll] _ in
                 if let scroll { coordinator.edges(scroll) }
             }
         }
@@ -144,8 +148,11 @@ struct ComposeField: NSViewRepresentable {
             DispatchQueue.main.async { onCaretApplied() }
         }
         if let window = view.window {
-            if focused, window.firstResponder !== view { window.makeFirstResponder(view) }
-            else if !focused, window.firstResponder === view { window.makeFirstResponder(nil) }
+            if focused, window.firstResponder !== view {
+                window.makeFirstResponder(view)
+            } else if !focused, window.firstResponder === view {
+                window.makeFirstResponder(nil)
+            }
         }
         context.coordinator.measure(view)
         context.coordinator.edges(scroll)
@@ -189,7 +196,8 @@ struct ComposeField: NSViewRepresentable {
         func decode(_ view: NSTextView) -> String {
             guard let storage = view.textStorage else { return view.string }
             let out = NSMutableString(string: storage.string)
-            storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length), options: [.reverse]) { value, range, _ in
+            storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length), options: [.reverse]) {
+                value, range, _ in
                 guard let cell = (value as? NSTextAttachment)?.attachmentCell as? ImageToken.Cell else { return }
                 out.replaceCharacters(in: range, with: ImageToken.text(cell.number, video: cell.video))
             }
@@ -206,7 +214,9 @@ struct ComposeField: NSViewRepresentable {
             guard let storage = view.textStorage else { return offset }
             var out = offset
             storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: min(offset, storage.length))) { value, _, _ in
-                if let cell = (value as? NSTextAttachment)?.attachmentCell as? ImageToken.Cell { out += (ImageToken.text(cell.number, video: cell.video) as NSString).length - 1 }
+                if let cell = (value as? NSTextAttachment)?.attachmentCell as? ImageToken.Cell {
+                    out += (ImageToken.text(cell.number, video: cell.video) as NSString).length - 1
+                }
             }
             return out
         }
@@ -250,16 +260,21 @@ struct ComposeField: NSViewRepresentable {
             guard caret.length == 0 else { return nil }
             let text = view.string as NSString
             var start = caret.location
-            while start > 0, let scalar = UnicodeScalar(text.character(at: start - 1)), !CharacterSet.whitespacesAndNewlines.contains(scalar) { start -= 1 }
+            while start > 0, let scalar = UnicodeScalar(text.character(at: start - 1)),
+                !CharacterSet.whitespacesAndNewlines.contains(scalar)
+            { start -= 1 }
             guard start < caret.location else { return nil }
             let word = text.substring(with: NSRange(location: start, length: caret.location - start))
             guard let symbol = word.first, symbol == "/" || symbol == "@" else { return nil }
             var end = caret.location
-            while end < text.length, let scalar = UnicodeScalar(text.character(at: end)), !CharacterSet.whitespacesAndNewlines.contains(scalar) { end += 1 }
+            while end < text.length, let scalar = UnicodeScalar(text.character(at: end)),
+                !CharacterSet.whitespacesAndNewlines.contains(scalar)
+            { end += 1 }
             // Its places as they are in the text (an image's pill before it is its whole token there).
             let (from, to, last) = (written(start, in: view), written(caret.location, in: view), written(end, in: view))
-            return MentionTrigger(symbol: symbol, query: String(word.dropFirst()), range: NSRange(location: from, length: to - from),
-                                  word: NSRange(location: from, length: last - from))
+            return MentionTrigger(
+                symbol: symbol, query: String(word.dropFirst()), range: NSRange(location: from, length: to - from),
+                word: NSRange(location: from, length: last - from))
         }
 
         /// Tokens in semibold dark yellow; their rounded yellow pills are drawn by the view behind the text. An image's
@@ -273,10 +288,13 @@ struct ComposeField: NSViewRepresentable {
             let shift = tokens.filter { NSMaxRange($0.range) <= caret.location }.reduce(0) { $0 + $1.range.length - 1 }
             storage.beginEditing()
             for token in tokens.reversed() {
-                storage.replaceCharacters(in: token.range, with: ImageToken.attachment(token.number, font: ComposeField.font, video: token.video))
+                storage.replaceCharacters(
+                    in: token.range, with: ImageToken.attachment(token.number, font: ComposeField.font, video: token.video))
             }
             let all = NSRange(location: 0, length: storage.length)
-            storage.addAttributes([.font: ComposeField.font, .foregroundColor: view.isEditable ? NSColor.labelColor : NSColor.secondaryLabelColor], range: all)
+            storage.addAttributes(
+                [.font: ComposeField.font, .foregroundColor: view.isEditable ? NSColor.labelColor : NSColor.secondaryLabelColor], range: all
+            )
             view.tokenRanges = view.tokens()
             for range in view.tokenRanges {
                 storage.addAttributes([.font: TokenTextView.tokenFont, .foregroundColor: TokenTextView.tokenText], range: range)
@@ -303,20 +321,27 @@ struct ComposeField: NSViewRepresentable {
 final class TokenTextView: NSTextView {
     weak var coordinator: ComposeField.Coordinator?
 
-    private func isCommandReturn(_ event: NSEvent) -> Bool { event.keyCode == 36 && event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command) }
+    private func isCommandReturn(_ event: NSEvent) -> Bool {
+        event.keyCode == 36 && event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command)
+    }
 
     // ⌘⏎ comes as a key equivalent first; when nothing in the window takes it as one, as a key down to the first
     // responder. Either way it's ours.
     /// Image and video files dropped here, when the field attaches them (onAttach).
     private func attachable(_ info: NSDraggingInfo) -> [URL]? {
         guard coordinator?.parent.onAttach != nil,
-              let files = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
-              !files.isEmpty, files.allSatisfy({ Attachments.isImage($0) || Attachments.isVideo($0) }) else { return nil }
+            let files = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+            !files.isEmpty, files.allSatisfy({ Attachments.isImage($0) || Attachments.isVideo($0) })
+        else { return nil }
         return files
     }
 
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { attachable(sender) != nil ? .copy : super.draggingEntered(sender) }
-    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { attachable(sender) != nil ? .copy : super.draggingUpdated(sender) }
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        attachable(sender) != nil ? .copy : super.draggingEntered(sender)
+    }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        attachable(sender) != nil ? .copy : super.draggingUpdated(sender)
+    }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         guard let files = attachable(sender), let attach = coordinator?.parent.onAttach else { return super.performDragOperation(sender) }
@@ -350,8 +375,10 @@ final class TokenTextView: NSTextView {
     private static func dynamic(dark: NSColor, light: NSColor) -> NSColor {
         NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light }
     }
-    static let tokenText = dynamic(dark: NSColor(red: 0.98, green: 0.84, blue: 0.40, alpha: 1), light: NSColor(red: 0.55, green: 0.38, blue: 0.0, alpha: 1))
-    static let tokenFill = dynamic(dark: NSColor(red: 0.36, green: 0.29, blue: 0.06, alpha: 1), light: NSColor(red: 0.99, green: 0.93, blue: 0.62, alpha: 1))
+    static let tokenText = dynamic(
+        dark: NSColor(red: 0.98, green: 0.84, blue: 0.40, alpha: 1), light: NSColor(red: 0.55, green: 0.38, blue: 0.0, alpha: 1))
+    static let tokenFill = dynamic(
+        dark: NSColor(red: 0.36, green: 0.29, blue: 0.06, alpha: 1), light: NSColor(red: 0.99, green: 0.93, blue: 0.62, alpha: 1))
 
     /// "/word", "@loop" for a loop that exists, and "@path" when files are on, at the start of the text or after
     /// whitespace. "@someone" that names no loop is plain words.
@@ -393,12 +420,14 @@ final class TokenTextView: NSTextView {
         let caret = selectedRange()
         let text = string as NSString
         if caret.length == 0, caret.location > 0,
-           let token = tokens().first(where: { range in
-               let end = NSMaxRange(range)
-               let finished = end < text.length && text.character(at: end) == 32
-               return finished && (caret.location == end || caret.location == end + 1)
-           }) {
-            let removal = NSRange(location: token.location, length: caret.location - token.location + (caret.location == NSMaxRange(token) ? 1 : 0))
+            let token = tokens().first(where: { range in
+                let end = NSMaxRange(range)
+                let finished = end < text.length && text.character(at: end) == 32
+                return finished && (caret.location == end || caret.location == end + 1)
+            })
+        {
+            let removal = NSRange(
+                location: token.location, length: caret.location - token.location + (caret.location == NSMaxRange(token) ? 1 : 0))
             if shouldChangeText(in: removal, replacementString: "") {
                 replaceCharacters(in: removal, with: "")
                 didChangeText()
@@ -439,8 +468,9 @@ final class TokenTextView: NSTextView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard string.isEmpty, !placeholder.isEmpty else { return }
-        (placeholder as NSString).draw(at: NSPoint(x: textContainerOrigin.x, y: textContainerOrigin.y),
-                                       withAttributes: [.font: ComposeField.font, .foregroundColor: NSColor.placeholderTextColor])
+        (placeholder as NSString).draw(
+            at: NSPoint(x: textContainerOrigin.x, y: textContainerOrigin.y),
+            withAttributes: [.font: ComposeField.font, .foregroundColor: NSColor.placeholderTextColor])
     }
 }
 
@@ -449,5 +479,7 @@ final class TokenBreaks: NSObject, NSLayoutManagerDelegate {
     private let inside: (Int) -> Bool
     init(inside: @escaping (Int) -> Bool) { self.inside = inside }
 
-    func layoutManager(_ layoutManager: NSLayoutManager, shouldBreakLineByWordBeforeCharacterAt charIndex: Int) -> Bool { !inside(charIndex) }
+    func layoutManager(_ layoutManager: NSLayoutManager, shouldBreakLineByWordBeforeCharacterAt charIndex: Int) -> Bool {
+        !inside(charIndex)
+    }
 }

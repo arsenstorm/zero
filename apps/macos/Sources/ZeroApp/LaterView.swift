@@ -19,8 +19,12 @@ struct LaterPage: View {
             SidebarColumn(title: "Later") {
                 HStack(spacing: 4) {
                     Spacer(minLength: 0)
-                    Button { writing = true } label: { NucleoIcon("compose", size: 15).frame(width: 30, height: 30) }
-                        .buttonStyle(Hovering()).foregroundStyle(.secondary).tip("Write one")
+                    Button {
+                        writing = true
+                    } label: {
+                        NucleoIcon("compose", size: 15).frame(width: 30, height: 30)
+                    }
+                    .buttonStyle(Hovering()).foregroundStyle(.secondary).tip("Write one")
                 }
                 .padding(.bottom, 6)
                 ScrollView {
@@ -28,7 +32,9 @@ struct LaterPage: View {
                         let suggested = workspace.later.filter { $0.suggested == true && !$0.done }
                         ForEach(workspace.later.filter { $0.suggested != true || $0.done }) { item in row(item) }
                         if !suggested.isEmpty {
-                            Button { suggestionsOpen.toggle() } label: {
+                            Button {
+                                suggestionsOpen.toggle()
+                            } label: {
                                 HStack(spacing: 6) {
                                     Text("Suggested by agents · \(suggested.count)")
                                     NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(suggestionsOpen ? 180 : 0))
@@ -55,7 +61,9 @@ struct LaterPage: View {
                     ContentUnavailableView {
                         NucleoLabel(workspace.later.isEmpty ? "Nothing saved for later" : "Nothing open", icon: "bookmark", size: 20)
                     } description: {
-                        Text("Ask a task to save what it has for later (right-click it in the sidebar), or an agent saves it with zero later. Each keeps a short note of what's to be done and everything behind it, in full.")
+                        Text(
+                            "Ask a task to save what it has for later (right-click it in the sidebar), or an agent saves it with zero later. Each keeps a short note of what's to be done and everything behind it, in full."
+                        )
                     } actions: {
                         Button("Write one") { writing = true }
                     }
@@ -76,17 +84,32 @@ struct LaterPage: View {
     }
 
     private func row(_ item: ZerodLink.LaterItem) -> some View {
-        Button { navigation.place = .laterItem(item.id) } label: { LaterRow(item: item) }
-            .buttonStyle(Hovering(selected: shown == item.id))
-            .zeroContextMenu("later-\(item.id)") {[
+        Button {
+            navigation.place = .laterItem(item.id)
+        } label: {
+            LaterRow(item: item)
+        }
+        .buttonStyle(Hovering(selected: shown == item.id))
+        .zeroContextMenu("later-\(item.id)") {
+            [
                 [MenuItem("Copy link", "link") { copy(item.link) }]
                     + (item.resume != nil && !item.done ? [MenuItem("Resume task", "circle-play") { resume(item) }] : [])
-                    + (item.suggested == true ? [MenuItem("Keep", "bookmark") { Task { await workspace.editLater(item.id, ["keep": true]) } }] : [])
-                    + [MenuItem(item.done ? "Not done" : "Done", item.done ? "undo" : "check") { Task { await workspace.editLater(item.id, ["done": !item.done]) } }],
-                [MenuItem(item.suggested == true ? "Dismiss" : "Delete", item.suggested == true ? "xmark" : "trash") {
-                    Task { await workspace.deleteLater(item.id); if shown == item.id { navigation.place = .later } }
-                }],
-            ]}
+                    + (item.suggested == true
+                        ? [MenuItem("Keep", "bookmark") { Task { await workspace.editLater(item.id, ["keep": true]) } }] : [])
+                    + [
+                        MenuItem(item.done ? "Not done" : "Done", item.done ? "undo" : "check") {
+                            Task { await workspace.editLater(item.id, ["done": !item.done]) }
+                        }
+                    ],
+                [
+                    MenuItem(item.suggested == true ? "Dismiss" : "Delete", item.suggested == true ? "xmark" : "trash") {
+                        Task {
+                            await workspace.deleteLater(item.id); if shown == item.id { navigation.place = .later }
+                        }
+                    }
+                ],
+            ]
+        }
     }
 }
 
@@ -118,11 +141,16 @@ private struct LaterDetail: View {
             if let item {
                 VStack(alignment: .leading, spacing: 18) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(item.note).font(.system(size: 22, weight: .medium)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                        Text(item.note).font(.system(size: 22, weight: .medium)).textSelection(.enabled).fixedSize(
+                            horizontal: false, vertical: true)
                         HStack(spacing: 6) {
                             if let task = item.task, let from = item.from {
-                                Button { navigation.place = .task(from) } label: { Text(task).fontWeight(.medium).underline(pattern: .dash) }
-                                    .buttonStyle(.plain).tip("Open the task it came from")
+                                Button {
+                                    navigation.place = .task(from)
+                                } label: {
+                                    Text(task).fontWeight(.medium).underline(pattern: .dash)
+                                }
+                                .buttonStyle(.plain).tip("Open the task it came from")
                                 Text("·")
                             }
                             Text(item.createdAt.formatted(.relative(presentation: .named)))
@@ -141,7 +169,9 @@ private struct LaterDetail: View {
                                 }
                             }
                             ForEach(item.files, id: \.self) { file in
-                                Button { NSWorkspace.shared.open(URL(fileURLWithPath: file)) } label: {
+                                Button {
+                                    NSWorkspace.shared.open(URL(fileURLWithPath: file))
+                                } label: {
                                     Text((file as NSString).lastPathComponent).fontWeight(.medium).underline(pattern: .dash)
                                 }
                                 .buttonStyle(.plain)
@@ -167,7 +197,9 @@ private struct LaterDetail: View {
         .scrollIndicators(.never)
         .task(id: version) { await load() }
         // Changed elsewhere (an agent editing it): read again, at the latest version.
-        .onChange(of: workspace.later.first { $0.id == id }?.updated) { version = nil; Task { await load() } }
+        .onChange(of: workspace.later.first { $0.id == id }?.updated) {
+            version = nil; Task { await load() }
+        }
     }
 
     private func load() async {
@@ -181,12 +213,18 @@ private struct LaterDetail: View {
             HStack(spacing: 8) {
                 Button {
                     Task { if let session = await workspace.resumeLater(item.id) { navigation.place = .task(session) } }
-                } label: { NucleoLabel("Resume task", icon: "media-play:glyph", size: 13) }
-                    .buttonStyle(.borderedProminent)
+                } label: {
+                    NucleoLabel("Resume task", icon: "media-play:glyph", size: 13)
+                }
+                .buttonStyle(.borderedProminent)
                 Button("Copy") { copy(item.note + (item.artifact.map { "\n\n" + $0 } ?? "")) }
                 Spacer()
-                Button("Delete", role: .destructive) { Task { await workspace.deleteLater(item.id); navigation.place = .later } }
-                    .tip("Back to the sidebar, on hold, and out of Later")
+                Button("Delete", role: .destructive) {
+                    Task {
+                        await workspace.deleteLater(item.id); navigation.place = .later
+                    }
+                }
+                .tip("Back to the sidebar, on hold, and out of Later")
             }
             .controlSize(.regular)
         } else {
@@ -199,32 +237,57 @@ private struct LaterDetail: View {
             Button {
                 workspace.pendingDrafts["new"] = LaterAsk.pickUp(item)
                 navigation.place = .home
-            } label: { NucleoLabel("Start a task from this", icon: "paper-plane", size: 13) }
-                .buttonStyle(.borderedProminent)
+            } label: {
+                NucleoLabel("Start a task from this", icon: "paper-plane", size: 13)
+            }
+            .buttonStyle(.borderedProminent)
             Menu {
                 ForEach(workspace.board.filter { $0.workspace == workspace.current }) { row in
-                    Button(row.task) { Task { await workspace.send(row.session, text: LaterAsk.pickUp(item)); navigation.place = .task(row.session) } }
+                    Button(row.task) {
+                        Task {
+                            await workspace.send(row.session, text: LaterAsk.pickUp(item)); navigation.place = .task(row.session)
+                        }
+                    }
                 }
-            } label: { Text("Send to a task") }
-                .fixedSize()
+            } label: {
+                Text("Send to a task")
+            }
+            .fixedSize()
             Button("Copy") { copy(item.note + (item.artifact.map { "\n\n" + $0 } ?? "")) }
             if item.suggested == true {
-                Button("Keep") { Task { await workspace.editLater(item.id, ["keep": true]); await load() } }
-                    .tip("Keep it in Later; otherwise it goes a week after it was saved")
+                Button("Keep") {
+                    Task {
+                        await workspace.editLater(item.id, ["keep": true]); await load()
+                    }
+                }
+                .tip("Keep it in Later; otherwise it goes a week after it was saved")
             }
-            Button(item.done ? "Not done" : "Done") { Task { await workspace.editLater(item.id, ["done": !item.done]); await load() } }
+            Button(item.done ? "Not done" : "Done") {
+                Task {
+                    await workspace.editLater(item.id, ["done": !item.done]); await load()
+                }
+            }
             Spacer()
             if item.versions.count > 1 {
                 Menu {
                     ForEach(item.versions.reversed(), id: \.version) { v in
-                        Button("Version \(v.version) · " + Date(timeIntervalSince1970: TimeInterval(v.at)).formatted(.relative(presentation: .named))) {
+                        Button(
+                            "Version \(v.version) · "
+                                + Date(timeIntervalSince1970: TimeInterval(v.at)).formatted(.relative(presentation: .named))
+                        ) {
                             version = v.version == item.versions.last?.version ? nil : v.version
                         }
                     }
-                } label: { Text("Version \(version ?? item.version)") }
-                    .fixedSize()
+                } label: {
+                    Text("Version \(version ?? item.version)")
+                }
+                .fixedSize()
             }
-            Button(item.suggested == true ? "Dismiss" : "Delete", role: .destructive) { Task { await workspace.deleteLater(item.id); navigation.place = .later } }
+            Button(item.suggested == true ? "Dismiss" : "Delete", role: .destructive) {
+                Task {
+                    await workspace.deleteLater(item.id); navigation.place = .later
+                }
+            }
         }
         .controlSize(.regular)
     }
@@ -253,13 +316,19 @@ private struct LaterWriter: View {
             TextField("What's to be done, in a sentence", text: $note, axis: .vertical).textFieldStyle(.dialog).lineLimit(1...3)
             TextEditor(text: $artifact).font(.system(size: 13)).scrollContentBackground(.hidden).padding(6).frame(minHeight: 160)
                 .overlay(alignment: .topLeading) {
-                    if artifact.isEmpty { Text("Anything behind it, in Markdown (optional)").font(.system(size: 13)).foregroundStyle(.tertiary).padding(.leading, 11).padding(.top, 6).allowsHitTesting(false) }
+                    if artifact.isEmpty {
+                        Text("Anything behind it, in Markdown (optional)").font(.system(size: 13)).foregroundStyle(.tertiary).padding(
+                            .leading, 11
+                        ).padding(.top, 6).allowsHitTesting(false)
+                    }
                 }
                 .background(Theme.row, in: RoundedRectangle(cornerRadius: 8))
             HStack {
                 Spacer()
                 DialogButton(title: "Cancel") { dismiss() }
-                DialogButton(title: "Save", kind: .primary, enabled: !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) { save(note, artifact); dismiss() }
+                DialogButton(title: "Save", kind: .primary, enabled: !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+                    save(note, artifact); dismiss()
+                }
             }
         }
         .frame(width: 480)

@@ -38,8 +38,11 @@ public enum FollowEvents {
                 guard !groups.isEmpty, !groups[groups.count - 1].events.isEmpty else { continue }
                 let i = groups[groups.count - 1].events.count - 1
                 var event = groups[groups.count - 1].events[i]
-                if words.hasPrefix("http"), !words.contains(" ") { event.url = words }
-                else { event.body += (event.body.isEmpty ? "" : "\n") + words }
+                if words.hasPrefix("http"), !words.contains(" ") {
+                    event.url = words
+                } else {
+                    event.body += (event.body.isEmpty ? "" : "\n") + words
+                }
                 groups[groups.count - 1].events[i] = event
             } else if line.hasPrefix("  ") {
                 guard !groups.isEmpty else { continue }

@@ -6,7 +6,10 @@ import ZeroCore
     // The loop heads the worker's brief: zerod gives its words in place of the name.
     if let loop = flag("loop") { prompt = "@\(loop)" + (prompt.isEmpty ? "" : " " + prompt) }
     if let brief = flag("brief") {
-        let path = URL(fileURLWithPath: (brief as NSString).expandingTildeInPath, relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)).standardized.path
+        let path = URL(
+            fileURLWithPath: (brief as NSString).expandingTildeInPath,
+            relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        ).standardized.path
         guard FileManager.default.fileExists(atPath: path) else { fail("zero: no brief at \(path)") }
         prompt = "Read \(path) and do what it says." + (prompt.isEmpty ? "" : " " + prompt)
     }
@@ -21,11 +24,13 @@ import ZeroCore
     }
     let session = await zerod { link -> String in
         if let lead = ProcessInfo.processInfo.environment["ZERO_SESSION"] {
-            return try await link.spawn(lead: lead, provider: provider, prompt: prompt, cwd: flag("cwd"), model: flag("model"), effort: flag("effort"),
-                                        permissions: permissions, label: flag("label"), ticket: flag("ticket"), workspace: flag("workspace"))
+            return try await link.spawn(
+                lead: lead, provider: provider, prompt: prompt, cwd: flag("cwd"), model: flag("model"), effort: flag("effort"),
+                permissions: permissions, label: flag("label"), ticket: flag("ticket"), workspace: flag("workspace"))
         }
-        let id = try await link.start(provider: provider ?? .claude, cwd: flag("cwd") ?? FileManager.default.currentDirectoryPath, prompt: prompt,
-                                      model: flag("model"), effort: flag("effort"), permissions: permissions ?? .auto, workspace: flag("workspace"))
+        let id = try await link.start(
+            provider: provider ?? .claude, cwd: flag("cwd") ?? FileManager.default.currentDirectoryPath, prompt: prompt,
+            model: flag("model"), effort: flag("effort"), permissions: permissions ?? .auto, workspace: flag("workspace"))
         if flag("label") != nil || flag("ticket") != nil { try await link.label(session: id, label: flag("label"), ticket: flag("ticket")) }
         return id
     }
@@ -50,7 +55,9 @@ import ZeroCore
 }
 
 @MainActor func waitSessionsCommand() async {
-    let settled = await zerod { try await $0.wait(on: positional, any: flag("any") != nil, timeout: flag("timeout").flatMap(Int.init).map { $0 * 60 }) }
+    let settled = await zerod {
+        try await $0.wait(on: positional, any: flag("any") != nil, timeout: flag("timeout").flatMap(Int.init).map { $0 * 60 })
+    }
     for session in settled { print(describe(session)) }
 }
 
@@ -83,7 +90,9 @@ func describe(_ session: [String: Any]) -> String {
     guard let lead = targetSession() else { fail("zero: workers of which session? (--session ID)") }
     let workers = await zerod { try await $0.workers(of: lead) }
     for (worker, attention) in workers {
-        print("\(worker.id)  \(attention.rawValue.padding(toLength: 9, withPad: " ", startingAt: 0))  \(Workspace.label(of: worker))\(worker.ticket.map { "  (\($0))" } ?? "")")
+        print(
+            "\(worker.id)  \(attention.rawValue.padding(toLength: 9, withPad: " ", startingAt: 0))  \(Workspace.label(of: worker))\(worker.ticket.map { "  (\($0))" } ?? "")"
+        )
     }
 }
 
@@ -101,15 +110,20 @@ func describe(_ session: [String: Any]) -> String {
 }
 
 @MainActor func migrateCommand() async {
-    guard let thread = positional.first else { fail("zero: migrate which session? (zero migrate ID: a Claude Code, Codex or OpenCode session's id)") }
+    guard let thread = positional.first else {
+        fail("zero: migrate which session? (zero migrate ID: a Claude Code, Codex or OpenCode session's id)")
+    }
     print(await zerod { try await $0.migrate(thread, label: flag("label"), workspace: flag("workspace")) })
 }
 
 @MainActor func tasksCommand() async {
     for task in await zerod({ try await $0.list() }) {
         // Its folder last: what another task needs to tell whether this one works on what it touches.
-        let columns = [task.id, task.status.rawValue, task.parent.map { "under \($0)" } ?? "lead", task.ticket ?? "-", task.thread ?? "-", Workspace.label(of: task),
-                       (task.cwd as NSString).abbreviatingWithTildeInPath]
+        let columns = [
+            task.id, task.status.rawValue, task.parent.map { "under \($0)" } ?? "lead", task.ticket ?? "-", task.thread ?? "-",
+            Workspace.label(of: task),
+            (task.cwd as NSString).abbreviatingWithTildeInPath,
+        ]
         print(columns.joined(separator: "  "))
     }
 }
@@ -122,7 +136,9 @@ func describe(_ session: [String: Any]) -> String {
 
 @MainActor func loopsCommand() async {
     for loop in await zerod({ try await $0.loops() }) {
-        print("\(loop.name)  \(loop.description)" + (loop.children.isEmpty ? "" : "  → " + loop.children.map { "@" + $0 }.joined(separator: " ")))
+        print(
+            "\(loop.name)  \(loop.description)"
+                + (loop.children.isEmpty ? "" : "  → " + loop.children.map { "@" + $0 }.joined(separator: " ")))
     }
 }
 
@@ -133,7 +149,9 @@ func describe(_ session: [String: Any]) -> String {
 
 @MainActor func usageCommand() async {
     for (provider, usage) in await zerod({ try await $0.usage() }) {
-        let reset = usage.resetsAt.map { " until " + Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .omitted, time: .shortened) } ?? ""
+        let reset =
+            usage.resetsAt.map { " until " + Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .omitted, time: .shortened) }
+            ?? ""
         let windows = usage.windows.map { "\($0.name) \(Int(($0.used * 100).rounded()))%" }.joined(separator: " · ")
         print("\(provider.title)  \(usage.limited ? "limited\(reset)" : "ok")  \(windows)")
     }
@@ -143,14 +161,17 @@ func describe(_ session: [String: Any]) -> String {
     guard let name = positional.first else { usage() }
     let tool = name.hasPrefix("browser_") ? name : "browser_" + name
     let input = positional.dropFirst().joined(separator: " ")
-    guard let args = (input.isEmpty ? [:] : (try? JSONSerialization.jsonObject(with: Data(input.utf8))) as? [String: Any]) else { fail("zero: the input is a JSON object, such as '{\"url\": \"example.com\"}'") }
+    guard let args = (input.isEmpty ? [:] : (try? JSONSerialization.jsonObject(with: Data(input.utf8))) as? [String: Any]) else {
+        fail("zero: the input is a JSON object, such as '{\"url\": \"example.com\"}'")
+    }
     let session = targetSession()
     // Each image a file of its own: one answer can have several (browser_compare's, one per browser).
     for (index, part) in await zerod({ try await $0.browserCall(session: session, tool: tool, args: args) }).enumerated() {
         if let text = part["text"] as? String { print(text) }
         if let data = (part["data"] as? String).flatMap({ Data(base64Encoded: $0) }) {
             let kind = (part["mimeType"] as? String) == "image/png" ? "png" : "jpg"
-            let file = FileManager.default.temporaryDirectory.appendingPathComponent("zero-screenshot-\(Int(Date().timeIntervalSince1970 * 1000))-\(index).\(kind)")
+            let file = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "zero-screenshot-\(Int(Date().timeIntervalSince1970 * 1000))-\(index).\(kind)")
             try? data.write(to: file)
             print("[image: \(file.path)]")
         }
@@ -160,7 +181,9 @@ func describe(_ session: [String: Any]) -> String {
 /// `zero attach`: one of zero-host's terminals in this one, raw, until ⌃] (or the terminal closes). The agent is
 /// named as Zero names it (claude-<the terminal id's last six>), by its terminal id, or by the start of its label.
 func attach(_ which: String?) -> Never {
-    guard let list = HostLink.call(HostLink.Request(op: "list")), let terminals = list.terminals else { fail("zero: none of Zero's own agents are running") }
+    guard let list = HostLink.call(HostLink.Request(op: "list")), let terminals = list.terminals else {
+        fail("zero: none of Zero's own agents are running")
+    }
     guard let which else {
         for terminal in terminals {
             print("claude-\(terminal.id.suffix(6))  \(terminal.running ? "running" : "exited ")  \(terminal.label)")
@@ -168,12 +191,17 @@ func attach(_ which: String?) -> Never {
         exit(0)
     }
     let lowered = which.lowercased()
-    guard let terminal = terminals.first(where: { which.hasSuffix(String($0.id.suffix(6))) || $0.id == which })
-            ?? terminals.first(where: { $0.label.lowercased().hasPrefix(lowered) }) else { fail("zero: no agent \(which) in Zero's terminals") }
+    guard
+        let terminal = terminals.first(where: { which.hasSuffix(String($0.id.suffix(6))) || $0.id == which })
+            ?? terminals.first(where: { $0.label.lowercased().hasPrefix(lowered) })
+    else { fail("zero: no agent \(which) in Zero's terminals") }
     var size = winsize()
     _ = ioctl(STDOUT_FILENO, TIOCGWINSZ, &size)
     guard let socket = try? UnixSocket.connect(path: HostLink.socket) else { fail("zero: Zero's terminal host isn't running") }
-    try? socket.send(HostLink.Request(op: "attach", id: terminal.id, columns: size.ws_col > 0 ? Int(size.ws_col) : nil, rows: size.ws_row > 0 ? Int(size.ws_row) : nil))
+    try? socket.send(
+        HostLink.Request(
+            op: "attach", id: terminal.id, columns: size.ws_col > 0 ? Int(size.ws_col) : nil, rows: size.ws_row > 0 ? Int(size.ws_row) : nil
+        ))
     guard let reply = socket.receive(HostLink.Response.self), reply.ok else { fail("zero: couldn't attach to \(which)") }
     var saved = termios()
     tcgetattr(STDIN_FILENO, &saved)
@@ -228,10 +256,16 @@ func attach(_ which: String?) -> Never {
     } else {
         times = VideoFrames.spread(Int(number("frames") ?? 12), over: seconds)
     }
-    let out = flag("out").map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
-        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".zero/video/\(video.deletingPathExtension().lastPathComponent)-\(Int(Date().timeIntervalSince1970))")
-    print("\(video.lastPathComponent): \(VideoFrames.stamp(seconds)) long, \(info.width)×\(info.height), \(String(format: "%.0f", info.fps)) fps")
+    let out =
+        flag("out").map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
+        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
+            ".zero/video/\(video.deletingPathExtension().lastPathComponent)-\(Int(Date().timeIntervalSince1970))")
+    print(
+        "\(video.lastPathComponent): \(VideoFrames.stamp(seconds)) long, \(info.width)×\(info.height), \(String(format: "%.0f", info.fps)) fps"
+    )
     do {
-        for frame in try await VideoFrames.frames(of: video, at: times, into: out) { print("\(VideoFrames.stamp(frame.at))  \(frame.path)") }
+        for frame in try await VideoFrames.frames(of: video, at: times, into: out) {
+            print("\(VideoFrames.stamp(frame.at))  \(frame.path)")
+        }
     } catch { fail("zero: \(error.localizedDescription)") }
 }

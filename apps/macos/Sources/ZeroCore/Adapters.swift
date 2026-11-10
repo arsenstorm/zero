@@ -13,8 +13,10 @@ public struct SpawnChoice: Identifiable, Hashable, Sendable {
     public let context: String?
     public let levels: [SpawnChoice]
     public let defaultLevel: String?
-    public init(id: String, name: String, detail: String? = nil, icon: String? = nil, provider: String? = nil,
-                context: String? = nil, levels: [SpawnChoice] = [], defaultLevel: String? = nil) {
+    public init(
+        id: String, name: String, detail: String? = nil, icon: String? = nil, provider: String? = nil,
+        context: String? = nil, levels: [SpawnChoice] = [], defaultLevel: String? = nil
+    ) {
         self.id = id; self.name = name; self.detail = detail; self.icon = icon; self.provider = provider
         self.context = context; self.levels = levels; self.defaultLevel = defaultLevel
     }
@@ -61,7 +63,8 @@ public protocol AgentAdapter: Sendable {
     /// Refreshes anything the model lists come from; returns true when a list changed.
     func refreshModels() async -> Bool
     /// `settings`: per-model configuration the user picked, such as ["reasoning": "high"].
-    func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String]) async throws -> AgentIdentity
+    func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String]) async throws
+        -> AgentIdentity
 }
 
 extension AgentAdapter {
@@ -83,7 +86,9 @@ public extension AgentAdapter {
     func findSession(for agent: AgentIdentity, firstPrompt: String) async -> String? { nil }
     func screen(of agent: AgentIdentity) async -> String? { nil }
     func press(_ bytes: [UInt8], on agent: AgentIdentity) async throws -> String? { nil }
-    func switchModel(of agent: AgentIdentity, to model: SpawnChoice?, level: String?) async throws { throw AdapterError("\(name) cannot change \(agent.name)'s model") }
+    func switchModel(of agent: AgentIdentity, to model: SpawnChoice?, level: String?) async throws {
+        throw AdapterError("\(name) cannot change \(agent.name)'s model")
+    }
     func offline(among agents: [AgentIdentity]) async -> Set<String> { [] }
     func gone(among agents: [AgentIdentity]) async -> Set<String> { [] }
     func stop(_ agent: AgentIdentity) async {}
@@ -94,7 +99,9 @@ public extension AgentAdapter {
     func spawnModels(for runtime: SpawnChoice) -> [SpawnChoice] { [] }
     func spawnNote(for runtime: SpawnChoice) -> String? { nil }
     func refreshModels() async -> Bool { false }
-    func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String]) async throws -> AgentIdentity {
+    func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String]) async throws
+        -> AgentIdentity
+    {
         throw AdapterError("\(name) cannot start agents")
     }
 }
@@ -111,7 +118,8 @@ enum ClaudeScreen {
     static func draft(in screen: String) -> String? {
         let lines = screen.components(separatedBy: "\n")
         guard let index = lines.lastIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("❯") }),
-              index > 0, lines[index - 1].contains("────") else { return nil }
+            index > 0, lines[index - 1].contains("────")
+        else { return nil }
         let text = lines[index].trimmingCharacters(in: .whitespaces).dropFirst().trimmingCharacters(in: .whitespaces)
         return text.hasPrefix("Try \"") ? "" : text
     }
@@ -129,7 +137,10 @@ enum ClaudeScreen {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             // The echo is the prompt glyph followed by our text; a later prompt that merely contains it is not.
             if let first = trimmed.first, "❯〉›>".contains(first),
-               trimmed.dropFirst().trimmingCharacters(in: .whitespaces).hasPrefix(needle) { start = index + 1 }
+                trimmed.dropFirst().trimmingCharacters(in: .whitespaces).hasPrefix(needle)
+            {
+                start = index + 1
+            }
         }
         guard start > 0 else { return nil } // no echo of our message yet: nothing after it can be the reply
         var blocks: [[String]] = []
@@ -183,21 +194,26 @@ public enum AgentModels {
     private static func codexModels() -> [SpawnChoice] {
         let cache = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/models_cache.json")
         guard let data = try? Data(contentsOf: cache), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let models = json["models"] as? [[String: Any]] else { return [] }
-        return models
+            let models = json["models"] as? [[String: Any]]
+        else { return [] }
+        return
+            models
             .filter { ($0["visibility"] as? String) == "list" }
             .sorted { (($0["priority"] as? Int) ?? 99) < (($1["priority"] as? Int) ?? 99) }
             .compactMap { model in
                 guard let slug = model["slug"] as? String else { return nil }
                 let raw = (model["display_name"] as? String) ?? slug
-                let window = (model["context_window"] as? Int).map { $0 >= 1_000_000 ? "\($0 / 1_000_000)M tokens" : "\($0 / 1000)K tokens" }
+                let window = (model["context_window"] as? Int).map {
+                    $0 >= 1_000_000 ? "\($0 / 1_000_000)M tokens" : "\($0 / 1000)K tokens"
+                }
                 let levels = (model["supported_reasoning_levels"] as? [[String: Any]] ?? []).compactMap { level -> SpawnChoice? in
                     guard let effort = level["effort"] as? String else { return nil }
                     return SpawnChoice(id: effort, name: effort.capitalized, detail: level["description"] as? String)
                 }
-                return SpawnChoice(id: slug, name: codexDisplayName(raw), detail: model["description"] as? String,
-                                   icon: "openai", provider: "OpenAI", context: window, levels: levels,
-                                   defaultLevel: model["default_reasoning_level"] as? String)
+                return SpawnChoice(
+                    id: slug, name: codexDisplayName(raw), detail: model["description"] as? String,
+                    icon: "openai", provider: "OpenAI", context: window, levels: levels,
+                    defaultLevel: model["default_reasoning_level"] as? String)
             }
     }
 
@@ -206,13 +222,17 @@ public enum AgentModels {
         guard runtime.name.lowercased().contains("claude") else { return nil }
         let switcher = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/claude-switcher/accounts.json")
         if let data = try? Data(contentsOf: switcher), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let accounts = json["accounts"] as? [[String: Any]],
-           let active = accounts.first(where: { $0["active"] as? Bool == true }), let email = active["email"] as? String {
+            let accounts = json["accounts"] as? [[String: Any]],
+            let active = accounts.first(where: { $0["active"] as? Bool == true }), let email = active["email"] as? String
+        {
             return email
         }
         let config = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude.json")
         if let data = try? Data(contentsOf: config), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let account = json["oauthAccount"] as? [String: Any] { return account["emailAddress"] as? String }
+            let account = json["oauthAccount"] as? [String: Any]
+        {
+            return account["emailAddress"] as? String
+        }
         return nil
     }
 

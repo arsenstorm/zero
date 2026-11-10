@@ -32,17 +32,23 @@ enum Keychain {
     // Written to the first of the targets' keychain-access-groups, shared by the app and its extensions.
     static func read(_ account: String) -> Data? {
         var result: AnyObject?
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                    kSecAttrAccount as String: account, kSecReturnData as String: true]
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+            kSecAttrAccount as String: account, kSecReturnData as String: true,
+        ]
         return SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess ? result as? Data : nil
     }
     static func write(_ account: String, _ data: Data) {
         delete(account)
-        let item: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account,
-                                   kSecValueData as String: data, kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        let item: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account,
+            kSecValueData as String: data, kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
         SecItemAdd(item as CFDictionary, nil)
     }
     static func delete(_ account: String) {
-        SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account] as CFDictionary)
+        SecItemDelete(
+            [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
+                as CFDictionary)
     }
 }

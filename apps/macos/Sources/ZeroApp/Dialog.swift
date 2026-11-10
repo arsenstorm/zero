@@ -48,7 +48,11 @@ struct DialogHost: View {
                     .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke))
                     .compositingGroup()
                     .shadow(color: .black.opacity(0.16), radius: 28, y: 10)
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { Dialogs.shared.card = $0 }
+                    .onGeometryChange(for: CGRect.self) {
+                        $0.frame(in: .global)
+                    } action: {
+                        Dialogs.shared.card = $0
+                    }
                     .environment(\.closeDialog, CloseDialog { Dialogs.shared.close() })
             }
             .ignoresSafeArea()
@@ -62,12 +66,18 @@ extension EnvironmentValues { @Entry var closeDialog = CloseDialog {} }
 
 extension View {
     /// Shows `content` in Zero's dialog while `item` is set; closing it clears `item`.
-    func zeroDialog<Item: Identifiable, Content: View>(item: Binding<Item?>, @ViewBuilder content: @escaping (Item) -> Content) -> some View {
-        modifier(DialogOpener(shown: item.wrappedValue.map { "\($0.id)" }, content: { item.wrappedValue.map { AnyView(content($0)) } }) { item.wrappedValue = nil })
+    func zeroDialog<Item: Identifiable, Content: View>(item: Binding<Item?>, @ViewBuilder content: @escaping (Item) -> Content) -> some View
+    {
+        modifier(
+            DialogOpener(shown: item.wrappedValue.map { "\($0.id)" }, content: { item.wrappedValue.map { AnyView(content($0)) } }) {
+                item.wrappedValue = nil
+            })
     }
 
     func zeroDialog<Content: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content) -> some View {
-        modifier(DialogOpener(shown: isPresented.wrappedValue ? "shown" : nil, content: { isPresented.wrappedValue ? AnyView(content()) : nil }) { isPresented.wrappedValue = false })
+        modifier(
+            DialogOpener(shown: isPresented.wrappedValue ? "shown" : nil, content: { isPresented.wrappedValue ? AnyView(content()) : nil })
+            { isPresented.wrappedValue = false })
     }
 }
 
@@ -79,8 +89,11 @@ private struct DialogOpener: ViewModifier {
 
     func body(content view: Content) -> some View {
         view.onChange(of: shown, initial: true) { _, shown in
-            if shown != nil, let content = content() { Dialogs.shared.show(content, owner: owner, closed: closed) }
-            else { Dialogs.shared.dismiss(owner: owner) }
+            if shown != nil, let content = content() {
+                Dialogs.shared.show(content, owner: owner, closed: closed)
+            } else {
+                Dialogs.shared.dismiss(owner: owner)
+            }
         }
         .onDisappear { Dialogs.shared.dismiss(owner: owner) }
     }
@@ -115,7 +128,10 @@ struct DialogButton: View {
     var body: some View {
         let button = Button(action: action) {
             Text(title).font(.system(size: 13, weight: .medium))
-                .foregroundStyle(kind == .primary ? AnyShapeStyle(Theme.onKnob) : kind == .destructive ? AnyShapeStyle(Color.red) : AnyShapeStyle(.primary))
+                .foregroundStyle(
+                    kind == .primary
+                        ? AnyShapeStyle(Theme.onKnob) : kind == .destructive ? AnyShapeStyle(Color.red) : AnyShapeStyle(.primary)
+                )
                 .padding(.horizontal, 14).frame(height: 30)
                 .background(kind == .primary ? Theme.knob : Theme.row, in: Capsule())
                 .opacity(enabled ? 1 : 0.4)
@@ -148,7 +164,9 @@ struct DialogChoice<Value: Hashable>: View {
         HStack(spacing: 2) {
             ForEach(options, id: \.value) { option in
                 let on = option.value == selection
-                Button { selection = option.value } label: {
+                Button {
+                    selection = option.value
+                } label: {
                     Text(option.title).font(.system(size: 12.5, weight: .medium)).foregroundStyle(on ? .primary : .secondary)
                         .padding(.horizontal, 12).frame(height: 26)
                         .background(on ? Theme.card : .clear, in: RoundedRectangle(cornerRadius: 6))
@@ -170,7 +188,9 @@ struct DialogCheckbox: ToggleStyle {
         let configuration: Configuration
         @Environment(\.isEnabled) private var enabled
         var body: some View {
-            Button { configuration.isOn.toggle() } label: {
+            Button {
+                configuration.isOn.toggle()
+            } label: {
                 HStack(spacing: 8) {
                     RoundedRectangle(cornerRadius: 4)
                         .fill(configuration.isOn ? Theme.knob : Theme.row)

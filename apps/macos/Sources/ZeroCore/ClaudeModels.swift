@@ -22,10 +22,14 @@ public enum ClaudeModels {
     public static var hasCache: Bool { accountID().flatMap { UserDefaults.standard.data(forKey: "claudeModels." + $0) } != nil }
 
     public static func cached() -> [SpawnChoice] {
-        let fromAPI = (accountID().flatMap { UserDefaults.standard.data(forKey: "claudeModels." + $0) })
+        let fromAPI =
+            (accountID().flatMap { UserDefaults.standard.data(forKey: "claudeModels." + $0) })
             .flatMap { try? JSONDecoder().decode([Entry].self, from: $0) } ?? []
-        var choices = fromAPI.map { SpawnChoice(id: $0.id, name: shortName($0.name), detail: describe($0.id), icon: "claude", provider: "Anthropic",
-                                                levels: levels, defaultLevel: "high") }
+        var choices = fromAPI.map {
+            SpawnChoice(
+                id: $0.id, name: shortName($0.name), detail: describe($0.id), icon: "claude", provider: "Anthropic",
+                levels: levels, defaultLevel: "high")
+        }
         for extra in localExtras() where !choices.contains(where: { $0.id == extra.id }) { choices.append(extra) }
         return choices.sorted { rank($0.name) < rank($1.name) }
     }
@@ -47,7 +51,8 @@ public enum ClaudeModels {
     public static func refresh() async -> Bool {
         guard let account = accountID() else { status = Status(source: "Claude Code is signed out", error: nil); return false }
         guard let token = accessToken() else {
-            status = Status(source: "Claude Code's local cache", error: "Zero was not allowed to read Claude Code's sign-in from the Keychain")
+            status = Status(
+                source: "Claude Code's local cache", error: "Zero was not allowed to read Claude Code's sign-in from the Keychain")
             return false
         }
         var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/models?limit=100")!)
@@ -92,7 +97,9 @@ public enum ClaudeModels {
         guard let stamp = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date else { return nil }
         configLock.lock(); defer { configLock.unlock() }
         if let parsed, parsed.stamp == stamp { return parsed.json }
-        guard let data = try? Data(contentsOf: url), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        guard let data = try? Data(contentsOf: url), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
         parsed = (stamp, json)
         return json
     }
@@ -111,8 +118,9 @@ public enum ClaudeModels {
             let detail = parts.count > 1 ? parts.dropFirst().joined(separator: " · ") : (description.isEmpty ? nil : description)
             // The 1M-context variant shares its name with the base model; say so in the row, not a badge.
             let long = value.hasSuffix("[1m]")
-            return SpawnChoice(id: value, name: shortName(title) + (long ? " (1M)" : ""), detail: detail, icon: "claude",
-                               provider: "Anthropic", context: long ? "1M tokens" : nil, levels: levels, defaultLevel: "high")
+            return SpawnChoice(
+                id: value, name: shortName(title) + (long ? " (1M)" : ""), detail: detail, icon: "claude",
+                provider: "Anthropic", context: long ? "1M tokens" : nil, levels: levels, defaultLevel: "high")
         }
     }
 
@@ -131,8 +139,9 @@ public enum ClaudeModels {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard process.terminationStatus == 0,
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let oauth = json["claudeAiOauth"] as? [String: Any] else { return nil }
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let oauth = json["claudeAiOauth"] as? [String: Any]
+        else { return nil }
         return oauth["accessToken"] as? String
     }
 

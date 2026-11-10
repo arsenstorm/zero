@@ -48,7 +48,8 @@ public enum TaskAlerts {
         let issues = onYou(row).map { $0.ticket + " " + $0.text }.joined(separator: "|")
         // On the user for its issues alone: those are what it says, not the lead's latest words, which change with
         // every turn it takes on something else (the same issue came again after each).
-        let asked = row.asks.isEmpty ? (issues.isEmpty ? row.now ?? "" : "") : row.asks.map { $0.id + " " + $0.title }.joined(separator: "|")
+        let asked =
+            row.asks.isEmpty ? (issues.isEmpty ? row.now ?? "" : "") : row.asks.map { $0.id + " " + $0.title }.joined(separator: "|")
         return state.rawValue + ":" + asked + "#" + issues
     }
 
@@ -60,7 +61,9 @@ public enum TaskAlerts {
     }
 
     /// As above, `announced` keeping what each task was last announced as (the notifier's, across boards).
-    public static func changes(from old: [BoardRow], to new: [BoardRow], announced: inout [String: String]) -> (alerts: [TaskAlert], cleared: [String]) {
+    public static func changes(from old: [BoardRow], to new: [BoardRow], announced: inout [String: String]) -> (
+        alerts: [TaskAlert], cleared: [String]
+    ) {
         var alerts: [TaskAlert] = [], cleared: [String] = []
         for row in new {
             let previous = old.first { $0.session == row.session }
@@ -75,12 +78,18 @@ public enum TaskAlerts {
             // Its issues alone again, all of them announced already (with an ask since answered, too): nothing new.
             let issues = onYou(row).map { $0.ticket + " " + $0.text }.joined(separator: "|")
             if !now.worker, now.state == .needsYou, row.asks.isEmpty, !issues.isEmpty, !newIssue,
-               announced[row.session]?.hasSuffix("#" + issues) == true { continue }
+                announced[row.session]?.hasSuffix("#" + issues) == true
+            {
+                continue
+            }
             announced[row.session] = said
             // An issue that has just turned to the user is the news, by its ticket.
             let issue = onYou(row).first { mine in !(previous.map(onYou) ?? []).contains { $0.ticket == mine.ticket } } ?? onYou(row).first
             let news = now.state == .needsYou && !now.worker ? issue.map { "\($0.ticket): \($0.text)" } : nil
-            alerts.append(TaskAlert(session: row.session, kind: now.kind, state: now.state, title: plain(row.task), body: plain(news ?? body(row, now.state, worker: now.worker))))
+            alerts.append(
+                TaskAlert(
+                    session: row.session, kind: now.kind, state: now.state, title: plain(row.task),
+                    body: plain(news ?? body(row, now.state, worker: now.worker))))
         }
         for row in old where !new.contains(where: { $0.session == row.session }) && standing(row) != nil { cleared.append(row.session) }
         return (alerts, cleared)
@@ -89,8 +98,10 @@ public enum TaskAlerts {
     /// Alerts sounded while the user was at the Mac (no notification, no phone) that still stand `after` seconds on:
     /// the user may have walked away just then, so they go to the phone. Not one for the task open in front when the
     /// user has touched the Mac since it came: that one was read there.
-    public static func due(_ held: [String: (alert: TaskAlert, at: Date)], rows: [BoardRow], now: Date, front: String?, lastInput: Date,
-                           after: TimeInterval = 300) -> [TaskAlert] {
+    public static func due(
+        _ held: [String: (alert: TaskAlert, at: Date)], rows: [BoardRow], now: Date, front: String?, lastInput: Date,
+        after: TimeInterval = 300
+    ) -> [TaskAlert] {
         held.values.filter { alert, at in
             guard now.timeIntervalSince(at) >= after, let row = rows.first(where: { $0.session == alert.session }) else { return false }
             let read = front == alert.session && lastInput > at
@@ -104,11 +115,12 @@ public enum TaskAlerts {
     /// An agent's ask that isn't a Zero task's (a terminal's `zero ask`, a permission it wants): its own notification,
     /// cleared once it's answered or the user has looked at the inbox.
     public static func ask(_ ask: Ask, agent: String) -> TaskAlert {
-        let what = switch ask.kind {
-        case .run: "Wants to run: " + (ask.command ?? ask.title)
-        case .approve: "Wants your approval: " + ask.title
-        default: ask.title
-        }
+        let what =
+            switch ask.kind {
+            case .run: "Wants to run: " + (ask.command ?? ask.title)
+            case .approve: "Wants your approval: " + ask.title
+            default: ask.title
+            }
         return TaskAlert(session: askPrefix + ask.id, kind: .needsYou, state: .needsYou, title: plain(agent), body: plain(what))
     }
 
@@ -126,13 +138,18 @@ public enum TaskAlerts {
         for raw in text.components(separatedBy: "\n") {
             var line = raw.trimmingCharacters(in: .whitespaces)
             if line.hasPrefix("```") || line.hasPrefix("~~~") || line.isEmpty { continue }
-            line = Self.lineMark.stringByReplacingMatches(in: line, range: NSRange(location: 0, length: (line as NSString).length), withTemplate: "")
-            let inline = (try? AttributedString(markdown: line, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))).map { String($0.characters) } ?? line
+            line = Self.lineMark.stringByReplacingMatches(
+                in: line, range: NSRange(location: 0, length: (line as NSString).length), withTemplate: "")
+            let inline =
+                (try? AttributedString(markdown: line, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))).map {
+                    String($0.characters)
+                } ?? line
             let words = inline.trimmingCharacters(in: .whitespaces)
             if !words.isEmpty { parts.append(words) }
         }
         let together = parts.joined(separator: " · ")
-        let joined = Self.spaces.stringByReplacingMatches(in: together, range: NSRange(location: 0, length: (together as NSString).length), withTemplate: " ")
+        let joined = Self.spaces.stringByReplacingMatches(
+            in: together, range: NSRange(location: 0, length: (together as NSString).length), withTemplate: " ")
         return joined.count > limit ? String(joined.prefix(limit - 1)).trimmingCharacters(in: .whitespaces) + "…" : joined
     }
 
@@ -141,20 +158,22 @@ public enum TaskAlerts {
 
     private static func body(_ row: BoardRow, _ state: BoardRow.State, worker: Bool) -> String {
         if worker { return "A worker needs you" + (row.asks.first.map { ": " + $0.title } ?? "") }
-        let detail: String? = switch state {
-        case .needsYou: row.asks.first?.title ?? row.now
-        case .handed: row.needs ?? row.now
-        default: row.now
-        }
-        let name = switch state {
-        case .needsYou: "Needs you"
-        case .trouble: "In trouble"
-        case .blocked: "Blocked"
-        case .handed: "Over to you"
-        case .answered: "Replied"
-        case .waiting: "Waiting"
-        default: "Done"
-        }
+        let detail: String? =
+            switch state {
+            case .needsYou: row.asks.first?.title ?? row.now
+            case .handed: row.needs ?? row.now
+            default: row.now
+            }
+        let name =
+            switch state {
+            case .needsYou: "Needs you"
+            case .trouble: "In trouble"
+            case .blocked: "Blocked"
+            case .handed: "Over to you"
+            case .answered: "Replied"
+            case .waiting: "Waiting"
+            default: "Done"
+            }
         // An ask's own question says it; the rest say their state first.
         if state == .needsYou, let detail { return detail }
         return name + (detail.map { ": " + $0 } ?? "")

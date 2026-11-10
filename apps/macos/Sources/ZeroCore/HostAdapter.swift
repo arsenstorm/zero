@@ -54,7 +54,9 @@ public struct HostAdapter: TerminalAdapter {
 
     /// A terminal of its own with Claude Code (or Codex), started with the model and effort picked; once
     /// it sits at its prompt, the first message.
-    public func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String]) async throws -> AgentIdentity {
+    public func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String])
+        async throws -> AgentIdentity
+    {
         let command = AgentCommand.build(runtime: runtime, model: model, settings: settings)
         let terminal = try await start(command, in: target.id, label: AgentCommand.label(for: prompt))
         var identity = AgentIdentity(name: "claude-" + String(terminal.suffix(6)), host: AgentIdentity.thisHost, cwd: target.id)

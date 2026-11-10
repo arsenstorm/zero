@@ -8,7 +8,13 @@ import ZeroCore
     case "save":
         let note = rest.joined(separator: " ")
         guard !note.isEmpty else { usage() }
-        let item = await later("save", ["note": note, "artifact": artifact() ?? "", "links": flags["link"] ?? [], "files": paths("attach"), "asked": flag("asked") != nil]) as? [String: Any] ?? [:]
+        let item =
+            await later(
+                "save",
+                [
+                    "note": note, "artifact": artifact() ?? "", "links": flags["link"] ?? [], "files": paths("attach"),
+                    "asked": flag("asked") != nil,
+                ]) as? [String: Any] ?? [:]
         print("zero: saved for later as \(item["link"] as? String ?? "?")")
     case "edit", "done", "open":
         guard let id = rest.first else { usage() }
@@ -17,7 +23,9 @@ import ZeroCore
         if let text = artifact() { args["artifact"] = text }
         if sub != "edit" { args["done"] = sub == "done" }
         let item = await later("edit", args) as? [String: Any] ?? [:]
-        print("zero: \(item["link"] as? String ?? id) is at version \(item["version"] as? Int ?? 1)" + (item["done"] as? Bool == true ? ", done" : ""))
+        print(
+            "zero: \(item["link"] as? String ?? id) is at version \(item["version"] as? Int ?? 1)"
+                + (item["done"] as? Bool == true ? ", done" : ""))
     case "view":
         guard let id = rest.first else { usage() }
         var args: [String: Any] = ["item": id]
@@ -32,7 +40,9 @@ import ZeroCore
         if items.isEmpty { print("zero: nothing saved for later") }
         for item in items {
             let done = item["done"] as? Bool == true ? "done  " : ""
-            print("\(item["id"] as? String ?? "?")  \(done)\(item["note"] as? String ?? "")" + ((item["task"] as? String).map { "  (\($0))" } ?? ""))
+            print(
+                "\(item["id"] as? String ?? "?")  \(done)\(item["note"] as? String ?? "")"
+                    + ((item["task"] as? String).map { "  (\($0))" } ?? ""))
         }
     default: usage()
     }

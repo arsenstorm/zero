@@ -30,7 +30,10 @@ struct QueueStrip: View {
                 NucleoIcon(held ? "media-stop" : "clock", fill: "glyph", size: 13)
                 Text(held ? "Held" : "Queued").font(.system(size: 12, weight: .medium)).tracking(-0.2)
                 Spacer()
-                if held { Button("Send", action: release).buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.primary).tip("You stopped the agent; let the queue go on") }
+                if held {
+                    Button("Send", action: release).buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.primary)
+                        .tip("You stopped the agent; let the queue go on")
+                }
             }
             .foregroundStyle(.secondary)
             .padding(.horizontal, 12).frame(height: 28)
@@ -39,7 +42,9 @@ struct QueueStrip: View {
                 // in the same place; by id, the row went and another came in its stead.
                 ForEach(Array(queued.enumerated()), id: \.offset) { index, item in
                     HStack(spacing: 2) {
-                        Button { edit(item) } label: {
+                        Button {
+                            edit(item)
+                        } label: {
                             Text(Self.gist(item)).font(.system(size: 13)).foregroundStyle(.primary).lineLimit(1).truncationMode(.tail)
                                 .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                         }
@@ -51,7 +56,9 @@ struct QueueStrip: View {
                             square("pen", help: "Edit in the composer", id: item.id + "/edit") { edit(item) }
                             square("trash", help: "Delete", id: item.id + "/delete") { remove(item) }
                             let lit = control == item.id + "/steer"
-                            Button { steer(item) } label: {
+                            Button {
+                                steer(item)
+                            } label: {
                                 HStack(spacing: 5) {
                                     Text("Steer").font(.system(size: 12, weight: .medium))
                                     NucleoIcon("arrow-turn-up-2", size: 12)
@@ -62,7 +69,9 @@ struct QueueStrip: View {
                                 .overlay(Capsule().strokeBorder(lit ? Color.clear : Theme.stroke))
                             }
                             .buttonStyle(PressableStyle()).tip("Send it now, mid-turn").padding(.leading, 4)
-                            .onHover { inside in if inside { control = item.id + "/steer" } else if control == item.id + "/steer" { control = nil } }
+                            .onHover { inside in
+                                if inside { control = item.id + "/steer" } else if control == item.id + "/steer" { control = nil }
+                            }
                         }
                         .padding(.vertical, 4).contentShape(Rectangle())
                         .onHover { inside in if inside { overControls = item.id } else if overControls == item.id { overControls = nil } }
@@ -101,11 +110,14 @@ struct QueueStrip: View {
     }
 
     private static func gist(_ item: Queued) -> String {
-        let line = item.text.replacingOccurrences(of: #"\s*\[Image #\d+\]"#, with: "", options: .regularExpression)
+        let line =
+            item.text.replacingOccurrences(of: #"\s*\[Image #\d+\]"#, with: "", options: .regularExpression)
             .split(whereSeparator: \.isNewline).first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
         let count = item.images?.count ?? 0
         let pictures = count == 0 ? "" : (count == 1 ? "an image" : "\(count) images")
-        return line.isEmpty ? (pictures.isEmpty ? item.text : pictures.prefix(1).uppercased() + pictures.dropFirst()) : (pictures.isEmpty ? line : "\(line) · \(pictures)")
+        return line.isEmpty
+            ? (pictures.isEmpty ? item.text : pictures.prefix(1).uppercased() + pictures.dropFirst())
+            : (pictures.isEmpty ? line : "\(line) · \(pictures)")
     }
 }
 
@@ -125,13 +137,19 @@ struct AddMenu: View {
         VStack(alignment: .leading, spacing: 1) {
             switch page {
             case .add:
-                Text("Add").font(.system(size: 12)).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.top, 4).padding(.bottom, 4)
-                row("files", icon: "file", title: "Files and folders", detail: "Images go with it, anything else as its path", action: files)
+                Text("Add").font(.system(size: 12)).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.top, 4).padding(
+                    .bottom, 4)
+                row(
+                    "files", icon: "file", title: "Files and folders", detail: "Images go with it, anything else as its path", action: files
+                )
                 row("pads", icon: "note-3", title: "Scratchpad", detail: "Point the agent at one of your pads") { page = .pads }
             case .pads:
                 HStack(spacing: 8) {
-                    Button { page = .add } label: {
-                        NucleoIcon("arrow-left", size: 13).foregroundStyle(.secondary).frame(width: 22, height: 22).contentShape(Rectangle())
+                    Button {
+                        page = .add
+                    } label: {
+                        NucleoIcon("arrow-left", size: 13).foregroundStyle(.secondary).frame(width: 22, height: 22).contentShape(
+                            Rectangle())
                     }
                     .buttonStyle(.plain).tip("Back")
                     TextField("Find a scratchpad", text: $query).textFieldStyle(.plain).font(.system(size: 13)).focused($searching)
@@ -142,7 +160,9 @@ struct AddMenu: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 1) {
                         ForEach(found) { summary in
-                            row(summary.id, icon: "note-3", title: summary.title, detail: summary.folder.isEmpty ? nil : summary.folder) { pad(summary) }
+                            row(summary.id, icon: "note-3", title: summary.title, detail: summary.folder.isEmpty ? nil : summary.folder) {
+                                pad(summary)
+                            }
                         }
                         if found.isEmpty {
                             Text(pads.isEmpty ? "Loading…" : "No scratchpad matches").font(.system(size: 13)).foregroundStyle(.tertiary)
@@ -164,7 +184,9 @@ struct AddMenu: View {
     /// Most recently changed first; matched on title and folder.
     private var found: [PadSummary] {
         let words = query.lowercased().split(separator: " ")
-        return pads.filter { pad in words.allSatisfy { (pad.title + " " + pad.folder).lowercased().contains($0) } }.sorted { $0.updated > $1.updated }
+        return pads.filter { pad in words.allSatisfy { (pad.title + " " + pad.folder).lowercased().contains($0) } }.sorted {
+            $0.updated > $1.updated
+        }
     }
 
     private func row(_ id: String, icon: String, title: String, detail: String?, action: @escaping () -> Void) -> some View {
@@ -194,8 +216,10 @@ final class WorkspaceSelector {
     @ObservationIgnored private var closed: (chip: String, at: Date)?
 
     /// `window`: the one the chip is in, when it isn't the key window (the control bar's panel never is).
-    func toggle(_ chip: String, kind: SelectorKind, anchor: CGRect, in window: NSWindow? = nil, rows: @escaping () -> [SelectorSection],
-                level: @escaping (String) -> String? = { _ in nil }, setLevel: @escaping (String, String) -> Void = { _, _ in }) {
+    func toggle(
+        _ chip: String, kind: SelectorKind, anchor: CGRect, in window: NSWindow? = nil, rows: @escaping () -> [SelectorSection],
+        level: @escaping (String) -> String? = { _ in nil }, setLevel: @escaping (String, String) -> Void = { _, _ in }
+    ) {
         if open == chip { close(); return }
         // The click that closed it through the click-outside monitor arrives here next: it was that close.
         if let closed, closed.chip == chip, Date().timeIntervalSince(closed.at) < 0.3 { return }
@@ -249,20 +273,28 @@ struct ComposerChip: View {
         } label: {
             HStack(spacing: 5) {
                 if let icon {
-                    icon.resizable().aspectRatio(contentMode: .fit).frame(width: roomy ? 16 : 14, height: roomy ? 16 : 14).clipShape(RoundedRectangle(cornerRadius: 3))
+                    icon.resizable().aspectRatio(contentMode: .fit).frame(width: roomy ? 16 : 14, height: roomy ? 16 : 14).clipShape(
+                        RoundedRectangle(cornerRadius: 3))
                 } else if let symbol {
-                    NucleoIcon(symbol, size: roomy ? 15 : 13).foregroundStyle(tint.map(AnyShapeStyle.init) ?? (roomy ? AnyShapeStyle(.primary.opacity(0.7)) : AnyShapeStyle(.secondary)))
+                    NucleoIcon(symbol, size: roomy ? 15 : 13).foregroundStyle(
+                        tint.map(AnyShapeStyle.init) ?? (roomy ? AnyShapeStyle(.primary.opacity(0.7)) : AnyShapeStyle(.secondary)))
                 }
                 if !iconOnly {
                     Text(label).font(.system(size: roomy ? 14.5 : 13)).lineLimit(1)
-                        .foregroundStyle(tint.map(AnyShapeStyle.init) ?? (prominent || roomy ? AnyShapeStyle(.primary.opacity(roomy ? 0.8 : 1)) : AnyShapeStyle(.secondary)))
+                        .foregroundStyle(
+                            tint.map(AnyShapeStyle.init)
+                                ?? (prominent || roomy ? AnyShapeStyle(.primary.opacity(roomy ? 0.8 : 1)) : AnyShapeStyle(.secondary)))
                 }
                 if pending { NucleoIcon("clock", size: 11).foregroundStyle(.secondary) }
                 // Roomy, as Devin's: plain words, no chevron.
-                if !roomy && !iconOnly { NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0)) }
+                if !roomy && !iconOnly {
+                    NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0))
+                }
             }
             // As tall as the + and Send beside it, so the row's pills are one size; an icon alone, as wide as tall.
-            .padding(.horizontal, iconOnly ? 0 : roomy ? 6 : 8).frame(minWidth: iconOnly ? (roomy ? 32 : 28) : nil).frame(height: roomy ? 32 : 28)
+            .padding(.horizontal, iconOnly ? 0 : roomy ? 6 : 8).frame(minWidth: iconOnly ? (roomy ? 32 : 28) : nil).frame(
+                height: roomy ? 32 : 28
+            )
             // Plain words, as Codex's controls are; a soft fill under the pointer, and while its selector is open.
             // On frost, a see-through darkening, which takes the tint under it: an opaque grey read pale blue beside the
             // glow showing through.
@@ -272,7 +304,11 @@ struct ComposerChip: View {
         .buttonStyle(.plain).fixedSize()
         .tip(iconOnly ? label : "")
         .onHover { hovered = $0 }
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { anchor = $0 }
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
+        } action: {
+            anchor = $0
+        }
     }
 }
 
@@ -285,16 +321,26 @@ extension EnvironmentValues {
 @MainActor enum ComposerRows {
     /// Each provider's models from its own catalogue, as the control bar's model selector has them; a provider
     /// without one is a single row. `selected` says which (provider, model id) is chosen; `pick` takes one.
-    static func models(_ providers: [Provider], selected: (Provider, String) -> Bool, pick: @escaping (Provider, SpawnChoice) -> Void) -> [SelectorSection] {
+    static func models(_ providers: [Provider], selected: (Provider, String) -> Bool, pick: @escaping (Provider, SpawnChoice) -> Void)
+        -> [SelectorSection]
+    {
         providers.map { provider in
             let catalogue = catalogue(provider)
-            let rows = catalogue.isEmpty
-                ? [SelectorRow(id: provider.rawValue, title: provider.title, provider: nil, providerIcon: provider.mark, detail: nil, context: nil,
-                               levels: [], defaultLevel: nil, modelID: nil, selected: selected(provider, "")) { pick(provider, SpawnChoice(id: "", name: provider.title)) }]
+            let rows =
+                catalogue.isEmpty
+                ? [
+                    SelectorRow(
+                        id: provider.rawValue, title: provider.title, provider: nil, providerIcon: provider.mark, detail: nil, context: nil,
+                        levels: [], defaultLevel: nil, modelID: nil, selected: selected(provider, "")
+                    ) { pick(provider, SpawnChoice(id: "", name: provider.title)) }
+                ]
                 : catalogue.map { model in
-                    SelectorRow(id: provider.rawValue + "/" + model.id, title: model.name, provider: model.provider, providerIcon: choiceIcon(model.icon) ?? provider.mark,
-                                detail: model.detail, context: model.context, levels: model.levels, defaultLevel: model.defaultLevel,
-                                modelID: provider.rawValue + "/" + model.id, selected: selected(provider, model.id)) { pick(provider, model) }
+                    SelectorRow(
+                        id: provider.rawValue + "/" + model.id, title: model.name, provider: model.provider,
+                        providerIcon: choiceIcon(model.icon) ?? provider.mark,
+                        detail: model.detail, context: model.context, levels: model.levels, defaultLevel: model.defaultLevel,
+                        modelID: provider.rawValue + "/" + model.id, selected: selected(provider, model.id)
+                    ) { pick(provider, model) }
                 }
             return SelectorSection(id: provider.rawValue, title: provider.title, icon: provider.mark, rows: rows)
         }
@@ -302,11 +348,15 @@ extension EnvironmentValues {
 
     /// A task's choices: its own provider's models, then each provider that can take it over (ConversationView.takeOver).
     /// `chosen` is the (provider, model id) in effect; no id means the provider's first.
-    static func taskModels(_ conversation: Conversation, chosen: (Provider, String?), pick: @escaping (Provider, SpawnChoice) -> Void) -> [SelectorSection] {
+    static func taskModels(_ conversation: Conversation, chosen: (Provider, String?), pick: @escaping (Provider, SpawnChoice) -> Void)
+        -> [SelectorSection]
+    {
         let providers = [conversation.provider] + ConversationView.takeOver.filter { $0 != conversation.provider }
-        return models(providers, selected: { provider, id in
-            provider == chosen.0 && (id == (chosen.1 ?? "") || (chosen.1 == nil && id == (catalogue(provider).first?.id ?? "")))
-        }, pick: pick)
+        return models(
+            providers,
+            selected: { provider, id in
+                provider == chosen.0 && (id == (chosen.1 ?? "") || (chosen.1 == nil && id == (catalogue(provider).first?.id ?? "")))
+            }, pick: pick)
     }
 
     /// The models a provider's CLI offers the signed-in account, from its own cache, and those the user added to Zero.
@@ -326,7 +376,10 @@ extension EnvironmentValues {
         case .claude: AgentModels.spawnModels(for: SpawnChoice(id: "claude", name: "Claude"))
         case .codex: AgentModels.spawnModels(for: SpawnChoice(id: "codex", name: "Codex"))
         // Its own list, read in the background: the rows fill in once it's in.
-        case .opencode: { OpenCodeModels.shared.refresh(); return OpenCodeModels.shared.models }()
+        case .opencode:
+            {
+                OpenCodeModels.shared.refresh(); return OpenCodeModels.shared.models
+            }()
         }
     }
 
@@ -334,18 +387,28 @@ extension EnvironmentValues {
     /// A menu's groups (SelectorKind.menu): each a section, drawn one under another with a line between.
     static func menu(_ groups: [[(id: String, title: String, glyph: String, selected: Bool, pick: () -> Void)]]) -> [SelectorSection] {
         groups.enumerated().map { index, rows in
-            SelectorSection(id: "group-\(index)", title: "", icon: nil, rows: rows.map { row in
-                SelectorRow(id: row.id, title: row.title, provider: nil, providerIcon: nil, detail: nil, context: nil, levels: [],
-                            defaultLevel: nil, modelID: nil, selected: row.selected, pick: row.pick, glyph: row.glyph)
-            })
+            SelectorSection(
+                id: "group-\(index)", title: "", icon: nil,
+                rows: rows.map { row in
+                    SelectorRow(
+                        id: row.id, title: row.title, provider: nil, providerIcon: nil, detail: nil, context: nil, levels: [],
+                        defaultLevel: nil, modelID: nil, selected: row.selected, pick: row.pick, glyph: row.glyph)
+                })
         }
     }
 
-    static func list(_ title: String, icon: Image? = nil, _ rows: [(id: String, title: String, detail: String?, selected: Bool, pick: () -> Void)]) -> [SelectorSection] {
-        [SelectorSection(id: title, title: title, icon: icon, rows: rows.map { row in
-            SelectorRow(id: row.id, title: row.title, provider: nil, providerIcon: nil, detail: row.detail, context: nil, levels: [],
+    static func list(
+        _ title: String, icon: Image? = nil, _ rows: [(id: String, title: String, detail: String?, selected: Bool, pick: () -> Void)]
+    ) -> [SelectorSection] {
+        [
+            SelectorSection(
+                id: title, title: title, icon: icon,
+                rows: rows.map { row in
+                    SelectorRow(
+                        id: row.id, title: row.title, provider: nil, providerIcon: nil, detail: row.detail, context: nil, levels: [],
                         defaultLevel: nil, modelID: nil, selected: row.selected, pick: row.pick)
-        })]
+                })
+        ]
     }
 }
 

@@ -40,8 +40,10 @@ struct SettingsView: View {
         }
         /// General leads on its own, where Home's New task is, so switching between the two moves no row. Then the
         /// app itself, what agents run with, and how the work is laid out.
-        static let groups: [(String, [Page])] = [("App", [.controlBar, .composer, .devices]), ("Agents", [.agents, .signins, .mcp, .chrome]),
-                                                 ("Work", [.workspaces, .projects, .git, .links, .events])]
+        static let groups: [(String, [Page])] = [
+            ("App", [.controlBar, .composer, .devices]), ("Agents", [.agents, .signins, .mcp, .chrome]),
+            ("Work", [.workspaces, .projects, .git, .links, .events]),
+        ]
     }
     /// The page open, kept in the window's history (Navigation) so back and forward go between pages; on its own
     /// where there's no history (the settings window of its own).
@@ -141,14 +143,17 @@ struct SidebarColumn<Content: View>: View {
         .overlay(alignment: .trailing) {
             Color.clear.frame(width: 6).contentShape(Rectangle())
                 .pointerStyle(.columnResize)
-                .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                    .onChanged { drag in
-                        let start = dragged ?? width
-                        dragged = start
-                        // Whole points: a fraction puts everything in it between pixels (hairlines read thicker).
-                        width = min(max((start + drag.translation.width).rounded(), SidebarWidth.range.lowerBound), SidebarWidth.range.upperBound)
-                    }
-                    .onEnded { _ in dragged = nil })
+                .gesture(
+                    DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                        .onChanged { drag in
+                            let start = dragged ?? width
+                            dragged = start
+                            // Whole points: a fraction puts everything in it between pixels (hairlines read thicker).
+                            width = min(
+                                max((start + drag.translation.width).rounded(), SidebarWidth.range.lowerBound),
+                                SidebarWidth.range.upperBound)
+                        }
+                        .onEnded { _ in dragged = nil })
         }
     }
 }
@@ -174,11 +179,14 @@ struct SidebarHeader: View {
                 if let picker {
                     let open = WorkspaceSelector.shared.open == "workspace"
                     // The logo and the name, one button: either opens the workspaces.
-                    Button { WorkspaceSelector.shared.toggle("workspace", kind: .menu, anchor: anchor, rows: picker) } label: {
+                    Button {
+                        WorkspaceSelector.shared.toggle("workspace", kind: .menu, anchor: anchor, rows: picker)
+                    } label: {
                         HStack(spacing: 5) {
                             WorkspaceGlyph(glyph: glyph, size: 18).frame(width: 18).padding(.trailing, 4)
                             Text(title).font(.system(size: 17, weight: .semibold)).lineLimit(1)
-                            NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).opacity(hovered || open ? 1 : 0.55)
+                            NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).opacity(
+                                hovered || open ? 1 : 0.55)
                         }
                         .padding(.horizontal, 6).frame(height: 26)
                         .background(open || hovered ? Theme.onBlueprint.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 7))
@@ -188,7 +196,11 @@ struct SidebarHeader: View {
                     }
                     .buttonStyle(.plain)
                     .onHover { hovered = $0 }
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { anchor = $0 }
+                    .onGeometryChange(for: CGRect.self) {
+                        $0.frame(in: .global)
+                    } action: {
+                        anchor = $0
+                    }
                     .tip("Switch workspace")
                 } else {
                     ZeroMark(small: true).frame(width: 20, height: 19).frame(width: 18)
@@ -330,15 +342,23 @@ private struct RowMenu: ViewModifier {
             .onTapGesture {
                 guard enabled else { return }
                 let width = SelectorView.width(.menu)
-                WorkspaceSelector.shared.toggle(id, kind: .menu, anchor: CGRect(x: frame.maxX - width - 8, y: frame.minY, width: width, height: frame.height), rows: rows)
+                WorkspaceSelector.shared.toggle(
+                    id, kind: .menu, anchor: CGRect(x: frame.maxX - width - 8, y: frame.minY, width: width, height: frame.height),
+                    rows: rows)
             }
             .onHover { hovered = $0 }
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
+            .onGeometryChange(for: CGRect.self) {
+                $0.frame(in: .global)
+            } action: {
+                frame = $0
+            }
     }
 }
 
 extension View {
-    func rowMenu(_ id: String, enabled: Bool = true, rows: @escaping () -> [SelectorSection]) -> some View { modifier(RowMenu(id: id, enabled: enabled, rows: rows)) }
+    func rowMenu(_ id: String, enabled: Bool = true, rows: @escaping () -> [SelectorSection]) -> some View {
+        modifier(RowMenu(id: id, enabled: enabled, rows: rows))
+    }
 }
 
 /// A heading's quiet button (Add workspace, Add account): an icon and words, a soft fill under the pointer or while
@@ -375,7 +395,9 @@ struct SettingChoice<Value: Hashable>: View {
     var body: some View {
         let open = WorkspaceSelector.shared.open == id
         let chosen = choices.joined().first { $0.value == selection } ?? choices.first?.first
-        Button { WorkspaceSelector.shared.toggle(id, kind: .menu, anchor: anchor, rows: { sections }) } label: {
+        Button {
+            WorkspaceSelector.shared.toggle(id, kind: .menu, anchor: anchor, rows: { sections })
+        } label: {
             HStack(spacing: 5) {
                 Text(chosen?.title ?? "").font(.system(size: 13)).lineLimit(1)
                 NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0))
@@ -386,7 +408,11 @@ struct SettingChoice<Value: Hashable>: View {
         }
         .buttonStyle(.plain).fixedSize()
         .onHover { hovered = $0 }
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { anchor = $0 }
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
+        } action: {
+            anchor = $0
+        }
     }
 
     private var sections: [SelectorSection] {
@@ -394,8 +420,10 @@ struct SettingChoice<Value: Hashable>: View {
     }
 
     private func row(_ choice: (title: String, value: Value)) -> SelectorRow {
-        SelectorRow(id: "\(choice.value)", title: choice.title, provider: nil, providerIcon: nil, detail: nil, context: nil,
-                    levels: [], defaultLevel: nil, modelID: nil, selected: choice.value == selection) { selection = choice.value }
+        SelectorRow(
+            id: "\(choice.value)", title: choice.title, provider: nil, providerIcon: nil, detail: nil, context: nil,
+            levels: [], defaultLevel: nil, modelID: nil, selected: choice.value == selection
+        ) { selection = choice.value }
     }
 }
 
@@ -443,7 +471,9 @@ struct SettingRow<Control: View>: View {
     @ViewBuilder let control: () -> Control
     var body: some View {
         HStack(spacing: 12) {
-            if let picture { picture.resizable().aspectRatio(contentMode: .fit).frame(width: 20, height: 20).clipShape(RoundedRectangle(cornerRadius: 5)) }
+            if let picture {
+                picture.resizable().aspectRatio(contentMode: .fit).frame(width: 20, height: 20).clipShape(RoundedRectangle(cornerRadius: 5))
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 13, weight: .medium))
                 Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -474,12 +504,16 @@ private struct UpdateRow: View {
         case .failed(let problem):
             SettingRow(title: "Zero \(updater.current)", detail: problem) { Button("Check again") { Task { await updater.check() } } }
         case .available(let release):
-            SettingRow(title: "Zero \(release.version) is available",
-                       detail: "Updating restarts Zero: running agents pause between steps for a few seconds, then carry on.") {
+            SettingRow(
+                title: "Zero \(release.version) is available",
+                detail: "Updating restarts Zero: running agents pause between steps for a few seconds, then carry on."
+            ) {
                 Button("Update and restart") { Task { await updater.install(release) } }
             }
         case .installing(let release):
-            SettingRow(title: "Updating to Zero \(release.version)…", detail: "Zero quits and opens again as the new version.") { EmptyView() }
+            SettingRow(title: "Updating to Zero \(release.version)…", detail: "Zero quits and opens again as the new version.") {
+                EmptyView()
+            }
         }
     }
 }
@@ -530,14 +564,19 @@ private struct GeneralPage: View {
                 SettingsSection(title: "Sounds") {
                     Rows {
                         ForEach(Self.sounded, id: \.state) { sounded in
-                            SettingRow(title: sounded.name, detail: sounded.detail) { SoundPicker(settings: settings, state: sounded.state) }
+                            SettingRow(title: sounded.name, detail: sounded.detail) {
+                                SoundPicker(settings: settings, state: sounded.state)
+                            }
                         }
                     }
                 }
             }
             SettingsSection(title: "Advanced") {
                 Rows {
-                    SettingRow(title: "Log", detail: "What Zero did and when: " + Log.file.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
+                    SettingRow(
+                        title: "Log",
+                        detail: "What Zero did and when: " + Log.file.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+                    ) {
                         RowButton(title: "View log") { NSWorkspace.shared.open(Log.file) }
                     }
                     SettingRow(title: "Onboarding", detail: "See the welcome again.") {
@@ -554,13 +593,19 @@ private struct SoundPicker: View {
     @Bindable var settings: Settings
     let state: BoardRow.State
     var body: some View {
-        let sounds = Settings.sounds.map { sound in (title: sound == Settings.defaultSound(state) ? "\(sound) (default)" : sound, value: sound) }
+        let sounds = Settings.sounds.map { sound in
+            (title: sound == Settings.defaultSound(state) ? "\(sound) (default)" : sound, value: sound)
+        }
         // ponytail: the selector's menu doesn't scroll; these 15 rows are about 450 pt, cut off where neither side of
         // the chip has that room. Let the menu kind scroll (Selector.swift) if a screen that short turns up.
-        SettingChoice(id: "sound-" + state.rawValue, choices: [sounds, [(title: "None", value: "")]], selection: Binding(get: { settings.sound(for: state) }, set: { sound in
-            settings.stateSounds[state.rawValue] = sound
-            if !sound.isEmpty { Chime.play(sound) }
-        }))
+        SettingChoice(
+            id: "sound-" + state.rawValue, choices: [sounds, [(title: "None", value: "")]],
+            selection: Binding(
+                get: { settings.sound(for: state) },
+                set: { sound in
+                    settings.stateSounds[state.rawValue] = sound
+                    if !sound.isEmpty { Chime.play(sound) }
+                }))
     }
 }
 
@@ -581,7 +626,9 @@ private struct ControlBarPage: View {
                         Switch(isOn: $settings.followActiveScreen)
                     }
                     SettingRow(title: "Bar in the window", detail: "The bar sits in Zero's window instead of at the screen's edge.") {
-                        SettingChoice(id: "barDock", choices: [[("When it fills the screen", .auto), ("Always", .always), ("Never", .never)]], selection: $settings.barDock)
+                        SettingChoice(
+                            id: "barDock", choices: [[("When it fills the screen", .auto), ("Always", .always), ("Never", .never)]],
+                            selection: $settings.barDock)
                     }
                 }
             }
@@ -604,7 +651,9 @@ private struct ControlBarPage: View {
                             if editing == name {
                                 TextField("Name", text: $draft, prompt: Text(store.identity(of: name)?.label ?? name))
                                     .textFieldStyle(.plain).font(.system(size: 13, weight: .medium)).focused($focused)
-                                    .onSubmit { store.rename(name, to: draft); editing = nil }
+                                    .onSubmit {
+                                        store.rename(name, to: draft); editing = nil
+                                    }
                                     .onExitCommand { editing = nil }
                             } else {
                                 Text(store.displayName(of: name)).font(.system(size: 13, weight: .medium)).lineLimit(1)
@@ -654,22 +703,30 @@ private struct ComposerPage: View {
                     SettingRow(title: "Take-back window", detail: "Esc takes an answer back within this time.") {
                         HStack(spacing: 6) {
                             Slider(value: $settings.takeBackSeconds, in: 0...5, step: 0.5).frame(width: 80)
-                            Text(String(format: "%.1f s", settings.takeBackSeconds)).font(.system(size: 12)).monospacedDigit().frame(width: 38, alignment: .trailing)
+                            Text(String(format: "%.1f s", settings.takeBackSeconds)).font(.system(size: 12)).monospacedDigit().frame(
+                                width: 38, alignment: .trailing)
                         }
                     }
                     SettingRow(title: "Move to the next ask", detail: "3 s after an answer lands.") {
                         Switch(isOn: $settings.autoAdvance)
                     }
                     SettingRow(title: "Ask expiry", detail: "For asks that set none.") {
-                        Stepper("\(settings.defaultTTLMinutes) min", value: $settings.defaultTTLMinutes, in: 5...1440, step: 5).font(.system(size: 12))
+                        Stepper("\(settings.defaultTTLMinutes) min", value: $settings.defaultTTLMinutes, in: 5...1440, step: 5).font(
+                            .system(size: 12))
                     }
                 }
             }
             SettingsSection(title: "Dictation") {
                 Rows {
-                    SettingRow(title: "Microphone", detail: missing ? "Not connected; the system default is used." : "Used when you dictate a reply.") {
-                        SettingChoice(id: "microphone", choices: [[(title: "System default", value: "")] + microphones.map { (title: $0.name, value: $0.uid) }],
-                                      selection: Binding(get: { settings.inputDeviceUID ?? "" }, set: { settings.inputDeviceUID = $0.isEmpty ? nil : $0 }))
+                    SettingRow(
+                        title: "Microphone",
+                        detail: missing ? "Not connected; the system default is used." : "Used when you dictate a reply."
+                    ) {
+                        SettingChoice(
+                            id: "microphone",
+                            choices: [[(title: "System default", value: "")] + microphones.map { (title: $0.name, value: $0.uid) }],
+                            selection: Binding(
+                                get: { settings.inputDeviceUID ?? "" }, set: { settings.inputDeviceUID = $0.isEmpty ? nil : $0 }))
                     }
                 }
             }
@@ -686,13 +743,24 @@ private struct AgentsPage: View {
             SettingsSection(title: "Setup") { PluginRow() }
             SettingsSection(title: "Tasks") {
                 Rows {
-                    SettingRow(title: "Archive done tasks", detail: "Done means finished end to end. Put away then; back when something they follow changes.") {
+                    SettingRow(
+                        title: "Archive done tasks",
+                        detail: "Done means finished end to end. Put away then; back when something they follow changes."
+                    ) {
                         ArchiveCompletedPicker()
                     }
-                    SettingRow(title: "Agents' own subagents", detail: "Off, agents hand work to Zero workers, which you see, steer and stop here. On, Claude and Codex may also use their own, which you can't. From each task's next start.") {
+                    SettingRow(
+                        title: "Agents' own subagents",
+                        detail:
+                            "Off, agents hand work to Zero workers, which you see, steer and stop here. On, Claude and Codex may also use their own, which you can't. From each task's next start."
+                    ) {
                         SubagentsSwitch()
                     }
-                    SettingRow(title: "Where tasks run", detail: "A command printing [{\"ticket\": \"ENG-1\", \"place\": \"my-bench\"}], run in your login shell every five minutes. Each task's Where is its place, by ticket, in place of its folder.") {
+                    SettingRow(
+                        title: "Where tasks run",
+                        detail:
+                            "A command printing [{\"ticket\": \"ENG-1\", \"place\": \"my-bench\"}], run in your login shell every five minutes. Each task's Where is its place, by ticket, in place of its folder."
+                    ) {
                         PlacesCommandField()
                     }
                 }
@@ -706,13 +774,20 @@ private struct AgentsPage: View {
 private struct ArchiveCompletedPicker: View {
     @State private var seconds = 24 * 3600
     @State private var link = try? ZerodLink()
-    static let choices: [(String, Int)] = [("Once you've read it", -1), ("After an hour", 3600), ("After a day", 24 * 3600), ("After a week", 7 * 24 * 3600), ("Never", 0)]
+    static let choices: [(String, Int)] = [
+        ("Once you've read it", -1), ("After an hour", 3600), ("After a day", 24 * 3600), ("After a week", 7 * 24 * 3600), ("Never", 0),
+    ]
 
     var body: some View {
-        SettingChoice(id: "archiveCompleted", choices: [Self.choices.map { (title: $0.0, value: $0.1) }], selection: Binding(get: { seconds }, set: { chosen in
-            seconds = chosen
-            Task { try? await link?.setArchiveCompleted(chosen) }
-        }))
+        SettingChoice(
+            id: "archiveCompleted", choices: [Self.choices.map { (title: $0.0, value: $0.1) }],
+            selection: Binding(
+                get: { seconds },
+                set: { chosen in
+                    seconds = chosen
+                    Task { try? await link?.setArchiveCompleted(chosen) }
+                })
+        )
         .task { if let kept = try? await link?.archiveCompleted() { seconds = Self.choices.contains { $0.1 == kept } ? kept : 24 * 3600 } }
     }
 }
@@ -723,10 +798,14 @@ private struct SubagentsSwitch: View {
     @State private var link = try? ZerodLink()
 
     var body: some View {
-        Switch(isOn: Binding(get: { on }, set: { chosen in
-            on = chosen
-            Task { try? await link?.setSubagents(chosen) }
-        }))
+        Switch(
+            isOn: Binding(
+                get: { on },
+                set: { chosen in
+                    on = chosen
+                    Task { try? await link?.setSubagents(chosen) }
+                })
+        )
         .task { if let kept = try? await link?.subagents() { on = kept } }
     }
 }
@@ -777,21 +856,31 @@ private struct BrowserRows: View {
             SettingsSection(title: "Chrome") { chrome }
             SettingsSection(title: "Firefox") {
                 Rows {
-                    SettingRow(title: "Firefox Developer Edition", detail: firefoxError ?? (firefox
-                        ? "Under Zero's remote control, with your sign-ins"
-                        : "Opened by Zero under remote control when an agent asks for it")) {
-                        if firefox { Text("Connected").font(.system(size: 12)).foregroundStyle(.secondary) }
-                        else if opening { ProgressView().controlSize(.small) }
-                        else { RowButton(title: "Open") { openFirefox() } }
+                    SettingRow(
+                        title: "Firefox Developer Edition",
+                        detail: firefoxError
+                            ?? (firefox
+                                ? "Under Zero's remote control, with your sign-ins"
+                                : "Opened by Zero under remote control when an agent asks for it")
+                    ) {
+                        if firefox {
+                            Text("Connected").font(.system(size: 12)).foregroundStyle(.secondary)
+                        } else if opening {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            RowButton(title: "Open") { openFirefox() }
+                        }
                     }
                 }
             }
             SettingsSection(title: "Safari") {
                 Rows {
-                    SettingRow(title: "Safari's automation windows", detail: safari.map { $0.isEmpty ? "Working · comparisons get a signed-out Safari window" : $0 }
-                        ?? "For comparing pages: a signed-out Safari window with real clicks") {
-                        if trying { ProgressView().controlSize(.small) }
-                        else { RowButton(title: "Try it") { trySafari() } }
+                    SettingRow(
+                        title: "Safari's automation windows",
+                        detail: safari.map { $0.isEmpty ? "Working · comparisons get a signed-out Safari window" : $0 }
+                            ?? "For comparing pages: a signed-out Safari window with real clicks"
+                    ) {
+                        if trying { ProgressView().controlSize(.small) } else { RowButton(title: "Try it") { trySafari() } }
                     }
                 }
             }
@@ -809,13 +898,20 @@ private struct BrowserRows: View {
     private var chrome: some View {
         VStack(alignment: .leading, spacing: 8) {
             Rows {
-                SettingRow(title: "Zero for Chrome", detail: chromes.map { $0.isEmpty ? "Not connected · set it up so agents can use Chrome" : "Connected · each task works in tabs of its own" } ?? "Lets agents use Chrome, each task in tabs of its own") {
+                SettingRow(
+                    title: "Zero for Chrome",
+                    detail: chromes.map {
+                        $0.isEmpty ? "Not connected · set it up so agents can use Chrome" : "Connected · each task works in tabs of its own"
+                    } ?? "Lets agents use Chrome, each task in tabs of its own"
+                ) {
                     RowButton(title: chromes?.isEmpty == false ? "Set up again" : "Set up", action: setUp)
                 }
             }
             if let folder {
-                Text("In Chrome's Extensions page (open now): turn on Developer mode, choose Load unpacked, and pick the folder Finder shows (\((folder as NSString).abbreviatingWithTildeInPath)). Zero for Chrome connects by itself.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                Text(
+                    "In Chrome's Extensions page (open now): turn on Developer mode, choose Load unpacked, and pick the folder Finder shows (\((folder as NSString).abbreviatingWithTildeInPath)). Zero for Chrome connects by itself."
+                )
+                .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             }
         }
     }
@@ -872,7 +968,9 @@ private struct BrowserRows: View {
             guard let path = await workspace.browserSetup() else { return }
             folder = path
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
-            if let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome"), let page = URL(string: "chrome://extensions") {
+            if let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome"),
+                let page = URL(string: "chrome://extensions")
+            {
                 NSWorkspace.shared.open([page], withApplicationAt: chrome, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
             }
         }
@@ -904,22 +1002,27 @@ private struct PluginRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Rows {
-                SettingRow(picture: Image(nsImage: appTile), title: "Zero plugin",
-                           detail: "Lets your agents reach your inbox and use your scratchpads.") {
+                SettingRow(
+                    picture: Image(nsImage: appTile), title: "Zero plugin",
+                    detail: "Lets your agents reach your inbox and use your scratchpads."
+                ) {
                     if let plugin {
-                        Switch(isOn: Binding(get: { plugin }, set: { on in
-                            self.plugin = nil
-                            error = nil
-                            Task {
-                                if on {
-                                    error = await ClaudePlugin.install() ?? AgentMCP.install()
-                                } else {
-                                    await ClaudePlugin.uninstall()
-                                    AgentMCP.uninstall()
-                                }
-                                self.plugin = ClaudePlugin.isInstalled
-                            }
-                        }))
+                        Switch(
+                            isOn: Binding(
+                                get: { plugin },
+                                set: { on in
+                                    self.plugin = nil
+                                    error = nil
+                                    Task {
+                                        if on {
+                                            error = await ClaudePlugin.install() ?? AgentMCP.install()
+                                        } else {
+                                            await ClaudePlugin.uninstall()
+                                            AgentMCP.uninstall()
+                                        }
+                                        self.plugin = ClaudePlugin.isInstalled
+                                    }
+                                }))
                     } else {
                         ProgressView().controlSize(.small)
                     }
@@ -929,7 +1032,6 @@ private struct PluginRow: View {
         }
     }
 }
-
 
 /// Zero's app icon without the margin macOS icons carry, so it fills a row's picture slot like the other logos,
 /// and with a faint edge, since its white tile would otherwise vanish on a white sheet.
@@ -998,8 +1100,13 @@ private struct FoldersPage: View {
                         .tip((folder as NSString).abbreviatingWithTildeInPath)
                         .rowMenu("folder-\(folder)") {
                             ComposerRows.menu([
-                                [("rename", "Rename…", "pen", false, { renaming = Folder(path: folder) }),
-                                 ("finder", "Show in Finder", "folder", false, { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: folder)]) })],
+                                [
+                                    ("rename", "Rename…", "pen", false, { renaming = Folder(path: folder) }),
+                                    (
+                                        "finder", "Show in Finder", "folder", false,
+                                        { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: folder)]) }
+                                    ),
+                                ],
                                 [("remove", "Remove", "trash", false, { save(folders.filter { $0 != folder }) })],
                             ])
                         }
@@ -1007,7 +1114,9 @@ private struct FoldersPage: View {
                 }
                 .id(named)
             }
-            SettingsSection(title: "Drop folders", accessory: AnyView(GhostButton(title: "Add drop folder", icon: "plus") { addingDrop = true })) {
+            SettingsSection(
+                title: "Drop folders", accessory: AnyView(GhostButton(title: "Add drop folder", icon: "plus") { addingDrop = true })
+            ) {
                 card(empty: settings.dropPatterns.isEmpty) {
                     ForEach(Array(settings.dropPatterns.enumerated()), id: \.element) { index, pattern in
                         if index > 0 { Divider().padding(.leading, 18) }
@@ -1017,7 +1126,9 @@ private struct FoldersPage: View {
                         }
                         .padding(.horizontal, 18).frame(height: 44)
                         .rowMenu("drop-\(pattern)") {
-                            ComposerRows.menu([[("remove", "Remove", "trash", false, { settings.dropPatterns.removeAll { $0 == pattern } })]])
+                            ComposerRows.menu([
+                                [("remove", "Remove", "trash", false, { settings.dropPatterns.removeAll { $0 == pattern } })]
+                            ])
                         }
                     }
                 }
@@ -1035,7 +1146,10 @@ private struct FoldersPage: View {
 
     private func card<Content: View>(empty: Bool, @ViewBuilder rows: () -> Content) -> some View {
         VStack(spacing: 0) {
-            if empty { Text("None yet").font(.system(size: 13)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).frame(height: 44) }
+            if empty {
+                Text("None yet").font(.system(size: 13)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 18).frame(height: 44)
+            }
             rows()
         }
         .clipShape(RoundedRectangle(cornerRadius: 14))
@@ -1070,11 +1184,15 @@ private struct DropFolderForm: View {
                     .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 8) {
-                TextField("", text: $pattern, prompt: Text("~/remotes/*/.zero")).textFieldStyle(.dialog).font(.system(size: 13, design: .monospaced)).onSubmit(add)
+                TextField("", text: $pattern, prompt: Text("~/remotes/*/.zero")).textFieldStyle(.dialog).font(
+                    .system(size: 13, design: .monospaced)
+                ).onSubmit(add)
                 DialogButton(title: "Choose…") {
                     let panel = NSOpenPanel()
                     panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
-                    if panel.runModal() == .OK, let url = panel.url { pattern = url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~") }
+                    if panel.runModal() == .OK, let url = panel.url {
+                        pattern = url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+                    }
                 }
             }
             HStack {
@@ -1106,26 +1224,41 @@ private struct LinksPage: View {
         Sections {
             SettingsSection(title: "GitHub", icon: AnyView(Integration.github.icon(size: 14).foregroundStyle(.secondary))) {
                 Rows {
-                    SettingRow(title: "Link pull requests and commits", detail: "repo#123, #123 and commit hashes in messages open on GitHub.") { Switch(isOn: $github) }
+                    SettingRow(
+                        title: "Link pull requests and commits", detail: "repo#123, #123 and commit hashes in messages open on GitHub."
+                    ) { Switch(isOn: $github) }
                 }
             }
             SettingsSection(title: "Linear", icon: AnyView(Integration.linear.icon(size: 14).foregroundStyle(.secondary))) {
                 Rows {
                     SettingRow(title: "Link issues", detail: "ABC-123 in messages opens the issue.") { Switch(isOn: $linear) }
-                    SettingRow(title: "Open issues in the Linear app", detail: LinearLinks.installed ? "Rather than the browser." : "Linear's app isn't installed.") {
-                        Switch(isOn: Binding(get: { linear && LinearLinks.installed && linearInApp }, set: { linearInApp = $0 })).disabled(!linear || !LinearLinks.installed)
+                    SettingRow(
+                        title: "Open issues in the Linear app",
+                        detail: LinearLinks.installed ? "Rather than the browser." : "Linear's app isn't installed."
+                    ) {
+                        Switch(isOn: Binding(get: { linear && LinearLinks.installed && linearInApp }, set: { linearInApp = $0 })).disabled(
+                            !linear || !LinearLinks.installed)
                     }
                 }
             }
-            SettingsSection(title: "Slack", icon: AnyView(Integration.slack.icon(size: 14).foregroundStyle(.secondary)),
-                            accessory: workspace == nil ? nil : AnyView(GhostButton(title: "Connect Slack", icon: "plus") { connecting = true })) {
+            SettingsSection(
+                title: "Slack", icon: AnyView(Integration.slack.icon(size: 14).foregroundStyle(.secondary)),
+                accessory: workspace == nil ? nil : AnyView(GhostButton(title: "Connect Slack", icon: "plus") { connecting = true })
+            ) {
                 Rows {
                     if Slack.shared.teams.isEmpty {
-                        SettingRow(title: "No workspace connected", detail: "Once one is, its #channels and message links open in Slack.") { EmptyView() }
+                        SettingRow(title: "No workspace connected", detail: "Once one is, its #channels and message links open in Slack.") {
+                            EmptyView()
+                        }
                     }
                     ForEach(Slack.shared.teams, id: \.team.id) { connected in
-                        SettingRow(title: connected.team.name, detail: "\(connected.team.domain).slack.com: its #channels and message links open in Slack.") {
-                            if let workspace { DialogButton(title: "Disconnect") { Task { await workspace.disconnectSlack(team: connected.team.id) } } }
+                        SettingRow(
+                            title: connected.team.name,
+                            detail: "\(connected.team.domain).slack.com: its #channels and message links open in Slack."
+                        ) {
+                            if let workspace {
+                                DialogButton(title: "Disconnect") { Task { await workspace.disconnectSlack(team: connected.team.id) } }
+                            }
                         }
                     }
                 }
@@ -1152,7 +1285,8 @@ private struct SlackConnect: View {
             }
             DialogPart(title: "1. Make Zero's app in the workspace") {
                 HStack {
-                    Text("Slack opens with it filled in: Create, then Install to Workspace.").font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true)
+                    Text("Slack opens with it filled in: Create, then Install to Workspace.").font(.system(size: 12.5)).fixedSize(
+                        horizontal: false, vertical: true)
                     Spacer()
                     DialogButton(title: "Open Slack") { NSWorkspace.shared.open(Slack.createAppURL) }
                 }
@@ -1164,7 +1298,9 @@ private struct SlackConnect: View {
             HStack {
                 Spacer()
                 DialogButton(title: "Cancel") { dismiss() }
-                DialogButton(title: waiting ? "Connecting…" : "Connect", kind: .primary, enabled: !waiting && !token.trimmingCharacters(in: .whitespaces).isEmpty, action: connect)
+                DialogButton(
+                    title: waiting ? "Connecting…" : "Connect", kind: .primary,
+                    enabled: !waiting && !token.trimmingCharacters(in: .whitespaces).isEmpty, action: connect)
             }
         }
         .frame(width: 440)
@@ -1228,8 +1364,10 @@ struct HotKeyRecorder: View {
         if flags.contains(.option) { parts.append("⌥") }
         if flags.contains(.shift) { parts.append("⇧") }
         if flags.contains(.command) { parts.append("⌘") }
-        let names: [Int: String] = [kVK_Space: "Space", kVK_Return: "Return", kVK_Tab: "Tab", kVK_Delete: "Delete",
-                                    kVK_UpArrow: "↑", kVK_DownArrow: "↓", kVK_LeftArrow: "←", kVK_RightArrow: "→"]
+        let names: [Int: String] = [
+            kVK_Space: "Space", kVK_Return: "Return", kVK_Tab: "Tab", kVK_Delete: "Delete",
+            kVK_UpArrow: "↑", kVK_DownArrow: "↓", kVK_LeftArrow: "←", kVK_RightArrow: "→",
+        ]
         let key = names[Int(event.keyCode)] ?? (event.charactersIgnoringModifiers ?? "?").uppercased()
         return parts.joined() + " " + key
     }
@@ -1242,8 +1380,12 @@ private struct Blueprint: View {
         Canvas { context, size in
             let ink = GraphicsContext.Shading.foreground
             var grid = Path()
-            stride(from: 0, through: size.width, by: 12).forEach { x in grid.move(to: CGPoint(x: x, y: 0)); grid.addLine(to: CGPoint(x: x, y: size.height)) }
-            stride(from: 0, through: size.height, by: 12).forEach { y in grid.move(to: CGPoint(x: 0, y: y)); grid.addLine(to: CGPoint(x: size.width, y: y)) }
+            stride(from: 0, through: size.width, by: 12).forEach { x in
+                grid.move(to: CGPoint(x: x, y: 0)); grid.addLine(to: CGPoint(x: x, y: size.height))
+            }
+            stride(from: 0, through: size.height, by: 12).forEach { y in
+                grid.move(to: CGPoint(x: 0, y: y)); grid.addLine(to: CGPoint(x: size.width, y: y))
+            }
             context.opacity = 0.07
             context.stroke(grid, with: ink, lineWidth: 0.5)
             context.opacity = 0.35
@@ -1268,8 +1410,10 @@ private struct Blueprint: View {
             }
             context.stroke(plus, with: ink, lineWidth: 0.8)
             context.opacity = 0.16
-            context.fill(Path(ellipseIn: CGRect(x: size.width - 150, y: -70, width: 180, height: 140)),
-                         with: .radialGradient(Gradient(colors: [.white, .clear]), center: CGPoint(x: size.width - 60, y: 0), startRadius: 0, endRadius: 90))
+            context.fill(
+                Path(ellipseIn: CGRect(x: size.width - 150, y: -70, width: 180, height: 140)),
+                with: .radialGradient(
+                    Gradient(colors: [.white, .clear]), center: CGPoint(x: size.width - 60, y: 0), startRadius: 0, endRadius: 90))
         }
     }
 }
@@ -1285,7 +1429,9 @@ private struct ProgressiveBlur<Content: View>: View {
         ZStack {
             ForEach(Array(Self.layers.enumerated()), id: \.offset) { index, layer in
                 content().blur(radius: layer.blur, opaque: false)
-                    .mask(LinearGradient(stops: band(layer.from, layer.to, last: index == Self.layers.count - 1), startPoint: .top, endPoint: .bottom))
+                    .mask(
+                        LinearGradient(
+                            stops: band(layer.from, layer.to, last: index == Self.layers.count - 1), startPoint: .top, endPoint: .bottom))
             }
         }
         .compositingGroup()
@@ -1297,18 +1443,21 @@ private struct ProgressiveBlur<Content: View>: View {
     /// through a band of grey.
     static var eased: [Gradient.Stop] {
         let start = 0.64
-        return [Gradient.Stop(color: .black, location: 0)] + (0...16).map { step in
-            let t = Double(step) / 16
-            let ease = t * t * t * (t * (t * 6 - 15) + 10)
-            return Gradient.Stop(color: .black.opacity(1 - ease), location: start + (1 - start) * t)
-        }
+        return [Gradient.Stop(color: .black, location: 0)]
+            + (0...16).map { step in
+                let t = Double(step) / 16
+                let ease = t * t * t * (t * (t * 6 - 15) + 10)
+                return Gradient.Stop(color: .black.opacity(1 - ease), location: start + (1 - start) * t)
+            }
     }
 
     /// Opaque over its band, ramping in at the top of it; a layer's band overlaps the next so there are no seams.
     private func band(_ from: CGFloat, _ to: CGFloat, last: Bool) -> [Gradient.Stop] {
         let ramp = (to - from) / 3
-        return [.init(color: .clear, location: max(0, from - 0.001)), .init(color: from == 0 ? .black : .clear, location: from),
-                .init(color: .black, location: min(1, from + ramp)), .init(color: .black, location: to),
-                .init(color: last ? .black : .clear, location: min(1, to + ramp))]
+        return [
+            .init(color: .clear, location: max(0, from - 0.001)), .init(color: from == 0 ? .black : .clear, location: from),
+            .init(color: .black, location: min(1, from + ramp)), .init(color: .black, location: to),
+            .init(color: last ? .black : .clear, location: min(1, to + ramp)),
+        ]
     }
 }

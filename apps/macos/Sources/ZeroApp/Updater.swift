@@ -35,7 +35,6 @@ import ZeroCore
     /// Downloads it, checks it's signed as this build, and installs it: Zero quits and opens again as the new build.
     func install(_ release: Release) async {
         state = .installing(release)
-        do { try Updates.install(try await Updates.download(release)) }
-        catch { state = .failed(error.localizedDescription) }
+        do { try Updates.install(try await Updates.download(release)) } catch { state = .failed(error.localizedDescription) }
     }
 }

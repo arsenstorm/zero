@@ -9,7 +9,10 @@ final class ShareViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         let providers = (extensionContext?.inputItems as? [NSExtensionItem] ?? []).flatMap { $0.attachments ?? [] }
-            .filter { $0.hasItemConformingToTypeIdentifier(UTType.image.identifier) || $0.hasItemConformingToTypeIdentifier(UTType.movie.identifier) }
+            .filter {
+                $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+                    || $0.hasItemConformingToTypeIdentifier(UTType.movie.identifier)
+            }
         let view = ShareView(providers: providers) { [weak self] in self?.extensionContext?.completeRequest(returningItems: nil) }
         let host = UIHostingController(rootView: view)
         addChild(host)
@@ -52,7 +55,11 @@ struct ShareView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: done) }
                 ToolbarItem(placement: .confirmationAction) {
-                    if sending { Spinner().frame(width: 18, height: 18) } else { Button("Send") { Task { await send() } }.disabled(picked == nil) }
+                    if sending {
+                        Spinner().frame(width: 18, height: 18)
+                    } else {
+                        Button("Send") { Task { await send() } }.disabled(picked == nil)
+                    }
                 }
             }
             .task { await connect() }
@@ -61,7 +68,9 @@ struct ShareView: View {
 
     /// A row to pick, as a native list's: the one picked with a tick (a selection list in edit mode only greyed it).
     private func choice(_ title: String, _ tag: String) -> some View {
-        Button { picked = tag } label: {
+        Button {
+            picked = tag
+        } label: {
             HStack {
                 Text(title).lineLimit(1).foregroundStyle(.primary)
                 Spacer()
@@ -72,7 +81,9 @@ struct ShareView: View {
     }
 
     private func connect() async {
-        guard let pairing = Pairing.load(), let lines = try? TunnelLines(pairing: pairing) else { problem = "Pair Zero with your Mac first."; return }
+        guard let pairing = Pairing.load(), let lines = try? TunnelLines(pairing: pairing) else {
+            problem = "Pair Zero with your Mac first."; return
+        }
         let link = ZerodLink(connection: lines)
         self.link = link
         do {
@@ -102,9 +113,14 @@ struct ShareView: View {
             }
             var paths: [String] = []
             for (index, image) in images.enumerated() {
-                if let path = try await link.call("upload", ["name": "shared-\(index + 1).jpg", "data": image.base64EncodedString()]) as? String { paths.append(path) }
+                if let path = try await link.call("upload", ["name": "shared-\(index + 1).jpg", "data": image.base64EncodedString()])
+                    as? String
+                {
+                    paths.append(path)
+                }
             }
-            let asked = text.isEmpty ? (about == nil ? "Have a look at \(paths.count == 1 ? "this" : "these")." : "Have a look at this.") : text
+            let asked =
+                text.isEmpty ? (about == nil ? "Have a look at \(paths.count == 1 ? "this" : "these")." : "Have a look at this.") : text
             let words = [asked, about].compactMap { $0 }.joined(separator: "\n\n")
             if picked.hasPrefix("task:") {
                 try await link.send(session: String(picked.dropFirst(5)), text: words, images: paths)
@@ -122,7 +138,8 @@ struct ShareView: View {
         await withCheckedContinuation { done in
             provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { url, _ in
                 guard let url else { done.resume(returning: nil); return }
-                let copy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension(url.pathExtension)
+                let copy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension(
+                    url.pathExtension)
                 done.resume(returning: (try? FileManager.default.copyItem(at: url, to: copy)) != nil ? copy : nil)
             }
         }

@@ -11,7 +11,9 @@ public enum VideoFrames {
     public static func info(of video: URL) async throws -> Info {
         let asset = AVURLAsset(url: video)
         let seconds = try await asset.load(.duration).seconds
-        guard let track = try await asset.loadTracks(withMediaType: .video).first else { throw Failure("\(video.lastPathComponent) has no video in it") }
+        guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+            throw Failure("\(video.lastPathComponent) has no video in it")
+        }
         let (size, transform, fps) = try await track.load(.naturalSize, .preferredTransform, .nominalFrameRate)
         let shown = size.applying(transform)
         return Info(seconds: seconds, width: Int(abs(shown.width)), height: Int(abs(shown.height)), fps: Double(fps))

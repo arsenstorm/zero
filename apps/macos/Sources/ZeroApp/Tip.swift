@@ -115,7 +115,8 @@ final class TipView: NSView {
         panel.orderFrontRegardless()
         if monitor == nil {
             // A click or a scroll moves on from what the tip was about.
-            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .scrollWheel, .keyDown]) { [weak self] event in
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .scrollWheel, .keyDown]) {
+                [weak self] event in
                 if let owner = self?.owner { self?.hide(from: owner) }
                 return event
             }
@@ -127,7 +128,8 @@ final class TipView: NSView {
     private var appWatch: Any?
     private func watchApp() {
         guard appWatch == nil else { return }
-        appWatch = NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { _ in
+        appWatch = NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) {
+            _ in
             MainActor.assumeIsolated {
                 guard let owner = TipPanel.shared.owner, !(owner.window is NSPanel) else { return }
                 TipPanel.shared.hide(from: owner)
@@ -156,8 +158,11 @@ private struct TipLabel: View {
         let one = ceil(words.size(withAttributes: [.font: font]).width) + 1
         guard one > 300 else { return one }
         let lines = { (width: CGFloat) in
-            Int((words.boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude), options: .usesLineFragmentOrigin,
-                                    attributes: [.font: font]).height / font.boundingRectForFont.height).rounded())
+            Int(
+                (words.boundingRect(
+                    with: CGSize(width: width, height: .greatestFiniteMagnitude), options: .usesLineFragmentOrigin,
+                    attributes: [.font: font]
+                ).height / font.boundingRectForFont.height).rounded())
         }
         let most = lines(300)
         var (low, high) = (CGFloat(80), CGFloat(300))

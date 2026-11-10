@@ -66,12 +66,12 @@ import UserNotifications
 
     init() {
         #if DEBUG
-        // A simulator has no camera, and can't be tapped from a script: its pairing link, given at launch.
-        if let link = ProcessInfo.processInfo.environment["ZERO_PAIR"], Tunnel.Invite(link: link) != nil {
-            Pairing.forget()
-            _ = pair(link)
-            return
-        }
+            // A simulator has no camera, and can't be tapped from a script: its pairing link, given at launch.
+            if let link = ProcessInfo.processInfo.environment["ZERO_PAIR"], Tunnel.Invite(link: link) != nil {
+                Pairing.forget()
+                _ = pair(link)
+                return
+            }
         #endif
         // Kept again, now into the Keychain group the extensions share (the app's own group before them).
         pairing?.save()
@@ -133,14 +133,16 @@ import UserNotifications
     /// Words put in a task's composer from elsewhere (Siri's draft): taken by the composer when it shows.
     var drafts: [String: String] = [:]
 
-
     /// The Mac's project folders, as New task offers them.
     func projects() async -> [String] { (try? await linked()?.call("projects")) as? [String] ?? [] }
 
     /// A task started on the Mac, in the workspace shown here: its session.
-    func start(_ prompt: String, in folder: String, with provider: Provider, model: String?, effort: String?, permissions: Permissions = .auto) async throws -> String {
+    func start(
+        _ prompt: String, in folder: String, with provider: Provider, model: String?, effort: String?, permissions: Permissions = .auto
+    ) async throws -> String {
         guard let link = await linked() else { throw ZerodError(message: "Not connected to your Mac") }
-        return try await link.start(provider: provider, cwd: folder, prompt: prompt, model: model, effort: effort, permissions: permissions, workspace: workspace)
+        return try await link.start(
+            provider: provider, cwd: folder, prompt: prompt, model: model, effort: effort, permissions: permissions, workspace: workspace)
     }
 
     /// What the agent may do without asking; between turns, as the agent starts again with it.
@@ -148,7 +150,9 @@ import UserNotifications
     func switchModel(_ session: String, provider: Provider, model: String, effort: String?) async {
         try? await linked()?.switchProvider(session: session, to: provider, model: model, effort: effort)
     }
-        func setPermissions(_ session: String, _ permissions: Permissions) async { try? await linked()?.setPermissions(session: session, permissions) }
+    func setPermissions(_ session: String, _ permissions: Permissions) async {
+        try? await linked()?.setPermissions(session: session, permissions)
+    }
 
     func pause(_ sessions: [String] = []) async -> [String] { (try? await linked()?.pause(sessions: sessions)) ?? [] }
     func unpause(_ sessions: [String] = []) async -> [String] { (try? await linked()?.unpause(sessions: sessions)) ?? [] }
@@ -201,7 +205,9 @@ import UserNotifications
                 guard let self, !Task.isCancelled, self.link === link else { return }
                 guard UIApplication.shared.applicationState == .active else { continue }
                 let answered = Answered()
-                Task { _ = try? await link.call("hello"); answered.yes = true }
+                Task {
+                    _ = try? await link.call("hello"); answered.yes = true
+                }
                 for _ in 0..<100 where !answered.yes { try? await Task.sleep(for: .milliseconds(100)) }
                 guard self.link === link, !answered.yes else { continue }
                 Log.write("phone: no answer for 10 s; connecting again")
@@ -337,7 +343,9 @@ import UserNotifications
             let center = UNUserNotificationCenter.current()
             let shown = await center.deliveredNotifications().map(\.request.identifier)
             let stale = shown.filter { id in
-                if id.hasPrefix(TaskAlerts.askPrefix) { return asksKnown && !asks.contains { TaskAlerts.askPrefix + $0.id == id && $0.state == .waiting } }
+                if id.hasPrefix(TaskAlerts.askPrefix) {
+                    return asksKnown && !asks.contains { TaskAlerts.askPrefix + $0.id == id && $0.state == .waiting }
+                }
                 return rows.first { $0.session == id }.flatMap(TaskAlerts.standing) == nil
             }
             if !stale.isEmpty { center.removeDeliveredNotifications(withIdentifiers: stale) }
@@ -364,7 +372,8 @@ import UserNotifications
     private(set) var names: [String: String] = [:]
     private func name(_ rows: [BoardRow]) async {
         guard rows.flatMap({ $0.team ?? [] }).contains(where: { names[$0.session] == nil }),
-              let all = try? await link?.list() else { return }
+            let all = try? await link?.list()
+        else { return }
         names = Dictionary(all.map { ($0.id, TaskName.of($0)) }, uniquingKeysWith: { a, _ in a })
     }
 
@@ -392,7 +401,9 @@ import UserNotifications
     }
 
     /// The asks waiting on the user, oldest first.
-    var waiting: [Ask] { asks.filter { ($0.state == .waiting || $0.state == .pending) && $0.isForYou }.sorted { $0.createdAt < $1.createdAt } }
+    var waiting: [Ask] {
+        asks.filter { ($0.state == .waiting || $0.state == .pending) && $0.isForYou }.sorted { $0.createdAt < $1.createdAt }
+    }
 
     func conversation(_ id: String) -> Conversation? { lives[id]?.conversation }
 
@@ -433,7 +444,9 @@ import UserNotifications
 
     /// A task opened: its latest items fetched, unless they're here already (it moved since connecting).
     func load(_ id: String, again: Bool = false) async {
-        guard again || mirror.conversations[id] == nil, let (conversation, earlier) = try? await linked()?.recent(session: id) else { return }
+        guard again || mirror.conversations[id] == nil, let (conversation, earlier) = try? await linked()?.recent(session: id) else {
+            return
+        }
         mirror.receive(.session(conversation))
         mirror.receive(.earlier(session: id, count: earlier))
         sync(id)
@@ -449,7 +462,9 @@ import UserNotifications
     func deliver(_ ask: Ask) async { try? await linked()?.deliver(ask.id) }
     /// An answer taken back in the moment before it goes (the Mac's take-back window): the ask waits again.
     func takeBack(_ ask: Ask) async { _ = try? await linked()?.takeBack(ask.id) }
-    func decide(session: String, approval: String, choice: String) async { try? await linked()?.decide(session: session, approval: approval, choice: choice) }
+    func decide(session: String, approval: String, choice: String) async {
+        try? await linked()?.decide(session: session, approval: approval, choice: choice)
+    }
     func answer(session: String, question: String, answers: [String: [String]]) async {
         try? await linked()?.answer(session: session, question: question, answers: answers)
     }
@@ -476,7 +491,10 @@ import UserNotifications
     private func upload(_ images: [Data], through link: ZerodLink) async throws -> [String] {
         var paths: [String] = []
         for (index, image) in images.enumerated() {
-            if let path = try await link.call("upload", ["name": "photo-\(index + 1).jpg", "data": image.base64EncodedString()]) as? String { paths.append(path) }
+            if let path = try await link.call("upload", ["name": "photo-\(index + 1).jpg", "data": image.base64EncodedString()]) as? String
+            {
+                paths.append(path)
+            }
         }
         return paths
     }
@@ -484,7 +502,8 @@ import UserNotifications
     /// Being written to while its agent has stopped: started in the background, at most once a minute, so the message
     /// doesn't wait for it. Never for a task the user has paused.
     func warm(_ session: String) {
-        guard let row = row(session), !row.online, row.ownState != .paused, Date().timeIntervalSince(warmed[session] ?? .distantPast) > 60 else { return }
+        guard let row = row(session), !row.online, row.ownState != .paused, Date().timeIntervalSince(warmed[session] ?? .distantPast) > 60
+        else { return }
         warmed[session] = Date()
         Task { try? await linked()?.resume(session: session) }
     }
@@ -527,10 +546,13 @@ import UserNotifications
         guard let all = try? await linked()?.call("models", ["provider": provider.rawValue]) as? [[String: Any]] else { return [] }
         return all.compactMap { model in
             guard let id = model["id"] as? String, let name = model["name"] as? String else { return nil }
-            let levels = (model["levels"] as? [[String: String]] ?? []).compactMap { level in level["id"].flatMap { id in level["name"].map { (id, $0) } } }
+            let levels = (model["levels"] as? [[String: String]] ?? []).compactMap { level in
+                level["id"].flatMap { id in level["name"].map { (id, $0) } }
+            }
             let text = { (key: String) in (model[key] as? String) ?? "" }
-            return ModelChoice(id: id, name: name, levels: levels, defaultLevel: text("defaultLevel").isEmpty ? nil : text("defaultLevel"),
-                               detail: text("detail"), context: text("context"), provider: text("provider"), icon: text("icon"))
+            return ModelChoice(
+                id: id, name: name, levels: levels, defaultLevel: text("defaultLevel").isEmpty ? nil : text("defaultLevel"),
+                detail: text("detail"), context: text("context"), provider: text("provider"), icon: text("icon"))
         }
     }
 
@@ -564,12 +586,15 @@ import UserNotifications
     }
 
     /// An image in a message, from the Mac, no bigger than `side` pixels: kept once fetched.
-    @ObservationIgnored private let images: NSCache<NSString, UIImage> = { let c = NSCache<NSString, UIImage>(); c.countLimit = 150; return c }()
+    @ObservationIgnored private let images: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>(); c.countLimit = 150; return c
+    }()
     func image(_ path: String, side: Int) async -> UIImage? {
         let key = "\(side)|\(path)" as NSString
         if let kept = images.object(forKey: key) { return kept }
         guard let encoded = try? await linked()?.call("image", ["path": path, "side": side]) as? String,
-              let data = Data(base64Encoded: encoded), let image = UIImage(data: data) else { return nil }
+            let data = Data(base64Encoded: encoded), let image = UIImage(data: data)
+        else { return nil }
         images.setObject(image, forKey: key)
         return image
     }
@@ -579,7 +604,9 @@ import UserNotifications
 
     /// The page of a task's items before those loaded.
     func loadEarlier(_ session: String) async {
-        guard earlier(session) > 0, let page = try? await linked()?.items(session: session, before: mirror.conversations[session]?.items.first?.id) else { return }
+        guard earlier(session) > 0,
+            let page = try? await linked()?.items(session: session, before: mirror.conversations[session]?.items.first?.id)
+        else { return }
         mirror.prepend(session, items: page, remaining: max(0, earlier(session) - page.count))
         sync(session)
     }

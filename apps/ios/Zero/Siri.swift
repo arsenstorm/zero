@@ -61,7 +61,8 @@ struct ZeroTaskQuery: EntityStringQuery {
     /// As the Mac's sidebar lists them: the first are the likeliest.
     @MainActor func suggestedEntities() async throws -> [ZeroTask] {
         _ = await PhoneModel.shared.ready()
-        return PhoneModel.shared.tasks.map(ZeroTask.init) + PhoneModel.shared.rows.filter { row in !PhoneModel.shared.tasks.contains { $0.session == row.session } }.map(ZeroTask.init)
+        return PhoneModel.shared.tasks.map(ZeroTask.init)
+            + PhoneModel.shared.rows.filter { row in !PhoneModel.shared.tasks.contains { $0.session == row.session } }.map(ZeroTask.init)
     }
 }
 
@@ -77,7 +78,9 @@ struct ZeroAgent {
 
     @MainActor init(_ row: BoardRow) {
         id = row.session
-        person = IntentPerson(identifier: .applicationDefined(row.session), name: .displayName(row.task), handle: IntentPerson.Handle(applicationDefined: row.session))
+        person = IntentPerson(
+            identifier: .applicationDefined(row.session), name: .displayName(row.task),
+            handle: IntentPerson.Handle(applicationDefined: row.session))
     }
 
     init(me: Void) {
@@ -97,7 +100,9 @@ struct ZeroAgentQuery: EntityStringQuery {
 
     /// "Zero development", "SEC-TEAM": the task's agent, by the task's name.
     @MainActor func entities(matching string: String) async throws -> [ZeroAgent] {
-        return try await ZeroTaskQuery().entities(matching: string).compactMap { task in PhoneModel.shared.rows.first { $0.session == task.id }.map(ZeroAgent.init) }
+        return try await ZeroTaskQuery().entities(matching: string).compactMap { task in
+            PhoneModel.shared.rows.first { $0.session == task.id }.map(ZeroAgent.init)
+        }
     }
 
     @MainActor func suggestedEntities() async throws -> [ZeroAgent] {
@@ -178,8 +183,12 @@ extension ZeroMessage {
     @MainActor init?(_ item: ConversationItem, in row: BoardRow) {
         let task = ZeroTask(row)
         switch item.kind {
-        case let .agent(text, true): self.init(id: row.session + "/" + item.id, task: task, author: ZeroAgent(row), text: ZeroEnding.split(text).0, date: item.date ?? Date())
-        case let .user(text, _) where ConversationItem.from(text) == nil: self.init(id: row.session + "/" + item.id, task: task, author: ZeroAgent(me: ()), text: text, date: item.date ?? Date())
+        case let .agent(text, true):
+            self.init(
+                id: row.session + "/" + item.id, task: task, author: ZeroAgent(row), text: ZeroEnding.split(text).0,
+                date: item.date ?? Date())
+        case let .user(text, _) where ConversationItem.from(text) == nil:
+            self.init(id: row.session + "/" + item.id, task: task, author: ZeroAgent(me: ()), text: text, date: item.date ?? Date())
         default: return nil
         }
     }
@@ -248,7 +257,8 @@ enum ZeroDestination {
     case messagePeople([ZeroAgent])
     static let typeDisplayRepresentation: TypeDisplayRepresentation = "Recipients"
     static let caseDisplayRepresentations: [Cases: DisplayRepresentation] = [
-        .people: "People", .messagePerson: "Task", .messagePeople: "Tasks"]
+        .people: "People", .messagePerson: "Task", .messagePeople: "Tasks",
+    ]
 
     /// The task it means.
     @MainActor var session: String? {
@@ -258,8 +268,14 @@ enum ZeroDestination {
         case let .people(people):
             // A name Siri heard: the task whose name has it.
             for person in people {
-                if case let .applicationDefined(id) = person.identifier, PhoneModel.shared.rows.contains(where: { $0.session == id }) { return id }
-                if case let .displayName(name) = person.name, let row = PhoneModel.shared.rows.first(where: { $0.task.localizedCaseInsensitiveContains(name) }) { return row.session }
+                if case let .applicationDefined(id) = person.identifier, PhoneModel.shared.rows.contains(where: { $0.session == id }) {
+                    return id
+                }
+                if case let .displayName(name) = person.name,
+                    let row = PhoneModel.shared.rows.first(where: { $0.task.localizedCaseInsensitiveContains(name) })
+                {
+                    return row.session
+                }
             }
             return nil
         }
@@ -281,13 +297,17 @@ struct SendToTaskIntent {
 
     @MainActor func perform() async throws -> some ReturnsValue<[ZeroMessage]> & ProvidesDialog {
         guard await PhoneModel.shared.ready() else { throw ZeroSiriError.offline }
-        guard let session = destination.session, let row = PhoneModel.shared.rows.first(where: { $0.session == session }) else { throw ZeroSiriError.noTask }
-        let words = [subject, content].compactMap { $0.map { String($0.characters) } }.joined(separator: "\n\n")
+        guard let session = destination.session, let row = PhoneModel.shared.rows.first(where: { $0.session == session }) else {
+            throw ZeroSiriError.noTask
+        }
+        let words =
+            [subject, content].compactMap { $0.map { String($0.characters) } }.joined(separator: "\n\n")
             + (links.isEmpty ? "" : "\n\n" + links.map(\.absoluteString).joined(separator: "\n"))
         let images = attachments.filter { $0.type?.conforms(to: .image) ?? false }.map(\.data)
         guard !words.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty else { throw ZeroSiriError.nothingToSend }
         try await PhoneModel.shared.send(words, images: images, to: session)
-        let sent = ZeroMessage(id: session + "/sent-" + UUID().uuidString, task: ZeroTask(row), author: ZeroAgent(me: ()), text: words, date: Date())
+        let sent = ZeroMessage(
+            id: session + "/sent-" + UUID().uuidString, task: ZeroTask(row), author: ZeroAgent(me: ()), text: words, date: Date())
         return .result(value: [sent], dialog: IntentDialog(full: "Sent to \(row.task).", supporting: "Sent"))
     }
 }
@@ -327,7 +347,9 @@ struct NeedsYouIntent: AppIntent {
         guard await model.ready() else { throw ZeroSiriError.offline }
         let tasks = model.tasks.filter { $0.state == .needsYou }
         let asks = model.waiting.filter { ask in !tasks.contains { $0.session == ask.session } }
-        if tasks.isEmpty && asks.isEmpty { return .result(dialog: IntentDialog(full: "Nothing needs you right now.", supporting: "Nothing needs you")) }
+        if tasks.isEmpty && asks.isEmpty {
+            return .result(dialog: IntentDialog(full: "Nothing needs you right now.", supporting: "Nothing needs you"))
+        }
         var lines = tasks.map { row in row.task + (row.asks.first.map { ": " + TaskAlerts.plain($0.title, limit: 120) } ?? "") }
         lines += asks.map { TaskAlerts.plain($0.title, limit: 120) }
         let count = lines.count == 1 ? "One thing needs you" : "\(lines.count) things need you"
@@ -380,14 +402,16 @@ struct SaveForLaterIntent: AppIntent {
 /// Puts every task on hold with its workers (each wraps up first), as `zero pause` does.
 struct PauseAgentsIntent: AppIntent {
     static let title: LocalizedStringResource = "Pause my agents"
-    static let description = IntentDescription("Every Zero task and its workers finish the step they're on and stop, until you resume them.")
+    static let description = IntentDescription(
+        "Every Zero task and its workers finish the step they're on and stop, until you resume them.")
 
     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
         guard await PhoneModel.shared.ready() else { throw ZeroSiriError.offline }
         try await requestConfirmation(dialog: "Pause every task and its workers?")
         // Zero waits for each to wrap up (minutes): asked, and answered now.
         Task { _ = await PhoneModel.shared.pause() }
-        return .result(dialog: IntentDialog(full: "Pausing your agents. Each finishes the step it's on, then stops.", supporting: "Pausing"))
+        return .result(
+            dialog: IntentDialog(full: "Pausing your agents. Each finishes the step it's on, then stops.", supporting: "Pausing"))
     }
 }
 
@@ -418,16 +442,30 @@ enum ZeroSiriError: Error, CustomLocalizedStringResourceConvertible {
 
 struct ZeroShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
-        AppShortcut(intent: NeedsYouIntent(), phrases: [
-            "What needs me in \(.applicationName)", "What's waiting for me in \(.applicationName)", "Anything need me in \(.applicationName)",
-        ], shortTitle: "What needs me", systemImageName: "hand.raised")
-        AppShortcut(intent: TaskStatusIntent(), phrases: [
-            "How is \(\.$task) doing in \(.applicationName)", "What's \(\.$task) doing in \(.applicationName)", "Check on \(\.$task) in \(.applicationName)",
-        ], shortTitle: "Check a task", systemImageName: "checklist")
-        AppShortcut(intent: OpenTaskIntent(), phrases: ["Open \(\.$target) in \(.applicationName)"], shortTitle: "Open a task", systemImageName: "bubble.left")
-        AppShortcut(intent: SaveForLaterIntent(), phrases: ["Save \(\.$task) for later in \(.applicationName)"], shortTitle: "Save for later", systemImageName: "bookmark")
-        AppShortcut(intent: PauseAgentsIntent(), phrases: ["Pause my agents in \(.applicationName)", "Pause \(.applicationName)"], shortTitle: "Pause agents", systemImageName: "pause.circle")
-        AppShortcut(intent: ResumeAgentsIntent(), phrases: ["Resume my agents in \(.applicationName)", "Unpause \(.applicationName)"], shortTitle: "Resume agents", systemImageName: "play.circle")
+        AppShortcut(
+            intent: NeedsYouIntent(),
+            phrases: [
+                "What needs me in \(.applicationName)", "What's waiting for me in \(.applicationName)",
+                "Anything need me in \(.applicationName)",
+            ], shortTitle: "What needs me", systemImageName: "hand.raised")
+        AppShortcut(
+            intent: TaskStatusIntent(),
+            phrases: [
+                "How is \(\.$task) doing in \(.applicationName)", "What's \(\.$task) doing in \(.applicationName)",
+                "Check on \(\.$task) in \(.applicationName)",
+            ], shortTitle: "Check a task", systemImageName: "checklist")
+        AppShortcut(
+            intent: OpenTaskIntent(), phrases: ["Open \(\.$target) in \(.applicationName)"], shortTitle: "Open a task",
+            systemImageName: "bubble.left")
+        AppShortcut(
+            intent: SaveForLaterIntent(), phrases: ["Save \(\.$task) for later in \(.applicationName)"], shortTitle: "Save for later",
+            systemImageName: "bookmark")
+        AppShortcut(
+            intent: PauseAgentsIntent(), phrases: ["Pause my agents in \(.applicationName)", "Pause \(.applicationName)"],
+            shortTitle: "Pause agents", systemImageName: "pause.circle")
+        AppShortcut(
+            intent: ResumeAgentsIntent(), phrases: ["Resume my agents in \(.applicationName)", "Unpause \(.applicationName)"],
+            shortTitle: "Resume agents", systemImageName: "play.circle")
     }
 }
 
@@ -439,7 +477,9 @@ struct ZeroShortcuts: AppShortcutsProvider {
     private static var indexed: [String: String] = [:]
 
     static func update(_ rows: [BoardRow]) {
-        let now = Dictionary(rows.map { ($0.session, $0.task + "|" + $0.ownState.rawValue + "|" + ($0.needs ?? $0.now ?? "")) }, uniquingKeysWith: { a, _ in a })
+        let now = Dictionary(
+            rows.map { ($0.session, $0.task + "|" + $0.ownState.rawValue + "|" + ($0.needs ?? $0.now ?? "")) },
+            uniquingKeysWith: { a, _ in a })
         guard now != indexed else { return }
         let changed = rows.filter { indexed[$0.session] != now[$0.session] }.map(ZeroTask.init)
         let gone = indexed.keys.filter { now[$0] == nil }

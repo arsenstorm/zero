@@ -27,7 +27,10 @@ struct MarkdownText: View {
     var fade: ((Int) -> Double)?
     var fadeLength = 0
 
-    init(_ text: String, cwd: String? = nil, size: CGFloat = 13, compact: Bool = false, hugs: Bool = false, yours: Bool = false, onClick: (() -> Void)? = nil) {
+    init(
+        _ text: String, cwd: String? = nil, size: CGFloat = 13, compact: Bool = false, hugs: Bool = false, yours: Bool = false,
+        onClick: (() -> Void)? = nil
+    ) {
         self.text = text
         repo = cwd.flatMap(References.repo(of:))
         owner = cwd.flatMap(References.owner(of:))
@@ -70,7 +73,9 @@ struct MarkdownText: View {
     }
 
     func streaming(_ on: Bool) -> MarkdownText { var copy = self; copy.streaming = on; return copy }
-    func fading(shown: Int, alpha: @escaping (Int) -> Double) -> MarkdownText { var copy = self; copy.fade = alpha; copy.fadeLength = shown; return copy }
+    func fading(shown: Int, alpha: @escaping (Int) -> Double) -> MarkdownText {
+        var copy = self; copy.fade = alpha; copy.fadeLength = shown; return copy
+    }
 
     /// The rendered text with its newest characters faded: matched to the source from the end (the Markdown's marks
     /// are few there), each run of one opacity (in 24 steps) set once.
@@ -117,7 +122,9 @@ struct MarkdownText: View {
         Task { @MainActor in
             while true {
                 let target = styler.latest
-                let made = await Task.detached(priority: .userInitiated) { Rendered(Self.render(target, size: size, compact: compact, links: links)) }.value
+                let made = await Task.detached(priority: .userInitiated) {
+                    Rendered(Self.render(target, size: size, compact: compact, links: links))
+                }.value
                 last = (target, made.text)
                 rendered.toggle()
                 if styler.latest == target { break }
@@ -130,8 +137,10 @@ struct MarkdownText: View {
     private var links: Links { Self.links(repo: repo, owner: owner, yours: yours) }
 
     static func links(repo: String?, owner: String?, yours: Bool) -> Links {
-        Links(repo: repo, owner: owner, github: GitHubLinks.enabled, slack: SlackLinks.teams, teams: LinearLinks.enabled ? Linear.shared.teams : [:],
-              app: LinearLinks.inApp, loops: LoopNames.known, skills: yours)
+        Links(
+            repo: repo, owner: owner, github: GitHubLinks.enabled, slack: SlackLinks.teams,
+            teams: LinearLinks.enabled ? Linear.shared.teams : [:],
+            app: LinearLinks.inApp, loops: LoopNames.known, skills: yours)
     }
 
     /// Styles a conversation's messages ahead of their first drawing (the window opening on it), off the main thread,
@@ -171,15 +180,17 @@ struct MarkdownText: View {
 
     /// A text still arriving, styled but not kept: its finished blocks come from the block cache, its last styled anew.
     nonisolated static func renderGrowing(_ text: String, size: CGFloat, links: Links) -> NSAttributedString {
-        RichMarkdown.render(MarkdownBlock.parse(ZeroEnding.split(text).0), size: size, inline: { inline($0, links: links) },
-                            key: "\(links.repo ?? "")|\(links.owner ?? "")|\(links.skills)|false", growing: true)
+        RichMarkdown.render(
+            MarkdownBlock.parse(ZeroEnding.split(text).0), size: size, inline: { inline($0, links: links) },
+            key: "\(links.repo ?? "")|\(links.owner ?? "")|\(links.skills)|false", growing: true)
     }
 
     /// Parsed, styled and kept. Zero's own ending ("[zero: done]") is for its hook, not for reading.
     nonisolated static func render(_ text: String, size: CGFloat, compact: Bool, links: Links) -> NSAttributedString {
         RichMarkdown.cached(text, size: size, compact: compact, repo: links.repo, yours: links.skills) {
-            let made = RichMarkdown.render(MarkdownBlock.parse(ZeroEnding.split(text).0), size: size, inline: { inline($0, links: links) },
-                                           key: "\(links.repo ?? "")|\(links.owner ?? "")|\(links.skills)|\(compact)")
+            let made = RichMarkdown.render(
+                MarkdownBlock.parse(ZeroEnding.split(text).0), size: size, inline: { inline($0, links: links) },
+                key: "\(links.repo ?? "")|\(links.owner ?? "")|\(links.skills)|\(compact)")
             // Yours, in a bubble: its code without a panel of its own (never a card in a card).
             let flat = links.skills ? RichMarkdown.flat(made) : made
             return compact ? RichMarkdown.compact(flat, size: size) : flat
@@ -188,11 +199,16 @@ struct MarkdownText: View {
 
     /// Linear issues and pull requests become links, except inside `code` and links the agent already wrote.
     nonisolated static func inline(_ prose: String, links: Links) -> AttributedString {
-        var result = (try? AttributedString(markdown: prose, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(prose)
+        var result =
+            (try? AttributedString(markdown: prose, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(prose)
         for run in result.runs where run.link != nil {
             if let link = run.link, let app = SlackLinks.url(link, in: links.slack) { result[run.range].link = app }
         }
-        for (range, url) in References.find(in: String(result.characters), repo: links.repo, linear: links.teams, linearApp: links.app, owner: links.owner, github: links.github, slack: links.slack) {
+        for (range, url) in References.find(
+            in: String(result.characters), repo: links.repo, linear: links.teams, linearApp: links.app, owner: links.owner,
+            github: links.github, slack: links.slack)
+        {
             guard let span = Range(range, in: result) else { continue }
             let plain = result[span].runs.allSatisfy { $0.link == nil && !($0.inlinePresentationIntent?.contains(.code) ?? false) }
             if plain { result[span].link = url }
@@ -202,8 +218,9 @@ struct MarkdownText: View {
             for match in regex.matches(in: string, range: NSRange(location: 0, length: (string as NSString).length)) {
                 let name = (string as NSString).substring(with: match.range(at: 1))
                 guard links.loops.contains(name), let range = Range(match.range, in: string), let span = Range(range, in: result),
-                      result[span].runs.allSatisfy({ $0.link == nil && !($0.inlinePresentationIntent?.contains(.code) ?? false) }),
-                      let url = URL(string: "zero://loop/" + name) else { continue }
+                    result[span].runs.allSatisfy({ $0.link == nil && !($0.inlinePresentationIntent?.contains(.code) ?? false) }),
+                    let url = URL(string: "zero://loop/" + name)
+                else { continue }
                 result[span].link = url
             }
         }
@@ -211,8 +228,11 @@ struct MarkdownText: View {
             let string = String(result.characters)
             for match in regex.matches(in: string, range: NSRange(location: 0, length: (string as NSString).length)) {
                 guard let range = Range(match.range, in: string), let span = Range(range, in: result),
-                      result[span].runs.allSatisfy({ $0.link == nil && !($0.inlinePresentationIntent?.contains(.code) ?? false) }),
-                      let url = URL(string: "zero://skill/" + (string as NSString).substring(with: match.range).dropFirst().addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)!) else { continue }
+                    result[span].runs.allSatisfy({ $0.link == nil && !($0.inlinePresentationIntent?.contains(.code) ?? false) }),
+                    let url = URL(
+                        string: "zero://skill/" + (string as NSString).substring(with: match.range).dropFirst().addingPercentEncoding(
+                            withAllowedCharacters: .urlPathAllowed)!)
+                else { continue }
                 result[span].link = url
             }
         }

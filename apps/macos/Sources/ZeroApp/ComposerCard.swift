@@ -66,13 +66,16 @@ struct ReplyBox: View {
             let (focus, key, text) = (focus, key, $text)
             pasting = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 guard focus.wrappedValue == key, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-                      event.charactersIgnoringModifiers == "v", let urls = Attachments.fromPasteboard(), !urls.isEmpty else { return event }
+                    event.charactersIgnoringModifiers == "v", let urls = Attachments.fromPasteboard(), !urls.isEmpty
+                else { return event }
                 let words = text.wrappedValue
                 text.wrappedValue = words + (words.isEmpty || words.hasSuffix(" ") ? "" : " ") + urls.map(\.path).joined(separator: " ")
                 return nil
             }
         }
-        .onDisappear { if let pasting { NSEvent.removeMonitor(pasting) }; if focus.wrappedValue == key { dockFocus?(false) } }
+        .onDisappear {
+            if let pasting { NSEvent.removeMonitor(pasting) }; if focus.wrappedValue == key { dockFocus?(false) }
+        }
         .onChange(of: focus.wrappedValue == key) { _, on in dockFocus?(on) }
         // A moment after appearing: in the same update, the field can't take focus yet and it's dropped.
         .task { if autofocus { try? await Task.sleep(for: .milliseconds(50)); focus.wrappedValue = key } }
@@ -174,7 +177,9 @@ struct ComposerCard: View {
         VStack(alignment: .leading, spacing: 10) {
             composer
                 .padding(14)
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                .onGeometryChange(for: CGFloat.self) {
+                    $0.size.height
+                } action: { height in
                     if height > 0, abs(controller.composerHeight - height) > 0.5 { controller.composerHeight = height }
                 }
                 // The whole box focuses the text, not just its line: a click in the padding or between the chips
@@ -193,7 +198,11 @@ struct ComposerCard: View {
         .overlay(alignment: .top) {
             if let state = controller.mention, state.key == key, controller.focusedReply == key {
                 MentionList(state: state, pick: { controller.acceptMention($0) }, hover: { controller.mention?.selected = $0 })
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { mentionHeight = $0 }
+                    .onGeometryChange(for: CGFloat.self) {
+                        $0.size.height
+                    } action: {
+                        mentionHeight = $0
+                    }
                     .offset(y: -mentionHeight - 6)
             }
         }
@@ -202,36 +211,61 @@ struct ComposerCard: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ComposeField(text: Binding(get: { controller.drafts[key, default: ""] }, set: { controller.drafts[key] = $0 }),
-                         placeholder: placeholder, focused: controller.focusedReply == key,
-                         editable: !starting, // the words stay put, read-only, while they go out
-                         caret: controller.caretRequest[key], onCaretApplied: { controller.caretRequest[key] = nil },
-                         onFocus: { focused in
-                             if focused { controller.focusedReply = key } else if controller.focusedReply == key { controller.focusedReply = nil }
-                         },
-                         onSubmit: submit,
-                         onTrigger: { controller.updateMention(key: key, trigger: $0) },
-                         onKey: { controller.mentionKey($0, for: key) },
-                         highlightFiles: controller.suggestFiles,
-                         height: $fieldHeight)
-                .frame(height: fieldHeight)
-                .padding(.horizontal, -TokenTextView.inset.width) // text still starts under the card's 14 pt
+            ComposeField(
+                text: Binding(get: { controller.drafts[key, default: ""] }, set: { controller.drafts[key] = $0 }),
+                placeholder: placeholder, focused: controller.focusedReply == key,
+                editable: !starting, // the words stay put, read-only, while they go out
+                caret: controller.caretRequest[key], onCaretApplied: { controller.caretRequest[key] = nil },
+                onFocus: { focused in
+                    if focused { controller.focusedReply = key } else if controller.focusedReply == key { controller.focusedReply = nil }
+                },
+                onSubmit: submit,
+                onTrigger: { controller.updateMention(key: key, trigger: $0) },
+                onKey: { controller.mentionKey($0, for: key) },
+                highlightFiles: controller.suggestFiles,
+                height: $fieldHeight
+            )
+            .frame(height: fieldHeight)
+            .padding(.horizontal, -TokenTextView.inset.width) // text still starts under the card's 14 pt
             HStack(spacing: 6) {
                 if agentName == nil {
                     // Where: grouped by adapter, each project with its path.
-                    chip(icon: choiceIcon(project?.icon) ?? Image(nsImage: Nucleo.image("folder", size: 14) ?? NSImage()), title: project?.name ?? "Project",
-                         open: controller.selector?.kind == .project) { controller.selectorAgent = nil; controller.openSelector(.project, anchor: projectAnchor) }
-                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { projectAnchor = $0 }
+                    chip(
+                        icon: choiceIcon(project?.icon) ?? Image(nsImage: Nucleo.image("folder", size: 14) ?? NSImage()),
+                        title: project?.name ?? "Project",
+                        open: controller.selector?.kind == .project
+                    ) {
+                        controller.selectorAgent = nil; controller.openSelector(.project, anchor: projectAnchor)
+                    }
+                    .onGeometryChange(for: CGRect.self) {
+                        $0.frame(in: .global)
+                    } action: {
+                        projectAnchor = $0
+                    }
                 }
                 // With what: the runtime's icon and the model's name (an agent's own runtime name until a model is picked for it).
-                chip(icon: choiceIcon(runtime?.icon) ?? Image(nsImage: Nucleo.image("terminal", size: 14) ?? NSImage()),
-                     title: model.map { $0.id.isEmpty ? (runtime?.name ?? "Default") : $0.name + (effort.map { " · " + $0 } ?? "") + (account.map { " · " + $0 } ?? "") }
+                chip(
+                    icon: choiceIcon(runtime?.icon) ?? Image(nsImage: Nucleo.image("terminal", size: 14) ?? NSImage()),
+                    title: model.map {
+                        $0.id.isEmpty
+                            ? (runtime?.name ?? "Default")
+                            : $0.name + (effort.map { " · " + $0 } ?? "") + (account.map { " · " + $0 } ?? "")
+                    }
                         ?? agentName.map { controller.store.zeroTask?($0)?.runs ?? speaker($0) } ?? runtime?.name ?? "Runtime",
-                     open: controller.selector?.kind == .runtime) { controller.selectorAgent = agentName; controller.openSelector(.runtime, anchor: runtimeAnchor) }
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { runtimeAnchor = $0 }
+                    open: controller.selector?.kind == .runtime
+                ) {
+                    controller.selectorAgent = agentName; controller.openSelector(.runtime, anchor: runtimeAnchor)
+                }
+                .onGeometryChange(for: CGRect.self) {
+                    $0.frame(in: .global)
+                } action: {
+                    runtimeAnchor = $0
+                }
                 Spacer(minLength: 8)
                 if starting { Spinner().frame(width: 12, height: 12).padding(.trailing, 4) }
-                Button { controller.toggleDictation() } label: {
+                Button {
+                    controller.toggleDictation()
+                } label: {
                     NucleoIcon(controller.dictatingFor == key ? "waveform-lines" : "microphone", size: 15)
                         .foregroundStyle(controller.dictatingFor == key ? .red : .secondary)
                 }.buttonStyle(.plain)

@@ -10,7 +10,9 @@ struct ScreenCard: View {
     let screen: String
     @Bindable var controller: InboxController
 
-    private static let keys: [(String, [UInt8])] = [("↑", [27, 91, 65]), ("↓", [27, 91, 66]), ("←", [27, 91, 68]), ("→", [27, 91, 67]), ("⏎", [13]), ("Esc", [27])]
+    private static let keys: [(String, [UInt8])] = [
+        ("↑", [27, 91, 65]), ("↓", [27, 91, 66]), ("←", [27, 91, 68]), ("→", [27, 91, 67]), ("⏎", [13]), ("Esc", [27]),
+    ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -19,13 +21,17 @@ struct ScreenCard: View {
                 Text(controller.store.displayName(of: agent)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                 Spacer(minLength: 8)
                 ForEach(Self.keys, id: \.0) { label, bytes in
-                    Button { controller.store.press(bytes, on: agent) } label: {
+                    Button {
+                        controller.store.press(bytes, on: agent)
+                    } label: {
                         Text(label).font(.system(size: 11, weight: .semibold)).monospacedDigit()
                             .frame(minWidth: 22, minHeight: 20).padding(.horizontal, 4)
                             .background(Theme.keycap).clipShape(RoundedRectangle(cornerRadius: 6))
                     }.buttonStyle(.plain)
                 }
-                Button { controller.store.closeScreen(of: agent) } label: {
+                Button {
+                    controller.store.closeScreen(of: agent)
+                } label: {
                     NucleoIcon("xmark", size: 13).foregroundStyle(.secondary)
                         .frame(width: 20, height: 20).contentShape(Rectangle())
                 }.buttonStyle(.plain).offset(x: 4)
@@ -74,7 +80,8 @@ struct HuggingWidth: Layout {
         return CGSize(width: min(size.width, width), height: size.height)
     }
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        subviews.first?.place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
+        subviews.first?.place(
+            at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
     }
 }
 
@@ -87,9 +94,12 @@ struct MentionList: View {
     var body: some View {
         VStack(spacing: 1) {
             ForEach(Array(state.items.enumerated()), id: \.element.id) { index, item in
-                Button { pick(index) } label: {
+                Button {
+                    pick(index)
+                } label: {
                     HStack(spacing: 8) {
-                        NucleoIcon(item.kind == .file ? "file" : item.kind == .loop ? "animation-repeat" : "command", size: 13).foregroundStyle(.secondary).frame(width: 14)
+                        NucleoIcon(item.kind == .file ? "file" : item.kind == .loop ? "animation-repeat" : "command", size: 13)
+                            .foregroundStyle(.secondary).frame(width: 14)
                         Text(title(item)).font(.system(size: 13, weight: .medium)).lineLimit(1)
                         if let detail = detail(item) {
                             Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
@@ -131,7 +141,9 @@ struct CopyCommand: View {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
             copied = true
-            Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
+            Task {
+                try? await Task.sleep(for: .seconds(1.5)); copied = false
+            }
         } label: {
             NucleoLabel(copied ? "Copied" : "Copy", icon: copied ? "circle-check" : "copy", size: 12)
                 .font(.system(size: 11.5, weight: .medium)).foregroundStyle(.secondary)

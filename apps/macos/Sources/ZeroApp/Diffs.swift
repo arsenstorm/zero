@@ -9,8 +9,16 @@ struct DiffLine: Equatable {
     let new: Int?
     let text: String
 
-    static let green = Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(red: 0.42, green: 0.85, blue: 0.52, alpha: 1) : NSColor(red: 0.10, green: 0.55, blue: 0.24, alpha: 1) })
-    static let red = Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(red: 1.0, green: 0.48, blue: 0.45, alpha: 1) : NSColor(red: 0.78, green: 0.16, blue: 0.16, alpha: 1) })
+    static let green = Color(
+        nsColor: NSColor(name: nil) {
+            $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ? NSColor(red: 0.42, green: 0.85, blue: 0.52, alpha: 1) : NSColor(red: 0.10, green: 0.55, blue: 0.24, alpha: 1)
+        })
+    static let red = Color(
+        nsColor: NSColor(name: nil) {
+            $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ? NSColor(red: 1.0, green: 0.48, blue: 0.45, alpha: 1) : NSColor(red: 0.78, green: 0.16, blue: 0.16, alpha: 1)
+        })
 
     /// A unified diff's lines, numbered from its hunk headers; a new file's text (with or without "+"s) all added.
     static func parse(_ diff: String, added: Bool) -> [DiffLine] {
@@ -37,7 +45,8 @@ struct DiffLine: Equatable {
             } else if line.hasPrefix("-") {
                 out.append(DiffLine(kind: .removed, old: old, new: nil, text: String(line.dropFirst()))); old += 1
             } else {
-                out.append(DiffLine(kind: .context, old: old, new: new, text: line.hasPrefix(" ") ? String(line.dropFirst()) : line)); old += 1; new += 1
+                out.append(DiffLine(kind: .context, old: old, new: new, text: line.hasPrefix(" ") ? String(line.dropFirst()) : line));
+                old += 1; new += 1
             }
         }
         // A first hunk's header says nothing a reader needs when nothing comes before it.
@@ -62,7 +71,9 @@ struct DiffText: View {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(lines.prefix(Self.shown).enumerated()), id: \.offset) { _, line in row(line, gutter: width) }
                 if lines.count > Self.shown {
-                    Text("\(lines.count - Self.shown) more lines").font(.system(size: 11)).foregroundStyle(.tertiary).padding(.horizontal, 12).padding(.vertical, 6)
+                    Text("\(lines.count - Self.shown) more lines").font(.system(size: 11)).foregroundStyle(.tertiary).padding(
+                        .horizontal, 12
+                    ).padding(.vertical, 6)
                 }
             }
             .padding(.vertical, 6)

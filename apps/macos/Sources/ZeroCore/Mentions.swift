@@ -68,14 +68,17 @@ public enum ClaudeCommands {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
         return names.filter { $0.hasSuffix(".md") }.sorted().map { name in
             let text = (try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8)) ?? ""
-            return Mention(kind: .command, insert: "/" + prefix + String(name.dropLast(3)), detail: frontmatter(text)["description"].map(firstSentence))
+            return Mention(
+                kind: .command, insert: "/" + prefix + String(name.dropLast(3)), detail: frontmatter(text)["description"].map(firstSentence)
+            )
         }
     }
 
     private static func pluginItems(home: URL) -> [Mention] {
         let manifest = home.appendingPathComponent("plugins/installed_plugins.json")
         guard let data = try? Data(contentsOf: manifest),
-              let plugins = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["plugins"] as? [String: [[String: Any]]] else { return [] }
+            let plugins = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["plugins"] as? [String: [[String: Any]]]
+        else { return [] }
         return plugins.sorted { $0.key < $1.key }.flatMap { key, installs -> [Mention] in
             guard let path = installs.first?["installPath"] as? String else { return [] }
             let plugin = String(key.split(separator: "@").first ?? Substring(key))
@@ -142,8 +145,11 @@ public enum ProjectFiles {
 
     private static func walk(_ root: String) -> [String] {
         let skip: Set<String> = ["node_modules", ".build", "build", "dist", "DerivedData", "Pods", "vendor"]
-        guard let walker = FileManager.default.enumerator(at: URL(fileURLWithPath: root), includingPropertiesForKeys: [.isDirectoryKey],
-                                                          options: [.skipsHiddenFiles]) else { return [] }
+        guard
+            let walker = FileManager.default.enumerator(
+                at: URL(fileURLWithPath: root), includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles])
+        else { return [] }
         var files: [String] = []
         let prefix = root.hasSuffix("/") ? root : root + "/"
         for case let url as URL in walker {
@@ -165,8 +171,17 @@ public enum ProjectFiles {
             let path = file.lowercased()
             let name = (path as NSString).lastPathComponent
             let rank: Int
-            if name.hasPrefix(q) { rank = 0 } else if name.contains(q) { rank = 1 } else if path.contains(q) { rank = 2 }
-            else if isSubsequence(q, of: path) { rank = 3 } else { continue }
+            if name.hasPrefix(q) {
+                rank = 0
+            } else if name.contains(q) {
+                rank = 1
+            } else if path.contains(q) {
+                rank = 2
+            } else if isSubsequence(q, of: path) {
+                rank = 3
+            } else {
+                continue
+            }
             ranked.append((rank, file))
         }
         return ranked.sorted { $0.0 != $1.0 ? $0.0 < $1.0 : $0.1.count < $1.1.count }.prefix(limit).map(\.1)

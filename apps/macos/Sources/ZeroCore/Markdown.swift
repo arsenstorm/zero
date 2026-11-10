@@ -50,7 +50,9 @@ public indirect enum MarkdownBlock: Equatable, Sendable {
             } else if trimmed.hasPrefix("|") {
                 var rows: [[String]] = []
                 while i < lines.count, case let line = lines[i].trimmingCharacters(in: .whitespaces), line.hasPrefix("|") {
-                    let cells = line.trimmingCharacters(in: CharacterSet(charactersIn: "|")).components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+                    let cells = line.trimmingCharacters(in: CharacterSet(charactersIn: "|")).components(separatedBy: "|").map {
+                        $0.trimmingCharacters(in: .whitespaces)
+                    }
                     // The line under the headings (|---|:--:|) is layout, not a row.
                     if !cells.allSatisfy({ Self.matches(Self.dividerCell, $0) }) { rows.append(cells) }
                     i += 1
@@ -65,7 +67,11 @@ public indirect enum MarkdownBlock: Equatable, Sendable {
                 var paragraph: [String] = []
                 while i < lines.count {
                     let line = lines[i].trimmingCharacters(in: .whitespaces)
-                    if line.isEmpty || fence(line) || heading(line) != nil || line.hasPrefix(">") || line.hasPrefix("|") || marker(lines[i]) != nil || image(line) != nil || (rule(line) && !paragraph.isEmpty) { break }
+                    if line.isEmpty || fence(line) || heading(line) != nil || line.hasPrefix(">") || line.hasPrefix("|")
+                        || marker(lines[i]) != nil || image(line) != nil || (rule(line) && !paragraph.isEmpty)
+                    {
+                        break
+                    }
                     paragraph.append(line)
                     i += 1
                 }
@@ -109,7 +115,10 @@ public indirect enum MarkdownBlock: Equatable, Sendable {
             // Blank lines between items keep the list going.
             var next = i
             while next < lines.count, lines[next].trimmingCharacters(in: .whitespaces).isEmpty { next += 1 }
-            if next < lines.count, let following = marker(lines[next]), following.indent == first.indent, following.ordered == first.ordered { i = next }
+            if next < lines.count, let following = marker(lines[next]), following.indent == first.indent, following.ordered == first.ordered
+            {
+                i = next
+            }
         }
         return .list(ordered: first.ordered, start: first.number, items: items)
     }

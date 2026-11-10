@@ -21,7 +21,10 @@ import ZeroCore
 @MainActor func watchFileCommand() async {
     guard let session = targetSession(), let file = flag("file") else { usage() }
     let path = URL(fileURLWithPath: (file as NSString).expandingTildeInPath).standardizedFileURL.path
-    let id = await zerod { try await $0.watchFile(session: session, file: path, alerts: flags["alert"] ?? [], done: flag("until"), quiet: flag("quiet").flatMap(Int.init)) }
+    let id = await zerod {
+        try await $0.watchFile(
+            session: session, file: path, alerts: flags["alert"] ?? [], done: flag("until"), quiet: flag("quiet").flatMap(Int.init))
+    }
     print("zero: watching \(path) (\(id)); this session will be told when it prints what you're watching for")
 }
 

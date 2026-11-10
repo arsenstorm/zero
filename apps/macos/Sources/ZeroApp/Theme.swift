@@ -30,7 +30,9 @@ enum Theme {
     private static func dynamic(dark: NSColor, light: NSColor) -> Color {
         Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light })
     }
-    static let cardColor = NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 0.11, alpha: 1) : .white }
+    static let cardColor = NSColor(name: nil) {
+        $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 0.11, alpha: 1) : .white
+    }
     static let card = Color(nsColor: cardColor)
     /// A row under the pointer, a step under the sidebar's grey; the rail's active and hovered tiles.
     static let hover = dynamic(dark: NSColor(white: 0.20, alpha: 1), light: NSColor(white: 0.945, alpha: 1))
@@ -39,7 +41,9 @@ enum Theme {
     static let railSelected = dynamic(dark: NSColor(white: 0.24, alpha: 1), light: NSColor(white: 0.84, alpha: 1))
     static let railHover = dynamic(dark: NSColor(white: 0.15, alpha: 1), light: NSColor(white: 0.885, alpha: 1))
     private static func hex(_ value: UInt32) -> NSColor {
-        NSColor(srgbRed: CGFloat((value >> 16) & 0xff) / 255, green: CGFloat((value >> 8) & 0xff) / 255, blue: CGFloat(value & 0xff) / 255, alpha: 1)
+        NSColor(
+            srgbRed: CGFloat((value >> 16) & 0xff) / 255, green: CGFloat((value >> 8) & 0xff) / 255, blue: CGFloat(value & 0xff) / 255,
+            alpha: 1)
     }
     /// The sidebars' blueprint heading as drafting paper: dark ink on the panels' neutral-200 (neutral-800 with light
     /// ink in dark mode), so it reads as a surface of its own rather than a faded black.
@@ -63,7 +67,8 @@ enum Theme {
     static let fieldTab = dynamic(dark: NSColor(white: 0.13, alpha: 1), light: NSColor(white: 0.955, alpha: 1))
     static let sendIdle = dynamic(dark: NSColor(white: 0.36, alpha: 1), light: NSColor(white: 0.56, alpha: 1))
     /// "Done" in a pill: the system green reads pale as small text on its own light fill; this one has weight.
-    static let done = dynamic(dark: NSColor(red: 0.40, green: 0.82, blue: 0.50, alpha: 1), light: NSColor(red: 0.09, green: 0.50, blue: 0.22, alpha: 1))
+    static let done = dynamic(
+        dark: NSColor(red: 0.40, green: 0.82, blue: 0.50, alpha: 1), light: NSColor(red: 0.09, green: 0.50, blue: 0.22, alpha: 1))
     /// An answer's row: a tint over whatever it sits on (a card, a question's panel), so it reads as a button on both.
     static let choice = dynamic(dark: NSColor(white: 1, alpha: 0.07), light: NSColor(white: 0, alpha: 0.05))
     /// Its number's key cap: a tint over the row's, a step past it on any surface.
@@ -81,13 +86,18 @@ enum Theme {
     static let stroke = dynamic(dark: NSColor(white: 0.24, alpha: 1), light: NSColor(white: 0.89, alpha: 1))
     /// Menus, as Linear draws its (measured): #212122 under a #333436 edge, #2a2a2b between groups.
     static let menu = dynamic(dark: NSColor(srgbRed: 33 / 255, green: 33 / 255, blue: 34 / 255, alpha: 1), light: .white)
-    static let menuStroke = dynamic(dark: NSColor(srgbRed: 51 / 255, green: 52 / 255, blue: 54 / 255, alpha: 1), light: NSColor(white: 0.86, alpha: 1))
-    static let menuLine = dynamic(dark: NSColor(srgbRed: 41 / 255, green: 42 / 255, blue: 45 / 255, alpha: 1), light: NSColor(white: 0.92, alpha: 1))
+    static let menuStroke = dynamic(
+        dark: NSColor(srgbRed: 51 / 255, green: 52 / 255, blue: 54 / 255, alpha: 1), light: NSColor(white: 0.86, alpha: 1))
+    static let menuLine = dynamic(
+        dark: NSColor(srgbRed: 41 / 255, green: 42 / 255, blue: 45 / 255, alpha: 1), light: NSColor(white: 0.92, alpha: 1))
     /// The row under the pointer: #323234, its words and icon white.
-    static let menuHover = dynamic(dark: NSColor(srgbRed: 50 / 255, green: 50 / 255, blue: 52 / 255, alpha: 1), light: NSColor(white: 0.94, alpha: 1))
+    static let menuHover = dynamic(
+        dark: NSColor(srgbRed: 50 / 255, green: 50 / 255, blue: 52 / 255, alpha: 1), light: NSColor(white: 0.94, alpha: 1))
     /// A row's words #e5e6e9 and its icon #9c9da0, as Linear's.
-    static let menuText = dynamic(dark: NSColor(srgbRed: 229 / 255, green: 230 / 255, blue: 233 / 255, alpha: 1), light: NSColor(white: 0.12, alpha: 1))
-    static let menuIcon = dynamic(dark: NSColor(srgbRed: 156 / 255, green: 157 / 255, blue: 160 / 255, alpha: 1), light: NSColor(white: 0.45, alpha: 1))
+    static let menuText = dynamic(
+        dark: NSColor(srgbRed: 229 / 255, green: 230 / 255, blue: 233 / 255, alpha: 1), light: NSColor(white: 0.12, alpha: 1))
+    static let menuIcon = dynamic(
+        dark: NSColor(srgbRed: 156 / 255, green: 157 / 255, blue: 160 / 255, alpha: 1), light: NSColor(white: 0.45, alpha: 1))
     static let menuHot = dynamic(dark: .white, light: .black)
     static let selectedStroke = dynamic(dark: NSColor(white: 0.45, alpha: 1), light: NSColor(white: 0.70, alpha: 1))
     /// Key cap fills for a chosen option: deeper in dark mode so the white digit keeps its contrast.
@@ -96,8 +106,10 @@ enum Theme {
     static let redCap = dynamic(dark: NSColor(red: 0.75, green: 0.22, blue: 0.20, alpha: 1), light: NSColor.systemRed)
     /// Pastel surfaces for a chosen option: delivered (mint), still sendable or on its way (apricot), and
     /// not delivered (rose).
-    static let greenRow = dynamic(dark: NSColor(red: 0.13, green: 0.25, blue: 0.16, alpha: 1), light: NSColor(red: 0.87, green: 0.96, blue: 0.89, alpha: 1))
-    static let orangeRow = dynamic(dark: NSColor(red: 0.30, green: 0.22, blue: 0.12, alpha: 1), light: NSColor(red: 0.99, green: 0.93, blue: 0.85, alpha: 1))
+    static let greenRow = dynamic(
+        dark: NSColor(red: 0.13, green: 0.25, blue: 0.16, alpha: 1), light: NSColor(red: 0.87, green: 0.96, blue: 0.89, alpha: 1))
+    static let orangeRow = dynamic(
+        dark: NSColor(red: 0.30, green: 0.22, blue: 0.12, alpha: 1), light: NSColor(red: 0.99, green: 0.93, blue: 0.85, alpha: 1))
     /// A done question's own shades, one hue (the Done state's purple, 292°) from its surface to its ink, picked as
     /// Refactoring UI builds an alert's: the purple faded over grey instead went muddy, a lavender-grey.
     private static func hsl(_ h: CGFloat, _ s: CGFloat, _ l: CGFloat) -> NSColor {
@@ -112,7 +124,8 @@ enum Theme {
     static let doneInk = Color(nsColor: .systemPurple)
     /// Quiet words on its surface: its hue, not grey (grey on a colour reads dull).
     static let doneMuted = dynamic(dark: hsl(292, 0.55, 0.75), light: hsl(292, 0.30, 0.48))
-    static let redRow = dynamic(dark: NSColor(red: 0.32, green: 0.14, blue: 0.14, alpha: 1), light: NSColor(red: 0.99, green: 0.89, blue: 0.89, alpha: 1))
+    static let redRow = dynamic(
+        dark: NSColor(red: 0.32, green: 0.14, blue: 0.14, alpha: 1), light: NSColor(red: 0.99, green: 0.89, blue: 0.89, alpha: 1))
 }
 
 /// 45s, 31m, 2h, 3d.

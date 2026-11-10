@@ -38,7 +38,8 @@ final class Screen {
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS, unsafeBitCast(status, to: UnsafeRawPointer.self))
         let scheme: GhosttyTerminalColorSchemeFn = { _, user, out in
             guard let user, let out else { return false }
-            out.pointee = Unmanaged<Screen>.fromOpaque(user).takeUnretainedValue().dark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT
+            out.pointee =
+                Unmanaged<Screen>.fromOpaque(user).takeUnretainedValue().dark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT
             return true
         }
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_SCHEME, unsafeBitCast(scheme, to: UnsafeRawPointer.self))

@@ -3,7 +3,9 @@ import ZeroCore
 
 @MainActor func followCommand() async {
     guard !positional.isEmpty, let session = targetSession() else { usage() }
-    let about = (flags["about"] ?? []).flatMap { $0.split(separator: ",") }.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    let about = (flags["about"] ?? []).flatMap { $0.split(separator: ",") }.map { $0.trimmingCharacters(in: .whitespaces) }.filter {
+        !$0.isEmpty
+    }
     guard let link = try? ZerodLink() else { fail("zero: Zero's daemon isn't running (open Zero)") }
     defer { link.close() }
     var failed = false
@@ -33,7 +35,12 @@ private func printFollowed(_ followed: ZerodLink.Followed) {
 @MainActor func followingCommand() async {
     let session = targetSession()
     let followed = await zerod { try await $0.following(session: session) }
-    if followed.isEmpty { print(session == nil ? "zero: nothing is followed" : "zero: this session follows nothing; zero follow <url> to hear of a pull request, issue or thread") }
+    if followed.isEmpty {
+        print(
+            session == nil
+                ? "zero: nothing is followed"
+                : "zero: this session follows nothing; zero follow <url> to hear of a pull request, issue or thread")
+    }
     for f in followed {
         let filter = (f.mine ? ["--mine"] : []) + (f.about.isEmpty ? [] : ["--about " + f.about.joined(separator: ",")])
         print("\(f.topic)" + (filter.isEmpty ? "" : "  " + filter.joined(separator: " ")) + (session == nil ? "  (\(f.session))" : ""))

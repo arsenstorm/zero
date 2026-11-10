@@ -38,8 +38,9 @@ struct DitherBackground: NSViewRepresentable {
 
         func draw(in view: MTKView) {
             guard let device = view.device, prepare(device, view.colorPixelFormat), let pipeline, let queue,
-                  let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
-                  let commands = queue.makeCommandBuffer(), let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { return }
+                let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
+                let commands = queue.makeCommandBuffer(), let encoder = commands.makeRenderCommandEncoder(descriptor: pass)
+            else { return }
             let scale = Float(view.window?.backingScaleFactor ?? 2)
             let dark = view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             // The composer's frost: its card's corners (26), fading back to dots over 4 pt beyond it. From the window's
@@ -49,12 +50,14 @@ struct DitherBackground: NSViewRepresentable {
                 let top = content.isFlipped ? self.frost.minY : content.bounds.height - self.frost.maxY
                 let inWindow = NSRect(x: self.frost.minX, y: top, width: self.frost.width, height: self.frost.height)
                 let mine = view.convert(content.convert(inWindow, to: nil), from: nil)
-                frost = CGRect(x: mine.minX, y: view.isFlipped ? mine.minY : view.bounds.height - mine.maxY, width: mine.width, height: mine.height)
+                frost = CGRect(
+                    x: mine.minX, y: view.isFlipped ? mine.minY : view.bounds.height - mine.maxY, width: mine.width, height: mine.height)
             }
-            var uniforms = Dither.Uniforms(size: SIMD2(Float(view.drawableSize.width), Float(view.drawableSize.height)), cell: 3 * scale,
-                                           dark: dark, ground: Theme.cardColor.resolved(in: view.effectiveAppearance),
-                                           frost: SIMD4(Float(frost.minX), Float(frost.minY), Float(frost.width), Float(frost.height)) * scale,
-                                           frostRadius: 26 * scale, feather: 4 * scale)
+            var uniforms = Dither.Uniforms(
+                size: SIMD2(Float(view.drawableSize.width), Float(view.drawableSize.height)), cell: 3 * scale,
+                dark: dark, ground: Theme.cardColor.resolved(in: view.effectiveAppearance),
+                frost: SIMD4(Float(frost.minX), Float(frost.minY), Float(frost.width), Float(frost.height)) * scale,
+                frostRadius: 26 * scale, feather: 4 * scale)
             encoder.setRenderPipelineState(pipeline)
             encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Dither.Uniforms>.stride, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)

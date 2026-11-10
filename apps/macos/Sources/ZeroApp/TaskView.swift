@@ -46,12 +46,13 @@ private struct TaskView: View {
 
     /// Other tasks by id, for a message from one: its name, and opening it (a worker on its lead's page).
     private var taskLink: TaskLink {
-        TaskLink(name: { [workspace] id in workspace.roster[id].map(Workspace.label(of:)) },
-                 open: { [workspace, navigation] id in
-                     let lead = workspace.roster[id]?.parent
-                     navigation.place = .task(lead ?? id)
-                     navigation.worker = lead == nil ? nil : id
-                 })
+        TaskLink(
+            name: { [workspace] id in workspace.roster[id].map(Workspace.label(of:)) },
+            open: { [workspace, navigation] id in
+                let lead = workspace.roster[id]?.parent
+                navigation.place = .task(lead ?? id)
+                navigation.worker = lead == nil ? nil : id
+            })
     }
     /// The page shown, as against one kept behind it.
     var active = true
@@ -85,17 +86,31 @@ private struct TaskView: View {
         if let conversation, conversation.terminal != nil {
             // A terminal runs edge to edge; the pane sits beside it as a column of its own.
             HStack(spacing: 0) {
-                if let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, inbox: inbox, active: active, queued: workspace.queued(conversation.id, board: row?.queued ?? []), held: row?.held ?? false, next: row?.next, live: live, open: open).equatable().id(conversation.id).environment(\.taskLink, taskLink) }
+                if let live = workspace.live(conversation.id) {
+                    ConversationView(
+                        workspace: workspace, inbox: inbox, active: active,
+                        queued: workspace.queued(conversation.id, board: row?.queued ?? []), held: row?.held ?? false, next: row?.next,
+                        live: live, open: open
+                    ).equatable().id(conversation.id).environment(\.taskLink, taskLink)
+                }
                 if navigation.pane {
                     Rectangle().fill(Theme.stroke).frame(width: 1)
-                    TaskDetails(workspace: workspace, inbox: inbox, navigation: navigation, row: row, conversation: conversation, docked: true)
+                    TaskDetails(
+                        workspace: workspace, inbox: inbox, navigation: navigation, row: row, conversation: conversation, docked: true)
                 }
             }
         } else {
             ZStack(alignment: .topTrailing) {
-                if let conversation, let live = workspace.live(conversation.id) { ConversationView(workspace: workspace, inbox: inbox, active: active, queued: workspace.queued(conversation.id, board: row?.queued ?? []), held: row?.held ?? false, next: row?.next, live: live, open: open).equatable().id(conversation.id).environment(\.taskLink, taskLink) }
+                if let conversation, let live = workspace.live(conversation.id) {
+                    ConversationView(
+                        workspace: workspace, inbox: inbox, active: active,
+                        queued: workspace.queued(conversation.id, board: row?.queued ?? []), held: row?.held ?? false, next: row?.next,
+                        live: live, open: open
+                    ).equatable().id(conversation.id).environment(\.taskLink, taskLink)
+                }
                 if navigation.pane, let conversation {
-                    TaskDetails(workspace: workspace, inbox: inbox, navigation: navigation, row: row, conversation: conversation).padding(TaskDetails.inset)
+                    TaskDetails(workspace: workspace, inbox: inbox, navigation: navigation, row: row, conversation: conversation).padding(
+                        TaskDetails.inset)
                 }
             }
         }
@@ -124,7 +139,9 @@ struct TitleBar: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            if navigation.ready, case .task(let lead) = navigation.place, let conversation = workspace.conversation(navigation.worker ?? lead) {
+            if navigation.ready, case .task(let lead) = navigation.place,
+                let conversation = workspace.conversation(navigation.worker ?? lead)
+            {
                 // The line between the sidebar and the title, there only when a title is.
                 Rectangle().fill(Theme.stroke).frame(width: 1, height: 16).padding(.trailing, 12)
                 Text(workspace.board.first { $0.session == lead }?.task ?? workspace.conversation(lead).map(Workspace.label(of:)) ?? "")
@@ -132,7 +149,9 @@ struct TitleBar: View {
                     .onTapGesture(count: 2, perform: Self.doubleClicked)
                 drag
                 actions(conversation)
-                BarButton(symbol: "sidebar-right", help: navigation.pane ? "Hide details" : "Show details", selected: navigation.pane) { navigation.pane.toggle() }
+                BarButton(symbol: "sidebar-right", help: navigation.pane ? "Hide details" : "Show details", selected: navigation.pane) {
+                    navigation.pane.toggle()
+                }
             } else if navigation.ready, navigation.place == .board || navigation.place == .inbox {
                 // The page's name in the bar, as a task's is.
                 Rectangle().fill(Theme.stroke).frame(width: 1, height: 16).padding(.trailing, 12)
@@ -165,10 +184,16 @@ struct TitleBar: View {
 
     @ViewBuilder private func actions(_ conversation: Conversation) -> some View {
         let busy = conversation.status == .working || conversation.status == .waiting
-        BarButton(symbol: "terminal", help: conversation.terminal == nil
-                  ? "Open in \(conversation.provider.title)'s own terminal, for what only it has"
-                  : "Back to Zero, with what happened in the terminal", selected: conversation.terminal != nil) {
-            Task { conversation.terminal == nil ? await workspace.openTerminal(conversation.id) : await workspace.closeTerminal(conversation.id) }
+        BarButton(
+            symbol: "terminal",
+            help: conversation.terminal == nil
+                ? "Open in \(conversation.provider.title)'s own terminal, for what only it has"
+                : "Back to Zero, with what happened in the terminal", selected: conversation.terminal != nil
+        ) {
+            Task {
+                conversation.terminal == nil
+                    ? await workspace.openTerminal(conversation.id) : await workspace.closeTerminal(conversation.id)
+            }
         }
         .disabled(conversation.terminal == nil && (conversation.thread == nil || busy))
         Menu {
@@ -190,7 +215,9 @@ struct TitleBar: View {
             Button("Show folder in Finder") { NSWorkspace.shared.open(URL(fileURLWithPath: conversation.cwd)) }
             Divider()
             if case .task(let lead) = navigation.place {
-                Button("Move to Later") { navigation.place = .home; Task { await workspace.moveToLater(lead) } }
+                Button("Move to Later") {
+                    navigation.place = .home; Task { await workspace.moveToLater(lead) }
+                }
                 Button("Archive…") { workspace.archiving = lead }
             }
         } label: {

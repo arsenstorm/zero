@@ -58,7 +58,13 @@ struct SelectorView: View {
     @FocusState private var focused: Bool
 
     /// Models get two panes, the list and its details, centred on the inbox; projects a single list on the chip.
-    static func width(_ kind: SelectorKind) -> CGFloat { switch kind { case .runtime: 2 * paneWidth; case .project: 272; case .menu: 220 } }
+    static func width(_ kind: SelectorKind) -> CGFloat {
+        switch kind {
+        case .runtime: 2 * paneWidth;
+        case .project: 272;
+        case .menu: 220
+        }
+    }
     private static let paneWidth: CGFloat = 240
     /// The model list is always eight rows tall, so neither a tab change nor a hover moves anything.
     private static let modelListHeight: CGFloat = 8 * rowHeight + 8 + 7
@@ -83,7 +89,9 @@ struct SelectorView: View {
                 VStack(spacing: 0) {
                     ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
                         // A line between groups, edge to edge, 5 above and below.
-                        if index > 0 { Rectangle().fill(Theme.menuLine).frame(height: 1).padding(.horizontal, -inset).padding(.vertical, 5) }
+                        if index > 0 {
+                            Rectangle().fill(Theme.menuLine).frame(height: 1).padding(.horizontal, -inset).padding(.vertical, 5)
+                        }
                         VStack(spacing: 0) { ForEach(section.rows) { rowView($0) } }
                     }
                 }
@@ -114,17 +122,36 @@ struct SelectorView: View {
         // Lighter than a page's card: a hairline edge, a little less round. (The window gives it its shadow.)
         .background(linear ? Theme.menu : Theme.card)
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(linear ? Theme.menuStroke : Theme.stroke, lineWidth: linear ? 1 : 0.5))
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { state.cardHeight = $0 }
+        .overlay(
+            RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(
+                linear ? Theme.menuStroke : Theme.stroke, lineWidth: linear ? 1 : 0.5)
+        )
+        .onGeometryChange(for: CGFloat.self) {
+            $0.size.height
+        } action: {
+            state.cardHeight = $0
+        }
         .focusable()
         .focused($focused)
         .focusEffectDisabled()
-        .onKeyPress(.downArrow) { move(1); return .handled }
-        .onKeyPress(.upArrow) { move(-1); return .handled }
-        .onKeyPress(.leftArrow) { switchTab(-1); return .handled }
-        .onKeyPress(.rightArrow) { switchTab(1); return .handled }
-        .onKeyPress(.return) { pickHighlighted(); return .handled }
-        .onKeyPress(.escape) { state.close(); return .handled }
+        .onKeyPress(.downArrow) {
+            move(1); return .handled
+        }
+        .onKeyPress(.upArrow) {
+            move(-1); return .handled
+        }
+        .onKeyPress(.leftArrow) {
+            switchTab(-1); return .handled
+        }
+        .onKeyPress(.rightArrow) {
+            switchTab(1); return .handled
+        }
+        .onKeyPress(.return) {
+            pickHighlighted(); return .handled
+        }
+        .onKeyPress(.escape) {
+            state.close(); return .handled
+        }
         .onAppear {
             // Open on the provider that holds the current pick, with that pick highlighted.
             if state.tab == nil { state.tab = sections.first { $0.rows.contains { $0.selected } }?.id ?? sections.first?.id }
@@ -137,7 +164,11 @@ struct SelectorView: View {
     /// says what it is), as tall as its rows; past eight, it scrolls.
     @ViewBuilder private var shortList: some View {
         let column = VStack(spacing: linear ? 0 : 1) { ForEach(rows) { rowView($0) } }.padding(inset)
-        if rows.count <= 8 { column } else { ScrollView(.vertical, showsIndicators: false) { column }.frame(height: Self.modelListHeight + 40).scrollEdgeFades() }
+        if rows.count <= 8 {
+            column
+        } else {
+            ScrollView(.vertical, showsIndicators: false) { column }.frame(height: Self.modelListHeight + 40).scrollEdgeFades()
+        }
     }
 
     private var list: some View {
@@ -152,10 +183,13 @@ struct SelectorView: View {
         HStack(spacing: 4) {
             ForEach(sections) { section in
                 let active = section.id == (state.tab ?? sections.first?.id)
-                Button { select(tab: section.id) } label: {
+                Button {
+                    select(tab: section.id)
+                } label: {
                     HStack(spacing: 6) {
                         if let icon = section.icon {
-                            icon.resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14).clipShape(RoundedRectangle(cornerRadius: 3))
+                            icon.resizable().aspectRatio(contentMode: .fit).frame(width: 14, height: 14).clipShape(
+                                RoundedRectangle(cornerRadius: 3))
                         }
                         Text(section.title).font(.system(size: 12, weight: .medium))
                     }
@@ -198,18 +232,22 @@ struct SelectorView: View {
             HStack(alignment: described.isEmpty ? .center : .top, spacing: 8) {
                 if let glyph = row.glyph {
                     WorkspaceGlyph(glyph: glyph, size: linear ? 16 : 14)
-                        .foregroundStyle(linear ? (current ? Theme.menuHot : Theme.menuIcon) : Color.secondary).frame(width: linear ? 16 : 18)
+                        .foregroundStyle(linear ? (current ? Theme.menuHot : Theme.menuIcon) : Color.secondary).frame(
+                            width: linear ? 16 : 18)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                        Text(row.title).font(.system(size: 13, weight: state.kind == .menu ? .regular : .medium)).lineLimit(1)
+                    Text(row.title).font(.system(size: 13, weight: state.kind == .menu ? .regular : .medium)).lineLimit(1)
                         .foregroundStyle(linear ? (current ? Theme.menuHot : Theme.menuText) : Color.primary)
                     if !described.isEmpty {
-                        Text(described).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                        Text(described).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(2).fixedSize(
+                            horizontal: false, vertical: true)
                     }
                 }
                 Spacer(minLength: 6)
                 // The check's place only where something can be checked: a menu of actions has none, and kept no gap.
-                if rows.contains(where: \.selected) { NucleoIcon("check", size: 13).foregroundStyle(Color.accentColor).opacity(row.selected ? 1 : 0) }
+                if rows.contains(where: \.selected) {
+                    NucleoIcon("check", size: 13).foregroundStyle(Color.accentColor).opacity(row.selected ? 1 : 0)
+                }
             }
             .padding(.leading, linear ? 9 : 10).padding(.trailing, 10).padding(.vertical, described.isEmpty ? 0 : 7)
             .frame(minHeight: rowHeight)
@@ -229,8 +267,10 @@ struct SelectorView: View {
             let picked = row.modelID.flatMap(state.level) ?? row.defaultLevel
             VStack(spacing: 0) {
                 if let icon = row.providerIcon {
-                    icon.resizable().aspectRatio(contentMode: .fit).frame(width: 36, height: 36).clipShape(RoundedRectangle(cornerRadius: 8))
-                        .padding(.bottom, 10)
+                    icon.resizable().aspectRatio(contentMode: .fit).frame(width: 36, height: 36).clipShape(
+                        RoundedRectangle(cornerRadius: 8)
+                    )
+                    .padding(.bottom, 10)
                 }
                 // Every text row has a fixed whole-point height (two lines for the description), so switching
                 // models shifts nothing: measured text heights differ by fractions between one and two lines.
@@ -244,7 +284,8 @@ struct SelectorView: View {
                     HStack {
                         Text("Effort").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                         Spacer()
-                        Text(picked.map { effortLabel($0) } ?? "").font(.system(size: 11, weight: .medium)).contentTransition(.numericText())
+                        Text(picked.map { effortLabel($0) } ?? "").font(.system(size: 11, weight: .medium)).contentTransition(
+                            .numericText())
                     }
                     .frame(height: 14)
                     .padding(.top, 16)
@@ -275,7 +316,6 @@ struct SelectorView: View {
         guard let last = text.last else { return text }
         return ".!?…".contains(last) ? text : text + "."
     }
-
 
     private func move(_ delta: Int) {
         let ids = rows.map(\.id)
@@ -314,7 +354,9 @@ struct EffortSlider: View {
 
     private let trackHeight: CGFloat = 10
     private let knob: CGFloat = 18
-    private let heat = [Color(red: 0.95, green: 0.72, blue: 0.25), Color(red: 0.95, green: 0.45, blue: 0.15), Color(red: 0.90, green: 0.22, blue: 0.18)]
+    private let heat = [
+        Color(red: 0.95, green: 0.72, blue: 0.25), Color(red: 0.95, green: 0.45, blue: 0.15), Color(red: 0.90, green: 0.22, blue: 0.18),
+    ]
 
     var body: some View {
         let index = picked.flatMap { levels.firstIndex(of: $0) } ?? 0
@@ -343,18 +385,19 @@ struct EffortSlider: View {
             .animation(.snappy(duration: 0.2), value: index)
             .animation(.snappy(duration: 0.15), value: held)
             .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0)
-                .onChanged { value in
-                    held = true
-                    guard step > 0 else { return }
-                    let i = Int(((value.location.x - inset) / step).rounded())
-                    let level = levels[max(0, min(levels.count - 1, i))]
-                    if level != picked {
-                        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
-                        onPick(level)
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        held = true
+                        guard step > 0 else { return }
+                        let i = Int(((value.location.x - inset) / step).rounded())
+                        let level = levels[max(0, min(levels.count - 1, i))]
+                        if level != picked {
+                            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+                            onPick(level)
+                        }
                     }
-                }
-                .onEnded { _ in held = false })
+                    .onEnded { _ in held = false })
         }
         .frame(height: knob + 4)
     }
@@ -372,7 +415,9 @@ struct ScrollEdgeFades: ViewModifier {
         content
             .onScrollGeometryChange(for: [Bool].self) { g in
                 [g.contentOffset.y > 1, g.contentOffset.y + g.containerSize.height < g.contentSize.height - 1]
-            } action: { _, more in moreAbove = more[0]; moreBelow = more[1] }
+            } action: { _, more in
+                moreAbove = more[0]; moreBelow = more[1]
+            }
             .mask(EdgeFadeMask(above: moreAbove, below: moreBelow, fade: fade))
     }
 }
@@ -409,7 +454,9 @@ struct MenuItem {
     let title: String
     var glyph: String? = nil
     let action: () -> Void
-    init(_ title: String, _ glyph: String? = nil, action: @escaping () -> Void) { self.title = title; self.glyph = glyph; self.action = action }
+    init(_ title: String, _ glyph: String? = nil, action: @escaping () -> Void) {
+        self.title = title; self.glyph = glyph; self.action = action
+    }
 }
 
 extension View {
@@ -424,16 +471,20 @@ extension View {
     static func open(_ id: String, _ groups: @escaping () -> [[MenuItem]]) {
         let point = NSEvent.mouseLocation
         guard let window = NSApp.window(withWindowNumber: NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0)),
-              let content = window.contentView else { return }
+            let content = window.contentView
+        else { return }
         let inWindow = window.convertPoint(fromScreen: point)
         // SwiftUI's global frame (the window's content, from its top left): the menu hangs off the pointer.
         let anchor = CGRect(x: inWindow.x, y: content.bounds.height - inWindow.y, width: 1, height: 1)
         WorkspaceSelector.shared.toggle("menu-" + id, kind: .menu, anchor: anchor, in: window) {
             groups().filter { !$0.isEmpty }.enumerated().map { index, items in
-                SelectorSection(id: "group-\(index)", title: "", icon: nil, rows: items.enumerated().map { n, item in
-                    SelectorRow(id: "\(index)-\(n)", title: item.title, provider: nil, providerIcon: nil, detail: nil, context: nil, levels: [],
-                                defaultLevel: nil, modelID: nil, selected: false, pick: item.action, glyph: item.glyph)
-                })
+                SelectorSection(
+                    id: "group-\(index)", title: "", icon: nil,
+                    rows: items.enumerated().map { n, item in
+                        SelectorRow(
+                            id: "\(index)-\(n)", title: item.title, provider: nil, providerIcon: nil, detail: nil, context: nil, levels: [],
+                            defaultLevel: nil, modelID: nil, selected: false, pick: item.action, glyph: item.glyph)
+                    })
             }
         }
     }
@@ -456,4 +507,3 @@ struct RightClick: NSViewRepresentable {
         override func rightMouseDown(with event: NSEvent) { action() }
     }
 }
-

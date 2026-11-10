@@ -30,7 +30,8 @@ struct PillShape: InsettableShape {
         path.move(to: CGPoint(x: w, y: y0))
         path.addArc(center: CGPoint(x: w - r, y: y0), radius: r, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
         path.addLine(to: CGPoint(x: x0 + R, y: y0 + r))
-        path.addArc(center: CGPoint(x: x0 + R, y: y0 + r + R), radius: R, startAngle: .degrees(270), endAngle: .degrees(180), clockwise: true)
+        path.addArc(
+            center: CGPoint(x: x0 + R, y: y0 + r + R), radius: R, startAngle: .degrees(270), endAngle: .degrees(180), clockwise: true)
         path.addLine(to: CGPoint(x: x0, y: h - r - R))
         path.addArc(center: CGPoint(x: x0 + R, y: h - r - R), radius: R, startAngle: .degrees(180), endAngle: .degrees(90), clockwise: true)
         path.addLine(to: CGPoint(x: w - r, y: h - r))
@@ -62,10 +63,12 @@ struct PillView: View {
 
     private let slot: CGFloat = 28
 
-    init(controller: InboxController, settings: Settings, workspace: Workspace? = nil, openInbox: @escaping () -> Void,
-         selectAgent: @escaping (String) -> Void, moveHere: @escaping () -> Void,
-         peek: @escaping (String?) -> Void = { _ in }, openWorkspaces: @escaping () -> Void = {},
-         previewHovered: String? = nil) {
+    init(
+        controller: InboxController, settings: Settings, workspace: Workspace? = nil, openInbox: @escaping () -> Void,
+        selectAgent: @escaping (String) -> Void, moveHere: @escaping () -> Void,
+        peek: @escaping (String?) -> Void = { _ in }, openWorkspaces: @escaping () -> Void = {},
+        previewHovered: String? = nil
+    ) {
         self.controller = controller; self.settings = settings; self.workspace = workspace
         self.openInbox = openInbox; self.selectAgent = selectAgent; self.moveHere = moveHere; self.peek = peek
         self.openWorkspaces = openWorkspaces
@@ -87,7 +90,8 @@ struct PillView: View {
     /// outside Zero that have asks. Built from the agents with asks alone, it showed other things than the sidebar,
     /// in other shapes.
     private func dots(_ agents: [(String, AgentStatus)]) -> [(String, Mark)] {
-        let rows = workspace.map { w in BoardRow.sorted(w.board.filter { $0.workspace == w.current }, by: taskSort, order: taskOrder) } ?? []
+        let rows =
+            workspace.map { w in BoardRow.sorted(w.board.filter { $0.workspace == w.current }, by: taskSort, order: taskOrder) } ?? []
         return rows.map { ("zerod-" + $0.session, Mark.task($0.state)) }
             + agents.filter { !$0.0.hasPrefix("zerod-") }.map { ($0.0, Mark.agent($0.1)) }
     }
@@ -103,7 +107,8 @@ struct PillView: View {
     /// While dragging, the dots between the start slot and the drop slot step aside by one slot.
     private func shift(of name: String, in names: [String]) -> CGFloat {
         guard let drag, drag.name != name, let from = names.firstIndex(of: drag.name),
-              let to = dropIndex(in: names), let i = names.firstIndex(of: name) else { return 0 }
+            let to = dropIndex(in: names), let i = names.firstIndex(of: name)
+        else { return 0 }
         if from < to, i > from, i <= to { return -slot }
         if from > to, i >= to, i < from { return slot }
         return 0
@@ -127,18 +132,26 @@ struct PillView: View {
         .background(PillShape().fill(Theme.pill))
         .overlay(PillShape().strokeBorder(Theme.stroke, lineWidth: 1))
         // The bar's drawn height, which the inbox uses for its scroll limits.
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { controller.barHeight = $0 }
+        .onGeometryChange(for: CGFloat.self) {
+            $0.size.height
+        } action: {
+            controller.barHeight = $0
+        }
         // Outermost on purpose: placed inside, only the dots would animate and the shape would snap.
         .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: dots.map(\.0))
         .pointerStyle(.link)
         // Behind the dots, so a dot's own menu (in front) answers on a dot and this one everywhere else on the bar.
         .background {
             RightClick {
-                ZeroContextMenu.open("bar") {[
-                    [MenuItem("Open Log", "file-content") { NSWorkspace.shared.open(Paths.log) }],
-                    [MenuItem("Settings…", "gear") { (NSApp.delegate as? AppDelegate)?.openSettings() },
-                     MenuItem("Quit Zero", "power-off") { NSApp.terminate(nil) }],
-                ]}
+                ZeroContextMenu.open("bar") {
+                    [
+                        [MenuItem("Open Log", "file-content") { NSWorkspace.shared.open(Paths.log) }],
+                        [
+                            MenuItem("Settings…", "gear") { (NSApp.delegate as? AppDelegate)?.openSettings() },
+                            MenuItem("Quit Zero", "power-off") { NSApp.terminate(nil) },
+                        ],
+                    ]
+                }
             }
         }
     }
@@ -156,29 +169,41 @@ struct PillView: View {
                 }
             }
             .frame(width: 32, height: 32)
-        .contentShape(Rectangle())
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { controller.barSlots[InboxController.inboxSlot] = $0 }
-        .onTapGesture(perform: openInbox)
-        .tip("Open asks")
+            .contentShape(Rectangle())
+            .onGeometryChange(for: CGRect.self) {
+                $0.frame(in: .global)
+            } action: {
+                controller.barSlots[InboxController.inboxSlot] = $0
+            }
+            .onTapGesture(perform: openInbox)
+            .tip("Open asks")
     }
 
     /// The workspace the bar lists (and the window shows): its glyph; a click opens the others beside the bar.
     private func workspaceSlot(_ workspace: Workspace) -> some View {
         // Under the pointer, the chevron the phone's selector has: it switches, it isn't a workspace's own button.
         Group {
-            if overWorkspace { NucleoIcon("chevron-expand-y", size: 15) } else { WorkspaceGlyph(glyph: workspace.currentWorkspace.glyph, size: 15) }
-        }
-            .foregroundStyle(controller.workspacesOpen || overWorkspace ? .primary : .secondary)
-            .overlay(alignment: .topTrailing) {
-                if controller.pinned && controller.workspacesOpen { PinBadge().offset(x: 4, y: -6) }
+            if overWorkspace {
+                NucleoIcon("chevron-expand-y", size: 15)
+            } else {
+                WorkspaceGlyph(glyph: workspace.currentWorkspace.glyph, size: 15)
             }
-            .frame(width: 32, height: 32)
-            .contentShape(Rectangle())
-            .onHover { overWorkspace = $0 }
-            // A slot of the bar's, as its others: the pointer on it opens its view in the inbox's pane.
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { controller.barSlots[InboxController.workspacesSlot] = $0 }
-            .onTapGesture(perform: openWorkspaces)
-            .tip(workspace.currentWorkspace.name)
+        }
+        .foregroundStyle(controller.workspacesOpen || overWorkspace ? .primary : .secondary)
+        .overlay(alignment: .topTrailing) {
+            if controller.pinned && controller.workspacesOpen { PinBadge().offset(x: 4, y: -6) }
+        }
+        .frame(width: 32, height: 32)
+        .contentShape(Rectangle())
+        .onHover { overWorkspace = $0 }
+        // A slot of the bar's, as its others: the pointer on it opens its view in the inbox's pane.
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
+        } action: {
+            controller.barSlots[InboxController.workspacesSlot] = $0
+        }
+        .onTapGesture(perform: openWorkspaces)
+        .tip(workspace.currentWorkspace.name)
     }
 
     private func agentDot(_ name: String, _ mark: Mark, among names: [String]) -> some View {
@@ -190,38 +215,44 @@ struct PillView: View {
                 Group { if status == .working { Spinner() } else { Circle().fill(status.color) } }.frame(width: 11, height: 11)
             }
         }
-            .frame(width: 14, height: 14)
-            .overlay(alignment: .topTrailing) {
-                if controller.pinned && controller.agentFilter == name { PinBadge().offset(x: 4, y: -6) }
-            }
-            .scaleEffect(scale(name))
-            .animation(reduceMotion ? nil : .smooth(duration: 0.15), value: scale(name))
-            .offset(y: drag?.name == name ? drag!.y : shift(of: name, in: names))
-            .animation(drag?.name == name || reduceMotion ? nil : .snappy(duration: 0.2), value: dropIndex(in: names))
-            // The whole slot, not just the dot, answers the pointer: full bar width, and the gap halves
-            // above and below it, so the slots meet and there is no dead space between dots.
-            .frame(width: 32, height: slot)
-            .contentShape(Rectangle())
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { controller.barSlots[name] = $0 }
-            // Gone from the bar, gone from its slots: a pointer where it was peeks nothing.
-            .onDisappear { controller.barSlots[name] = nil }
-            .zIndex(drag?.name == name ? 1 : 0)
-            .tip(controller.store.displayName(of: name))
-            // A right-click: Zero's own menu by the dot, with the task's actions under its name (not the system's menu,
-            // which said "Remove zerod-01a1…").
-            .overlay { RightClick { menu(name) } }
-            // One gesture for click and drag, so they never compete: a press that moves under 4 pt selects;
-            // a longer one drags the dot with the pointer and drops it into the nearest slot.
-            // Global space: the dot moves with the drag, so a local translation would cancel itself out.
-            .highPriorityGesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
+        .frame(width: 14, height: 14)
+        .overlay(alignment: .topTrailing) {
+            if controller.pinned && controller.agentFilter == name { PinBadge().offset(x: 4, y: -6) }
+        }
+        .scaleEffect(scale(name))
+        .animation(reduceMotion ? nil : .smooth(duration: 0.15), value: scale(name))
+        .offset(y: drag?.name == name ? drag!.y : shift(of: name, in: names))
+        .animation(drag?.name == name || reduceMotion ? nil : .snappy(duration: 0.2), value: dropIndex(in: names))
+        // The whole slot, not just the dot, answers the pointer: full bar width, and the gap halves
+        // above and below it, so the slots meet and there is no dead space between dots.
+        .frame(width: 32, height: slot)
+        .contentShape(Rectangle())
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
+        } action: {
+            controller.barSlots[name] = $0
+        }
+        // Gone from the bar, gone from its slots: a pointer where it was peeks nothing.
+        .onDisappear { controller.barSlots[name] = nil }
+        .zIndex(drag?.name == name ? 1 : 0)
+        .tip(controller.store.displayName(of: name))
+        // A right-click: Zero's own menu by the dot, with the task's actions under its name (not the system's menu,
+        // which said "Remove zerod-01a1…").
+        .overlay { RightClick { menu(name) } }
+        // One gesture for click and drag, so they never compete: a press that moves under 4 pt selects;
+        // a longer one drags the dot with the pointer and drops it into the nearest slot.
+        // Global space: the dot moves with the drag, so a local translation would cancel itself out.
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .global)
                 .onChanged { value in
                     if abs(value.translation.height) >= 4 || drag != nil { drag = (name, value.translation.height) }
                 }
                 .onEnded { _ in
                     guard drag != nil else { open(name); return }
                     drop(name, among: names)
-                })
-            .transition(.opacity)
+                }
+        )
+        .transition(.opacity)
     }
 
     /// A dot's menu, in Zero's selector by the dot: a task's own actions (open it, pause or resume it, move it to Later,
@@ -236,20 +267,35 @@ struct PillView: View {
             var rows: [[(id: String, title: String, glyph: String, selected: Bool, pick: () -> Void)]] = []
             if name.hasPrefix("zerod-"), let workspace {
                 let id = String(name.dropFirst("zerod-".count))
-                let open: () -> Void = { if let url = URL(string: "zero://task/" + id) { (NSApp.delegate as? AppDelegate)?.openZeroURL(url) } }
+                let open: () -> Void = {
+                    if let url = URL(string: "zero://task/" + id) { (NSApp.delegate as? AppDelegate)?.openZeroURL(url) }
+                }
                 rows.append([("open", "Open", "arrow-up-right", false, open)])
                 rows.append([
-                    workspace.isPaused(id) ? ("resume", "Resume", "circle-play", false, { Task { await workspace.unpause([id]) } })
-                                           : ("pause", "Pause", "circle-pause", false, { Task { await workspace.pause([id]) } }),
+                    workspace.isPaused(id)
+                        ? ("resume", "Resume", "circle-play", false, { Task { await workspace.unpause([id]) } })
+                        : ("pause", "Pause", "circle-pause", false, { Task { await workspace.pause([id]) } }),
                     ("later", "Move to Later", "bookmark", false, { Task { await workspace.moveToLater(id) } }),
                 ])
-                rows.append([("archive", "Archive…", "archive", false, { open(); workspace.archiving = id })])
+                rows.append([
+                    (
+                        "archive", "Archive…", "archive", false,
+                        {
+                            open(); workspace.archiving = id
+                        }
+                    )
+                ])
             } else {
                 if let identity = controller.store.identity(of: name), identity.runtime == "zero", let ref = identity.ref {
                     rows.append([("terminal", "Open in Terminal", "terminal", false, { HostAdapter.reveal(ref) })])
                 }
-                rows.append([(controller.store.canStop(name) ? "stop" : "remove", controller.store.canStop(name) ? "Remove and stop" : "Remove", "trash", false,
-                              { controller.store.closeAgent(name) })])
+                rows.append([
+                    (
+                        controller.store.canStop(name) ? "stop" : "remove", controller.store.canStop(name) ? "Remove and stop" : "Remove",
+                        "trash", false,
+                        { controller.store.closeAgent(name) }
+                    )
+                ])
             }
             return ComposerRows.menu(rows)
         }

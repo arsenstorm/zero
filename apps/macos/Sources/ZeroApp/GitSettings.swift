@@ -20,23 +20,37 @@ struct GitPage: View {
         VStack(alignment: .leading, spacing: 32) {
             SettingsSection(title: "Agents' commits") {
                 Rows {
-                    SettingRow(title: "Sign with the agents' own key", detail: "You stay the author; the identity below commits and signs. Your own terminal keeps your key.") {
+                    SettingRow(
+                        title: "Sign with the agents' own key",
+                        detail: "You stay the author; the identity below commits and signs. Your own terminal keeps your key."
+                    ) {
                         Switch(isOn: binding(\.enabled))
                     }
-                    SettingRow(title: git.login.isEmpty ? "Account" : git.login,
-                               detail: git.email.isEmpty ? "The GitHub account that commits and signs." : "\(git.name) · \(git.email)") {
+                    SettingRow(
+                        title: git.login.isEmpty ? "Account" : git.login,
+                        detail: git.email.isEmpty ? "The GitHub account that commits and signs." : "\(git.name) · \(git.email)"
+                    ) {
                         Button(git.login.isEmpty ? "Choose…" : "Change…") { choosing = true }
                     }
-                    SettingRow(title: "Signing key", detail: problem ?? keyTitle ?? publicKey.map(Self.short) ?? "None yet: a private key without a passphrase.") {
+                    SettingRow(
+                        title: "Signing key",
+                        detail: problem ?? keyTitle ?? publicKey.map(Self.short) ?? "None yet: a private key without a passphrase."
+                    ) {
                         HStack(spacing: 10) {
                             if publicKey != nil, !git.login.isEmpty, let onGitHub {
                                 StatePill(text: onGitHub ? "On \(git.login)" : "Not on \(git.login)", color: onGitHub ? .green : .orange)
-                                    .tip(onGitHub ? "One of the account's signing keys: its commits show as Verified" : "Add it to the account as a signing key, or its commits show as Unverified")
+                                    .tip(
+                                        onGitHub
+                                            ? "One of the account's signing keys: its commits show as Verified"
+                                            : "Add it to the account as a signing key, or its commits show as Unverified")
                             }
                             Button(publicKey == nil ? "Choose…" : "Replace…", action: chooseKey)
                         }
                     }
-                    SettingRow(title: "Push over HTTPS", detail: "GitHub with the GitHub CLI's sign-in, in place of SSH, which may wait on your own key.") {
+                    SettingRow(
+                        title: "Push over HTTPS",
+                        detail: "GitHub with the GitHub CLI's sign-in, in place of SSH, which may wait on your own key."
+                    ) {
                         Switch(isOn: binding(\.https))
                     }
                 }
@@ -44,11 +58,16 @@ struct GitPage: View {
             SettingsSection(title: "Folders", accessory: AnyView(GhostButton(title: "Add folder", icon: "plus", action: addFolder))) {
                 Rows {
                     if git.folders.isEmpty {
-                        SettingRow(title: "Every folder", detail: "Agents anywhere commit this way. Add folders to keep it to them.") { EmptyView() }
+                        SettingRow(title: "Every folder", detail: "Agents anywhere commit this way. Add folders to keep it to them.") {
+                            EmptyView()
+                        }
                     }
                     ForEach(git.folders, id: \.self) { folder in
-                        SettingRow(title: (folder as NSString).lastPathComponent, detail: (folder as NSString).abbreviatingWithTildeInPath) {
-                            Button("Remove") { git.folders.removeAll { $0 == folder }; save() }
+                        SettingRow(title: (folder as NSString).lastPathComponent, detail: (folder as NSString).abbreviatingWithTildeInPath)
+                        {
+                            Button("Remove") {
+                                git.folders.removeAll { $0 == folder }; save()
+                            }
                         }
                     }
                 }
@@ -85,7 +104,11 @@ struct GitPage: View {
     }
 
     private func binding<Value>(_ path: WritableKeyPath<AgentGit, Value>) -> Binding<Value> {
-        Binding(get: { git[keyPath: path] }, set: { git[keyPath: path] = $0; save() })
+        Binding(
+            get: { git[keyPath: path] },
+            set: {
+                git[keyPath: path] = $0; save()
+            })
     }
 
     /// Kept as it changes; not before the saved settings are in, so they're never overwritten with blanks.
@@ -102,8 +125,7 @@ struct GitPage: View {
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task {
-            do { publicKey = try await link?.takeGitKey(path: url.path); problem = nil }
-            catch { problem = error.localizedDescription }
+            do { publicKey = try await link?.takeGitKey(path: url.path); problem = nil } catch { problem = error.localizedDescription }
         }
     }
 

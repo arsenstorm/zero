@@ -36,11 +36,16 @@ enum Integration: String, CaseIterable, Identifiable {
     /// Linear isn't in Nucleo, and the app bundles its tile (a light mark on a dark square): the mark alone, its
     /// brightness as its opacity and cropped to it, so it draws as a template like the rest.
     static let linearMark: NSImage? = {
-        guard let tile = Bundle.main.image(forResource: "linear"), let source = tile.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        guard let tile = Bundle.main.image(forResource: "linear"), let source = tile.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        else { return nil }
         let (width, height) = (source.width, source.height)
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
-        guard let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
-                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        guard
+            let context = CGContext(
+                data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
         context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
         var (minX, minY, maxX, maxY) = (width, height, 0, 0)
         for y in 0..<height {
@@ -52,7 +57,9 @@ enum Integration: String, CaseIterable, Identifiable {
                 if alpha > 40 { (minX, minY, maxX, maxY) = (min(minX, x), min(minY, y), max(maxX, x), max(maxY, y)) }
             }
         }
-        guard maxX > minX, let mark = context.makeImage()?.cropping(to: CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)) else { return nil }
+        guard maxX > minX,
+            let mark = context.makeImage()?.cropping(to: CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1))
+        else { return nil }
         let image = NSImage(cgImage: mark, size: NSSize(width: mark.width, height: mark.height))
         image.isTemplate = true
         return image
@@ -80,8 +87,10 @@ enum Integration: String, CaseIterable, Identifiable {
     /// What agents can follow through it (the Following section).
     var followingDetail: String {
         switch self {
-        case .github: "Agents follow pull requests with zero follow <url>: reviews, comments, CI, pushes and merges reach them between turns."
-        case .linear: "Agents follow issues, or one comment thread, with zero follow <url>: status changes and comments reach them between turns."
+        case .github:
+            "Agents follow pull requests with zero follow <url>: reviews, comments, CI, pushes and merges reach them between turns."
+        case .linear:
+            "Agents follow issues, or one comment thread, with zero follow <url>: status changes and comments reach them between turns."
         case .slack: "Agents follow threads and channels with zero follow <url>: replies reach them between turns."
         }
     }
@@ -108,7 +117,9 @@ struct IntegrationsPane: View {
         HStack(spacing: 0) {
             SidebarColumn(title: "Integrations") {
                 ForEach(Integration.allCases) { integration in
-                    SidebarItem(title: integration.title, selected: shown == integration, action: { shown = integration }) { integration.icon(size: 15) }
+                    SidebarItem(title: integration.title, selected: shown == integration, action: { shown = integration }) {
+                        integration.icon(size: 15)
+                    }
                 }
             }
             Rectangle().fill(Theme.stroke).frame(width: 1)
@@ -123,9 +134,12 @@ struct IntegrationsPane: View {
                     }
                     if shown != .slack {
                         Text("Views").font(.system(size: 15, weight: .semibold)).padding(.bottom, 4)
-                        Text(shown == .github ? "Each view is a GitHub search: add org:YourOrg to narrow it to one organisation's repositories."
-                                              : "Each view picks whose issues, which teams and which states.")
-                            .font(.system(size: 12)).foregroundStyle(.secondary).padding(.bottom, 12)
+                        Text(
+                            shown == .github
+                                ? "Each view is a GitHub search: add org:YourOrg to narrow it to one organisation's repositories."
+                                : "Each view picks whose issues, which teams and which states."
+                        )
+                        .font(.system(size: 12)).foregroundStyle(.secondary).padding(.bottom, 12)
                         views
                     }
                 }
@@ -148,11 +162,15 @@ struct IntegrationsPane: View {
     }
 
     @ViewBuilder private var connection: some View {
-        let enabled = Binding(get: { shown.enabled(in: workspace.integrations) }, set: { on in Task { await workspace.setIntegration(shown.rawValue, enabled: on) } })
+        let enabled = Binding(
+            get: { shown.enabled(in: workspace.integrations) },
+            set: { on in Task { await workspace.setIntegration(shown.rawValue, enabled: on) } })
         if let account = shown.account(in: workspace.integrations) {
             Rows {
-                OnboardingRow(icon: "", picture: nil, title: shown == .github ? "Connected as \(account)" : "Connected to \(account)",
-                              detail: connectedDetail) {
+                OnboardingRow(
+                    icon: "", picture: nil, title: shown == .github ? "Connected as \(account)" : "Connected to \(account)",
+                    detail: connectedDetail
+                ) {
                     if shown == .linear { Button("Disconnect") { Task { await workspace.disconnectLinear() } } }
                     if shown == .slack, let team = workspace.integrations?.slack?.first?.team, workspace.integrations?.slack?.count == 1 {
                         Button("Disconnect") { Task { await workspace.disconnectSlack(team: team.id) } }
@@ -160,10 +178,14 @@ struct IntegrationsPane: View {
                 }
                 .overlay(alignment: .leading) { shown.icon(size: 17).foregroundStyle(.secondary).frame(width: 22) }
                 if shown != .slack {
-                    OnboardingRow(icon: "sidebar-right", title: "Show in the sidebar", detail: "A place of its own in the rail, with these views.") { Switch(isOn: enabled) }
+                    OnboardingRow(
+                        icon: "sidebar-right", title: "Show in the sidebar", detail: "A place of its own in the rail, with these views."
+                    ) { Switch(isOn: enabled) }
                 }
                 if shown == .linear, LinearLinks.installed {
-                    OnboardingRow(icon: "link", title: "Open issues in the Linear app", detail: "Rather than the browser, here and in messages.") { Switch(isOn: $linearInApp) }
+                    OnboardingRow(
+                        icon: "link", title: "Open issues in the Linear app", detail: "Rather than the browser, here and in messages."
+                    ) { Switch(isOn: $linearInApp) }
                 }
             }
         } else {
@@ -174,19 +196,25 @@ struct IntegrationsPane: View {
 
     @ViewBuilder private var views: some View {
         let integration = shown
-        let rows: [(id: String, name: String, summary: String, mono: Bool)] = switch integration {
-        case .github: (workspace.integrations?.settings.github.views ?? []).map { ($0.id, $0.name, $0.query, true) }
-        case .linear: (workspace.integrations?.settings.linear.views ?? []).map { ($0.id, $0.name, Self.summary($0, teams: workspace.linearTeams), false) }
-        case .slack: []
-        }
+        let rows: [(id: String, name: String, summary: String, mono: Bool)] =
+            switch integration {
+            case .github: (workspace.integrations?.settings.github.views ?? []).map { ($0.id, $0.name, $0.query, true) }
+            case .linear:
+                (workspace.integrations?.settings.linear.views ?? []).map {
+                    ($0.id, $0.name, Self.summary($0, teams: workspace.linearTeams), false)
+                }
+            case .slack: []
+            }
         let ids = rows.map(\.id)
         VStack(spacing: 0) {
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                 if index > 0 { Divider().padding(.leading, 16) }
-                ViewRow(name: row.name, summary: row.summary, mono: row.mono,
-                        moveUp: index > 0 ? { move(ids, from: index, to: index - 1) } : nil,
-                        moveDown: index < ids.count - 1 ? { move(ids, from: index, to: index + 1) } : nil,
-                        delete: { Task { await workspace.deleteView(integration.rawValue, view: row.id) } }) {
+                ViewRow(
+                    name: row.name, summary: row.summary, mono: row.mono,
+                    moveUp: index > 0 ? { move(ids, from: index, to: index - 1) } : nil,
+                    moveDown: index < ids.count - 1 ? { move(ids, from: index, to: index + 1) } : nil,
+                    delete: { Task { await workspace.deleteView(integration.rawValue, view: row.id) } }
+                ) {
                     form(for: row.id)
                 }
             }
@@ -200,7 +228,9 @@ struct IntegrationsPane: View {
     @ViewBuilder private func form(for id: String?) -> some View {
         switch shown {
         case .github:
-            let view = workspace.integrations?.settings.github.views.first { $0.id == id } ?? GitHubView(name: "", query: "is:pr is:open author:@me archived:false")
+            let view =
+                workspace.integrations?.settings.github.views.first { $0.id == id }
+                ?? GitHubView(name: "", query: "is:pr is:open author:@me archived:false")
             GitHubViewForm(view: view) { edited in Task { await workspace.saveView("github", view: edited) } }
         case .linear:
             let view = workspace.integrations?.settings.linear.views.first { $0.id == id } ?? LinearView(name: "")
@@ -215,17 +245,23 @@ struct IntegrationsPane: View {
         Task { await workspace.orderViews(shown.rawValue, ids: order) }
     }
 
-    static let stateNames = ["triage": "Triage", "backlog": "Backlog", "unstarted": "To do", "started": "In progress", "completed": "Done", "canceled": "Canceled"]
+    static let stateNames = [
+        "triage": "Triage", "backlog": "Backlog", "unstarted": "To do", "started": "In progress", "completed": "Done",
+        "canceled": "Canceled",
+    ]
 
     /// "Assigned to me · U, T · PM review, Self QA, Working on +3": the states it shows by their own names, once Linear's
     /// teams are known.
     static func summary(_ view: LinearView, teams known: [LinearTeam]?) -> String {
         let who = ["me": "Assigned to me", "anyone": "Anyone's", "nobody": "Unassigned"][view.assignee] ?? view.assignee
         let teams = view.teams.isEmpty ? "Every team" : view.teams.joined(separator: ", ")
-        let names = !view.stateNames.isEmpty ? view.stateNames
+        let names =
+            !view.stateNames.isEmpty
+            ? view.stateNames
             : known.map { LinearViewForm.offered($0, teams: view.teams).filter { view.states.contains($0.type) }.map(\.name) }
-            ?? view.states.compactMap { stateNames[$0] }
-        let states = names.isEmpty ? "Every state" : (names.prefix(3) + (names.count > 3 ? ["+\(names.count - 3)"] : [])).joined(separator: ", ")
+                ?? view.states.compactMap { stateNames[$0] }
+        let states =
+            names.isEmpty ? "Every state" : (names.prefix(3) + (names.count > 3 ? ["+\(names.count - 3)"] : [])).joined(separator: ", ")
         return [who, teams, states].joined(separator: " · ")
     }
 }
@@ -246,20 +282,27 @@ private struct ViewRow<Form: View>: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(name).font(.system(size: 13, weight: .semibold))
-                Text(summary).font(mono ? .system(size: 11.5).monospaced() : .system(size: 12)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                Text(summary).font(mono ? .system(size: 11.5).monospaced() : .system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                    .truncationMode(.middle)
             }
             Spacer(minLength: 8)
             HStack(spacing: 2) {
-                Button { editing = true } label: { NucleoIcon("pen", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28) }
-                    .buttonStyle(Hovering(radius: 7)).tip("Edit")
-                    .popover(isPresented: $editing, arrowEdge: .trailing) { form().environment(\.dismissForm, { editing = false }) }
+                Button {
+                    editing = true
+                } label: {
+                    NucleoIcon("pen", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28)
+                }
+                .buttonStyle(Hovering(radius: 7)).tip("Edit")
+                .popover(isPresented: $editing, arrowEdge: .trailing) { form().environment(\.dismissForm, { editing = false }) }
                 Menu {
                     if let moveUp { Button("Move up", action: moveUp) }
                     if let moveDown { Button("Move down", action: moveDown) }
                     Divider()
                     Button("Delete", role: .destructive, action: delete)
-                } label: { NucleoIcon("dots", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28) }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                } label: {
+                    NucleoIcon("dots", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28)
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             }
             .opacity(hovered || editing ? 1 : 0)
         }
@@ -267,12 +310,14 @@ private struct ViewRow<Form: View>: View {
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture(count: 2) { editing = true }
-        .zeroContextMenu("view-\(name)") {[
-            [MenuItem("Edit", "pen") { editing = true }]
-                + (moveUp.map { [MenuItem("Move up", "arrow-up", action: $0)] } ?? [])
-                + (moveDown.map { [MenuItem("Move down", "chevron-down", action: $0)] } ?? []),
-            [MenuItem("Delete", "trash", action: delete)],
-        ]}
+        .zeroContextMenu("view-\(name)") {
+            [
+                [MenuItem("Edit", "pen") { editing = true }]
+                    + (moveUp.map { [MenuItem("Move up", "arrow-up", action: $0)] } ?? [])
+                    + (moveDown.map { [MenuItem("Move down", "chevron-down", action: $0)] } ?? []),
+                [MenuItem("Delete", "trash", action: delete)],
+            ]
+        }
     }
 }
 
@@ -281,7 +326,9 @@ private struct AddViewRow<Form: View>: View {
     @State private var adding = false
 
     var body: some View {
-        Button { adding = true } label: {
+        Button {
+            adding = true
+        } label: {
             NucleoLabel("Add a view", icon: "plus", size: 13).font(.system(size: 13)).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).frame(height: 40).contentShape(Rectangle())
         }
@@ -293,7 +340,10 @@ private struct AddViewRow<Form: View>: View {
 
 private struct DismissForm: EnvironmentKey { static let defaultValue: () -> Void = {} }
 extension EnvironmentValues {
-    var dismissForm: () -> Void { get { self[DismissForm.self] } set { self[DismissForm.self] = newValue } }
+    var dismissForm: () -> Void {
+        get { self[DismissForm.self] }
+        set { self[DismissForm.self] = newValue }
+    }
 }
 
 /// A form's frame: its fields with their labels, then Cancel and Save.
@@ -312,7 +362,9 @@ private struct FormSheet<Fields: View>: View {
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save") { save(); dismiss() }.keyboardShortcut(.defaultAction).disabled(!canSave)
+                Button("Save") {
+                    save(); dismiss()
+                }.keyboardShortcut(.defaultAction).disabled(!canSave)
             }
         }
         .textFieldStyle(.dialog)
@@ -341,15 +393,22 @@ private struct GitHubViewForm: View {
     private static let snippets = ["author:@me", "review-requested:@me", "org:", "repo:", "is:draft", "-is:draft", "label:"]
 
     var body: some View {
-        FormSheet(title: view.id.isEmpty ? "New view" : "Edit view", canSave: !name.trimmingCharacters(in: .whitespaces).isEmpty && !query.isEmpty,
-                  save: { save(GitHubView(id: view.id, name: name, query: query)) }) {
+        FormSheet(
+            title: view.id.isEmpty ? "New view" : "Edit view",
+            canSave: !name.trimmingCharacters(in: .whitespaces).isEmpty && !query.isEmpty,
+            save: { save(GitHubView(id: view.id, name: name, query: query)) }
+        ) {
             Field(label: "Name") { TextField("", text: $name, prompt: Text("My team's pull requests")) }
             Field(label: "Search", hint: "GitHub's search syntax, as on github.com.") {
                 TextField("", text: $query).font(.system(size: 12).monospaced())
-                FlowChips(items: Self.snippets) { snippet in query = (query.trimmingCharacters(in: .whitespaces) + " " + snippet).trimmingCharacters(in: .whitespaces) }
+                FlowChips(items: Self.snippets) { snippet in
+                    query = (query.trimmingCharacters(in: .whitespaces) + " " + snippet).trimmingCharacters(in: .whitespaces)
+                }
             }
         }
-        .onAppear { name = view.name; query = view.query }
+        .onAppear {
+            name = view.name; query = view.query
+        }
     }
 }
 
@@ -365,7 +424,10 @@ private struct LinearViewForm: View {
     @State private var start: TaskStart?
     private static let order = ["triage", "backlog", "unstarted", "started", "completed", "canceled"]
     /// Linear's state types as it groups them, in its order; a duplicate counts as canceled.
-    private static let groups = [("started", "In progress"), ("unstarted", "To do"), ("backlog", "Backlog"), ("triage", "Triage"), ("completed", "Done"), ("canceled", "Canceled")]
+    private static let groups = [
+        ("started", "In progress"), ("unstarted", "To do"), ("backlog", "Backlog"), ("triage", "Triage"), ("completed", "Done"),
+        ("canceled", "Canceled"),
+    ]
     private static func group(_ type: String) -> String { type == "duplicate" ? "canceled" : type }
 
     /// The teams' states (every team's when none is picked), each name once, in Linear's order of their types.
@@ -374,28 +436,40 @@ private struct LinearViewForm: View {
         let types = groups.map(\.0)
         let states = known.filter { keys.isEmpty || keys.contains($0.key) }.flatMap(\.states).filter { seen.insert($0.name).inserted }
         return states.enumerated().sorted { a, b in
-            let (x, y) = (types.firstIndex(of: group(a.element.type)) ?? types.count, types.firstIndex(of: group(b.element.type)) ?? types.count)
+            let (x, y) = (
+                types.firstIndex(of: group(a.element.type)) ?? types.count, types.firstIndex(of: group(b.element.type)) ?? types.count
+            )
             return x != y ? x < y : a.offset < b.offset
         }.map(\.element)
     }
 
     var body: some View {
-        FormSheet(title: view.id.isEmpty ? "New view" : "Edit view", canSave: !name.trimmingCharacters(in: .whitespaces).isEmpty, width: 540, save: {
-            save(LinearView(id: view.id, name: name, assignee: assignee, teams: keys, states: states, stateNames: stateNames, start: start))
-        }) {
+        FormSheet(
+            title: view.id.isEmpty ? "New view" : "Edit view", canSave: !name.trimmingCharacters(in: .whitespaces).isEmpty, width: 540,
+            save: {
+                save(
+                    LinearView(
+                        id: view.id, name: name, assignee: assignee, teams: keys, states: states, stateNames: stateNames, start: start))
+            }
+        ) {
             Field(label: "Name") { TextField("", text: $name, prompt: Text("My issues")) }
             Field(label: "Assigned to") {
-                Picker("", selection: $assignee) { Text("Me").tag("me"); Text("Anyone").tag("anyone"); Text("No one").tag("nobody") }
-                    .pickerStyle(.segmented).labelsHidden().fixedSize()
+                Picker("", selection: $assignee) {
+                    Text("Me").tag("me"); Text("Anyone").tag("anyone"); Text("No one").tag("nobody")
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
             }
             if let known = workspace.linearTeams {
                 Field(label: "Teams") {
                     WrappingStack(spacing: 6) {
                         Pill(selected: keys.isEmpty, action: { keys = [] }) { Text("Every team") }
                         ForEach(known) { team in
-                            Pill(selected: keys.contains(team.key), action: {
-                                keys = known.map(\.key).filter { $0 == team.key ? !keys.contains($0) : keys.contains($0) }
-                            }) {
+                            Pill(
+                                selected: keys.contains(team.key),
+                                action: {
+                                    keys = known.map(\.key).filter { $0 == team.key ? !keys.contains($0) : keys.contains($0) }
+                                }
+                            ) {
                                 HStack(spacing: 6) {
                                     Text(team.key).font(.system(size: 10.5, weight: .semibold).monospaced()).opacity(0.55)
                                     Text(team.name)
@@ -407,14 +481,23 @@ private struct LinearViewForm: View {
                 states(Self.offered(known, teams: keys))
             } else {
                 Field(label: "Teams", hint: "Team keys, separated by commas. Empty for every team.") {
-                    TextField("", text: Binding(get: { keys.joined(separator: ", ") }, set: { text in
-                        keys = text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).uppercased() }.filter { !$0.isEmpty }
-                    }), prompt: Text("U, T"))
+                    TextField(
+                        "",
+                        text: Binding(
+                            get: { keys.joined(separator: ", ") },
+                            set: { text in
+                                keys = text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).uppercased() }.filter {
+                                    !$0.isEmpty
+                                }
+                            }), prompt: Text("U, T"))
                 }
                 Field(label: "States", hint: "None picked shows every state.") {
                     WrappingStack(spacing: 6) {
                         ForEach(Self.order, id: \.self) { state in
-                            Pill(selected: states.contains(state), action: { states = Self.order.filter { $0 == state ? !states.contains(state) : states.contains($0) } }) {
+                            Pill(
+                                selected: states.contains(state),
+                                action: { states = Self.order.filter { $0 == state ? !states.contains(state) : states.contains($0) } }
+                            ) {
                                 Text(IntegrationsPane.stateNames[state] ?? state)
                             }
                         }
@@ -423,7 +506,10 @@ private struct LinearViewForm: View {
             }
             StartFields(start: $start, noun: "issue")
         }
-        .onAppear { name = view.name; assignee = view.assignee; keys = view.teams; states = view.states; stateNames = view.stateNames; start = view.start }
+        .onAppear {
+            name = view.name; assignee = view.assignee; keys = view.teams; states = view.states; stateNames = view.stateNames;
+            start = view.start
+        }
         .task { await workspace.loadLinearTeams() }
     }
 
@@ -443,17 +529,25 @@ private struct LinearViewForm: View {
                     let members = offered.filter { Self.group($0.type) == kind }.map(\.name)
                     let all = members.allSatisfy(picked.contains)
                     HStack(alignment: .top, spacing: 12) {
-                        Button { pick(all ? picked.filter { !members.contains($0) } : picked + members) } label: {
-                            Text(title).font(.system(size: 12)).foregroundStyle(.secondary).frame(width: 76, height: 26, alignment: .leading).contentShape(Rectangle())
+                        Button {
+                            pick(all ? picked.filter { !members.contains($0) } : picked + members)
+                        } label: {
+                            Text(title).font(.system(size: 12)).foregroundStyle(.secondary).frame(
+                                width: 76, height: 26, alignment: .leading
+                            ).contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain).tip(all ? "Leave out every \(title.lowercased()) state" : "Pick every \(title.lowercased()) state")
+                        .buttonStyle(.plain).tip(
+                            all ? "Leave out every \(title.lowercased()) state" : "Pick every \(title.lowercased()) state")
                         WrappingStack(spacing: 6) {
                             ForEach(offered.filter { Self.group($0.type) == kind }, id: \.name) { state in
                                 let on = picked.contains(state.name)
                                 Pill(selected: on, action: { pick(on ? picked.filter { $0 != state.name } : picked + [state.name]) }) {
                                     HStack(spacing: 6) {
-                                        StateIcon(kind: state.type, color: Color(hex: state.color),
-                                                  fill: started.firstIndex(of: state.name).map { Double(started.count - $0) / Double(started.count + 1) } ?? 0.5)
+                                        StateIcon(
+                                            kind: state.type, color: Color(hex: state.color),
+                                            fill: started.firstIndex(of: state.name).map {
+                                                Double(started.count - $0) / Double(started.count + 1)
+                                            } ?? 0.5)
                                         Text(state.name)
                                     }
                                 }
@@ -475,18 +569,27 @@ private struct StartFields: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Toggle(isOn: Binding(get: { start != nil }, set: { on in
-                start = on ? TaskStart(cwd: "", prompt: "Work on {key}: {title} ({url}).", provider: "claude") : nil
-            })) {
+            Toggle(
+                isOn: Binding(
+                    get: { start != nil },
+                    set: { on in
+                        start = on ? TaskStart(cwd: "", prompt: "Work on {key}: {title} ({url}).", provider: "claude") : nil
+                    })
+            ) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Start a task from each \(noun)").font(.system(size: 12, weight: .medium))
-                    Text("One task per \(noun), with a scratchpad of its own for its state.").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text("One task per \(noun), with a scratchpad of its own for its state.").font(.system(size: 11)).foregroundStyle(
+                        .secondary)
                 }
             }
             .toggleStyle(.switch).controlSize(.small)
             if let current = start {
-                let field = { (key: WritableKeyPath<TaskStart, String>) in Binding(get: { current[keyPath: key] }, set: { start?[keyPath: key] = $0 }) }
-                let optional = { (key: WritableKeyPath<TaskStart, String?>) in Binding(get: { current[keyPath: key] ?? "" }, set: { start?[keyPath: key] = $0.isEmpty ? nil : $0 }) }
+                let field = { (key: WritableKeyPath<TaskStart, String>) in
+                    Binding(get: { current[keyPath: key] }, set: { start?[keyPath: key] = $0 })
+                }
+                let optional = { (key: WritableKeyPath<TaskStart, String?>) in
+                    Binding(get: { current[keyPath: key] ?? "" }, set: { start?[keyPath: key] = $0.isEmpty ? nil : $0 })
+                }
                 Field(label: "Folder") {
                     HStack {
                         TextField("", text: field(\.cwd), prompt: Text("~/Documents/projects/app"))
@@ -500,14 +603,22 @@ private struct StartFields: View {
                 }
                 Field(label: "Agent") {
                     HStack(spacing: 8) {
-                        Picker("", selection: optional(\.provider)) { Text("Claude").tag("claude"); Text("Codex").tag("codex"); Text("OpenCode").tag("opencode") }
-                            .pickerStyle(.segmented).labelsHidden().fixedSize()
+                        Picker("", selection: optional(\.provider)) {
+                            Text("Claude").tag("claude"); Text("Codex").tag("codex"); Text("OpenCode").tag("opencode")
+                        }
+                        .pickerStyle(.segmented).labelsHidden().fixedSize()
                         TextField("", text: optional(\.model), prompt: Text("Model (its default)")).frame(width: 150)
-                        Picker("", selection: optional(\.effort)) { ForEach(Self.efforts, id: \.self) { Text($0.isEmpty ? "Effort" : $0.capitalized).tag($0) } }
-                            .labelsHidden().fixedSize()
+                        Picker("", selection: optional(\.effort)) {
+                            ForEach(Self.efforts, id: \.self) { Text($0.isEmpty ? "Effort" : $0.capitalized).tag($0) }
+                        }
+                        .labelsHidden().fixedSize()
                     }
                 }
-                Field(label: "Prompt", hint: "{key}, {title} and {url} are filled in. The task is told where its state pad is, unless you place {state} yourself.") {
+                Field(
+                    label: "Prompt",
+                    hint:
+                        "{key}, {title} and {url} are filled in. The task is told where its state pad is, unless you place {state} yourself."
+                ) {
                     TextEditor(text: field(\.prompt))
                         .font(.system(size: 12).monospaced()).frame(height: 64).scrollContentBackground(.hidden)
                         .padding(4).background(Theme.composer, in: RoundedRectangle(cornerRadius: 6))
@@ -554,7 +665,9 @@ struct WrappingStack: Layout {
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         for row in arrange(subviews, width: bounds.width) {
             let shift = trailing ? bounds.width - row.width : 0
-            for (index, x) in row.items { subviews[index].place(at: CGPoint(x: bounds.minX + shift + x, y: bounds.minY + row.y), proposal: .unspecified) }
+            for (index, x) in row.items {
+                subviews[index].place(at: CGPoint(x: bounds.minX + shift + x, y: bounds.minY + row.y), proposal: .unspecified)
+            }
         }
     }
 
@@ -591,9 +704,13 @@ private struct FlowChips: View {
     var body: some View {
         HStack(spacing: 6) {
             ForEach(items, id: \.self) { item in
-                Button { add(item) } label: { Text(item).font(.system(size: 11).monospaced()).padding(.horizontal, 7).frame(height: 22) }
-                    .buttonStyle(Hovering(radius: 6, fill: Theme.chip, hover: Theme.chip))
-                    .background(Theme.composer, in: RoundedRectangle(cornerRadius: 6))
+                Button {
+                    add(item)
+                } label: {
+                    Text(item).font(.system(size: 11).monospaced()).padding(.horizontal, 7).frame(height: 22)
+                }
+                .buttonStyle(Hovering(radius: 6, fill: Theme.chip, hover: Theme.chip))
+                .background(Theme.composer, in: RoundedRectangle(cornerRadius: 6))
             }
         }
     }
@@ -619,9 +736,18 @@ struct IntegrationPage: View {
             }
             Rectangle().fill(Theme.stroke).frame(width: 1)
             Group {
-                if integration.account(in: workspace.integrations) == nil, workspace.integrations != nil { ConnectCard(integration: integration, workspace: workspace) }
-                else if let view { ItemsTable(workspace: workspace, integration: integration, view: view.id, name: view.name, actions: actions(view.id)).id(view.id) }
-                else { ContentUnavailableView { NucleoLabel("No views", icon: "sliders", size: 20) } description: { Text("Add one in Integrations.") } }
+                if integration.account(in: workspace.integrations) == nil, workspace.integrations != nil {
+                    ConnectCard(integration: integration, workspace: workspace)
+                } else if let view {
+                    ItemsTable(workspace: workspace, integration: integration, view: view.id, name: view.name, actions: actions(view.id))
+                        .id(view.id)
+                } else {
+                    ContentUnavailableView {
+                        NucleoLabel("No views", icon: "sliders", size: 20)
+                    } description: {
+                        Text("Add one in Integrations.")
+                    }
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.card)
         }
@@ -630,15 +756,23 @@ struct IntegrationPage: View {
 
     /// What a view's rows can do with their tasks: open one, or start one when the view says how.
     private func actions(_ view: String) -> TaskActions {
-        let starts = switch integration {
-        case .linear: workspace.integrations?.settings.linear.views.first { $0.id == view }?.start != nil
-        case .github: workspace.integrations?.settings.github.views.first { $0.id == view }?.start != nil
-        case .slack: false
-        }
+        let starts =
+            switch integration {
+            case .linear: workspace.integrations?.settings.linear.views.first { $0.id == view }?.start != nil
+            case .github: workspace.integrations?.settings.github.views.first { $0.id == view }?.start != nil
+            case .slack: false
+            }
         return TaskActions(
             state: { session in workspace.board.first { $0.session == session }?.state },
             open: openTask,
-            start: starts ? { item in Task { if let started = await workspace.startTask(integration.rawValue, view: view, item: item) { openTask(started.session) } } } : nil)
+            start: starts
+                ? { item in
+                    Task {
+                        if let started = await workspace.startTask(integration.rawValue, view: view, item: item) {
+                            openTask(started.session)
+                        }
+                    }
+                } : nil)
     }
 }
 
@@ -657,7 +791,9 @@ private struct TaskControl: View {
 
     var body: some View {
         if let task = row.task {
-            Button { actions.open(task) } label: {
+            Button {
+                actions.open(task)
+            } label: {
                 Group {
                     if let state = actions.state(task) { StateLabel(state: state) } else { Text("Task") }
                 }
@@ -667,7 +803,9 @@ private struct TaskControl: View {
             }
             .buttonStyle(.plain).tip("Open this \(row.key.hasPrefix("#") ? "pull request" : "issue")'s task")
         } else if let start = actions.start {
-            Button { start(row) } label: {
+            Button {
+                start(row)
+            } label: {
                 NucleoLabel("Start", icon: "paper-plane", size: 12).font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.onKnob).padding(.horizontal, 10).frame(height: 24)
                     .background(Theme.knob, in: Capsule())
@@ -695,8 +833,11 @@ private struct ItemsTable: View {
                     if workspace.refreshing.contains(key) {
                         ProgressView().controlSize(.small).frame(width: 28, height: 28).tip("Fetching again")
                     } else {
-                        Button { Task { await workspace.refreshView(integration.rawValue, view: view) } } label: {
-                            NucleoIcon("arrow-rotate-clockwise", fill: "glyph", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28)
+                        Button {
+                            Task { await workspace.refreshView(integration.rawValue, view: view) }
+                        } label: {
+                            NucleoIcon("arrow-rotate-clockwise", fill: "glyph", size: 14).foregroundStyle(.secondary).frame(
+                                width: 28, height: 28)
                         }
                         .buttonStyle(Hovering(radius: 7)).tip("Refresh")
                     }
@@ -708,17 +849,26 @@ private struct ItemsTable: View {
                     LinearList(rows: rows, view: view, actions: actions)
                 } else if rows == nil && workspace.itemErrors[key] == nil || rows?.isEmpty == false {
                     ArticlePanel {
-                        line(head: true, key: Text("#"), title: Text(integration == .github ? "Pull request" : "Issue"), place: Text(integration == .github ? "Repository" : "Team"),
-                             state: Text("State"), extra: Text(integration == .github ? "Checks" : "Priority"), person: Text(integration == .github ? "Author" : "Assignee"))
-                            .padding(.vertical, -3)
+                        line(
+                            head: true, key: Text("#"), title: Text(integration == .github ? "Pull request" : "Issue"),
+                            place: Text(integration == .github ? "Repository" : "Team"),
+                            state: Text("State"), extra: Text(integration == .github ? "Checks" : "Priority"),
+                            person: Text(integration == .github ? "Author" : "Assignee")
+                        )
+                        .padding(.vertical, -3)
                     } content: {
                         VStack(spacing: 0) {
                             if rows == nil { skeleton }
                             ForEach(Array((rows ?? []).enumerated()), id: \.element.id) { index, row in
                                 if index > 0 { Rectangle().fill(Theme.stroke).frame(height: 1) }
-                                Button { if let url = LinearLinks.url(row.url) { NSWorkspace.shared.open(url) } } label: {
-                                    line(head: false, key: Text(row.key).foregroundStyle(.secondary), title: Text(row.title), place: Text(row.place).foregroundStyle(.secondary),
-                                         state: Text(row.state), extra: extra(row), person: Text(row.person ?? "").foregroundStyle(.secondary))
+                                Button {
+                                    if let url = LinearLinks.url(row.url) { NSWorkspace.shared.open(url) }
+                                } label: {
+                                    line(
+                                        head: false, key: Text(row.key).foregroundStyle(.secondary), title: Text(row.title),
+                                        place: Text(row.place).foregroundStyle(.secondary),
+                                        state: Text(row.state), extra: extra(row),
+                                        person: Text(row.person ?? "").foregroundStyle(.secondary))
                                 }
                                 .buttonStyle(Hovering(radius: 0, hover: Theme.rowHover))
                             }
@@ -741,7 +891,9 @@ private struct ItemsTable: View {
         }
     }
 
-    private func line(head: Bool, key: some View, title: some View, place: some View, state: some View, extra: some View, person: some View) -> some View {
+    private func line(head: Bool, key: some View, title: some View, place: some View, state: some View, extra: some View, person: some View)
+        -> some View
+    {
         HStack(alignment: .firstTextBaseline, spacing: 16) {
             key.frame(width: 80, alignment: .leading)
             title.frame(maxWidth: .infinity, alignment: .leading)
@@ -761,8 +913,9 @@ private struct ItemsTable: View {
     @ViewBuilder private var skeleton: some View {
         ForEach([0.62, 0.48, 0.71, 0.55, 0.66, 0.43].indices, id: \.self) { index in
             if index > 0 { Rectangle().fill(Theme.stroke).frame(height: 1) }
-            line(head: false, key: Bar(width: 48), title: Bar(fraction: [0.62, 0.48, 0.71, 0.55, 0.66, 0.43][index]), place: Bar(width: 100),
-                 state: Bar(width: 56), extra: Bar(width: 60), person: Bar(width: 70))
+            line(
+                head: false, key: Bar(width: 48), title: Bar(fraction: [0.62, 0.48, 0.71, 0.55, 0.66, 0.43][index]), place: Bar(width: 100),
+                state: Bar(width: 56), extra: Bar(width: 60), person: Bar(width: 70))
         }
     }
 
@@ -776,10 +929,12 @@ private struct ItemsTable: View {
                 case .some: NucleoIcon("hourglass", fill: "glyph", size: 13).foregroundStyle(.orange)
                 case nil: EmptyView()
                 }
-                Text(row.review.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "").foregroundStyle(row.review == "changes requested" ? Color.orange : .secondary)
+                Text(row.review.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "").foregroundStyle(
+                    row.review == "changes requested" ? Color.orange : .secondary)
             }
         } else {
-            Text(["No priority", "Urgent", "High", "Medium", "Low"][min(row.priority ?? 0, 4)]).foregroundStyle(row.priority == 1 ? Color.red : .secondary)
+            Text(["No priority", "Urgent", "High", "Medium", "Low"][min(row.priority ?? 0, 4)]).foregroundStyle(
+                row.priority == 1 ? Color.red : .secondary)
         }
     }
 }
@@ -807,7 +962,11 @@ private struct LinearList: View {
     /// zerod sends issues already grouped, in Linear's order.
     private var groups: [Group] {
         rows.reduce(into: []) { groups, row in
-            if groups.last?.state == row.state { groups[groups.count - 1].rows.append(row) } else { groups.append(Group(state: row.state, rows: [row])) }
+            if groups.last?.state == row.state {
+                groups[groups.count - 1].rows.append(row)
+            } else {
+                groups.append(Group(state: row.state, rows: [row]))
+            }
         }
     }
 
@@ -821,9 +980,12 @@ private struct LinearList: View {
                 let first = group.rows[0]
                 let fill = started.firstIndex(of: group.state).map { Double(started.count - $0) / Double(started.count + 1) } ?? 0.5
                 let icon = StateIcon(kind: first.kind, color: first.color.map(Color.init(hex:)) ?? .secondary, fill: fill)
-                Button { toggle(group.state, in: folded) } label: {
+                Button {
+                    toggle(group.state, in: folded)
+                } label: {
                     HStack(spacing: 9) {
-                        NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(folded.contains(group.state) ? -90 : 0))
+                        NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(
+                            .degrees(folded.contains(group.state) ? -90 : 0))
                         icon
                         Text(group.state).font(.system(size: 13, weight: .medium))
                         Text("\(group.rows.count)").font(.system(size: 12.5)).foregroundStyle(.secondary).monospacedDigit()
@@ -872,10 +1034,16 @@ private struct IssueRow: View {
         .onHover { hovered = $0 }
         .onTapGesture { if let url = LinearLinks.url(row.url) { NSWorkspace.shared.open(url) } }
         .zeroContextMenu("issue-\(row.key)") {
-            let task: [MenuItem] = if let task = row.task { [MenuItem("Open task", "arrow-right") { actions.open(task) }] }
-                else if let start = actions.start { [MenuItem("Start task", "compose") { start(row) }] } else { [] }
-            return [task + [MenuItem("Open in Linear", "arrow-up-right") { if let url = LinearLinks.url(row.url) { NSWorkspace.shared.open(url) } },
-                            MenuItem("Copy link", "link") { PadLinks.copy(row.url, title: "\(row.key) \(row.title)") }]]
+            let task: [MenuItem] =
+                if let task = row.task { [MenuItem("Open task", "arrow-right") { actions.open(task) }] } else if let start = actions.start {
+                    [MenuItem("Start task", "compose") { start(row) }]
+                } else { [] }
+            return [
+                task + [
+                    MenuItem("Open in Linear", "arrow-up-right") { if let url = LinearLinks.url(row.url) { NSWorkspace.shared.open(url) } },
+                    MenuItem("Copy link", "link") { PadLinks.copy(row.url, title: "\(row.key) \(row.title)") },
+                ]
+            ]
         }
         .tip(row.title)
     }
@@ -906,7 +1074,8 @@ private struct StateIcon: View {
                 Circle().strokeBorder(color, lineWidth: 1.4)
                 Pie(fraction: fill).fill(color).padding(3)
             case "completed": Circle().fill(color); Text("✓").font(.system(size: 8, weight: .heavy)).foregroundStyle(.white)
-            case "canceled", "duplicate": Circle().fill(Color.secondary); Text("✕").font(.system(size: 7, weight: .heavy)).foregroundStyle(.white)
+            case "canceled", "duplicate":
+                Circle().fill(Color.secondary); Text("✕").font(.system(size: 7, weight: .heavy)).foregroundStyle(.white)
             case "triage": Circle().fill(color); Text("⇄").font(.system(size: 8, weight: .bold)).foregroundStyle(.white)
             default: Circle().strokeBorder(Color.secondary, lineWidth: 1.4)
             }
@@ -920,7 +1089,9 @@ private struct StateIcon: View {
             var path = Path()
             let centre = CGPoint(x: rect.midX, y: rect.midY)
             path.move(to: centre)
-            path.addArc(center: centre, radius: rect.width / 2, startAngle: .degrees(-90), endAngle: .degrees(-90 + 360 * fraction), clockwise: false)
+            path.addArc(
+                center: centre, radius: rect.width / 2, startAngle: .degrees(-90), endAngle: .degrees(-90 + 360 * fraction),
+                clockwise: false)
             path.closeSubpath()
             return path
         }
@@ -946,7 +1117,8 @@ private struct PriorityIcon: View {
                 }
                 .foregroundStyle(.secondary)
             default:
-                HStack(spacing: 1.5) { ForEach(0..<3) { _ in RoundedRectangle(cornerRadius: 1).frame(width: 3, height: 1.5) } }.foregroundStyle(.tertiary)
+                HStack(spacing: 1.5) { ForEach(0..<3) { _ in RoundedRectangle(cornerRadius: 1).frame(width: 3, height: 1.5) } }
+                    .foregroundStyle(.tertiary)
             }
         }
         .frame(width: 16, height: 14)
@@ -959,8 +1131,11 @@ private struct TagChip: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            if let emoji = tag.icon.flatMap(Self.emoji) { Text(emoji).font(.system(size: 11)) }
-            else { Circle().fill(tag.color.map(Color.init(hex:)) ?? .secondary).frame(width: 8, height: 8) }
+            if let emoji = tag.icon.flatMap(Self.emoji) {
+                Text(emoji).font(.system(size: 11))
+            } else {
+                Circle().fill(tag.color.map(Color.init(hex:)) ?? .secondary).frame(width: 8, height: 8)
+            }
             Text(tag.name).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
         }
         .padding(.horizontal, 8).frame(height: 24).frame(maxWidth: 190)
@@ -969,8 +1144,10 @@ private struct TagChip: View {
     }
 
     /// Shortcodes whose emoji's Unicode name is something else.
-    private static let aliases = ["moneybag": "💰", "bee": "🐝", "rolled_up_newspaper": "🗞️", "alien": "👽", "us": "🇺🇸", "tv": "📺", "up": "🆙",
-                                  "art": "🎨", "arrow_upper_right": "↗️", "female-artist": "👩‍🎨", "flag-cz": "🇨🇿", "+1": "👍", "rocket": "🚀"]
+    private static let aliases = [
+        "moneybag": "💰", "bee": "🐝", "rolled_up_newspaper": "🗞️", "alien": "👽", "us": "🇺🇸", "tv": "📺", "up": "🆙",
+        "art": "🎨", "arrow_upper_right": "↗️", "female-artist": "👩‍🎨", "flag-cz": "🇨🇿", "+1": "👍", "rocket": "🚀",
+    ]
 
     /// ":fire:" as 🔥, by its Unicode name; nil for Linear's own icons ("Server") and custom emoji.
     static func emoji(_ code: String) -> String? {
@@ -979,7 +1156,9 @@ private struct TagChip: View {
         if let alias = aliases[name] { return alias }
         let spoken = name.replacingOccurrences(of: "_", with: " ").uppercased()
         for candidate in [spoken, spoken + " SIGN", spoken + " FACE"] {
-            if let emoji = "\\N{\(candidate)}".applyingTransform(StringTransform("Name-Any"), reverse: false), !emoji.hasPrefix("\\") { return emoji }
+            if let emoji = "\\N{\(candidate)}".applyingTransform(StringTransform("Name-Any"), reverse: false), !emoji.hasPrefix("\\") {
+                return emoji
+            }
         }
         return nil
     }
@@ -1029,19 +1208,27 @@ struct ConnectCard: View {
                 // Slack's sign-in needs a secret Zero can't carry: instead each workspace gets Zero's app from its
                 // manifest, and the person pastes the user token Slack shows once it's installed.
                 Button("Create Zero's Slack app") { NSWorkspace.shared.open(Slack.createAppURL) }.buttonStyle(Prominent())
-                Text("Slack opens with the app filled in: Create, then Install to Workspace, then copy the User OAuth Token it shows and paste it here. Connected before agents could follow Slack? Add the scopes from the manifest to your app, reinstall it, and paste the new token.")
-                    .font(.system(size: 11)).foregroundStyle(.tertiary).multilineTextAlignment(.center).frame(maxWidth: 380).padding(.top, 12).padding(.bottom, 14)
+                Text(
+                    "Slack opens with the app filled in: Create, then Install to Workspace, then copy the User OAuth Token it shows and paste it here. Connected before agents could follow Slack? Add the scopes from the manifest to your app, reinstall it, and paste the new token."
+                )
+                .font(.system(size: 11)).foregroundStyle(.tertiary).multilineTextAlignment(.center).frame(maxWidth: 380).padding(.top, 12)
+                .padding(.bottom, 14)
                 HStack(spacing: 8) {
                     SecureField("xoxp-…", text: $token).textFieldStyle(.dialog).font(.system(size: 12).monospaced()).frame(width: 260)
                         .onSubmit(connectSlack)
-                    Button(waiting ? "Connecting…" : "Connect") { connectSlack() }.disabled(waiting || token.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button(waiting ? "Connecting…" : "Connect") { connectSlack() }.disabled(
+                        waiting || token.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
                 if let error { Text(error).font(.system(size: 12)).foregroundStyle(.red).padding(.top, 10) }
             case .github:
                 HStack(spacing: 8) {
                     Text("gh auth login").font(.system(size: 12.5).monospaced()).textSelection(.enabled)
-                    Button { copy() } label: { NucleoIcon(copied ? "check" : "copy", size: 13).foregroundStyle(.secondary).frame(width: 24, height: 24) }
-                        .buttonStyle(Hovering(radius: 6)).tip("Copy")
+                    Button {
+                        copy()
+                    } label: {
+                        NucleoIcon(copied ? "check" : "copy", size: 13).foregroundStyle(.secondary).frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(Hovering(radius: 6)).tip("Copy")
                 }
                 .padding(.leading, 12).padding(.trailing, 4).frame(height: 34)
                 .background(Theme.composer, in: RoundedRectangle(cornerRadius: 9))
@@ -1060,7 +1247,8 @@ struct ConnectCard: View {
         switch integration {
         case .linear: "See your issues in Zero, in views you choose: yours, a team's, or any states you like."
         case .github: "See your pull requests and the reviews waiting on you, in views you choose, such as one organisation's repositories."
-        case .slack: "Channels and threads named in messages open in Slack itself, and agents can follow a thread or a channel to hear its replies. Zero reads channels, messages and names; it posts nothing."
+        case .slack:
+            "Channels and threads named in messages open in Slack itself, and agents can follow a thread or a channel to hear its replies. Zero reads channels, messages and names; it posts nothing."
         }
     }
 
@@ -1089,14 +1277,18 @@ struct ConnectCard: View {
 
     private func check() {
         waiting = true
-        Task { await workspace.loadIntegrations(); waiting = false }
+        Task {
+            await workspace.loadIntegrations(); waiting = false
+        }
     }
 
     private func copy() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString("gh auth login", forType: .string)
         copied = true
-        Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
+        Task {
+            try? await Task.sleep(for: .seconds(1.5)); copied = false
+        }
     }
 }
 
@@ -1151,8 +1343,10 @@ struct BalancedText: View {
     /// Narrows from `maxWidth` while the text still fits in as many lines.
     private var width: CGFloat {
         let lines = { (width: CGFloat) -> Int in
-            let height = (text as NSString).boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin],
-                                                        attributes: [.font: font]).height
+            let height = (text as NSString).boundingRect(
+                with: NSSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin],
+                attributes: [.font: font]
+            ).height
             return Int((height / (font.ascender - font.descender + font.leading)).rounded())
         }
         let target = lines(maxWidth)

@@ -33,7 +33,8 @@ import Observation
                     setup.stop()
                     self.setup = nil
                     let whose = await Self.account(of: token)
-                    var signin = ZerodLink.SignIn(cli: .claude, kind: .token, label: whose.email ?? replacing?.label ?? (label.isEmpty ? "Claude account" : label))
+                    var signin = ZerodLink.SignIn(
+                        cli: .claude, kind: .token, label: whose.email ?? replacing?.label ?? (label.isEmpty ? "Claude account" : label))
                     if let replacing { signin.id = replacing.id }
                     signin.plan = whose.plan ?? replacing?.plan
                     let error = await workspace.addSignIn(signin, secret: token)

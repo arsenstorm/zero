@@ -22,24 +22,26 @@ struct InboxView: View {
     private var pinsBottom: Bool { controller.agentFilter != nil }
     /// Each view starts from a fresh scroll position at its end: reusing the last view's carried its offset into
     /// the next, which showed it low for a moment before it settled.
-    private var viewKey: String { controller.workspacesOpen ? "+workspaces" : controller.newAgentOpen ? "+new" : (controller.agentFilter ?? "inbox") }
+    private var viewKey: String {
+        controller.workspacesOpen ? "+workspaces" : controller.newAgentOpen ? "+new" : (controller.agentFilter ?? "inbox")
+    }
 
     var body: some View {
         GeometryReader { geo in
             ScrollViewReader { proxy in
                 keptAtEnd(ScrollView(.vertical, showsIndicators: false) { cardStack(height: geo.size.height) })
-                .onChange(of: controller.cards.map(\.id)) { _, _ in cardsChanged(proxy) }
-                // Content dissolves into the edges instead of being sliced by them.
-                .softEdges(top: 40, bottom: 40)
-                .onAppear { center(proxy) }
-                .onChange(of: viewKey) { _, _ in
-                    position = ScrollPosition(edge: pinsBottom ? .bottom : .top)
-                    center(proxy)
-                }
-                .onChange(of: controller.scrollRequest) { scrollRequested(proxy) }
-                .onChange(of: controller.selected.flatMap { controller.store.ask($0)?.state }) { _, state in
-                    if let state, state.isFinal, let id = controller.selected { controller.scheduleAdvance(after: id) }
-                }
+                    .onChange(of: controller.cards.map(\.id)) { _, _ in cardsChanged(proxy) }
+                    // Content dissolves into the edges instead of being sliced by them.
+                    .softEdges(top: 40, bottom: 40)
+                    .onAppear { center(proxy) }
+                    .onChange(of: viewKey) { _, _ in
+                        position = ScrollPosition(edge: pinsBottom ? .bottom : .top)
+                        center(proxy)
+                    }
+                    .onChange(of: controller.scrollRequest) { scrollRequested(proxy) }
+                    .onChange(of: controller.selected.flatMap { controller.store.ask($0)?.state }) { _, state in
+                        if let state, state.isFinal, let id = controller.selected { controller.scheduleAdvance(after: id) }
+                    }
             }
         }
         .frame(width: 380)
@@ -73,7 +75,9 @@ struct InboxView: View {
         // it, so the eye never has to find it.
         // A conversation ends with its composer centred on the bar, where the new-agent composer and the
         // empty inbox sit; the 10 pt is the surface's inset around the composer.
-        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named("stack")).minY } action: { top in
+        .onGeometryChange(for: CGFloat.self) {
+            $0.frame(in: .named("stack")).minY
+        } action: { top in
             if !controller.holdTop { heldTop = top }
         }
         .padding(.bottom, pinsBottom ? max(0, bar / 2 - controller.composerHeight / 2 - 10) : 0)
@@ -86,15 +90,17 @@ struct InboxView: View {
         .padding(.vertical, max(0, (height - bar) / 2))
         // Outermost on purpose: the stack and its surface grow together when a card joins.
         // A view switch is excluded: that is a cut.
-        .animation(reduceMotion || controller.switching ? nil : .timingCurve(0.32, 0.72, 0, 1, duration: 0.22),
-                   value: controller.cards.map { "\($0.id)/\($0.state.rawValue)" })
+        .animation(
+            reduceMotion || controller.switching ? nil : .timingCurve(0.32, 0.72, 0, 1, duration: 0.22),
+            value: controller.cards.map { "\($0.id)/\($0.state.rawValue)" })
     }
 
     @ViewBuilder private var askCards: some View {
         ForEach(controller.cards) { ask in
             CardView(ask: ask, controller: controller, focus: $focus)
                 .id(ask.id)
-                .transition(.asymmetric(insertion: .identity, removal: .opacity)) // the fade comes from the stack's animation, which a view switch turns off
+                // The fade comes from the stack's animation, which a view switch turns off.
+                .transition(.asymmetric(insertion: .identity, removal: .opacity))
         }
         if controller.cards.isEmpty { QuietCard(controller: controller) }
     }
@@ -107,14 +113,18 @@ struct InboxView: View {
             .defaultScrollAnchor(pinsBottom ? .bottom : nil)
             .defaultScrollAnchor(pinsBottom && !controller.holdTop ? .bottom : nil, for: .sizeChanges)
             // A panel resize (another screen, say) drops the offset to the top; the conversation goes back to its end.
-            .onScrollGeometryChange(for: CGFloat.self) { $0.containerSize.height } action: { _, _ in
+            .onScrollGeometryChange(for: CGFloat.self) {
+                $0.containerSize.height
+            } action: { _, _ in
                 if pinsBottom { position.scrollTo(edge: .bottom) }
             }
             .onChange(of: controller.barHeight) { _, _ in if pinsBottom { position.scrollTo(edge: .bottom) } }
             // Content that settles its height after the switch (a card measuring itself, text laying out) would
             // otherwise leave the conversation short of its end until something else redrew it: pinned again
             // whenever its height changes, so the composer stays on the bar's bottom line throughout.
-            .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, _ in
+            .onScrollGeometryChange(for: CGFloat.self) {
+                $0.contentSize.height
+            } action: { _, _ in
                 if pinsBottom && !controller.holdTop { position.scrollTo(edge: .bottom) }
             }
     }
@@ -164,7 +174,9 @@ private struct WorkspacesCard: View {
             Text("Workspaces").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                 .padding(.horizontal, 10).padding(.top, 4).padding(.bottom, 4)
             ForEach(workspace.workspaces, id: \.id) { space in
-                Button { workspace.current = space.id } label: {
+                Button {
+                    workspace.current = space.id
+                } label: {
                     HStack(spacing: 10) {
                         WorkspaceGlyph(glyph: space.glyph, size: 15).foregroundStyle(.secondary).frame(width: 18)
                         Text(space.name).font(.system(size: 13, weight: .medium)).lineLimit(1)

@@ -12,19 +12,19 @@ struct ZeroPhone: App {
     var body: some Scene {
         WindowGroup {
             Root(model: model)
-            // Back in front: connected again if the connection dropped while away.
-            .onChange(of: phase) { if phase == .active { Task { await model.wake() } } }
-            // Dropped: tried again while the app is in front, at once (the Mac's app restarting is back in a moment),
-            // then waiting longer each time it doesn't connect, up to four seconds.
-            .task(id: model.status) {
-                guard case .offline = model.status, phase == .active else { return }
-                try? await Task.sleep(for: .seconds(min(4, 0.5 * pow(2, Double(model.retries)))))
-                model.retries += 1
-                model.connect()
-            }
-            .onAppear { AppDelegate.model = model }
-            // A pairing link, from the Camera or anywhere: paired with that Mac (again, if it's a new code).
-            .onOpenURL { url in if url.host == "pair" { model.unpair(); _ = model.pair(url.absoluteString) } }
+                // Back in front: connected again if the connection dropped while away.
+                .onChange(of: phase) { if phase == .active { Task { await model.wake() } } }
+                // Dropped: tried again while the app is in front, at once (the Mac's app restarting is back in a moment),
+                // then waiting longer each time it doesn't connect, up to four seconds.
+                .task(id: model.status) {
+                    guard case .offline = model.status, phase == .active else { return }
+                    try? await Task.sleep(for: .seconds(min(4, 0.5 * pow(2, Double(model.retries)))))
+                    model.retries += 1
+                    model.connect()
+                }
+                .onAppear { AppDelegate.model = model }
+                // A pairing link, from the Camera or anywhere: paired with that Mac (again, if it's a new code).
+                .onOpenURL { url in if url.host == "pair" { model.unpair(); _ = model.pair(url.absoluteString) } }
         }
     }
 }
@@ -45,7 +45,10 @@ struct Root: View {
             case .pair: PairView(model: model).transition(.opacity)
             case .splash:
                 Splash(model: model).zIndex(1)
-                    .transition(reduceMotion ? .opacity : .asymmetric(insertion: .opacity, removal: .modifier(active: Away(on: true), identity: Away(on: false))))
+                    .transition(
+                        reduceMotion
+                            ? .opacity
+                            : .asymmetric(insertion: .opacity, removal: .modifier(active: Away(on: true), identity: Away(on: false))))
             case .home:
                 // Faded in, not scaled: scaling it moved its header and tab bar, which then settled after it.
                 Home(model: model).transition(.opacity)
@@ -73,8 +76,11 @@ struct StateGlyph: View {
     var size: CGFloat = 16
     var body: some View {
         let look = Self.look(state)
-        if state == .working { Spinner().frame(width: size - 2, height: size - 2).frame(width: size, height: size) }
-        else { Image(look.icon).resizable().frame(width: size, height: size).foregroundStyle(look.color) }
+        if state == .working {
+            Spinner().frame(width: size - 2, height: size - 2).frame(width: size, height: size)
+        } else {
+            Image(look.icon).resizable().frame(width: size, height: size).foregroundStyle(look.color)
+        }
     }
 
     static func look(_ state: BoardRow.State) -> (icon: String, color: Color, name: String) {
@@ -110,7 +116,8 @@ struct Described: View {
         let ago = at.map { Ago.short($0) }
         if let text, !text.isEmpty {
             // Left-aligned: inside a button (a task's row), lines are centred otherwise.
-            Text(text).font(font).foregroundStyle(primary ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)).lineLimit(2).multilineTextAlignment(.leading)
+            Text(text).font(font).foregroundStyle(primary ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)).lineLimit(2)
+                .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .mask {
                     // Whole, but the last line's end: fading out, then nothing where the time is.
@@ -129,7 +136,11 @@ struct Described: View {
                 .overlay(alignment: .bottomTrailing) {
                     if let ago {
                         Text(ago).font(font).foregroundStyle(.secondary).monospacedDigit()
-                            .onGeometryChange(for: CGSize.self) { $0.size } action: { timeWidth = $0.width; lineHeight = $0.height }
+                            .onGeometryChange(for: CGSize.self) {
+                                $0.size
+                            } action: {
+                                timeWidth = $0.width; lineHeight = $0.height
+                            }
                     }
                 }
         }
@@ -150,16 +161,26 @@ struct FadingLine: View {
 
     var body: some View {
         Text(text).font(font).lineLimit(1).hidden()
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { room = $0 }
+            .onGeometryChange(for: CGFloat.self) {
+                $0.size.width
+            } action: {
+                room = $0
+            }
             .overlay(alignment: .leading) {
                 Text(text).font(font).lineLimit(1).fixedSize()
-                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { whole = $0 }
+                    .onGeometryChange(for: CGFloat.self) {
+                        $0.size.width
+                    } action: {
+                        whole = $0
+                    }
             }
             .clipped()
             .mask {
                 HStack(spacing: 0) {
                     Color.black
-                    if whole > room + 0.5 { LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 28) }
+                    if whole > room + 0.5 {
+                        LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 28)
+                    }
                 }
             }
     }
@@ -313,8 +334,10 @@ private struct LoadingTurns: View {
                     Text("A message of yours, a line or so long").padding(.horizontal, 14).padding(.vertical, 9)
                         .background(Color(.secondarySystemFill), in: RoundedRectangle(cornerRadius: 18))
                 }
-                Text(turn == 1 ? "An answer a few lines long, written out across the page as the agent's answers are, ending here." :
-                     "An answer, a couple of lines long, across the page as the agent's are.")
+                Text(
+                    turn == 1
+                        ? "An answer a few lines long, written out across the page as the agent's answers are, ending here."
+                        : "An answer, a couple of lines long, across the page as the agent's are.")
             }
         }
         .redacted(reason: .placeholder)
@@ -336,7 +359,9 @@ struct UnderBar: ViewModifier {
 }
 
 extension Home {
-    static let names: [PhoneModel.Place: String] = [.inbox: "Inbox", .tasks: "Tasks", .later: "Later", .record: "Record", .settings: "Settings"]
+    static let names: [PhoneModel.Place: String] = [
+        .inbox: "Inbox", .tasks: "Tasks", .later: "Later", .record: "Record", .settings: "Settings",
+    ]
 
     /// A workspace's name, its emoji first when it has one (a Nucleo icon's name isn't shown here).
     static func title(_ space: ZerodLink.Workspace) -> String {
@@ -366,8 +391,14 @@ struct TasksView: View {
                 ForEach(model.tasks) { row in
                     let workers = (row.team ?? []).filter { $0.session != row.session }.count
                     TaskRow(row: row, said: row.needs ?? row.now) { model.path.append(row.session) }
-                        .contextMenu { actions(row.session, name: row.task, state: row.ownState, workers: workers) } preview: { TaskPeek(row: row, name: row.task) }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) { swipes(row.session, name: row.task, state: row.ownState, workers: workers) }
+                        .contextMenu {
+                            actions(row.session, name: row.task, state: row.ownState, workers: workers)
+                        } preview: {
+                            TaskPeek(row: row, name: row.task)
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            swipes(row.session, name: row.task, state: row.ownState, workers: workers)
+                        }
                         .swipeActions(edge: .leading) { renameSwipe(row.session, name: row.task) }
                 }
             }
@@ -377,16 +408,24 @@ struct TasksView: View {
         .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $newName)
             Button("Cancel", role: .cancel) {}
-            Button("Rename") { if let renaming, !newName.trimmingCharacters(in: .whitespaces).isEmpty { Task { await model.rename(renaming.session, to: newName) } } }
+            Button("Rename") {
+                if let renaming, !newName.trimmingCharacters(in: .whitespaces).isEmpty {
+                    Task { await model.rename(renaming.session, to: newName) }
+                }
+            }
         }
         // As the Mac asks: archiving puts the task away with every worker under it.
-        .confirmationDialog(archiving.map { "Archive \($0.name)?" } ?? "", isPresented: Binding(get: { archiving != nil }, set: { if !$0 { archiving = nil } }),
-                            titleVisibility: .visible) {
+        .confirmationDialog(
+            archiving.map { "Archive \($0.name)?" } ?? "",
+            isPresented: Binding(get: { archiving != nil }, set: { if !$0 { archiving = nil } }),
+            titleVisibility: .visible
+        ) {
             Button("Archive", role: .destructive) { if let archiving { Task { await model.archive(archiving.session) } } }
         } message: {
             if let archiving {
-                Text((archiving.workers == 0 ? "It" : "It and its \(archiving.workers == 1 ? "worker" : "\(archiving.workers) workers")")
-                     + " will be put away. Bring " + (archiving.workers == 0 ? "it" : "them") + " back from Archived tasks on your Mac.")
+                Text(
+                    (archiving.workers == 0 ? "It" : "It and its \(archiving.workers == 1 ? "worker" : "\(archiving.workers) workers")")
+                        + " will be put away. Bring " + (archiving.workers == 0 ? "it" : "them") + " back from Archived tasks on your Mac.")
             }
         }
         .refreshable { model.connect() }
@@ -397,29 +436,65 @@ struct TasksView: View {
 extension TasksView {
     /// Swiped left: archive (asking first, as from the menu), and pause or resume.
     @ViewBuilder func swipes(_ session: String, name: String, state: BoardRow.State, workers: Int) -> some View {
-        Button { archiving = (session, name, workers) } label: { Label("Archive", image: "trash-glyph") }.tint(.red)
+        Button {
+            archiving = (session, name, workers)
+        } label: {
+            Label("Archive", image: "trash-glyph")
+        }.tint(.red)
         if state == .paused {
-            Button { Task { _ = await model.unpause([session]) } } label: { Label("Resume", image: "arrow-rotate-clockwise-glyph") }.tint(.blue)
+            Button {
+                Task { _ = await model.unpause([session]) }
+            } label: {
+                Label("Resume", image: "arrow-rotate-clockwise-glyph")
+            }.tint(.blue)
         } else {
-            Button { Task { _ = await model.pause([session]) } } label: { Label("Pause", image: "circle-pause-glyph") }.tint(.gray)
+            Button {
+                Task { _ = await model.pause([session]) }
+            } label: {
+                Label("Pause", image: "circle-pause-glyph")
+            }.tint(.gray)
         }
     }
 
     /// Swiped right: rename.
     func renameSwipe(_ session: String, name: String) -> some View {
-        Button { newName = name; renaming = (session, name) } label: { Label("Rename", image: "pen-glyph") }.tint(.indigo)
+        Button {
+            newName = name; renaming = (session, name)
+        } label: {
+            Label("Rename", image: "pen-glyph")
+        }.tint(.indigo)
     }
 
     /// A task's long press, as the Mac's row menu: pause or resume, rename, archive.
     @ViewBuilder func actions(_ session: String, name: String, state: BoardRow.State, workers: Int) -> some View {
         if state == .paused {
-            Button { Task { _ = await model.unpause([session]) } } label: { Label("Resume", image: "arrow-rotate-clockwise-glyph") }
+            Button {
+                Task { _ = await model.unpause([session]) }
+            } label: {
+                Label("Resume", image: "arrow-rotate-clockwise-glyph")
+            }
         } else {
-            Button { Task { _ = await model.pause([session]) } } label: { Label("Pause", image: "circle-pause-glyph") }
+            Button {
+                Task { _ = await model.pause([session]) }
+            } label: {
+                Label("Pause", image: "circle-pause-glyph")
+            }
         }
-        Button { newName = name; renaming = (session, name) } label: { Label("Rename", image: "pen-glyph") }
-        Button { Task { await model.askToSaveForLater(session) } } label: { Label("Save for later", image: "bookmark-glyph") }
-        Button(role: .destructive) { archiving = (session, name, workers) } label: { Label("Archive", image: "trash-glyph") }
+        Button {
+            newName = name; renaming = (session, name)
+        } label: {
+            Label("Rename", image: "pen-glyph")
+        }
+        Button {
+            Task { await model.askToSaveForLater(session) }
+        } label: {
+            Label("Save for later", image: "bookmark-glyph")
+        }
+        Button(role: .destructive) {
+            archiving = (session, name, workers)
+        } label: {
+            Label("Archive", image: "trash-glyph")
+        }
     }
 }
 
@@ -436,9 +511,11 @@ struct TaskPeek: View {
             Text(name).font(.headline).lineLimit(2)
             if let now = row.now, !now.isEmpty { Text(now).font(.subheadline).foregroundStyle(.secondary).lineLimit(4) }
             if let needs = row.needs { Label("For you: " + needs, image: "hand-holding-box-glyph").font(.subheadline) }
-            ForEach(row.asks.prefix(3), id: \.id) { ask in Label(ask.title, image: "circle-question-glyph").font(.subheadline).lineLimit(2) }
+            ForEach(row.asks.prefix(3), id: \.id) { ask in Label(ask.title, image: "circle-question-glyph").font(.subheadline).lineLimit(2)
+            }
             if let queued = row.queued, !queued.isEmpty {
-                Label("\(queued.count) queued" + (row.held == true ? ", held" : ""), image: "clock-glyph").font(.subheadline).foregroundStyle(.secondary)
+                Label("\(queued.count) queued" + (row.held == true ? ", held" : ""), image: "clock-glyph").font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(16)
@@ -469,7 +546,11 @@ struct TaskRow: View {
                             FadingLine(text: row.task, font: .body.weight(.semibold))
                             // Centred on the name's capitals (about 12 pt tall at this size), not sat on its baseline
                             // like a full stop.
-                            if row.ownState == .answered { Circle().fill(.blue).frame(width: 8, height: 8).alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 6 } }
+                            if row.ownState == .answered {
+                                Circle().fill(.blue).frame(width: 8, height: 8).alignmentGuide(.firstTextBaseline) {
+                                    $0[VerticalAlignment.center] + 6
+                                }
+                            }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         if !Described.says(said) { TimeBeside(at: row.at) }
@@ -499,7 +580,8 @@ struct InboxAskRow: View {
             AgentAvatar(provider: row?.provider, state: .needsYou)
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    FadingLine(text: row?.task ?? ask.agent.label ?? ask.agent.name, font: .body.weight(.semibold)).frame(maxWidth: .infinity, alignment: .leading)
+                    FadingLine(text: row?.task ?? ask.agent.label ?? ask.agent.name, font: .body.weight(.semibold)).frame(
+                        maxWidth: .infinity, alignment: .leading)
                     TimeBeside(at: Int(ask.createdAt.timeIntervalSince1970 * 1000))
                 }
                 AskCard(model: model, ask: ask, flat: true, inRow: true)
@@ -541,7 +623,9 @@ struct TaskView: View {
         let conversation = model.conversation(session)
         let waiting: Int = conversation.map(model.waitingCount) ?? 0
         ScrollView {
-            if let conversation { ConversationView(model: model, conversation: conversation).padding() }
+            if let conversation {
+                ConversationView(model: model, conversation: conversation).padding()
+            }
             // Not loaded: a moment the Mac couldn't be reached left the page blank, with nothing to say so.
             // Can't reach the Mac (or it didn't answer): said, in the page's middle, not a spinner going on.
             else if couldNotLoad || missedMac {
@@ -550,7 +634,9 @@ struct TaskView: View {
                 } description: {
                     Text(missedMac ? "This task opens once your Mac is back." : "Your Mac didn't answer in time.")
                 } actions: {
-                    Button("Try again") { if model.offline { model.connect() }; Task { await loadUntilLoaded() } }.buttonStyle(.bordered)
+                    Button("Try again") {
+                        if model.offline { model.connect() }; Task { await loadUntilLoaded() }
+                    }.buttonStyle(.bordered)
                 }
                 .containerRelativeFrame(.vertical)
             } else {
@@ -562,15 +648,21 @@ struct TaskView: View {
         // The keyboard goes as the conversation is dragged down, as in Messages, or with a tap on the conversation:
         // the composer then folds back to its capsule when nothing is written.
         .scrollDismissesKeyboard(.interactively)
-        .simultaneousGesture(TapGesture().onEnded {
-            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        })
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            }
+        )
         // Where the reader is: at the bottom (or not scrolled yet), new words keep it there; scrolled up, they don't.
         .onScrollGeometryChange(for: Bool.self) { geometry in
             geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 60
-        } action: { _, bottom in atBottom = bottom }
+        } action: { _, bottom in
+            atBottom = bottom
+        }
         // Opened, the conversation arrived, or grew: to the bottom, once it's laid out.
-        .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { old, _ in
+        .onScrollGeometryChange(for: CGFloat.self) {
+            $0.contentSize.height
+        } action: { old, _ in
             // After this layout, not inside it: asked mid-layout (the app opening on it from a notification), the scroll
             // was dropped and the page sat past its end, blank, until scrolled.
             if atBottom || old < 1 { DispatchQueue.main.async { position.scrollTo(edge: .bottom) } }
@@ -616,7 +708,9 @@ struct TaskView: View {
             Menu {
                 Button("Details") { details = true }
                 Button("Save for later") { Task { await model.askToSaveForLater(session) } }
-            } label: { Image("dots-glyph") }
+            } label: {
+                Image("dots-glyph")
+            }
         }
     }
 
@@ -636,11 +730,16 @@ struct TaskView: View {
 final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     @MainActor static weak var model: PhoneModel?
 
-    func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]? = nil)
+        -> Bool
+    {
         UNUserNotificationCenter.current().delegate = self
         // A task's notification (the Notify extension marks them "task"): Reply, written on the notification itself.
-        let reply = UNTextInputNotificationAction(identifier: Self.reply, title: "Reply", options: [], textInputButtonTitle: "Send", textInputPlaceholder: "Reply to this task")
-        UNUserNotificationCenter.current().setNotificationCategories([UNNotificationCategory(identifier: "task", actions: [reply], intentIdentifiers: [], options: [])])
+        let reply = UNTextInputNotificationAction(
+            identifier: Self.reply, title: "Reply", options: [], textInputButtonTitle: "Send", textInputPlaceholder: "Reply to this task")
+        UNUserNotificationCenter.current().setNotificationCategories([
+            UNNotificationCategory(identifier: "task", actions: [reply], intentIdentifiers: [], options: [])
+        ])
         return true
     }
     static let reply = "reply"
@@ -657,7 +756,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     }
 
     // In the app: its sound, no banner over what you're reading.
-    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async
+        -> UNNotificationPresentationOptions
+    {
         [.sound, .list]
     }
 
@@ -694,20 +795,28 @@ struct TaskDetails: View {
             Form {
                 Section {
                     if let row {
-                        LabeledContent("State") { HStack(spacing: 6) { StateGlyph(state: row.ownState); Text(row.ownState.title) } }
+                        LabeledContent("State") {
+                            HStack(spacing: 6) {
+                                StateGlyph(state: row.ownState); Text(row.ownState.title)
+                            }
+                        }
                         if let now = row.needs ?? row.now, !now.isEmpty { Text(now).font(.subheadline).foregroundStyle(.secondary) }
                         if row.workers > 0 { LabeledContent("Workers", value: "\(row.workers)") }
                     }
                 }
                 Section {
-                    LabeledContent("Where", value: row?.path ?? conversation.map { ($0.cwd as NSString).abbreviatingWithTildeInPath } ?? row?.place ?? "–")
+                    LabeledContent(
+                        "Where",
+                        value: row?.path ?? conversation.map { ($0.cwd as NSString).abbreviatingWithTildeInPath } ?? row?.place ?? "–")
                     if let branch = conversation?.branch { LabeledContent("Branch", value: branch) }
                     if let ticket = row?.ticket ?? conversation?.ticket { LabeledContent("Ticket", value: ticket) }
                 }
                 if let conversation {
                     Section {
                         LabeledContent("Agent", value: conversation.provider.title)
-                        if let id = conversation.model { LabeledContent("Model", value: id + (conversation.effort.map { " · " + $0.capitalized } ?? "")) }
+                        if let id = conversation.model {
+                            LabeledContent("Model", value: id + (conversation.effort.map { " · " + $0.capitalized } ?? ""))
+                        }
                         LabeledContent("Permissions", value: conversation.permissions == .unrestricted ? "Unrestricted" : "Auto")
                     }
                     if let attributes = conversation.attributes, !attributes.isEmpty {
@@ -715,8 +824,12 @@ struct TaskDetails: View {
                             ForEach(attributes.keys.sorted(), id: \.self) { key in
                                 let value = attributes[key] ?? ""
                                 if let url = URL(string: value), url.scheme?.hasPrefix("http") == true {
-                                    Button { openURL(url) } label: { LabeledContent(key) { Text(url.host() ?? value).fontWeight(.medium).lineLimit(1) } }
-                                        .foregroundStyle(.primary)
+                                    Button {
+                                        openURL(url)
+                                    } label: {
+                                        LabeledContent(key) { Text(url.host() ?? value).fontWeight(.medium).lineLimit(1) }
+                                    }
+                                    .foregroundStyle(.primary)
                                 } else {
                                     LabeledContent(key, value: value)
                                 }
@@ -760,9 +873,7 @@ struct InboxView: View {
         .refreshable { model.connect() }
     }
 
-
     private func item(_ row: BoardRow, _ said: String?) -> some View {
         TaskRow(row: row, said: said) { model.path.append(row.session) }
     }
 }
-

@@ -54,7 +54,9 @@ final class InboxController {
         guard !workspacesOpen else { return }
         holdTop = false
         switching = true
-        cut { agentFilter = nil; newAgentOpen = false; workspacesOpen = true }
+        cut {
+            agentFilter = nil; newAgentOpen = false; workspacesOpen = true
+        }
         requestScroll(animated: false)
         DispatchQueue.main.async { self.switching = false }
     }
@@ -66,7 +68,9 @@ final class InboxController {
         guard !newAgentOpen else { return }
         holdTop = false
         switching = true
-        cut { agentFilter = nil; workspacesOpen = false; newAgentOpen = true }
+        cut {
+            agentFilter = nil; workspacesOpen = false; newAgentOpen = true
+        }
         requestScroll(animated: false)
         DispatchQueue.main.async { self.switching = false }
     }
@@ -80,7 +84,9 @@ final class InboxController {
 
     func show(agent: String?) {
         let wasNew = newAgentOpen || workspacesOpen
-        cut { newAgentOpen = false; workspacesOpen = false }
+        cut {
+            newAgentOpen = false; workspacesOpen = false
+        }
         // Hovering the control for the view already shown changes nothing: what the user opened stays open and
         // where it is.
         guard agentFilter != agent || wasNew else { return }
@@ -125,7 +131,8 @@ final class InboxController {
     @ObservationIgnored var presentSelector: ((CGRect) -> Void)?
     @ObservationIgnored var dismissSelector: (() -> Void)?
     /// Per-model configuration the user picked in the preview card, such as a reasoning level.
-    var spawnSettings: [String: [String: String]] = (UserDefaults.standard.dictionary(forKey: "spawnSettings") as? [String: [String: String]]) ?? [:]
+    var spawnSettings: [String: [String: String]] =
+        (UserDefaults.standard.dictionary(forKey: "spawnSettings") as? [String: [String: String]]) ?? [:]
 
     /// The model each running agent was switched to from Zero, by agent name; nothing recorded means whatever it started with.
     var agentModels: [String: String] = (UserDefaults.standard.dictionary(forKey: "agentModels") as? [String: String]) ?? [:]
@@ -170,8 +177,9 @@ final class InboxController {
             mentionTask = Task { [weak self] in
                 let files = await ProjectFiles.list(path)
                 guard let self, !Task.isCancelled else { return }
-                showMention(key: key, trigger: trigger,
-                            items: ProjectFiles.match(trigger.query, in: files).map { Mention(kind: .file, insert: "@" + $0, detail: nil) })
+                showMention(
+                    key: key, trigger: trigger,
+                    items: ProjectFiles.match(trigger.query, in: files).map { Mention(kind: .file, insert: "@" + $0, detail: nil) })
             }
         }
     }
@@ -179,7 +187,8 @@ final class InboxController {
     private func showMention(key: String, trigger: MentionTrigger, items: [Mention]) {
         guard !items.isEmpty else { mention = nil; return }
         let sameWord = mention?.key == key && mention?.trigger.range.location == trigger.range.location
-        mention = MentionState(key: key, trigger: trigger, items: items, selected: sameWord ? min(mention?.selected ?? 0, items.count - 1) : 0)
+        mention = MentionState(
+            key: key, trigger: trigger, items: items, selected: sameWord ? min(mention?.selected ?? 0, items.count - 1) : 0)
     }
 
     /// Arrows move, Tab or Return takes the highlighted suggestion, Esc closes the list.
@@ -201,7 +210,9 @@ final class InboxController {
         let text = drafts[state.key, default: ""] as NSString
         let word = state.trigger.word
         guard NSMaxRange(word) <= text.length else { mention = nil; return }
-        let spaced = NSMaxRange(word) < text.length && text.substring(with: NSRange(location: NSMaxRange(word), length: 1)).rangeOfCharacter(from: .whitespacesAndNewlines) != nil
+        let spaced =
+            NSMaxRange(word) < text.length
+            && text.substring(with: NSRange(location: NSMaxRange(word), length: 1)).rangeOfCharacter(from: .whitespacesAndNewlines) != nil
         let insert = state.items[index].insert + (spaced ? "" : " ")
         drafts[state.key] = text.replacingCharacters(in: word, with: insert)
         caretRequest[state.key] = word.location + (insert as NSString).length + (spaced ? 1 : 0)
@@ -248,8 +259,9 @@ final class InboxController {
         let rows = workspace?.board ?? []
         // A worker: a session with a lead, by the sessions' own parent links (the board's rows don't always carry
         // their team).
-        let workers = Set((workspace?.conversations ?? []).filter { $0.parent != nil }.map(\.id)
-                          + rows.flatMap { row in (row.team ?? []).map(\.session).filter { $0 != row.session } })
+        let workers = Set(
+            (workspace?.conversations ?? []).filter { $0.parent != nil }.map(\.id)
+                + rows.flatMap { row in (row.team ?? []).map(\.session).filter { $0 != row.session } })
         let session = { (ask: Ask) -> String? in ask.session }
         // Each agent's asks, gathered once (not every ask filtered again for every dot).
         var byAgent: [String: [Ask]] = [:]
@@ -342,11 +354,15 @@ final class InboxController {
             return store.spawners.compactMap { adapter in
                 let targets = spawnTargets.filter { targetAdapter[$0.id] == adapter.name }
                 guard !targets.isEmpty else { return nil }
-                return SelectorSection(id: adapter.name, title: "Zero projects", icon: choiceIcon("zero"), rows: targets.map { choice in
-                    SelectorRow(id: choice.id, title: choice.name, provider: choice.provider, providerIcon: choiceIcon(choice.icon),
-                                detail: choice.detail, context: nil, levels: [], defaultLevel: nil, modelID: nil,
-                                selected: choice.id == spawnTarget) { [weak self] in self?.spawnTarget = choice.id }
-                })
+                return SelectorSection(
+                    id: adapter.name, title: "Zero projects", icon: choiceIcon("zero"),
+                    rows: targets.map { choice in
+                        SelectorRow(
+                            id: choice.id, title: choice.name, provider: choice.provider, providerIcon: choiceIcon(choice.icon),
+                            detail: choice.detail, context: nil, levels: [], defaultLevel: nil, modelID: nil,
+                            selected: choice.id == spawnTarget
+                        ) { [weak self] in self?.spawnTarget = choice.id }
+                    })
             }
         case .menu: return []
         case .runtime:
@@ -357,17 +373,29 @@ final class InboxController {
             let runtimes = agent.flatMap { runtime(of: $0) }.map { [$0] } ?? spawnRuntimes
             return runtimes.map { runtime in
                 let models = adapter.spawnModels(for: runtime)
-                let rows: [SelectorRow] = models.isEmpty
-                    ? [SelectorRow(id: runtime.id, title: runtime.name, provider: runtime.provider, providerIcon: choiceIcon(runtime.icon),
-                                   detail: runtime.detail, context: nil, levels: [], defaultLevel: nil, modelID: nil,
-                                   selected: runtime.id == spawnRuntime) { [weak self] in if agent == nil { self?.spawnRuntime = runtime.id } }]
+                let rows: [SelectorRow] =
+                    models.isEmpty
+                    ? [
+                        SelectorRow(
+                            id: runtime.id, title: runtime.name, provider: runtime.provider, providerIcon: choiceIcon(runtime.icon),
+                            detail: runtime.detail, context: nil, levels: [], defaultLevel: nil, modelID: nil,
+                            selected: runtime.id == spawnRuntime
+                        ) { [weak self] in if agent == nil { self?.spawnRuntime = runtime.id } }
+                    ]
                     : models.map { model in
                         let selected = agent.map { agentModels[$0] == model.id } ?? (runtime.id == spawnRuntime && model.id == spawnModel)
-                        return SelectorRow(id: runtime.id + "/" + model.id, title: model.name, provider: model.provider ?? runtime.provider,
-                                    providerIcon: choiceIcon(model.icon ?? runtime.icon), detail: model.detail, context: model.context,
-                                    levels: model.levels, defaultLevel: model.defaultLevel, modelID: model.id.isEmpty ? runtime.id + "/default" : model.id,
-                                    selected: selected) { [weak self] in
-                            if let agent { self?.setAgentModel(agent, model: model) } else { self?.spawnRuntime = runtime.id; self?.spawnModel = model.id }
+                        return SelectorRow(
+                            id: runtime.id + "/" + model.id, title: model.name, provider: model.provider ?? runtime.provider,
+                            providerIcon: choiceIcon(model.icon ?? runtime.icon), detail: model.detail, context: model.context,
+                            levels: model.levels, defaultLevel: model.defaultLevel,
+                            modelID: model.id.isEmpty ? runtime.id + "/default" : model.id,
+                            selected: selected
+                        ) { [weak self] in
+                            if let agent {
+                                self?.setAgentModel(agent, model: model)
+                            } else {
+                                self?.spawnRuntime = runtime.id; self?.spawnModel = model.id
+                            }
                         }
                     }
                 return SelectorSection(id: runtime.id, title: runtime.provider ?? runtime.name, icon: choiceIcon(runtime.icon), rows: rows)
@@ -375,8 +403,13 @@ final class InboxController {
         }
     }
     /// Models for the chosen runtime, and the pick remembered per runtime.
-    var spawnModels: [SpawnChoice] { _ = modelsVersion; return spawnAdapter.flatMap { adapter in spawnRuntimes.first { $0.id == spawnRuntime }.map { adapter.spawnModels(for: $0) } } ?? [] }
-    var spawnNote: String? { spawnAdapter.flatMap { adapter in spawnRuntimes.first { $0.id == spawnRuntime }.flatMap { adapter.spawnNote(for: $0) } } }
+    var spawnModels: [SpawnChoice] {
+        _ = modelsVersion;
+        return spawnAdapter.flatMap { adapter in spawnRuntimes.first { $0.id == spawnRuntime }.map { adapter.spawnModels(for: $0) } } ?? []
+    }
+    var spawnNote: String? {
+        spawnAdapter.flatMap { adapter in spawnRuntimes.first { $0.id == spawnRuntime }.flatMap { adapter.spawnNote(for: $0) } }
+    }
     var spawnModel: String? {
         get { spawnRuntime.flatMap { UserDefaults.standard.string(forKey: "lastSpawnModel.\($0)") } ?? spawnModels.first?.id }
         set { if let spawnRuntime { UserDefaults.standard.set(newValue, forKey: "lastSpawnModel.\(spawnRuntime)") } }
@@ -415,7 +448,8 @@ final class InboxController {
         advanceTask = Task {
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled, selected == id,
-                  let next = cards.first(where: { $0.state == .waiting }) else { return }
+                let next = cards.first(where: { $0.state == .waiting })
+            else { return }
             selected = next.id
             requestScroll(animated: true)
         }
@@ -432,8 +466,10 @@ final class InboxController {
             // Messages that never arrived (from before delivery confirmed first) are not part of the conversation.
             // Nor zerod's own marks of a task's state ("Working", "Offline"): the agent said none of them, and they were
             // most of what a task's pane showed.
-            return store.asks.filter { $0.agent.name == agentFilter && $0.state != .expired && $0.request != "attention"
-                && !(($0.status ?? "").hasPrefix("failed") && $0.kind == .message) }
+            return store.asks.filter {
+                $0.agent.name == agentFilter && $0.state != .expired && $0.request != "attention"
+                    && !(($0.status ?? "").hasPrefix("failed") && $0.kind == .message)
+            }
         }
         return store.asks.filter {
             $0.isForYou && (!$0.state.isFinal || ($0.answeredAt ?? .distantPast) >= inboxOpenedAt)
@@ -459,7 +495,10 @@ final class InboxController {
         let visible = cards
         let waiting = visible.filter { $0.state == .waiting }
         if let selected, let current = visible.first(where: { $0.id == selected }),
-           current.state == .waiting || waiting.isEmpty { return }
+            current.state == .waiting || waiting.isEmpty
+        {
+            return
+        }
         selected = waiting.first?.id ?? visible.last?.id
         requestScroll()
     }
@@ -549,7 +588,6 @@ final class InboxController {
 
     func composerKey(_ agent: String) -> String { "msg:" + agent }
 
-
     /// The Earlier row opened into its full card, if any.
     var expandedEarlier: String?
 
@@ -587,7 +625,9 @@ final class InboxController {
                 runtimesByAdapter = runtimes
                 spawnTargets = targets
                 if spawnTarget == nil || !targets.contains(where: { $0.id == spawnTarget }) { spawnTarget = targets.first?.id }
-                if spawnRuntime == nil || !spawnRuntimes.contains(where: { $0.id == spawnRuntime }) { spawnRuntime = spawnRuntimes.first?.id }
+                if spawnRuntime == nil || !spawnRuntimes.contains(where: { $0.id == spawnRuntime }) {
+                    spawnRuntime = spawnRuntimes.first?.id
+                }
             }
             // Only when there is no list for this account yet: the refresh reads Claude Code's sign-in from the
             // Keychain, and macOS asks about that every time Claude Code rewrites the item. Settings has a button.
@@ -601,8 +641,9 @@ final class InboxController {
     func spawn() {
         let prompt = drafts[Self.newAgentKey, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, !spawning, let adapter = spawnAdapter,
-              let target = spawnTargets.first(where: { $0.id == spawnTarget }),
-              let runtime = spawnRuntimes.first(where: { $0.id == spawnRuntime }) else { return }
+            let target = spawnTargets.first(where: { $0.id == spawnTarget }),
+            let runtime = spawnRuntimes.first(where: { $0.id == spawnRuntime })
+        else { return }
         let model = spawnModels.first { $0.id == spawnModel }
         let settings = model.flatMap { spawnSettings[$0.id] } ?? [:]
         if dictatingFor == Self.newAgentKey { stopDictation() }
@@ -611,8 +652,9 @@ final class InboxController {
         focusedReply = nil
         Task {
             do {
-                let identity = try await store.spawn(prompt: prompt, adapter: adapter, target: target, runtime: runtime, model: model,
-                                                     settings: settings, started: { [weak self] name in self?.show(agent: name) })
+                let identity = try await store.spawn(
+                    prompt: prompt, adapter: adapter, target: target, runtime: runtime, model: model,
+                    settings: settings, started: { [weak self] name in self?.show(agent: name) })
                 // Up: clear the composer; the view follows the agent from its provisional name to the real one.
                 drafts[Self.newAgentKey] = nil
                 if agentFilter?.hasPrefix("starting-") == true { agentFilter = identity.name }
@@ -659,7 +701,8 @@ final class InboxController {
         case " ": toggleDictation(); return true
         default:
             guard let target = typingTarget, let scalar = key.unicodeScalars.first,
-                  !CharacterSet.controlCharacters.contains(scalar) else { return false }
+                !CharacterSet.controlCharacters.contains(scalar)
+            else { return false }
             drafts[target, default: ""] += key
             focusedReply = target
             return true

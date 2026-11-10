@@ -26,7 +26,8 @@ public enum ClaudeSessions {
     public static func title(of session: String, cwd: String) -> String? {
         let file = folder(for: cwd).appendingPathComponent(session + ".jsonl")
         guard let text = try? String(contentsOf: file, encoding: .utf8),
-              let range = text.range(of: "\"aiTitle\":\"([^\"]+)\"", options: [.regularExpression, .backwards]) else { return nil }
+            let range = text.range(of: "\"aiTitle\":\"([^\"]+)\"", options: [.regularExpression, .backwards])
+        else { return nil }
         let match = text[range]
         return match.dropFirst("\"aiTitle\":\"".count).dropLast().replacingOccurrences(of: "\\\"", with: "\"")
     }
@@ -34,7 +35,8 @@ public enum ClaudeSessions {
     /// Session files, newest first.
     private static func files(in cwd: String) -> [URL] {
         let folder = folder(for: cwd)
-        let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        let urls =
+            (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         return urls.filter { $0.pathExtension == "jsonl" }.sorted {
             ((try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast)
                 > ((try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast)

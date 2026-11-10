@@ -12,8 +12,9 @@ func logo(color: String) -> String { svg.replacingOccurrences(of: "fill=\"#00000
 func image(_ source: String) -> NSImage { NSImage(data: Data(source.utf8))! }
 
 func bitmap(_ size: Int) -> NSBitmapImageRep {
-    NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size, bitsPerSample: 8, samplesPerPixel: 4,
-                     hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    NSBitmapImageRep(
+        bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size, bitsPerSample: 8, samplesPerPixel: 4,
+        hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
 }
 
 /// Drawn at four times the size and scaled down (supersampled): thin strokes at an angle come out even, where drawing
@@ -69,7 +70,8 @@ for (points, scales) in [(16, [1, 2]), (32, [1, 2]), (128, [1, 2]), (256, [1, 2]
             NSGraphicsContext.saveGraphicsState()
             if px >= 128 {
                 let shadow = NSShadow()
-                shadow.shadowColor = NSColor(white: 0, alpha: 0.18); shadow.shadowBlurRadius = 18 * k; shadow.shadowOffset = NSSize(width: 0, height: -6 * k)
+                shadow.shadowColor = NSColor(white: 0, alpha: 0.18); shadow.shadowBlurRadius = 18 * k;
+                shadow.shadowOffset = NSSize(width: 0, height: -6 * k)
                 shadow.set()
             }
             NSColor.white.setFill(); shape.fill()
@@ -104,7 +106,8 @@ try! png(1024) { canvas in
 // Menu bar: a template (black on clear, macOS tints it), 18 pt.
 let bar = image(logo(color: "#000000"))
 for (name, px) in [("menubar.png", 18), ("menubar@2x.png", 36)] {
-    try! png(px) { drawLogo(bar, in: $0.insetBy(dx: CGFloat(px) / 18, dy: CGFloat(px) / 18)) }.write(to: root.appendingPathComponent("Resources/logo/\(name)"))
+    try! png(px) { drawLogo(bar, in: $0.insetBy(dx: CGFloat(px) / 18, dy: CGFloat(px) / 18)) }.write(
+        to: root.appendingPathComponent("Resources/logo/\(name)"))
 }
 
 // The marks the app draws (onboarding), black for template images: the logo, at any size alike.

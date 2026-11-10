@@ -33,14 +33,20 @@ public final class Slack {
     /// names; history and people's names, for following threads).
     public nonisolated static var createAppURL: URL {
         let manifest: [String: Any] = [
-            "display_information": ["name": "Zero", "description": "Lets Zero open channels and threads in Slack, and agents follow them.", "background_color": "#1d1c1d"],
+            "display_information": [
+                "name": "Zero", "description": "Lets Zero open channels and threads in Slack, and agents follow them.",
+                "background_color": "#1d1c1d",
+            ],
             "oauth_config": ["scopes": ["user": ["channels:read", "groups:read", "channels:history", "groups:history", "users:read"]]],
             "settings": ["org_deploy_enabled": false, "socket_mode_enabled": false, "token_rotation_enabled": false],
         ]
-        let json = String(decoding: (try? JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])) ?? Data(), as: UTF8.self)
+        let json = String(
+            decoding: (try? JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])) ?? Data(), as: UTF8.self)
         var allowed = CharacterSet.alphanumerics
         allowed.insert(charactersIn: "-._~")
-        return URL(string: "https://api.slack.com/apps?new_app=1&manifest_json=" + (json.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""))!
+        return URL(
+            string: "https://api.slack.com/apps?new_app=1&manifest_json="
+                + (json.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""))!
     }
 
     /// What zerod says now.

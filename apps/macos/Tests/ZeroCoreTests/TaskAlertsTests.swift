@@ -3,16 +3,18 @@ import Testing
 @testable import ZeroCore
 
 /// A lead's row as zerod's board sends it: its team's state, its own, and a worker's when it has one.
-private func row(_ id: String, state: String, own: String? = nil, worker: String? = nil, now: String? = nil, needs: String? = nil,
-                 asks: [String] = [], quiet: Bool = false, onYou: [(String, String)] = []) -> BoardRow {
+private func row(
+    _ id: String, state: String, own: String? = nil, worker: String? = nil, now: String? = nil, needs: String? = nil,
+    asks: [String] = [], quiet: Bool = false, onYou: [(String, String)] = []
+) -> BoardRow {
     let team = worker.map { #"[{"session":"w-\#(id)","state":"\#($0)","place":"w","asks":[]}]"# } ?? "[]"
     let json = """
-    {"session":"\(id)","task":"Task \(id)","workspace":"zero","place":"p","online":true,"state":"\(state)","own":"\(own ?? state)",
-     "now":\(now.map { "\"\($0)\"" } ?? "null"),"needs":\(needs.map { "\"\($0)\"" } ?? "null"),
-     "asks":[\(asks.enumerated().map { #"{"id":"a\#($0.offset)","title":"\#($0.element)"}"# }.joined(separator: ","))],
-     "workers":\(worker == nil ? 0 : 1),"team":\(team),"quiet":\(quiet),
-     "issues":[\(onYou.map { #"{"ticket":"\#($0.0)","state":"you","text":"\#($0.1)","since":0}"# }.joined(separator: ","))]}
-    """
+        {"session":"\(id)","task":"Task \(id)","workspace":"zero","place":"p","online":true,"state":"\(state)","own":"\(own ?? state)",
+         "now":\(now.map { "\"\($0)\"" } ?? "null"),"needs":\(needs.map { "\"\($0)\"" } ?? "null"),
+         "asks":[\(asks.enumerated().map { #"{"id":"a\#($0.offset)","title":"\#($0.element)"}"# }.joined(separator: ","))],
+         "workers":\(worker == nil ? 0 : 1),"team":\(team),"quiet":\(quiet),
+         "issues":[\(onYou.map { #"{"ticket":"\#($0.0)","state":"you","text":"\#($0.1)","since":0}"# }.joined(separator: ","))]}
+        """
     return try! JSONDecoder().decode(BoardRow.self, from: Data(json.utf8))
 }
 
@@ -29,19 +31,25 @@ private func row(_ id: String, state: String, own: String? = nil, worker: String
 
 @Test func aFinishedTaskSaysHowItEnded() {
     let changes = TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "handed", needs: "Merge the PR")])
-    #expect(changes.alerts == [TaskAlert(session: "1", kind: .finished, state: .handed, title: "Task 1", body: "Over to you: Merge the PR")])
+    #expect(
+        changes.alerts == [TaskAlert(session: "1", kind: .finished, state: .handed, title: "Task 1", body: "Over to you: Merge the PR")])
     let done = TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "done", now: "Fixed the build")])
     #expect(done.alerts.map(\.body) == ["Done: Fixed the build"])
 }
 
 @Test func aWorkerThatNeedsTheUserIsItsLeadsAlert() {
     // The lead works on; its worker asks: the lead's notification, saying it's a worker's.
-    let changes = TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "needsYou", own: "working", worker: "needsYou", asks: ["Which DB?"])])
-    #expect(changes.alerts == [TaskAlert(session: "1", kind: .needsYou, state: .needsYou, title: "Task 1", body: "A worker needs you: Which DB?")])
+    let changes = TaskAlerts.changes(
+        from: [row("1", state: "working")], to: [row("1", state: "needsYou", own: "working", worker: "needsYou", asks: ["Which DB?"])])
+    #expect(
+        changes.alerts == [
+            TaskAlert(session: "1", kind: .needsYou, state: .needsYou, title: "Task 1", body: "A worker needs you: Which DB?")
+        ])
 }
 
 @Test func aWorkerFinishingIsNoAlert() {
-    let changes = TaskAlerts.changes(from: [row("1", state: "working", worker: "working")], to: [row("1", state: "working", worker: "done")])
+    let changes = TaskAlerts.changes(
+        from: [row("1", state: "working", worker: "working")], to: [row("1", state: "working", worker: "done")])
     #expect(changes.alerts.isEmpty)
 }
 
@@ -56,11 +64,15 @@ private func row(_ id: String, state: String, own: String? = nil, worker: String
 }
 
 @Test func theBadgeCountsTasksWaitingOnTheUser() {
-    #expect(TaskAlerts.needingYou([row("1", state: "needsYou"), row("2", state: "needsYou", own: "working", worker: "needsYou"), row("3", state: "done")]) == 2)
+    #expect(
+        TaskAlerts.needingYou([
+            row("1", state: "needsYou"), row("2", state: "needsYou", own: "working", worker: "needsYou"), row("3", state: "done"),
+        ]) == 2)
 }
 
 @Test func theSameStandingIsntAnnouncedTwice() {
-    let changes = TaskAlerts.changes(from: [row("1", state: "needsYou", asks: ["A?"])], to: [row("1", state: "needsYou", asks: ["A?", "B?"])])
+    let changes = TaskAlerts.changes(
+        from: [row("1", state: "needsYou", asks: ["A?"])], to: [row("1", state: "needsYou", asks: ["A?", "B?"])])
     #expect(changes.alerts.isEmpty && changes.cleared.isEmpty)
 }
 
@@ -81,30 +93,50 @@ private func row(_ id: String, state: String, own: String? = nil, worker: String
     _ = TaskAlerts.changes(from: [row("1", state: "done")], to: [row("1", state: "working")], announced: &announced)
     #expect(TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "done")], announced: &announced).alerts.isEmpty)
     // A task asking again is always news: its new question.
-    _ = TaskAlerts.changes(from: [row("2", state: "working")], to: [row("2", state: "needsYou", asks: ["Merge it?"])], announced: &announced)
+    _ = TaskAlerts.changes(
+        from: [row("2", state: "working")], to: [row("2", state: "needsYou", asks: ["Merge it?"])], announced: &announced)
     _ = TaskAlerts.changes(from: [row("2", state: "needsYou")], to: [row("2", state: "working")], announced: &announced)
-    #expect(TaskAlerts.changes(from: [row("2", state: "working")], to: [row("2", state: "needsYou", asks: ["Deploy it?"])], announced: &announced).alerts.count == 1)
+    #expect(
+        TaskAlerts.changes(
+            from: [row("2", state: "working")], to: [row("2", state: "needsYou", asks: ["Deploy it?"])], announced: &announced
+        ).alerts.count == 1)
 }
 
 @Test func aReplyToATurnZeroStartedIsNoAlert() {
     // An event it follows passed on, a worker's report: the reply shows (unread), but there's nothing to tell.
     #expect(TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "answered", quiet: true)]).alerts.isEmpty)
-    #expect(TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "answered")]).alerts.count == 1, "a reply to the user is")
-    #expect(TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "needsYou", asks: ["Merge it?"], quiet: true)]).alerts.count == 1,
-            "what needs the user is news, whoever started the turn")
+    #expect(
+        TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "answered")]).alerts.count == 1,
+        "a reply to the user is")
+    #expect(
+        TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "needsYou", asks: ["Merge it?"], quiet: true)]).alerts
+            .count == 1,
+        "what needs the user is news, whoever started the turn")
 }
 
 @Test func aTaskBackAtTheSameOpenQuestionAfterZerosTurnIsNoNewAlert() {
     // It asked, and was announced; an event and a worker's report each start a turn that ends on the same open ask.
     var announced: [String: String] = [:]
-    #expect(TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "needsYou", asks: ["Merge it?"])], announced: &announced).alerts.count == 1)
+    #expect(
+        TaskAlerts.changes(
+            from: [row("1", state: "working")], to: [row("1", state: "needsYou", asks: ["Merge it?"])], announced: &announced
+        ).alerts.count == 1)
     for _ in 0..<2 {
-        _ = TaskAlerts.changes(from: [row("1", state: "needsYou", asks: ["Merge it?"])], to: [row("1", state: "working", asks: ["Merge it?"])], announced: &announced)
-        #expect(TaskAlerts.changes(from: [row("1", state: "working", asks: ["Merge it?"])], to: [row("1", state: "needsYou", asks: ["Merge it?"], quiet: true)],
-                                   announced: &announced).alerts.isEmpty, "the same question, still open: nothing new")
+        _ = TaskAlerts.changes(
+            from: [row("1", state: "needsYou", asks: ["Merge it?"])], to: [row("1", state: "working", asks: ["Merge it?"])],
+            announced: &announced)
+        #expect(
+            TaskAlerts.changes(
+                from: [row("1", state: "working", asks: ["Merge it?"])],
+                to: [row("1", state: "needsYou", asks: ["Merge it?"], quiet: true)],
+                announced: &announced
+            ).alerts.isEmpty, "the same question, still open: nothing new")
     }
     // Another question is news.
-    #expect(TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "needsYou", asks: ["Merge it?", "Deploy it?"])], announced: &announced).alerts.count == 1)
+    #expect(
+        TaskAlerts.changes(
+            from: [row("1", state: "working")], to: [row("1", state: "needsYou", asks: ["Merge it?", "Deploy it?"])], announced: &announced
+        ).alerts.count == 1)
 }
 
 @Test func anAlertSoundedAtTheMacGoesToThePhoneIfItStillStandsMinutesLater() {
@@ -113,21 +145,29 @@ private func row(_ id: String, state: String, own: String? = nil, worker: String
     let held = ["1": (alert: replied, at: start)]
     let still = [row("1", state: "answered")]
     #expect(TaskAlerts.due(held, rows: still, now: start + 299, front: nil, lastInput: start).isEmpty, "not yet")
-    #expect(TaskAlerts.due(held, rows: still, now: start + 300, front: nil, lastInput: start) == [replied], "unseen five minutes on: the phone")
+    #expect(
+        TaskAlerts.due(held, rows: still, now: start + 300, front: nil, lastInput: start) == [replied], "unseen five minutes on: the phone")
     #expect(TaskAlerts.due(held, rows: [row("1", state: "read")], now: start + 300, front: nil, lastInput: start).isEmpty, "seen meanwhile")
     #expect(TaskAlerts.due(held, rows: [row("1", state: "working")], now: start + 300, front: nil, lastInput: start).isEmpty, "moved on")
-    #expect(TaskAlerts.due(held, rows: still, now: start + 300, front: "1", lastInput: start + 60).isEmpty, "open in front, and the user was there after it came")
-    #expect(TaskAlerts.due(held, rows: still, now: start + 300, front: "1", lastInput: start - 1) == [replied], "open in front, but nobody there since")
+    #expect(
+        TaskAlerts.due(held, rows: still, now: start + 300, front: "1", lastInput: start + 60).isEmpty,
+        "open in front, and the user was there after it came")
+    #expect(
+        TaskAlerts.due(held, rows: still, now: start + 300, front: "1", lastInput: start - 1) == [replied],
+        "open in front, but nobody there since")
 }
 
 @Test func anIssueThatTurnsToTheUserSaysWhichAndWhatItNeeds() {
     // A lead driving several issues: the one now on the user is the news, by its ticket, however the lead's row reads.
     var announced: [String: String] = [:]
-    let first = TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "needsYou", now: "Two PRs are green.", onYou: [("ENG-1", "merge decision")])], announced: &announced)
+    let first = TaskAlerts.changes(
+        from: [row("1", state: "working")],
+        to: [row("1", state: "needsYou", now: "Two PRs are green.", onYou: [("ENG-1", "merge decision")])], announced: &announced)
     #expect(first.alerts.first?.body == "ENG-1: merge decision")
     // Another issue on the user, the lead still Needs you: news too.
-    let second = TaskAlerts.changes(from: [row("1", state: "needsYou", onYou: [("ENG-1", "merge decision")])],
-                                    to: [row("1", state: "needsYou", onYou: [("ENG-1", "merge decision"), ("ENG-2", "the OCI Apply")])], announced: &announced)
+    let second = TaskAlerts.changes(
+        from: [row("1", state: "needsYou", onYou: [("ENG-1", "merge decision")])],
+        to: [row("1", state: "needsYou", onYou: [("ENG-1", "merge decision"), ("ENG-2", "the OCI Apply")])], announced: &announced)
     #expect(second.alerts.first?.body == "ENG-2: the OCI Apply")
 }
 
@@ -136,13 +176,20 @@ private func row(_ id: String, state: String, own: String? = nil, worker: String
     // notification it already gave isn't given again (it came three times, each about the same issue).
     var announced: [String: String] = [:]
     let issue = [("ENG-1", "Live in production; move it to PM review")]
-    let first = TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "needsYou", now: "Merged #1.", onYou: issue)], announced: &announced)
+    let first = TaskAlerts.changes(
+        from: [row("1", state: "working")], to: [row("1", state: "needsYou", now: "Merged #1.", onYou: issue)], announced: &announced)
     #expect(first.alerts.count == 1)
-    _ = TaskAlerts.changes(from: [row("1", state: "needsYou", now: "Merged #1.", onYou: issue)], to: [row("1", state: "working", onYou: issue)], announced: &announced)
-    let again = TaskAlerts.changes(from: [row("1", state: "working", onYou: issue)], to: [row("1", state: "needsYou", now: "Opened #2.", onYou: issue)], announced: &announced)
+    _ = TaskAlerts.changes(
+        from: [row("1", state: "needsYou", now: "Merged #1.", onYou: issue)], to: [row("1", state: "working", onYou: issue)],
+        announced: &announced)
+    let again = TaskAlerts.changes(
+        from: [row("1", state: "working", onYou: issue)], to: [row("1", state: "needsYou", now: "Opened #2.", onYou: issue)],
+        announced: &announced)
     #expect(again.alerts.isEmpty, "the same issue, still on the user")
     // Asked something new meanwhile: news.
-    let asked = TaskAlerts.changes(from: [row("1", state: "working", onYou: issue)], to: [row("1", state: "needsYou", now: "Opened #3.", asks: ["Merge #3?"], onYou: issue)], announced: &announced)
+    let asked = TaskAlerts.changes(
+        from: [row("1", state: "working", onYou: issue)],
+        to: [row("1", state: "needsYou", now: "Opened #3.", asks: ["Merge #3?"], onYou: issue)], announced: &announced)
     #expect(asked.alerts.count == 1)
 }
 
@@ -153,6 +200,8 @@ private func row(_ id: String, state: String, own: String? = nil, worker: String
     let atLaunch = [row("1", state: "needsYou", now: "Merged #1.", onYou: issue)]
     var announced = TaskAlerts.announced(atLaunch)
     _ = TaskAlerts.changes(from: atLaunch, to: [row("1", state: "working", onYou: issue)], announced: &announced)
-    let back = TaskAlerts.changes(from: [row("1", state: "working", onYou: issue)], to: [row("1", state: "needsYou", now: "Opened #2.", onYou: issue)], announced: &announced)
+    let back = TaskAlerts.changes(
+        from: [row("1", state: "working", onYou: issue)], to: [row("1", state: "needsYou", now: "Opened #2.", onYou: issue)],
+        announced: &announced)
     #expect(back.alerts.isEmpty)
 }

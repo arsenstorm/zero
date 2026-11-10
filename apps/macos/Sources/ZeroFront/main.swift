@@ -40,7 +40,9 @@ while i < args.count {
     if arg == "--" { positional.append(contentsOf: args[(i + 1)...]); break }
     if arg.hasPrefix("--") {
         let key = String(arg.dropFirst(2))
-        if ["async", "blocked", "done", "merged", "completed", "waiting", "any", "mine", "all", "asked", "watch", "block", "ask"].contains(key) {
+        if ["async", "blocked", "done", "merged", "completed", "waiting", "any", "mine", "all", "asked", "watch", "block", "ask"].contains(
+            key)
+        {
             flags[key, default: []].append("1")
         } else {
             i += 1
@@ -159,7 +161,8 @@ struct Parser {
     }
 
     mutating func hex4() -> UInt32? {
-        guard bytes.count - at >= 4, let text = String(validating: bytes[at..<at + 4], as: UTF8.self), let value = UInt32(text, radix: 16) else { return nil }
+        guard bytes.count - at >= 4, let text = String(validating: bytes[at..<at + 4], as: UTF8.self), let value = UInt32(text, radix: 16)
+        else { return nil }
         at += 4
         return value
     }
@@ -177,7 +180,9 @@ struct Parser {
                 guard at < bytes.count else { return nil }
                 let escape = bytes[at]
                 at += 1
-                let simple: [UInt8: UInt8] = [0x22: 0x22, 0x5C: 0x5C, 0x2F: 0x2F, 0x62: 0x08, 0x66: 0x0C, 0x6E: 0x0A, 0x72: 0x0D, 0x74: 0x09]
+                let simple: [UInt8: UInt8] = [
+                    0x22: 0x22, 0x5C: 0x5C, 0x2F: 0x2F, 0x62: 0x08, 0x66: 0x0C, 0x6E: 0x0A, 0x72: 0x0D, 0x74: 0x09,
+                ]
                 if let plain = simple[escape] { out.append(plain); continue }
                 guard escape == UInt8(ascii: "u"), var code = hex4() else { return nil }
                 if (0xD800..<0xDC00).contains(code) {
@@ -216,7 +221,9 @@ final class Connection {
         address.sun_family = sa_family_t(AF_UNIX)
         address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
         let capacity = MemoryLayout.size(ofValue: address.sun_path)
-        withUnsafeMutablePointer(to: &address.sun_path) { $0.withMemoryRebound(to: CChar.self, capacity: capacity) { _ = strlcpy($0, path, capacity) } }
+        withUnsafeMutablePointer(to: &address.sun_path) {
+            $0.withMemoryRebound(to: CChar.self, capacity: capacity) { _ = strlcpy($0, path, capacity) }
+        }
         let connected = withUnsafePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
@@ -271,7 +278,8 @@ func zerod(_ op: String, _ fields: [(String, String?)]) {
     }
     while let line = link.readLine() {
         guard let message = Parser.parse(line), case .object = message, message["event"]?.string == nil,
-              case .number(let id)? = message["id"], Int(id) == 1 else { continue }
+            case .number(let id)? = message["id"], Int(id) == 1
+        else { continue }
         if case .bool(true)? = message["ok"] { return }
         fail("zero: \(message["error"]?.string ?? "zerod refused the request")")
     }
@@ -286,7 +294,8 @@ func iso(_ seconds: time_t) -> String {
     var t = seconds
     var parts = tm()
     gmtime_r(&t, &parts)
-    return "\(parts.tm_year + 1900)-\(twoDigits(parts.tm_mon + 1))-\(twoDigits(parts.tm_mday))T\(twoDigits(parts.tm_hour)):\(twoDigits(parts.tm_min)):\(twoDigits(parts.tm_sec))Z"
+    return
+        "\(parts.tm_year + 1900)-\(twoDigits(parts.tm_mon + 1))-\(twoDigits(parts.tm_mday))T\(twoDigits(parts.tm_hour)):\(twoDigits(parts.tm_min)):\(twoDigits(parts.tm_sec))Z"
 }
 
 func newID() -> String {
@@ -332,7 +341,8 @@ func note() -> Never {
     guard let text = positional.first, (flag("needs")?.count ?? 0) <= 280 else { delegate() }
     let socket = connectAsks()
     let status = ["blocked", "done", "completed", "merged", "waiting"].first { flag($0) != nil }.map { $0 == "merged" ? "completed" : $0 }
-    let note = ask(kind: "note", title: flag("ticket") ?? "Update", body: text, agent: agentIdentity(), status: status, needs: flag("needs"))
+    let note = ask(
+        kind: "note", title: flag("ticket") ?? "Update", body: text, agent: agentIdentity(), status: status, needs: flag("needs"))
     if status == "done" || status == "completed" {
         fputs("zero: a note's --done doesn't mark the task done; zero done does (it asks you to confirm)\n", stderr)
     }
@@ -345,7 +355,10 @@ func done() -> Never {
     guard let text = positional.first else { delegate() }
     let socket = connectAsks()
     let said = ask(kind: "note", title: "Update", body: text, agent: agentIdentity())
-    socket.write(line: object([("op", quote("done")), ("ask", said), ("id", flag("confirm").map(quote)), ("text", flag("ask") != nil ? quote("ask") : nil)]))
+    socket.write(
+        line: object([
+            ("op", quote("done")), ("ask", said), ("id", flag("confirm").map(quote)), ("text", flag("ask") != nil ? quote("ask") : nil),
+        ]))
     guard let reply = socket.reply() else { fail("zero: no reply from Zero.app") }
     switch reply["op"]?.string {
     case "marked": print("Marked done. End your turn with [zero: done].")
@@ -379,8 +392,12 @@ func status() -> Never {
 
 func issue() -> Never {
     guard positional.count >= 2, let session = flag("session") ?? env("ZERO_SESSION") else { delegate() }
-    zerod("issue", [("session", quote(session)), ("ticket", quote(positional[0])), ("state", quote(positional[1])),
-                    ("text", quote(positional.dropFirst(2).joined(separator: " ")))])
+    zerod(
+        "issue",
+        [
+            ("session", quote(session)), ("ticket", quote(positional[0])), ("state", quote(positional[1])),
+            ("text", quote(positional.dropFirst(2).joined(separator: " "))),
+        ])
     exit(0)
 }
 
@@ -416,23 +433,37 @@ func prompt() -> Never {
     let previous = saved?.first.map(String.init)
     var now = timespec()
     clock_gettime(CLOCK_REALTIME, &now)
-    let typedRecently = previous == "human" && (saved?.dropFirst().first.flatMap { Double($0) }).map { Double(now.tv_sec) + Double(now.tv_nsec) / 1e9 - $0 < 600 } == true
+    let typedRecently =
+        previous == "human"
+        && (saved?.dropFirst().first.flatMap { Double($0) }).map { Double(now.tv_sec) + Double(now.tv_nsec) / 1e9 - $0 < 600 } == true
     let machinery = ["<task-notification>", "<system-reminder>", "Caveat:"].contains { prompt.hasPrefix($0) }
-    let zeroSaid = ["The user answered your ask", "The user declined your ask", "The user ran your command", "The user rejected your command", "Your ask "]
-        .contains { prompt.hasPrefix($0) }
+    let zeroSaid = [
+        "The user answered your ask", "The user declined your ask", "The user ran your command", "The user rejected your command",
+        "Your ask ",
+    ]
+    .contains { prompt.hasPrefix($0) }
     var source: String
-    if previous == "worker" || namesBrief(Array(prompt.utf8)) { source = "worker" }
-    else if machinery || zeroSaid { source = typedRecently ? "human" : "zero" }
-    else { source = sourceZeroKnows(prompt, session: session) }
+    if previous == "worker" || namesBrief(Array(prompt.utf8)) {
+        source = "worker"
+    } else if machinery || zeroSaid {
+        source = typedRecently ? "human" : "zero"
+    } else {
+        source = sourceZeroKnows(prompt, session: session)
+    }
     mkdir(home + "/.zero", 0o755)
     mkdir(folder, 0o755)
-    let stamp = source == "human" && typedRecently && (machinery || zeroSaid) ? (saved?.dropFirst().first.map(String.init) ?? "") : String(now.tv_sec)
+    let stamp =
+        source == "human" && typedRecently && (machinery || zeroSaid)
+        ? (saved?.dropFirst().first.map(String.init) ?? "") : String(now.tv_sec)
     write("\(source) \(stamp)", to: file)
-    let context: String? = switch source {
-    case "human": "The user typed this in the terminal and is at the keyboard: answer them here in the chat. This turn needs no Zero note and no [zero: …] ending, and anything you'd ask them, ask here."
-    case "worker": "You were started from a brief by a lead agent: report to that lead as the brief says, not to the user. Don't post Zero notes or asks and don't end turns with [zero: …]. Only use zero run, with --why, for a command only the user can run on their Mac."
-    default: nil
-    }
+    let context: String? =
+        switch source {
+        case "human":
+            "The user typed this in the terminal and is at the keyboard: answer them here in the chat. This turn needs no Zero note and no [zero: …] ending, and anything you'd ask them, ask here."
+        case "worker":
+            "You were started from a brief by a lead agent: report to that lead as the brief says, not to the user. Don't post Zero notes or asks and don't end turns with [zero: …]. Only use zero run, with --why, for a command only the user can run on their Mac."
+        default: nil
+        }
     guard let context else { exit(0) }
     print(object([("hookSpecificOutput", object([("hookEventName", quote("UserPromptSubmit")), ("additionalContext", quote(context))]))]))
     exit(0)
@@ -442,13 +473,16 @@ func prompt() -> Never {
 func trimmed(_ text: String) -> String {
     let scalars = Array(text.unicodeScalars)
     guard let first = scalars.firstIndex(where: { !$0.properties.isWhitespace }),
-          let last = scalars.lastIndex(where: { !$0.properties.isWhitespace }) else { return "" }
+        let last = scalars.lastIndex(where: { !$0.properties.isWhitespace })
+    else { return "" }
     return String(String.UnicodeScalarView(scalars[first...last]))
 }
 
 /// `\b(BRIEF|FIX|REVIEW|TEST)[\w.-]*\.md\b`, for ASCII text.
 func namesBrief(_ text: [UInt8]) -> Bool {
-    func word(_ byte: UInt8) -> Bool { byte == UInt8(ascii: "_") || (0x30...0x39).contains(byte) || (0x41...0x5A).contains(byte) || (0x61...0x7A).contains(byte) }
+    func word(_ byte: UInt8) -> Bool {
+        byte == UInt8(ascii: "_") || (0x30...0x39).contains(byte) || (0x41...0x5A).contains(byte) || (0x61...0x7A).contains(byte)
+    }
     for start in text.indices where start == 0 || !word(text[start - 1]) {
         for keyword in ["BRIEF", "FIX", "REVIEW", "TEST"].map({ Array($0.utf8) }) where text[start...].starts(with: keyword) {
             var end = start + keyword.count

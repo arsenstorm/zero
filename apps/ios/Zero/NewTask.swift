@@ -42,8 +42,10 @@ struct NewTaskSheet: View {
         // Above the keyboard, as Linear's properties: what the task starts with.
         .safeAreaInset(edge: .bottom) { chips }
         .sheet(isPresented: $selecting) {
-            ModelSelector(agents: Self.agents.map { .init(provider: $0, models: catalogue[$0] ?? []) },
-                          current: (agent, chosen?.model ?? models.first?.id, chosen?.effort)) { picked, m, e in
+            ModelSelector(
+                agents: Self.agents.map { .init(provider: $0, models: catalogue[$0] ?? []) },
+                current: (agent, chosen?.model ?? models.first?.id, chosen?.effort)
+            ) { picked, m, e in
                 provider = picked.rawValue
                 chosen = m.map { ($0, e) }
             }
@@ -61,10 +63,16 @@ struct NewTaskSheet: View {
 
     private var top: some View {
         HStack {
-            Button { dismiss() } label: { glyph("xmark-outline") }
-                .buttonStyle(.plain).glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("Close")
+            Button {
+                dismiss()
+            } label: {
+                glyph("xmark-outline")
+            }
+            .buttonStyle(.plain).glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("Close")
             Spacer(minLength: 12)
-            Button { choosing = .folder } label: {
+            Button {
+                choosing = .folder
+            } label: {
                 HStack(spacing: 8) {
                     Image("folder-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(.blue)
                     Text(folder.isEmpty ? "Folder" : (folder as NSString).lastPathComponent).font(.body.weight(.medium)).lineLimit(1)
@@ -76,9 +84,15 @@ struct NewTaskSheet: View {
                 list(folders.map { ($0, ($0 as NSString).lastPathComponent) }, selected: folder) { folder = $0 }
             }
             Spacer(minLength: 12)
-            Button { Task { await start() } } label: {
+            Button {
+                Task { await start() }
+            } label: {
                 Group {
-                    if starting { Spinner().frame(width: 18, height: 18) } else { glyph("arrow-up-outline").foregroundStyle(canStart ? .white : .secondary) }
+                    if starting {
+                        Spinner().frame(width: 18, height: 18)
+                    } else {
+                        glyph("arrow-up-outline").foregroundStyle(canStart ? .white : .secondary)
+                    }
                 }
                 .frame(width: 44, height: 44)
                 .background { if canStart { Circle().fill(Color.accentColor) } }
@@ -95,13 +109,16 @@ struct NewTaskSheet: View {
             HStack(spacing: 8) {
                 // The agent and its model, one choice: its mark, its model's name.
                 chip(modelName, icon: providerIcon) { selecting = true }
-                chip(permissions == .auto ? "Auto" : "Unrestricted", icon: permissions == .auto ? "wand-sparkle-outline" : "bolt-lightning-glyph",
-                     tint: permissions == .auto ? nil : .orange) { choosing = .permissions }
-                    .popover(isPresented: Binding(get: { choosing == .permissions }, set: { if !$0 { choosing = nil } })) {
-                        list([("auto", "Auto"), ("unrestricted", "Unrestricted")], selected: permissions == .auto ? "auto" : "unrestricted") {
-                            permissions = $0 == "auto" ? .auto : .unrestricted
-                        }
+                chip(
+                    permissions == .auto ? "Auto" : "Unrestricted",
+                    icon: permissions == .auto ? "wand-sparkle-outline" : "bolt-lightning-glyph",
+                    tint: permissions == .auto ? nil : .orange
+                ) { choosing = .permissions }
+                .popover(isPresented: Binding(get: { choosing == .permissions }, set: { if !$0 { choosing = nil } })) {
+                    list([("auto", "Auto"), ("unrestricted", "Unrestricted")], selected: permissions == .auto ? "auto" : "unrestricted") {
+                        permissions = $0 == "auto" ? .auto : .unrestricted
                     }
+                }
             }
             .padding(.horizontal, 16).padding(.vertical, 10)
         }
@@ -135,11 +152,14 @@ struct NewTaskSheet: View {
     private func list(_ rows: [(String, String)], selected: String, pick: @escaping (String) -> Void) -> some View {
         VStack(spacing: 2) {
             ForEach(rows, id: \.0) { id, title in
-                Button { pick(id); choosing = nil } label: {
+                Button {
+                    pick(id); choosing = nil
+                } label: {
                     HStack {
                         Text(title).lineLimit(1)
                         Spacer(minLength: 16)
-                        Image("circle-check-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(Color.accentColor).opacity(id == selected ? 1 : 0)
+                        Image("circle-check-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(Color.accentColor).opacity(
+                            id == selected ? 1 : 0)
                     }
                     .padding(.horizontal, 14).frame(height: 44).contentShape(Rectangle())
                 }
@@ -163,7 +183,8 @@ struct NewTaskSheet: View {
         starting = true
         defer { starting = false }
         do {
-            let session = try await model.start(prompt, in: folder, with: agent, model: chosen?.model, effort: chosen?.effort, permissions: permissions)
+            let session = try await model.start(
+                prompt, in: folder, with: agent, model: chosen?.model, effort: chosen?.effort, permissions: permissions)
             dismiss()
             model.tab = .tasks
             model.path = [session]

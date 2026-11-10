@@ -32,14 +32,18 @@ struct FollowRows: View {
     let source: Integration?
 
     private var rows: [ZerodLink.Followed] {
-        workspace.followed.filter { source == nil || $0.source == source?.rawValue }.sorted { ($0.summary.isEmpty ? $0.topic : $0.summary, $0.session) < ($1.summary.isEmpty ? $1.topic : $1.summary, $1.session) }
+        workspace.followed.filter { source == nil || $0.source == source?.rawValue }.sorted {
+            ($0.summary.isEmpty ? $0.topic : $0.summary, $0.session) < ($1.summary.isEmpty ? $1.topic : $1.summary, $1.session)
+        }
     }
 
     var body: some View {
         VStack(spacing: 0) {
             if rows.isEmpty {
                 Text(source == nil ? "No agent follows anything yet." : "No agent follows anything through \(source!.title) yet.")
-                    .font(.system(size: 12.5)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).frame(height: 44)
+                    .font(.system(size: 12.5)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(
+                        .horizontal, 18
+                    ).frame(height: 44)
             }
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                 if index > 0 { Divider().padding(.leading, 18) }
@@ -66,12 +70,18 @@ private struct FollowRow: View {
     }
     private var url: URL? { row.summary.split(separator: " ").last { $0.hasPrefix("http") }.flatMap { URL(string: String($0)) } }
     private var filter: String {
-        ((row.mine ? ["only your pull requests"] : []) + (row.about.isEmpty ? [] : ["about " + row.about.joined(separator: ", ")])).joined(separator: ", ")
+        ((row.mine ? ["only your pull requests"] : []) + (row.about.isEmpty ? [] : ["about " + row.about.joined(separator: ", ")])).joined(
+            separator: ", ")
     }
     private var detail: String {
         var parts = [row.topic]
         if !filter.isEmpty { parts.append(filter) }
-        if row.lastPoll > 0 { parts.append("read " + RelativeDateTimeFormatter().localizedString(for: Date(timeIntervalSince1970: TimeInterval(row.lastPoll)), relativeTo: Date())) }
+        if row.lastPoll > 0 {
+            parts.append(
+                "read "
+                    + RelativeDateTimeFormatter().localizedString(
+                        for: Date(timeIntervalSince1970: TimeInterval(row.lastPoll)), relativeTo: Date()))
+        }
         return parts.joined(separator: " · ")
     }
 
@@ -83,7 +93,9 @@ private struct FollowRow: View {
                 if let error = row.error { Text("Can't read it: \(error)").font(.system(size: 12)).foregroundStyle(.red).lineLimit(1) }
             }
             Spacer(minLength: 8)
-            Button { NSWorkspace.shared.open(URL(string: "zero://task/\(row.session)")!) } label: {
+            Button {
+                NSWorkspace.shared.open(URL(string: "zero://task/\(row.session)")!)
+            } label: {
                 Text(task).font(.system(size: 12, weight: .medium)).lineLimit(1).foregroundStyle(.secondary)
                     .padding(.horizontal, 8).frame(height: 24).background(Theme.chip, in: Capsule())
             }
@@ -95,10 +107,16 @@ private struct FollowRow: View {
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture(count: 2) { if let url { NSWorkspace.shared.open(url) } }
-        .zeroContextMenu("follow-\(row.session)-\(row.topic)") {[
-            (url.map { url in [MenuItem("Open", "arrow-up-right") { NSWorkspace.shared.open(url) }] } ?? [])
-                + [MenuItem("Copy topic", "copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(row.topic, forType: .string) }],
-            [MenuItem("Unfollow", "xmark", action: unfollow)],
-        ]}
+        .zeroContextMenu("follow-\(row.session)-\(row.topic)") {
+            [
+                (url.map { url in [MenuItem("Open", "arrow-up-right") { NSWorkspace.shared.open(url) }] } ?? [])
+                    + [
+                        MenuItem("Copy topic", "copy") {
+                            NSPasteboard.general.clearContents(); NSPasteboard.general.setString(row.topic, forType: .string)
+                        }
+                    ],
+                [MenuItem("Unfollow", "xmark", action: unfollow)],
+            ]
+        }
     }
 }

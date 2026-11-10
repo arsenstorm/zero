@@ -29,25 +29,33 @@ struct TaskDetails: View {
 
     var body: some View {
         // Its properties, then its issues and its workers.
-        VStack(alignment: .leading, spacing: 0) { properties; issues; workers }.padding(16)
-        .frame(width: 280, alignment: .leading)
-        .frame(maxHeight: docked ? .infinity : nil, alignment: .top)
-        // Concentric with the panel's corner it sits in: its radius and its inset add up to the panel's (6 + 6 = 12).
-        .background(docked ? Theme.composer : Theme.card, in: RoundedRectangle(cornerRadius: docked ? 0 : Self.radius))
-        .overlay { if !docked { RoundedRectangle(cornerRadius: Self.radius).strokeBorder(Theme.stroke) } }
-        .compositingGroup()
-        .shadow(color: .black.opacity(docked ? 0 : 0.04), radius: 10, y: 2)
-        .coordinateSpace(name: "details")
-        .overlay(alignment: .topLeading) {
-            if peek, let row {
-                StatusCard(row: row, inbox: inbox)
-                    .onHover { inside in overCard = inside; if !inside { closeSoon() } }
-                    .simultaneousGesture(TapGesture().onEnded { hold() })
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { cardFrame = $0 }
-                    .offset(x: -(StatusCard.width + 8), y: max(0, peekY - 14))
+        VStack(alignment: .leading, spacing: 0) {
+            properties; issues; workers
+        }.padding(16)
+            .frame(width: 280, alignment: .leading)
+            .frame(maxHeight: docked ? .infinity : nil, alignment: .top)
+            // Concentric with the panel's corner it sits in: its radius and its inset add up to the panel's (6 + 6 = 12).
+            .background(docked ? Theme.composer : Theme.card, in: RoundedRectangle(cornerRadius: docked ? 0 : Self.radius))
+            .overlay { if !docked { RoundedRectangle(cornerRadius: Self.radius).strokeBorder(Theme.stroke) } }
+            .compositingGroup()
+            .shadow(color: .black.opacity(docked ? 0 : 0.04), radius: 10, y: 2)
+            .coordinateSpace(name: "details")
+            .overlay(alignment: .topLeading) {
+                if peek, let row {
+                    StatusCard(row: row, inbox: inbox)
+                        .onHover { inside in
+                            overCard = inside; if !inside { closeSoon() }
+                        }
+                        .simultaneousGesture(TapGesture().onEnded { hold() })
+                        .onGeometryChange(for: CGRect.self) {
+                            $0.frame(in: .global)
+                        } action: {
+                            cardFrame = $0
+                        }
+                        .offset(x: -(StatusCard.width + 8), y: max(0, peekY - 14))
+                }
             }
-        }
-        .onDisappear(perform: release)
+            .onDisappear(perform: release)
     }
 
     /// A moment to cross from the pill to the card; held, it stays.
@@ -93,10 +101,15 @@ struct TaskDetails: View {
                 HStack(spacing: 6) {
                     HStack(spacing: 5) {
                         if let mark = conversation.provider.mark {
-                            mark.resizable().aspectRatio(contentMode: .fit).frame(width: 13, height: 13).clipShape(RoundedRectangle(cornerRadius: 3))
+                            mark.resizable().aspectRatio(contentMode: .fit).frame(width: 13, height: 13).clipShape(
+                                RoundedRectangle(cornerRadius: 3))
                         }
-                        Text([modelName ?? conversation.provider.title, conversation.effort.map { effortLabel($0, short: true) }].compactMap { $0 }.joined(separator: " · "))
-                            .lineLimit(1).truncationMode(.tail).tip([conversation.provider.title, conversation.model].compactMap { $0 }.joined(separator: " · "))
+                        Text(
+                            [modelName ?? conversation.provider.title, conversation.effort.map { effortLabel($0, short: true) }].compactMap
+                            { $0 }.joined(separator: " · ")
+                        )
+                        .lineLimit(1).truncationMode(.tail).tip(
+                            [conversation.provider.title, conversation.model].compactMap { $0 }.joined(separator: " · "))
                     }
                     // Unrestricted: a bolt beside the agent, as the composer's permissions chip shows it.
                     if conversation.permissions == .unrestricted {
@@ -110,7 +123,9 @@ struct TaskDetails: View {
             property("Where") {
                 // The place's own folder when the places command says (a bench's), else the task's.
                 let folder = row?.path ?? conversation.cwd
-                Button { NSWorkspace.shared.open(URL(fileURLWithPath: folder)) } label: {
+                Button {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: folder))
+                } label: {
                     Self.linked(row?.place ?? Projects.name(of: conversation.cwd)).truncationMode(.middle)
                 }
                 .buttonStyle(.plain).tip("Show \((folder as NSString).abbreviatingWithTildeInPath) in Finder")
@@ -122,7 +137,11 @@ struct TaskDetails: View {
                             overPill = inside
                             if inside { peek = true } else { closeSoon() }
                         }
-                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named("details")).minY } action: { peekY = $0 }
+                        .onGeometryChange(for: CGFloat.self) {
+                            $0.frame(in: .named("details")).minY
+                        } action: {
+                            peekY = $0
+                        }
                 }
             }
             if let branch = conversation.branch {
@@ -185,7 +204,8 @@ struct TaskDetails: View {
                     Text("Workers").foregroundStyle(.secondary)
                     Spacer()
                     if members.count > shown.count || allWorkers {
-                        Button(allWorkers ? "Fewer" : "All \(members.count)") { allWorkers.toggle() }.buttonStyle(.plain).foregroundStyle(.secondary)
+                        Button(allWorkers ? "Fewer" : "All \(members.count)") { allWorkers.toggle() }.buttonStyle(.plain).foregroundStyle(
+                            .secondary)
                     }
                 }
                 .padding(.top, 14).padding(.bottom, 2)
@@ -201,22 +221,24 @@ struct TaskDetails: View {
     }
 
     @ViewBuilder private func workerRows(_ members: [BoardRow.Member]) -> some View {
-                ForEach(members, id: \.session) { member in
-                    Button { navigation.worker = member.session } label: {
-                        HStack(alignment: .top, spacing: 7) {
-                            TaskStateIcon(state: member.state).frame(width: 14, height: 16)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(title(of: member)).fontWeight(.medium).lineLimit(1)
-                                if let now = member.needs ?? member.now, !now.isEmpty {
-                                    Text(now).foregroundStyle(.secondary).lineLimit(2)
-                                }
-                            }
+        ForEach(members, id: \.session) { member in
+            Button {
+                navigation.worker = member.session
+            } label: {
+                HStack(alignment: .top, spacing: 7) {
+                    TaskStateIcon(state: member.state).frame(width: 14, height: 16)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(title(of: member)).fontWeight(.medium).lineLimit(1)
+                        if let now = member.needs ?? member.now, !now.isEmpty {
+                            Text(now).foregroundStyle(.secondary).lineLimit(2)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
-                    .opacity([.done, .idle, .offline].contains(member.state) ? 0.6 : 1)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity([.done, .idle, .offline].contains(member.state) ? 0.6 : 1)
+        }
     }
 
     private func title(of member: BoardRow.Member) -> String {
@@ -233,7 +255,9 @@ struct TaskDetails: View {
 
     /// The ticket's page: from the integration's view that lists it, else Linear's link for its team's workspace.
     private func ticketURL(_ ticket: String) -> URL? {
-        if let listed = workspace.items.values.lazy.flatMap({ $0 }).first(where: { $0.ticketKey == ticket })?.url { return LinearLinks.url(listed) }
+        if let listed = workspace.items.values.lazy.flatMap({ $0 }).first(where: { $0.ticketKey == ticket })?.url {
+            return LinearLinks.url(listed)
+        }
         guard let team = ticket.split(separator: "-").first, let space = Linear.shared.teams[String(team)] else { return nil }
         return LinearLinks.url("https://linear.app/\(space)/issue/\(ticket)")
     }
@@ -249,14 +273,22 @@ struct TaskDetails: View {
 
     /// A line across, for the dashed underline.
     private struct Rule: Shape {
-        func path(in rect: CGRect) -> Path { Path { $0.move(to: CGPoint(x: rect.minX, y: rect.midY)); $0.addLine(to: CGPoint(x: rect.maxX, y: rect.midY)) } }
+        func path(in rect: CGRect) -> Path {
+            Path {
+                $0.move(to: CGPoint(x: rect.minX, y: rect.midY)); $0.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+            }
+        }
     }
 
     /// Its value as a link when it is one, plain words otherwise.
     @ViewBuilder private func link(_ text: String, to url: URL?) -> some View {
         if let url {
-            Button { NSWorkspace.shared.open(url) } label: { Self.linked(text) }
-                .buttonStyle(.plain).tip("Open " + url.absoluteString)
+            Button {
+                NSWorkspace.shared.open(url)
+            } label: {
+                Self.linked(text)
+            }
+            .buttonStyle(.plain).tip("Open " + url.absoluteString)
         } else {
             Text(text).lineLimit(2)
         }
@@ -272,15 +304,20 @@ struct TaskDetails: View {
     /// The latest pull request the task's words mention: a GitHub link, or "repo#123" for a repository one of the
     /// GitHub views shows (which says whose it is).
     private var mentionedPR: String? {
-        let texts = [row?.asks.first?.title, row?.needs, row?.now].compactMap { $0 }
+        let texts =
+            [row?.asks.first?.title, row?.needs, row?.now].compactMap { $0 }
             + (workspace.live(conversation.id)?.conversation.items ?? []).reversed().compactMap { item -> String? in
-                switch item.kind { case let .agent(text, _), let .user(text, _): text; default: nil }
+                switch item.kind {
+                case let .agent(text, _), let .user(text, _): text;
+                default: nil
+                }
             }
-        let owners = Dictionary(workspace.items.values.flatMap { $0 }.compactMap { item -> (String, String)? in
-            let parts = item.url.split(separator: "/")
-            guard item.url.contains("github.com/"), parts.count >= 4 else { return nil }
-            return (String(parts[3]).lowercased(), String(parts[2]))
-        }, uniquingKeysWith: { first, _ in first })
+        let owners = Dictionary(
+            workspace.items.values.flatMap { $0 }.compactMap { item -> (String, String)? in
+                let parts = item.url.split(separator: "/")
+                guard item.url.contains("github.com/"), parts.count >= 4 else { return nil }
+                return (String(parts[3]).lowercased(), String(parts[2]))
+            }, uniquingKeysWith: { first, _ in first })
         for text in texts {
             if let match = text.firstMatch(of: #/https://github\.com/[\w.-]+/[\w.-]+/pull/\d+/#) { return String(match.0) }
             if let match = text.firstMatch(of: #/\b([\w.-]+)#(\d+)\b/#), let owner = owners[String(match.1).lowercased()] {
@@ -293,7 +330,10 @@ struct TaskDetails: View {
     /// A GitHub pull request as "repo#123"; any other link without its scheme; words as they are.
     static func shown(_ value: String) -> String {
         if let pr = value.firstMatch(of: #/github\.com/[\w.-]+/([\w.-]+)/pull/(\d+)/#) { return "\(pr.1)#\(pr.2)" }
-        if value.hasPrefix("https://") || value.hasPrefix("http://") { return String(value.split(separator: "/", maxSplits: 1).last ?? Substring(value)).trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
+        if value.hasPrefix("https://") || value.hasPrefix("http://") {
+            return String(value.split(separator: "/", maxSplits: 1).last ?? Substring(value)).trimmingCharacters(
+                in: CharacterSet(charactersIn: "/"))
+        }
         return value
     }
 

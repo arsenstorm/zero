@@ -48,7 +48,9 @@ final class Settings {
         }
     }
     /// The system's alert sounds, every one copied into Zero.app (the Makefile), where a notification's has to be.
-    static let sounds = ["Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero", "Morse", "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink"]
+    static let sounds = [
+        "Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero", "Morse", "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink",
+    ]
     @ObservationIgnored var onChange: (() -> Void)?
 
     var launchAtLogin: Bool {

@@ -37,8 +37,9 @@ import Observation
     public func adding(to own: [SpawnChoice], for cli: Provider) -> [SpawnChoice] {
         let levels = cli == .claude ? ClaudeModels.levels : []
         let added = models.filter { $0.cli == cli && !own.map(\.id).contains($0.id) }.map { model in
-            SpawnChoice(id: model.id, name: model.name, detail: "Added in Zero · \(model.id)", icon: cli == .claude ? "claude" : nil,
-                        provider: cli == .claude ? "Anthropic" : nil, levels: levels, defaultLevel: cli == .claude ? "high" : nil)
+            SpawnChoice(
+                id: model.id, name: model.name, detail: "Added in Zero · \(model.id)", icon: cli == .claude ? "claude" : nil,
+                provider: cli == .claude ? "Anthropic" : nil, levels: levels, defaultLevel: cli == .claude ? "high" : nil)
         }
         return own + added
     }

@@ -21,25 +21,47 @@ struct LoopsPage: View {
             SidebarColumn(title: "Loops") {
                 HStack(spacing: 4) {
                     Spacer(minLength: 0)
-                    Button { naming = true } label: { NucleoIcon("compose", size: 15).frame(width: 30, height: 30) }
-                        .buttonStyle(Hovering()).foregroundStyle(.secondary).tip("New loop")
+                    Button {
+                        naming = true
+                    } label: {
+                        NucleoIcon("compose", size: 15).frame(width: 30, height: 30)
+                    }
+                    .buttonStyle(Hovering()).foregroundStyle(.secondary).tip("New loop")
                 }
                 .padding(.bottom, 6)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 1) {
                         ForEach(workspace.loops) { loop in
-                            Button { navigation.place = .loop(loop.name) } label: {
+                            Button {
+                                navigation.place = .loop(loop.name)
+                            } label: {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("@" + loop.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                                    if !loop.description.isEmpty { Text(loop.description).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1) }
+                                    if !loop.description.isEmpty {
+                                        Text(loop.description).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
+                                    }
                                 }
-                                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).frame(height: loop.description.isEmpty ? 30 : 42)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).frame(
+                                    height: loop.description.isEmpty ? 30 : 42)
                             }
                             .buttonStyle(Hovering(selected: shown == loop.name))
-                            .zeroContextMenu("loop-\(loop.name)") {[
-                                [MenuItem("Copy name", "copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString("@" + loop.name, forType: .string) }],
-                                [MenuItem("Delete", "trash") { Task { await workspace.deleteLoop(loop.name); if shown == loop.name { navigation.place = .loops } } }],
-                            ]}
+                            .zeroContextMenu("loop-\(loop.name)") {
+                                [
+                                    [
+                                        MenuItem("Copy name", "copy") {
+                                            NSPasteboard.general.clearContents();
+                                            NSPasteboard.general.setString("@" + loop.name, forType: .string)
+                                        }
+                                    ],
+                                    [
+                                        MenuItem("Delete", "trash") {
+                                            Task {
+                                                await workspace.deleteLoop(loop.name); if shown == loop.name { navigation.place = .loops }
+                                            }
+                                        }
+                                    ],
+                                ]
+                            }
                         }
                     }
                     .padding(.bottom, 8)
@@ -55,7 +77,9 @@ struct LoopsPage: View {
                     ContentUnavailableView {
                         NucleoLabel("No loop open", icon: "animation-repeat", size: 20)
                     } description: {
-                        Text("A loop is an instruction an agent follows. Name one as @name in a message, and the agent gets its words. A loop can name the loops its workers follow.")
+                        Text(
+                            "A loop is an instruction an agent follows. Name one as @name in a message, and the agent gets its words. A loop can name the loops its workers follow."
+                        )
                     } actions: {
                         Button("New loop") { naming = true }
                     }
@@ -68,8 +92,11 @@ struct LoopsPage: View {
             NameSheet(title: "New loop", name: "", action: "Create") { name in
                 let slug = name.lowercased().replacingOccurrences(of: " ", with: "-")
                 Task {
-                    if let error = await workspace.saveLoop(slug, description: "", body: "") { NSSound.beep(); print(error) }
-                    else { navigation.place = .loop(slug) }
+                    if let error = await workspace.saveLoop(slug, description: "", body: "") {
+                        NSSound.beep(); print(error)
+                    } else {
+                        navigation.place = .loop(slug)
+                    }
                 }
             }
         }
@@ -95,9 +122,11 @@ private struct LoopEditor: View {
             if let loop {
                 header(loop)
                 if let problem { banner(problem) }
-                MarkdownEditor(text: $text, scrollTo: $scrollTo, sectionLink: { _ in nil }, padLink: ("zero://loop/" + name, "@" + name), sections: [])
-                    .onChange(of: text) { _, now in if now != saved.text { scheduleSave() } }
-                    .onChange(of: description) { _, now in if now != saved.description { scheduleSave() } }
+                MarkdownEditor(
+                    text: $text, scrollTo: $scrollTo, sectionLink: { _ in nil }, padLink: ("zero://loop/" + name, "@" + name), sections: []
+                )
+                .onChange(of: text) { _, now in if now != saved.text { scheduleSave() } }
+                .onChange(of: description) { _, now in if now != saved.description { scheduleSave() } }
                 footer(loop)
             } else if missing {
                 ContentUnavailableView("No such loop", systemImage: "", description: Text("It may have been deleted."))
@@ -114,12 +143,15 @@ private struct LoopEditor: View {
             HStack(alignment: .center, spacing: 8) {
                 Text("@" + loop.name).font(.system(size: 26, weight: .semibold))
                 Spacer()
-                Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString("@" + loop.name, forType: .string) } label: {
+                Button {
+                    NSPasteboard.general.clearContents(); NSPasteboard.general.setString("@" + loop.name, forType: .string)
+                } label: {
                     NucleoLabel("Copy name", icon: "copy", size: 14).font(.system(size: 12.5, weight: .medium))
                 }
                 .buttonStyle(.plain).tip("Copy @\(loop.name) to name it in a message")
             }
-            TextField("What this loop is for, in a line", text: $description).textFieldStyle(.plain).font(.system(size: 14)).foregroundStyle(.secondary)
+            TextField("What this loop is for, in a line", text: $description).textFieldStyle(.plain).font(.system(size: 14))
+                .foregroundStyle(.secondary)
         }
         .padding(.top, 28).padding(.bottom, 12)
     }
@@ -133,7 +165,8 @@ private struct LoopEditor: View {
                     ForEach(loop.children, id: \.self) { child in
                         Button("@" + child) { navigation.place = .loop(child) }
                             .buttonStyle(.plain).font(.system(size: 12.5, weight: .medium)).foregroundStyle(TokenTextView.tokenText.asColor)
-                            .padding(.horizontal, 6).padding(.vertical, 2).background(TokenTextView.tokenFill.asColor, in: RoundedRectangle(cornerRadius: 5))
+                            .padding(.horizontal, 6).padding(.vertical, 2).background(
+                                TokenTextView.tokenFill.asColor, in: RoundedRectangle(cornerRadius: 5))
                     }
                 }
             }
@@ -143,11 +176,14 @@ private struct LoopEditor: View {
                 Text("Ran by").font(.system(size: 12.5)).foregroundStyle(.secondary)
                 ForEach(Array(loop.uses.reversed().prefix(12).enumerated()), id: \.offset) { _, use in
                     HStack(spacing: 8) {
-                        Button(title(of: use.session)) { navigation.place = .task(use.session) }.buttonStyle(.plain).font(.system(size: 13, weight: .medium))
+                        Button(title(of: use.session)) { navigation.place = .task(use.session) }.buttonStyle(.plain).font(
+                            .system(size: 13, weight: .medium))
                         Text(use.role).font(.system(size: 12)).foregroundStyle(.secondary)
                         if let state = state(of: use.session) { StateLabel(state: state) }
                         Spacer(minLength: 0)
-                        Text(Date(timeIntervalSince1970: TimeInterval(use.at) / 1000).formatted(.relative(presentation: .named))).font(.system(size: 12)).foregroundStyle(.tertiary)
+                        Text(Date(timeIntervalSince1970: TimeInterval(use.at) / 1000).formatted(.relative(presentation: .named))).font(
+                            .system(size: 12)
+                        ).foregroundStyle(.tertiary)
                     }
                 }
             }
@@ -195,7 +231,9 @@ private struct LoopEditor: View {
             description = fresh.description
             text = fresh.body
             saved = (fresh.description, fresh.body)
-        } else { loop = fresh } // what's typed here stays; the children and uses shown are the latest
+        } else {
+            loop = fresh
+        } // what's typed here stays; the children and uses shown are the latest
     }
 
     private func scheduleSave() {

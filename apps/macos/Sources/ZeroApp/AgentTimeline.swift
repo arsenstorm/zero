@@ -44,7 +44,8 @@ struct AgentTimeline: View {
     /// left, with a placeholder holding the reply's place while it works. Everything before folds into
     /// "Earlier", so sending again moves the previous exchange up into the list and opens a new one below.
     private static func latestExchange(_ history: [Ask]) -> (recent: [Ask], earlier: [Ask]) {
-        let start = history.lastIndex(where: { $0.kind == .message })
+        let start =
+            history.lastIndex(where: { $0.kind == .message })
             ?? history.lastIndex(where: { $0.kind == .note }) ?? history.endIndex
         return (Array(history[start...]), Array(history[..<start].suffix(40)))
     }
@@ -75,8 +76,9 @@ struct AgentTimeline: View {
     /// A Zero task's latest answer, without its ending line, when it's newer than the agent's latest ask or note.
     private func latestReply(_ agent: String) -> (text: String, at: Date?)? {
         guard agent.hasPrefix("zerod-"), let conversation = controller.workspace?.conversation(String(agent.dropFirst("zerod-".count))),
-              let answer = conversation.items.last(where: { if case .agent(_, true) = $0.kind { true } else { false } }),
-              case let .agent(text, _) = answer.kind else { return nil }
+            let answer = conversation.items.last(where: { if case .agent(_, true) = $0.kind { true } else { false } }),
+            case let .agent(text, _) = answer.kind
+        else { return nil }
         let words = ZeroEnding.split(text).0.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !words.isEmpty else { return nil }
         let at = answer.at.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000) }
@@ -88,10 +90,14 @@ struct AgentTimeline: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text(speaker(agent)).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                if let at = reply.at { Text("· " + at.formatted(.relative(presentation: .named))).font(.system(size: 11)).foregroundStyle(.tertiary) }
+                if let at = reply.at {
+                    Text("· " + at.formatted(.relative(presentation: .named))).font(.system(size: 11)).foregroundStyle(.tertiary)
+                }
                 Spacer()
                 Button("Open task") {
-                    if let url = URL(string: "zero://task/" + agent.dropFirst("zerod-".count)) { (NSApp.delegate as? AppDelegate)?.openZeroURL(url) }
+                    if let url = URL(string: "zero://task/" + agent.dropFirst("zerod-".count)) {
+                        (NSApp.delegate as? AppDelegate)?.openZeroURL(url)
+                    }
                 }
                 .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
             }
@@ -126,12 +132,15 @@ private struct EarlierDetail: View {
             if ask.kind == .note || ask.kind == .message {
                 MarkdownText(ask.body, cwd: ask.agent.cwd ?? ask.cwd)
             } else {
-                Text(ask.title).font(.system(size: 13, weight: .semibold)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                Text(ask.title).font(.system(size: 13, weight: .semibold)).textSelection(.enabled).fixedSize(
+                    horizontal: false, vertical: true)
                 if !ask.body.isEmpty, ask.body != ask.title {
-                    Text(ask.body).font(.system(size: 12)).foregroundStyle(.secondary).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    Text(ask.body).font(.system(size: 12)).foregroundStyle(.secondary).textSelection(.enabled).fixedSize(
+                        horizontal: false, vertical: true)
                 }
                 if let detail = ask.detail, !detail.isEmpty {
-                    Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).textSelection(.enabled).fixedSize(
+                        horizontal: false, vertical: true)
                 }
                 if let command = ask.command, !command.isEmpty {
                     Text(ask.kind == .run && !ask.output.isEmpty ? "$ \(command)\n\(ask.output.suffix(2000))" : command)
@@ -168,7 +177,9 @@ private struct EarlierRow: View {
             Text(summary).font(.system(size: 12)).foregroundStyle(open ? .primary : .secondary).lineLimit(1)
             Spacer(minLength: 4)
             if let agent = controller.agentFilter, controller.store.canMessage(agent) {
-                Button { controller.quote(ask, to: agent) } label: {
+                Button {
+                    controller.quote(ask, to: agent)
+                } label: {
                     NucleoIcon("share-left", size: 12).foregroundStyle(.secondary)
                         .frame(width: 16, height: 16).contentShape(Rectangle())
                 }

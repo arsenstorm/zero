@@ -13,10 +13,10 @@ final class UpdatesTests: XCTestCase {
 
     func testAReleaseAsGitHubGivesIt() throws {
         let json = """
-        {"tag_name": "v0.2", "body": "Fixes", "assets": [
-          {"name": "notes.txt", "browser_download_url": "https://example.com/notes.txt"},
-          {"name": "Zero.zip", "browser_download_url": "https://example.com/Zero.zip"}]}
-        """
+            {"tag_name": "v0.2", "body": "Fixes", "assets": [
+              {"name": "notes.txt", "browser_download_url": "https://example.com/notes.txt"},
+              {"name": "Zero.zip", "browser_download_url": "https://example.com/Zero.zip"}]}
+            """
         let release = try JSONDecoder().decode(Release.self, from: Data(json.utf8))
         XCTAssertEqual(release.version, "0.2")
         XCTAssertEqual(release.app?.name, "Zero.zip")

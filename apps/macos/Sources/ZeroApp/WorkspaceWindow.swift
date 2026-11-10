@@ -14,7 +14,8 @@ extension AppDelegate {
         let screens = NSScreen.screens.map(\.frame.size)
         return windows.contains { window in
             guard (window[kCGWindowOwnerPID as String] as? Int32) != me, (window[kCGWindowLayer as String] as? Int) == 0,
-                  let bounds = window[kCGWindowBounds as String] as? [String: CGFloat] else { return false }
+                let bounds = window[kCGWindowBounds as String] as? [String: CGFloat]
+            else { return false }
             return screens.contains { $0.width == bounds["Width"] && $0.height == bounds["Height"] }
         }
     }
@@ -25,7 +26,9 @@ extension AppDelegate {
     func showWorkspace(activating: Bool) {
         if workspaceWindow == nil {
             let view = WorkspaceView(workspace: workspace, navigation: navigation, inbox: inbox) { [unowned self] in
-                SettingsView(settings: settings, store: store, inbox: inbox, workspace: workspace, navigation: navigation, showOnboarding: { [weak self] in self?.openOnboarding() })
+                SettingsView(
+                    settings: settings, store: store, inbox: inbox, workspace: workspace, navigation: navigation,
+                    showOnboarding: { [weak self] in self?.openOnboarding() })
             }
             let host = NSHostingController(rootView: view)
             host.sizingOptions = []
@@ -59,8 +62,9 @@ extension AppDelegate {
                 let least = window.frameRect(forContentRect: NSRect(origin: .zero, size: window.contentMinSize)).size
                 saved.size = NSSize(width: max(saved.width, least.width), height: max(saved.height, least.height))
                 window.setFrame(saved, display: false)
+            } else {
+                window.center()
             }
-            else { window.center() }
             for name in [NSWindow.didMoveNotification, NSWindow.didEndLiveResizeNotification, NSWindow.didResizeNotification] {
                 NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak window] _ in
                     guard let window, !window.styleMask.contains(.fullScreen), !window.isMiniaturized else { return }
@@ -70,9 +74,11 @@ extension AppDelegate {
             window.acceptsMouseMovedEvents = true
             workspaceWindow = window
             // Filling the screen (or leaving it), the bar moves into the window or back out to the screen's edge.
-            let changes: [Notification.Name] = [NSWindow.didResizeNotification, NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification,
-                                                NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification, NSWindow.didChangeScreenNotification,
-                                                NSWindow.willCloseNotification]
+            let changes: [Notification.Name] = [
+                NSWindow.didResizeNotification, NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification,
+                NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification, NSWindow.didChangeScreenNotification,
+                NSWindow.willCloseNotification,
+            ]
             // Closed by you, it stays closed next launch; open when Zero quits (an update, a crash), it opens again.
             NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
                 UserDefaults.standard.set(false, forKey: "workspaceOpen")
@@ -111,8 +117,14 @@ extension AppDelegate {
         // Following the active screen, the bar leaves the window for another screen the pointer is on (a full-screen
         // window's included), and comes back with it.
         let mouse = NSEvent.mouseLocation
-        let elsewhere = settings.followActiveScreen && NSScreen.screens.first { $0.frame.contains(mouse) }.map { $0 != workspaceWindow?.screen } == true
-        let wanted = switch settings.barDock { case .auto: fills; case .always: shown; case .never: false }
+        let elsewhere =
+            settings.followActiveScreen && NSScreen.screens.first { $0.frame.contains(mouse) }.map { $0 != workspaceWindow?.screen } == true
+        let wanted =
+            switch settings.barDock {
+            case .auto: fills;
+            case .always: shown;
+            case .never: false
+            }
         let docked = wanted && !elsewhere
         guard docked != navigation.barDocked else { return }
         navigation.barDocked = docked
@@ -132,7 +144,8 @@ extension AppDelegate {
     /// (Solo's, Rex's, a terminal's) as a page with its conversation with you.
     func openAgent(_ name: String) {
         guard let identity = inbox.store.identity(of: name), identity.runtime == "zerod", let session = identity.ref,
-              let task = workspace.conversation(session) else {
+            let task = workspace.conversation(session)
+        else {
             inWindow(.agent(name))
             return
         }

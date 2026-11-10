@@ -23,7 +23,9 @@ private func connect(_ host: Tunnel.Host, _ phone: inout Tunnel.Phone, at now: D
     return nil
 }
 
-private func invite(_ host: Tunnel.Host, at now: Date) -> Tunnel.Invite { host.invite(relay: "wss://relay.example", mac: "mac-1", now: now) }
+private func invite(_ host: Tunnel.Host, at now: Date) -> Tunnel.Invite {
+    host.invite(relay: "wss://relay.example", mac: "mac-1", now: now)
+}
 
 @Test func aPhonePairsWithTheCodeAndIsKnownAfter() throws {
     let clock = Clock()

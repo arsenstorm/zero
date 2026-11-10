@@ -22,8 +22,10 @@ public enum HostLink {
         public var rows: Int?
         /// For spawn: keep the program's output in runs/<id>.out and its exit code in <id>.exit (Paths.dir/host).
         public var record: Bool?
-        public init(op: String, id: String? = nil, cwd: String? = nil, argv: [String]? = nil, label: String? = nil,
-                    text: String? = nil, bytes: [UInt8]? = nil, columns: Int? = nil, rows: Int? = nil, record: Bool? = nil) {
+        public init(
+            op: String, id: String? = nil, cwd: String? = nil, argv: [String]? = nil, label: String? = nil,
+            text: String? = nil, bytes: [UInt8]? = nil, columns: Int? = nil, rows: Int? = nil, record: Bool? = nil
+        ) {
             self.op = op; self.id = id; self.cwd = cwd; self.argv = argv; self.label = label
             self.text = text; self.bytes = bytes; self.columns = columns; self.rows = rows; self.record = record
         }
@@ -41,7 +43,10 @@ public enum HostLink {
         public var statusMessage: String?
         /// Seconds since its program last wrote or was typed to.
         public var idle: Int?
-        public init(id: String, label: String, cwd: String, argv: [String], running: Bool, exitCode: Int32?, status: String?, statusMessage: String?, idle: Int? = nil) {
+        public init(
+            id: String, label: String, cwd: String, argv: [String], running: Bool, exitCode: Int32?, status: String?,
+            statusMessage: String?, idle: Int? = nil
+        ) {
             self.id = id; self.label = label; self.cwd = cwd; self.argv = argv; self.running = running
             self.exitCode = exitCode; self.status = status; self.statusMessage = statusMessage; self.idle = idle
         }
@@ -54,8 +59,12 @@ public enum HostLink {
         public var terminal: Terminal?
         public var terminals: [Terminal]?
         public var screen: String?
-        public init(ok: Bool, error: String? = nil, version: Int? = nil, terminal: Terminal? = nil, terminals: [Terminal]? = nil, screen: String? = nil) {
-            self.ok = ok; self.error = error; self.version = version; self.terminal = terminal; self.terminals = terminals; self.screen = screen
+        public init(
+            ok: Bool, error: String? = nil, version: Int? = nil, terminal: Terminal? = nil, terminals: [Terminal]? = nil,
+            screen: String? = nil
+        ) {
+            self.ok = ok; self.error = error; self.version = version; self.terminal = terminal; self.terminals = terminals;
+            self.screen = screen
         }
     }
 

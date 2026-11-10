@@ -47,10 +47,12 @@ struct TaskRow: View {
         .onHover { hovering = $0 }
         // One gesture for click and drag, as the control bar's: on the row's button only, so the fold chevron keeps its
         // own click. Global space: the row moves with the drag, so a local translation would cancel itself out.
-        .highPriorityGesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
-            .onChanged { reorder?.changed($0.translation.height) }
-            .onEnded { _ in if reorder?.ended() == false { action() } },
-            including: reorder == nil ? .subviews : .all)
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                .onChanged { reorder?.changed($0.translation.height) }
+                .onEnded { _ in if reorder?.ended() == false { action() } },
+            including: reorder == nil ? .subviews : .all
+        )
         // Just left of the state icon, outside the row's own button so its click is its own.
         .overlay(alignment: .trailing) {
             if let fold {
@@ -68,8 +70,10 @@ struct TaskRow: View {
 
     /// A worker's state in the sidebar's terms: how it ended its last turn, if it said, else what it's doing.
     static func state(of worker: Conversation) -> BoardRow.State {
-        if [.idle, .done, .offline].contains(worker.attention), let answer = worker.items.last(where: { if case .agent(_, true) = $0.kind { true } else { false } }),
-           case let .agent(text, _) = answer.kind, let ending = ZeroEnding.split(text).1 {
+        if [.idle, .done, .offline].contains(worker.attention),
+            let answer = worker.items.last(where: { if case .agent(_, true) = $0.kind { true } else { false } }),
+            case let .agent(text, _) = answer.kind, let ending = ZeroEnding.split(text).1
+        {
             switch ending {
             case .done: return .done
             case .working: return .idle
@@ -116,8 +120,11 @@ struct TaskStateIcon: View {
     var body: some View {
         Group {
             // At work it spins, as everywhere else in Zero something under way does.
-            if state == .working { Spinner().frame(width: 12, height: 12).frame(width: 14, height: 14) }
-            else { NucleoIcon(Self.look(state).symbol, fill: "glyph", size: 14).foregroundStyle(Self.look(state).color) }
+            if state == .working {
+                Spinner().frame(width: 12, height: 12).frame(width: 14, height: 14)
+            } else {
+                NucleoIcon(Self.look(state).symbol, fill: "glyph", size: 14).foregroundStyle(Self.look(state).color)
+            }
         }
         // A view of its own for each state: a spinner's AppKit view kept from Working could otherwise stand where the
         // next state's icon should be, and the row would show nothing.
@@ -190,14 +197,19 @@ struct TaskPeekCard: View {
     var body: some View {
         let peek = TaskPeek.shared
         if let id = peek.session, let (lead, row) = found(id) {
-            card(row, title: lead.session == id ? row.task : workspace.conversations.first { $0.id == id }.map(Workspace.label(of:)) ?? row.task)
-                .contentShape(RoundedRectangle(cornerRadius: 12))
-                .onTapGesture { open(lead.session, lead.session == id ? nil : id); peek.close() }
-                .onHover { inside in
-                    peek.overCard = inside
-                    if !inside { peek.close() }
-                }
-                .offset(x: width + 8, y: max(8, peek.top - 4))
+            card(
+                row,
+                title: lead.session == id ? row.task : workspace.conversations.first { $0.id == id }.map(Workspace.label(of:)) ?? row.task
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+            .onTapGesture {
+                open(lead.session, lead.session == id ? nil : id); peek.close()
+            }
+            .onHover { inside in
+                peek.overCard = inside
+                if !inside { peek.close() }
+            }
+            .offset(x: width + 8, y: max(8, peek.top - 4))
         }
     }
 
@@ -243,7 +255,12 @@ struct TaskPeekCard: View {
             if let queued = row.queued, !queued.isEmpty { line("clock", "\(queued.count) queued" + (row.held == true ? ", held" : "")) }
             if let wakes = row.wakes {
                 let at = Date(timeIntervalSince1970: TimeInterval(wakes))
-                line("alarm-clock", "Wakes " + (Calendar.current.isDateInToday(at) ? at.formatted(date: .omitted, time: .shortened) : at.formatted(.dateTime.weekday(.abbreviated).hour().minute())))
+                line(
+                    "alarm-clock",
+                    "Wakes "
+                        + (Calendar.current.isDateInToday(at)
+                            ? at.formatted(date: .omitted, time: .shortened)
+                            : at.formatted(.dateTime.weekday(.abbreviated).hour().minute())))
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
@@ -273,7 +290,9 @@ struct StateLabel: View {
         HStack(spacing: 5) {
             TaskStateIcon(state: state).scaleEffect(0.86)
             Text(look.name).font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(look.color == .secondary ? AnyShapeStyle(.secondary) : look.color == .green ? AnyShapeStyle(Theme.done) : AnyShapeStyle(look.color))
+                .foregroundStyle(
+                    look.color == .secondary
+                        ? AnyShapeStyle(.secondary) : look.color == .green ? AnyShapeStyle(Theme.done) : AnyShapeStyle(look.color))
         }
         .padding(.leading, 5).padding(.trailing, 8).padding(.vertical, 3)
         .background(tint.opacity(0.12), in: Capsule())

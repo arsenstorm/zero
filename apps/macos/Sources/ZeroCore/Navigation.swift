@@ -5,14 +5,20 @@ import Observation
 /// retrace it. The app moves it too (Settings… in the menu opens the window on Settings).
 @MainActor @Observable
 public final class Navigation {
-    public enum Place: Hashable, Sendable { case home, inbox, board, task(String), agent(String), settings, integrations, integration(String), pads, pad(String), loops, loop(String), later, laterItem(String) }
+    public enum Place: Hashable, Sendable {
+        case home, inbox, board, task(String), agent(String), settings, integrations, integration(String), pads, pad(String), loops, loop(
+            String), later, laterItem(String)
+    }
 
     public var place = Place.home {
         didSet {
             if place != oldValue && !travelling { behind.append((oldValue, worker, settingsPage)); ahead.removeAll() }
             if place != oldValue && !travelling { changingPlace = true; worker = nil; changingPlace = false }
             UserDefaults.standard.set(place.key, forKey: "place")
-            switch place { case .home, .board, .task, .agent: homePlace = place; default: break }
+            switch place {
+            case .home, .board, .task, .agent: homePlace = place;
+            default: break
+            }
         }
     }
     /// Where Home was last: the task that was open, so the rail's Home goes back to it rather than to New task.
@@ -32,7 +38,6 @@ public final class Navigation {
             if settingsPage != oldValue && !travelling && place == .settings { behind.append((place, worker, oldValue)); ahead.removeAll() }
         }
     }
-
 
     /// The control bar works with this window: what it opens opens here, not in its own panel.
     public var barDocked = false
@@ -57,7 +62,10 @@ public final class Navigation {
     /// The workspace shown changed: the task open last there, while it's still there (`keeps`: not archived, not
     /// moved to another workspace); else a new task. Away from the tasks (Settings, a scratchpad), the window stays.
     public func arrive(in workspace: String, keeps: (String) -> Bool) {
-        switch place { case .home, .board, .task: break; default: return }
+        switch place {
+        case .home, .board, .task: break;
+        default: return
+        }
         guard let last = lastTasks[workspace], let task = last.first, keeps(task) else { place = .home; return }
         place = .task(task)
         worker = last.count > 1 && keeps(last[1]) ? last[1] : nil

@@ -13,20 +13,29 @@ struct WorkspacesPage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
             if let workspace {
-                SettingsSection(title: "Workspaces", accessory: AnyView(GhostButton(title: "Add workspace", icon: "plus") { adding = true })) {
-                VStack(spacing: 0) {
-                    ForEach(Array(workspace.workspaces.enumerated()), id: \.element.id) { index, w in
-                        if index > 0 { Divider().padding(.leading, 18) }
-                        WorkspaceRow(workspace: w, current: w.id == workspace.current, edit: { editing = w },
-                                     delete: w.id == "zero" ? nil : { Task { await workspace.deleteWorkspace(w.id) } })
+                SettingsSection(
+                    title: "Workspaces", accessory: AnyView(GhostButton(title: "Add workspace", icon: "plus") { adding = true })
+                ) {
+                    VStack(spacing: 0) {
+                        ForEach(Array(workspace.workspaces.enumerated()), id: \.element.id) { index, w in
+                            if index > 0 { Divider().padding(.leading, 18) }
+                            WorkspaceRow(
+                                workspace: w, current: w.id == workspace.current, edit: { editing = w },
+                                delete: w.id == "zero" ? nil : { Task { await workspace.deleteWorkspace(w.id) } })
+                        }
                     }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 14))
-                .bleedingCard()
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .bleedingCard()
                 }
                 .task(id: workspace.workspacesVersion) { await workspace.loadWorkspaces() }
-                .zeroDialog(item: $editing) { w in WorkspaceForm(workspace: w, model: workspace) { edited in Task { await workspace.saveWorkspace(edited) } } }
-                .zeroDialog(isPresented: $adding) { WorkspaceForm(workspace: ZerodLink.Workspace(name: ""), model: workspace) { made in Task { await workspace.saveWorkspace(made) } } }
+                .zeroDialog(item: $editing) { w in
+                    WorkspaceForm(workspace: w, model: workspace) { edited in Task { await workspace.saveWorkspace(edited) } }
+                }
+                .zeroDialog(isPresented: $adding) {
+                    WorkspaceForm(workspace: ZerodLink.Workspace(name: ""), model: workspace) { made in
+                        Task { await workspace.saveWorkspace(made) }
+                    }
+                }
             }
         }
     }
@@ -44,13 +53,20 @@ private struct WorkspaceRow: View {
             WorkspaceGlyph(glyph: workspace.glyph, size: 17).foregroundStyle(.secondary).frame(width: 22)
             HStack(spacing: 8) {
                 Text(workspace.name).font(.system(size: 13, weight: .medium))
-                if current { Text("Shown").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).padding(.horizontal, 7).frame(height: 20).background(Theme.chip, in: Capsule()) }
+                if current {
+                    Text("Shown").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).padding(.horizontal, 7).frame(
+                        height: 20
+                    ).background(Theme.chip, in: Capsule())
+                }
             }
             Spacer(minLength: 8)
             HStack(spacing: 2) {
-                Button(action: edit) { NucleoIcon("pen", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28) }.buttonStyle(Hovering(radius: 7)).tip("Edit")
+                Button(action: edit) { NucleoIcon("pen", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28) }.buttonStyle(
+                    Hovering(radius: 7)
+                ).tip("Edit")
                 if let delete {
-                    Button(action: delete) { NucleoIcon("trash", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28) }.buttonStyle(Hovering(radius: 7)).tip("Delete: its tasks are Zero's again")
+                    Button(action: delete) { NucleoIcon("trash", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28) }
+                        .buttonStyle(Hovering(radius: 7)).tip("Delete: its tasks are Zero's again")
                 }
             }
             .opacity(hovered ? 1 : 0)
@@ -69,9 +85,13 @@ struct WorkspaceGlyph: View {
     var body: some View {
         // Zero's mark in the box the icons beside it get, its own shape kept (a hexagon, narrower than it is tall):
         // never stretched to fill it.
-        if glyph.isEmpty { ZeroMark(small: true).frame(width: size, height: size) }
-        else if glyph.unicodeScalars.first?.properties.isEmoji == true, glyph.count <= 2 { Text(glyph).font(.system(size: size - 1)) }
-        else { NucleoIcon(glyph, size: size) }
+        if glyph.isEmpty {
+            ZeroMark(small: true).frame(width: size, height: size)
+        } else if glyph.unicodeScalars.first?.properties.isEmoji == true, glyph.count <= 2 {
+            Text(glyph).font(.system(size: size - 1))
+        } else {
+            NucleoIcon(glyph, size: size)
+        }
     }
 }
 
@@ -91,7 +111,8 @@ private struct WorkspaceForm: View {
             DialogTitle(text: workspace.id.isEmpty ? "New workspace" : "Edit \(workspace.name)")
             if workspace.id != "zero" {
                 HStack(spacing: 8) {
-                    WorkspaceGlyph(glyph: workspace.glyph, size: 16).frame(width: 30, height: 30).background(Theme.row, in: RoundedRectangle(cornerRadius: 8))
+                    WorkspaceGlyph(glyph: workspace.glyph, size: 16).frame(width: 30, height: 30).background(
+                        Theme.row, in: RoundedRectangle(cornerRadius: 8))
                     TextField("Name", text: $workspace.name).textFieldStyle(.dialog)
                 }
             }
@@ -100,7 +121,9 @@ private struct WorkspaceForm: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 32, maximum: 32), spacing: 2)], alignment: .leading, spacing: 2) {
                     ForEach(Self.icons, id: \.self) { name in
                         let on = workspace.glyph == name
-                        Button { workspace.glyph = name } label: {
+                        Button {
+                            workspace.glyph = name
+                        } label: {
                             NucleoIcon(name, size: 16).foregroundStyle(on ? .primary : .secondary)
                                 .frame(width: 32, height: 32)
                                 .background(on ? Theme.card : .clear, in: RoundedRectangle(cornerRadius: 7))
@@ -115,15 +138,20 @@ private struct WorkspaceForm: View {
             if !workspace.id.isEmpty, !model.mcpServers.isEmpty {
                 field("MCP servers") {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Given to this workspace's tasks; set them up in MCP servers.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                        Text("Given to this workspace's tasks; set them up in MCP servers.").font(.system(size: 11.5)).foregroundStyle(
+                            .secondary)
                         ForEach(model.mcpServers) { server in
                             if server.workspaces.isEmpty {
                                 Toggle(isOn: .constant(true)) { Text(server.name + " (every workspace)").font(.system(size: 12.5)) }
                                     .toggleStyle(.dialogCheckbox).disabled(true)
                             } else {
-                                Toggle(isOn: Binding(get: { servers?.contains(server.id) ?? false }, set: { on in
-                                    if on { servers?.insert(server.id) } else { servers?.remove(server.id) }
-                                })) { Text(server.name).font(.system(size: 12.5)) }
+                                Toggle(
+                                    isOn: Binding(
+                                        get: { servers?.contains(server.id) ?? false },
+                                        set: { on in
+                                            if on { servers?.insert(server.id) } else { servers?.remove(server.id) }
+                                        })
+                                ) { Text(server.name).font(.system(size: 12.5)) }
                                 .toggleStyle(.dialogCheckbox)
                             }
                         }
@@ -133,7 +161,9 @@ private struct WorkspaceForm: View {
             HStack {
                 Spacer()
                 DialogButton(title: "Cancel") { dismiss() }
-                DialogButton(title: "Save", kind: .primary, enabled: canSave) { save(workspace); saveServers(); dismiss() }
+                DialogButton(title: "Save", kind: .primary, enabled: canSave) {
+                    save(workspace); saveServers(); dismiss()
+                }
             }
         }
         .frame(width: 400)
@@ -149,7 +179,8 @@ private struct WorkspaceForm: View {
     private func saveServers() {
         guard let servers else { return }
         let id = workspace.id
-        for var server in model.mcpServers where !server.workspaces.isEmpty && server.workspaces.contains(id) != servers.contains(server.id) {
+        for var server in model.mcpServers where !server.workspaces.isEmpty && server.workspaces.contains(id) != servers.contains(server.id)
+        {
             if servers.contains(server.id) { server.workspaces.append(id) } else { server.workspaces.removeAll { $0 == id } }
             // Taken out of its last workspace, a server would be everyone's: off instead.
             if server.workspaces.isEmpty { server.workspaces = [id]; server.enabled = false }
@@ -166,7 +197,6 @@ private struct WorkspaceForm: View {
         "bolt-lightning", "trophy", "crown", "flag", "gift", "compass", "map-pin", "anchor", "plane", "car", "mug",
         "gamepad", "graduation-cap", "wallet", "calendar", "megaphone", "folder",
     ]
-
 
     private func field(_ label: String, @ViewBuilder content: @escaping () -> some View) -> some View {
         DialogPart(title: label, content: content)

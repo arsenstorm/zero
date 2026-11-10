@@ -14,7 +14,9 @@ struct PageGroup<Content: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             if let title { Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).padding(.bottom, 4) }
             content()
-            if let note { Text(note).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.top, 6) }
+            if let note {
+                Text(note).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.top, 6)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)

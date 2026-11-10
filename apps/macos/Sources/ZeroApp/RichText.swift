@@ -20,15 +20,25 @@ extension NSAttributedString.Key {
 }
 
 enum RichMarkdown {
-    static let codeFill = NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.09) : NSColor(white: 0, alpha: 0.055) }
-    static let blockFill = NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.06) : NSColor(white: 0, alpha: 0.04) }
-    static let quoteBar = NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.2) : NSColor(white: 0, alpha: 0.15) }
+    static let codeFill = NSColor(name: nil) {
+        $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.09) : NSColor(white: 0, alpha: 0.055)
+    }
+    static let blockFill = NSColor(name: nil) {
+        $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.06) : NSColor(white: 0, alpha: 0.04)
+    }
+    static let quoteBar = NSColor(name: nil) {
+        $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.2) : NSColor(white: 0, alpha: 0.15)
+    }
 
-    private static let rendered: NSCache<NSString, NSAttributedString> = { let cache = NSCache<NSString, NSAttributedString>(); cache.countLimit = 500; return cache }()
+    private static let rendered: NSCache<NSString, NSAttributedString> = {
+        let cache = NSCache<NSString, NSAttributedString>(); cache.countLimit = 500; return cache
+    }()
 
     /// The text as rendered before, or rendered now and kept: a message that hasn't changed isn't parsed and styled
     /// again each time its view is drawn. The same rendering is the same object, which the view checks for.
-    static func cached(_ text: String, size: CGFloat, compact: Bool, repo: String?, yours: Bool = false, render: () -> NSAttributedString) -> NSAttributedString {
+    static func cached(_ text: String, size: CGFloat, compact: Bool, repo: String?, yours: Bool = false, render: () -> NSAttributedString)
+        -> NSAttributedString
+    {
         let key = "\(size)|\(compact)|\(yours)|\(repo ?? "")|\(text)" as NSString
         if let kept = rendered.object(forKey: key) { return kept }
         let made = render()
@@ -44,7 +54,10 @@ enum RichMarkdown {
         out.enumerateAttribute(.zeroCodeBlock, in: NSRange(location: 0, length: out.length)) { value, range, _ in
             guard value != nil else { return }
             out.removeAttribute(.zeroCodeBlock, range: range)
-            guard let style = (out.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle else { return }
+            guard
+                let style = (out.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle)?.mutableCopy()
+                    as? NSMutableParagraphStyle
+            else { return }
             style.headIndent = max(0, style.headIndent - 12)
             style.firstLineHeadIndent = max(0, style.firstLineHeadIndent - 12)
             style.tailIndent = 0
@@ -58,14 +71,18 @@ enum RichMarkdown {
         rendered.object(forKey: "\(size)|\(compact)|\(yours)|\(repo ?? "")|\(text)" as NSString)
     }
 
-    private static let renderedBlocks: NSCache<NSString, NSAttributedString> = { let cache = NSCache<NSString, NSAttributedString>(); cache.countLimit = 4000; return cache }()
+    private static let renderedBlocks: NSCache<NSString, NSAttributedString> = {
+        let cache = NSCache<NSString, NSAttributedString>(); cache.countLimit = 4000; return cache
+    }()
 
     /// The blocks as one attributed text; `inline` reads what's inside a line (bold, code, links). With a `key` (what
     /// the inline links depend on), each top-level block is kept once rendered: an answer still streaming grows by
     /// its last block, and only that one is parsed and styled again.
     /// `growing`: the text is still arriving, and its last block isn't kept (it's different next frame; kept, every
     /// frame's would push out blocks the page needs).
-    static func render(_ blocks: [MarkdownBlock], size: CGFloat, inline: (String) -> AttributedString, key: String? = nil, growing: Bool = false) -> NSAttributedString {
+    static func render(
+        _ blocks: [MarkdownBlock], size: CGFloat, inline: (String) -> AttributedString, key: String? = nil, growing: Bool = false
+    ) -> NSAttributedString {
         let out = NSMutableAttributedString()
         if let key {
             for (index, block) in blocks.enumerated() {
@@ -96,7 +113,9 @@ enum RichMarkdown {
         let out = NSMutableAttributedString(attributedString: text)
         let whole = NSRange(location: 0, length: out.length)
         out.enumerateAttribute(.font, in: whole) { value, range, _ in
-            guard let font = value as? NSFont, font.pointSize > size + 0.1, !font.fontDescriptor.symbolicTraits.contains(.monoSpace) else { return }
+            guard let font = value as? NSFont, font.pointSize > size + 0.1, !font.fontDescriptor.symbolicTraits.contains(.monoSpace) else {
+                return
+            }
             out.addAttribute(.font, value: NSFont.systemFont(ofSize: size, weight: .semibold), range: range)
         }
         out.removeAttribute(.zeroCode, range: whole)
@@ -113,7 +132,9 @@ enum RichMarkdown {
 
     private static let indentStep: CGFloat = 20
 
-    private static func style(size: CGFloat, indent: CGFloat = 0, first: CGFloat? = nil, after: CGFloat, before: CGFloat = 0) -> NSMutableParagraphStyle {
+    private static func style(size: CGFloat, indent: CGFloat = 0, first: CGFloat? = nil, after: CGFloat, before: CGFloat = 0)
+        -> NSMutableParagraphStyle
+    {
         let style = NSMutableParagraphStyle()
         // About 1.5 lines from baseline to baseline, as the web's text has.
         style.lineSpacing = round(size * 0.42)
@@ -124,46 +145,65 @@ enum RichMarkdown {
         return style
     }
 
-    private static func append(_ blocks: [MarkdownBlock], depth: Int, into out: NSMutableAttributedString, size: CGFloat, inline: (String) -> AttributedString, tight: Bool = false) {
+    private static func append(
+        _ blocks: [MarkdownBlock], depth: Int, into out: NSMutableAttributedString, size: CGFloat, inline: (String) -> AttributedString,
+        tight: Bool = false
+    ) {
         let indent = CGFloat(depth) * indentStep
         let gap = tight ? round(size * 0.35) : round(size * 0.8)
         for block in blocks {
             switch block {
             case let .heading(level, text):
                 let font = NSFont.systemFont(ofSize: size + [5, 3, 1.5, 0.5, 0, 0][min(level, 6) - 1], weight: .semibold)
-                out.append(line(inline(text), font: font, style: style(size: size, indent: indent, after: round(size * 0.4), before: level <= 2 ? round(size * 0.6) : 0)))
+                out.append(
+                    line(
+                        inline(text), font: font,
+                        style: style(size: size, indent: indent, after: round(size * 0.4), before: level <= 2 ? round(size * 0.6) : 0)))
             case let .paragraph(text):
                 out.append(line(inline(text), font: .systemFont(ofSize: size), style: style(size: size, indent: indent, after: gap)))
             case let .list(ordered, start, items):
                 for (index, item) in items.enumerated() {
                     let marker = ordered ? "\(start + index)." : "•"
-                    let text = NSMutableAttributedString(string: marker + "\t", attributes: [.font: NSFont.systemFont(ofSize: size), .foregroundColor: NSColor.secondaryLabelColor])
+                    let text = NSMutableAttributedString(
+                        string: marker + "\t",
+                        attributes: [.font: NSFont.systemFont(ofSize: size), .foregroundColor: NSColor.secondaryLabelColor])
                     // A bullet larger than the text's own "•" (a speck beside it), lowered to sit on the line's middle
                     // as it was: a font scales up from the baseline.
                     if !ordered {
-                        text.addAttributes([.font: NSFont.systemFont(ofSize: round(size * 1.4)), .baselineOffset: -round(size * 0.14)], range: NSRange(location: 0, length: 1))
+                        text.addAttributes(
+                            [.font: NSFont.systemFont(ofSize: round(size * 1.4)), .baselineOffset: -round(size * 0.14)],
+                            range: NSRange(location: 0, length: 1))
                     }
                     text.append(styled(inline(item.text), font: .systemFont(ofSize: size)))
                     let hang = indent + indentStep
-                    let paragraph = style(size: size, indent: hang, first: indent + (ordered ? 0 : 4), after: index == items.count - 1 && item.children.isEmpty ? gap : round(size * 0.3))
+                    let paragraph = style(
+                        size: size, indent: hang, first: indent + (ordered ? 0 : 4),
+                        after: index == items.count - 1 && item.children.isEmpty ? gap : round(size * 0.3))
                     paragraph.tabStops = [NSTextTab(textAlignment: .left, location: hang)]
                     paragraph.defaultTabInterval = indentStep
                     text.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: text.length))
                     text.append(NSAttributedString(string: "\n"))
                     out.append(text)
-                    if !item.children.isEmpty { append(item.children, depth: depth + 1, into: out, size: size, inline: inline, tight: index < items.count - 1) }
+                    if !item.children.isEmpty {
+                        append(item.children, depth: depth + 1, into: out, size: size, inline: inline, tight: index < items.count - 1)
+                    }
                 }
             case let .code(code):
                 // One paragraph however many lines (line separators within), so its panel is one shape.
-                let text = NSMutableAttributedString(string: code.replacingOccurrences(of: "\n", with: "\u{2028}"),
-                                                     attributes: [.font: NSFont.monospacedSystemFont(ofSize: size - 1.5, weight: .regular), .foregroundColor: NSColor.labelColor])
+                let text = NSMutableAttributedString(
+                    string: code.replacingOccurrences(of: "\n", with: "\u{2028}"),
+                    attributes: [
+                        .font: NSFont.monospacedSystemFont(ofSize: size - 1.5, weight: .regular), .foregroundColor: NSColor.labelColor,
+                    ])
                 let paragraph = style(size: size - 1.5, indent: indent + 12, after: gap + 8, before: 8)
                 paragraph.tailIndent = -12
                 text.addAttributes([.paragraphStyle: paragraph, .zeroCodeBlock: true], range: NSRange(location: 0, length: text.length))
                 text.append(NSAttributedString(string: "\n"))
                 out.append(text)
             case let .quote(text):
-                let quoted = line(inline(text), font: .systemFont(ofSize: size), style: style(size: size, indent: indent + 14, after: gap), color: .secondaryLabelColor)
+                let quoted = line(
+                    inline(text), font: .systemFont(ofSize: size), style: style(size: size, indent: indent + 14, after: gap),
+                    color: .secondaryLabelColor)
                 quoted.addAttribute(.zeroQuote, value: true, range: NSRange(location: 0, length: quoted.length - 1))
                 out.append(quoted)
             case let .table(rows):
@@ -171,7 +211,9 @@ enum RichMarkdown {
             case let .image(path, alt):
                 out.append(picture(path, alt: alt, size: size, indent: indent, after: gap))
             case .rule:
-                let rule = NSMutableAttributedString(string: " \n", attributes: [.font: NSFont.systemFont(ofSize: size), .paragraphStyle: style(size: size, indent: indent, after: gap)])
+                let rule = NSMutableAttributedString(
+                    string: " \n",
+                    attributes: [.font: NSFont.systemFont(ofSize: size), .paragraphStyle: style(size: size, indent: indent, after: gap)])
                 rule.addAttribute(.zeroRule, value: true, range: NSRange(location: 0, length: 1))
                 out.append(rule)
             }
@@ -183,7 +225,8 @@ enum RichMarkdown {
     private static func picture(_ path: String, alt: String, size: CGFloat, indent: CGFloat, after: CGFloat) -> NSAttributedString {
         let paragraph = style(size: size, indent: indent, after: after)
         guard let image = NSImage(contentsOfFile: path), image.size.width > 0, image.size.height > 0 else {
-            return line(AttributedString(alt.isEmpty ? path : alt), font: .systemFont(ofSize: size), style: paragraph, color: .secondaryLabelColor)
+            return line(
+                AttributedString(alt.isEmpty ? path : alt), font: .systemFont(ofSize: size), style: paragraph, color: .secondaryLabelColor)
         }
         let scale = min(1, 560 / image.size.width, 420 / image.size.height)
         image.size = NSSize(width: round(image.size.width * scale), height: round(image.size.height * scale))
@@ -198,7 +241,9 @@ enum RichMarkdown {
         return out
     }
 
-    private static func line(_ text: AttributedString, font: NSFont, style: NSParagraphStyle, color: NSColor = .labelColor) -> NSMutableAttributedString {
+    private static func line(_ text: AttributedString, font: NSFont, style: NSParagraphStyle, color: NSColor = .labelColor)
+        -> NSMutableAttributedString
+    {
         let out = styled(text, font: font, color: color)
         out.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: out.length))
         out.append(NSAttributedString(string: "\n", attributes: [.paragraphStyle: style, .font: font]))
@@ -215,7 +260,9 @@ enum RichMarkdown {
             var traits: NSFontDescriptor.SymbolicTraits = []
             if intent.contains(.stronglyEmphasized) { traits.insert(.bold) }
             if intent.contains(.emphasized) { traits.insert(.italic) }
-            if !traits.isEmpty { attributes[.font] = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(traits), size: font.pointSize) ?? font }
+            if !traits.isEmpty {
+                attributes[.font] = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(traits), size: font.pointSize) ?? font
+            }
             if intent.contains(.strikethrough) { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
             if intent.contains(.code) {
                 attributes[.font] = NSFont.monospacedSystemFont(ofSize: font.pointSize * 0.88, weight: .regular)
@@ -251,7 +298,9 @@ enum RichMarkdown {
         return out
     }
 
-    private static func table(_ rows: [[String]], size: CGFloat, indent: CGFloat, after: CGFloat, inline: (String) -> AttributedString) -> NSAttributedString {
+    private static func table(_ rows: [[String]], size: CGFloat, indent: CGFloat, after: CGFloat, inline: (String) -> AttributedString)
+        -> NSAttributedString
+    {
         let out = NSMutableAttributedString()
         let columns = rows.map(\.count).max() ?? 0
         let table = NSTextTable()
@@ -276,7 +325,9 @@ enum RichMarkdown {
             }
         }
         // Room after the table, on an empty paragraph of its own.
-        out.append(NSAttributedString(string: "\n", attributes: [.font: NSFont.systemFont(ofSize: 4), .paragraphStyle: style(size: 4, after: after)]))
+        out.append(
+            NSAttributedString(
+                string: "\n", attributes: [.font: NSFont.systemFont(ofSize: 4), .paragraphStyle: style(size: 4, after: after)]))
         return out
     }
 }
@@ -285,17 +336,24 @@ enum RichMarkdown {
 /// a quote, a hairline for a rule.
 final class RichLayoutManager: NSLayoutManager {
     /// A code block's panel: 12 pt either side of its text, 8 pt above and below; where the copy button goes too.
-    static func panel(for range: NSRange, storage: NSTextStorage, manager: NSLayoutManager, container: NSTextContainer, origin: NSPoint) -> NSRect {
-        let rect = manager.boundingRect(forGlyphRange: manager.glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: container)
+    static func panel(for range: NSRange, storage: NSTextStorage, manager: NSLayoutManager, container: NSTextContainer, origin: NSPoint)
+        -> NSRect
+    {
+        let rect = manager.boundingRect(
+            forGlyphRange: manager.glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: container)
         let style = storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
         let left = (style?.headIndent ?? 12) - 12 + container.lineFragmentPadding
-        return NSRect(x: origin.x + left, y: origin.y + rect.minY - 8, width: container.size.width - left - container.lineFragmentPadding, height: rect.height + 16)
+        return NSRect(
+            x: origin.x + left, y: origin.y + rect.minY - 8, width: container.size.width - left - container.lineFragmentPadding,
+            height: rect.height + 16)
     }
 
     /// The selection's highlight on each line as wide as what's selected on it, and as tall as the line (not the room
     /// after a paragraph): AppKit's ran to the text's right edge on lines that wrap and through the gap between items,
     /// whitespace that isn't there.
-    override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>, count rectCount: Int, forCharacterRange charRange: NSRange, color: NSColor) {
+    override func fillBackgroundRectArray(
+        _ rectArray: UnsafePointer<NSRect>, count rectCount: Int, forCharacterRange charRange: NSRange, color: NSColor
+    ) {
         guard let container = textContainers.first else {
             return super.fillBackgroundRectArray(rectArray, count: rectCount, forCharacterRange: charRange, color: color)
         }
@@ -322,10 +380,13 @@ final class RichLayoutManager: NSLayoutManager {
                 var picked = NSIntersectionRange(lineGlyphs, selected)
                 // Its trailing spaces and newline off: they're no words, and a newline's box runs to the edge.
                 while picked.length > 0, let text, case let c = text.character(at: self.characterIndexForGlyph(at: NSMaxRange(picked) - 1)),
-                      let scalar = Unicode.Scalar(c), CharacterSet.whitespacesAndNewlines.contains(scalar) { picked.length -= 1 }
+                    let scalar = Unicode.Scalar(c), CharacterSet.whitespacesAndNewlines.contains(scalar)
+                { picked.length -= 1 }
                 guard picked.length > 0, used.minY < local.maxY, used.maxY > local.minY else { return }
                 let words = self.boundingRect(forGlyphRange: picked, in: container)
-                let style = self.textStorage?.attribute(.paragraphStyle, at: self.characterIndexForGlyph(at: picked.location), effectiveRange: nil) as? NSParagraphStyle
+                let style =
+                    self.textStorage?.attribute(.paragraphStyle, at: self.characterIndexForGlyph(at: picked.location), effectiveRange: nil)
+                    as? NSParagraphStyle
                 // Around its words, from their baseline: their tallest ascender above and deepest descender below (a
                 // bullet, larger and raised, left out), and half the line spacing either side, so one line's band meets
                 // the next's, and a paragraph's last line, or the text's, is as tall as any other. Laid on each line's
@@ -343,14 +404,19 @@ final class RichLayoutManager: NSLayoutManager {
                 let maxY = ascent > 0 ? baseline + descent + spacing / 2 : used.maxY
                 let minX = words.minX, maxX = words.maxX
                 guard maxX - minX > 0.5, maxY > minY else { return }
-                placed.append(NSRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY).offsetBy(dx: self.drawnAt.x, dy: self.drawnAt.y))
+                placed.append(
+                    NSRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY).offsetBy(dx: self.drawnAt.x, dy: self.drawnAt.y))
             }
         }
         guard !placed.isEmpty else { return }
-        placed.withUnsafeBufferPointer { super.fillBackgroundRectArray($0.baseAddress!, count: $0.count, forCharacterRange: charRange, color: color) }
+        placed.withUnsafeBufferPointer {
+            super.fillBackgroundRectArray($0.baseAddress!, count: $0.count, forCharacterRange: charRange, color: color)
+        }
     }
     /// The selection's grey: light text stays readable on it in dark mode, dark text in light.
-    static let selection = NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 0.36, alpha: 1) : NSColor(white: 0.82, alpha: 1) }
+    static let selection = NSColor(name: nil) {
+        $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 0.36, alpha: 1) : NSColor(white: 0.82, alpha: 1)
+    }
 
     /// Where the text is being drawn (drawBackground's origin): AppKit's rects are in the view, the layout's in the
     /// container.
@@ -368,39 +434,46 @@ final class RichLayoutManager: NSLayoutManager {
             NSBezierPath(roundedRect: panel, xRadius: 8, yRadius: 8).fill()
         }
         for (key, fill) in [(NSAttributedString.Key.zeroCode, RichMarkdown.codeFill), (.zeroToken, TokenTextView.tokenFill)] {
-        storage.enumerateAttribute(key, in: characters) { value, range, _ in
-            guard value != nil, let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont else { return }
-            let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-            var glyph = glyphs.location
-            // A pill per line the code runs over, hugging its glyphs: from above their tops to below their descenders.
-            while glyph < NSMaxRange(glyphs) {
-                var line = NSRange()
-                let fragment = lineFragmentRect(forGlyphAt: glyph, effectiveRange: &line)
-                let segment = NSIntersectionRange(glyphs, line)
-                guard segment.length > 0 else { break }
-                let bounds = boundingRect(forGlyphRange: segment, in: container)
-                let baseline = fragment.minY + location(forGlyphAt: segment.location).y
-                let top = baseline - font.ascender - 2, bottom = baseline - font.descender + 2
-                // Its last letter's kerning (6) is in the bounds: 4 of it inside the pill, 2 clear of what follows.
-                let pill = NSRect(x: origin.x + bounds.minX - 4, y: origin.y + top, width: bounds.width + 2, height: bottom - top)
-                fill.setFill()
-                NSBezierPath(roundedRect: pill, xRadius: 5, yRadius: 5).fill()
-                glyph = NSMaxRange(segment)
+            storage.enumerateAttribute(key, in: characters) { value, range, _ in
+                guard value != nil, let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont else { return }
+                let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+                var glyph = glyphs.location
+                // A pill per line the code runs over, hugging its glyphs: from above their tops to below their descenders.
+                while glyph < NSMaxRange(glyphs) {
+                    var line = NSRange()
+                    let fragment = lineFragmentRect(forGlyphAt: glyph, effectiveRange: &line)
+                    let segment = NSIntersectionRange(glyphs, line)
+                    guard segment.length > 0 else { break }
+                    let bounds = boundingRect(forGlyphRange: segment, in: container)
+                    let baseline = fragment.minY + location(forGlyphAt: segment.location).y
+                    let top = baseline - font.ascender - 2, bottom = baseline - font.descender + 2
+                    // Its last letter's kerning (6) is in the bounds: 4 of it inside the pill, 2 clear of what follows.
+                    let pill = NSRect(x: origin.x + bounds.minX - 4, y: origin.y + top, width: bounds.width + 2, height: bottom - top)
+                    fill.setFill()
+                    NSBezierPath(roundedRect: pill, xRadius: 5, yRadius: 5).fill()
+                    glyph = NSMaxRange(segment)
+                }
             }
-        }
         }
         storage.enumerateAttribute(.zeroQuote, in: characters) { value, range, _ in
             guard value != nil else { return }
             let rect = boundingRect(forGlyphRange: glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: container)
             let style = storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
             RichMarkdown.quoteBar.setFill()
-            NSBezierPath(roundedRect: NSRect(x: origin.x + container.lineFragmentPadding + (style?.headIndent ?? 14) - 14, y: origin.y + rect.minY, width: 3, height: rect.height), xRadius: 1.5, yRadius: 1.5).fill()
+            NSBezierPath(
+                roundedRect: NSRect(
+                    x: origin.x + container.lineFragmentPadding + (style?.headIndent ?? 14) - 14, y: origin.y + rect.minY, width: 3,
+                    height: rect.height), xRadius: 1.5, yRadius: 1.5
+            ).fill()
         }
         storage.enumerateAttribute(.zeroRule, in: characters) { value, range, _ in
             guard value != nil else { return }
             let rect = boundingRect(forGlyphRange: glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: container)
             NSColor.separatorColor.setFill()
-            NSRect(x: origin.x + container.lineFragmentPadding, y: origin.y + rect.midY, width: container.size.width - 2 * container.lineFragmentPadding, height: 1).fill()
+            NSRect(
+                x: origin.x + container.lineFragmentPadding, y: origin.y + rect.midY,
+                width: container.size.width - 2 * container.lineFragmentPadding, height: 1
+            ).fill()
         }
     }
 }
@@ -423,7 +496,8 @@ final class RichTextView: NSTextView {
         // A token of yours ("/skill") on one line, whole, as the composer keeps it.
         breaks = TokenBreaks { [weak storage] index in
             guard let storage, index > 0, index < storage.length else { return false }
-            return storage.attribute(.zeroToken, at: index - 1, effectiveRange: nil) != nil && storage.attribute(.zeroToken, at: index, effectiveRange: nil) != nil
+            return storage.attribute(.zeroToken, at: index - 1, effectiveRange: nil) != nil
+                && storage.attribute(.zeroToken, at: index, effectiveRange: nil) != nil
         }
         layout.delegate = breaks
         isEditable = false
@@ -461,7 +535,8 @@ final class RichTextView: NSTextView {
         if let scrolling { NotificationCenter.default.removeObserver(scrolling); self.scrolling = nil }
         if window != nil, let clip = enclosingScrollView?.contentView {
             clip.postsBoundsChangedNotifications = true
-            scrolling = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) { [weak self] _ in
+            scrolling = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) {
+                [weak self] _ in
                 MainActor.assumeIsolated { self?.keepDrawn() }
             }
         }
@@ -472,8 +547,7 @@ final class RichTextView: NSTextView {
     private func keepDrawn() {
         guard let clip = enclosingScrollView?.contentView, let layer else { return }
         let near = convert(bounds, to: clip).intersects(clip.bounds.insetBy(dx: 0, dy: -2 * clip.bounds.height))
-        if near, letGo { letGo = false; needsDisplay = true }
-        else if !near, !letGo { letGo = true; layer.contents = nil }
+        if near, letGo { letGo = false; needsDisplay = true } else if !near, !letGo { letGo = true; layer.contents = nil }
     }
     private var scrolling: NSObjectProtocol?
     private var letGo = false
@@ -482,9 +556,11 @@ final class RichTextView: NSTextView {
     private func peers() -> [RichTextView] {
         let scroll = enclosingScrollView
         // On screen: a page kept behind the one shown has its messages in the window too, not to be taken in unseen.
-        return Self.all.allObjects.filter { $0.window === window && $0.enclosingScrollView === scroll && $0.superview != nil
-            && ($0 === self || (!$0.isHiddenOrHasHiddenAncestor && !$0.visibleRect.isEmpty)) }
-            .sorted { $0.convert($0.bounds, to: nil).maxY > $1.convert($1.bounds, to: nil).maxY }
+        return Self.all.allObjects.filter {
+            $0.window === window && $0.enclosingScrollView === scroll && $0.superview != nil
+                && ($0 === self || (!$0.isHiddenOrHasHiddenAncestor && !$0.visibleRect.isEmpty))
+        }
+        .sorted { $0.convert($0.bounds, to: nil).maxY > $1.convert($1.bounds, to: nil).maxY }
     }
 
     /// A click anywhere in the app but a message's words (the composer, the sidebar, the page around them): what's
@@ -572,14 +648,19 @@ final class RichTextView: NSTextView {
         let views = peers()
         guard let mine = views.firstIndex(where: { $0 === self }) else { return }
         // The message under the pointer, or the last above it (between two, the one it has passed).
-        let target = views.firstIndex { let f = $0.convert($0.bounds, to: nil); return point.y >= f.minY && point.y <= f.maxY }
+        let target =
+            views.firstIndex {
+                let f = $0.convert($0.bounds, to: nil); return point.y >= f.minY && point.y <= f.maxY
+            }
             ?? views.lastIndex { $0.convert($0.bounds, to: nil).minY >= point.y } ?? mine
         var taken: [Weak] = []
         for (index, view) in views.enumerated() where view !== self {
             let length = view.textStorage?.length ?? 0
             var range: NSRange?
             if target > mine, index > mine, index <= target {
-                range = index < target ? NSRange(location: 0, length: length)
+                range =
+                    index < target
+                    ? NSRange(location: 0, length: length)
                     : NSRange(location: 0, length: view.characterIndexForInsertion(at: view.convert(point, from: nil)))
             } else if target < mine, index < mine, index >= target {
                 let from = index > target ? 0 : view.characterIndexForInsertion(at: view.convert(point, from: nil))
@@ -598,7 +679,9 @@ final class RichTextView: NSTextView {
     /// The selected words of the selection's messages, top to bottom.
     private static func selectedWords() -> String {
         guard let anchor = selecting else { return "" }
-        let views = ([anchor] + extended.compactMap(\.view)).sorted { $0.convert($0.bounds, to: nil).maxY > $1.convert($1.bounds, to: nil).maxY }
+        let views = ([anchor] + extended.compactMap(\.view)).sorted {
+            $0.convert($0.bounds, to: nil).maxY > $1.convert($1.bounds, to: nil).maxY
+        }
         return views.compactMap { view -> String? in
             guard let storage = view.textStorage, view.selectedRange().length > 0 else { return nil }
             return storage.attributedSubstring(from: view.selectedRange()).string.replacingOccurrences(of: "\u{2028}", with: "\n")
@@ -632,17 +715,25 @@ final class RichTextView: NSTextView {
         layout.lineFragmentRect(forGlyphAt: start, effectiveRange: &firstLine)
         let onFirst = NSIntersectionRange(firstLine, layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil))
         let rect = layout.boundingRect(forGlyphRange: onFirst, in: container).offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
-        let chip = NSHostingView(rootView: ReplyChip { [weak self] in onReply(words); self?.hideReply() })
+        let chip = NSHostingView(
+            rootView: ReplyChip { [weak self] in
+                onReply(words); self?.hideReply()
+            })
         let size = chip.fittingSize
-        chip.frame = NSRect(x: min(max(0, rect.minX), max(0, bounds.width - size.width)), y: rect.minY - size.height - 4, width: size.width, height: size.height)
+        chip.frame = NSRect(
+            x: min(max(0, rect.minX), max(0, bounds.width - size.width)), y: rect.minY - size.height - 4, width: size.width,
+            height: size.height)
         // No room above it in this text (a step's words, the step before close above): beside where the selection
         // ends, or under it, not over what's above.
         if chip.frame.minY < -6 {
             var lastLine = NSRange()
-            layout.lineFragmentRect(forGlyphAt: max(start, layout.glyphIndexForCharacter(at: NSMaxRange(range) - 1)), effectiveRange: &lastLine)
+            layout.lineFragmentRect(
+                forGlyphAt: max(start, layout.glyphIndexForCharacter(at: NSMaxRange(range) - 1)), effectiveRange: &lastLine)
             let onLast = NSIntersectionRange(lastLine, layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil))
-            let end = layout.boundingRect(forGlyphRange: onLast, in: container).offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
-            chip.frame.origin = end.maxX + 8 + size.width <= bounds.width
+            let end = layout.boundingRect(forGlyphRange: onLast, in: container).offsetBy(
+                dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+            chip.frame.origin =
+                end.maxX + 8 + size.width <= bounds.width
                 ? NSPoint(x: end.maxX + 8, y: end.midY - size.height / 2)
                 : NSPoint(x: min(max(0, end.minX), max(0, bounds.width - size.width)), y: end.maxY + 4)
         }
@@ -666,8 +757,9 @@ final class RichTextView: NSTextView {
             // Only what changed, from the start of its paragraph: a reply fading in grows at its end and changes its
             // last few hundred letters' colour, and setting it whole laid all of it out again, 30 times a second.
             storage.beginEditing()
-            storage.replaceCharacters(in: NSRange(location: from, length: storage.length - from),
-                                      with: text.attributedSubstring(from: NSRange(location: from, length: text.length - from)))
+            storage.replaceCharacters(
+                in: NSRange(location: from, length: storage.length - from),
+                with: text.attributedSubstring(from: NSRange(location: from, length: text.length - from)))
             storage.endEditing()
         } else {
             textStorage?.setAttributedString(text)
@@ -685,7 +777,9 @@ final class RichTextView: NSTextView {
         guard shared > 1000 else { return nil }
         var same = 0
         // Words come in whole, so the texts agree far into them: compared in chunks, a letter at a time only at the end.
-        while same + 256 <= shared, old.substring(with: NSRange(location: same, length: 256)) == new.substring(with: NSRange(location: same, length: 256)) { same += 256 }
+        while same + 256 <= shared,
+            old.substring(with: NSRange(location: same, length: 256)) == new.substring(with: NSRange(location: same, length: 256))
+        { same += 256 }
         while same < shared, old.character(at: same) == new.character(at: same) { same += 1 }
         let from = min(same, max(0, new.length - MarkdownText.fadeReach))
         let paragraph = min(new.paragraphRange(for: NSRange(location: min(from, max(0, new.length - 1)), length: 0)).location, old.length)
@@ -705,7 +799,9 @@ final class RichTextView: NSTextView {
         guard picked.length > 0 else { return false }
         picked.mutableString.replaceOccurrences(of: "\u{2028}", with: "\n", options: [], range: NSRange(location: 0, length: picked.length))
         pboard.clearContents()
-        if let rtf = try? picked.data(from: NSRange(location: 0, length: picked.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]) {
+        if let rtf = try? picked.data(
+            from: NSRange(location: 0, length: picked.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
+        {
             pboard.setData(rtf, forType: .rtf)
         }
         return pboard.setString(picked.string, forType: .string)
@@ -732,7 +828,10 @@ final class RichTextView: NSTextView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.filter { $0.owner === self && $0.userInfo?["code"] != nil }.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self, userInfo: ["code": true]))
+        addTrackingArea(
+            NSTrackingArea(
+                rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self,
+                userInfo: ["code": true]))
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -761,7 +860,12 @@ final class RichTextView: NSTextView {
         var panels: [(NSRange, NSRect)] = []
         storage.enumerateAttribute(.zeroCodeBlock, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
             guard value != nil else { return }
-            panels.append((range, RichLayoutManager.panel(for: range, storage: storage, manager: manager, container: container, origin: textContainerOrigin)))
+            panels.append(
+                (
+                    range,
+                    RichLayoutManager.panel(
+                        for: range, storage: storage, manager: manager, container: container, origin: textContainerOrigin)
+                ))
         }
         return panels
     }
@@ -798,9 +902,13 @@ final class RichTextView: NSTextView {
         // the view has been laid out (its extra line, for an insertion point), which made a short message's bubble
         // stretch across the page.
         var widest: CGFloat = 0
-        layout.enumerateLineFragments(forGlyphRange: layout.glyphRange(for: container)) { _, line, _, _, _ in widest = max(widest, line.maxX) }
+        layout.enumerateLineFragments(forGlyphRange: layout.glyphRange(for: container)) { _, line, _, _, _ in
+            widest = max(widest, line.maxX)
+        }
         // A code block last: its panel reaches 8 pt under the text (RichLayoutManager), so the view does too.
-        let below: CGFloat = (textStorage.map { $0.length > 0 && $0.attribute(.zeroCodeBlock, at: $0.length - 1, effectiveRange: nil) != nil } ?? false) ? 8 : 0
+        let below: CGFloat =
+            (textStorage.map { $0.length > 0 && $0.attribute(.zeroCodeBlock, at: $0.length - 1, effectiveRange: nil) != nil } ?? false)
+            ? 8 : 0
         measured = (width, ceil(used.height) + above + below, min(width, ceil(widest)))
         return CGSize(width: min(width, ceil(widest)), height: ceil(used.height) + above + below)
     }
@@ -849,7 +957,9 @@ final class RichTextView: NSTextView {
             return
         }
         // An image an agent shows: opened in the viewer, with the message's other images to go through.
-        if let index = characterIndex(under: event), let path = textStorage?.attribute(.zeroPicture, at: index, effectiveRange: nil) as? String {
+        if let index = characterIndex(under: event),
+            let path = textStorage?.attribute(.zeroPicture, at: index, effectiveRange: nil) as? String
+        {
             ImageViewer.shared.show(path, among: imagePaths)
             return
         }
@@ -867,11 +977,17 @@ final class RichTextView: NSTextView {
     /// The scroll wheel's button opens what's under it too: a link, a loop's pill, an image's.
     override func otherMouseDown(with event: NSEvent) {
         guard event.buttonNumber == 2, let index = characterIndex(under: event) else { return super.otherMouseDown(with: event) }
-        if let url = textStorage?.attribute(.zeroOpens, at: index, effectiveRange: nil) as? URL { NSApp.sendAction(#selector(AppDelegate.openZeroURL(_:)), to: nil, from: url); return }
+        if let url = textStorage?.attribute(.zeroOpens, at: index, effectiveRange: nil) as? URL {
+            NSApp.sendAction(#selector(AppDelegate.openZeroURL(_:)), to: nil, from: url); return
+        }
         guard let link = textStorage?.attribute(.link, at: index, effectiveRange: nil) else { return super.otherMouseDown(with: event) }
         let url = link as? URL ?? (link as? String).flatMap(URL.init(string:))
         guard let url else { return }
-        if url.isFileURL, textStorage?.attribute(.attachment, at: index, effectiveRange: nil) != nil { ImageViewer.shared.show(url.path, among: imagePaths) } else { NSWorkspace.shared.open(url) }
+        if url.isFileURL, textStorage?.attribute(.attachment, at: index, effectiveRange: nil) != nil {
+            ImageViewer.shared.show(url.path, among: imagePaths)
+        } else {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     /// Every image the message's pills open, in order: what the viewer moves between.
@@ -883,7 +999,9 @@ final class RichTextView: NSTextView {
                 if !paths.contains(picture) { paths.append(picture) }
                 return
             }
-            guard (value as? NSTextAttachment)?.attachmentCell is ImageToken.Cell, let link = storage.attribute(.link, at: range.location, effectiveRange: nil) as? URL, link.isFileURL else { return }
+            guard (value as? NSTextAttachment)?.attachmentCell is ImageToken.Cell,
+                let link = storage.attribute(.link, at: range.location, effectiveRange: nil) as? URL, link.isFileURL
+            else { return }
             if !paths.contains(link.path) { paths.append(link.path) }
         }
         return paths
@@ -895,7 +1013,9 @@ final class RichTextView: NSTextView {
         let point = convert(event.locationInWindow, from: nil)
         let inText = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
         let glyph = manager.glyphIndex(for: inText, in: container)
-        guard glyph < manager.numberOfGlyphs, manager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).contains(inText) else { return nil }
+        guard glyph < manager.numberOfGlyphs,
+            manager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).contains(inText)
+        else { return nil }
         return manager.characterIndexForGlyph(at: glyph)
     }
 }
@@ -979,4 +1099,3 @@ extension EnvironmentValues {
     /// In a conversation: what's selected in its words, quoted into its composer.
     @Entry var replyToSelection: ((String) -> Void)? = nil
 }
-

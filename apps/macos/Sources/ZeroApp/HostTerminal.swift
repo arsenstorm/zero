@@ -74,6 +74,10 @@ struct HostTerminal: NSViewRepresentable {
             }
         }
 
-        func letGo() { lock.withLock { socket?.close(); socket = nil } }
+        func letGo() {
+            lock.withLock {
+                socket?.close(); socket = nil
+            }
+        }
     }
 }

@@ -14,7 +14,9 @@ extension AppDelegate {
     /// The selector over any window, hung off the chip at `anchor` (its SwiftUI global frame in the window's
     /// content); the two-pane model selector centred on `centredOn`, else on the chip. With `returning`, that window
     /// gets the keys back when it closes (the workspace's composers).
-    func presentSelector(_ selector: SelectorState, chip anchor: CGRect, in window: NSWindow, centredOn: NSRect? = nil, returning: NSWindow? = nil) {
+    func presentSelector(
+        _ selector: SelectorState, chip anchor: CGRect, in window: NSWindow, centredOn: NSRect? = nil, returning: NSWindow? = nil
+    ) {
         guard let content = window.contentView else { return }
         hideSelector(keepState: true)
         selectorReturn = returning
@@ -35,8 +37,10 @@ extension AppDelegate {
         let left = selector.kind == .runtime ? (centredOn ?? chip).midX - size.width / 2 : chip.minX
         let x = max(screen.minX + 8, min(left, screen.maxX - size.width - 8)).rounded()
         let y = (opensBelow ? chip.minY - 6 - size.height : chip.maxY + 6).rounded()
-        let view = FirstMouseHostingView(rootView: AnyView(SelectorView(state: selector)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: opensBelow ? .top : .bottom)))
+        let view = FirstMouseHostingView(
+            rootView: AnyView(
+                SelectorView(state: selector)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: opensBelow ? .top : .bottom)))
         view.sizingOptions = []
         // The animated layer is a plain container's, not the hosting view's: AppKit resets a hosting view's layer
         // geometry whenever SwiftUI lays out, which stutters a transform on it.
@@ -60,16 +64,26 @@ extension AppDelegate {
         }
         // A click anywhere but the card closes it: in another app (global), in Zero's other windows, or in the
         // strip's empty part (local).
-        if let global = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak selector] _ in
-            selector?.close()
-        }) { selectorMonitors.append(global) }
-        if let local = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self, weak selector] event in
-            guard let self, let panel = selectorPanel else { return event }
-            let y = event.locationInWindow.y, card = selector?.cardHeight ?? 0
-            let inCard = opensBelow ? y >= panel.frame.height - card : y <= card
-            if event.window !== panel || !inCard { selector?.close() }
-            return event
-        }) { selectorMonitors.append(local) }
+        if let global = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown],
+            handler: { [weak selector] _ in
+                selector?.close()
+            })
+        {
+            selectorMonitors.append(global)
+        }
+        if let local = NSEvent.addLocalMonitorForEvents(
+            matching: .leftMouseDown,
+            handler: { [weak self, weak selector] event in
+                guard let self, let panel = selectorPanel else { return event }
+                let y = event.locationInWindow.y, card = selector?.cardHeight ?? 0
+                let inCard = opensBelow ? y >= panel.frame.height - card : y <= card
+                if event.window !== panel || !inCard { selector?.close() }
+                return event
+            })
+        {
+            selectorMonitors.append(local)
+        }
     }
 
     func hideSelector(keepState: Bool = false) {

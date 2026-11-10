@@ -25,7 +25,9 @@ struct RecordView: View {
     /// here or with the red pill at the top; then the recording is read.
     private var shutter: some View {
         VStack(spacing: 14) {
-            Button { recorder.recording ? recorder.stop() : recorder.start() } label: {
+            Button {
+                recorder.recording ? recorder.stop() : recorder.start()
+            } label: {
                 ZStack {
                     Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 4).frame(width: 84, height: 84)
                     RoundedRectangle(cornerRadius: recorder.recording ? 8 : 32, style: .continuous).fill(.red)
@@ -42,9 +44,12 @@ struct RecordView: View {
             } else {
                 Text("Record your screen").font(.headline)
             }
-            Text(recorder.recording ? "Stop here, or with the red pill at the top of the screen."
-                                    : "Turn the microphone on to talk it through.")
-                .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Text(
+                recorder.recording
+                    ? "Stop here, or with the red pill at the top of the screen."
+                    : "Turn the microphone on to talk it through."
+            )
+            .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 32).padding(.vertical, 20)
@@ -87,7 +92,9 @@ struct RecordView: View {
             guard let file else { return }
             recorder.finished = nil
             reading = true
-            Task { recording = await Recording.read(file); reading = false }
+            Task {
+                recording = await Recording.read(file); reading = false
+            }
         }
         .onChange(of: recorder.problem) { _, why in if let why { problem = why } }
         .onChange(of: video) {
@@ -95,8 +102,11 @@ struct RecordView: View {
             reading = true
             Task {
                 defer { reading = false }
-                if let movie = try? await video.loadTransferable(type: Movie.self) { recording = await Recording.read(movie.url) }
-                else { problem = "Couldn't open that recording" }
+                if let movie = try? await video.loadTransferable(type: Movie.self) {
+                    recording = await Recording.read(movie.url)
+                } else {
+                    problem = "Couldn't open that recording"
+                }
             }
         }
         .onChange(of: picked) {
@@ -104,7 +114,10 @@ struct RecordView: View {
                 var loaded: [Data] = []
                 for item in picked {
                     if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data),
-                       let jpeg = image.jpegData(compressionQuality: 0.8) { loaded.append(jpeg) }
+                        let jpeg = image.jpegData(compressionQuality: 0.8)
+                    {
+                        loaded.append(jpeg)
+                    }
                 }
                 images = loaded
             }
@@ -116,17 +129,25 @@ struct RecordView: View {
         let canSend = task != nil && !sending
         return VStack(spacing: 0) {
             HStack {
-                Button { clear() } label: {
+                Button {
+                    clear()
+                } label: {
                     Image("xmark-outline").resizable().frame(width: 20, height: 20).frame(width: 44, height: 44).contentShape(Circle())
                 }
                 .buttonStyle(.plain).glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("Close")
                 Spacer()
                 Text("Send to a task").font(.headline)
                 Spacer()
-                Button { Task { await send() } } label: {
+                Button {
+                    Task { await send() }
+                } label: {
                     Group {
-                        if sending { Spinner(color: .white).frame(width: 18, height: 18) }
-                        else { Image("arrow-up-outline").resizable().frame(width: 20, height: 20).foregroundStyle(canSend ? .white : .secondary) }
+                        if sending {
+                            Spinner(color: .white).frame(width: 18, height: 18)
+                        } else {
+                            Image("arrow-up-outline").resizable().frame(width: 20, height: 20).foregroundStyle(
+                                canSend ? .white : .secondary)
+                        }
                     }
                     .frame(width: 44, height: 44)
                     .background { if canSend || sending { Circle().fill(Color.accentColor) } }
@@ -150,7 +171,9 @@ struct RecordView: View {
                             }
                         }
                     } else if let recording {
-                        PageRow(title: "\(recording.length) · \(recording.frames.count) frames" + (recording.said == nil ? "" : " · what you said"), icon: "record-glyph")
+                        PageRow(
+                            title: "\(recording.length) · \(recording.frames.count) frames"
+                                + (recording.said == nil ? "" : " · what you said"), icon: "record-glyph")
                     }
                     wordsField
                     if let problem { Text(problem).font(.footnote).foregroundStyle(.red) }
@@ -159,7 +182,9 @@ struct RecordView: View {
                 PageGroup(title: "Send to") {
                     // Zero's own list, the tick on the right, as everywhere else here.
                     ForEach(model.tasks) { row in
-                        Button { task = row.session } label: {
+                        Button {
+                            task = row.session
+                        } label: {
                             HStack {
                                 Text(row.task).lineLimit(1)
                                 Spacer(minLength: 12)
@@ -186,8 +211,9 @@ struct RecordView: View {
         sending = true
         defer { sending = false }
         do {
-            try await model.send([words, recording?.text].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n"),
-                                 images: images + (recording?.frames ?? []), to: task)
+            try await model.send(
+                [words, recording?.text].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n"),
+                images: images + (recording?.frames ?? []), to: task)
             clear()
             model.tab = .tasks
             model.path = [task]
@@ -201,8 +227,11 @@ struct RecordView: View {
 private struct Movie: Transferable {
     let url: URL
     static var transferRepresentation: some TransferRepresentation {
-        FileRepresentation(contentType: .movie) { SentTransferredFile($0.url) } importing: { received in
-            let copy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension(received.file.pathExtension)
+        FileRepresentation(contentType: .movie) {
+            SentTransferredFile($0.url)
+        } importing: { received in
+            let copy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension(
+                received.file.pathExtension)
             try FileManager.default.copyItem(at: received.file, to: copy)
             return Movie(url: copy)
         }
@@ -250,8 +279,9 @@ private struct Movie: Transferable {
         }
         (self.stream, self.file) = (stream, file)
         Task {
-            do { try await stream.startCapture(); started = Date(); recording = true }
-            catch { problem = "Couldn't record: \(error.localizedDescription)"; ended() }
+            do { try await stream.startCapture(); started = Date(); recording = true } catch {
+                problem = "Couldn't record: \(error.localizedDescription)"; ended()
+            }
         }
     }
 
@@ -269,15 +299,21 @@ private struct Movie: Transferable {
         Task { @MainActor in self.ended() }
     }
     nonisolated func contentSharingPickerStartDidFailWithError(_ error: any Error) {
-        Task { @MainActor in self.problem = "Couldn't record: \(error.localizedDescription)"; self.ended() }
+        Task { @MainActor in
+            self.problem = "Couldn't record: \(error.localizedDescription)"; self.ended()
+        }
     }
     nonisolated func stream(_ stream: SCStream, didStopWithError error: any Error) {
         Task { @MainActor in self.ended() }
     }
     nonisolated func recordingOutputDidFinishRecording(_ recordingOutput: SCRecordingOutput) {
-        Task { @MainActor in self.finished = self.file; self.ended() }
+        Task { @MainActor in
+            self.finished = self.file; self.ended()
+        }
     }
     nonisolated func recordingOutput(_ recordingOutput: SCRecordingOutput, didFailWithError error: any Error) {
-        Task { @MainActor in self.problem = "The recording failed: \(error.localizedDescription)"; self.ended() }
+        Task { @MainActor in
+            self.problem = "The recording failed: \(error.localizedDescription)"; self.ended()
+        }
     }
 }

@@ -26,9 +26,12 @@ struct RewindPicker: View {
                     ScrollView {
                         VStack(spacing: 1) {
                             ForEach(Array(messages.enumerated()), id: \.element.id) { i, item in
-                                Button { pick(item) } label: {
+                                Button {
+                                    pick(item)
+                                } label: {
                                     HStack(spacing: 12) {
-                                        Text(Self.gist(item)).font(.system(size: 13)).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
+                                        Text(Self.gist(item)).font(.system(size: 13)).lineLimit(1).truncationMode(.tail).frame(
+                                            maxWidth: .infinity, alignment: .leading)
                                         if let date = item.date {
                                             Text(date.formatted(.relative(presentation: .numeric, unitsStyle: .abbreviated)))
                                                 .font(.system(size: 11.5)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
@@ -76,7 +79,9 @@ struct RewindPicker: View {
                 }
             }
         }
-        .onDisappear { if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil }
+        .onDisappear {
+            if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil
+        }
     }
 
     /// A key and what it does, as the footer of a menu names them.
@@ -92,10 +97,13 @@ struct RewindPicker: View {
     private static func gist(_ item: ConversationItem) -> String {
         guard case let .user(text, images) = item.kind else { return "" }
         let words = ConversationItem.from(text)?.text ?? text
-        let line = words.replacingOccurrences(of: #"\s*\[Image #\d+\]"#, with: "", options: .regularExpression)
+        let line =
+            words.replacingOccurrences(of: #"\s*\[Image #\d+\]"#, with: "", options: .regularExpression)
             .split(whereSeparator: \.isNewline).first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
         let pictures = images.isEmpty ? "" : (images.count == 1 ? "an image" : "\(images.count) images")
-        return line.isEmpty ? (pictures.isEmpty ? words : pictures.prefix(1).uppercased() + pictures.dropFirst()) : (pictures.isEmpty ? line : "\(line) · \(pictures)")
+        return line.isEmpty
+            ? (pictures.isEmpty ? words : pictures.prefix(1).uppercased() + pictures.dropFirst())
+            : (pictures.isEmpty ? line : "\(line) · \(pictures)")
     }
 }
 
@@ -120,8 +128,11 @@ struct RewindCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Rewind").font(.system(size: 13, weight: .semibold)).padding(.horizontal, 10).padding(.top, 6)
                 Text(text).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(2).padding(.horizontal, 10)
-                Text(folder).font(.system(size: 12)).foregroundStyle(.tertiary).padding(.horizontal, 10).padding(.top, 2).padding(.bottom, 6)
-                row("both", "Restore conversation and code", "Back to before this message, files and all", enabled: kept) { go(conversation: true, code: true) }
+                Text(folder).font(.system(size: 12)).foregroundStyle(.tertiary).padding(.horizontal, 10).padding(.top, 2).padding(
+                    .bottom, 6)
+                row("both", "Restore conversation and code", "Back to before this message, files and all", enabled: kept) {
+                    go(conversation: true, code: true)
+                }
                 row("conversation", "Restore conversation", "The files stay as they are now") { go(conversation: true, code: false) }
                 row("code", "Restore code", "The conversation carries on as it is", enabled: kept) { go(conversation: false, code: true) }
                 row("branch", "Branch from here", "A new task from before this message; this one stays") { branch() }
@@ -150,7 +161,9 @@ struct RewindCard: View {
     private func go(conversation: Bool, code: Bool) {
         busy = true
         Task {
-            if let back = await workspace.rewind(task, message: item.id, conversation: conversation, code: code) { rewound(back, conversation) }
+            if let back = await workspace.rewind(task, message: item.id, conversation: conversation, code: code) {
+                rewound(back, conversation)
+            }
             busy = false
             close()
         }

@@ -19,7 +19,8 @@ struct ItemView: View {
                     WrappingStack(spacing: 6, trailing: true) {
                         ForEach(tiles, id: \.path) { tile in
                             if let video = tile.video {
-                                Thumbnail(path: tile.path, side: 88, tap: { NSWorkspace.shared.open(URL(fileURLWithPath: video)) }).overlay { VideoBadge() }
+                                Thumbnail(path: tile.path, side: 88, tap: { NSWorkspace.shared.open(URL(fileURLWithPath: video)) }).overlay
+                                { VideoBadge() }
                             } else {
                                 Thumbnail(path: tile.path, side: 88, among: pictures)
                             }
@@ -31,7 +32,9 @@ struct ItemView: View {
                         Spacer(minLength: 80)
                         // As an answer reads: links that open (zero://, PRs, commits, tickets) and code as code, an
                         // image's token as its pill; the bubble hugs its words.
-                        MarkdownText(ImageToken.linked(text, images: images), cwd: cwd, size: 14.5, hugs: true, yours: true).padding(.horizontal, 14).padding(.vertical, 9)
+                        MarkdownText(ImageToken.linked(text, images: images), cwd: cwd, size: 14.5, hugs: true, yours: true).padding(
+                            .horizontal, 14
+                        ).padding(.vertical, 9)
                             .background(Theme.chip, in: RoundedRectangle(cornerRadius: 16))
                     }
                 }
@@ -73,7 +76,7 @@ struct ItemView: View {
                     .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4.5 }
                     Text(NoticeText.attributed(text))
                 }
-                    .font(.callout).foregroundStyle(.secondary).tint(.primary)
+                .font(.callout).foregroundStyle(.secondary).tint(.primary)
             }
         case let .table(title, columns, rows):
             TableCard(title: title, columns: columns, rows: rows, cwd: cwd)
@@ -91,7 +94,9 @@ struct CopyButton: View {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
             copied = true
-            Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
+            Task {
+                try? await Task.sleep(for: .seconds(1.5)); copied = false
+            }
         } label: {
             NucleoIcon(copied ? "circle-check" : "copy", size: 13).foregroundStyle(.secondary).frame(width: 22, height: 22)
         }
@@ -121,13 +126,23 @@ private struct StatusIcon: View {
 /// A callout's three tones, light and dark: the shell around it, the panel its words sit on, the ink.
 private enum CalloutColors {
     private static func tinted(light: (CGFloat, CGFloat, CGFloat), dark: (CGFloat, CGFloat, CGFloat)) -> Color {
-        Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(red: dark.0, green: dark.1, blue: dark.2, alpha: 1) : NSColor(red: light.0, green: light.1, blue: light.2, alpha: 1) })
+        Color(
+            nsColor: NSColor(name: nil) {
+                $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                    ? NSColor(red: dark.0, green: dark.1, blue: dark.2, alpha: 1)
+                    : NSColor(red: light.0, green: light.1, blue: light.2, alpha: 1)
+            })
     }
-    static let rose = (shell: tinted(light: (1.0, 0.894, 0.902), dark: (0.24, 0.03, 0.10)), panel: tinted(light: (1.0, 0.945, 0.949), dark: (0.40, 0.06, 0.18)),
-                       ink: tinted(light: (0.30, 0.02, 0.10), dark: (1.0, 0.894, 0.902)))
-    static let amber = (shell: tinted(light: (1.0, 0.925, 0.835), dark: (0.26, 0.14, 0.02)), panel: tinted(light: (1.0, 0.957, 0.902), dark: (0.40, 0.22, 0.04)),
-                        ink: tinted(light: (0.36, 0.18, 0.0), dark: (1.0, 0.925, 0.835)))
+    static let rose = (
+        shell: tinted(light: (1.0, 0.894, 0.902), dark: (0.24, 0.03, 0.10)),
+        panel: tinted(light: (1.0, 0.945, 0.949), dark: (0.40, 0.06, 0.18)),
+        ink: tinted(light: (0.30, 0.02, 0.10), dark: (1.0, 0.894, 0.902))
+    )
+    static let amber = (
+        shell: tinted(light: (1.0, 0.925, 0.835), dark: (0.26, 0.14, 0.02)),
+        panel: tinted(light: (1.0, 0.957, 0.902), dark: (0.40, 0.22, 0.04)),
+        ink: tinted(light: (0.36, 0.18, 0.0), dark: (1.0, 0.925, 0.835))
+    )
 }
 
 struct CautionCallout<Actions: View>: View {
@@ -152,10 +167,13 @@ struct CautionCallout<Actions: View>: View {
             .foregroundStyle(colors.ink)
             .padding(.horizontal, 14).padding(.vertical, 7)
             VStack(alignment: .leading, spacing: 12) {
-                Text((try? AttributedString(markdown: body, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(body))
-                    .font(.system(size: 13)).lineSpacing(4).foregroundStyle(colors.ink)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(
+                    (try? AttributedString(markdown: body, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+                        ?? AttributedString(body)
+                )
+                .font(.system(size: 13)).lineSpacing(4).foregroundStyle(colors.ink)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 actions()
             }
             .padding(14)
@@ -170,7 +188,8 @@ struct CautionCallout<Actions: View>: View {
     /// "Blocked: the words" → ("Blocked", "the words"); anything else is an Error with all its words.
     static func split(_ text: String) -> (String, String) {
         if let colon = text.firstIndex(of: ":"), text.distance(from: text.startIndex, to: colon) <= 24,
-           !text[..<colon].contains("\n"), text[text.index(after: colon)...].first == " " {
+            !text[..<colon].contains("\n"), text[text.index(after: colon)...].first == " "
+        {
             return (String(text[..<colon]), String(text[text.index(after: colon)...]).trimmingCharacters(in: .whitespaces))
         }
         return ("Error", text)
@@ -193,10 +212,15 @@ private struct TableCard: View {
                 line(columns.map { AnyView(Text($0)) }, head: true).padding(.vertical, -3)
             } content: {
                 VStack(spacing: 0) {
-                    if rows.isEmpty { Text("Nothing in it").font(.system(size: 13)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 16) }
+                    if rows.isEmpty {
+                        Text("Nothing in it").font(.system(size: 13)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(
+                            .vertical, 16)
+                    }
                     ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
                         if index > 0 { Rectangle().fill(Theme.stroke).frame(height: 1) }
-                        line(row.enumerated().map { column, text in AnyView(cell(text, in: column < columns.count ? columns[column] : "")) }, head: false)
+                        line(
+                            row.enumerated().map { column, text in AnyView(cell(text, in: column < columns.count ? columns[column] : "")) },
+                            head: false)
                     }
                 }
             }
@@ -235,7 +259,8 @@ private struct RiskLabel: View {
         let color: Color = level == "low" ? .green : level == "medium" ? .orange : .red
         HStack(spacing: 5) {
             Circle().fill(color).frame(width: 7, height: 7)
-            Text(level.capitalized).font(.system(size: 11.5, weight: .medium)).foregroundStyle(level == "low" ? AnyShapeStyle(Theme.done) : AnyShapeStyle(color))
+            Text(level.capitalized).font(.system(size: 11.5, weight: .medium)).foregroundStyle(
+                level == "low" ? AnyShapeStyle(Theme.done) : AnyShapeStyle(color))
         }
         .padding(.leading, 7).padding(.trailing, 8).padding(.vertical, 3)
         .background(color.opacity(0.12), in: Capsule())
@@ -251,11 +276,16 @@ private struct ReasoningRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Button { open.toggle() } label: {
+            Button {
+                open.toggle()
+            } label: {
                 HStack(alignment: .top, spacing: 8) {
                     NucleoIcon("brain", size: 14).foregroundStyle(.secondary).frame(width: 14, height: 16)
                     Text(Took.text("Thought", seconds)).fontWeight(.medium)
-                    if !open { Text(text.split(whereSeparator: \.isNewline).first.map(String.init) ?? "").foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail) }
+                    if !open {
+                        Text(text.split(whereSeparator: \.isNewline).first.map(String.init) ?? "").foregroundStyle(.secondary).lineLimit(1)
+                            .truncationMode(.tail)
+                    }
                     Spacer(minLength: 0)
                     NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary)
                 }
@@ -280,13 +310,17 @@ private struct CommandCard: View {
     var body: some View {
         // A row like every step's; its output, opened, in a box beneath it, under its words.
         VStack(alignment: .leading, spacing: 8) {
-            Button { open.toggle() } label: {
+            Button {
+                open.toggle()
+            } label: {
                 HStack(alignment: .top, spacing: 8) {
                     StatusIcon(status: status)
                     Text("$ " + command).font(.system(.callout, design: .monospaced)).lineLimit(open ? nil : 1)
                     Spacer(minLength: 0)
                     if let exitCode, exitCode != 0 { Text("exit \(exitCode)").font(.caption).foregroundStyle(.red) }
-                    if !output.isEmpty { NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary) }
+                    if !output.isEmpty {
+                        NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary)
+                    }
                 }
                 .contentShape(Rectangle())
             }
@@ -312,7 +346,11 @@ private struct CommandCard: View {
                         Text(output).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary).lineSpacing(2)
                             .textSelection(.enabled).fixedSize()
                             .padding(.horizontal, 12).padding(.vertical, 10)
-                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { outputHeight = $0 }
+                            .onGeometryChange(for: CGFloat.self) {
+                                $0.size.height
+                            } action: {
+                                outputHeight = $0
+                            }
                     }
                     .defaultScrollAnchor(.topLeading)
                     .thinScrollbar()
@@ -339,7 +377,9 @@ struct FileChangeCard: View {
         let path = relative(change.path, to: cwd)
         let (folder, name) = ((path as NSString).deletingLastPathComponent, (path as NSString).lastPathComponent)
         VStack(alignment: .leading, spacing: 8) {
-            Button { open.toggle() } label: {
+            Button {
+                open.toggle()
+            } label: {
                 HStack(alignment: .top, spacing: 8) {
                     StatusIcon(status: status)
                     Text(verb).font(.callout.weight(.medium))
@@ -351,7 +391,9 @@ struct FileChangeCard: View {
                     let added = lines.count { $0.kind == .added }, removed = lines.count { $0.kind == .removed }
                     if added > 0 { Text("+\(added)").foregroundStyle(DiffLine.green) }
                     if removed > 0 { Text("−\(removed)").foregroundStyle(DiffLine.red) }
-                    if !lines.isEmpty { NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary) }
+                    if !lines.isEmpty {
+                        NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary)
+                    }
                 }
                 .font(.system(.callout).monospacedDigit())
                 .contentShape(Rectangle())

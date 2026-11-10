@@ -12,7 +12,10 @@ private func shutDown(_ socket: String, _ home: URL) {
     if let connection = try? UnixSocket.connect(path: socket) {
         try? connection.write(line: #"{"id":0,"op":"hello"}"#)
         if let line = connection.readLine(), let reply = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-           let pid = (reply["result"] as? [String: Any])?["pid"] as? Int32 { kill(pid, SIGTERM) }
+            let pid = (reply["result"] as? [String: Any])?["pid"] as? Int32
+        {
+            kill(pid, SIGTERM)
+        }
         connection.close()
     }
     try? FileManager.default.removeItem(at: home)
@@ -59,8 +62,11 @@ private func launch(_ name: String) async throws -> (socket: String, home: URL) 
     try? FileManager.default.removeItem(at: home)
     let kept = home.appendingPathComponent("data/sessions/01a1000000000000")
     try FileManager.default.createDirectory(at: kept, withIntermediateDirectories: true)
-    try #"{"id":"01a1000000000000","provider":"claude","cwd":"/work/project","thread":null}"#.write(to: kept.appendingPathComponent("meta.json"), atomically: true, encoding: .utf8)
-    let recording = URL(fileURLWithPath: binary).deletingLastPathComponent().appendingPathComponent("../../crates/zerod/tests/fixtures/claude-command.jsonl").standardized
+    try #"{"id":"01a1000000000000","provider":"claude","cwd":"/work/project","thread":null}"#.write(
+        to: kept.appendingPathComponent("meta.json"), atomically: true, encoding: .utf8)
+    let recording = URL(fileURLWithPath: binary).deletingLastPathComponent().appendingPathComponent(
+        "../../crates/zerod/tests/fixtures/claude-command.jsonl"
+    ).standardized
     try FileManager.default.copyItem(at: recording, to: kept.appendingPathComponent("transcript.jsonl"))
     let socket = home.appendingPathComponent("z.sock").path
     try #require(await ZerodLink.launch(binary: binary, home: home.appendingPathComponent("data").path, socket: socket))
@@ -83,18 +89,24 @@ private func launch(_ name: String) async throws -> (socket: String, home: URL) 
     #expect(try await link.workers(of: conversation.id).isEmpty)
     let settled = try await link.wait(on: [conversation.id], timeout: 1)
     #expect(settled.first?["attention"] as? String == "offline")
-    await #expect(throws: ZerodError(message: "No session nope to lead it")) { _ = try await link.spawn(lead: "nope", provider: .codex, prompt: "x") }
+    await #expect(throws: ZerodError(message: "No session nope to lead it")) {
+        _ = try await link.spawn(lead: "nope", provider: .codex, prompt: "x")
+    }
 
     // Offline, it's on the board as not running, its plain answer still there to read (Replied); then its agent hands
     // the user something.
     let offline = try #require(try await link.board().first)
     #expect((offline.online, offline.state, offline.now) == (false, .answered, "The command printed `Darwin`."))
-    var note = Ask(kind: .note, title: "Update", body: "Printed the kernel name", agent: AgentIdentity(name: "zerod-" + conversation.id, host: "mac"))
+    var note = Ask(
+        kind: .note, title: "Update", body: "Printed the kernel name", agent: AgentIdentity(name: "zerod-" + conversation.id, host: "mac"))
     note.status = "done"
     note.needs = "check it says Darwin"
     _ = try await link.create(note)
     let row = try #require(try await link.board().first)
-    #expect((row.session, row.task, row.ticket, row.state, row.now, row.needs) == (conversation.id, "Uname check", "GH-1", .handed, "Printed the kernel name", "check it says Darwin"), "done, with a step for the user: over to them")
+    #expect(
+        (row.session, row.task, row.ticket, row.state, row.now, row.needs) == (
+            conversation.id, "Uname check", "GH-1", .handed, "Printed the kernel name", "check it says Darwin"
+        ), "done, with a step for the user: over to them")
 }
 
 private final class Heard: @unchecked Sendable {
@@ -122,7 +134,8 @@ private final class InboxHeard: @unchecked Sendable {
     link.onInbox = { heard.add($0) }
     try await link.configure(takeBack: 0.05, ttl: 600, patterns: [])
     try await link.followInbox()
-    let ask = try await link.create(Ask(kind: .choice, title: "Ship it?", options: ["Yes", "No"], agent: AgentIdentity(name: "codex-1", host: "mac")))
+    let ask = try await link.create(
+        Ask(kind: .choice, title: "Ship it?", options: ["Yes", "No"], agent: AgentIdentity(name: "codex-1", host: "mac")))
     try await link.choose(ask.id, option: 0)
     for _ in 0..<300 {
         if heard.all.contains(where: { if case let .ask(a) = $0 { a.id == ask.id && a.state == .answered } else { false } }) { break }

@@ -2,7 +2,9 @@ import Foundation
 import Testing
 @testable import ZeroCore
 
-private func yours(_ id: String, _ text: String, at: Int) -> ConversationItem { ConversationItem(id: id, turn: nil, kind: .user(text: text, images: []), status: .done, at: at) }
+private func yours(_ id: String, _ text: String, at: Int) -> ConversationItem {
+    ConversationItem(id: id, turn: nil, kind: .user(text: text, images: []), status: .done, at: at)
+}
 
 /// A message sent while its agent starts shows at once, and gives way to the conversation's own once that's in.
 @Test func aMessageSentShowsAtOnceUntilTheConversationHasIt() {

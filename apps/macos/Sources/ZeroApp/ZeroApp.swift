@@ -9,7 +9,9 @@ enum ZeroMain {
     static func main() {
         if CommandLine.arguments.contains("--claude-models") {
             let semaphore = DispatchSemaphore(value: 0)
-            Task { _ = await ClaudeModels.refresh(); semaphore.signal() }
+            Task {
+                _ = await ClaudeModels.refresh(); semaphore.signal()
+            }
             semaphore.wait()
             print("source:", ClaudeModels.status.source, ClaudeModels.status.error.map { "(\($0))" } ?? "")
             for choice in ClaudeModels.cached() { print(choice.id, "—", choice.name, "—", choice.detail ?? "") }

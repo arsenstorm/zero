@@ -20,8 +20,10 @@ struct OnboardingView: View {
         VStack(spacing: 0) {
             ZStack {
                 page.id(step)
-                    .transition(.asymmetric(insertion: .offset(x: forward ? 16 : -16).combined(with: .opacity),
-                                            removal: .opacity))
+                    .transition(
+                        .asymmetric(
+                            insertion: .offset(x: forward ? 16 : -16).combined(with: .opacity),
+                            removal: .opacity))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(.horizontal, 44).padding(.top, 52)
@@ -30,7 +32,9 @@ struct OnboardingView: View {
         .frame(width: 560, height: 600)
         .background(Theme.card)
         // From the first page, so later pages open already answered rather than changing in front of you.
-        .onAppear { agents.run(); permissions.run() }
+        .onAppear {
+            agents.run(); permissions.run()
+        }
     }
 
     @ViewBuilder private var page: some View {
@@ -39,18 +43,27 @@ struct OnboardingView: View {
             VStack(spacing: 18) {
                 ZeroMark().frame(width: 104, height: 100).padding(.top, 36)
                 Text("Welcome to Zero").font(.system(size: 26, weight: .semibold))
-                Text("One inbox on your Mac for everything your agents need from you: a question, a go-ahead, a command to run on your side.")
-                    .font(.system(size: 14)).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 380)
+                Text(
+                    "One inbox on your Mac for everything your agents need from you: a question, a go-ahead, a command to run on your side."
+                )
+                .font(.system(size: 14)).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 380)
                 VStack(alignment: .leading, spacing: 14) {
-                    point(AnyView(BarGlyph()), "The bar", "Sits at the edge of your screen, with a dot for each agent. A dot turns orange when that agent needs you.")
-                    point(AnyView(NucleoIcon("inbox", size: 17).foregroundStyle(.secondary)), "The inbox",
-                          "Opens from the bar. Answer with 1, 2 or 3, type a reply, or start a new agent.")
+                    point(
+                        AnyView(BarGlyph()), "The bar",
+                        "Sits at the edge of your screen, with a dot for each agent. A dot turns orange when that agent needs you.")
+                    point(
+                        AnyView(NucleoIcon("inbox", size: 17).foregroundStyle(.secondary)), "The inbox",
+                        "Opens from the bar. Answer with 1, 2 or 3, type a reply, or start a new agent.")
                 }
                 .padding(.top, 14).frame(maxWidth: 400)
             }
             .frame(maxWidth: .infinity)
         case .agents:
-            StepPage(title: "Your agents", detail: "Zero works with the coding agents on this Mac. The Zero plugin teaches them to ask you here instead of waiting in a terminal you are not watching.") {
+            StepPage(
+                title: "Your agents",
+                detail:
+                    "Zero works with the coding agents on this Mac. The Zero plugin teaches them to ask you here instead of waiting in a terminal you are not watching."
+            ) {
                 AgentsStep(check: agents)
             }
         case .permissions:
@@ -65,7 +78,8 @@ struct OnboardingView: View {
                     }
                     Divider()
                     OnboardingRow(icon: "power-off", title: "Launch Zero at login", detail: "So agents can always reach you.") {
-                        Toggle("", isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 })).labelsHidden().toggleStyle(.switch)
+                        Toggle("", isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 })).labelsHidden()
+                            .toggleStyle(.switch)
                     }
                     Divider()
                     OnboardingRow(icon: "monitor", title: "Follow the active screen", detail: "The bar moves to the screen you use.") {
@@ -107,7 +121,9 @@ struct OnboardingView: View {
             Spacer()
             if step != .welcome {
                 // The same 32 pt capsule as Continue, just without a fill, so the whole shape takes the click.
-                Button { go(-1) } label: {
+                Button {
+                    go(-1)
+                } label: {
                     Text("Back").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
                         .padding(.horizontal, 16).frame(height: 32).contentShape(Capsule())
                 }
@@ -153,8 +169,12 @@ struct OnboardingRow<Trailing: View>: View {
     var body: some View {
         HStack(spacing: 12) {
             Group {
-                if let picture { picture.resizable().aspectRatio(contentMode: .fit).frame(width: 20, height: 20).clipShape(RoundedRectangle(cornerRadius: 5)) }
-                else { NucleoIcon(icon, size: 17).foregroundStyle(.secondary) }
+                if let picture {
+                    picture.resizable().aspectRatio(contentMode: .fit).frame(width: 20, height: 20).clipShape(
+                        RoundedRectangle(cornerRadius: 5))
+                } else {
+                    NucleoIcon(icon, size: 17).foregroundStyle(.secondary)
+                }
             }
             .frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
@@ -201,7 +221,8 @@ struct SolidButton: View {
 
 struct PressableStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.scaleEffect(configuration.isPressed ? 0.96 : 1).animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+        configuration.label.scaleEffect(configuration.isPressed ? 0.96 : 1).animation(
+            .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
@@ -241,7 +262,9 @@ final class AgentCheck {
 
     func addPlugin() {
         plugin = nil
-        Task { pluginError = await ClaudePlugin.install(); plugin = ClaudePlugin.isInstalled }
+        Task {
+            pluginError = await ClaudePlugin.install(); plugin = ClaudePlugin.isInstalled
+        }
     }
 }
 
@@ -250,10 +273,14 @@ private struct AgentsStep: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            OnboardingRow(icon: "sparkle", picture: choiceIcon("claude"), title: "Claude Code", detail: "Asks and progress come to your inbox.") {
+            OnboardingRow(
+                icon: "sparkle", picture: choiceIcon("claude"), title: "Claude Code", detail: "Asks and progress come to your inbox."
+            ) {
                 switch (check.claude, check.plugin) {
                 case (false, _): RowButton(title: "Not installed", enabled: false)
-                case (true, true): NucleoLabel("Plugin added", icon: "circle-check", fill: "glyph").font(.system(size: 12, weight: .medium)).foregroundStyle(.green)
+                case (true, true):
+                    NucleoLabel("Plugin added", icon: "circle-check", fill: "glyph").font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.green)
                 case (true, false): RowButton(title: "Add plugin") { check.addPlugin() }
                 default: ProgressView().controlSize(.small)
                 }
@@ -278,7 +305,8 @@ final class PermissionCheck {
     func run() {
         guard observer == nil else { return }
         refresh()
-        observer = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+        observer = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) {
+            [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
     }
@@ -289,13 +317,21 @@ final class PermissionCheck {
     }
 
     func allowMicrophone() {
-        if microphone == .notDetermined { Task { _ = await AVCaptureDevice.requestAccess(for: .audio); refresh() } }
-        else { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!) }
+        if microphone == .notDetermined {
+            Task {
+                _ = await AVCaptureDevice.requestAccess(for: .audio); refresh()
+            }
+        } else {
+            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+        }
     }
 
     func allowSpeech() {
-        if speech == .notDetermined { SFSpeechRecognizer.requestAuthorization { _ in Task { @MainActor in self.refresh() } } }
-        else { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")!) }
+        if speech == .notDetermined {
+            SFSpeechRecognizer.requestAuthorization { _ in Task { @MainActor in self.refresh() } }
+        } else {
+            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")!)
+        }
     }
 }
 
@@ -325,7 +361,9 @@ struct ZeroMark: View {
     }
     private static let large = load("mark"), compact = load("mark-small")
     var body: some View {
-        if let image = small ? Self.compact : Self.large { Image(nsImage: image).resizable().aspectRatio(contentMode: .fit).foregroundStyle(.primary) }
+        if let image = small ? Self.compact : Self.large {
+            Image(nsImage: image).resizable().aspectRatio(contentMode: .fit).foregroundStyle(.primary)
+        }
     }
 }
 

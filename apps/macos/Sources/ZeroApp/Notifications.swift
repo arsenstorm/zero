@@ -40,7 +40,9 @@ import ZeroCore
         }
         watchPlace()
         for name in [NSApplication.didBecomeActiveNotification, NSWindow.didBecomeKeyNotification] {
-            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.looked() } }
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.looked() }
+            }
         }
         watchScreen()
         Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.catchUp() } }
@@ -54,7 +56,9 @@ import ZeroCore
     private var atMac: Bool { !screenOff && Self.idle < 120 && PhoneUse.last < Date().addingTimeInterval(-Self.idle) }
 
     /// Seconds since the user last touched the keyboard, mouse or trackpad.
-    private static var idle: TimeInterval { CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: UInt32.max)!) }
+    private static var idle: TimeInterval {
+        CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: UInt32.max)!)
+    }
 
     private func watchScreen() {
         let off: (Bool) -> (Notification) -> Void = { value in { [weak self] _ in MainActor.assumeIsolated { self?.screenOff = value } } }
@@ -83,7 +87,10 @@ import ZeroCore
         guard let last else { self.last = rows; announced = TaskAlerts.announced(rows); return }
         self.last = rows
         let (alerts, cleared) = TaskAlerts.changes(from: last, to: rows, announced: &announced)
-        if !cleared.isEmpty { center.removeDeliveredNotifications(withIdentifiers: cleared); Phones.shared.clear(cleared); for id in cleared { held[id] = nil } }
+        if !cleared.isEmpty {
+            center.removeDeliveredNotifications(withIdentifiers: cleared); Phones.shared.clear(cleared);
+            for id in cleared { held[id] = nil }
+        }
         for alert in alerts where wanted(alert.kind) { announce(alert) }
     }
 
@@ -149,7 +156,9 @@ import ZeroCore
         content.body = alert.body
         // The notification's own sound, so Focus and the system's settings for Zero quiet it as they do any app's.
         let sound = settings.sound(for: alert.state)
-        if settings.notificationSounds && !sound.isEmpty { content.sound = UNNotificationSound(named: UNNotificationSoundName(sound + ".aiff")) }
+        if settings.notificationSounds && !sound.isEmpty {
+            content.sound = UNNotificationSound(named: UNNotificationSoundName(sound + ".aiff"))
+        }
         center.add(UNNotificationRequest(identifier: alert.session, content: content, trigger: nil))
     }
 
@@ -165,13 +174,19 @@ import ZeroCore
     }
 
     private func watchPlace() {
-        withObservationTracking { _ = navigation.place } onChange: { [weak self] in
-            Task { @MainActor in self?.looked(); self?.watchPlace() }
+        withObservationTracking {
+            _ = navigation.place
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                self?.looked(); self?.watchPlace()
+            }
         }
     }
 
     // Shown even while Zero is the active app (its control bar can be, with the window away).
-    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async
+        -> UNNotificationPresentationOptions
+    {
         [.banner, .list, .sound]
     }
 
@@ -206,9 +221,14 @@ private extension Int {
     }
 
     private nonisolated static func register(_ name: String) -> SystemSoundID? {
-        let folders = [FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Sounds"),
-                       URL(fileURLWithPath: "/Library/Sounds"), URL(fileURLWithPath: "/System/Library/Sounds")]
-        let found = folders.lazy.flatMap { folder in ["aiff", "aif", "wav", "caf"].map { folder.appendingPathComponent(name).appendingPathExtension($0) } }
+        let folders = [
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Sounds"),
+            URL(fileURLWithPath: "/Library/Sounds"), URL(fileURLWithPath: "/System/Library/Sounds"),
+        ]
+        let found =
+            folders.lazy.flatMap { folder in
+                ["aiff", "aif", "wav", "caf"].map { folder.appendingPathComponent(name).appendingPathExtension($0) }
+            }
             .first { FileManager.default.fileExists(atPath: $0.path) } ?? Bundle.main.url(forResource: name, withExtension: "aiff")
         var id: SystemSoundID = 0
         guard let found, AudioServicesCreateSystemSoundID(found as CFURL, &id) == noErr else { return nil }

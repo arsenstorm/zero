@@ -36,7 +36,8 @@ final class GhosttyView: NSView {
     private let font = TerminalFont.regular
     private lazy var faces: [Face: NSFont] = [
         Face(): font, Face(bold: true): TerminalFont.styled(bold: true, italic: false),
-        Face(italic: true): TerminalFont.styled(bold: false, italic: true), Face(bold: true, italic: true): TerminalFont.styled(bold: true, italic: true),
+        Face(italic: true): TerminalFont.styled(bold: false, italic: true),
+        Face(bold: true, italic: true): TerminalFont.styled(bold: true, italic: true),
     ]
     private lazy var advance = ("M" as NSString).size(withAttributes: [.font: font]).width
     private lazy var cell = CGSize(width: ceil(advance), height: ceil(font.ascender - font.descender + font.leading))
@@ -70,9 +71,16 @@ final class GhosttyView: NSView {
             var result = GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED
             if write.pointee.location == GHOSTTY_CLIPBOARD_LOCATION_STANDARD {
                 let contents = UnsafeBufferPointer(start: write.pointee.contents, count: write.pointee.contents_len)
-                let text = contents.first { $0.mime.len == 0 || String(decoding: UnsafeBufferPointer(start: $0.mime.ptr, count: $0.mime.len), as: UTF8.self).hasPrefix("text/plain") }
+                let text = contents.first {
+                    $0.mime.len == 0
+                        || String(decoding: UnsafeBufferPointer(start: $0.mime.ptr, count: $0.mime.len), as: UTF8.self).hasPrefix(
+                            "text/plain")
+                }
                 NSPasteboard.general.clearContents()
-                if let text, let bytes = text.data.ptr { NSPasteboard.general.setString(String(decoding: UnsafeBufferPointer(start: bytes, count: text.data.len), as: UTF8.self), forType: .string) }
+                if let text, let bytes = text.data.ptr {
+                    NSPasteboard.general.setString(
+                        String(decoding: UnsafeBufferPointer(start: bytes, count: text.data.len), as: UTF8.self), forType: .string)
+                }
                 result = GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS
             }
             var reply = GhosttyClipboardWriteReply(size: MemoryLayout<GhosttyClipboardWriteReply>.size, result: result, remember: false)
@@ -206,13 +214,20 @@ final class GhosttyView: NSView {
                 ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_SELECTED, &selected)
                 var fg = foreground, bg: NSColor?
                 var value = GhosttyColorRgb()
-                if ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &value) == GHOSTTY_SUCCESS { fg = color(value) }
-                if ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &value) == GHOSTTY_SUCCESS { bg = color(value) }
+                if ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &value) == GHOSTTY_SUCCESS {
+                    fg = color(value)
+                }
+                if ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &value) == GHOSTTY_SUCCESS {
+                    bg = color(value)
+                }
                 if style.inverse { (fg, bg) = (bg ?? background, fg) }
                 if style.faint { fg = fg.withAlphaComponent(0.6) }
                 let rect = CGRect(x: padding + CGFloat(x) * cell.width, y: top, width: cell.width * CGFloat(span), height: cell.height)
-                if selected { context.setFillColor(selection.cgColor); context.fill(rect) }
-                else if let bg { context.setFillColor(bg.cgColor); context.fill(rect) }
+                if selected {
+                    context.setFillColor(selection.cgColor); context.fill(rect)
+                } else if let bg {
+                    context.setFillColor(bg.cgColor); context.fill(rect)
+                }
                 let text = style.invisible ? " " : grapheme()
                 let isCursor = cursor.visible && cursor.viewport_has_value && Int(cursor.viewport_x) == x && Int(cursor.viewport_y) == y
                 // Block elements (▀ ▐ ▛ ░ …) as exact rectangles, as terminals draw them: a font's glyphs leave seams.
@@ -226,13 +241,16 @@ final class GhosttyView: NSView {
                     }
                     if isCursor {
                         cursorRect = rect
-                        drawCursor(cursor, rect: rect, text: " ", look: Look(color: fg, face: Face(), underline: false, strike: false), colors: colors, background: background, context: context)
+                        drawCursor(
+                            cursor, rect: rect, text: " ", look: Look(color: fg, face: Face(), underline: false, strike: false),
+                            colors: colors, background: background, context: context)
                     }
                     run = Run(start: x + span, look: run.look)
                     continue
                 }
-                let look = Look(color: fg, face: Face(bold: style.bold, italic: style.italic), underline: style.underline != 0,
-                                strike: style.strikethrough)
+                let look = Look(
+                    color: fg, face: Face(bold: style.bold, italic: style.italic), underline: style.underline != 0,
+                    strike: style.strikethrough)
                 // Wide cells and the cursor's cell are drawn on their own; the rest in runs of the same look.
                 if span == 2 || isCursor || look != run.look {
                     draw(run, top: top)
@@ -267,7 +285,8 @@ final class GhosttyView: NSView {
             ghostty_render_state_image_get(images, GHOSTTY_RENDER_STATE_IMAGE_DATA_LAYER, &layer)
             guard kind == GHOSTTY_IMAGE_PROTOCOL_KITTY, (layer == GHOSTTY_RENDER_STATE_IMAGE_LAYER_ABOVE_TEXT) == above else { continue }
             var id: UInt32 = 0, generation: UInt64 = 0, column: Int32 = 0, row: Int32 = 0
-            var dx: UInt32 = 0, dy: UInt32 = 0, width: UInt32 = 0, height: UInt32 = 0, sx: UInt32 = 0, sy: UInt32 = 0, sw: UInt32 = 0, sh: UInt32 = 0
+            var dx: UInt32 = 0, dy: UInt32 = 0, width: UInt32 = 0, height: UInt32 = 0, sx: UInt32 = 0, sy: UInt32 = 0, sw: UInt32 = 0,
+                sh: UInt32 = 0
             ghostty_render_state_image_get(images, GHOSTTY_RENDER_STATE_IMAGE_DATA_IMAGE_ID, &id)
             ghostty_render_state_image_get(images, GHOSTTY_RENDER_STATE_IMAGE_DATA_IMAGE_GENERATION, &generation)
             ghostty_render_state_image_get(images, GHOSTTY_RENDER_STATE_IMAGE_DATA_VIEWPORT_COL, &column)
@@ -282,10 +301,12 @@ final class GhosttyView: NSView {
             ghostty_render_state_image_get(images, GHOSTTY_RENDER_STATE_IMAGE_DATA_SOURCE_HEIGHT, &sh)
             guard let picture = image(id, generation: generation, in: graphics) else { continue }
             // The engine counts a cell as cell.width × cell.height pixels, which are points here.
-            let rect = CGRect(x: padding + CGFloat(column) * cell.width + CGFloat(dx), y: padding + CGFloat(row) * cell.height + CGFloat(dy),
-                              width: CGFloat(width), height: CGFloat(height))
-            picture.draw(in: rect, from: CGRect(x: CGFloat(sx), y: picture.size.height - CGFloat(sy + sh), width: CGFloat(sw), height: CGFloat(sh)),
-                         operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            let rect = CGRect(
+                x: padding + CGFloat(column) * cell.width + CGFloat(dx), y: padding + CGFloat(row) * cell.height + CGFloat(dy),
+                width: CGFloat(width), height: CGFloat(height))
+            picture.draw(
+                in: rect, from: CGRect(x: CGFloat(sx), y: picture.size.height - CGFloat(sy + sh), width: CGFloat(sw), height: CGFloat(sh)),
+                operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         }
     }
 
@@ -306,15 +327,19 @@ final class GhosttyView: NSView {
         if format == GHOSTTY_KITTY_IMAGE_FORMAT_PNG {
             picture = NSImage(data: data)
         } else {
-            let (channels, info, space): (Int, CGImageAlphaInfo, CGColorSpace) = switch format {
-            case GHOSTTY_KITTY_IMAGE_FORMAT_RGB: (3, .none, CGColorSpaceCreateDeviceRGB())
-            case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY: (1, .none, CGColorSpaceCreateDeviceGray())
-            case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA: (2, .last, CGColorSpaceCreateDeviceGray())
-            default: (4, .last, CGColorSpaceCreateDeviceRGB())
-            }
+            let (channels, info, space): (Int, CGImageAlphaInfo, CGColorSpace) =
+                switch format {
+                case GHOSTTY_KITTY_IMAGE_FORMAT_RGB: (3, .none, CGColorSpaceCreateDeviceRGB())
+                case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY: (1, .none, CGColorSpaceCreateDeviceGray())
+                case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA: (2, .last, CGColorSpaceCreateDeviceGray())
+                default: (4, .last, CGColorSpaceCreateDeviceRGB())
+                }
             picture = CGDataProvider(data: data as CFData).flatMap {
-                CGImage(width: Int(width), height: Int(height), bitsPerComponent: 8, bitsPerPixel: 8 * channels, bytesPerRow: Int(width) * channels,
-                        space: space, bitmapInfo: CGBitmapInfo(rawValue: info.rawValue), provider: $0, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+                CGImage(
+                    width: Int(width), height: Int(height), bitsPerComponent: 8, bitsPerPixel: 8 * channels,
+                    bytesPerRow: Int(width) * channels,
+                    space: space, bitmapInfo: CGBitmapInfo(rawValue: info.rawValue), provider: $0, decode: nil, shouldInterpolate: true,
+                    intent: .defaultIntent)
             }.map { NSImage(cgImage: $0, size: NSSize(width: Int(width), height: Int(height))) }
         }
         decoded[id] = picture.map { (generation, $0) }
@@ -328,8 +353,12 @@ final class GhosttyView: NSView {
         let rect = CGRect(x: cursorRect.minX, y: cursorRect.minY, width: width, height: cell.height)
         background.setFill()
         rect.fill()
-        text.draw(at: CGPoint(x: rect.minX, y: rect.minY + 1), withAttributes: [.font: font, .foregroundColor: NSColor.labelColor,
-                                                                               .underlineStyle: NSUnderlineStyle.single.rawValue, .kern: cell.width - advance])
+        text.draw(
+            at: CGPoint(x: rect.minX, y: rect.minY + 1),
+            withAttributes: [
+                .font: font, .foregroundColor: NSColor.labelColor,
+                .underlineStyle: NSUnderlineStyle.single.rawValue, .kern: cell.width - advance,
+            ])
     }
 
     /// The current cell's characters, a space if it's empty.
@@ -347,20 +376,25 @@ final class GhosttyView: NSView {
     private func draw(_ run: Run, top: CGFloat) {
         guard !run.text.isEmpty, run.text.contains(where: { $0 != " " }) || run.look.underline || run.look.strike else { return }
         // Each character spaced to exactly one cell, so a run ends where the grid says it does.
-        var attributes: [NSAttributedString.Key: Any] = [.font: faces[run.look.face] ?? font, .foregroundColor: run.look.color, .kern: cell.width - advance]
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: faces[run.look.face] ?? font, .foregroundColor: run.look.color, .kern: cell.width - advance,
+        ]
         if run.look.underline { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
         if run.look.strike { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
         (run.text as NSString).draw(at: CGPoint(x: padding + CGFloat(run.start) * cell.width, y: top + 1), withAttributes: attributes)
     }
 
-    private func drawCursor(_ cursor: GhosttyRenderStateCursor, rect: CGRect, text: String, look: Look, colors: GhosttyRenderStateColors,
-                            background: NSColor, context: CGContext) {
+    private func drawCursor(
+        _ cursor: GhosttyRenderStateCursor, rect: CGRect, text: String, look: Look, colors: GhosttyRenderStateColors,
+        background: NSColor, context: CGContext
+    ) {
         let tint = colors.cursor_has_value ? color(colors.cursor) : look.color
         context.setFillColor(tint.cgColor)
         context.setStrokeColor(tint.cgColor)
         switch cursor.visual_style {
         case GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR: context.fill(CGRect(x: rect.minX, y: rect.minY, width: 2, height: rect.height))
-        case GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE: context.fill(CGRect(x: rect.minX, y: rect.maxY - 2, width: rect.width, height: 2))
+        case GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE:
+            context.fill(CGRect(x: rect.minX, y: rect.maxY - 2, width: rect.width, height: 2))
         default:
             guard focused && cursor.visual_style != GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW else {
                 context.stroke(rect.insetBy(dx: 0.5, dy: 0.5), width: 1)
@@ -393,8 +427,10 @@ final class GhosttyView: NSView {
                     input(Data(text.utf8))
                     continue
                 }
-                press(ghosttyKeys[event.keyCode] ?? GHOSTTY_KEY_UNIDENTIFIED, mods: Self.mods(event.modifierFlags), action: action, text: text,
-                      unshifted: event.charactersIgnoringModifiers?.lowercased().unicodeScalars.first)
+                press(
+                    ghosttyKeys[event.keyCode] ?? GHOSTTY_KEY_UNIDENTIFIED, mods: Self.mods(event.modifierFlags), action: action,
+                    text: text,
+                    unshifted: event.charactersIgnoringModifiers?.lowercased().unicodeScalars.first)
             }
         } else if !composing && marked.length == 0 {
             send(event, action: action)
@@ -403,7 +439,9 @@ final class GhosttyView: NSView {
     override func keyUp(with event: NSEvent) { send(event, action: GHOSTTY_KEY_ACTION_RELEASE) }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        guard window?.firstResponder === self, event.modifierFlags.contains(.command) else { return super.performKeyEquivalent(with: event) }
+        guard window?.firstResponder === self, event.modifierFlags.contains(.command) else {
+            return super.performKeyEquivalent(with: event)
+        }
         switch event.charactersIgnoringModifiers {
         case "c": copy(nil); return true
         case "v": paste(nil); return true
@@ -415,8 +453,9 @@ final class GhosttyView: NSView {
     private func send(_ event: NSEvent, action: GhosttyKeyAction) {
         if action != GHOSTTY_KEY_ACTION_RELEASE { programSelected = false }
         let text = action == GHOSTTY_KEY_ACTION_RELEASE ? "" : (event.characters ?? "")
-        press(ghosttyKeys[event.keyCode] ?? GHOSTTY_KEY_UNIDENTIFIED, mods: Self.mods(event.modifierFlags), action: action, text: text,
-              unshifted: event.charactersIgnoringModifiers?.lowercased().unicodeScalars.first)
+        press(
+            ghosttyKeys[event.keyCode] ?? GHOSTTY_KEY_UNIDENTIFIED, mods: Self.mods(event.modifierFlags), action: action, text: text,
+            unshifted: event.charactersIgnoringModifiers?.lowercased().unicodeScalars.first)
     }
 
     /// One key through Ghostty's encoder, in the modes the program asked for, to the program.
@@ -531,7 +570,10 @@ final class GhosttyView: NSView {
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { .copy }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let files = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !files.isEmpty else { return false }
+        guard
+            let files = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+            !files.isEmpty
+        else { return false }
         window?.makeFirstResponder(self)
         pasteText(files.map { Self.escaped($0.path) }.joined(separator: " "))
         return true
@@ -693,7 +735,9 @@ final class GhosttyView: NSView {
         var text = ""
     }
 
-    private func color(_ rgb: GhosttyColorRgb) -> NSColor { NSColor(srgbRed: CGFloat(rgb.r) / 255, green: CGFloat(rgb.g) / 255, blue: CGFloat(rgb.b) / 255, alpha: 1) }
+    private func color(_ rgb: GhosttyColorRgb) -> NSColor {
+        NSColor(srgbRed: CGFloat(rgb.r) / 255, green: CGFloat(rgb.g) / 255, blue: CGFloat(rgb.b) / 255, alpha: 1)
+    }
     private func rgb(_ color: NSColor) -> GhosttyColorRgb {
         let c = color.usingColorSpace(.sRGB) ?? .black
         return GhosttyColorRgb(r: UInt8(c.redComponent * 255), g: UInt8(c.greenComponent * 255), b: UInt8(c.blueComponent * 255))
@@ -711,7 +755,9 @@ extension GhosttyView: @preconcurrency NSTextInputClient {
 
     func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
         marked = (string as? NSAttributedString) ?? NSAttributedString(string: (string as? String) ?? "")
-        setNeedsDisplay(cursorRect.insetBy(dx: -1, dy: 0).union(CGRect(x: cursorRect.minX, y: cursorRect.minY, width: bounds.width, height: cell.height)))
+        setNeedsDisplay(
+            cursorRect.insetBy(dx: -1, dy: 0).union(
+                CGRect(x: cursorRect.minX, y: cursorRect.minY, width: bounds.width, height: cell.height)))
     }
 
     func unmarkText() {
@@ -721,7 +767,9 @@ extension GhosttyView: @preconcurrency NSTextInputClient {
     }
 
     func hasMarkedText() -> Bool { marked.length > 0 }
-    func markedRange() -> NSRange { marked.length > 0 ? NSRange(location: 0, length: marked.length) : NSRange(location: NSNotFound, length: 0) }
+    func markedRange() -> NSRange {
+        marked.length > 0 ? NSRange(location: 0, length: marked.length) : NSRange(location: NSNotFound, length: 0)
+    }
     func selectedRange() -> NSRange { NSRange(location: NSNotFound, length: 0) }
     func validAttributesForMarkedText() -> [NSAttributedString.Key] { [] }
     func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? { nil }
@@ -744,7 +792,9 @@ enum TerminalFont {
 
     static func styled(bold: Bool, italic: Bool) -> NSFont {
         let traits: NSFontTraitMask = [bold ? .boldFontMask : [], italic ? .italicFontMask : []]
-        if let family = config.family, let font = NSFontManager.shared.font(withFamily: family, traits: traits, weight: bold ? 9 : 5, size: config.size) {
+        if let family = config.family,
+            let font = NSFontManager.shared.font(withFamily: family, traits: traits, weight: bold ? 9 : 5, size: config.size)
+        {
             return font
         }
         let system = NSFont.monospacedSystemFont(ofSize: config.size, weight: bold ? .bold : .regular)
@@ -755,8 +805,10 @@ enum TerminalFont {
     static let config: (family: String?, size: CGFloat) = {
         let home = FileManager.default.homeDirectoryForCurrentUser
         var family: String?, size: CGFloat = 13
-        for file in [".config/ghostty/config", ".config/ghostty/config.ghostty", "Library/Application Support/com.mitchellh.ghostty/config",
-                     "Library/Application Support/com.mitchellh.ghostty/config.ghostty"] {
+        for file in [
+            ".config/ghostty/config", ".config/ghostty/config.ghostty", "Library/Application Support/com.mitchellh.ghostty/config",
+            "Library/Application Support/com.mitchellh.ghostty/config.ghostty",
+        ] {
             guard let text = try? String(contentsOf: home.appendingPathComponent(file), encoding: .utf8) else { continue }
             for line in text.split(separator: "\n") {
                 let parts = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }

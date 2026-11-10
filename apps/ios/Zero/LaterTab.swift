@@ -20,7 +20,9 @@ struct LaterView: View {
         List {
             HStack(spacing: 4) {
                 ForEach(Shown.allCases, id: \.self) { shown in
-                    Button { withAnimation(.snappy(duration: 0.2)) { showing = shown } } label: {
+                    Button {
+                        withAnimation(.snappy(duration: 0.2)) { showing = shown }
+                    } label: {
                         HStack(spacing: 6) {
                             Text(shown.rawValue)
                             Text("\((shown == .open ? open : done).count)").foregroundStyle(.secondary).monospacedDigit()
@@ -61,7 +63,10 @@ struct LaterView: View {
                 ContentUnavailableView {
                     Text(showing == .open ? "Nothing for later" : "Nothing done yet")
                 } description: {
-                    Text(showing == .open ? "In a task, choose Save for later from its menu, and its agent writes down what's left." : "Notes you mark done show here.")
+                    Text(
+                        showing == .open
+                            ? "In a task, choose Save for later from its menu, and its agent writes down what's left."
+                            : "Notes you mark done show here.")
                 }
                 .allowsHitTesting(false)
             }
@@ -73,7 +78,8 @@ struct LaterView: View {
 /// A line in Later's list: on the icons' column, as the card's lines are, either side.
 private struct LaterRowInsets: ViewModifier {
     func body(content: Content) -> some View {
-        content.listRowInsets(EdgeInsets(top: 0, leading: LaterView.column, bottom: 0, trailing: LaterView.column)).listRowSeparator(.hidden)
+        content.listRowInsets(EdgeInsets(top: 0, leading: LaterView.column, bottom: 0, trailing: LaterView.column)).listRowSeparator(
+            .hidden)
     }
 }
 
@@ -86,7 +92,11 @@ struct LaterLine: View {
     var body: some View {
         ZStack {
             // The way in, under the row: a link's own chevron isn't drawn.
-            NavigationLink { LaterDetail(model: model, id: item.id) } label: { EmptyView() }.opacity(0)
+            NavigationLink {
+                LaterDetail(model: model, id: item.id)
+            } label: {
+                EmptyView()
+            }.opacity(0)
             HStack(spacing: 12) {
                 if item.done {
                     Image("circle-check-glyph").resizable().frame(width: 20, height: 20).foregroundStyle(.green)
@@ -135,10 +145,14 @@ struct LaterDetail: View {
                                     }
                                 }
                             }
-                        } label: { Text("Send to a task") }
-                            .buttonStyle(.glassProminent)
+                        } label: {
+                            Text("Send to a task")
+                        }
+                        .buttonStyle(.glassProminent)
                         Button(item.done ? "Not done" : "Done") {
-                            Task { await model.editLater(item.id, ["done": !item.done]); self.item = await model.laterItem(id) }
+                            Task {
+                                await model.editLater(item.id, ["done": !item.done]); self.item = await model.laterItem(id)
+                            }
                         }
                         .buttonStyle(.glass)
                         Button("Copy") { UIPasteboard.general.string = item.note + (item.artifact.map { "\n\n" + $0 } ?? "") }
@@ -148,8 +162,11 @@ struct LaterDetail: View {
                         if let url = URL(string: link) { Link(link, destination: url).font(.footnote).lineLimit(1) }
                     }
                     Divider()
-                    if let artifact = item.artifact, !artifact.isEmpty { MarkdownView(text: artifact) }
-                    else { Text("No artifact: the note is all there is.").foregroundStyle(.tertiary) }
+                    if let artifact = item.artifact, !artifact.isEmpty {
+                        MarkdownView(text: artifact)
+                    } else {
+                        Text("No artifact: the note is all there is.").foregroundStyle(.tertiary)
+                    }
                 }
                 .padding()
             } else {

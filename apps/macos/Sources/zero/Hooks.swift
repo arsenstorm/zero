@@ -38,8 +38,12 @@ private func permissionDecision(_ done: Ask, suggestions: [Any]) -> Never {
         if done.answer == "Always allow", !suggestions.isEmpty { decision["updatedPermissions"] = suggestions }
         hookReply(["hookSpecificOutput": ["hookEventName": "PermissionRequest", "decision": decision]])
     case .declined:
-        hookReply(["hookSpecificOutput": ["hookEventName": "PermissionRequest",
-                                          "decision": ["behavior": "deny", "message": "The user said no in Zero" + (reason(done).map { ": \($0)" } ?? "")]]])
+        hookReply([
+            "hookSpecificOutput": [
+                "hookEventName": "PermissionRequest",
+                "decision": ["behavior": "deny", "message": "The user said no in Zero" + (reason(done).map { ": \($0)" } ?? "")],
+            ]
+        ])
     default:
         exit(0)
     }
@@ -50,15 +54,17 @@ private func permissionDecision(_ done: Ask, suggestions: [Any]) -> Never {
 /// for all of them prints nothing, and the picker shows in the terminal as usual.
 @MainActor func questionCommand() {
     let hook = (try? JSONSerialization.jsonObject(with: FileHandle.standardInput.readDataToEndOfFile())) as? [String: Any] ?? [:]
-    guard let input = hook["tool_input"] as? [String: Any], let questions = input["questions"] as? [[String: Any]], !questions.isEmpty else { exit(0) }
+    guard let input = hook["tool_input"] as? [String: Any], let questions = input["questions"] as? [[String: Any]], !questions.isEmpty
+    else { exit(0) }
     var answers: [String: String] = [:]
     for item in questions {
         guard let question = item["question"] as? String else { exit(0) }
         let options = (item["options"] as? [[String: Any]] ?? []).compactMap { $0["label"] as? String }
         let several = item["multiSelect"] as? Bool == true
-        var ask = Ask(kind: .choice, title: item["header"] as? String ?? question, body: question,
-                      options: options + [several ? "Several, or something else…" : "Something else…"],
-                      cwd: hook["cwd"] as? String, agent: agentIdentity(), ttl: ttl)
+        var ask = Ask(
+            kind: .choice, title: item["header"] as? String ?? question, body: question,
+            options: options + [several ? "Several, or something else…" : "Something else…"],
+            cwd: hook["cwd"] as? String, agent: agentIdentity(), ttl: ttl)
         ask.detail = optionDescriptions(item)
         guard let done = askAndWait(ask), done.state == .answered, let answer = done.answer else { exit(0) }
         answers[question] = options.contains(answer) ? answer : (reason(done) ?? answer)
@@ -89,25 +95,39 @@ private func optionDescriptions(_ item: [String: Any]) -> String? {
     // "<source> <unix time>": the stop hook reads the first word.
     let saved = (try? String(contentsOf: file, encoding: .utf8))?.split(separator: " ")
     let previous = saved?.first.map(String.init)
-    let typedRecently = previous == "human" && (saved?.dropFirst().first.flatMap { Double($0) }).map { Date().timeIntervalSince1970 - $0 < 600 } == true
+    let typedRecently =
+        previous == "human" && (saved?.dropFirst().first.flatMap { Double($0) }).map { Date().timeIntervalSince1970 - $0 < 600 } == true
     let machinery = ["<task-notification>", "<system-reminder>", "Caveat:"].contains { prompt.hasPrefix($0) }
-    let zeroSaid = ["The user answered your ask", "The user declined your ask", "The user ran your command", "The user rejected your command", "Your ask "]
-        .contains { prompt.hasPrefix($0) }
+    let zeroSaid = [
+        "The user answered your ask", "The user declined your ask", "The user ran your command", "The user rejected your command",
+        "Your ask ",
+    ]
+    .contains { prompt.hasPrefix($0) }
     let brief = prompt.range(of: #"\b(BRIEF|FIX|REVIEW|TEST)[\w.-]*\.md\b"#, options: .regularExpression) != nil
     var source: String
-    if previous == "worker" || brief { source = "worker" }
+    if previous == "worker" || brief {
+        source = "worker"
+    }
     // A timer, a background result or Zero's answer arriving while the user is in the chat (often mid-turn) doesn't
     // mean they left: within ten minutes of their last typed prompt the turn stays theirs. After that, Zero's rules again.
-    else if machinery || zeroSaid { source = typedRecently ? "human" : "zero" }
-    else { source = sourceZeroKnows(prompt, session: session) }
-    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-    let stamp = source == "human" && typedRecently && (machinery || zeroSaid) ? (saved?.dropFirst().first.map(String.init) ?? "") : String(Int(Date().timeIntervalSince1970))
-    try? "\(source) \(stamp)".write(to: file, atomically: true, encoding: .utf8)
-    let context: String? = switch source {
-    case "human": "The user typed this in the terminal and is at the keyboard: answer them here in the chat. This turn needs no Zero note and no [zero: …] ending, and anything you'd ask them, ask here."
-    case "worker": "You were started from a brief by a lead agent: report to that lead as the brief says, not to the user. Don't post Zero notes or asks and don't end turns with [zero: …]. Only use zero run, with --why, for a command only the user can run on their Mac."
-    default: nil
+    else if machinery || zeroSaid {
+        source = typedRecently ? "human" : "zero"
+    } else {
+        source = sourceZeroKnows(prompt, session: session)
     }
+    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    let stamp =
+        source == "human" && typedRecently && (machinery || zeroSaid)
+        ? (saved?.dropFirst().first.map(String.init) ?? "") : String(Int(Date().timeIntervalSince1970))
+    try? "\(source) \(stamp)".write(to: file, atomically: true, encoding: .utf8)
+    let context: String? =
+        switch source {
+        case "human":
+            "The user typed this in the terminal and is at the keyboard: answer them here in the chat. This turn needs no Zero note and no [zero: …] ending, and anything you'd ask them, ask here."
+        case "worker":
+            "You were started from a brief by a lead agent: report to that lead as the brief says, not to the user. Don't post Zero notes or asks and don't end turns with [zero: …]. Only use zero run, with --why, for a command only the user can run on their Mac."
+        default: nil
+        }
     guard let context else { exit(0) }
     hookReply(["hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": context]])
 }

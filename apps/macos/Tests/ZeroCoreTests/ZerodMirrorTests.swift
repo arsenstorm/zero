@@ -53,8 +53,9 @@ private func title(_ session: String, _ seq: UInt64, _ text: String) -> ZerodMir
     copy.apply(.delta(item: "m", text: "lo"))
     copy.apply(.delta(item: "missing", text: "nothing"))
     #expect(copy.items.first?.kind == .agent(text: "Hello", finalAnswer: false))
-    let approval = Approval(id: "0", item: "m", kind: .command, title: "Run ls", command: "ls", cwd: "/", reason: nil, changes: [],
-                            choices: [Choice(id: "0", label: "Allow", kind: .allow)])
+    let approval = Approval(
+        id: "0", item: "m", kind: .command, title: "Run ls", command: "ls", cwd: "/", reason: nil, changes: [],
+        choices: [Choice(id: "0", label: "Allow", kind: .allow)])
     copy.apply(.approval(approval))
     copy.apply(.approval(approval))
     #expect(copy.approvals.count == 1, "the same approval again replaces it")
@@ -67,7 +68,9 @@ private func title(_ session: String, _ seq: UInt64, _ text: String) -> ZerodMir
     #expect(copy.seq == 9, "every change counts, even one that finds nothing")
 }
 
-private func said(_ id: String) -> ConversationItem { ConversationItem(id: id, turn: nil, kind: .agent(text: id, finalAnswer: false), status: .done) }
+private func said(_ id: String) -> ConversationItem {
+    ConversationItem(id: id, turn: nil, kind: .agent(text: id, finalAnswer: false), status: .done)
+}
 
 /// Jumped back through a long conversation: a window of it, not everything from there to the end. What comes while the
 /// window stops short of the end is counted below it, never put after its last item (that would leave a gap).

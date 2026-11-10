@@ -30,7 +30,11 @@ struct BoardView: View {
         .thinScrollbar(remember: "board")
         .overlay {
             if rows.isEmpty {
-                ContentUnavailableView { NucleoLabel("No tasks", icon: "list-checkbox", size: 20) } description: { Text("Start one with New task (⌘N). Each shows here as a row, its workers folded in.") }
+                ContentUnavailableView {
+                    NucleoLabel("No tasks", icon: "list-checkbox", size: 20)
+                } description: {
+                    Text("Start one with New task (⌘N). Each shows here as a row, its workers folded in.")
+                }
             }
         }
     }
@@ -45,8 +49,11 @@ struct BoardView: View {
     private func table(_ rows: [BoardRow], places: Bool, empty: String? = nil) -> some View {
         ArticlePanel {
             // The headings in the shell's strip, over the columns they name.
-            line(head: true, places: places, task: Text("Task"), place: Text("Where"), state: Text("State"), now: Text("Now"), actions: Text(""))
-                .padding(.vertical, -3)
+            line(
+                head: true, places: places, task: Text("Task"), place: Text("Where"), state: Text("State"), now: Text("Now"),
+                actions: Text("")
+            )
+            .padding(.vertical, -3)
         } content: {
             VStack(spacing: 0) {
                 // No rows: the table stays, its body saying why.
@@ -55,21 +62,33 @@ struct BoardView: View {
                 }
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                     if index > 0 { Rectangle().fill(Theme.stroke).frame(height: 1) }
-                    Button { open(row.session) } label: {
-                        line(head: false, places: places,
-                             task: VStack(alignment: .leading, spacing: 2) {
-                                 // Three lines at most; the whole of it on hover.
-                                 Text(row.task).foregroundStyle(.primary).lineLimit(3).tip(row.task)
-                                 if row.workers > 0 { Text(row.workers == 1 ? "1 worker" : "\(row.workers) workers").font(.system(size: 12)).foregroundStyle(.secondary) }
-                             },
-                             place: Text(row.place).foregroundStyle(.secondary),
-                             state: VStack(alignment: .leading, spacing: 3) {
-                                 StateLabel(state: row.state)
-                                 if let needs = needs(row) { Text(needs).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(3).tip(needs) }
-                             },
-                             now: Text((try? AttributedString(markdown: row.now ?? "", options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(row.now ?? ""))
-                                 .lineLimit(3).tip(row.now ?? ""),
-                             actions: Text(""))
+                    Button {
+                        open(row.session)
+                    } label: {
+                        line(
+                            head: false, places: places,
+                            task: VStack(alignment: .leading, spacing: 2) {
+                                // Three lines at most; the whole of it on hover.
+                                Text(row.task).foregroundStyle(.primary).lineLimit(3).tip(row.task)
+                                if row.workers > 0 {
+                                    Text(row.workers == 1 ? "1 worker" : "\(row.workers) workers").font(.system(size: 12)).foregroundStyle(
+                                        .secondary)
+                                }
+                            },
+                            place: Text(row.place).foregroundStyle(.secondary),
+                            state: VStack(alignment: .leading, spacing: 3) {
+                                StateLabel(state: row.state)
+                                if let needs = needs(row) {
+                                    Text(needs).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(3).tip(needs)
+                                }
+                            },
+                            now: Text(
+                                (try? AttributedString(
+                                    markdown: row.now ?? "", options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+                                    ?? AttributedString(row.now ?? "")
+                            )
+                            .lineLimit(3).tip(row.now ?? ""),
+                            actions: Text(""))
                     }
                     .buttonStyle(Hovering(radius: 0, hover: Theme.rowHover))
                     // Over the row's last column, not in its label: a menu inside a button gives its clicks to the button.
@@ -80,7 +99,9 @@ struct BoardView: View {
     }
 
     /// One row of the table, the header included: two fixed columns, the rest sharing what's left.
-    private func line(head: Bool, places: Bool, task: some View, place: some View, state: some View, now: some View, actions: some View) -> some View {
+    private func line(head: Bool, places: Bool, task: some View, place: some View, state: some View, now: some View, actions: some View)
+        -> some View
+    {
         HStack(alignment: .firstTextBaseline, spacing: 16) {
             task.frame(maxWidth: .infinity, alignment: .leading)
             if places { place.frame(width: 140, alignment: .leading) }
@@ -140,7 +161,8 @@ private struct RowActions: View {
             Divider()
             Button("Archive…") { workspace.archiving = row.session }
         } label: {
-            NucleoIcon("dots", size: 15).foregroundStyle(hovered ? .primary : .secondary).frame(width: 30, height: 30).contentShape(Rectangle())
+            NucleoIcon("dots", size: 15).foregroundStyle(hovered ? .primary : .secondary).frame(width: 30, height: 30).contentShape(
+                Rectangle())
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         // The menu's own size is wider than its dots; a square, as the rail's items are.
@@ -165,7 +187,9 @@ struct ArticlePanel<Strip: View, Content: View>: View {
                 // Docked above the composer: sized by DockFit, its body filling it, and scrolling only once it's at
                 // its most. Nothing folds.
                 if docked, dockMax != nil {
-                    ViewThatFits(in: .vertical) { content(); scrolling }.frame(maxHeight: .infinity, alignment: .top)
+                    ViewThatFits(in: .vertical) {
+                        content(); scrolling
+                    }.frame(maxHeight: .infinity, alignment: .top)
                 } else {
                     content()
                 }
@@ -173,16 +197,21 @@ struct ArticlePanel<Strip: View, Content: View>: View {
             // Docked, its surface runs on under what's in front of it (the composer, or the queue's tab).
             .padding(.bottom, docked ? AskDock.tuck : 0)
             .background(doneCard ? Theme.doneSurface : Theme.composer)
-            .clipShape(docked ? AnyShape(UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16, style: .continuous))
-                              : AnyShape(RoundedRectangle(cornerRadius: 10)))
+            .clipShape(
+                docked
+                    ? AnyShape(UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16, style: .continuous))
+                    : AnyShape(RoundedRectangle(cornerRadius: 10)))
         }
         .padding(docked ? EdgeInsets(top: 0, leading: 2, bottom: 0, trailing: 2) : EdgeInsets(top: 2, leading: 2, bottom: 2, trailing: 2))
         .modifier(DockFit(most: docked ? dockMax : nil, held: dockHeight, own: dockOwn))
         // Docked, a tab behind the composer as the queue's is (its grey, its top corners, concentric with the surface's
         // 16 at 2 in); otherwise a panel in the page.
-        .background(doneCard ? Theme.doneShell : docked ? Theme.fieldTab : Theme.rail,
-                    in: docked ? AnyShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18, style: .continuous))
-                               : AnyShape(RoundedRectangle(cornerRadius: 12)))
+        .background(
+            doneCard ? Theme.doneShell : docked ? Theme.fieldTab : Theme.rail,
+            in: docked
+                ? AnyShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18, style: .continuous))
+                : AnyShape(RoundedRectangle(cornerRadius: 12))
+        )
         // Bled out by its inner padding (the shell's 2 pt and a cell's 16), so its text lines up with the page's, as
         // the site's panels do with its prose. Docked above the composer, as wide as the composer instead.
         .padding(.horizontal, docked ? 0 : -18)
@@ -226,10 +255,18 @@ struct Marquee: View {
         Text(text).lineLimit(1)
             .opacity(scrolling ? 0 : 1)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { shown = $0 }
+            .onGeometryChange(for: CGFloat.self) {
+                $0.size.width
+            } action: {
+                shown = $0
+            }
             .background(alignment: .leading) {
                 Text(text).lineLimit(1).fixedSize().hidden()
-                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { full = $0 }
+                    .onGeometryChange(for: CGFloat.self) {
+                        $0.size.width
+                    } action: {
+                        full = $0
+                    }
             }
             .overlay(alignment: .leading) {
                 if scrolling { Sliding(text: text, offset: offset) }
@@ -247,14 +284,18 @@ struct Marquee: View {
     private struct Sliding: View, Animatable {
         let text: String
         var offset: CGFloat
-        var animatableData: CGFloat { get { offset } set { offset = newValue } }
+        var animatableData: CGFloat {
+            get { offset }
+            set { offset = newValue }
+        }
 
         var body: some View {
             Color.clear
                 .overlay(alignment: .leading) { Text(text).lineLimit(1).fixedSize().offset(x: offset) }
                 .mask {
                     HStack(spacing: 0) {
-                        LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing).frame(width: min(Self.fade, max(0, -offset * 4)))
+                        LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing).frame(
+                            width: min(Self.fade, max(0, -offset * 4)))
                         Color.black
                         LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: Self.fade)
                     }
@@ -273,7 +314,11 @@ struct Marquee: View {
             // come to rest at the end: 30 points a second on average, so a long name takes longer at the same pace.
             withAnimation(.timingCurve(0.4, 0.5, 0.6, 1, duration: max(0.6, distance / 30)).delay(0.8)) { offset = -distance }
         } else if scrolling {
-            withAnimation(.easeOut(duration: 0.2)) { offset = 0 } completion: { if offset == 0 { scrolling = false } }
+            withAnimation(.easeOut(duration: 0.2)) {
+                offset = 0
+            } completion: {
+                if offset == 0 { scrolling = false }
+            }
         }
     }
 }

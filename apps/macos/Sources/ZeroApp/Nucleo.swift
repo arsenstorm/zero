@@ -10,7 +10,8 @@ enum Nucleo {
     static func image(_ label: String, fill: String = "outline", size: CGFloat = 16) -> NSImage? {
         let name = "\(label)-\(fill)"
         // A fill that wasn't exported falls back to the outline rather than drawing nothing.
-        let file = Bundle.main.url(forResource: name, withExtension: "svg", subdirectory: "nucleo")
+        let file =
+            Bundle.main.url(forResource: name, withExtension: "svg", subdirectory: "nucleo")
             ?? Bundle.main.url(forResource: "\(label)-outline", withExtension: "svg", subdirectory: "nucleo")
         let image = images[name] ?? file.flatMap(NSImage.init(contentsOf:))
         if image == nil { Log.write("icon missing: \(name)") }
@@ -49,10 +50,13 @@ struct NucleoLabel: View {
     var fill = "outline"
     var size: CGFloat = 14
 
-    init(_ text: String, icon: String, fill: String = "outline", size: CGFloat = 14) { self.text = text; self.icon = icon; self.fill = fill; self.size = size }
+    init(_ text: String, icon: String, fill: String = "outline", size: CGFloat = 14) {
+        self.text = text; self.icon = icon; self.fill = fill; self.size = size
+    }
 
     var body: some View {
-        HStack(spacing: 6) { NucleoIcon(icon, fill: fill, size: size); Text(text) }
+        HStack(spacing: 6) {
+            NucleoIcon(icon, fill: fill, size: size); Text(text)
+        }
     }
 }
-

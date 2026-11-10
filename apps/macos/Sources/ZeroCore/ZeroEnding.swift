@@ -17,16 +17,18 @@ public enum ZeroEnding: Equatable, Sendable {
         // tens of milliseconds on the main thread.
         let last = trimmed[(trimmed.lastIndex(of: "\n").map(trimmed.index(after:)) ?? trimmed.startIndex)...]
         guard last.hasPrefix("[zero: "),
-              let match = last.wholeMatch(of: Self.line) else { return (text, nil) }
+            let match = last.wholeMatch(of: Self.line)
+        else { return (text, nil) }
         let answer = trimmed[..<last.startIndex].trimmingCharacters(in: .whitespacesAndNewlines)
         // No ask's id: no ask to wait on, so no state of its own, but not words to show either.
         if match.output.1 == "asked" { return (answer, nil) }
-        let ending: ZeroEnding = switch match.output.1 {
-        case "done", "completed": .done
-        case "waiting", "blocked": .waiting
-        case "working": .working
-        default: .asked(String(match.output.2 ?? ""))
-        }
+        let ending: ZeroEnding =
+            switch match.output.1 {
+            case "done", "completed": .done
+            case "waiting", "blocked": .waiting
+            case "working": .working
+            default: .asked(String(match.output.2 ?? ""))
+            }
         return (answer, ending)
     }
 }

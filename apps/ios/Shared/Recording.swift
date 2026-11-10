@@ -33,14 +33,19 @@ struct Recording {
         var frames: [Data] = []
         for time in times {
             if let image = try? await generator.image(at: CMTime(seconds: time, preferredTimescale: 600)).image,
-               let jpeg = UIImage(cgImage: image).jpegData(compressionQuality: 0.7) { frames.append(jpeg) }
+                let jpeg = UIImage(cgImage: image).jpegData(compressionQuality: 0.7)
+            {
+                frames.append(jpeg)
+            }
         }
         return Recording(duration: duration, times: times, frames: frames, said: transcribe ? await transcript(of: url) : nil)
     }
 
     /// Its sound as words; nothing when it has none, or speech isn't allowed.
     private static func transcript(of url: URL) async -> String? {
-        let allowed = await withCheckedContinuation { done in SFSpeechRecognizer.requestAuthorization { done.resume(returning: $0 == .authorized) } }
+        let allowed = await withCheckedContinuation { done in
+            SFSpeechRecognizer.requestAuthorization { done.resume(returning: $0 == .authorized) }
+        }
         guard allowed, let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else { return nil }
         let request = SFSpeechURLRecognitionRequest(url: url)
         request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
@@ -49,8 +54,11 @@ struct Recording {
             var finished = false
             recognizer.recognitionTask(with: request) { result, error in
                 guard !finished else { return }
-                if let result, result.isFinal { finished = true; done.resume(returning: result.bestTranscription.formattedString) }
-                else if error != nil { finished = true; done.resume(returning: nil) }
+                if let result, result.isFinal {
+                    finished = true; done.resume(returning: result.bestTranscription.formattedString)
+                } else if error != nil {
+                    finished = true; done.resume(returning: nil)
+                }
             }
         }
         return words?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty

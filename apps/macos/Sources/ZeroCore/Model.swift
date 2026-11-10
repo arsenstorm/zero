@@ -104,8 +104,10 @@ public struct Ask: Codable, Identifiable, Equatable, Sendable {
     /// An option ending with "…" asks for text: picking it opens an input, and the answer is "label: text".
     public static func expectsText(_ option: String) -> Bool { option.hasSuffix("…") || option.hasSuffix("...") }
 
-    public init(kind: AskKind, title: String, body: String = "", options: [String] = [],
-                command: String? = nil, cwd: String? = nil, agent: AgentIdentity, ttl: TimeInterval = 3600) {
+    public init(
+        kind: AskKind, title: String, body: String = "", options: [String] = [],
+        command: String? = nil, cwd: String? = nil, agent: AgentIdentity, ttl: TimeInterval = 3600
+    ) {
         id = Ask.newID()
         self.kind = kind; self.title = title; self.body = body; self.options = options
         self.command = command; self.cwd = cwd; self.agent = agent
@@ -117,20 +119,34 @@ public struct Ask: Codable, Identifiable, Equatable, Sendable {
     /// (Bash's own description of the command, else the tool and its target), the command or target in the code
     /// block, and why, in the agent's own latest words from its transcript.
     public static func permission(hook: Data, agent: AgentIdentity, ttl: TimeInterval) -> Ask? {
-        guard let json = try? JSONSerialization.jsonObject(with: hook) as? [String: Any], let tool = json["tool_name"] as? String else { return nil }
-        let input = json["tool_input"] as? [String: Any] ?? [:]
-        let (what, code): (String, String) = switch tool {
-        case "Bash": ((input["description"] as? String).map { $0.hasSuffix("?") ? String($0.dropLast()) : $0 } ?? "Run a command", input["command"] as? String ?? "")
-        case "Edit", "MultiEdit", "Write", "NotebookEdit": ("\(tool == "Write" ? "Write" : "Edit") a file", input["file_path"] as? String ?? input["notebook_path"] as? String ?? "")
-        case "WebFetch": ("Fetch a page", input["url"] as? String ?? "")
-        default: ("Use \(tool)", (try? JSONSerialization.data(withJSONObject: input, options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? "")
+        guard let json = try? JSONSerialization.jsonObject(with: hook) as? [String: Any], let tool = json["tool_name"] as? String else {
+            return nil
         }
+        let input = json["tool_input"] as? [String: Any] ?? [:]
+        let (what, code): (String, String) =
+            switch tool {
+            case "Bash":
+                (
+                    (input["description"] as? String).map { $0.hasSuffix("?") ? String($0.dropLast()) : $0 } ?? "Run a command",
+                    input["command"] as? String ?? ""
+                )
+            case "Edit", "MultiEdit", "Write", "NotebookEdit":
+                ("\(tool == "Write" ? "Write" : "Edit") a file", input["file_path"] as? String ?? input["notebook_path"] as? String ?? "")
+            case "WebFetch": ("Fetch a page", input["url"] as? String ?? "")
+            default:
+                (
+                    "Use \(tool)",
+                    (try? JSONSerialization.data(withJSONObject: input, options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) }
+                        ?? ""
+                )
+            }
         let why = (json["transcript_path"] as? String).flatMap(lastWords) ?? ""
         // "Always allow" applies the rule Claude Code itself suggests for this request, so offered only with one.
         let suggested = !((json["permission_suggestions"] as? [Any]) ?? []).isEmpty
         let options = suggested ? ["Allow", "Always allow", "Deny", "Deny, and say why…"] : ["Allow", "Deny", "Deny, and say why…"]
-        return Ask(kind: .permission, title: what, body: why, options: options,
-                   command: String(code.prefix(2000)), cwd: json["cwd"] as? String, agent: agent, ttl: ttl)
+        return Ask(
+            kind: .permission, title: what, body: why, options: options,
+            command: String(code.prefix(2000)), cwd: json["cwd"] as? String, agent: agent, ttl: ttl)
     }
 
     /// The agent's last words before the tool call: the latest assistant text in its transcript, trimmed.
@@ -141,10 +157,13 @@ public struct Ask: Codable, Identifiable, Equatable, Sendable {
         try? handle.seek(toOffset: size > 400_000 ? size - 400_000 : 0)
         let tail = String(decoding: handle.readDataToEndOfFile(), as: UTF8.self)
         for line in tail.split(separator: "\n").reversed() {
-            guard let entry = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any], entry["type"] as? String == "assistant",
-                  let content = (entry["message"] as? [String: Any])?["content"] as? [[String: Any]] else { continue }
+            guard let entry = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                entry["type"] as? String == "assistant",
+                let content = (entry["message"] as? [String: Any])?["content"] as? [[String: Any]]
+            else { continue }
             if let text = content.last(where: { $0["type"] as? String == "text" })?["text"] as? String,
-               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 return trimmed.count > 500 ? String(trimmed.prefix(500)) + "…" : trimmed
             }
@@ -159,10 +178,13 @@ public struct Ask: Codable, Identifiable, Equatable, Sendable {
         let path = ["sh", "bash", "zsh"].contains(first) ? (words.count > 1 ? words[1] : "") : first
         guard !path.isEmpty, !path.hasPrefix("-") else { return nil }
         let expanded = (path as NSString).expandingTildeInPath
-        let full = expanded.hasPrefix("/") ? expanded : ((cwd ?? FileManager.default.currentDirectoryPath) as NSString).appendingPathComponent(expanded)
+        let full =
+            expanded.hasPrefix("/")
+            ? expanded : ((cwd ?? FileManager.default.currentDirectoryPath) as NSString).appendingPathComponent(expanded)
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: full, isDirectory: &isDirectory), !isDirectory.boolValue,
-              let text = try? String(contentsOfFile: full, encoding: .utf8) else { return nil }
+            let text = try? String(contentsOfFile: full, encoding: .utf8)
+        else { return nil }
         // A compiled program isn't something to read; a script is, at least its first screens of it.
         return text.count > 6000 ? String(text.prefix(6000)) + "\n…" : text
     }
@@ -209,5 +231,9 @@ public enum Paths {
     public static let log = dir.appendingPathComponent("asks.jsonl")
 }
 
-public let jsonEncoder: JSONEncoder = { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e }()
-public let jsonDecoder: JSONDecoder = { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }()
+public let jsonEncoder: JSONEncoder = {
+    let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e
+}()
+public let jsonDecoder: JSONDecoder = {
+    let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d
+}()

@@ -39,7 +39,11 @@ public final class Store {
         while true {
             if link == nil, await ZerodLink.ensureRunning(), let fresh = try? ZerodLink() {
                 fresh.onInbox = { [weak self] message in Task { @MainActor in self?.receive(message) } }
-                fresh.onClose = { [weak self] in Task { @MainActor in self?.link = nil; self?.connected = false } }
+                fresh.onClose = { [weak self] in
+                    Task { @MainActor in
+                        self?.link = nil; self?.connected = false
+                    }
+                }
                 link = fresh
                 if let settings { try? await fresh.configure(takeBack: settings.takeBack, ttl: settings.ttl, patterns: settings.patterns) }
                 if (try? await fresh.followInbox()) != nil { connected = true }
@@ -113,7 +117,8 @@ public final class Store {
         if let label = identity?.label { return label }
         // A process number means nothing to the user; until the session's title is known, say where it works.
         if Self.processName.firstMatch(in: agent, range: NSRange(location: 0, length: (agent as NSString).length)) != nil,
-           let folder = identity?.cwd.map({ ($0 as NSString).lastPathComponent }), !folder.isEmpty {
+            let folder = identity?.cwd.map({ ($0 as NSString).lastPathComponent }), !folder.isEmpty
+        {
             return "Claude in \(folder)"
         }
         return agent
@@ -139,8 +144,10 @@ public final class Store {
 
     /// Starts a new agent through an adapter and puts the first prompt in its timeline, so it is in the bar at once
     /// with what the user asked of it.
-    public func spawn(prompt: String, adapter: AgentAdapter, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?,
-                      settings: [String: String] = [:], started: (String) -> Void = { _ in }) async throws -> AgentIdentity {
+    public func spawn(
+        prompt: String, adapter: AgentAdapter, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?,
+        settings: [String: String] = [:], started: (String) -> Void = { _ in }
+    ) async throws -> AgentIdentity {
         let link = try linked()
         var identity = try await adapter.spawn(prompt: prompt, target: target, runtime: runtime, model: model, settings: settings)
         identity.label = identity.label ?? Self.gist(of: prompt)
@@ -234,7 +241,9 @@ public final class Store {
     @discardableResult
     public func takeBack(_ id: String) -> Bool {
         guard let ask = ask(id), ask.state == .pending else { return false }
-        update(id) { $0.state = .waiting; $0.answer = nil; $0.choice = nil }
+        update(id) {
+            $0.state = .waiting; $0.answer = nil; $0.choice = nil
+        }
         request { _ = try await $0.takeBack(id) }
         return true
     }
@@ -255,7 +264,9 @@ public final class Store {
 
     /// Shown pending at once, as zerod will report it.
     private func stage(_ id: String, answer: String, choice: Int?) {
-        update(id) { $0.state = .pending; $0.answer = answer; $0.choice = choice }
+        update(id) {
+            $0.state = .pending; $0.answer = answer; $0.choice = choice
+        }
     }
 
     private func update(_ id: String, _ change: (inout Ask) -> Void) {
@@ -279,25 +290,35 @@ public struct ZerodSpawner: AgentAdapter {
     public func spawnTargets() async throws -> [SpawnChoice] {
         let home = NSHomeDirectory()
         return Projects.folders.map { path in
-            SpawnChoice(id: path, name: Projects.name(of: path), detail: path.replacingOccurrences(of: home, with: "~"), icon: "folder", provider: name)
+            SpawnChoice(
+                id: path, name: Projects.name(of: path), detail: path.replacingOccurrences(of: home, with: "~"), icon: "folder",
+                provider: name)
         }
     }
 
     public func spawnRuntimes() async throws -> [SpawnChoice] {
-        [(Provider.claude, "Claude", "claude", "Anthropic"), (.codex, "Codex", "openai", "OpenAI"), (.opencode, "OpenCode", "opencode", "OpenCode")]
-            .filter { AgentCommand.onPath($0.0.rawValue) }
-            .map { SpawnChoice(id: "zerod:" + $0.0.rawValue, name: $0.1, detail: $0.0.rawValue, icon: $0.2, provider: $0.3) }
+        [
+            (Provider.claude, "Claude", "claude", "Anthropic"), (.codex, "Codex", "openai", "OpenAI"),
+            (.opencode, "OpenCode", "opencode", "OpenCode"),
+        ]
+        .filter { AgentCommand.onPath($0.0.rawValue) }
+        .map { SpawnChoice(id: "zerod:" + $0.0.rawValue, name: $0.1, detail: $0.0.rawValue, icon: $0.2, provider: $0.3) }
     }
 
     public func spawnModels(for runtime: SpawnChoice) -> [SpawnChoice] { AgentModels.spawnModels(for: runtime) }
     public func refreshModels() async -> Bool { await AgentModels.refresh() }
 
-    public func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String]) async throws -> AgentIdentity {
-        guard let provider = Provider(rawValue: String(runtime.id.dropFirst("zerod:".count))) else { throw AdapterError("zerod can't run \(runtime.name)") }
+    public func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String])
+        async throws -> AgentIdentity
+    {
+        guard let provider = Provider(rawValue: String(runtime.id.dropFirst("zerod:".count))) else {
+            throw AdapterError("zerod can't run \(runtime.name)")
+        }
         let link = try ZerodLink()
         defer { link.close() }
-        let session = try await link.start(provider: provider, cwd: target.id, prompt: prompt, model: model.flatMap { $0.id.isEmpty ? nil : $0.id },
-                                           effort: settings["reasoning"].flatMap { $0.isEmpty ? nil : $0 })
+        let session = try await link.start(
+            provider: provider, cwd: target.id, prompt: prompt, model: model.flatMap { $0.id.isEmpty ? nil : $0.id },
+            effort: settings["reasoning"].flatMap { $0.isEmpty ? nil : $0 })
         var identity = AgentIdentity(name: "zerod-" + session, host: AgentIdentity.thisHost, cwd: target.id)
         identity.runtime = "zerod"
         identity.ref = session

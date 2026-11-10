@@ -121,22 +121,27 @@ import ZeroCore
         await workspace.loadMcpServers()
         let names = Dictionary(workspace.workspaces.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
         return workspace.mcpServers.map { server in
-            ["name": server.name, "runs": server.url ?? ([server.command ?? ""] + server.args).joined(separator: " "),
-             "workspaces": server.workspaces.map { names[$0] ?? $0 }, "enabled": server.enabled] as [String: Any]
+            [
+                "name": server.name, "runs": server.url ?? ([server.command ?? ""] + server.args).joined(separator: " "),
+                "workspaces": server.workspaces.map { names[$0] ?? $0 }, "enabled": server.enabled,
+            ] as [String: Any]
         }
     }
 
     private func makeNotifier() -> Notifier {
-        Notifier(navigation: navigation, settings: settings, windowShown: { [weak self] in
-            guard let window = self?.workspaceWindow else { return false }
-            return window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible)
-        }, open: { [weak self] id in
-            guard let self else { return }
-            navigation.place = .task(id)
-            navigation.worker = nil
-            openWorkspace()
-            NSApp.activate()
-        })
+        Notifier(
+            navigation: navigation, settings: settings,
+            windowShown: { [weak self] in
+                guard let window = self?.workspaceWindow else { return false }
+                return window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible)
+            },
+            open: { [weak self] id in
+                guard let self else { return }
+                navigation.place = .task(id)
+                navigation.worker = nil
+                openWorkspace()
+                NSApp.activate()
+            })
     }
 
     private func connectInbox() {
@@ -152,10 +157,13 @@ import ZeroCore
     private func restoreWorkspace() {
         guard UserDefaults.standard.bool(forKey: "workspaceOpen") else { return }
         guard Self.anotherAppFillsTheScreen() else { openWorkspace(); return }
-        restoreWatch = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+        restoreWatch = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main)
+        { [weak self] _ in
             MainActor.assumeIsolated { self?.restoreOnceActive() }
         }
-        spaceWatch = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+        spaceWatch = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
             MainActor.assumeIsolated {
                 // A moment for the Space's windows to be on screen before looking at them.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -192,7 +200,9 @@ import ZeroCore
         // nothing.
         let follow: (NSEvent) -> Void = { [weak self] _ in MainActor.assumeIsolated { self?.trackPointer() } }
         NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged], handler: follow)
-        NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { event in follow(event); return event }
+        NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { event in
+            follow(event); return event
+        }
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.window === inboxPanel else { return event }
             return inbox.handle(event) ? nil : event
@@ -222,11 +232,12 @@ import ZeroCore
 
     @objc func openOnboarding() {
         if onboardingWindow == nil {
-            let view = OnboardingView(settings: settings, tryIt: { [weak self] in self?.sendSampleAsk() },
-                                      finish: { [weak self] in
-                                          UserDefaults.standard.set(true, forKey: "onboarded")
-                                          self?.onboardingWindow?.close()
-                                      })
+            let view = OnboardingView(
+                settings: settings, tryIt: { [weak self] in self?.sendSampleAsk() },
+                finish: { [weak self] in
+                    UserDefaults.standard.set(true, forKey: "onboarded")
+                    self?.onboardingWindow?.close()
+                })
             let window = NSWindow(contentViewController: NSHostingController(rootView: view))
             window.styleMask = [.titled, .closable, .fullSizeContentView]
             window.titlebarAppearsTransparent = true
@@ -245,8 +256,10 @@ import ZeroCore
     /// The ask an agent would send, so the first card answered is a real one; the inbox opens on it.
     private func sendSampleAsk() {
         let zero = AgentIdentity(name: "zero", host: AgentIdentity.thisHost, label: "Zero")
-        store.create(Ask(kind: .approve, title: "Onboarding", body: "Zero is set up. Finish onboarding?",
-                             options: ["Yes", "No", "Suggest something else…"], agent: zero, ttl: 600))
+        store.create(
+            Ask(
+                kind: .approve, title: "Onboarding", body: "Zero is set up. Finish onboarding?",
+                options: ["Yes", "No", "Suggest something else…"], agent: zero, ttl: 600))
         pin(agent: nil)
     }
 
@@ -354,11 +367,13 @@ import ZeroCore
         if let hotKey { UnregisterEventHotKey(hotKey); self.hotKey = nil }
         if !hotKeyHandlerInstalled {
             var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-            InstallEventHandler(GetApplicationEventTarget(), { _, _, userData in
-                guard let userData else { return noErr }
-                Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue().talk()
-                return noErr
-            }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), nil)
+            InstallEventHandler(
+                GetApplicationEventTarget(),
+                { _, _, userData in
+                    guard let userData else { return noErr }
+                    Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue().talk()
+                    return noErr
+                }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), nil)
             hotKeyHandlerInstalled = true
         }
         let id = EventHotKeyID(signature: 0x5A45524F, id: 1) // "ZERO"

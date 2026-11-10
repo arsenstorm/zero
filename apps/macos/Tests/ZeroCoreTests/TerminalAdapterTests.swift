@@ -27,9 +27,10 @@ func ownTerminalAgentStartsRepliesStopsAndResumes() async throws {
 private func startReplyStopResume(_ adapter: some TerminalAdapter, runtime: String, in folder: String) async throws -> AgentIdentity {
     let prompt = "Reply with the single word ok and nothing else"
     let model = SpawnChoice(id: "claude-haiku-5-5", name: "Haiku", provider: "Anthropic")
-    var agent = try await adapter.spawn(prompt: prompt, target: SpawnChoice(id: folder, name: "test"),
-                                        runtime: SpawnChoice(id: runtime, name: "Claude", provider: "Anthropic"), model: model,
-                                        settings: ["reasoning": "low"])
+    var agent = try await adapter.spawn(
+        prompt: prompt, target: SpawnChoice(id: folder, name: "test"),
+        runtime: SpawnChoice(id: runtime, name: "Claude", provider: "Anthropic"), model: model,
+        settings: ["reasoning": "low"])
     let reply = await adapter.reply(from: agent, to: prompt)
     #expect(reply?.lowercased().contains("ok") == true, "reply: \(reply ?? "none")")
     #expect(await adapter.offline(among: [agent]).isEmpty)

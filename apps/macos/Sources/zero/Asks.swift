@@ -4,22 +4,27 @@ import ZeroCore
 /// A question or a request is the headline of its card; the reasoning behind it belongs in --body.
 func shortHeadline(_ text: String) {
     guard text.count > 140 else { return }
-    fail("zero: keep the question to one short line (about 12 words, ending in ?) and put the details in --body; this one is \(text.count) characters")
+    fail(
+        "zero: keep the question to one short line (about 12 words, ending in ?) and put the details in --body; this one is \(text.count) characters"
+    )
 }
 
 /// The text under a question is two or three plain sentences; anything longer goes in a file the agent links.
 func shortDetail(_ text: String?, flag name: String) {
     guard let text, text.count > 280 else { return }
-    fail("zero: keep --\(name) to two or three plain sentences (280 characters; this is \(text.count)): the problem, what you recommend and why. Put anything longer in a file and give its path")
+    fail(
+        "zero: keep --\(name) to two or three plain sentences (280 characters; this is \(text.count)): the problem, what you recommend and why. Put anything longer in a file and give its path"
+    )
 }
 
 @MainActor func agentIdentity() -> AgentIdentity {
     let env = ProcessInfo.processInfo.environment
     let own: String? = env["ZERO_HOST_TERMINAL"].map { "claude-" + String($0.suffix(6)) }
     let name: String = flag("agent") ?? env["ZERO_AGENT"] ?? own ?? "shell-\(getppid())"
-    var identity = AgentIdentity(name: name, host: AgentIdentity.thisHost,
-                         cwd: FileManager.default.currentDirectoryPath,
-                         ticket: flag("ticket"))
+    var identity = AgentIdentity(
+        name: name, host: AgentIdentity.thisHost,
+        cwd: FileManager.default.currentDirectoryPath,
+        ticket: flag("ticket"))
     // Inside one of Zero's own terminals: Zero reaches the agent through zero-host.
     if let terminal = env["ZERO_HOST_TERMINAL"] { identity.runtime = "zero"; identity.ref = terminal }
     // A session zerod runs: its notes, asks and runs join that session's approvals in the inbox.
@@ -103,8 +108,9 @@ func reason(_ ask: Ask) -> String? {
     shortHeadline(question)
     shortDetail(flag("body"), flag: "body")
     let title = flag("title") ?? flag("ticket") ?? question
-    var ask = Ask(kind: options.isEmpty ? .question : .choice, title: title, body: title == question ? "" : question, options: options,
-                  command: flag("code"), agent: agentIdentity(), ttl: ttl)
+    var ask = Ask(
+        kind: options.isEmpty ? .question : .choice, title: title, body: title == question ? "" : question, options: options,
+        command: flag("code"), agent: agentIdentity(), ttl: ttl)
     ask.detail = flag("body")
     // --block: it can't go on without the answer; Zero holds its other events until it's answered.
     ask.blocks = flag("block") != nil ? true : nil
@@ -115,8 +121,10 @@ func reason(_ ask: Ask) -> String? {
     guard let what = positional.first else { usage() }
     shortHeadline(what)
     shortDetail(flag("body"), flag: "body")
-    create(Ask(kind: .approve, title: what, body: flag("body") ?? "", options: ["Yes", "No", "Suggest something else…"],
-               command: flag("code"), agent: agentIdentity(), ttl: ttl))
+    create(
+        Ask(
+            kind: .approve, title: what, body: flag("body") ?? "", options: ["Yes", "No", "Suggest something else…"],
+            command: flag("code"), agent: agentIdentity(), ttl: ttl))
 }
 
 @MainActor func withdrawCommand() {
@@ -128,11 +136,14 @@ func reason(_ ask: Ask) -> String? {
 
 @MainActor func runCommand() {
     guard let shell = positional.first else { usage() }
-    guard flag("why") != nil || flag("body") != nil else { fail("zero run needs --why: say what you need the output for, so the user knows what they are running") }
+    guard flag("why") != nil || flag("body") != nil else {
+        fail("zero run needs --why: say what you need the output for, so the user knows what they are running")
+    }
     shortDetail(flag("why") ?? flag("body"), flag: "why")
     let folder = flag("cwd") ?? FileManager.default.currentDirectoryPath
-    var run = Ask(kind: .run, title: flag("title") ?? flag("ticket") ?? "Run a command", body: flag("why") ?? flag("body") ?? "",
-                  options: ["Run", "Reject", "Suggest something else…"], command: shell, cwd: folder, agent: agentIdentity(), ttl: ttl)
+    var run = Ask(
+        kind: .run, title: flag("title") ?? flag("ticket") ?? "Run a command", body: flag("why") ?? flag("body") ?? "",
+        options: ["Run", "Reject", "Suggest something else…"], command: shell, cwd: folder, agent: agentIdentity(), ttl: ttl)
     run.script = Ask.script(of: shell, cwd: folder)
     if let prefix = flag("allow") {
         let rest = shell.hasPrefix(prefix) ? shell.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces) : ""
@@ -153,7 +164,8 @@ func reason(_ ask: Ask) -> String? {
     note.needs = flag("needs")
     shortDetail(note.needs, flag: "needs")
     if note.status == "done" || note.status == "completed" {
-        FileHandle.standardError.write(Data("zero: a note's --done doesn't mark the task done; zero done does (it asks you to confirm)\n".utf8))
+        FileHandle.standardError.write(
+            Data("zero: a note's --done doesn't mark the task done; zero done does (it asks you to confirm)\n".utf8))
     }
     try? socket.send(Request(op: "create", ask: note, wait: false))
     guard let reply = socket.receive(Response.self), reply.op == "created" else { fail("zero: no reply from Zero.app") }
@@ -179,7 +191,8 @@ func reason(_ ask: Ask) -> String? {
 @MainActor func blockedCommand() {
     guard let text = positional.first else { usage() }
     let socket = connect()
-    try? socket.send(Request(op: "blocked", ask: Ask(kind: .note, title: "Update", body: text, agent: agentIdentity()), id: flag("confirm")))
+    try? socket.send(
+        Request(op: "blocked", ask: Ask(kind: .note, title: "Update", body: text, agent: agentIdentity()), id: flag("confirm")))
     guard let reply = socket.receive(Response.self) else { fail("zero: no reply from Zero.app") }
     switch reply.op {
     case "marked": print("Marked blocked. End your turn with [zero: blocked].")
@@ -209,7 +222,9 @@ func reason(_ ask: Ask) -> String? {
     guard positional.count >= 2 else { usage() }
     let socket = connect()
     try? socket.send(Request(op: "message", agent: positional[0], text: positional[1...].joined(separator: " ")))
-    guard let reply = socket.receive(Response.self), reply.op == "created" else { fail("zero: \(socket.receive(Response.self)?.message ?? "no reply from Zero.app")") }
+    guard let reply = socket.receive(Response.self), reply.op == "created" else {
+        fail("zero: \(socket.receive(Response.self)?.message ?? "no reply from Zero.app")")
+    }
 }
 
 @MainActor func listCommand() {
@@ -219,5 +234,9 @@ func reason(_ ask: Ask) -> String? {
     request.open = flag("all") == nil ? true : nil
     try? socket.send(request)
     guard let reply = socket.receive(Response.self), let asks = reply.asks else { fail("zero: no reply") }
-    for ask in asks { print("\(ask.id)  \(ask.state.rawValue.padding(toLength: 8, withPad: " ", startingAt: 0))  \(ask.kind.rawValue.padding(toLength: 8, withPad: " ", startingAt: 0))  \(ask.agent.name)  \(ask.title)") }
+    for ask in asks {
+        print(
+            "\(ask.id)  \(ask.state.rawValue.padding(toLength: 8, withPad: " ", startingAt: 0))  \(ask.kind.rawValue.padding(toLength: 8, withPad: " ", startingAt: 0))  \(ask.agent.name)  \(ask.title)"
+        )
+    }
 }

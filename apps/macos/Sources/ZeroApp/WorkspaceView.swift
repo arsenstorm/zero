@@ -36,7 +36,11 @@ struct WorkspaceView: View {
             navigation.arrive(in: now) { id in workspace.conversation(id).map { workspace.workspace(of: root($0)) == now } ?? false }
         }
         // The rail and the strip above the panel: translucent grey over what's behind the window, blurred, as Codex's.
-        .background { ZStack { BehindWindow(); Theme.railTint } }
+        .background {
+            ZStack {
+                BehindWindow(); Theme.railTint
+            }
+        }
         .ignoresSafeArea()
         // Behind the mark, everything the first screen needs: zerod and the inbox connected, the rail's integrations,
         // the sidebar's tasks, loop names for the pills, and the page the window opens on with its words already
@@ -104,8 +108,11 @@ struct WorkspaceView: View {
                         AsksPage(controller: inbox).frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.card)
                     }
                 case .integration(let name):
-                    IntegrationPage(workspace: workspace, integration: Integration(rawValue: name) ?? .github, edit: { Integration.edit(name, place: &navigation.place) },
-                                    openTask: { navigation.place = .task($0) }).id(name)
+                    IntegrationPage(
+                        workspace: workspace, integration: Integration(rawValue: name) ?? .github,
+                        edit: { Integration.edit(name, place: &navigation.place) },
+                        openTask: { navigation.place = .task($0) }
+                    ).id(name)
                 default:
                     HStack(spacing: 0) {
                         TasksSidebar(workspace: workspace, navigation: navigation)
@@ -115,7 +122,13 @@ struct WorkspaceView: View {
                     .coordinateSpace(.named("tasks"))
                     // A task's details, beside the sidebar where the pointer rests on its row: over the page, since the
                     // sidebar clips what it scrolls.
-                    .overlay(alignment: .topLeading) { TaskPeekCard(workspace: workspace, open: { navigation.place = .task($0); navigation.worker = $1 }) }
+                    .overlay(alignment: .topLeading) {
+                        TaskPeekCard(
+                            workspace: workspace,
+                            open: {
+                                navigation.place = .task($0); navigation.worker = $1
+                            })
+                    }
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -146,7 +159,8 @@ struct WorkspaceView: View {
         switch navigation.place {
         case .board: BoardView(workspace: workspace, open: { navigation.place = .task($0) })
         case .agent(let name): AgentPage(controller: inbox, name: name).id(name)
-        case .task(let id) where workspace.conversation(id) != nil: TaskPages(workspace: workspace, inbox: inbox, navigation: navigation, current: id)
+        case .task(let id) where workspace.conversation(id) != nil:
+            TaskPages(workspace: workspace, inbox: inbox, navigation: navigation, current: id)
         default: NewTaskView(workspace: workspace, started: { navigation.place = .task($0) })
         }
     }
@@ -182,11 +196,17 @@ struct ArchiveCard: View {
             // Under its row, no name is needed; away from it, the task is named.
             Text(named ? "Archive \(workspace.conversation(id).map { Workspace.label(of: $0) } ?? "this task")?" : "Archive this task?")
                 .font(.system(size: 13, weight: .semibold)).lineLimit(2)
-            Text(workers == 0 ? "Bring it back from Archived tasks." : "Its \(workers == 1 ? "worker goes" : "\(workers) workers go") with it; bring them back from Archived tasks.")
-                .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(
+                workers == 0
+                    ? "Bring it back from Archived tasks."
+                    : "Its \(workers == 1 ? "worker goes" : "\(workers) workers go") with it; bring them back from Archived tasks."
+            )
+            .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 6) {
                 Spacer()
-                Button { workspace.archiving = nil } label: {
+                Button {
+                    workspace.archiving = nil
+                } label: {
                     Text("Cancel").font(.system(size: 12, weight: .medium)).padding(.horizontal, 10).frame(height: 26)
                 }
                 .buttonStyle(Hovering(selected: true, radius: 6, fill: Theme.row)).keyboardShortcut(.cancelAction)
@@ -233,7 +253,10 @@ private struct Rail: View {
     private static let step: CGFloat = 38
 
     private var home: Bool {
-        switch place { case .inbox, .settings, .integrations, .integration, .pads, .pad, .loops, .loop, .later, .laterItem: false; default: true }
+        switch place {
+        case .inbox, .settings, .integrations, .integration, .pads, .pad, .loops, .loop, .later, .laterItem: false;
+        default: true
+        }
     }
 
     /// Every integration in your order, those never placed after.
@@ -254,15 +277,16 @@ private struct Rail: View {
                 UserDefaults.standard.set("", forKey: InboxFilter.titleKey)
                 place = .inbox
             }
-                .overlay(alignment: .topTrailing) {
-                    let waiting = AsksPage.waiting(inbox).count
-                    if waiting > 0 {
-                        Text("\(waiting)").font(.system(size: 9.5, weight: .semibold)).monospacedDigit().foregroundStyle(.white)
-                            .padding(.horizontal, 4).frame(minWidth: 15, minHeight: 15).background(Color.red, in: Capsule())
-                            .padding(1.5).background(Theme.composer, in: Capsule()) // a ring in the rail's colour, as the Dock cuts its badges out
-                            .offset(x: 4.5, y: -3.5).allowsHitTesting(false)
-                    }
+            .overlay(alignment: .topTrailing) {
+                let waiting = AsksPage.waiting(inbox).count
+                if waiting > 0 {
+                    Text("\(waiting)").font(.system(size: 9.5, weight: .semibold)).monospacedDigit().foregroundStyle(.white)
+                        .padding(.horizontal, 4).frame(minWidth: 15, minHeight: 15).background(Color.red, in: Capsule())
+                        // A ring in the rail's colour, as the Dock cuts its badges out.
+                        .padding(1.5).background(Theme.composer, in: Capsule())
+                        .offset(x: 4.5, y: -3.5).allowsHitTesting(false)
                 }
+            }
             let later = { if case .laterItem = place { true } else { place == .later } }()
             item("bookmark", selected: later, help: "Later") { if !later { place = .later } }
             let pads = { if case .pad = place { true } else { place == .pads } }()
@@ -272,7 +296,9 @@ private struct Rail: View {
             let shown = shown
             ForEach(Array(shown.enumerated()), id: \.element) { index, integration in
                 let selected = place == .integration(integration.rawValue)
-                Button { place = .integration(integration.rawValue) } label: {
+                Button {
+                    place = .integration(integration.rawValue)
+                } label: {
                     integration.icon(size: 17).foregroundStyle(selected ? .primary : .secondary).frame(width: 32, height: 32)
                 }
                 .buttonStyle(Hovering(selected: selected, fill: Theme.railSelected, hover: Theme.railHover)).tip(integration.title)
@@ -280,12 +306,18 @@ private struct Rail: View {
                 .zIndex(dragging == integration ? 1 : 0)
                 .animation(.spring(duration: 0.22), value: dragging == integration ? 0 : shift(index, in: shown))
                 .highPriorityGesture(drag(integration, from: index, of: shown.count), including: command ? .all : .subviews)
-                .zeroContextMenu("rail-\(integration.rawValue)") {[
-                    (index > 0 ? [MenuItem("Move up", "arrow-up") { move(integration, to: index - 1) }] : [])
-                        + (index < shown.count - 1 ? [MenuItem("Move down", "chevron-down") { move(integration, to: index + 1) }] : [])
-                        + [MenuItem("Edit views", "pen") { Integration.edit(integration.rawValue, place: &place) }],
-                    [MenuItem("Hide from the sidebar", "eye") { Task { await workspace.setIntegration(integration.rawValue, enabled: false) } }],
-                ]}
+                .zeroContextMenu("rail-\(integration.rawValue)") {
+                    [
+                        (index > 0 ? [MenuItem("Move up", "arrow-up") { move(integration, to: index - 1) }] : [])
+                            + (index < shown.count - 1 ? [MenuItem("Move down", "chevron-down") { move(integration, to: index + 1) }] : [])
+                            + [MenuItem("Edit views", "pen") { Integration.edit(integration.rawValue, place: &place) }],
+                        [
+                            MenuItem("Hide from the sidebar", "eye") {
+                                Task { await workspace.setIntegration(integration.rawValue, enabled: false) }
+                            }
+                        ],
+                    ]
+                }
             }
             Spacer()
             item("puzzle-piece", selected: place == .integrations, help: "Integrations") { place = .integrations }
@@ -296,7 +328,9 @@ private struct Rail: View {
         .frame(width: 48)
         // ⌘ held or not decides whether a drag moves an item or is a click.
         .onAppear {
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in command = event.modifierFlags.contains(.command); return event }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+                command = event.modifierFlags.contains(.command); return event
+            }
         }
         .onDisappear { if let monitor { NSEvent.removeMonitor(monitor) } }
     }
@@ -305,7 +339,9 @@ private struct Rail: View {
     /// lands in the slot it's let go over.
     private func drag(_ integration: Integration, from index: Int, of count: Int) -> some Gesture {
         DragGesture(minimumDistance: 3)
-            .onChanged { value in dragging = integration; dragged = value.translation.height }
+            .onChanged { value in
+                dragging = integration; dragged = value.translation.height
+            }
             .onEnded { _ in
                 let target = slot(from: index, of: count)
                 // Landed where it's drawn already: no animation back and forth.

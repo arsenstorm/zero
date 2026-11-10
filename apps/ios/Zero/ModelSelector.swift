@@ -20,16 +20,26 @@ struct ModelSelector: View {
                 ForEach(agents, id: \.provider) { agent in
                     Section {
                         if agent.models.isEmpty {
-                            Button { pick(agent.provider, nil, nil); dismiss() } label: {
-                                row(agent.provider.title, detail: "Its own default", chosen: current.provider == agent.provider, more: false)
+                            Button {
+                                pick(agent.provider, nil, nil); dismiss()
+                            } label: {
+                                row(
+                                    agent.provider.title, detail: "Its own default", chosen: current.provider == agent.provider, more: false
+                                )
                             }
                             .buttonStyle(.plain)
                         }
                         ForEach(agent.models) { model in
                             Button {
-                                if model.levels.isEmpty { pick(agent.provider, model.id, nil); dismiss() } else { path = [Self.key(agent.provider, model.id)] }
+                                if model.levels.isEmpty {
+                                    pick(agent.provider, model.id, nil); dismiss()
+                                } else {
+                                    path = [Self.key(agent.provider, model.id)]
+                                }
                             } label: {
-                                row(model.name, detail: model.context, chosen: current.provider == agent.provider && model.id == current.model, more: !model.levels.isEmpty)
+                                row(
+                                    model.name, detail: model.context,
+                                    chosen: current.provider == agent.provider && model.id == current.model, more: !model.levels.isEmpty)
                             }
                             .buttonStyle(.plain)
                         }
@@ -43,7 +53,10 @@ struct ModelSelector: View {
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .navigationDestination(for: String.self) { key in
                 if let agent = agents.first(where: { key.hasPrefix($0.provider.rawValue + "/") }),
-                   let model = agent.models.first(where: { Self.key(agent.provider, $0.id) == key }) { levels(of: model, agent: agent.provider) }
+                    let model = agent.models.first(where: { Self.key(agent.provider, $0.id) == key })
+                {
+                    levels(of: model, agent: agent.provider)
+                }
             }
         }
         .presentationDetents([.medium, .large])
@@ -68,7 +81,9 @@ struct ModelSelector: View {
             }
             Section("Effort") {
                 ForEach(model.levels, id: \.id) { level in
-                    Button { pick(agent, model.id, level.id); dismiss() } label: {
+                    Button {
+                        pick(agent, model.id, level.id); dismiss()
+                    } label: {
                         row(level.name, detail: "", chosen: level.id == effort, more: false)
                     }
                     .buttonStyle(.plain)
@@ -88,14 +103,18 @@ struct ModelSelector: View {
             }
             Spacer(minLength: 8)
             Image("circle-check-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(Color.accentColor).opacity(chosen ? 1 : 0)
-            if more { Image("chevron-down-outline").resizable().frame(width: 10, height: 10).rotationEffect(.degrees(-90)).foregroundStyle(.secondary) }
+            if more {
+                Image("chevron-down-outline").resizable().frame(width: 10, height: 10).rotationEffect(.degrees(-90)).foregroundStyle(
+                    .secondary)
+            }
         }
         .frame(minHeight: 36).contentShape(Rectangle())
     }
 
     @ViewBuilder private func logo(_ name: String, size: CGFloat) -> some View {
         if ["claude", "openai"].contains(name) {
-            Image("provider-" + name).resizable().scaledToFit().frame(width: size, height: size).clipShape(RoundedRectangle(cornerRadius: size * 0.22))
+            Image("provider-" + name).resizable().scaledToFit().frame(width: size, height: size).clipShape(
+                RoundedRectangle(cornerRadius: size * 0.22))
         }
     }
 

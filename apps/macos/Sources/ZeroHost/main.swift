@@ -166,10 +166,10 @@ final class Terminal {
 
     var lastActivity = Date()
 
-
     var summary: HostLink.Terminal {
-        HostLink.Terminal(id: id, label: label, cwd: cwd, argv: argv, running: running, exitCode: exitCode,
-                          status: screen.status?.state, statusMessage: screen.status?.message, idle: Int(Date().timeIntervalSince(lastActivity)))
+        HostLink.Terminal(
+            id: id, label: label, cwd: cwd, argv: argv, running: running, exitCode: exitCode,
+            status: screen.status?.state, statusMessage: screen.status?.message, idle: Int(Date().timeIntervalSince(lastActivity)))
     }
 }
 
@@ -183,16 +183,21 @@ func handle(_ request: HostLink.Request) -> HostLink.Response {
     case "hello":
         return HostLink.Response(ok: true, version: HostLink.version)
     case "spawn":
-        guard let argv = request.argv, !argv.isEmpty, let cwd = request.cwd else { return HostLink.Response(ok: false, error: "spawn needs argv and cwd") }
+        guard let argv = request.argv, !argv.isEmpty, let cwd = request.cwd else {
+            return HostLink.Response(ok: false, error: "spawn needs argv and cwd")
+        }
         let columns = request.columns ?? 120, rows = request.rows ?? 40
-        let terminal = Terminal(id: "term-" + UUID().uuidString.prefix(8).lowercased(), label: request.label ?? argv[0],
-                                cwd: cwd, argv: argv, columns: columns, rows: rows)
+        let terminal = Terminal(
+            id: "term-" + UUID().uuidString.prefix(8).lowercased(), label: request.label ?? argv[0],
+            cwd: cwd, argv: argv, columns: columns, rows: rows)
         if request.record == true {
             let runs = Paths.dir.appendingPathComponent("host")
             try? FileManager.default.createDirectory(at: runs, withIntermediateDirectories: true)
             let output = runs.appendingPathComponent(terminal.id + ".out")
             FileManager.default.createFile(atPath: output.path, contents: nil, attributes: [.posixPermissions: 0o600])
-            if let handle = try? FileHandle(forWritingTo: output) { terminal.record = (handle, runs.appendingPathComponent(terminal.id + ".exit")) }
+            if let handle = try? FileHandle(forWritingTo: output) {
+                terminal.record = (handle, runs.appendingPathComponent(terminal.id + ".exit"))
+            }
         }
         do { try terminal.start(columns: columns, rows: rows, queue: queue) } catch {
             return HostLink.Response(ok: false, error: error.localizedDescription)
@@ -247,7 +252,9 @@ signal(SIGHUP, SIG_IGN)
 try? FileManager.default.createDirectory(at: Paths.dir, withIntermediateDirectories: true)
 if HostLink.call(HostLink.Request(op: "hello")) != nil { exit(0) } // one helper is enough
 unlink(HostLink.socket)
-guard let listener = try? UnixSocket.listen(path: HostLink.socket) else { fputs("zero-host: can't listen on \(HostLink.socket)\n", stderr); exit(1) }
+guard let listener = try? UnixSocket.listen(path: HostLink.socket) else {
+    fputs("zero-host: can't listen on \(HostLink.socket)\n", stderr); exit(1)
+}
 Thread.detachNewThread {
     while let client = try? listener.accept() {
         Thread.detachNewThread {

@@ -25,7 +25,8 @@ final class Dictation {
         guard !listening else { return }
         guard await AVCaptureDevice.requestAccess(for: .audio) else { throw Failure(errorDescription: "Microphone access denied") }
         let locale = Locale(identifier: "en_US")
-        let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: [])
+        let transcriber = SpeechTranscriber(
+            locale: locale, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: [])
         if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
             try await request.downloadAndInstall()
         }
@@ -38,7 +39,8 @@ final class Dictation {
         let node = engine.inputNode
         if let deviceUID, let deviceID = Dictation.audioDeviceID(forUID: deviceUID), let unit = node.audioUnit {
             var id = deviceID
-            AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, UInt32(MemoryLayout<AudioDeviceID>.size))
+            AudioUnitSetProperty(
+                unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, UInt32(MemoryLayout<AudioDeviceID>.size))
         }
         let inputFormat = node.outputFormat(forBus: 0)
         guard let converter = AVAudioConverter(from: inputFormat, to: format) else {
@@ -88,14 +90,16 @@ final class Dictation {
     }
 
     private static func audioDeviceID(forUID uid: String) -> AudioDeviceID? {
-        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyTranslateUIDToDevice,
-                                                 mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyTranslateUIDToDevice,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         var cfUID = uid as CFString
         var deviceID = AudioDeviceID(0)
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
         let status = withUnsafeMutablePointer(to: &cfUID) { uidPointer in
-            AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address,
-                                       UInt32(MemoryLayout<CFString>.size), uidPointer, &size, &deviceID)
+            AudioObjectGetPropertyData(
+                AudioObjectID(kAudioObjectSystemObject), &address,
+                UInt32(MemoryLayout<CFString>.size), uidPointer, &size, &deviceID)
         }
         return status == noErr && deviceID != 0 ? deviceID : nil
     }

@@ -48,7 +48,8 @@ public enum PadBlocks {
 
         func flush() {
             guard !body.isEmpty else { return }
-            blocks.append(PadBlock(lead: blocks.isEmpty ? lead : "", body: body.joined(separator: "\n"), gap: "\n" + gap.map { $0 + "\n" }.joined()))
+            blocks.append(
+                PadBlock(lead: blocks.isEmpty ? lead : "", body: body.joined(separator: "\n"), gap: "\n" + gap.map { $0 + "\n" }.joined()))
             body = []; gap = []
         }
 
@@ -138,8 +139,14 @@ public enum PadBlocks {
     public static func table(_ rows: [[String]], divider: String? = nil) -> String {
         let width = rows.map(\.count).max() ?? 0
         guard width > 0 else { return "" }
-        let line = { (cells: [String]) in "| " + (cells + Array(repeating: "", count: width - cells.count)).map { $0.replacingOccurrences(of: "|", with: "\\|") }.joined(separator: " | ") + " |" }
-        let kept = divider.flatMap { row($0).count == width ? $0 : nil } ?? "|" + Array(repeating: "---", count: width).joined(separator: "|") + "|"
+        let line = { (cells: [String]) in
+            "| "
+                + (cells + Array(repeating: "", count: width - cells.count)).map { $0.replacingOccurrences(of: "|", with: "\\|") }.joined(
+                    separator: " | ") + " |"
+        }
+        let kept =
+            divider.flatMap { row($0).count == width ? $0 : nil } ?? "|" + Array(repeating: "---", count: width).joined(separator: "|")
+            + "|"
         return ([line(rows[0]), kept] + rows.dropFirst().map(line)).joined(separator: "\n")
     }
 

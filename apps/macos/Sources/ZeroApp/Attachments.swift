@@ -14,7 +14,8 @@ enum Attachments {
     /// An image kept as Zero's own PNG.
     static func save(_ image: NSImage) -> URL? {
         guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
-              let png = bitmap.representation(using: .png, properties: [:]) else { return nil }
+            let png = bitmap.representation(using: .png, properties: [:])
+        else { return nil }
         return write(png, extension: "png")
     }
 
@@ -23,7 +24,8 @@ enum Attachments {
     /// the size, and no room taken until either changes.
     static func copy(_ file: URL) -> URL? {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let kept = folder.appendingPathComponent(UUID().uuidString.lowercased()).appendingPathExtension(file.pathExtension.isEmpty ? "png" : file.pathExtension.lowercased())
+        let kept = folder.appendingPathComponent(UUID().uuidString.lowercased()).appendingPathExtension(
+            file.pathExtension.isEmpty ? "png" : file.pathExtension.lowercased())
         return (try? FileManager.default.copyItem(at: file, to: kept)) != nil ? kept : nil
     }
 
@@ -51,7 +53,9 @@ enum Attachments {
         Task { @MainActor in
             guard let info = try? await VideoFrames.info(of: video), info.seconds > 0 else { return }
             let times = VideoFrames.spread(min(most, max(1, Int(info.seconds.rounded(.up)))), over: info.seconds)
-            let frames = (try? await VideoFrames.frames(of: video, at: times, into: folder.appendingPathComponent(UUID().uuidString.lowercased()))) ?? []
+            let frames =
+                (try? await VideoFrames.frames(of: video, at: times, into: folder.appendingPathComponent(UUID().uuidString.lowercased())))
+                ?? []
             videos[video.path] = Video(images: frames.map(\.path), times: frames.map(\.at), info: info)
         }
     }
@@ -63,7 +67,8 @@ enum Attachments {
     /// Nil leaves the paste to the text field.
     static func fromPasteboard(_ board: NSPasteboard = .general) -> [URL]? {
         if let files = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !files.isEmpty,
-           files.allSatisfy({ isImage($0) || isVideo($0) }) {
+            files.allSatisfy({ isImage($0) || isVideo($0) })
+        {
             return files.compactMap(copy)
         }
         if board.string(forType: .string) == nil, let image = NSImage(pasteboard: board) { return save(image).map { [$0] } }
@@ -100,7 +105,9 @@ enum Attachments {
 /// An image as a square tile, cropped to fill; a click opens it in Zero (`tap` does something else instead); a right
 /// click offers Preview and its folder. With `remove`, an × shows on hover.
 struct Thumbnail: View {
-    private static let decoded: NSCache<NSString, NSImage> = { let cache = NSCache<NSString, NSImage>(); cache.countLimit = 200; return cache }()
+    private static let decoded: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>(); cache.countLimit = 200; return cache
+    }()
 
     /// The image decoded once, small: about twice the tile's size for a Retina screen, not the whole screenshot on
     /// every redraw.
@@ -108,8 +115,13 @@ struct Thumbnail: View {
         let key = "\(side)|\(path)" as NSString
         if let kept = decoded.object(forKey: key) { return kept }
         guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
-              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
-                  kCGImageSourceThumbnailMaxPixelSize: side * 2 * 2, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary) else { return nil }
+            let image = CGImageSourceCreateThumbnailAtIndex(
+                source, 0,
+                [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceThumbnailMaxPixelSize: side * 2 * 2, kCGImageSourceCreateThumbnailWithTransform: true,
+                ] as CFDictionary)
+        else { return nil }
         let small = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
         decoded.setObject(small, forKey: key)
         return small
@@ -125,12 +137,15 @@ struct Thumbnail: View {
     @State private var hovered = false
 
     var body: some View {
-        Button { if let tap { tap() } else { ImageViewer.shared.show(path, among: among) } } label: {
+        Button {
+            if let tap { tap() } else { ImageViewer.shared.show(path, among: among) }
+        } label: {
             Group {
                 if let image = Thumbnail.image(path, side: side) {
                     Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
                 } else {
-                    NucleoIcon("file", size: 18).foregroundStyle(.tertiary).frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.chip)
+                    NucleoIcon("file", size: 18).foregroundStyle(.tertiary).frame(maxWidth: .infinity, maxHeight: .infinity).background(
+                        Theme.chip)
                 }
             }
             .frame(width: side, height: side).clipShape(RoundedRectangle(cornerRadius: 10))
@@ -142,7 +157,8 @@ struct Thumbnail: View {
         .overlay(alignment: .topTrailing) {
             if let remove, hovered {
                 Button(action: remove) {
-                    NucleoIcon("xmark", size: 9).foregroundStyle(Theme.onKnob).frame(width: 18, height: 18).background(Theme.knob, in: Circle())
+                    NucleoIcon("xmark", size: 9).foregroundStyle(Theme.onKnob).frame(width: 18, height: 18).background(
+                        Theme.knob, in: Circle())
                 }
                 .buttonStyle(.plain).padding(5).tip("Remove")
             }
@@ -171,7 +187,8 @@ enum ImageToken {
     /// The number a link's words name ("Image #2"), if they do.
     static func number(inLabel label: String) -> (number: Int, video: Bool)? {
         guard let match = Self.label.firstMatch(in: label, range: NSRange(location: 0, length: (label as NSString).length)),
-              let number = Int((label as NSString).substring(with: match.range(at: 2))) else { return nil }
+            let number = Int((label as NSString).substring(with: match.range(at: 2)))
+        else { return nil }
         return (number, (label as NSString).substring(with: match.range(at: 1)) == "Video")
     }
 
@@ -200,18 +217,26 @@ enum ImageToken {
         guard attachments.contains(where: { Attachments.isVideo(URL(fileURLWithPath: $0)) }) else { return (text, attachments) }
         var images: [String] = [], number: [Int: Int] = [:], videos: [(path: String, index: Int)] = []
         for (i, path) in attachments.enumerated() {
-            if Attachments.isVideo(URL(fileURLWithPath: path)) { videos.append((path, videos.count + 1)); number[i + 1] = videos.count }
-            else { images.append(path); number[i + 1] = images.count }
+            if Attachments.isVideo(URL(fileURLWithPath: path)) {
+                videos.append((path, videos.count + 1)); number[i + 1] = videos.count
+            } else {
+                images.append(path); number[i + 1] = images.count
+            }
         }
         let out = NSMutableString(string: text)
         for token in find(in: text).reversed() {
-            if let n = number[token.number] { out.replaceCharacters(in: token.range, with: Self.text(n, video: Attachments.isVideo(URL(fileURLWithPath: attachments[token.number - 1])))) }
+            if let n = number[token.number] {
+                out.replaceCharacters(
+                    in: token.range, with: Self.text(n, video: Attachments.isVideo(URL(fileURLWithPath: attachments[token.number - 1]))))
+            }
         }
         for video in videos {
             var line = "[Video #\(video.index): \(video.path)"
             if let cut = Attachments.videos[video.path] {
                 line += ", \(VideoFrames.stamp(cut.info.seconds)) long, \(cut.info.width)×\(cut.info.height). Stills from it: "
-                line += zip(cut.images, cut.times).map { path, at in images.append(path); return "\(Self.text(images.count)) at \(VideoFrames.stamp(at))" }.joined(separator: ", ")
+                line += zip(cut.images, cut.times).map { path, at in
+                    images.append(path); return "\(Self.text(images.count)) at \(VideoFrames.stamp(at))"
+                }.joined(separator: ", ")
             }
             line += ". It's a video: cut the frames you need with `zero video \"\(video.path)\"`.]"
             out.append("\n\n" + line)
@@ -219,7 +244,8 @@ enum ImageToken {
         return (out as String, images)
     }
 
-    private static let videoLine = try! NSRegularExpression(pattern: "\\n*\\[Video #(\\d+): (.+?)(?:, \\d+:\\d|\\. It's a video)[^\\n]*\\]$", options: [.anchorsMatchLines])
+    private static let videoLine = try! NSRegularExpression(
+        pattern: "\\n*\\[Video #(\\d+): (.+?)(?:, \\d+:\\d|\\. It's a video)[^\\n]*\\]$", options: [.anchorsMatchLines])
 
     /// What a sent message shows as its tiles: each video once (its first still, a play mark, the video itself on a
     /// click), not the stills cut from it for the agent; the images as they are.
@@ -244,11 +270,14 @@ enum ImageToken {
         for match in videoLine.matches(in: text, range: NSRange(location: 0, length: whole.length)) {
             videos[Int(whole.substring(with: match.range(at: 1))) ?? 0] = whole.substring(with: match.range(at: 2))
         }
-        let out = NSMutableString(string: videoLine.stringByReplacingMatches(in: text, range: NSRange(location: 0, length: whole.length), withTemplate: ""))
+        let out = NSMutableString(
+            string: videoLine.stringByReplacingMatches(in: text, range: NSRange(location: 0, length: whole.length), withTemplate: ""))
         for token in find(in: out as String).reversed() {
             let path = token.video ? videos[token.number] : (images.indices.contains(token.number - 1) ? images[token.number - 1] : nil)
             guard let path else { continue }
-            out.replaceCharacters(in: token.range, with: "[\(token.video ? "Video" : "Image") #\(token.number)](\(URL(fileURLWithPath: path).absoluteString))")
+            out.replaceCharacters(
+                in: token.range, with: "[\(token.video ? "Video" : "Image") #\(token.number)](\(URL(fileURLWithPath: path).absoluteString))"
+            )
         }
         return out as String
     }
@@ -268,9 +297,12 @@ enum ImageToken {
         let point = view.convert(event.locationInWindow, from: nil)
         let inText = NSPoint(x: point.x - view.textContainerOrigin.x, y: point.y - view.textContainerOrigin.y)
         let glyph = manager.glyphIndex(for: inText, in: container)
-        guard glyph < manager.numberOfGlyphs, manager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).contains(inText) else { return nil }
+        guard glyph < manager.numberOfGlyphs,
+            manager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).contains(inText)
+        else { return nil }
         let index = manager.characterIndexForGlyph(at: glyph)
-        guard let cell = (storage.attribute(.attachment, at: index, effectiveRange: nil) as? NSTextAttachment)?.attachmentCell as? Cell else { return nil }
+        guard let cell = (storage.attribute(.attachment, at: index, effectiveRange: nil) as? NSTextAttachment)?.attachmentCell as? Cell
+        else { return nil }
         return (cell, index)
     }
 
@@ -290,8 +322,11 @@ enum ImageToken {
 
         /// The text's size, a step heavier than the words around it.
         private var words: NSAttributedString {
-            NSAttributedString(string: video ? "\u{1F3A5} Video \(number)" : "\u{1F5BC}\u{FE0F} Image \(number)",
-                               attributes: [.font: NSFont.systemFont(ofSize: textFont.pointSize, weight: .medium), .foregroundColor: TokenTextView.tokenText])
+            NSAttributedString(
+                string: video ? "\u{1F3A5} Video \(number)" : "\u{1F5BC}\u{FE0F} Image \(number)",
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: textFont.pointSize, weight: .medium), .foregroundColor: TokenTextView.tokenText,
+                ])
         }
 
         override func cellSize() -> NSSize {
@@ -339,8 +374,12 @@ enum ImageToken {
 
 /// Where an image's file can go from Zero: Preview, or its folder.
 @MainActor func imageActions(_ path: String) -> [[MenuItem]] {
-    [[MenuItem("Open with Preview", "image") { NSWorkspace.shared.open(URL(fileURLWithPath: path)) },
-      MenuItem("Show in Finder", "folder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }]]
+    [
+        [
+            MenuItem("Open with Preview", "image") { NSWorkspace.shared.open(URL(fileURLWithPath: path)) },
+            MenuItem("Show in Finder", "folder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) },
+        ]
+    ]
 }
 
 struct ImageLightbox: View {
@@ -366,9 +405,11 @@ struct ImageLightbox: View {
                     .id(path)
             }
             if paths.count > 1 {
-                Text("\(index + 1) of \(paths.count)").font(.system(size: 12, weight: .medium)).monospacedDigit().foregroundStyle(.white.opacity(0.85))
-                    .padding(.horizontal, 10).padding(.vertical, 5).background(.black.opacity(0.45), in: Capsule())
-                    .frame(maxHeight: .infinity, alignment: .bottom).padding(.bottom, 18)
+                Text("\(index + 1) of \(paths.count)").font(.system(size: 12, weight: .medium)).monospacedDigit().foregroundStyle(
+                    .white.opacity(0.85)
+                )
+                .padding(.horizontal, 10).padding(.vertical, 5).background(.black.opacity(0.45), in: Capsule())
+                .frame(maxHeight: .infinity, alignment: .bottom).padding(.bottom, 18)
             }
         }
         .ignoresSafeArea()
@@ -397,7 +438,9 @@ struct ImageLightbox: View {
                 }
             }
         }
-        .onDisappear { if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil }
+        .onDisappear {
+            if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil
+        }
     }
 
     private func step(_ by: Int) {

@@ -38,7 +38,9 @@ public enum TimelineBlock: Identifiable, Equatable, Sendable {
                 // Ending on an ask: the words before it are the reasoning behind the question, shown in full above it
                 // rather than folded with the commands.
                 var before: ConversationItem?
-                if case .asked? = ZeroEnding.split(text).1, let at = work.lastIndex(where: { if case .agent(_, false) = $0.kind { true } else { false } }) {
+                if case .asked? = ZeroEnding.split(text).1,
+                    let at = work.lastIndex(where: { if case .agent(_, false) = $0.kind { true } else { false } })
+                {
                     before = work.remove(at: at)
                 }
                 flush(end: item.date, live: false)
@@ -103,7 +105,9 @@ public enum TimelineRow: Identifiable, Equatable, Sendable {
         var folded: [[TimelineBlock]] = []
         func fold() {
             // Named by its last turn: older pages coming in above add turns at its start, and it stays the same row.
-            if let last = folded.last?.first { rows.append(.quiet(id: "quiet-" + last.id, blocks: folded.flatMap { $0 }, turns: folded.count)) }
+            if let last = folded.last?.first {
+                rows.append(.quiet(id: "quiet-" + last.id, blocks: folded.flatMap { $0 }, turns: folded.count))
+            }
             folded = []
         }
         for (index, turn) in turns.enumerated() {
@@ -118,7 +122,9 @@ public enum TimelineRow: Identifiable, Equatable, Sendable {
     nonisolated(unsafe) private static let changes = #/\bzero (run|ask|approve|issue)\b|\bzero_(run|ask|approve|issue)\b|\[zero: asked/#
 
     private static func quiet(_ turn: [TimelineBlock]) -> Bool {
-        guard case let .user(first)? = turn.first, case let .user(text, _) = first.kind, let given = ConversationItem.from(text) else { return false }
+        guard case let .user(first)? = turn.first, case let .user(text, _) = first.kind, let given = ConversationItem.from(text) else {
+            return false
+        }
         // The user's own answer to an ask, passed on by Zero: theirs, not an update that needed nothing from them.
         if NoticeText.headline(given.text) != nil { return false }
         let items = turn.dropFirst().flatMap { block -> [ConversationItem] in
@@ -150,10 +156,14 @@ extension ConversationItem {
 
     public func ask(in asks: [Ask], session: String) -> Ask? {
         guard case let .command(command, _, output, _, _) = kind,
-              command.firstMatch(of: Self.zeroAsks) != nil else { return nil }
+            command.firstMatch(of: Self.zeroAsks) != nil
+        else { return nil }
         let own = asks.filter { $0.isAgents(in: session) }
         if let id = output.firstMatch(of: Self.askID).map({ String($0.output.1) }),
-           let ask = own.first(where: { $0.id == id }) { return ask }
+            let ask = own.first(where: { $0.id == id })
+        {
+            return ask
+        }
         let since = date?.addingTimeInterval(-5) ?? .distantPast
         return own.filter { $0.createdAt >= since && command.contains(($0.kind == .run ? $0.command : nil) ?? $0.title) }
             .min { $0.createdAt < $1.createdAt }
@@ -175,7 +185,9 @@ extension BoardRow {
     /// level, and whatever follows it.
     public static func risk(_ text: String) -> (String, String)? {
         var rest = text.trimmingCharacters(in: .whitespaces)
-        if let colon = rest.range(of: ":"), rest[..<colon.lowerBound].localizedCaseInsensitiveContains("risk") { rest = String(rest[colon.upperBound...]).trimmingCharacters(in: .whitespaces) }
+        if let colon = rest.range(of: ":"), rest[..<colon.lowerBound].localizedCaseInsensitiveContains("risk") {
+            rest = String(rest[colon.upperBound...]).trimmingCharacters(in: .whitespaces)
+        }
         guard let level = ["low", "medium", "high"].first(where: { rest.lowercased().hasPrefix($0) }) else { return nil }
         let after = rest.dropFirst(level.count)
         guard after.isEmpty || !(after.first?.isLetter ?? false) else { return nil }
@@ -192,7 +204,9 @@ public enum TableCell: Equatable, Sendable {
     case text(String)
 
     public static func of(_ text: String, column: String) -> TableCell {
-        if column.localizedCaseInsensitiveContains("risk"), let (level, rest) = BoardRow.risk(text) { return .risk(level: level, gaps: rest) }
+        if column.localizedCaseInsensitiveContains("risk"), let (level, rest) = BoardRow.risk(text) {
+            return .risk(level: level, gaps: rest)
+        }
         if let state = BoardRow.State.named(text) { return .state(state) }
         if ["", "-", "—", "–"].contains(text) { return .empty }
         return .text(text)
@@ -227,8 +241,10 @@ extension BoardRow {
         case .state: return rows
         case .name: return rows.sorted { $0.task.localizedStandardCompare($1.task) == .orderedAscending }
         case .manual:
-            let rank = Dictionary(order.split(separator: "\n").enumerated().map { (String($1), $0) }, uniquingKeysWith: { first, _ in first })
-            return rows.enumerated().sorted { (rank[$0.element.session] ?? -1, $0.offset) < (rank[$1.element.session] ?? -1, $1.offset) }.map(\.element)
+            let rank = Dictionary(
+                order.split(separator: "\n").enumerated().map { (String($1), $0) }, uniquingKeysWith: { first, _ in first })
+            return rows.enumerated().sorted { (rank[$0.element.session] ?? -1, $0.offset) < (rank[$1.element.session] ?? -1, $1.offset) }
+                .map(\.element)
         }
     }
 }
@@ -267,7 +283,10 @@ public struct Sending: Identifiable, Equatable, Sendable {
         guard !sending.isEmpty else { return items }
         let latest = items.last { if case .user = $0.kind { true } else { false } }?.at ?? 0
         let waiting = sending.filter { latest < $0.at }
-        return items + waiting.map { ConversationItem(id: $0.id, turn: nil, kind: .user(text: $0.text, images: $0.images), status: .done, at: $0.at) }
+        return items
+            + waiting.map {
+                ConversationItem(id: $0.id, turn: nil, kind: .user(text: $0.text, images: $0.images), status: .done, at: $0.at)
+            }
     }
 }
 
@@ -280,10 +299,10 @@ public enum TaskName {
             if case let .user(text, _) = item.kind, let gist = gist(of: text) { return gist }
         }
         #if os(macOS)
-        let folder = Projects.name(of: conversation.cwd)
+            let folder = Projects.name(of: conversation.cwd)
         #else
-        // The phone has no names of its own for folders (Projects isn't part of its build).
-        let folder = (conversation.cwd as NSString).lastPathComponent
+            // The phone has no names of its own for folders (Projects isn't part of its build).
+            let folder = (conversation.cwd as NSString).lastPathComponent
         #endif
         return "\(conversation.provider.title) in \(folder)"
     }
@@ -291,7 +310,9 @@ public enum TaskName {
     /// A prompt's first line as a name: its first five words, when it has at least three.
     public static func gist(of prompt: String) -> String? {
         let line = prompt.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
-        let words = line.split(separator: " ").map { $0.trimmingCharacters(in: .punctuationCharacters.subtracting(["'"])) }.filter { !$0.isEmpty }
+        let words = line.split(separator: " ").map { $0.trimmingCharacters(in: .punctuationCharacters.subtracting(["'"])) }.filter {
+            !$0.isEmpty
+        }
         guard words.count >= 3 else { return nil }
         let kept = words.prefix(5).joined(separator: " ")
         return kept.prefix(1).uppercased() + kept.dropFirst() + (words.count > 5 ? "…" : "")
@@ -310,7 +331,9 @@ public enum NoticeText {
     /// answered with “…”"), not "The user answered your ask…", which is written for the agent. Nil for anything else.
     public static func headline(_ text: String) -> String? {
         if text.hasPrefix("The user answered your ask "), let colon = text.range(of: "\"): ") {
-            let answer = text[colon.upperBound...].split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
+            let answer =
+                text[colon.upperBound...].split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init)
+                ?? ""
             return "Ask answered with “\(answer)”"
         }
         if text.hasPrefix("The user declined your ask ") { return "Ask declined" }
@@ -330,13 +353,17 @@ public enum ToolNames {
         let parts = raw.dropFirst("mcp__".count).components(separatedBy: "__")
         guard parts.count >= 2 else { return raw }
         // "linear-server", "plugin_zero_zero": the service's own name, its last word.
-        let server = parts[0].replacingOccurrences(of: "-server", with: "").split(whereSeparator: { $0 == "_" || $0 == "-" }).last.map(String.init) ?? parts[0]
+        let server =
+            parts[0].replacingOccurrences(of: "-server", with: "").split(whereSeparator: { $0 == "_" || $0 == "-" }).last.map(String.init)
+            ?? parts[0]
         return server.capitalized + " · " + parts[1...].joined(separator: " ").replacingOccurrences(of: "_", with: " ")
     }
 
     /// A JSON object's values, shortest first (what it's about before what it says); anything else as it is.
     public static func detail(_ raw: String) -> String {
-        guard let data = raw.data(using: .utf8), let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return raw }
+        guard let data = raw.data(using: .utf8), let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return raw
+        }
         let values: [String] = object.values.compactMap { value in
             switch value {
             case let text as String: text

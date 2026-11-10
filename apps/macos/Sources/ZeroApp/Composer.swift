@@ -80,57 +80,81 @@ struct Composer<Controls: View>: View {
                         ForEach(attached, id: \.offset) { number, url in
                             // A click puts the image's token where the caret is; its pill opens the image.
                             let video = Attachments.isVideo(url)
-                            Thumbnail(path: (video ? Attachments.poster(url) : nil) ?? url.path, tap: { insert(ImageToken.text(number + 1, video: video)) }, remove: { handle.remove(number + 1) })
-                                .overlay { if video { VideoBadge() } }
+                            Thumbnail(
+                                path: (video ? Attachments.poster(url) : nil) ?? url.path,
+                                tap: { insert(ImageToken.text(number + 1, video: video)) }, remove: { handle.remove(number + 1) }
+                            )
+                            .overlay { if video { VideoBadge() } }
                         }
                     }
                 }
                 .scrollIndicators(.never)
             }
-            ComposeField(text: $draft, placeholder: placeholder, focused: active && focused, editable: true,
-                         caret: caret, onCaretApplied: { caret = nil },
-                         onFocus: { focused = $0; focus.on = $0 },
-                         onSubmit: { if ready { (queue ?? send)() } },
-                         onCommandSubmit: queue == nil ? nil : { if ready { send() } },
-                         onTrigger: suggest, onKey: key, highlightFiles: suggestFiles,
-                         onImage: { number in
-                             guard images.indices.contains(number - 1) else { return }
-                             // A video's pill plays it, in the Mac's own player.
-                             if Attachments.isVideo(images[number - 1]) { NSWorkspace.shared.open(images[number - 1]); return }
-                             ImageViewer.shared.show(images[number - 1].path, among: images.map(\.path).filter { !Attachments.isVideo(URL(fileURLWithPath: $0)) })
-                         },
-                         onAttach: { attach($0) },
-                         handle: handle, onEdges: { fades = (top: $0, bottom: $1) }, height: $fieldHeight)
-                .frame(height: fieldHeight)
-                .padding(.horizontal, -TokenTextView.inset.width) // the text still starts on the card's 14 pt
-                // Scrolled inside: the text fades at an edge with more beyond it, so that more is seen to be there.
-                .mask {
-                    VStack(spacing: 0) {
-                        LinearGradient(colors: [fades.top ? .clear : .black, .black], startPoint: .top, endPoint: .bottom).frame(height: 14)
-                        Color.black
-                        LinearGradient(colors: [.black, fades.bottom ? .clear : .black], startPoint: .top, endPoint: .bottom).frame(height: 14)
-                    }
+            ComposeField(
+                text: $draft, placeholder: placeholder, focused: active && focused, editable: true,
+                caret: caret, onCaretApplied: { caret = nil },
+                onFocus: {
+                    focused = $0; focus.on = $0
+                },
+                onSubmit: { if ready { (queue ?? send)() } },
+                onCommandSubmit: queue == nil ? nil : { if ready { send() } },
+                onTrigger: suggest, onKey: key, highlightFiles: suggestFiles,
+                onImage: { number in
+                    guard images.indices.contains(number - 1) else { return }
+                    // A video's pill plays it, in the Mac's own player.
+                    if Attachments.isVideo(images[number - 1]) { NSWorkspace.shared.open(images[number - 1]); return }
+                    ImageViewer.shared.show(
+                        images[number - 1].path, among: images.map(\.path).filter { !Attachments.isVideo(URL(fileURLWithPath: $0)) })
+                },
+                onAttach: { attach($0) },
+                handle: handle, onEdges: { fades = (top: $0, bottom: $1) }, height: $fieldHeight
+            )
+            .frame(height: fieldHeight)
+            .padding(.horizontal, -TokenTextView.inset.width) // the text still starts on the card's 14 pt
+            // Scrolled inside: the text fades at an edge with more beyond it, so that more is seen to be there.
+            .mask {
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [fades.top ? .clear : .black, .black], startPoint: .top, endPoint: .bottom).frame(height: 14)
+                    Color.black
+                    LinearGradient(colors: [.black, fades.bottom ? .clear : .black], startPoint: .top, endPoint: .bottom).frame(height: 14)
                 }
+            }
             HStack(spacing: translucent ? 2 : 6) {
-                Button { adding = adding == nil ? .add : nil } label: {
-                    NucleoIcon("plus", size: translucent ? 17 : 15).foregroundStyle(.primary).frame(width: translucent ? 32 : 28, height: translucent ? 32 : 28)
-                        .background(adding == nil ? .clear : translucent ? Theme.frostFill : Theme.row, in: Circle())
+                Button {
+                    adding = adding == nil ? .add : nil
+                } label: {
+                    NucleoIcon("plus", size: translucent ? 17 : 15).foregroundStyle(.primary).frame(
+                        width: translucent ? 32 : 28, height: translucent ? 32 : 28
+                    )
+                    .background(adding == nil ? .clear : translucent ? Theme.frostFill : Theme.row, in: Circle())
                 }
-                .buttonStyle(Hovering(radius: translucent ? 16 : 14, fill: translucent ? Theme.frostFill : Theme.row, hover: translucent ? Theme.frostFill : Theme.row))
+                .buttonStyle(
+                    Hovering(
+                        radius: translucent ? 16 : 14, fill: translucent ? Theme.frostFill : Theme.row,
+                        hover: translucent ? Theme.frostFill : Theme.row)
+                )
                 .tip("Add files, folders or a scratchpad")
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { plusFrame = $0 }
+                .onGeometryChange(for: CGRect.self) {
+                    $0.frame(in: .global)
+                } action: {
+                    plusFrame = $0
+                }
                 // Roomy: 14 pt between one chip's words and the next (6 + 2 + 6); 24 read as gaps.
-                HStack(spacing: translucent ? 2 : 6) { controls }.frame(maxWidth: .infinity, alignment: .leading).environment(\.roomyComposer, translucent)
+                HStack(spacing: translucent ? 2 : 6) { controls }.frame(maxWidth: .infinity, alignment: .leading).environment(
+                    \.roomyComposer, translucent)
                 if let stop {
                     Button(action: stop) {
-                        NucleoIcon("media-stop", fill: "glyph", size: 12).foregroundStyle(Theme.onKnob).frame(width: 28, height: 28).background(Theme.knob, in: Circle())
+                        NucleoIcon("media-stop", fill: "glyph", size: 12).foregroundStyle(Theme.onKnob).frame(width: 28, height: 28)
+                            .background(Theme.knob, in: Circle())
                     }
                     .buttonStyle(.plain).keyboardShortcut(".", modifiers: .command).tip("Stop", shortcut: "⌘.")
                 } else {
                     Button(action: send) {
                         // A solid paper plane: the thin arrow rendered soft. Nudged off-centre, as its point is up and right.
-                        NucleoIcon("paper-plane", fill: "glyph", size: translucent ? 15 : 13).foregroundStyle(ready ? Theme.onKnob : .white).offset(x: -0.5, y: 0.5)
-                            .frame(width: translucent ? 32 : 28, height: translucent ? 32 : 28).background(ready ? Theme.knob : Theme.sendIdle, in: Circle())
+                        NucleoIcon("paper-plane", fill: "glyph", size: translucent ? 15 : 13).foregroundStyle(ready ? Theme.onKnob : .white)
+                            .offset(x: -0.5, y: 0.5)
+                            .frame(width: translucent ? 32 : 28, height: translucent ? 32 : 28).background(
+                                ready ? Theme.knob : Theme.sendIdle, in: Circle())
                     }
                     .buttonStyle(.plain).keyboardShortcut(.return, modifiers: .command).disabled(!ready).tip("Send", shortcut: "⌘↩")
                 }
@@ -147,8 +171,10 @@ struct Composer<Controls: View>: View {
         // also falls on the folder tab behind its top.
         // Translucent, nothing of its own: the backdrop draws the frost under it (Dither's frost).
         .background(translucent ? .clear : Theme.field, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous)
-            .strokeBorder(dropping ? Color.accentColor : translucent ? .clear : Theme.fieldEdge, lineWidth: dropping ? 2 : 1))
+        .overlay(
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .strokeBorder(dropping ? Color.accentColor : translucent ? .clear : Theme.fieldEdge, lineWidth: dropping ? 2 : 1)
+        )
         .compositingGroup()
         // No card to lift when translucent: its words and chips would cast it.
         .shadow(color: .black.opacity(translucent ? 0 : 0.06), radius: 14, y: 5)
@@ -156,17 +182,32 @@ struct Composer<Controls: View>: View {
         .overlay(alignment: .top) {
             if let mention {
                 MentionList(state: mention, pick: accept, hover: { self.mention?.selected = $0 })
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { mentionHeight = $0 }
+                    .onGeometryChange(for: CGFloat.self) {
+                        $0.size.height
+                    } action: {
+                        mentionHeight = $0
+                    }
                     .offset(y: -mentionHeight - 6)
             }
         }
         // The + menu, as Codex's: the composer's width, just above it.
         .overlay(alignment: .top) {
             if let page = adding {
-                AddMenu(page: Binding(get: { page }, set: { adding = $0 }), pads: workspace?.pads ?? [],
-                        files: { adding = nil; addFiles() }, pad: { pad in adding = nil; insert("[\(pad.title)](\(pad.link))") })
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { addFrame = $0; addHeight = $0.height }
-                    .offset(y: -addHeight - 6)
+                AddMenu(
+                    page: Binding(get: { page }, set: { adding = $0 }), pads: workspace?.pads ?? [],
+                    files: {
+                        adding = nil; addFiles()
+                    },
+                    pad: { pad in
+                        adding = nil; insert("[\(pad.title)](\(pad.link))")
+                    }
+                )
+                .onGeometryChange(for: CGRect.self) {
+                    $0.frame(in: .global)
+                } action: {
+                    addFrame = $0; addHeight = $0.height
+                }
+                .offset(y: -addHeight - 6)
             }
         }
         .onChange(of: adding == nil) { _, closed in closed ? stopWatchingAdd() : watchAdd() }
@@ -187,8 +228,9 @@ struct Composer<Controls: View>: View {
                 guard shown.on else { return event }
                 let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
                 if flags.isDisjoint(with: [.command, .control, .option]), draft.wrappedValue.isEmpty, images.wrappedValue.isEmpty,
-                   let digit = event.charactersIgnoringModifiers.flatMap(Int.init), (1...9).contains(digit),
-                   (focus.on || !Self.takesTyping(event.window?.firstResponder)), picker.pick?(digit) == true {
+                    let digit = event.charactersIgnoringModifiers.flatMap(Int.init), (1...9).contains(digit),
+                    (focus.on || !Self.takesTyping(event.window?.firstResponder)), picker.pick?(digit) == true
+                {
                     return nil
                 }
                 let paste = flags == .command && event.charactersIgnoringModifiers == "v"
@@ -206,9 +248,13 @@ struct Composer<Controls: View>: View {
                     focused.wrappedValue = true
                 }
                 if paste {
-                    if let urls = Attachments.fromPasteboard(), !urls.isEmpty { attach(urls) }
-                    else if let text = NSPasteboard.general.string(forType: .string) { land(text) }
-                    else { return event }
+                    if let urls = Attachments.fromPasteboard(), !urls.isEmpty {
+                        attach(urls)
+                    } else if let text = NSPasteboard.general.string(forType: .string) {
+                        land(text)
+                    } else {
+                        return event
+                    }
                     return nil
                 }
                 // Words, not shortcuts (⌘, ⌃) or keys that move about (Return, Tab, Esc, arrows, Space).
@@ -217,8 +263,12 @@ struct Composer<Controls: View>: View {
                 return nil
             }
         }
-        .onDisappear { if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil; stopWatchingAdd() }
-        .onChange(of: active, initial: true) { shown.on = active; if !active { focus.on = false } }
+        .onDisappear {
+            if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil; stopWatchingAdd()
+        }
+        .onChange(of: active, initial: true) {
+            shown.on = active; if !active { focus.on = false }
+        }
         .onAppear { picker.pick = pick }
         .onChange(of: pick == nil) { picker.pick = pick }
     }
@@ -234,7 +284,8 @@ struct Composer<Controls: View>: View {
     private static func isWords(_ text: String) -> Bool {
         guard !text.isEmpty, text != " " else { return false }
         return text.unicodeScalars.allSatisfy { scalar in
-            !CharacterSet.controlCharacters.contains(scalar) && !(0xF700...0xF8FF).contains(scalar.value) // AppKit's arrow and function keys
+            // AppKit's arrow and function keys.
+            !CharacterSet.controlCharacters.contains(scalar) && !(0xF700...0xF8FF).contains(scalar.value)
         }
     }
 
@@ -309,13 +360,17 @@ struct Composer<Controls: View>: View {
         if trigger.symbol == "@" {
             // Loops first, always; the folder's files after them when that's on.
             let query = trigger.query.lowercased()
-            let loops = (workspace?.loops ?? []).filter { query.isEmpty || $0.name.contains(query) || $0.description.lowercased().contains(query) }
-                .map { Mention(kind: .loop, insert: "@" + $0.name, detail: $0.description.isEmpty ? "Loop" : $0.description) }
+            let loops = (workspace?.loops ?? []).filter {
+                query.isEmpty || $0.name.contains(query) || $0.description.lowercased().contains(query)
+            }
+            .map { Mention(kind: .loop, insert: "@" + $0.name, detail: $0.description.isEmpty ? "Loop" : $0.description) }
             guard suggestFiles, let folder else { show(trigger, loops); return }
             mentionTask = Task {
                 let files = await ProjectFiles.list(folder)
                 guard !Task.isCancelled else { return }
-                show(trigger, loops + ProjectFiles.match(trigger.query, in: files).map { Mention(kind: .file, insert: "@" + $0, detail: nil) })
+                show(
+                    trigger,
+                    loops + ProjectFiles.match(trigger.query, in: files).map { Mention(kind: .file, insert: "@" + $0, detail: nil) })
             }
             return
         }
@@ -323,7 +378,11 @@ struct Composer<Controls: View>: View {
             let query = trigger.query.lowercased()
             let all = ClaudeCommands.all(projectPath: folder)
             let name = { (m: Mention) in m.insert.dropFirst().lowercased() }
-            show(trigger, Array((all.filter { name($0).hasPrefix(query) } + all.filter { !name($0).hasPrefix(query) && name($0).contains(query) }).prefix(8)))
+            show(
+                trigger,
+                Array(
+                    (all.filter { name($0).hasPrefix(query) } + all.filter { !name($0).hasPrefix(query) && name($0).contains(query) })
+                        .prefix(8)))
         } else {
             guard let folder else { mention = nil; return }
             mentionTask = Task {
@@ -358,7 +417,9 @@ struct Composer<Controls: View>: View {
         let text = draft as NSString
         let word = state.trigger.word
         guard NSMaxRange(word) <= text.length else { mention = nil; return }
-        let spaced = NSMaxRange(word) < text.length && text.substring(with: NSRange(location: NSMaxRange(word), length: 1)).rangeOfCharacter(from: .whitespacesAndNewlines) != nil
+        let spaced =
+            NSMaxRange(word) < text.length
+            && text.substring(with: NSRange(location: NSMaxRange(word), length: 1)).rangeOfCharacter(from: .whitespacesAndNewlines) != nil
         let insert = state.items[index].insert + (spaced ? "" : " ")
         draft = text.replacingCharacters(in: word, with: insert)
         caret = word.location + (insert as NSString).length + (spaced ? 1 : 0)
@@ -367,9 +428,15 @@ struct Composer<Controls: View>: View {
 }
 
 extension Composer where Controls == EmptyView {
-    init(draft: Binding<String>, placeholder: String, canSend: Bool = true, folder: String? = nil, workspace: Workspace? = nil, images: Binding<[URL]>,
-         stop: (() -> Void)? = nil, send: @escaping () -> Void) {
-        self.init(draft: draft, placeholder: placeholder, canSend: canSend, folder: folder, workspace: workspace, images: images, stop: stop, send: send) { EmptyView() }
+    init(
+        draft: Binding<String>, placeholder: String, canSend: Bool = true, folder: String? = nil, workspace: Workspace? = nil,
+        images: Binding<[URL]>,
+        stop: (() -> Void)? = nil, send: @escaping () -> Void
+    ) {
+        self.init(
+            draft: draft, placeholder: placeholder, canSend: canSend, folder: folder, workspace: workspace, images: images, stop: stop,
+            send: send
+        ) { EmptyView() }
     }
 }
 

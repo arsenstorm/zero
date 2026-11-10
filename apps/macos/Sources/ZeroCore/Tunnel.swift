@@ -19,17 +19,23 @@ public enum Tunnel {
         public var link: String {
             var parts = URLComponents()
             parts.scheme = "zero"; parts.host = "pair"
-            parts.queryItems = [.init(name: "relay", value: relay), .init(name: "mac", value: mac),
-                                .init(name: "key", value: key.base64EncodedString()), .init(name: "code", value: code)]
+            parts.queryItems = [
+                .init(name: "relay", value: relay), .init(name: "mac", value: mac),
+                .init(name: "key", value: key.base64EncodedString()), .init(name: "code", value: code),
+            ]
             return parts.string ?? ""
         }
 
-        public init(relay: String, mac: String, key: Data, code: String) { self.relay = relay; self.mac = mac; self.key = key; self.code = code }
+        public init(relay: String, mac: String, key: Data, code: String) {
+            self.relay = relay; self.mac = mac; self.key = key; self.code = code
+        }
 
         public init?(link: String) {
             guard let parts = URLComponents(string: link), parts.scheme == "zero", parts.host == "pair" else { return nil }
             let value = { (name: String) in parts.queryItems?.first { $0.name == name }?.value }
-            guard let relay = value("relay"), let mac = value("mac"), let key = value("key").flatMap({ Data(base64Encoded: $0) }), let code = value("code") else { return nil }
+            guard let relay = value("relay"), let mac = value("mac"), let key = value("key").flatMap({ Data(base64Encoded: $0) }),
+                let code = value("code")
+            else { return nil }
             self.init(relay: relay, mac: mac, key: key, code: code)
         }
     }
@@ -128,7 +134,9 @@ public enum Tunnel {
                 return .send(try handshake.write())
             }
             let payload = try handshake.read(frame)
-            guard let key = handshake.remote, let hello = try? JSONDecoder().decode(Hello.self, from: payload) else { return .refused("No hello") }
+            guard let key = handshake.remote, let hello = try? JSONDecoder().decode(Hello.self, from: payload) else {
+                return .refused("No hello")
+            }
             guard let device = host.admit(key, hello, now: now) else { return .refused("Not paired") }
             transport = try handshake.split()
             self.device = device
@@ -210,11 +218,15 @@ public enum Tunnel {
     }
 
     /// What needs the Mac in front of you: setting up Chrome, a provider's own terminal, pairing another phone.
-    public static let macOnly: Set<String> = ["browserAttach", "browserAnswer", "browserSetup", "openTerminal", "closeTerminal", "saveMcpServer", "deleteMcpServer"]
+    public static let macOnly: Set<String> = [
+        "browserAttach", "browserAnswer", "browserSetup", "openTerminal", "closeTerminal", "saveMcpServer", "deleteMcpServer",
+    ]
 
     /// A phone's request line: passed on to zerod, or (a Mac-only op) answered here with an error.
     public static func screen(_ line: Data) -> (pass: Data?, reply: Data?) {
-        guard let request = try? JSONSerialization.jsonObject(with: line) as? [String: Any], let op = request["op"] as? String, macOnly.contains(op) else {
+        guard let request = try? JSONSerialization.jsonObject(with: line) as? [String: Any], let op = request["op"] as? String,
+            macOnly.contains(op)
+        else {
             return (line, nil)
         }
         let reply: [String: Any] = ["id": request["id"] ?? NSNull(), "ok": false, "error": "Only on the Mac: \(op)"]

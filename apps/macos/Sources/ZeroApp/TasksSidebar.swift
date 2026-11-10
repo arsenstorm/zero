@@ -15,7 +15,13 @@ struct TasksSidebar: View {
     /// Each row's top, for the peek card on hover: kept where writing it doesn't redraw the sidebar (rows moving in an
     /// animation write theirs every frame).
     @State private var tops = Tops()
-    final class Tops { var y: [String: CGFloat] = [:]; subscript(_ id: String) -> CGFloat? { get { y[id] } set { y[id] = newValue } } }
+    final class Tops {
+        var y: [String: CGFloat] = [:];
+        subscript(_ id: String) -> CGFloat? {
+            get { y[id] }
+            set { y[id] = newValue }
+        }
+    }
     /// How the tasks are ordered: by state (the board's own order), by name, or as they were dragged.
     @AppStorage("taskSort") private var sort = BoardRow.Sort.state
     /// The dragged order, one lead per line; tasks not in it yet go on top.
@@ -47,7 +53,8 @@ struct TasksSidebar: View {
     /// While dragging, the groups between where it came from and where it would land make way by its height.
     private func shift(of lead: String, in ids: [String]) -> CGFloat {
         guard let drag, drag.lead != lead, let from = ids.firstIndex(of: drag.lead), let to = dropIndex(in: ids),
-              let i = ids.firstIndex(of: lead) else { return 0 }
+            let i = ids.firstIndex(of: lead)
+        else { return 0 }
         if from < to, i > from, i <= to { return -height(drag.lead) }
         if to < from, i >= to, i < from { return height(drag.lead) }
         return 0
@@ -56,21 +63,23 @@ struct TasksSidebar: View {
     /// A press that moves 4 pt drags the lead; let go, it takes the slot it's over and the order is manual from then
     /// on. False if it never moved: a click.
     private func reorder(_ lead: String, in rows: [BoardRow]) -> TaskRow.Reorder {
-        TaskRow.Reorder(changed: { y in if abs(y) >= 4 || drag != nil { drag = (lead, y) } }, ended: {
-            guard drag != nil else { return false }
-            var ids = rows.map(\.session)
-            let target = dropIndex(in: ids)
-            withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) {
-                if let from = ids.firstIndex(of: lead), let target, target != from {
-                    ids.remove(at: from)
-                    ids.insert(lead, at: target)
-                    order = ids.joined(separator: "\n")
-                    sort = .manual
+        TaskRow.Reorder(
+            changed: { y in if abs(y) >= 4 || drag != nil { drag = (lead, y) } },
+            ended: {
+                guard drag != nil else { return false }
+                var ids = rows.map(\.session)
+                let target = dropIndex(in: ids)
+                withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) {
+                    if let from = ids.firstIndex(of: lead), let target, target != from {
+                        ids.remove(at: from)
+                        ids.insert(lead, at: target)
+                        order = ids.joined(separator: "\n")
+                        sort = .manual
+                    }
+                    drag = nil
                 }
-                drag = nil
-            }
-            return true
-        })
+                return true
+            })
     }
 
     /// Leads that aren't on the board: finished and gone offline with nothing for the user. One running isn't (a task
@@ -78,16 +87,20 @@ struct TasksSidebar: View {
     private func earlier(_ all: [Conversation]) -> [Conversation] {
         let ids = Set(all.map(\.id)), onBoard = Set(workspace.board.map(\.session))
         let saved = workspace.savedForLater
-        return all.filter { lead in (lead.parent.map { !ids.contains($0) } ?? true) && !onBoard.contains(lead.id) && !workspace.putAway.contains(lead.id)
-            && !saved.contains(lead.id) && lead.status == .offline }.reversed()
+        return all.filter { lead in
+            (lead.parent.map { !ids.contains($0) } ?? true) && !onBoard.contains(lead.id) && !workspace.putAway.contains(lead.id)
+                && !saved.contains(lead.id) && lead.status == .offline
+        }.reversed()
     }
 
     /// Leads started and running that the board hasn't got to yet: rows of their own, Working, until it has.
     private func starting(_ all: [Conversation]) -> [BoardRow] {
         let ids = Set(all.map(\.id)), onBoard = Set(workspace.board.map(\.session))
-        return all.filter { lead in (lead.parent.map { !ids.contains($0) } ?? true) && !onBoard.contains(lead.id) && !workspace.putAway.contains(lead.id)
-            && lead.status != .offline && workspace.workspace(of: lead) == workspace.current }
-            .compactMap { BoardRow.starting(session: $0.id, task: Workspace.label(of: $0), workspace: workspace.current) }
+        return all.filter { lead in
+            (lead.parent.map { !ids.contains($0) } ?? true) && !onBoard.contains(lead.id) && !workspace.putAway.contains(lead.id)
+                && lead.status != .offline && workspace.workspace(of: lead) == workspace.current
+        }
+        .compactMap { BoardRow.starting(session: $0.id, task: Workspace.label(of: $0), workspace: workspace.current) }
     }
 
     @State private var namingWorkspace = false
@@ -96,8 +109,15 @@ struct TasksSidebar: View {
     private func workspaceRows() -> [SelectorSection] {
         ComposerRows.menu([
             workspace.workspaces.map { w in (w.id, w.name, w.glyph, w.id == workspace.current, { workspace.current = w.id }) },
-            [("new", "New workspace…", "plus", false, { namingWorkspace = true }),
-             ("settings", "Workspace settings…", "sliders", false, { SettingsView.requested = .workspaces; place = .settings })],
+            [
+                ("new", "New workspace…", "plus", false, { namingWorkspace = true }),
+                (
+                    "settings", "Workspace settings…", "sliders", false,
+                    {
+                        SettingsView.requested = .workspaces; place = .settings
+                    }
+                ),
+            ],
         ])
     }
 
@@ -112,25 +132,33 @@ struct TasksSidebar: View {
             // Not before the first board: until then every lead looks like it isn't on it.
             let earlier = workspace.board.isEmpty ? [] : earlier(all).filter { workspace.workspace(of: $0) == workspace.current }
             ScrollView { taskList(all: all, workersOf: workersOf, earlier: earlier) }
-            .thinScrollbar(outset: 10, remember: "sidebar.tasks") // in the sidebar's padding: at its edge, clear of the rows
-            .scrollIndicators(.never)
-            .zeroDialog(isPresented: $namingWorkspace) {
-                NameSheet(title: "New workspace", name: "", action: "Create") { name in
-                    Task { if let error = await workspace.saveWorkspace(ZerodLink.Workspace(name: name)) { NSSound.beep(); Log.write("workspace: \(error)") } }
+                .thinScrollbar(outset: 10, remember: "sidebar.tasks") // in the sidebar's padding: at its edge, clear of the rows
+                .scrollIndicators(.never)
+                .zeroDialog(isPresented: $namingWorkspace) {
+                    NameSheet(title: "New workspace", name: "", action: "Create") { name in
+                        Task {
+                            if let error = await workspace.saveWorkspace(ZerodLink.Workspace(name: name)) {
+                                NSSound.beep(); Log.write("workspace: \(error)")
+                            }
+                        }
+                    }
                 }
-            }
-            .zeroDialog(item: $renaming) { task in
-                NameSheet(title: "Rename", name: task.name, action: "Rename") { name in Task { await workspace.rename(task.id, to: name, ticket: task.ticket) } }
-            }
-            .zeroDialog(item: $pairing) { task in
-                PairSheet(task: task, others: workspace.board.filter { $0.session != task.id }) { other in Task { await workspace.introduce(task.id, to: other) } }
-            }
-            .background { taskShortcuts }
-            // Soft edges, as the conversation has: more above, more below.
-            .softEdges(top: 20, bottom: 28)
-            // The list has the sidebar's whole height: what's said about the daemon lies over its foot, on a fade, and
-            // the last task scrolls clear of it.
-            .safeAreaInset(edge: .bottom, spacing: 0) { footer }
+                .zeroDialog(item: $renaming) { task in
+                    NameSheet(title: "Rename", name: task.name, action: "Rename") { name in
+                        Task { await workspace.rename(task.id, to: name, ticket: task.ticket) }
+                    }
+                }
+                .zeroDialog(item: $pairing) { task in
+                    PairSheet(task: task, others: workspace.board.filter { $0.session != task.id }) { other in
+                        Task { await workspace.introduce(task.id, to: other) }
+                    }
+                }
+                .background { taskShortcuts }
+                // Soft edges, as the conversation has: more above, more below.
+                .softEdges(top: 20, bottom: 28)
+                // The list has the sidebar's whole height: what's said about the daemon lies over its foot, on a fade, and
+                // the last task scrolls clear of it.
+                .safeAreaInset(edge: .bottom, spacing: 0) { footer }
         }
     }
 
@@ -154,7 +182,9 @@ struct TasksSidebar: View {
         // The last task clear of the fade at the foot.
         .padding(.bottom, 36)
         // Tasks coming and going move the rest smoothly, Earlier's included.
-        .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: (workspace.board.map(\.session) + starting(all).map(\.session) + earlier.map(\.id)))
+        .animation(
+            reduceMotion ? nil : .snappy(duration: 0.25),
+            value: (workspace.board.map(\.session) + starting(all).map(\.session) + earlier.map(\.id)))
     }
 
     /// The heading where every sidebar's is, its sort button centred over the tasks' state icons below.
@@ -162,14 +192,23 @@ struct TasksSidebar: View {
         HStack(spacing: 0) {
             Text("Tasks").font(.system(size: 13)).foregroundStyle(.secondary).padding(.leading, 10)
             Spacer()
-            Button { WorkspaceSelector.shared.toggle("tasks", kind: .menu, anchor: sortAnchor, rows: taskMenuRows) } label: {
+            Button {
+                WorkspaceSelector.shared.toggle("tasks", kind: .menu, anchor: sortAnchor, rows: taskMenuRows)
+            } label: {
                 NucleoIcon("sliders", size: 13).foregroundStyle(.secondary).frame(width: 24, height: 24)
-                    .background(sortHovered || WorkspaceSelector.shared.open == "tasks" ? Theme.hover : .clear, in: RoundedRectangle(cornerRadius: 6))
+                    .background(
+                        sortHovered || WorkspaceSelector.shared.open == "tasks" ? Theme.hover : .clear,
+                        in: RoundedRectangle(cornerRadius: 6)
+                    )
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .onHover { sortHovered = $0 }
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { sortAnchor = $0 }
+            .onGeometryChange(for: CGRect.self) {
+                $0.frame(in: .global)
+            } action: {
+                sortAnchor = $0
+            }
             // A row's state icon is 14 pt, 10 pt in from the edge: its centre is 17 pt in, as this 24 pt button's.
             .padding(.trailing, 5).tip("Sort, pause or unarchive tasks")
             .zeroDialog(isPresented: $showingArchive) { ArchiveSheet(workspace: workspace) }
@@ -184,16 +223,24 @@ struct TasksSidebar: View {
         let here = workspace.board.filter { $0.workspace == workspace.current }
         let running = here.filter { $0.ownState != .paused }.map(\.session)
         let paused = here.filter { $0.ownState == .paused }.map(\.session)
-        let sorts: [(BoardRow.Sort, String, String)] = [(.state, "State", "circle-check"), (.name, "Name", "heading-1"),
-                                                        (.manual, "Manual (drag to arrange)", "ordered-list")]
+        let sorts: [(BoardRow.Sort, String, String)] = [
+            (.state, "State", "circle-check"), (.name, "Name", "heading-1"),
+            (.manual, "Manual (drag to arrange)", "ordered-list"),
+        ]
         var pausing: [(id: String, title: String, glyph: String, selected: Bool, pick: () -> Void)] = []
-        if !running.isEmpty { pausing.append(("pause", "Pause all tasks", "circle-pause:glyph", false, { Task { await workspace.pause(running) } })) }
-        if !paused.isEmpty { pausing.append(("resume", "Resume paused tasks", "arrow-rotate-clockwise:glyph", false, { Task { await workspace.unpause(paused) } })) }
-        return ComposerRows.menu([
-            sorts.map { option, title, glyph in (option.rawValue, title, glyph, sort == option, { sort = option }) },
-            pausing,
-            [("archive", "Archived tasks…", "stack", false, { showingArchive = true })],
-        ].filter { !$0.isEmpty })
+        if !running.isEmpty {
+            pausing.append(("pause", "Pause all tasks", "circle-pause:glyph", false, { Task { await workspace.pause(running) } }))
+        }
+        if !paused.isEmpty {
+            pausing.append(
+                ("resume", "Resume paused tasks", "arrow-rotate-clockwise:glyph", false, { Task { await workspace.unpause(paused) } }))
+        }
+        return ComposerRows.menu(
+            [
+                sorts.map { option, title, glyph in (option.rawValue, title, glyph, sort == option, { sort = option }) },
+                pausing,
+                [("archive", "Archived tasks…", "stack", false, { showingArchive = true })],
+            ].filter { !$0.isEmpty })
     }
 
     /// The rows in a stack of their own, masked at its top: one arriving slides in from under the heading
@@ -213,15 +260,22 @@ struct TasksSidebar: View {
     private func leadGroup(_ row: BoardRow, workers: [Conversation], open: Bool, in rows: [BoardRow]) -> some View {
         let ids = rows.map(\.session)
         return VStack(alignment: .leading, spacing: 0) {
-            TaskRow(title: row.task, state: row.ownState, selected: place == .task(row.session) && navigation.worker == nil,
-                    fold: workers.isEmpty ? nil : open, action: {
-                // Its worker shown, the same task: back to the lead.
-                place = .task(row.session)
-                navigation.worker = nil
-            }, toggle: { toggle(row.session) }, reorder: reorder(row.session, in: rows))
-                .zeroContextMenu("task-\(row.session)") { menu(row.session, name: row.task, ticket: row.ticket) }
-                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named("tasks")).minY } action: { tops[row.session] = $0 }
-                .onHover { inside in TaskPeek.shared.hover(row.session, top: tops[row.session] ?? 0, inside: inside && drag == nil) }
+            TaskRow(
+                title: row.task, state: row.ownState, selected: place == .task(row.session) && navigation.worker == nil,
+                fold: workers.isEmpty ? nil : open,
+                action: {
+                    // Its worker shown, the same task: back to the lead.
+                    place = .task(row.session)
+                    navigation.worker = nil
+                }, toggle: { toggle(row.session) }, reorder: reorder(row.session, in: rows)
+            )
+            .zeroContextMenu("task-\(row.session)") { menu(row.session, name: row.task, ticket: row.ticket) }
+            .onGeometryChange(for: CGFloat.self) {
+                $0.frame(in: .named("tasks")).minY
+            } action: {
+                tops[row.session] = $0
+            }
+            .onHover { inside in TaskPeek.shared.hover(row.session, top: tops[row.session] ?? 0, inside: inside && drag == nil) }
             // Its workers, a row each. Its issues aren't rows (not tasks of their own, a row with nothing to open):
             // they're in its details pane.
             if open {
@@ -230,7 +284,11 @@ struct TasksSidebar: View {
                 }
             }
         }
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { heights[row.session] = $0 }
+        .onGeometryChange(for: CGFloat.self) {
+            $0.size.height
+        } action: {
+            heights[row.session] = $0
+        }
         .offset(y: drag?.lead == row.session ? drag!.y : shift(of: row.session, in: ids))
         .animation(drag?.lead == row.session || reduceMotion ? nil : .snappy(duration: 0.2), value: dropIndex(in: ids))
         // Asked to archive it: the question under its row, over the rows below.
@@ -246,23 +304,35 @@ struct TasksSidebar: View {
     }
 
     private func workerRow(_ worker: Conversation, of row: BoardRow, branch: TaskRow.Branch) -> some View {
-        TaskRow(title: Workspace.label(of: worker), state: row.member(worker.id)?.state ?? TaskRow.state(of: worker), selected: navigation.worker == worker.id,
-                branch: branch, action: {
-            place = .task(row.session)
-            navigation.worker = worker.id
-        })
+        TaskRow(
+            title: Workspace.label(of: worker), state: row.member(worker.id)?.state ?? TaskRow.state(of: worker),
+            selected: navigation.worker == worker.id,
+            branch: branch,
+            action: {
+                place = .task(row.session)
+                navigation.worker = worker.id
+            }
+        )
         // A worker's own menu, as its lead's: rename it, pause or stop it, archive it.
         .zeroContextMenu("worker-\(worker.id)") { workerMenu(worker) }
-        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named("tasks")).minY } action: { tops[worker.id] = $0 }
+        .onGeometryChange(for: CGFloat.self) {
+            $0.frame(in: .named("tasks")).minY
+        } action: {
+            tops[worker.id] = $0
+        }
         .onHover { inside in TaskPeek.shared.hover(worker.id, top: tops[worker.id] ?? 0, inside: inside && drag == nil) }
     }
 
     private func workerMenu(_ worker: Conversation) -> [[MenuItem]] {
         [
             [MenuItem("Rename…", "pen") { renaming = Renaming(id: worker.id, name: Workspace.label(of: worker), ticket: worker.ticket) }],
-            [workspace.isPaused(worker.id) ? MenuItem("Resume", "circle-play") { Task { await workspace.unpause([worker.id]) } }
-                                           : MenuItem("Pause", "circle-pause") { Task { await workspace.pause([worker.id]) } }]
-                + (worker.status == .working || worker.status == .waiting ? [MenuItem("Stop", "circle-xmark") { Task { await workspace.stop(worker.id) } }] : []),
+            [
+                workspace.isPaused(worker.id)
+                    ? MenuItem("Resume", "circle-play") { Task { await workspace.unpause([worker.id]) } }
+                    : MenuItem("Pause", "circle-pause") { Task { await workspace.pause([worker.id]) } }
+            ]
+                + (worker.status == .working || worker.status == .waiting
+                    ? [MenuItem("Stop", "circle-xmark") { Task { await workspace.stop(worker.id) } }] : []),
             [MenuItem("Archive…", "archive") { workspace.archiving = worker.id }],
         ]
     }
@@ -271,8 +341,10 @@ struct TasksSidebar: View {
     private var taskShortcuts: some View {
         let rows = sorted(workspace.board.filter { $0.workspace == workspace.current }).prefix(9)
         return ForEach(Array(rows.enumerated()), id: \.element.session) { index, row in
-            Button("") { place = .task(row.session); navigation.worker = nil }
-                .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+            Button("") {
+                place = .task(row.session); navigation.worker = nil
+            }
+            .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
         }
         .hidden()
     }
@@ -292,20 +364,31 @@ struct TasksSidebar: View {
 
     private func menu(_ id: String, name: String, ticket: String?) -> [[MenuItem]] {
         // Move to: a group of its own (Zero's menus have no submenus), the workspace it's in left out.
-        var moves = workspace.workspaces.count > 1 ? workspace.workspaces.filter { $0.id != workspace.current }.map { w in
-            MenuItem("Move to \(w.name)", "layers") { Task { await workspace.place(id, in: w.id) } }
-        } : []
+        var moves =
+            workspace.workspaces.count > 1
+            ? workspace.workspaces.filter { $0.id != workspace.current }.map { w in
+                MenuItem("Move to \(w.name)", "layers") { Task { await workspace.place(id, in: w.id) } }
+            } : []
         if workspace.workspaces.count > 1, workspace.roster[id]?.workspace != nil {
             moves.append(MenuItem("Move to its folder's workspace", "folder") { Task { await workspace.place(id, in: nil) } })
         }
         return [
-            [MenuItem("Rename…", "pen") { renaming = Renaming(id: id, name: name, ticket: ticket) },
-             MenuItem("Work with another task…", "link") { pairing = Renaming(id: id, name: name, ticket: ticket) }],
+            [
+                MenuItem("Rename…", "pen") { renaming = Renaming(id: id, name: name, ticket: ticket) },
+                MenuItem("Work with another task…", "link") { pairing = Renaming(id: id, name: name, ticket: ticket) },
+            ],
             moves,
-            [workspace.isPaused(id) ? MenuItem("Resume", "circle-play") { Task { await workspace.unpause([id]) } }
-                                    : MenuItem("Pause", "circle-pause") { Task { await workspace.pause([id]) } },
-             MenuItem("Save for later", "bookmark") { Task { await workspace.askToSaveForLater(id) } },
-             MenuItem("Move to Later", "clock") { Task { if place == .task(id) { place = .home }; await workspace.moveToLater(id) } }],
+            [
+                workspace.isPaused(id)
+                    ? MenuItem("Resume", "circle-play") { Task { await workspace.unpause([id]) } }
+                    : MenuItem("Pause", "circle-pause") { Task { await workspace.pause([id]) } },
+                MenuItem("Save for later", "bookmark") { Task { await workspace.askToSaveForLater(id) } },
+                MenuItem("Move to Later", "clock") {
+                    Task {
+                        if place == .task(id) { place = .home }; await workspace.moveToLater(id)
+                    }
+                },
+            ],
             [MenuItem("Archive…", "archive") { workspace.archiving = id }],
         ]
     }
@@ -319,13 +402,18 @@ struct TasksSidebar: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10).padding(.vertical, 10)
                 .padding(.horizontal, 10).padding(.top, 22)
-                .background(LinearGradient(stops: [.init(color: Theme.composer.opacity(0), location: 0), .init(color: Theme.composer, location: 0.5)],
-                                           startPoint: .top, endPoint: .bottom))
+                .background(
+                    LinearGradient(
+                        stops: [.init(color: Theme.composer.opacity(0), location: 0), .init(color: Theme.composer, location: 0.5)],
+                        startPoint: .top, endPoint: .bottom)
+                )
                 .padding(.horizontal, -10)
         } else {
             // In from the sidebar's edges by its inset (the column pads its content 10 at the sides, none below).
-            UsageFooter(workspace: workspace) { SettingsView.requested = .signins; place = .settings }
-                .padding(.horizontal, UsageFooter.inset - 10).padding(.vertical, UsageFooter.inset)
+            UsageFooter(workspace: workspace) {
+                SettingsView.requested = .signins; place = .settings
+            }
+            .padding(.horizontal, UsageFooter.inset - 10).padding(.vertical, UsageFooter.inset)
         }
     }
 }
@@ -346,7 +434,9 @@ private struct PairSheet: View {
             ScrollView {
                 VStack(spacing: 2) {
                     ForEach(others, id: \.session) { row in
-                        Button { chosen = row.session } label: {
+                        Button {
+                            chosen = row.session
+                        } label: {
                             HStack {
                                 Text(row.task).font(.system(size: 13)).lineLimit(1)
                                 Spacer()

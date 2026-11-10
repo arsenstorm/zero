@@ -28,4 +28,3 @@ private func session(_ id: String, _ provider: Provider = .claude) -> Conversati
     w.receive(.session(session("01a1aaaa00000002", .codex)))
     #expect(w.conversations.map(\.id) == ["01a1aaaa00000001", "01a1aaaa00000002"])
 }
-

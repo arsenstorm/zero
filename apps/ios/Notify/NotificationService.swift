@@ -8,9 +8,10 @@ final class NotificationService: UNNotificationServiceExtension {
     override func didReceive(_ request: UNNotificationRequest, withContentHandler done: @escaping (UNNotificationContent) -> Void) {
         guard let content = request.content.mutableCopy() as? UNMutableNotificationContent else { return done(request.content) }
         if let sealed = (content.userInfo["zero"] as? String).flatMap({ Data(base64Encoded: $0) }), let pairing = Pairing.load(),
-           let key = try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: pairing.key),
-           let plain = try? Tunnel.open(sealed, with: key, from: pairing.macKey),
-           let note = try? JSONDecoder().decode([String: String].self, from: plain) {
+            let key = try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: pairing.key),
+            let plain = try? Tunnel.open(sealed, with: key, from: pairing.macKey),
+            let note = try? JSONDecoder().decode([String: String].self, from: plain)
+        {
             content.title = note["title"] ?? content.title
             content.body = note["body"] ?? content.body
         }

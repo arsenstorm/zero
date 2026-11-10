@@ -28,7 +28,9 @@ struct BlockRow: View, Equatable {
                     // Not yours: a worker's report, or Zero's word. Read as such, on the left, folded past a few lines.
                     GivenMessage(from: given.from, text: given.text, cwd: cwd)
                 } else {
-                    MessageBlock(text: text, date: item.date, mine: true, quote: quote, save: save, rewind: { rewind(item) }) { ItemView(item: item, cwd: cwd) }
+                    MessageBlock(text: text, date: item.date, mine: true, quote: quote, save: save, rewind: { rewind(item) }) {
+                        ItemView(item: item, cwd: cwd)
+                    }
                 }
             }
         case let .answer(item):
@@ -39,8 +41,11 @@ struct BlockRow: View, Equatable {
                     // at its pace, fading as it was, rather than jumping to the end.
                     // Or new, never read out (it came whole as the turn ended, its words never streamed live): from its
                     // first word, rather than all at once, half under the composer, then the page jumping up for it.
-                    if Reveal.unfinished(item.id, of: text) || Reveal.fresh(item) { StreamingText(id: item.id, text: text, cwd: cwd) }
-                    else { MarkdownText(text, cwd: cwd, size: 14.5) }
+                    if Reveal.unfinished(item.id, of: text) || Reveal.fresh(item) {
+                        StreamingText(id: item.id, text: text, cwd: cwd)
+                    } else {
+                        MarkdownText(text, cwd: cwd, size: 14.5)
+                    }
                 }
             }
         case let .work(_, items, start, end, live):
@@ -73,13 +78,17 @@ struct WorkBlock: View {
     @State private var spoke = false
     private var open: Bool { live != toggled }
     /// Steps of substance: reading, running, editing. Thought alone isn't work, nor its words.
-    private var worked: Bool { items.contains { if case .reasoning = $0.kind { false } else if case .agent = $0.kind { false } else { true } } }
+    private var worked: Bool {
+        items.contains { if case .reasoning = $0.kind { false } else if case .agent = $0.kind { false } else { true } }
+    }
     /// Answering with no steps, its words streaming in: the header it ends with (none, or "Thought for…") already,
     /// not "Working for…" taken away as the answer lands.
     private var speaking: Bool { live && !worked && items.last.map { if case .agent = $0.kind { true } else { false } } == true }
     /// The words the agent is writing now, the last of its items.
     private var streamingWords: String? {
-        guard let last = items.last, case let .agent(said, _) = last.kind, case let text = ZeroEnding.split(said).0, !text.isEmpty else { return nil }
+        guard let last = items.last, case let .agent(said, _) = last.kind, case let text = ZeroEnding.split(said).0, !text.isEmpty else {
+            return nil
+        }
         return text
     }
     private var thought: Bool { items.contains { if case .reasoning = $0.kind { true } else { false } } }
@@ -89,7 +98,9 @@ struct WorkBlock: View {
             if speaking && !thought {
                 // Just its words: Codex's "Thinking" goes as they start.
             } else if live || !items.isEmpty {
-                Button { chosen = true; withAnimation(.easeOut(duration: 0.15)) { toggled.toggle() } } label: {
+                Button {
+                    chosen = true; withAnimation(.easeOut(duration: 0.15)) { toggled.toggle() }
+                } label: {
                     HStack(spacing: 6) {
                         if speaking {
                             // As it'll read once answered: how long it thought, until its words began.
@@ -269,10 +280,13 @@ struct QuietTurns<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Button { open.toggle() } label: {
+            Button {
+                open.toggle()
+            } label: {
                 HStack(spacing: 8) {
                     NucleoIcon("stack", size: 14).foregroundStyle(.secondary).frame(width: 14, height: 16)
-                    Text(turns == 1 ? "An update that needed nothing from you" : "\(turns) updates that needed nothing from you").foregroundStyle(.secondary)
+                    Text(turns == 1 ? "An update that needed nothing from you" : "\(turns) updates that needed nothing from you")
+                        .foregroundStyle(.secondary)
                     Spacer(minLength: 0)
                     NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary)
                 }
@@ -307,11 +321,15 @@ struct GivenMessage: View {
                     Button(sender) { link.open(from) }.buttonStyle(.plain).fontWeight(.medium).lineLimit(1).fixedSize()
                         .tip("Open \(sender)")
                 }
-                Button { open.toggle() } label: {
+                Button {
+                    open.toggle()
+                } label: {
                     HStack(alignment: .top, spacing: 8) {
                         Text(first).foregroundStyle(.secondary).lineLimit(open ? nil : 1).truncationMode(.tail)
                         Spacer(minLength: 0)
-                        if !rest.isEmpty { NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary) }
+                        if !rest.isEmpty {
+                            NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary)
+                        }
                     }
                     .contentShape(Rectangle())
                 }
@@ -322,7 +340,11 @@ struct GivenMessage: View {
             if open, !rest.isEmpty {
                 let followed = from == "zero" ? FollowEvents.parse(report) : []
                 Group {
-                    if followed.isEmpty { MarkdownText(rest, cwd: cwd, size: 13.5, compact: true) } else { FollowedEvents(groups: followed) }
+                    if followed.isEmpty {
+                        MarkdownText(rest, cwd: cwd, size: 13.5, compact: true)
+                    } else {
+                        FollowedEvents(groups: followed)
+                    }
                 }
                 .padding(.leading, 22)
             }
@@ -394,7 +416,11 @@ private struct FollowedEvents: View {
     /// What opens, as properties have it: medium weight on a dashed underline.
     @ViewBuilder private func opening(_ text: String, _ link: String?) -> some View {
         if let link, let url = URL(string: link) {
-            Button { NSWorkspace.shared.open(url) } label: { TaskDetails.linked(text) }.buttonStyle(.plain).tip("Open " + link)
+            Button {
+                NSWorkspace.shared.open(url)
+            } label: {
+                TaskDetails.linked(text)
+            }.buttonStyle(.plain).tip("Open " + link)
         } else {
             Text(text).fontWeight(.medium).lineLimit(1)
         }
@@ -454,7 +480,8 @@ struct MessageBlock<Content: View>: View {
         let calendar = Calendar.current
         if calendar.isDateInToday(date) { return date.formatted(date: .omitted, time: .shortened) }
         let sameYear = calendar.isDate(date, equalTo: .now, toGranularity: .year)
-        return date.formatted(sameYear ? .dateTime.month(.abbreviated).day().hour().minute() : .dateTime.month(.abbreviated).day().year().hour().minute())
+        return date.formatted(
+            sameYear ? .dateTime.month(.abbreviated).day().hour().minute() : .dateTime.month(.abbreviated).day().year().hour().minute())
     }
 }
 
@@ -519,7 +546,9 @@ struct MessageRail: View, Equatable {
                         let group = groups[hovered]
                         let within = min(max((point.y - (top + pitch * CGFloat(hovered))) / pitch, 0), 0.999)
                         scrubbed = group.lowerBound + Int(within * CGFloat(group.count))
-                    } else { scrubbed = nil }
+                    } else {
+                        scrubbed = nil
+                    }
                 case .ended:
                     // A moment to cross to the card; it stays while the pointer's on it.
                     Task {
@@ -552,12 +581,16 @@ struct MessageRail: View, Equatable {
     }
 
     private func preview(_ mark: Mark) -> some View {
-        let inline = { (text: String) in (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text) }
+        let inline = { (text: String) in
+            (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+                ?? AttributedString(text)
+        }
         let firstLine = mark.text.split(separator: "\n").first.map(String.init) ?? mark.text
         return VStack(alignment: .leading, spacing: 5) {
             Text(firstLine).font(.system(size: 13.5, weight: .medium)).lineLimit(1)
             if let answer = mark.answer {
-                Text(inline(answer.replacingOccurrences(of: "\n", with: " "))).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(3)
+                Text(inline(answer.replacingOccurrences(of: "\n", with: " "))).font(.system(size: 13)).foregroundStyle(.secondary)
+                    .lineLimit(3)
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
@@ -587,7 +620,11 @@ struct WayDown: View {
     let go: () -> Void
 
     var body: some View {
-        if away || tracker.geometry.map({ $0.contentSize.height + $0.contentInsets.bottom - ($0.contentOffset.y + $0.containerSize.height) > 200 }) == true {
+        if away
+            || tracker.geometry.map({
+                $0.contentSize.height + $0.contentInsets.bottom - ($0.contentOffset.y + $0.containerSize.height) > 200
+            }) == true
+        {
             Button(action: go) {
                 NucleoIcon("arrow-up", size: 14).rotationEffect(.degrees(180)).foregroundStyle(.primary)
                     .frame(width: 32, height: 32).background(Theme.card, in: Circle())
@@ -611,11 +648,12 @@ struct ThinScrollbar: View {
     @State private var hiding: Task<Void, Never>?
 
     /// rgb(161 161 170 / 70%) light, rgb(113 113 122 / 70%) dark: the site's zinc.
-    static let thumb = Color(nsColor: NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(srgbRed: 113 / 255, green: 113 / 255, blue: 122 / 255, alpha: 0.7)
-            : NSColor(srgbRed: 161 / 255, green: 161 / 255, blue: 170 / 255, alpha: 0.7)
-    })
+    static let thumb = Color(
+        nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ? NSColor(srgbRed: 113 / 255, green: 113 / 255, blue: 122 / 255, alpha: 0.7)
+                : NSColor(srgbRed: 161 / 255, green: 161 / 255, blue: 170 / 255, alpha: 0.7)
+        })
 
     var body: some View {
         GeometryReader { space in
@@ -639,14 +677,17 @@ struct ThinScrollbar: View {
                             withAnimation(.easeOut(duration: 0.12)) { hovered = inside }
                             if !inside { reveal() }
                         }
-                        .gesture(DragGesture(minimumDistance: 0)
-                            .onChanged { drag in
-                                let start = dragFrom ?? offset
-                                if dragFrom == nil { dragFrom = start }
-                                let moved = drag.translation.height * room / max(track - length, 1)
-                                scrollTo(min(max(start + moved, 0), room))
-                            }
-                            .onEnded { _ in dragFrom = nil; reveal() })
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { drag in
+                                    let start = dragFrom ?? offset
+                                    if dragFrom == nil { dragFrom = start }
+                                    let moved = drag.translation.height * room / max(track - length, 1)
+                                    scrollTo(min(max(start + moved, 0), room))
+                                }
+                                .onEnded { _ in
+                                    dragFrom = nil; reveal()
+                                })
                 }
             }
         }
@@ -680,7 +721,9 @@ struct ThinScrollbars: ViewModifier {
             .scrollIndicators(.never)
             .scrollPosition($position)
             .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { _, now in tracker.geometry = now }
-            .overlay(alignment: .trailing) { ThinScrollbar(tracker: tracker) { position.scrollTo(y: $0) }.padding(.trailing, 2).offset(x: outset) }
+            .overlay(alignment: .trailing) {
+                ThinScrollbar(tracker: tracker) { position.scrollTo(y: $0) }.padding(.trailing, 2).offset(x: outset)
+            }
             .onScrollPhaseChange { _, phase in if phase == .idle { keep() } }
             .onDisappear(perform: keep)
             .onAppear {
@@ -698,7 +741,9 @@ struct ThinScrollbars: ViewModifier {
 
 extension View {
     /// The one scrollbar Zero has, the chat's, on this scroll view.
-    func thinScrollbar(outset: CGFloat = 0, remember: String? = nil) -> some View { modifier(ThinScrollbars(outset: outset, remember: remember)) }
+    func thinScrollbar(outset: CGFloat = 0, remember: String? = nil) -> some View {
+        modifier(ThinScrollbars(outset: outset, remember: remember))
+    }
 }
 
 /// Where pages and conversations were scrolled to, kept across going back and forward and across Zero reopening.
@@ -712,7 +757,8 @@ enum ScrollMemory {
     /// A conversation's place: the block at the top of the screen, and the message of yours it answers (to load back
     /// to when it isn't loaded). None: at its end.
     static func place(in conversation: String) -> (block: String, turn: String)? {
-        guard let kept = (UserDefaults.standard.dictionary(forKey: "chatScroll") as? [String: [String]])?[conversation], kept.count == 2 else { return nil }
+        guard let kept = (UserDefaults.standard.dictionary(forKey: "chatScroll") as? [String: [String]])?[conversation], kept.count == 2
+        else { return nil }
         return (kept[0], kept[1])
     }
 
@@ -769,11 +815,14 @@ struct SkeletonTurns: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             ForEach(0..<2, id: \.self) { _ in
-                RoundedRectangle(cornerRadius: 14).fill(Theme.chip).frame(width: 260, height: 36).frame(maxWidth: .infinity, alignment: .trailing)
+                RoundedRectangle(cornerRadius: 14).fill(Theme.chip).frame(width: 260, height: 36).frame(
+                    maxWidth: .infinity, alignment: .trailing)
                 VStack(alignment: .leading, spacing: 9) {
                     ForEach([0.92, 0.78, 0.86, 0.45], id: \.self) { fraction in
-                        GeometryReader { space in RoundedRectangle(cornerRadius: 4).fill(Theme.chip).frame(width: space.size.width * fraction, height: 10) }
-                            .frame(height: 10)
+                        GeometryReader { space in
+                            RoundedRectangle(cornerRadius: 4).fill(Theme.chip).frame(width: space.size.width * fraction, height: 10)
+                        }
+                        .frame(height: 10)
                     }
                 }
             }
@@ -803,7 +852,8 @@ struct StepLine: View {
 
     @ViewBuilder private var text: some View {
         switch item.kind {
-        case let .command(command, _, _, _, _): Text("$ " + command.replacingOccurrences(of: "\n", with: " ")).font(.system(size: 12, design: .monospaced))
+        case let .command(command, _, _, _, _):
+            Text("$ " + command.replacingOccurrences(of: "\n", with: " ")).font(.system(size: 12, design: .monospaced))
         case let .tool(name, detail): Text(ToolNames.name(name)).fontWeight(.medium) + Text(" " + ToolNames.detail(detail))
         case let .fileChange(changes): Text("Edited " + changes.map { ($0.path as NSString).lastPathComponent }.joined(separator: ", "))
         case let .agent(text, _), let .reasoning(text), let .plan(text): Text(text.split(separator: "\n").first.map(String.init) ?? "")
@@ -895,7 +945,9 @@ struct StreamingText: View {
     private func advance(to now: Date, total: Int) {
         let step = min(now.timeIntervalSince(last ?? now.addingTimeInterval(-1 / 60)), 0.1)
         last = now
-        if runs.contains(where: { now.timeIntervalSince($0.since) >= Self.fade }) { runs = runs.filter { now.timeIntervalSince($0.since) < Self.fade }; tick += 1 }
+        if runs.contains(where: { now.timeIntervalSince($0.since) >= Self.fade }) {
+            runs = runs.filter { now.timeIntervalSince($0.since) < Self.fade }; tick += 1
+        }
         let behind = total - shown
         guard behind > 0 else { if runs.isEmpty, !done { done = true }; return }
         // Steady, a burst read out at the same pace (a reply arrives whole once Claude has thought); only a backlog of
@@ -915,5 +967,3 @@ struct StreamingText: View {
         Reveal.shown[id] = shown
     }
 }
-
-

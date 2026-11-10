@@ -10,7 +10,9 @@ struct PairView: View {
     var body: some View {
         Welcome(title: "Pair with your Mac", words: "Your phone talks to Zero on your Mac, end to end encrypted.") {
             Panel {
-                ForEach(Array(["Open Zero on your Mac", "Settings › Phone › Add a phone", "Scan the code it shows"].enumerated()), id: \.offset) { n, step in
+                ForEach(
+                    Array(["Open Zero on your Mac", "Settings › Phone › Add a phone", "Scan the code it shows"].enumerated()), id: \.offset
+                ) { n, step in
                     HStack(spacing: 14) {
                         Text("\(n + 1)").font(.subheadline.weight(.semibold)).monospacedDigit()
                             .frame(width: 28, height: 28).background(Color.primary.opacity(0.1), in: Circle())
@@ -27,7 +29,9 @@ struct PairView: View {
                 // Its room kept, so the buttons don't move when it shows.
                 Text("That isn't a Zero pairing link.").font(.footnote).foregroundStyle(.red).opacity(wrong ? 1 : 0)
             }
-        } foot: { EmptyView() }
+        } foot: {
+            EmptyView()
+        }
         .sheet(isPresented: $scanning) {
             Scanner { text in
                 scanning = false
@@ -127,8 +131,10 @@ private struct Welcome<Content: View, Foot: View>: View {
                 VStack(spacing: 10) {
                     Logo(size: 64).padding(.bottom, 26)
                     Text(title).font(.title.weight(.bold)).lineLimit(1).minimumScaleFactor(0.7)
-                    Text(words).font(.body).foregroundStyle(scheme == .dark ? AnyShapeStyle(.white.opacity(0.75)) : AnyShapeStyle(.secondary))
-                        .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                    Text(words).font(.body).foregroundStyle(
+                        scheme == .dark ? AnyShapeStyle(.white.opacity(0.75)) : AnyShapeStyle(.secondary)
+                    )
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                 }
                 .foregroundStyle(scheme == .dark ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
                 .modifier(Halo(color: scheme == .dark ? .black : .white, strength: scheme == .dark ? 0.25 : 1))

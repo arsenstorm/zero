@@ -53,10 +53,11 @@ public final class Linear {
             guard callback["state"] == state, let code = callback["code"] else {
                 return callback["error_description"] ?? callback["error"] ?? "Linear didn't connect."
             }
-            var workspace = try await Self.describe(Self.token([
-                "grant_type": "authorization_code", "code": code, "redirect_uri": Self.redirect,
-                "client_id": Self.clientID, "code_verifier": verifier,
-            ]))
+            var workspace = try await Self.describe(
+                Self.token([
+                    "grant_type": "authorization_code", "code": code, "redirect_uri": Self.redirect,
+                    "client_id": Self.clientID, "code_verifier": verifier,
+                ]))
             workspace.name = workspace.name.isEmpty ? workspace.urlKey : workspace.name
             workspaces.removeAll { $0.urlKey == workspace.urlKey }
             workspaces.append(workspace)
@@ -81,7 +82,8 @@ public final class Linear {
 
     private func cacheLogo(_ workspace: Workspace) async {
         guard let url = workspace.logo, let (data, response) = try? await URLSession.shared.data(from: url),
-              (response as? HTTPURLResponse)?.statusCode == 200 else { return }
+            (response as? HTTPURLResponse)?.statusCode == 200
+        else { return }
         let file = Self.logoFile(workspace.urlKey)
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: file)
@@ -112,7 +114,9 @@ public final class Linear {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(tokens.access)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["query": "{ organization { urlKey name logoUrl } teams(first: 250) { nodes { key } } }"])
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "query": "{ organization { urlKey name logoUrl } teams(first: 250) { nodes { key } } }"
+        ])
         struct Reply: Decodable {
             struct Data: Decodable {
                 struct Organization: Decodable { let urlKey: String; let name: String; let logoUrl: String? }
@@ -140,14 +144,17 @@ public final class Linear {
         request.httpBody = Data((body.percentEncodedQuery ?? "").replacingOccurrences(of: "+", with: "%2B").utf8)
         struct Reply: Decodable { let access_token: String; let refresh_token: String?; let expires_in: Double? }
         let reply = try JSONDecoder().decode(Reply.self, from: try await send(request))
-        return Workspace(urlKey: "", name: "", teams: [], access: reply.access_token, refresh: reply.refresh_token,
-                         expires: Date().addingTimeInterval(reply.expires_in ?? 86_400))
+        return Workspace(
+            urlKey: "", name: "", teams: [], access: reply.access_token, refresh: reply.refresh_token,
+            expires: Date().addingTimeInterval(reply.expires_in ?? 86_400))
     }
 
     private static func send(_ request: URLRequest) async throws -> Data {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw NSError(domain: "Linear", code: 0, userInfo: [NSLocalizedDescriptionKey: "Linear answered \((response as? HTTPURLResponse)?.statusCode ?? 0)."])
+            throw NSError(
+                domain: "Linear", code: 0,
+                userInfo: [NSLocalizedDescriptionKey: "Linear answered \((response as? HTTPURLResponse)?.statusCode ?? 0)."])
         }
         return data
     }
@@ -187,8 +194,10 @@ private enum Callback {
                     let line = data.map { String(decoding: $0, as: UTF8.self) }?.components(separatedBy: "\r\n").first ?? ""
                     let path = line.split(separator: " ").dropFirst().first.map(String.init) ?? ""
                     guard path.hasPrefix("/oauth/linear") else { connection.cancel(); return }
-                    let page = "<!doctype html><meta charset=utf-8><title>Zero</title><body style=\"font:15px -apple-system;margin:4em;text-align:center\">Linear is connected. You can close this tab."
-                    let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(page.utf8.count)\r\nConnection: close\r\n\r\n\(page)"
+                    let page =
+                        "<!doctype html><meta charset=utf-8><title>Zero</title><body style=\"font:15px -apple-system;margin:4em;text-align:center\">Linear is connected. You can close this tab."
+                    let response =
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(page.utf8.count)\r\nConnection: close\r\n\r\n\(page)"
                     connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
                     let items = URLComponents(string: "http://localhost\(path)")?.queryItems ?? []
                     finish(.success(Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })))
@@ -210,13 +219,17 @@ public enum Keychain {
     }
 
     public static func saveString(_ value: String?, service: String, account: String) {
-        if let value { _ = security(["add-generic-password", "-U", "-s", service, "-a", account, "-w", value]) }
-        else { _ = security(["delete-generic-password", "-s", service, "-a", account]) }
+        if let value {
+            _ = security(["add-generic-password", "-U", "-s", service, "-a", account, "-w", value])
+        } else {
+            _ = security(["delete-generic-password", "-s", service, "-a", account])
+        }
     }
 
     static func load() -> [Linear.Workspace] {
         guard let encoded = security(["find-generic-password", "-s", "Zero Linear", "-a", "workspaces", "-w"]),
-              let data = Data(base64Encoded: encoded) else { return [] }
+            let data = Data(base64Encoded: encoded)
+        else { return [] }
         return (try? JSONDecoder().decode([Linear.Workspace].self, from: data)) ?? []
     }
 

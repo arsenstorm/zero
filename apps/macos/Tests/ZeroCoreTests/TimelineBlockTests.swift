@@ -1,7 +1,9 @@
 import Testing
 @testable import ZeroCore
 
-private func item(_ id: String, _ kind: ConversationItem.Kind) -> ConversationItem { ConversationItem(id: id, turn: "t", kind: kind, status: .done) }
+private func item(_ id: String, _ kind: ConversationItem.Kind) -> ConversationItem {
+    ConversationItem(id: id, turn: "t", kind: kind, status: .done)
+}
 
 /// A turn that ends on an ask: what the agent wrote before asking is the reasoning behind the question, shown in full
 /// above it, not folded away with the commands. The rest of the turn's words fold as before.
@@ -37,7 +39,11 @@ private func item(_ id: String, _ kind: ConversationItem.Kind) -> ConversationIt
     ]
     let rows = TimelineRow.of(TimelineBlock.of(items, working: false))
     #expect(rows.map(\.id) == ["u", "a0", "quiet-r2", "r3", "work-c3", "a3", "r4", "a4"], "\(rows.map(\.id))")
-    if case let .quiet(_, blocks, turns) = rows[2] { #expect(turns == 2 && blocks.map(\.id) == ["r1", "a1", "r2", "a2"]) } else { Issue.record("not folded") }
+    if case let .quiet(_, blocks, turns) = rows[2] {
+        #expect(turns == 2 && blocks.map(\.id) == ["r1", "a1", "r2", "a2"])
+    } else {
+        Issue.record("not folded")
+    }
 }
 
 /// A turn started by the user's own answer to an ask (Zero passes it on, so it reads as Zero's) is the user's: it

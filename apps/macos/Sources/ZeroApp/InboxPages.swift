@@ -22,7 +22,9 @@ struct InboxSidebar: View {
         let asks = AsksPage.asks(controller)
         let waiting = asks.filter { !$0.state.isFinal }
         // Agents by their latest ask, newest first.
-        let agents = asks.reversed().reduce(into: [String]()) { names, ask in if !names.contains(ask.agent.name) { names.append(ask.agent.name) } }
+        let agents = asks.reversed().reduce(into: [String]()) { names, ask in
+            if !names.contains(ask.agent.name) { names.append(ask.agent.name) }
+        }
         SidebarColumn(title: "Inbox") {
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
@@ -45,7 +47,9 @@ struct InboxSidebar: View {
     }
 
     private func row(_ id: String, _ title: String, count: Int?, @ViewBuilder icon: () -> some View) -> some View {
-        Button { filter = id; filterTitle = title } label: {
+        Button {
+            filter = id; filterTitle = title
+        } label: {
             HStack(spacing: 9) {
                 icon().foregroundStyle(.secondary).frame(width: 18)
                 Text(title).font(.system(size: 13)).lineLimit(1)
@@ -78,7 +82,8 @@ struct AsksPage: View {
     /// What the filter shows: waiting oldest first (a queue), answered newest first.
     private var shown: [Ask] {
         let all = Self.asks(controller)
-        let answered = Array(all.filter(\.state.isFinal).sorted { ($0.answeredAt ?? $0.createdAt) > ($1.answeredAt ?? $1.createdAt) }.prefix(50))
+        let answered = Array(
+            all.filter(\.state.isFinal).sorted { ($0.answeredAt ?? $0.createdAt) > ($1.answeredAt ?? $1.createdAt) }.prefix(50))
         switch filter {
         case InboxFilter.waiting: return all.filter { !$0.state.isFinal }
         case InboxFilter.answered: return answered
@@ -91,7 +96,8 @@ struct AsksPage: View {
     var body: some View {
         let asks = shown
         // "" is every row closed, on purpose.
-        let open: String? = picked == "" ? nil : picked.flatMap { id in asks.first { $0.id == id }?.id } ?? asks.first { !$0.state.isFinal }?.id
+        let open: String? =
+            picked == "" ? nil : picked.flatMap { id in asks.first { $0.id == id }?.id } ?? asks.first { !$0.state.isFinal }?.id
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 if !asks.isEmpty { table(asks, open: open) }
@@ -121,18 +127,23 @@ struct AsksPage: View {
                             // its purple rows on the open row's grey read as broken.
                             .background(ask.doneCheck == true ? Theme.doneSurface : Theme.rowHover)
                             .overlay(alignment: .topTrailing) {
-                                Button { picked = "" } label: {
+                                Button {
+                                    picked = ""
+                                } label: {
                                     NucleoIcon("xmark", size: 11).foregroundStyle(.secondary).frame(width: 24, height: 24)
                                 }
                                 .buttonStyle(Hovering(radius: 6)).tip("Fold it back").padding(10)
                             }
                     } else {
-                        Button { picked = ask.id } label: {
-                            line(head: false,
-                                 ask: Text(ask.title).foregroundStyle(.primary).lineLimit(2).tip(ask.title),
-                                 agent: Text(controller.store.displayName(of: ask.agent.name)).foregroundStyle(.secondary).lineLimit(1),
-                                 kind: Text(Self.kind(ask)).foregroundStyle(.secondary),
-                                 since: since(ask))
+                        Button {
+                            picked = ask.id
+                        } label: {
+                            line(
+                                head: false,
+                                ask: Text(ask.title).foregroundStyle(.primary).lineLimit(2).tip(ask.title),
+                                agent: Text(controller.store.displayName(of: ask.agent.name)).foregroundStyle(.secondary).lineLimit(1),
+                                kind: Text(Self.kind(ask)).foregroundStyle(.secondary),
+                                since: since(ask))
                         }
                         .buttonStyle(Hovering(radius: 0, fill: .clear, hover: Theme.rowHover))
                     }
@@ -174,11 +185,16 @@ struct AsksPage: View {
 
     /// Nothing to show: said plainly, with what would show here.
     private var empty: some View {
-        let (title, detail): (String, String) = switch filter {
-        case InboxFilter.waiting: ("You're all caught up", "When an agent asks you something, wants an approval or needs a command run, it lands here, and the bar's inbox turns orange.")
-        case InboxFilter.answered: ("Nothing answered yet", "Asks you answer show here, newest first.")
-        default: ("Nothing from this agent", "Its questions, approvals and commands show here when it asks.")
-        }
+        let (title, detail): (String, String) =
+            switch filter {
+            case InboxFilter.waiting:
+                (
+                    "You're all caught up",
+                    "When an agent asks you something, wants an approval or needs a command run, it lands here, and the bar's inbox turns orange."
+                )
+            case InboxFilter.answered: ("Nothing answered yet", "Asks you answer show here, newest first.")
+            default: ("Nothing from this agent", "Its questions, approvals and commands show here when it asks.")
+            }
         return VStack(spacing: 14) {
             NucleoIcon("inbox", fill: "glyph", size: 26).foregroundStyle(.secondary)
                 .frame(width: 64, height: 64).background(Theme.row, in: Circle())
@@ -224,7 +240,8 @@ enum Drafts {
 
     static func load(_ composer: String) -> (text: String, images: [URL])? {
         guard let data = UserDefaults.standard.dictionary(forKey: key)?[composer] as? Data,
-              let draft = try? JSONDecoder().decode(Draft.self, from: data) else { return nil }
+            let draft = try? JSONDecoder().decode(Draft.self, from: data)
+        else { return nil }
         return (draft.text, draft.images.filter { FileManager.default.fileExists(atPath: $0) }.map { URL(fileURLWithPath: $0) })
     }
 
@@ -251,11 +268,16 @@ struct StatusCard: View {
             // Blocked on an ask, the ask says it all: no words of the status beside it.
             if asks.isEmpty, let needs = row.needs { Text(needs).font(.system(size: 13)).fixedSize(horizontal: false, vertical: true) }
             if asks.isEmpty, let now = row.now, row.needs == nil {
-                Text((try? AttributedString(markdown: now, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(now))
-                    .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(
+                    (try? AttributedString(markdown: now, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+                        ?? AttributedString(now)
+                )
+                .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             // The inbox's card without its own frame (a card in a card), lined up with this one's padding.
-            ForEach(asks) { ask in CardView(ask: ask, controller: inbox, focus: $focus, flat: true, showsByline: false).padding(.horizontal, -16) }
+            ForEach(asks) { ask in
+                CardView(ask: ask, controller: inbox, focus: $focus, flat: true, showsByline: false).padding(.horizontal, -16)
+            }
         }
         .padding(14)
         .frame(width: Self.width, alignment: .leading)
@@ -290,7 +312,8 @@ struct UpdatingBar: View {
                             if index > 0 { Divider().padding(.leading, 10) }
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(waiting.task.isEmpty ? "A task" : waiting.task).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                                Text(waiting.command).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                                Text(waiting.command).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
+                                    .truncationMode(.tail)
                             }
                             .padding(.horizontal, 10).padding(.vertical, 7)
                         }

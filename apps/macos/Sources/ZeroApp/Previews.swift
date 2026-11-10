@@ -11,7 +11,9 @@ enum Preview {
         NSApplication.shared.appearance = NSAppearance(named: .darkAqua)
         let words = "`SkeletonTurns` is static, and `Bar` only shows while an integration view loads, so both are fine."
         let item = ConversationItem(id: "a1", turn: "t", kind: .agent(text: words, finalAnswer: false), status: .done)
-        let command = ConversationItem(id: "c1", turn: "t", kind: .command(command: "cd /Users/arsen", cwd: "/", output: "", exitCode: 0, durationMs: 1), status: .done)
+        let command = ConversationItem(
+            id: "c1", turn: "t", kind: .command(command: "cd /Users/arsen", cwd: "/", output: "", exitCode: 0, durationMs: 1), status: .done
+        )
         func write(_ view: some View, _ name: String) {
             let host = NSHostingView(rootView: view.frame(width: 640).padding(24).background(Theme.card))
             host.frame = NSRect(origin: .zero, size: host.fittingSize)
@@ -24,11 +26,16 @@ enum Preview {
             try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: dir).appendingPathComponent(name))
         }
         write(MarkdownText(words, size: 14.5), "text.png")
-        write(VStack(alignment: .leading, spacing: 12) { ItemView(item: command, cwd: "/"); ItemView(item: item, cwd: "/") }, "step.png")
+        write(
+            VStack(alignment: .leading, spacing: 12) {
+                ItemView(item: command, cwd: "/"); ItemView(item: item, cwd: "/")
+            }, "step.png")
         write(WorkBlock(items: [command, item], start: Date().addingTimeInterval(-60), end: Date(), live: true, cwd: "/"), "block.png")
         let mine = ConversationItem(id: "u1", turn: "t", kind: .user(text: "`git status` first, then the rest"), status: .done)
         write(ItemView(item: mine, cwd: "/"), "mine.png")
-        write(MarkdownText("Before.\n\n```swift\nlet a = 1\n```\n\n> A quote, quoted.\n\n---\n\n`code` after a rule.", size: 14.5), "blocks.png")
+        write(
+            MarkdownText("Before.\n\n```swift\nlet a = 1\n```\n\n> A quote, quoted.\n\n---\n\n`code` after a rule.", size: 14.5),
+            "blocks.png")
     }
 
     static func renderPill(to dir: String) {
@@ -36,13 +43,20 @@ enum Preview {
         let lead = AgentIdentity(name: "app-lead", host: "mac")
         let store = Store(asks: [
             made(Ask(kind: .note, title: "Update", body: "Scaffolded the checkout page; installing the Stripe SDK next", agent: codex)),
-            Ask(kind: .choice, title: "Stripe checkout", body: "Allow this command?", options: ["Yes", "Yes, and don't ask again", "No, and tell Codex what to do differently…"],
+            Ask(
+                kind: .choice, title: "Stripe checkout", body: "Allow this command?",
+                options: ["Yes", "Yes, and don't ask again", "No, and tell Codex what to do differently…"],
                 command: "npm install stripe", agent: codex),
-            Ask(kind: .run, title: "Production read: Source.count", options: ["Run", "Reject", "Suggest something else…"],
+            Ask(
+                kind: .run, title: "Production read: Source.count", options: ["Run", "Reject", "Suggest something else…"],
                 command: "bin/production console <<< 'puts Source.count'", cwd: "/Users/arsen/x", agent: lead),
             made(Ask(kind: .choice, title: "Deploy", body: "Deploy to staging now?", options: ["Yes", "Not yet…"], agent: lead), chose: 0),
-            made(Ask(kind: .choice, title: "Lint", body: "Fix the 3 lint warnings too?", options: ["Yes", "Leave them"], agent: codex), chose: 0),
-            made(Ask(kind: .choice, title: "Deploy", body: "Deploy to staging now?", options: ["Yes", "Not yet…"], agent: lead), chose: 0, pending: true),
+            made(
+                Ask(kind: .choice, title: "Lint", body: "Fix the 3 lint warnings too?", options: ["Yes", "Leave them"], agent: codex),
+                chose: 0),
+            made(
+                Ask(kind: .choice, title: "Deploy", body: "Deploy to staging now?", options: ["Yes", "Not yet…"], agent: lead), chose: 0,
+                pending: true),
         ])
         let controller = InboxController(store: store)
         let settings = Settings()
@@ -58,7 +72,9 @@ enum Preview {
             let rep = NSBitmapImageRep(cgImage: cg)
             try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: dir).appendingPathComponent(name))
         }
-        let pill = { PillView(controller: controller, settings: settings, openInbox: {}, selectAgent: { _ in }, moveHere: {}, previewHovered: $0) }
+        let pill = {
+            PillView(controller: controller, settings: settings, openInbox: {}, selectAgent: { _ in }, moveHere: {}, previewHovered: $0)
+        }
         write(pill(nil), "pill-resting.png")
         controller.agentFilter = "app-lead"
         controller.pinned = true
@@ -68,17 +84,27 @@ enum Preview {
         write(CardStack(controller: controller).padding(12).background(Color(white: 0.5)), "cards.png")
         // The answer states on their own, with nothing else open, so nothing is dimmed.
         let states = Store(asks: [
-            made(Ask(kind: .choice, title: "Lint", body: "Fix the 3 lint warnings too?", options: ["Yes", "Leave them"], agent: codex), chose: 0),
-            made(Ask(kind: .choice, title: "Deploy", body: "Deploy to staging now?", options: ["Yes", "Not yet…"], agent: lead), chose: 0, pending: true),
+            made(
+                Ask(kind: .choice, title: "Lint", body: "Fix the 3 lint warnings too?", options: ["Yes", "Leave them"], agent: codex),
+                chose: 0),
+            made(
+                Ask(kind: .choice, title: "Deploy", body: "Deploy to staging now?", options: ["Yes", "Not yet…"], agent: lead), chose: 0,
+                pending: true),
         ])
         write(CardStack(controller: InboxController(store: states)).padding(12).background(Color(white: 0.5)), "states.png")
         // A run before and after completion, to compare the terminal's height with the options' space.
-        var finished = made(Ask(kind: .run, title: "Production read", options: ["Run", "Reject", "Suggest something else…"],
-                                command: "echo one; echo two", cwd: "/tmp", agent: lead), chose: 0)
+        var finished = made(
+            Ask(
+                kind: .run, title: "Production read", options: ["Run", "Reject", "Suggest something else…"],
+                command: "echo one; echo two", cwd: "/tmp", agent: lead), chose: 0)
         finished.output = "one\ntwo\n"
         finished.exitCode = 0
-        let runs = Store(asks: [finished, Ask(kind: .run, title: "Production read", options: ["Run", "Reject", "Suggest something else…"],
-                                              command: "echo one; echo two", cwd: "/tmp", agent: lead)])
+        let runs = Store(asks: [
+            finished,
+            Ask(
+                kind: .run, title: "Production read", options: ["Run", "Reject", "Suggest something else…"],
+                command: "echo one; echo two", cwd: "/tmp", agent: lead),
+        ])
         write(CardStack(controller: InboxController(store: runs)).padding(12).background(Color(white: 0.5)), "runs.png")
         // The empty inbox: "All quiet." and the new-agent composer, with example choices.
         let empty = InboxController(store: Store())
@@ -94,7 +120,10 @@ enum Preview {
             return item
         }
         let first = said(.message, "fix the flaky checkout spec", "sent")
-        let reply = said(.note, "Found it: the spec raced the mailer.\n\n```ruby\nperform_enqueued_jobs do\n  post :create\nend\n```\n\nPushed as `a1b2c3`.", "done")
+        let reply = said(
+            .note,
+            "Found it: the spec raced the mailer.\n\n```ruby\nperform_enqueued_jobs do\n  post :create\nend\n```\n\nPushed as `a1b2c3`.",
+            "done")
         let short = said(.note, "Hi. What do you want to work on?", "done")
         let second = said(.message, "and the retry logic?", "sent")
         let talking = InboxController(store: Store(asks: [first, reply]))

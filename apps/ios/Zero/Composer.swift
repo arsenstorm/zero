@@ -27,11 +27,12 @@ struct Composer: View {
     /// shows as its first line and sends from there; a tap opens it again, all of it there.
     private var compact: Bool { !focused && !dictation.listening }
 
-
     /// Asks for the picker, which hangs off the composer itself: the button moves as the composer folds and opens
     /// (opening the picker takes the keyboard, which folds it), and a sheet on the button went with it, closing at once.
     private var photos: some View {
-        Button { picking = true } label: {
+        Button {
+            picking = true
+        } label: {
             Image("plus-outline").resizable().frame(width: 20, height: 20).frame(width: 40, height: 40)
         }
         .buttonStyle(.plain)
@@ -39,7 +40,9 @@ struct Composer: View {
     }
 
     private var microphone: some View {
-        Button { dictation.listening ? dictation.stop() : dictation.start(after: draft) { draft = $0 } } label: {
+        Button {
+            dictation.listening ? dictation.stop() : dictation.start(after: draft) { draft = $0 }
+        } label: {
             Image("microphone-outline").resizable().frame(width: 20, height: 20)
                 .foregroundStyle(dictation.listening ? Color.white : Color.primary)
                 .frame(width: 34, height: 40)
@@ -53,7 +56,9 @@ struct Composer: View {
 
     @ViewBuilder private var sendButton: some View {
         if busy && empty {
-            Button { Task { await model.interrupt(session) } } label: {
+            Button {
+                Task { await model.interrupt(session) }
+            } label: {
                 Image("media-stop-glyph").resizable().frame(width: 14, height: 14)
                     .foregroundStyle(Color(uiColor: .systemBackground))
                     .frame(width: 40, height: 40).background(Color.primary, in: Circle())
@@ -82,17 +87,29 @@ struct Composer: View {
                     Image(held ? "media-stop-glyph" : "clock-glyph").resizable().frame(width: 12, height: 12)
                     Text(held ? "Held" : "Queued").font(.footnote.weight(.medium))
                     Spacer()
-                    if held { Button("Send") { Task { await model.release(session) } }.font(.footnote.weight(.semibold)).foregroundStyle(.primary) }
+                    if held {
+                        Button("Send") { Task { await model.release(session) } }.font(.footnote.weight(.semibold)).foregroundStyle(.primary)
+                    }
                 }
                 .foregroundStyle(.secondary).padding(.horizontal, 16).frame(height: 32)
                 ForEach(queued) { item in
                     HStack(spacing: 8) {
-                        Button { Task { if await model.unqueue(session, item: item.id) { draft = draft.isEmpty ? item.text : draft + "\n" + item.text; focused = true } } } label: {
-                            Text(item.text).font(.subheadline).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                        Button {
+                            Task {
+                                if await model.unqueue(session, item: item.id) {
+                                    draft = draft.isEmpty ? item.text : draft + "\n" + item.text; focused = true
+                                }
+                            }
+                        } label: {
+                            Text(item.text).font(.subheadline).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading).contentShape(
+                                Rectangle())
                         }
                         .buttonStyle(.plain)
-                        Button { Task { _ = await model.unqueue(session, item: item.id) } } label: {
-                            Image("trash-outline").resizable().frame(width: 16, height: 16).foregroundStyle(.secondary).frame(width: 32, height: 32)
+                        Button {
+                            Task { _ = await model.unqueue(session, item: item.id) }
+                        } label: {
+                            Image("trash-outline").resizable().frame(width: 16, height: 16).foregroundStyle(.secondary).frame(
+                                width: 32, height: 32)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Delete")
@@ -125,7 +142,11 @@ struct Composer: View {
         // What's written is kept on the phone as it's typed: back after the app is closed or restarted, gone once sent.
         .onAppear { if draft.isEmpty, let kept = UserDefaults.standard.string(forKey: draftKey) { draft = kept } }
         .onChange(of: draft) { _, text in
-            if text.isEmpty { UserDefaults.standard.removeObject(forKey: draftKey) } else { UserDefaults.standard.set(text, forKey: draftKey); model.warm(session) }
+            if text.isEmpty {
+                UserDefaults.standard.removeObject(forKey: draftKey)
+            } else {
+                UserDefaults.standard.set(text, forKey: draftKey); model.warm(session)
+            }
         }
     }
 
@@ -141,7 +162,9 @@ struct Composer: View {
                             Image(uiImage: image).resizable().scaledToFill().frame(width: compact ? 40 : 56, height: compact ? 40 : 56)
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                                 .overlay(alignment: .topTrailing) {
-                                    Button { images.remove(at: index); if index < picked.count { picked.remove(at: index) } } label: {
+                                    Button {
+                                        images.remove(at: index); if index < picked.count { picked.remove(at: index) }
+                                    } label: {
                                         Text("✕").font(.caption2.weight(.bold)).foregroundStyle(.white)
                                             .frame(width: 18, height: 18).background(.black.opacity(0.6), in: Circle())
                                     }
@@ -196,18 +219,22 @@ struct Composer: View {
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: compact ? 24 : 28))
         // Open, swiped down: the keyboard goes and it folds to its capsule, what's written kept. Only a mostly downward
         // swipe: selecting text and scrolling a long draft still work. (No grabber drawn for it: it looked out of place.)
-        .simultaneousGesture(DragGesture(minimumDistance: 14).onEnded { drag in
-            guard !compact, drag.translation.height > 30, drag.translation.height > abs(drag.translation.width) * 1.5 else { return }
-            dictation.stop()
-            focused = false
-        })
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 14).onEnded { drag in
+                guard !compact, drag.translation.height > 30, drag.translation.height > abs(drag.translation.width) * 1.5 else { return }
+                dictation.stop()
+                focused = false
+            }
+        )
         .padding(.horizontal, compact ? 30 : 12).padding(.bottom, compact ? 2 : 8)
         .animation(.smooth(duration: 0.28), value: compact)
         .onChange(of: picked) {
             Task {
                 var loaded: [UIImage] = []
                 for item in picked {
-                    if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) { loaded.append(image) }
+                    if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) {
+                        loaded.append(image)
+                    }
                 }
                 images = loaded
             }
@@ -231,11 +258,15 @@ struct Composer: View {
         let pending = model.row(session)?.next?.permissions
         let shown = pending ?? conversation?.permissions ?? .auto
         let unrestricted = shown == .unrestricted
-        return Button { permitting = true } label: {
+        return Button {
+            permitting = true
+        } label: {
             Image(unrestricted ? "bolt-lightning-glyph" : "wand-sparkle-outline").resizable().frame(width: 18, height: 18)
                 .foregroundStyle(unrestricted ? Color.orange : Color.primary)
                 .overlay(alignment: .topTrailing) {
-                    if pending != nil { Image("clock-glyph").resizable().frame(width: 9, height: 9).foregroundStyle(.secondary).offset(x: 6, y: -5) }
+                    if pending != nil {
+                        Image("clock-glyph").resizable().frame(width: 9, height: 9).foregroundStyle(.secondary).offset(x: 6, y: -5)
+                    }
                 }
                 .frame(width: 32, height: 40).contentShape(Rectangle())
         }
@@ -272,8 +303,11 @@ struct Composer: View {
         guard id.hasPrefix("claude-") else { return id }
         var words: [String] = []
         for part in id.dropFirst(7).split(separator: "-").map(String.init) {
-            if let last = words.last, Int(part) != nil, last.last?.isNumber == true { words[words.count - 1] = last + "." + part }
-            else { words.append(Int(part) != nil ? part : part.prefix(1).uppercased() + part.dropFirst()) }
+            if let last = words.last, Int(part) != nil, last.last?.isNumber == true {
+                words[words.count - 1] = last + "." + part
+            } else {
+                words.append(Int(part) != nil ? part : part.prefix(1).uppercased() + part.dropFirst())
+            }
         }
         return words.joined(separator: " ")
     }
@@ -320,10 +354,12 @@ struct Composer: View {
             do {
                 // While it works, always after this turn: never steering it (a model picked mid-turn is zerod's
                 // already, for the next turn). Sent with one that was, it interrupted the turn.
-                if busy { try await model.queue(text, images: photos, to: session) }
-                else { try await model.send(text, images: photos, to: session, model: choice?.model, effort: choice?.effort) }
-            }
-            catch { draft = text } // Back in the box, to send again.
+                if busy {
+                    try await model.queue(text, images: photos, to: session)
+                } else {
+                    try await model.send(text, images: photos, to: session, model: choice?.model, effort: choice?.effort)
+                }
+            } catch { draft = text } // Back in the box, to send again.
         }
     }
 }
@@ -387,7 +423,9 @@ struct Composer: View {
     }
 
     private static func allowed() async -> Bool {
-        let speech = await withCheckedContinuation { done in SFSpeechRecognizer.requestAuthorization { done.resume(returning: $0 == .authorized) } }
+        let speech = await withCheckedContinuation { done in
+            SFSpeechRecognizer.requestAuthorization { done.resume(returning: $0 == .authorized) }
+        }
         return speech ? await AVAudioApplication.requestRecordPermission() : false
     }
 }

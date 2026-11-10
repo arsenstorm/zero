@@ -17,9 +17,14 @@ final class TunnelLines: LineConnection, @unchecked Sendable {
     init(pairing: Pairing) throws {
         let key = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: pairing.key)
         let name = UIDevice.current.name
-        phone = pairing.code.map { Tunnel.Phone(key: key, invite: Tunnel.Invite(relay: pairing.relay, mac: pairing.mac, key: pairing.macKey, code: $0), name: name) }
+        phone =
+            pairing.code.map {
+                Tunnel.Phone(
+                    key: key, invite: Tunnel.Invite(relay: pairing.relay, mac: pairing.mac, key: pairing.macKey, code: $0), name: name)
+            }
             ?? Tunnel.Phone(key: key, mac: pairing.macKey, name: name)
-        let base = pairing.relay.replacingOccurrences(of: "https://", with: "wss://").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let base = pairing.relay.replacingOccurrences(of: "https://", with: "wss://").trimmingCharacters(
+            in: CharacterSet(charactersIn: "/"))
         guard let url = URL(string: base + "/phone/" + pairing.mac) else { throw URLError(.badURL) }
         socket = URLSession.shared.webSocketTask(with: url)
         socket.resume()

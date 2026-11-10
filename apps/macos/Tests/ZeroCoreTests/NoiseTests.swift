@@ -5,8 +5,10 @@ import Testing
 
 /// Noise XX between the phone (initiator) and the Mac (responder): both learn each other's static key, and what they
 /// send after is encrypted and authenticated.
-private func handshake(phone: Curve25519.KeyAgreement.PrivateKey, mac: Curve25519.KeyAgreement.PrivateKey,
-                       payload: Data = Data()) throws -> (Noise.Transport, Noise.Transport, Data, Data) {
+private func handshake(
+    phone: Curve25519.KeyAgreement.PrivateKey, mac: Curve25519.KeyAgreement.PrivateKey,
+    payload: Data = Data()
+) throws -> (Noise.Transport, Noise.Transport, Data, Data) {
     var initiator = Noise.Handshake(initiator: true, key: phone)
     var responder = Noise.Handshake(initiator: false, key: mac)
     let one = try initiator.write()

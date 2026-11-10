@@ -7,11 +7,14 @@ import Testing
 private let wire = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     .appendingPathComponent("../../../../crates/zerod/tests/wire").standardized
 
-private let recordings = ["codex-command", "codex-file-change", "claude-command", "claude-command-approval", "claude-file-change",
-                          "opencode-command", "opencode-file-change", "opencode-approval", "opencode-refused"]
+private let recordings = [
+    "codex-command", "codex-file-change", "claude-command", "claude-command-approval", "claude-file-change",
+    "opencode-command", "opencode-file-change", "opencode-approval", "opencode-refused",
+]
 
 @Test(arguments: recordings) func applyingZerodsEventsEndsInItsConversation(_ name: String) throws {
-    let expected = try JSONDecoder().decode(Conversation.self, from: Data(contentsOf: wire.appendingPathComponent("\(name).conversation.json")))
+    let expected = try JSONDecoder().decode(
+        Conversation.self, from: Data(contentsOf: wire.appendingPathComponent("\(name).conversation.json")))
     let lines = try String(contentsOf: wire.appendingPathComponent("\(name).events.jsonl"), encoding: .utf8).split(separator: "\n")
     var mirror = ZerodMirror()
     mirror.receive(.session(Conversation(id: "s1", provider: expected.provider, cwd: "/work/project")))
@@ -33,17 +36,19 @@ private let recordings = ["codex-command", "codex-file-change", "claude-command"
     #expect(Set(json.keys).subtracting(known).isEmpty, "zerod sends \(Set(json.keys).subtracting(known)) that the app doesn't read")
     // Fields zerod leaves out until they have something in them.
     let whenSet: Set<String> = ["attributes", "signin"]
-    #expect(known.subtracting(json.keys).isSubset(of: whenSet), "the app expects \(known.subtracting(json.keys).subtracting(whenSet)) that zerod no longer sends")
+    #expect(
+        known.subtracting(json.keys).isSubset(of: whenSet),
+        "the app expects \(known.subtracting(json.keys).subtracting(whenSet)) that zerod no longer sends")
 }
 
 @Test func everyKindOfItemDecodes() throws {
     let json = """
-    [{"id":"a","turn":null,"status":"running","kind":{"type":"tool","name":"Read","detail":"a.rs"}},
-     {"id":"b","turn":"u","status":"done","kind":{"type":"plan","text":"- [x] one"}},
-     {"id":"c","turn":null,"status":"failed","kind":{"type":"command","command":"make","cwd":"/","output":"no","exitCode":2,"durationMs":null}},
-     {"id":"d","turn":null,"status":"declined","kind":{"type":"fileChange","changes":[{"path":"/a","kind":"update","movePath":"/b","diff":"-a\\n+b\\n"}]}},
-     {"id":"e","turn":null,"status":"done","kind":{"type":"notice","text":"Interrupted","error":false}}]
-    """
+        [{"id":"a","turn":null,"status":"running","kind":{"type":"tool","name":"Read","detail":"a.rs"}},
+         {"id":"b","turn":"u","status":"done","kind":{"type":"plan","text":"- [x] one"}},
+         {"id":"c","turn":null,"status":"failed","kind":{"type":"command","command":"make","cwd":"/","output":"no","exitCode":2,"durationMs":null}},
+         {"id":"d","turn":null,"status":"declined","kind":{"type":"fileChange","changes":[{"path":"/a","kind":"update","movePath":"/b","diff":"-a\\n+b\\n"}]}},
+         {"id":"e","turn":null,"status":"done","kind":{"type":"notice","text":"Interrupted","error":false}}]
+        """
     let items = try JSONDecoder().decode([ConversationItem].self, from: Data(json.utf8))
     #expect(items[0].kind == .tool(name: "Read", detail: "a.rs"))
     #expect(items[1].kind == .plan(text: "- [x] one"))
@@ -73,13 +78,16 @@ private let recordings = ["codex-command", "codex-file-change", "claude-command"
 }
 
 @Test func aSwitchPutsTheConversationOnAnotherProvider() throws {
-    let change = try JSONDecoder().decode(Change.self, from: Data(#"{"type":"switched","provider":"codex","model":"gpt-6-sol","effort":null}"#.utf8))
+    let change = try JSONDecoder().decode(
+        Change.self, from: Data(#"{"type":"switched","provider":"codex","model":"gpt-6-sol","effort":null}"#.utf8))
     var conversation = Conversation(id: "s", provider: .claude, cwd: "/")
     conversation.apply(.thread("claude-thread", model: "opus", effort: "high"))
     conversation.apply(change)
     #expect((conversation.provider, conversation.thread, conversation.model, conversation.effort) == (.codex, nil, "gpt-6-sol", nil))
-    #expect(conversation.items.last == ConversationItem(id: "switched-2", turn: nil, kind: .notice(text: "Continued in Codex", error: false), status: .done),
-            "the same item zerod adds, by the same id")
+    #expect(
+        conversation.items.last
+            == ConversationItem(id: "switched-2", turn: nil, kind: .notice(text: "Continued in Codex", error: false), status: .done),
+        "the same item zerod adds, by the same id")
 }
 
 @Test func aTaskGoesToItsTerminalAndBack() throws {

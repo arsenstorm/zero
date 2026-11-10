@@ -9,8 +9,11 @@ struct ConversationView: View {
     let conversation: Conversation
 
     var body: some View {
-        let blocks = TimelineBlock.of(Sending.merge(conversation.items, model.sending[conversation.id] ?? []).filter { item in !conversation.approvals.contains { $0.item == item.id } },
-                                      working: conversation.status == .working || conversation.status == .waiting)
+        let blocks = TimelineBlock.of(
+            Sending.merge(conversation.items, model.sending[conversation.id] ?? []).filter { item in
+                !conversation.approvals.contains { $0.item == item.id }
+            },
+            working: conversation.status == .working || conversation.status == .waiting)
         // Not lazy: a lazy stack under a bottom anchor drew nothing until scrolled, and the phone holds one page only.
         VStack(alignment: .leading, spacing: 24) {
             if model.earlier(conversation.id) > 0 {
@@ -20,12 +23,16 @@ struct ConversationView: View {
             ForEach(blocks) { block in
                 switch block {
                 case let .user(item): UserMessage(item: item)
-                case let .work(_, items, start, end, live): WorkBlock(model: model, session: conversation.id, items: items, start: start, end: end, live: live)
+                case let .work(_, items, start, end, live):
+                    WorkBlock(model: model, session: conversation.id, items: items, start: start, end: end, live: live)
                 // An answer that was only its ending (an event or a worker's report taken in, "[zero: waiting]") has
                 // no words to show: nothing, not its copy and menu under an empty reply.
                 case let .answer(item):
                     if case let .agent(text, _) = item.kind, case let words = ZeroEnding.split(text).0,
-                       !words.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { Answer(text: words) }
+                        !words.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    {
+                        Answer(text: words)
+                    }
                 case let .step(item): StepView(model: model, session: conversation.id, item: item)
                 }
             }
@@ -73,8 +80,12 @@ struct TaskInbox: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
                             if let conversation {
-                                ForEach(conversation.questions) { question in QuestionCard(model: model, session: session, question: question).transition(Self.fade) }
-                                ForEach(conversation.approvals) { approval in ApprovalCard(model: model, session: session, approval: approval).transition(Self.fade) }
+                                ForEach(conversation.questions) { question in
+                                    QuestionCard(model: model, session: session, question: question).transition(Self.fade)
+                                }
+                                ForEach(conversation.approvals) { approval in
+                                    ApprovalCard(model: model, session: session, approval: approval).transition(Self.fade)
+                                }
                             }
                             ForEach(model.openAsks(session)) { ask in AskCard(model: model, ask: ask).transition(Self.fade) }
                         }
@@ -144,13 +155,18 @@ struct Answer: View {
                 Button {
                     UIPasteboard.general.string = text
                     copied = true
-                    Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
+                    Task {
+                        try? await Task.sleep(for: .seconds(1.5)); copied = false
+                    }
                 } label: {
                     Image(copied ? "circle-check-glyph" : "copy-outline").resizable().frame(width: 18, height: 18)
                         .foregroundStyle(.secondary).frame(width: 36, height: 32).contentShape(Rectangle())
                 }
-                Menu { CopyActions(text: text, select: { selecting = true }) } label: {
-                    Image("dots-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(.secondary).frame(width: 36, height: 32).contentShape(Rectangle())
+                Menu {
+                    CopyActions(text: text, select: { selecting = true })
+                } label: {
+                    Image("dots-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(.secondary).frame(width: 36, height: 32)
+                        .contentShape(Rectangle())
                 }
             }
             .buttonStyle(.plain)
@@ -178,11 +194,15 @@ struct SelectText: View {
 
     var body: some View {
         NavigationStack {
-            SelectableText(text: (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))).map { String($0.characters) } ?? text)
-                .padding(.horizontal, 12)
-                .navigationTitle("Select text")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            SelectableText(
+                text: (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))).map {
+                    String($0.characters)
+                } ?? text
+            )
+            .padding(.horizontal, 12)
+            .navigationTitle("Select text")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
         .presentationDragIndicator(.visible)
     }
@@ -201,7 +221,9 @@ private struct SelectableText: UIViewRepresentable {
         let style = NSMutableParagraphStyle()
         style.lineSpacing = 3
         style.paragraphSpacing = 10
-        view.attributedText = NSAttributedString(string: text, attributes: [.font: UIFont.preferredFont(forTextStyle: .body), .foregroundColor: UIColor.label, .paragraphStyle: style])
+        view.attributedText = NSAttributedString(
+            string: text,
+            attributes: [.font: UIFont.preferredFont(forTextStyle: .body), .foregroundColor: UIColor.label, .paragraphStyle: style])
         return view
     }
     func updateUIView(_ view: UITextView, context: Context) {}
@@ -213,7 +235,8 @@ struct UserMessage: View {
     @State private var open = false
 
     /// A video's line for the agent (the Mac's composer adds it): its number, and the stills cut from it.
-    private static let videoLine = try! NSRegularExpression(pattern: #"\n*\[Video #(\d+): (.+?)(?:, \d+:\d|\. It's a video)[^\n]*\]$"#, options: [.anchorsMatchLines])
+    private static let videoLine = try! NSRegularExpression(
+        pattern: #"\n*\[Video #(\d+): (.+?)(?:, \d+:\d|\. It's a video)[^\n]*\]$"#, options: [.anchorsMatchLines])
     private static let token = try! NSRegularExpression(pattern: #"\[(?:Image|Video) #\d+\]"#)
 
     /// The tiles a message of yours shows and its words: a video once, by its first still; the images that aren't
@@ -223,8 +246,10 @@ struct UserMessage: View {
         var stills = Set<Int>(), videos: [(path: String, video: Bool)] = []
         for match in videoLine.matches(in: text, range: NSRange(location: 0, length: whole.length)) {
             let line = whole.substring(with: match.range) as NSString
-            let numbers = (try! NSRegularExpression(pattern: #"\[Image #(\d+)\]"#)).matches(in: line as String, range: NSRange(location: 0, length: line.length))
-                .compactMap { Int(line.substring(with: $0.range(at: 1))) }
+            let numbers = (try! NSRegularExpression(pattern: #"\[Image #(\d+)\]"#)).matches(
+                in: line as String, range: NSRange(location: 0, length: line.length)
+            )
+            .compactMap { Int(line.substring(with: $0.range(at: 1))) }
             stills.formUnion(numbers)
             if let first = numbers.first, images.indices.contains(first - 1) { videos.append((images[first - 1], true)) }
         }
@@ -237,7 +262,9 @@ struct UserMessage: View {
     var body: some View {
         if case let .user(text, images) = item.kind {
             if let given = ConversationItem.from(text) {
-                Button { open.toggle() } label: {
+                Button {
+                    open.toggle()
+                } label: {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(given.text.split(separator: "\n").first.map(String.init) ?? "").lineLimit(open ? nil : 1)
                         if open { MarkdownView(text: given.text) }
@@ -277,7 +304,9 @@ struct WorkBlock: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Button { withAnimation(.easeOut(duration: 0.15)) { toggled.toggle() } } label: {
+            Button {
+                withAnimation(.easeOut(duration: 0.15)) { toggled.toggle() }
+            } label: {
                 HStack(spacing: 6) {
                     // As the Mac's: thought alone isn't work, and under a second is "for a moment", never "0s".
                     if live, !worked {
@@ -289,7 +318,9 @@ struct WorkBlock: View {
                     } else {
                         Text(Took.text(worked ? "Worked" : "Thought", start.flatMap { start in end.map { $0.timeIntervalSince(start) } }))
                     }
-                    if !items.isEmpty { Image("chevron-down-outline").resizable().frame(width: 9, height: 9).rotationEffect(.degrees(open ? 0 : -90)) }
+                    if !items.isEmpty {
+                        Image("chevron-down-outline").resizable().frame(width: 9, height: 9).rotationEffect(.degrees(open ? 0 : -90))
+                    }
                 }
                 .font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
             }
@@ -325,7 +356,9 @@ struct StepView: View {
         } else {
             switch item.kind {
             case let .command(command, _, output, exitCode, _):
-                Button { open.toggle() } label: {
+                Button {
+                    open.toggle()
+                } label: {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(alignment: .top, spacing: 8) {
                             StatusIcon(status: item.status)
@@ -346,7 +379,9 @@ struct StepView: View {
                     StatusIcon(status: item.status)
                     VStack(alignment: .leading, spacing: 2) {
                         ForEach(changes, id: \.path) { change in
-                            Text((change.kind == "add" ? "Added " : change.kind == "delete" ? "Deleted " : "Edited ") + (change.path as NSString).lastPathComponent)
+                            Text(
+                                (change.kind == "add" ? "Added " : change.kind == "delete" ? "Deleted " : "Edited ")
+                                    + (change.path as NSString).lastPathComponent)
                         }
                     }
                 }
@@ -368,14 +403,22 @@ struct StepView: View {
                 TableView(title: title, columns: columns, rows: rows)
             case let .reasoning(text):
                 // As the Mac's: "Thought for 4s" and its first line; opened, all of it.
-                Button { open.toggle() } label: {
+                Button {
+                    open.toggle()
+                } label: {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(alignment: .top, spacing: 8) {
-                            Image("brain-outline").resizable().frame(width: 14, height: 14).foregroundStyle(.secondary).frame(width: 14, height: 16)
-                            Text(Took.text("Thought", until.flatMap { until in item.date.map { until.timeIntervalSince($0) } })).fontWeight(.medium)
-                            if !open { Text(text.split(separator: "\n").first.map(String.init) ?? "").foregroundStyle(.secondary).lineLimit(1) }
+                            Image("brain-outline").resizable().frame(width: 14, height: 14).foregroundStyle(.secondary).frame(
+                                width: 14, height: 16)
+                            Text(Took.text("Thought", until.flatMap { until in item.date.map { until.timeIntervalSince($0) } })).fontWeight(
+                                .medium)
+                            if !open {
+                                Text(text.split(separator: "\n").first.map(String.init) ?? "").foregroundStyle(.secondary).lineLimit(1)
+                            }
                         }
-                        if open { Text(text).foregroundStyle(.secondary).padding(.leading, 22).frame(maxWidth: .infinity, alignment: .leading) }
+                        if open {
+                            Text(text).foregroundStyle(.secondary).padding(.leading, 22).frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
                     .font(.footnote).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                 }
@@ -456,7 +499,9 @@ struct TableView: View {
                 // on one line and only then narrowed, its wrapped lines spilling over the rows below.)
                 let wide = columns.indices.map { column in rows.contains { column < $0.count && $0[column].count > 28 } }
                 Grid(alignment: .topLeading, horizontalSpacing: 14, verticalSpacing: 10) {
-                    GridRow { ForEach(Array(columns.enumerated()), id: \.offset) { _, column in Text(column).font(.caption.weight(.semibold)) } }
+                    GridRow {
+                        ForEach(Array(columns.enumerated()), id: \.offset) { _, column in Text(column).font(.caption.weight(.semibold)) }
+                    }
                     Divider()
                     ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                         GridRow {
@@ -485,10 +530,14 @@ struct TableView: View {
         var body: some View {
             switch TableCell.of(text, column: column) {
             case let .risk(level, gaps):
-                Button { showing.toggle() } label: { RiskPill(level: level) }
-                    .buttonStyle(.plain)
-                    .popover(isPresented: $showing) { Text(gaps).font(.footnote).padding().presentationCompactAdaptation(.popover) }
-                    .disabled(gaps.isEmpty)
+                Button {
+                    showing.toggle()
+                } label: {
+                    RiskPill(level: level)
+                }
+                .buttonStyle(.plain)
+                .popover(isPresented: $showing) { Text(gaps).font(.footnote).padding().presentationCompactAdaptation(.popover) }
+                .disabled(gaps.isEmpty)
             case let .state(state): StatePill(state: state)
             case .empty: MarkdownView.inline("–")
             case let .text(text): MarkdownView.inline(text)
@@ -564,10 +613,11 @@ struct AskCard: View {
 
     /// Under it: a question's --body, why a run or an approval is wanted.
     private var supporting: String? {
-        let text = switch ask.kind {
-        case .question, .choice: ask.detail ?? ""
-        default: ask.body
-        }
+        let text =
+            switch ask.kind {
+            case .question, .choice: ask.detail ?? ""
+            default: ask.body
+            }
         return text.isEmpty || text == headline ? nil : text
     }
 
@@ -575,7 +625,8 @@ struct AskCard: View {
         VStack(alignment: .leading, spacing: 10) {
             if !inRow {
                 HStack(spacing: 5) {
-                    Image(ask.kind == .run || manual ? "terminal-outline" : "circle-question-glyph").resizable().frame(width: 13, height: 13)
+                    Image(ask.kind == .run || manual ? "terminal-outline" : "circle-question-glyph").resizable().frame(
+                        width: 13, height: 13)
                     Text(kindName)
                     Text("·")
                     Text(ask.agent.label ?? ask.agent.name).lineLimit(1)
@@ -593,19 +644,25 @@ struct AskCard: View {
             }
             if let command = ask.command {
                 // What runs is what's read: the command, the script it runs, and what it printed.
-                let shown = [(ask.kind == .run ? "$ " : "") + command, ask.script, ask.output.isEmpty ? nil : ask.output].compactMap { $0 }.joined(separator: "\n")
+                let shown = [(ask.kind == .run ? "$ " : "") + command, ask.script, ask.output.isEmpty ? nil : ask.output].compactMap { $0 }
+                    .joined(separator: "\n")
                 ScrollView(.horizontal) { Text(shown).font(.footnote.monospaced()).textSelection(.enabled).padding(10) }
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
                     .overlay(alignment: .topTrailing) {
-                        Button { UIPasteboard.general.string = [command, ask.script].compactMap { $0 }.joined(separator: "\n") } label: {
-                            Image("copy-outline").resizable().frame(width: 14, height: 14).foregroundStyle(.secondary).frame(width: 32, height: 32)
+                        Button {
+                            UIPasteboard.general.string = [command, ask.script].compactMap { $0 }.joined(separator: "\n")
+                        } label: {
+                            Image("copy-outline").resizable().frame(width: 14, height: 14).foregroundStyle(.secondary).frame(
+                                width: 32, height: 32)
                         }
                         .accessibilityLabel("Copy the command")
                     }
                 if manual, let typed = ask.options.firstIndex(where: Ask.expectsText) {
                     // What it printed, from the clipboard into the reply, ready to send.
-                    Button("Paste its output") { words = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""; typing = typed }
-                        .font(.footnote.weight(.medium))
+                    Button("Paste its output") {
+                        words = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""; typing = typed
+                    }
+                    .font(.footnote.weight(.medium))
                 }
             }
             if !ask.options.isEmpty {
@@ -615,7 +672,9 @@ struct AskCard: View {
                     ForEach(Array(ask.options.enumerated()), id: \.offset) { index, option in
                         if index > 0 { Divider().padding(.leading, 14) }
                         if ask.state == .waiting, typing == index {
-                            ReplyBox(placeholder: option, words: $words, fill: .clear) { text in await model.answer(ask, option: index, text: text) }
+                            ReplyBox(placeholder: option, words: $words, fill: .clear) { text in
+                                await model.answer(ask, option: index, text: text)
+                            }
                         } else {
                             optionRow(index, option)
                         }
@@ -631,13 +690,17 @@ struct AskCard: View {
             if ask.state == .running {
                 Text("Running…").font(.footnote).foregroundStyle(.secondary)
             } else if ask.lost {
-                Text("Lost: Zero can't tell whether it finished. Check what it did before running it again.").font(.footnote).foregroundStyle(.orange)
+                Text("Lost: Zero can't tell whether it finished. Check what it did before running it again.").font(.footnote)
+                    .foregroundStyle(.orange)
             }
         }
         .padding(flat ? 0 : 14)
         .padding(.vertical, flat ? 6 : 0)
         // Whether the task is done: the whole card in the done question's shades, a question still.
-        .background(ask.doneCheck == true ? AnyShapeStyle(DoneShades.surface) : flat ? AnyShapeStyle(.clear) : AnyShapeStyle(.background.secondary), in: RoundedRectangle(cornerRadius: 16))
+        .background(
+            ask.doneCheck == true ? AnyShapeStyle(DoneShades.surface) : flat ? AnyShapeStyle(.clear) : AnyShapeStyle(.background.secondary),
+            in: RoundedRectangle(cornerRadius: 16)
+        )
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(flat ? AnyShapeStyle(.clear) : AnyShapeStyle(.quaternary)))
     }
 
@@ -648,13 +711,18 @@ struct AskCard: View {
         let chosen = decided && ask.choice == index
         let label = option.replacingOccurrences(of: "…", with: "").replacingOccurrences(of: "...", with: "")
         let answer = ask.answer ?? option
-        let shown = chosen && Ask.expectsText(option) && answer.hasPrefix(label + ": ") ? String(answer.dropFirst(label.count + 2)) : chosen ? answer : option
+        let shown =
+            chosen && Ask.expectsText(option) && answer.hasPrefix(label + ": ")
+            ? String(answer.dropFirst(label.count + 2)) : chosen ? answer : option
         return choiceRow(shown, muted: !chosen && Ask.expectsText(option), chosen: chosen, grouped: true)
             .opacity(decided && !chosen ? 0.4 : 1)
             .contentShape(Rectangle())
             .onTapGesture {
-                if !decided { if Ask.expectsText(option) { words = ""; typing = index } else { Task { await model.choose(ask, option: index) } } }
-                else if chosen, ask.delivery == .failed { Task { await model.deliver(ask) } }
+                if !decided {
+                    if Ask.expectsText(option) { words = ""; typing = index } else { Task { await model.choose(ask, option: index) } }
+                } else if chosen, ask.delivery == .failed {
+                    Task { await model.deliver(ask) }
+                }
             }
             .allowsHitTesting(!decided || chosen)
     }
@@ -675,7 +743,9 @@ struct AskCard: View {
         return HStack(alignment: .center, spacing: 8) {
             (Text(words) + (recommended ? Text("  Recommended").font(.caption.weight(.semibold)).foregroundStyle(.blue) : Text("")))
                 .font(.subheadline.weight(.medium))
-                .foregroundStyle(muted ? (ask.doneCheck == true ? AnyShapeStyle(DoneShades.muted) : AnyShapeStyle(.secondary)) : AnyShapeStyle(.primary))
+                .foregroundStyle(
+                    muted ? (ask.doneCheck == true ? AnyShapeStyle(DoneShades.muted) : AnyShapeStyle(.secondary)) : AnyShapeStyle(.primary)
+                )
                 .frame(maxWidth: .infinity, alignment: .leading)
             if chosen { standing }
         }
@@ -724,7 +794,11 @@ struct QuestionCard: View {
                     ForEach(field.options, id: \.label) { option in
                         let on = picked[field.id]?.contains(option.label) == true
                         Button {
-                            if field.multiple { picked[field.id, default: []].toggle(option.label) } else { picked[field.id] = [option.label] }
+                            if field.multiple {
+                                picked[field.id, default: []].toggle(option.label)
+                            } else {
+                                picked[field.id] = [option.label]
+                            }
                         } label: {
                             HStack {
                                 Image(on ? "circle-check-glyph" : "shape-circle-outline").resizable().frame(width: 18, height: 18)
@@ -738,8 +812,11 @@ struct QuestionCard: View {
                         .buttonStyle(.plain)
                     }
                     if field.other || field.options.isEmpty {
-                        if field.secret { SecureField("Your answer", text: binding(field.id)).textFieldStyle(.roundedBorder) }
-                        else { TextField("Your answer", text: binding(field.id), axis: .vertical).textFieldStyle(.roundedBorder) }
+                        if field.secret {
+                            SecureField("Your answer", text: binding(field.id)).textFieldStyle(.roundedBorder)
+                        } else {
+                            TextField("Your answer", text: binding(field.id), axis: .vertical).textFieldStyle(.roundedBorder)
+                        }
                     }
                 }
             }
@@ -794,9 +871,13 @@ struct ApprovalCard: View {
             }
             ForEach(approval.changes, id: \.path) { change in Text(change.path).font(.footnote.monospaced()).foregroundStyle(.secondary) }
             ForEach(approval.choices) { choice in
-                Button { Task { await model.decide(session: session, approval: approval.id, choice: choice.id) } } label: {
+                Button {
+                    Task { await model.decide(session: session, approval: approval.id, choice: choice.id) }
+                } label: {
                     Text(choice.label).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.vertical, 9)
-                        .background(choice.kind == .deny || choice.kind == .stop ? Color.red.opacity(0.12) : Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                        .background(
+                            choice.kind == .deny || choice.kind == .stop ? Color.red.opacity(0.12) : Color.secondary.opacity(0.12),
+                            in: RoundedRectangle(cornerRadius: 10))
                 }
                 .buttonStyle(.plain)
             }
@@ -815,8 +896,12 @@ private extension Array where Element == String {
 @MainActor enum MarkdownCache {
     private final class Blocks { let value: [MarkdownBlock]; init(_ value: [MarkdownBlock]) { self.value = value } }
     private final class Inline { let value: AttributedString; init(_ value: AttributedString) { self.value = value } }
-    private static let blockCache: NSCache<NSString, Blocks> = { let c = NSCache<NSString, Blocks>(); c.countLimit = 500; return c }()
-    private static let inlineCache: NSCache<NSString, Inline> = { let c = NSCache<NSString, Inline>(); c.countLimit = 3000; return c }()
+    private static let blockCache: NSCache<NSString, Blocks> = {
+        let c = NSCache<NSString, Blocks>(); c.countLimit = 500; return c
+    }()
+    private static let inlineCache: NSCache<NSString, Inline> = {
+        let c = NSCache<NSString, Inline>(); c.countLimit = 3000; return c
+    }()
 
     static func blocks(_ text: String) -> [MarkdownBlock] {
         if let kept = blockCache.object(forKey: text as NSString) { return kept.value }
@@ -827,7 +912,9 @@ private extension Array where Element == String {
 
     static func inline(_ text: String) -> AttributedString {
         if let kept = inlineCache.object(forKey: text as NSString) { return kept.value }
-        let parsed = (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
+        let parsed =
+            (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
         inlineCache.setObject(Inline(parsed), forKey: text as NSString)
         return parsed
     }
@@ -864,7 +951,9 @@ struct WrappingStack: Layout {
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         for row in arrange(subviews, width: bounds.width) {
             let shift = trailing ? bounds.width - row.width : 0
-            for (index, x) in row.items { subviews[index].place(at: CGPoint(x: bounds.minX + shift + x, y: bounds.minY + row.y), proposal: .unspecified) }
+            for (index, x) in row.items {
+                subviews[index].place(at: CGPoint(x: bounds.minX + shift + x, y: bounds.minY + row.y), proposal: .unspecified)
+            }
         }
     }
 
@@ -941,8 +1030,11 @@ struct AnswerImage: View {
 
     var body: some View {
         Group {
-            if let image { Image(uiImage: image).resizable().aspectRatio(image.size, contentMode: .fit) }
-            else { Color.primary.opacity(0.08).aspectRatio(16 / 10, contentMode: .fit) }
+            if let image {
+                Image(uiImage: image).resizable().aspectRatio(image.size, contentMode: .fit)
+            } else {
+                Color.primary.opacity(0.08).aspectRatio(16 / 10, contentMode: .fit)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -993,8 +1085,12 @@ enum DoneShades {
 /// The Mac's pastel rows for a chosen option, in both appearances.
 enum RowShades {
     private static func dynamic(dark: (CGFloat, CGFloat, CGFloat), light: (CGFloat, CGFloat, CGFloat)) -> Color {
-        Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: dark.0, green: dark.1, blue: dark.2, alpha: 1)
-                                                                : UIColor(red: light.0, green: light.1, blue: light.2, alpha: 1) })
+        Color(
+            uiColor: UIColor {
+                $0.userInterfaceStyle == .dark
+                    ? UIColor(red: dark.0, green: dark.1, blue: dark.2, alpha: 1)
+                    : UIColor(red: light.0, green: light.1, blue: light.2, alpha: 1)
+            })
     }
     static let green = dynamic(dark: (0.13, 0.25, 0.16), light: (0.87, 0.96, 0.89))
     static let orange = dynamic(dark: (0.30, 0.22, 0.12), light: (0.99, 0.93, 0.85))
@@ -1016,7 +1112,9 @@ private struct ReplyBox: View {
             TextField(placeholder, text: $words, axis: .vertical)
                 .font(.subheadline.weight(.medium)).lineLimit(1...6).focused($focused)
                 .padding(.vertical, 12)
-            Button { let text = words; words = ""; focused = false; Task { await send(text) } } label: {
+            Button {
+                let text = words; words = ""; focused = false; Task { await send(text) }
+            } label: {
                 Image("arrow-up-outline").resizable().frame(width: 14, height: 14)
                     .foregroundStyle(Color(uiColor: .systemBackground))
                     .frame(width: 30, height: 30).background(Color.primary.opacity(empty ? 0.25 : 1), in: Circle())
@@ -1028,6 +1126,8 @@ private struct ReplyBox: View {
         .padding(.leading, 14).padding(.trailing, 7).frame(minHeight: 44)
         .background(fill, in: RoundedRectangle(cornerRadius: 12))
         // A moment after it's there: asked for in the same update, focus is dropped.
-        .task { try? await Task.sleep(for: .milliseconds(50)); focused = true }
+        .task {
+            try? await Task.sleep(for: .milliseconds(50)); focused = true
+        }
     }
 }

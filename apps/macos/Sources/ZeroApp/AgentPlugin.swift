@@ -10,13 +10,16 @@ enum ClaudePlugin {
     static var isInstalled: Bool {
         let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/plugins/installed_plugins.json")
         guard let data = try? Data(contentsOf: file), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let plugins = json["plugins"] as? [String: Any] else { return false }
+            let plugins = json["plugins"] as? [String: Any]
+        else { return false }
         return plugins["zero@zero"] != nil
     }
 
     static func install() async -> String? {
         let path = bundled.replacingOccurrences(of: "'", with: "'\\''")
-        let out = await shell("claude plugin marketplace add '\(path)' 2>&1; claude plugin marketplace update zero 2>&1; claude plugin install zero@zero 2>&1")
+        let out = await shell(
+            "claude plugin marketplace add '\(path)' 2>&1; claude plugin marketplace update zero 2>&1; claude plugin install zero@zero 2>&1"
+        )
         return isInstalled ? nil : out
     }
 
@@ -65,12 +68,16 @@ enum AgentMCP {
         var problems: [String] = []
         if let toml = try? String(contentsOf: codex, encoding: .utf8) {
             if !toml.contains("[mcp_servers.zero]") {
-                do { try (toml + codexEntry).write(to: codex, atomically: true, encoding: .utf8) } catch { problems.append("Codex: \(error.localizedDescription)") }
+                do { try (toml + codexEntry).write(to: codex, atomically: true, encoding: .utf8) } catch {
+                    problems.append("Codex: \(error.localizedDescription)")
+                }
             }
         }
         if let text = try? String(contentsOf: opencode, encoding: .utf8), !inOpenCode(text) {
             if let edited = openCodeAdding(to: text) {
-                do { try edited.write(to: opencode, atomically: true, encoding: .utf8) } catch { problems.append("OpenCode: \(error.localizedDescription)") }
+                do { try edited.write(to: opencode, atomically: true, encoding: .utf8) } catch {
+                    problems.append("OpenCode: \(error.localizedDescription)")
+                }
             } else {
                 problems.append("OpenCode: add \(opencodeEntry) under \"mcp\" in \(opencode.path)")
             }
@@ -85,7 +92,9 @@ enum AgentMCP {
         if let text = try? String(contentsOf: opencode, encoding: .utf8) {
             for form in [opencodeEntry + ",\n    ", ",\n    " + opencodeEntry, opencodeEntry] where text.contains(form) {
                 let edited = text.replacingOccurrences(of: form, with: "")
-                if (try? JSONSerialization.jsonObject(with: Data(edited.utf8))) != nil { try? edited.write(to: opencode, atomically: true, encoding: .utf8) }
+                if (try? JSONSerialization.jsonObject(with: Data(edited.utf8))) != nil {
+                    try? edited.write(to: opencode, atomically: true, encoding: .utf8)
+                }
                 break
             }
         }
@@ -101,7 +110,9 @@ enum AgentMCP {
             edited = text.replacingCharacters(in: range, with: text[range] + "\n    " + opencodeEntry + (empty ? "" : ","))
         } else if let close = text.range(of: "}", options: .backwards) {
             edited = text.replacingCharacters(in: close, with: ",\n  \"mcp\": {\n    \(opencodeEntry)\n  }\n}")
-        } else { return nil }
+        } else {
+            return nil
+        }
         return (try? JSONSerialization.jsonObject(with: Data(edited.utf8))) != nil ? edited : nil
     }
 }

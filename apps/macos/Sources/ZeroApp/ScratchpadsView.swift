@@ -39,7 +39,12 @@ struct ScratchpadsPage: View {
     /// What the name sheet is for.
     private enum Naming: Identifiable {
         case folder(in: String), rename(PadSummary)
-        var id: String { switch self { case .folder(let parent): "folder:\(parent)"; case .rename(let pad): "rename:\(pad.id)" } }
+        var id: String {
+            switch self {
+            case .folder(let parent): "folder:\(parent)";
+            case .rename(let pad): "rename:\(pad.id)"
+            }
+        }
     }
 
     private var shown: String? { if case .pad(let id) = navigation.place { id } else { nil } }
@@ -83,10 +88,13 @@ struct ScratchpadsPage: View {
             case .folder(let parent):
                 NameSheet(title: parent.isEmpty ? "New folder" : "New folder in \(parent)", name: "", action: "Create") { name in
                     let path = parent.isEmpty ? name : "\(parent)/\(name)"
-                    Task { await workspace.makePadFolder(path); toggle(path, to: true); if !parent.isEmpty { toggle(parent, to: true) } }
+                    Task {
+                        await workspace.makePadFolder(path); toggle(path, to: true); if !parent.isEmpty { toggle(parent, to: true) }
+                    }
                 }
             case .rename(let pad):
-                NameSheet(title: "Rename", name: pad.title, action: "Rename") { name in Task { await workspace.renamePad(pad.id, to: name) } }
+                NameSheet(title: "Rename", name: pad.title, action: "Rename") { name in Task { await workspace.renamePad(pad.id, to: name) }
+                }
             }
         }
     }
@@ -101,8 +109,12 @@ struct ScratchpadsPage: View {
                 NucleoIcon("magnifier", size: 13).foregroundStyle(.secondary)
                 TextField("Search", text: $search).textFieldStyle(.plain).font(.system(size: 13)).focused($searchFocused)
                 if searching {
-                    Button { search = "" } label: { NucleoIcon("xmark", size: 11).foregroundStyle(.secondary) }
-                        .buttonStyle(.plain).tip("Clear")
+                    Button {
+                        search = ""
+                    } label: {
+                        NucleoIcon("xmark", size: 11).foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain).tip("Clear")
                 }
             }
             .padding(.horizontal, 9).frame(height: 30)
@@ -111,10 +123,18 @@ struct ScratchpadsPage: View {
             .contentShape(Rectangle()).onTapGesture { searchFocused = true }
             if !searching {
                 Group {
-                    Button { create(in: "") } label: { NucleoIcon("compose", size: 15).frame(width: 30, height: 30) }
-                        .buttonStyle(Hovering()).tip("New scratchpad")
-                    Button { naming = .folder(in: "") } label: { NucleoIcon("folder-plus", size: 15).frame(width: 30, height: 30) }
-                        .buttonStyle(Hovering()).tip("New folder")
+                    Button {
+                        create(in: "")
+                    } label: {
+                        NucleoIcon("compose", size: 15).frame(width: 30, height: 30)
+                    }
+                    .buttonStyle(Hovering()).tip("New scratchpad")
+                    Button {
+                        naming = .folder(in: "")
+                    } label: {
+                        NucleoIcon("folder-plus", size: 15).frame(width: 30, height: 30)
+                    }
+                    .buttonStyle(Hovering()).tip("New folder")
                 }
                 .foregroundStyle(.secondary)
                 .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -140,19 +160,26 @@ struct ScratchpadsPage: View {
     private func tree(in folder: String, depth: Int) -> AnyView {
         let opened = Set(open.split(separator: "\n").map(String.init))
         let children = workspace.padFolders.filter { parent(of: $0) == folder }
-        return AnyView(Group {
-            ForEach(children, id: \.self) { child in
-                folderRow(child, depth: depth, isOpen: opened.contains(child))
-                if opened.contains(child) { tree(in: child, depth: depth + 1) }
-            }
-            ForEach(workspace.pads.filter { $0.folder == folder }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }) { pad in
-                padRow(pad, depth: depth, showFolder: false)
-            }
-        })
+        return AnyView(
+            Group {
+                ForEach(children, id: \.self) { child in
+                    folderRow(child, depth: depth, isOpen: opened.contains(child))
+                    if opened.contains(child) { tree(in: child, depth: depth + 1) }
+                }
+                ForEach(
+                    workspace.pads.filter { $0.folder == folder }.sorted {
+                        $0.title.localizedStandardCompare($1.title) == .orderedAscending
+                    }
+                ) { pad in
+                    padRow(pad, depth: depth, showFolder: false)
+                }
+            })
     }
 
     private func folderRow(_ folder: String, depth: Int, isOpen: Bool) -> some View {
-        Button { toggle(folder, to: !isOpen) } label: {
+        Button {
+            toggle(folder, to: !isOpen)
+        } label: {
             HStack(spacing: 7) {
                 NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(isOpen ? 0 : -90)).frame(width: 10)
                 NucleoIcon("folder", size: 15).foregroundStyle(.secondary)
@@ -164,45 +191,61 @@ struct ScratchpadsPage: View {
             .padding(.leading, 10 + CGFloat(depth) * 14).padding(.trailing, 10).frame(height: 30)
         }
         .buttonStyle(Hovering())
-        .zeroContextMenu("pad-folder-\(folder)") {[
-            [MenuItem("New scratchpad here", "compose") { create(in: folder) },
-             MenuItem("New folder inside", "folder-plus") { naming = .folder(in: folder) }],
-            [MenuItem("Show in Finder", "folder") { NSWorkspace.shared.open(Self.root.appendingPathComponent(folder)) }],
-        ]}
+        .zeroContextMenu("pad-folder-\(folder)") {
+            [
+                [
+                    MenuItem("New scratchpad here", "compose") { create(in: folder) },
+                    MenuItem("New folder inside", "folder-plus") { naming = .folder(in: folder) },
+                ],
+                [MenuItem("Show in Finder", "folder") { NSWorkspace.shared.open(Self.root.appendingPathComponent(folder)) }],
+            ]
+        }
     }
 
     private func padRow(_ pad: PadSummary, depth: Int, showFolder: Bool) -> some View {
-        Button { navigation.place = .pad(pad.id) } label: {
+        Button {
+            navigation.place = .pad(pad.id)
+        } label: {
             HStack(spacing: 9) {
                 NucleoIcon("file-content", size: 15).foregroundStyle(.secondary)
                 Text(pad.title).font(.system(size: 13)).lineLimit(1)
                 if showFolder && !pad.folder.isEmpty { Text(pad.folder).font(.system(size: 11.5)).foregroundStyle(.tertiary).lineLimit(1) }
                 Spacer(minLength: 0)
             }
-            .padding(.leading, 10 + CGFloat(depth) * 14 + (depth > 0 || !workspace.padFolders.isEmpty ? 17 : 0)).padding(.trailing, 10).frame(height: 30)
+            .padding(.leading, 10 + CGFloat(depth) * 14 + (depth > 0 || !workspace.padFolders.isEmpty ? 17 : 0)).padding(.trailing, 10)
+            .frame(height: 30)
         }
         .buttonStyle(Hovering(selected: shown == pad.id))
         .onHover { if $0 { workspace.prefetchPad(pad.id) } }
         .draggable(pad.link)
-        .zeroContextMenu("pad-\(pad.id)") {[
-            [MenuItem("Copy link", "link") { PadLinks.copy(pad.link, title: pad.title) },
-             MenuItem("Copy Markdown link", "copy") { PadLinks.copy(pad.link, title: pad.title, markdown: true) }],
-            [MenuItem("Rename…", "pen") { naming = .rename(pad) },
-             MenuItem("Show in Finder", "folder") {
-                 let file = Self.root.appendingPathComponent(pad.folder).appendingPathComponent(pad.title + ".md")
-                 NSWorkspace.shared.activateFileViewerSelecting([file])
-             }],
-            (pad.folder.isEmpty ? [] : [MenuItem("Move to Scratchpads (top)", "folder-download") { Task { await workspace.movePad(pad.id, to: "") } }])
-                + workspace.padFolders.filter { $0 != pad.folder }.map { folder in
-                    MenuItem("Move to \(folder)", "folder-download") { Task { await workspace.movePad(pad.id, to: folder) } }
-                },
-            [MenuItem("Move to Trash", "trash") {
-                Task {
-                    await workspace.deletePad(pad.id)
-                    if shown == pad.id { navigation.place = .pads }
-                }
-            }],
-        ]}
+        .zeroContextMenu("pad-\(pad.id)") {
+            [
+                [
+                    MenuItem("Copy link", "link") { PadLinks.copy(pad.link, title: pad.title) },
+                    MenuItem("Copy Markdown link", "copy") { PadLinks.copy(pad.link, title: pad.title, markdown: true) },
+                ],
+                [
+                    MenuItem("Rename…", "pen") { naming = .rename(pad) },
+                    MenuItem("Show in Finder", "folder") {
+                        let file = Self.root.appendingPathComponent(pad.folder).appendingPathComponent(pad.title + ".md")
+                        NSWorkspace.shared.activateFileViewerSelecting([file])
+                    },
+                ],
+                (pad.folder.isEmpty
+                    ? [] : [MenuItem("Move to Scratchpads (top)", "folder-download") { Task { await workspace.movePad(pad.id, to: "") } }])
+                    + workspace.padFolders.filter { $0 != pad.folder }.map { folder in
+                        MenuItem("Move to \(folder)", "folder-download") { Task { await workspace.movePad(pad.id, to: folder) } }
+                    },
+                [
+                    MenuItem("Move to Trash", "trash") {
+                        Task {
+                            await workspace.deletePad(pad.id)
+                            if shown == pad.id { navigation.place = .pads }
+                        }
+                    }
+                ],
+            ]
+        }
     }
 
     static let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".zero/scratchpads")
@@ -289,11 +332,17 @@ private struct PadEditor: View {
             if let pad {
                 header(pad)
                 if let conflict { banner(conflict) }
-                PadDocument(text: $text, scrollToLine: Binding(get: { scrollTo.flatMap { slug in pad.sections.first { $0.slug == slug }?.line } },
-                                                                set: { if $0 == nil { scrollTo = nil } }),
-                            sectionLink: { line in
-                    pad.sections.last { $0.line <= line }.map { section in (PadLinks.section(pad.id, section.slug), "\(pad.title) › \(section.title)") }
-                }, padLink: (pad.link, pad.title))
+                PadDocument(
+                    text: $text,
+                    scrollToLine: Binding(
+                        get: { scrollTo.flatMap { slug in pad.sections.first { $0.slug == slug }?.line } },
+                        set: { if $0 == nil { scrollTo = nil } }),
+                    sectionLink: { line in
+                        pad.sections.last { $0.line <= line }.map { section in
+                            (PadLinks.section(pad.id, section.slug), "\(pad.title) › \(section.title)")
+                        }
+                    }, padLink: (pad.link, pad.title)
+                )
                 .onChange(of: text) { _, now in if now != saved { scheduleSave() } }
             } else if missing {
                 ContentUnavailableView("No such scratchpad", systemImage: "", description: Text("It may have been moved to the trash."))
@@ -335,7 +384,8 @@ private struct PadEditor: View {
                         Section("Link to a section") {
                             ForEach(pad.sections, id: \.slug) { section in
                                 Button(String(repeating: "   ", count: max(0, section.level - 1)) + section.title) {
-                                    PadLinks.copy(PadLinks.section(pad.id, section.slug), title: "\(pad.title) › \(section.title)", markdown: true)
+                                    PadLinks.copy(
+                                        PadLinks.section(pad.id, section.slug), title: "\(pad.title) › \(section.title)", markdown: true)
                                 }
                             }
                         }
@@ -348,9 +398,14 @@ private struct PadEditor: View {
                 .menuStyle(.borderlessButton).fixedSize()
                 .tip("Copy this pad's link; the arrow has a Markdown link and each section's")
             }
-            Text([pad.folder.isEmpty ? "Scratchpads" : pad.folder, "Edited " + Date(timeIntervalSince1970: TimeInterval(pad.updated)).formatted(.relative(presentation: .named))]
-                .joined(separator: " · "))
-                .font(.system(size: 12)).foregroundStyle(.secondary)
+            Text(
+                [
+                    pad.folder.isEmpty ? "Scratchpads" : pad.folder,
+                    "Edited " + Date(timeIntervalSince1970: TimeInterval(pad.updated)).formatted(.relative(presentation: .named)),
+                ]
+                .joined(separator: " · ")
+            )
+            .font(.system(size: 12)).foregroundStyle(.secondary)
         }
         .padding(.top, 28).padding(.bottom, 12)
     }
@@ -361,7 +416,11 @@ private struct PadEditor: View {
             Text("Changed elsewhere while you were typing.").font(.system(size: 12.5))
             Spacer()
             Button("Keep mine") { Task { await write(force: true) } }
-            Button("Take theirs") { Task { conflict = nil; await load() } }
+            Button("Take theirs") {
+                Task {
+                    conflict = nil; await load()
+                }
+            }
         }
         .padding(.horizontal, 14).padding(.vertical, 8)
         .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
@@ -424,7 +483,11 @@ private struct PadEditor: View {
         let name = title.trimmingCharacters(in: .whitespaces)
         guard let pad, !name.isEmpty, name != pad.title else { title = pad?.title ?? title; return }
         Task {
-            if let renamed = await workspace.renamePad(id, to: name) { self.pad?.title = renamed.title; title = renamed.title } else { title = pad.title }
+            if let renamed = await workspace.renamePad(id, to: name) {
+                self.pad?.title = renamed.title; title = renamed.title
+            } else {
+                title = pad.title
+            }
         }
     }
 }
@@ -509,7 +572,8 @@ struct MarkdownEditor: NSViewRepresentable {
             parent.text = view.string
         }
 
-        func textStorage(_ storage: NSTextStorage, didProcessEditing edited: NSTextStorageEditActions, range: NSRange, changeInLength: Int) {
+        func textStorage(_ storage: NSTextStorage, didProcessEditing edited: NSTextStorageEditActions, range: NSRange, changeInLength: Int)
+        {
             guard edited.contains(.editedCharacters) else { return }
             MarkdownStyle.apply(to: storage)
         }
@@ -528,7 +592,8 @@ struct MarkdownEditor: NSViewRepresentable {
         }
 
         func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
-            let line = (view.string as NSString).substring(to: min(charIndex, (view.string as NSString).length)).filter { $0 == "\n" }.count + 1
+            let line =
+                (view.string as NSString).substring(to: min(charIndex, (view.string as NSString).length)).filter { $0 == "\n" }.count + 1
             var items: [NSMenuItem] = []
             if let section = parent.sections.last(where: { $0.line <= line }), let found = parent.sectionLink(section.slug) {
                 items.append(LinkItem(title: "Copy link to “\(section.title)”", link: found.link, label: found.title))
@@ -616,7 +681,9 @@ enum MarkdownStyle {
         for match in fence.matches(in: text, range: whole) {
             fenced.append(match.range)
             // A panel behind it (RichLayoutManager), its text inset from the panel's edges; the fences dimmed.
-            storage.addAttributes([.font: mono, .foregroundColor: NSColor.labelColor, .zeroCodeBlock: true, .paragraphStyle: codeParagraph], range: match.range)
+            storage.addAttributes(
+                [.font: mono, .foregroundColor: NSColor.labelColor, .zeroCodeBlock: true, .paragraphStyle: codeParagraph],
+                range: match.range)
             let nsText = text as NSString
             let open = nsText.lineRange(for: NSRange(location: match.range.location, length: 0))
             storage.addAttribute(.foregroundColor, value: dim, range: open)
@@ -629,7 +696,9 @@ enum MarkdownStyle {
             let size: CGFloat = [24, 20, 17, 15, 14, 14][level - 1]
             storage.addAttributes([.font: NSFont.systemFont(ofSize: size, weight: level <= 2 ? .bold : .semibold)], range: match.range)
             storage.addAttribute(.foregroundColor, value: dim, range: match.range(at: 1))
-            storage.addAttribute(.zeroMark, value: true, range: NSRange(location: match.range.location, length: min(match.range(at: 1).length + 1, match.range.length)))
+            storage.addAttribute(
+                .zeroMark, value: true,
+                range: NSRange(location: match.range.location, length: min(match.range(at: 1).length + 1, match.range.length)))
         }
         for match in bold.matches(in: text, range: whole) where outside(match.range) {
             let font = (storage.attribute(.font, at: match.range.location, effectiveRange: nil) as? NSFont) ?? body
@@ -656,13 +725,15 @@ enum MarkdownStyle {
             storage.addAttribute(.font, value: mono, range: match.range)
             storage.addAttribute(.zeroCode, value: true, range: NSRange(location: match.range.location + 1, length: match.range.length - 2))
             storage.addAttributes([.foregroundColor: dim, .zeroMark: true], range: NSRange(location: match.range.location, length: 1))
-            storage.addAttributes([.foregroundColor: dim, .zeroMark: true], range: NSRange(location: NSMaxRange(match.range) - 1, length: 1))
+            storage.addAttributes(
+                [.foregroundColor: dim, .zeroMark: true], range: NSRange(location: NSMaxRange(match.range) - 1, length: 1))
         }
         for match in marker.matches(in: text, range: whole) where outside(match.range) {
             storage.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: match.range)
         }
         for match in quote.matches(in: text, range: whole) where outside(match.range) {
-            storage.addAttributes([.foregroundColor: NSColor.secondaryLabelColor, .zeroQuote: true, .paragraphStyle: quoteParagraph], range: match.range)
+            storage.addAttributes(
+                [.foregroundColor: NSColor.secondaryLabelColor, .zeroQuote: true, .paragraphStyle: quoteParagraph], range: match.range)
             let marker = (text as NSString).substring(with: match.range).prefix { $0 == ">" || $0 == " " }.count
             storage.addAttributes([.foregroundColor: dim, .zeroMark: true], range: NSRange(location: match.range.location, length: marker))
         }
@@ -672,11 +743,15 @@ enum MarkdownStyle {
         for match in link.matches(in: text, range: whole) where outside(match.range) {
             let target = (text as NSString).substring(with: match.range(at: 2))
             if let url = URL(string: target) { storage.addAttribute(.link, value: url, range: match.range(at: 1)) }
-            storage.addAttributes([.foregroundColor: dim, .zeroMark: true], range: NSRange(location: match.range(at: 1).location + match.range(at: 1).length, length: match.range(at: 2).length + 3))
+            storage.addAttributes(
+                [.foregroundColor: dim, .zeroMark: true],
+                range: NSRange(location: match.range(at: 1).location + match.range(at: 1).length, length: match.range(at: 2).length + 3))
             storage.addAttributes([.foregroundColor: dim, .zeroMark: true], range: NSRange(location: match.range.location, length: 1))
         }
         for match in bare.matches(in: text, range: whole) where outside(match.range) {
-            if let url = URL(string: (text as NSString).substring(with: match.range)) { storage.addAttribute(.link, value: url, range: match.range) }
+            if let url = URL(string: (text as NSString).substring(with: match.range)) {
+                storage.addAttribute(.link, value: url, range: match.range)
+            }
         }
     }
 }

@@ -78,7 +78,9 @@ public struct ConversationItem: Decodable, Equatable, Sendable, Identifiable {
 }
 
 extension ConversationItem.Kind: Decodable {
-    private enum Keys: String, CodingKey { case type, text, finalAnswer, command, cwd, output, exitCode, durationMs, changes, name, detail, error, images, title, columns, rows }
+    private enum Keys: String, CodingKey {
+        case type, text, finalAnswer, command, cwd, output, exitCode, durationMs, changes, name, detail, error, images, title, columns, rows
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -89,13 +91,17 @@ extension ConversationItem.Kind: Decodable {
         case "reasoning": self = .reasoning(text: try text())
         case "plan": self = .plan(text: try text())
         case "command":
-            self = .command(command: try c.decode(String.self, forKey: .command), cwd: try c.decode(String.self, forKey: .cwd),
-                            output: try c.decode(String.self, forKey: .output), exitCode: try c.decodeIfPresent(Int.self, forKey: .exitCode),
-                            durationMs: try c.decodeIfPresent(Int.self, forKey: .durationMs))
+            self = .command(
+                command: try c.decode(String.self, forKey: .command), cwd: try c.decode(String.self, forKey: .cwd),
+                output: try c.decode(String.self, forKey: .output), exitCode: try c.decodeIfPresent(Int.self, forKey: .exitCode),
+                durationMs: try c.decodeIfPresent(Int.self, forKey: .durationMs))
         case "fileChange": self = .fileChange(try c.decode([FileChange].self, forKey: .changes))
         case "tool": self = .tool(name: try c.decode(String.self, forKey: .name), detail: try c.decode(String.self, forKey: .detail))
         case "notice": self = .notice(text: try text(), error: try c.decode(Bool.self, forKey: .error))
-        case "table": self = .table(title: try c.decode(String.self, forKey: .title), columns: try c.decode([String].self, forKey: .columns), rows: try c.decode([[String]].self, forKey: .rows))
+        case "table":
+            self = .table(
+                title: try c.decode(String.self, forKey: .title), columns: try c.decode([String].self, forKey: .columns),
+                rows: try c.decode([[String]].self, forKey: .rows))
         // A newer zerod's item still shows, as what it is, instead of failing the whole conversation.
         case let other: self = .notice(text: "An item Zero can't show yet (\(other))", error: false)
         }
@@ -126,8 +132,10 @@ public struct Approval: Decodable, Equatable, Sendable, Identifiable {
     /// The answers the provider takes, in its order.
     public var choices: [Choice]
 
-    public init(id: String, item: String?, kind: ApprovalKind, title: String, command: String?, cwd: String?, reason: String?,
-                changes: [FileChange], choices: [Choice]) {
+    public init(
+        id: String, item: String?, kind: ApprovalKind, title: String, command: String?, cwd: String?, reason: String?,
+        changes: [FileChange], choices: [Choice]
+    ) {
         self.id = id; self.item = item; self.kind = kind; self.title = title; self.command = command; self.cwd = cwd
         self.reason = reason; self.changes = changes; self.choices = choices
     }
@@ -152,7 +160,8 @@ public struct Field: Decodable, Equatable, Sendable, Identifiable {
     /// Shown as dots, and never kept in Zero's log.
     public var secret: Bool
     public init(id: String, header: String?, question: String, options: [QuestionOption], multiple: Bool, other: Bool, secret: Bool) {
-        self.id = id; self.header = header; self.question = question; self.options = options; self.multiple = multiple; self.other = other; self.secret = secret
+        self.id = id; self.header = header; self.question = question; self.options = options; self.multiple = multiple; self.other = other;
+        self.secret = secret
     }
 }
 
@@ -190,7 +199,9 @@ public struct GitHubView: Codable, Equatable, Sendable, Identifiable {
     public var name: String
     public var query: String
     public var start: TaskStart?
-    public init(id: String = "", name: String, query: String, start: TaskStart? = nil) { self.id = id; self.name = name; self.query = query; self.start = start }
+    public init(id: String = "", name: String, query: String, start: TaskStart? = nil) {
+        self.id = id; self.name = name; self.query = query; self.start = start
+    }
 }
 
 /// How a view's items start tasks (crates/zerod/src/integrations.rs): the folder, the agent, and a prompt that fills in
@@ -202,8 +213,11 @@ public struct TaskStart: Codable, Equatable, Sendable {
     public var model: String?
     public var effort: String?
     public var permissions: String?
-    public init(cwd: String, prompt: String, provider: String? = nil, model: String? = nil, effort: String? = nil, permissions: String? = nil) {
-        self.cwd = cwd; self.prompt = prompt; self.provider = provider; self.model = model; self.effort = effort; self.permissions = permissions
+    public init(
+        cwd: String, prompt: String, provider: String? = nil, model: String? = nil, effort: String? = nil, permissions: String? = nil
+    ) {
+        self.cwd = cwd; self.prompt = prompt; self.provider = provider; self.model = model; self.effort = effort;
+        self.permissions = permissions
     }
 }
 
@@ -224,9 +238,13 @@ public struct LinearView: Codable, Equatable, Sendable, Identifiable {
     /// The teams' own states by name; when any are picked they stand in for `states` (their types).
     public var stateNames: [String]
     public var start: TaskStart?
-    public init(id: String = "", name: String, assignee: String = "me", teams: [String] = [], states: [String] = ["backlog", "unstarted", "started"],
-                stateNames: [String] = [], start: TaskStart? = nil) {
-        self.id = id; self.name = name; self.assignee = assignee; self.teams = teams; self.states = states; self.stateNames = stateNames; self.start = start
+    public init(
+        id: String = "", name: String, assignee: String = "me", teams: [String] = [],
+        states: [String] = ["backlog", "unstarted", "started"],
+        stateNames: [String] = [], start: TaskStart? = nil
+    ) {
+        self.id = id; self.name = name; self.assignee = assignee; self.teams = teams; self.states = states; self.stateNames = stateNames;
+        self.start = start
     }
 }
 
@@ -380,8 +398,10 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     /// A task just started, before zerod's board has its row: Working, under its name, so it takes its place among the
     /// tasks at once (rather than showing elsewhere first and jumping when the board catches up).
     public static func starting(session: String, task: String, workspace: String) -> BoardRow? {
-        let row: [String: Any] = ["session": session, "task": task, "workspace": workspace, "place": "", "online": true,
-                                  "state": "working", "own": "working", "asks": [], "workers": 0]
+        let row: [String: Any] = [
+            "session": session, "task": task, "workspace": workspace, "place": "", "online": true,
+            "state": "working", "own": "working", "asks": [], "workers": 0,
+        ]
         return (try? JSONSerialization.data(withJSONObject: row)).flatMap { try? JSONDecoder().decode(BoardRow.self, from: $0) }
     }
     public var now: String?
@@ -502,7 +522,9 @@ public struct Failure: Decodable, Equatable, Sendable {
 }
 
 /// What a session needs from the user, most urgent first: the bar's dot (zerod's `Conversation::attention`).
-public enum Attention: String, Decodable, Sendable { case needsYou, limited, stuck, failed, blocked, working, done, answered, idle, offline, starting }
+public enum Attention: String, Decodable, Sendable {
+    case needsYou, limited, stuck, failed, blocked, working, done, answered, idle, offline, starting
+}
 
 public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
     public var id: String
@@ -547,7 +569,8 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
     public var seq: UInt64
 
     public init(id: String, provider: Provider, cwd: String) {
-        self.id = id; self.provider = provider; self.cwd = cwd; permissions = .auto; status = .starting; items = []; approvals = []; questions = []; seq = 0
+        self.id = id; self.provider = provider; self.cwd = cwd; permissions = .auto; status = .starting; items = []; approvals = [];
+        questions = []; seq = 0
     }
 
     public func item(_ id: String) -> ConversationItem? { items.first { $0.id == id } }
@@ -573,7 +596,9 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
             case .asked?: return .needsYou
             case .waiting?: return .blocked
             case .working?: return .idle
-            case nil: return text.split(whereSeparator: \.isNewline).contains { $0.trimmingCharacters(in: .whitespaces).hasSuffix("?") } ? .needsYou : .answered
+            case nil:
+                return text.split(whereSeparator: \.isNewline).contains { $0.trimmingCharacters(in: .whitespaces).hasSuffix("?") }
+                    ? .needsYou : .answered
             }
         }
     }
@@ -593,8 +618,10 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
         case let .permitted(permissions):
             // As zerod records it (model.rs): the change, and a line in the conversation saying so.
             self.permissions = permissions
-            let text = permissions == .auto ? "Auto from here: it asks before what isn't safe" : "Unrestricted from here: it acts without asking"
-            items.append(ConversationItem(id: "permitted-\(items.count)", turn: nil, kind: .notice(text: text, error: false), status: .done))
+            let text =
+                permissions == .auto ? "Auto from here: it asks before what isn't safe" : "Unrestricted from here: it acts without asking"
+            items.append(
+                ConversationItem(id: "permitted-\(items.count)", turn: nil, kind: .notice(text: text, error: false), status: .done))
         case let .status(status, turn, error):
             self.status = status; self.turn = turn; self.error = error
         case let .item(item):
@@ -644,7 +671,10 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
             if let last = items.indices.last, case .notice("Interrupted", false) = items[last].kind {
                 items[last].kind = .notice(text: "Interrupted and continued in \(provider.title)", error: false)
             } else {
-                items.append(ConversationItem(id: "switched-\(seq)", turn: nil, kind: .notice(text: "Continued in \(provider.title)", error: false), status: .done))
+                items.append(
+                    ConversationItem(
+                        id: "switched-\(seq)", turn: nil, kind: .notice(text: "Continued in \(provider.title)", error: false), status: .done
+                    ))
             }
         }
     }
@@ -690,20 +720,29 @@ public enum Change: Decodable, Equatable, Sendable {
     /// Back to just before this message of yours: it and everything after it are gone.
     case rewound(String)
 
-    private enum Keys: String, CodingKey { case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label, ticket, provider, terminal, place, parent, before, name, value, workspace, permissions, signin }
+    private enum Keys: String, CodingKey {
+        case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label,
+            ticket, provider, terminal, place, parent, before, name, value, workspace, permissions, signin
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         switch try c.decode(String.self, forKey: .type) {
-        case "thread": self = .thread(try c.decode(String.self, forKey: .thread), model: try c.decodeIfPresent(String.self, forKey: .model),
-                                      effort: try c.decodeIfPresent(String.self, forKey: .effort))
+        case "thread":
+            self = .thread(
+                try c.decode(String.self, forKey: .thread), model: try c.decodeIfPresent(String.self, forKey: .model),
+                effort: try c.decodeIfPresent(String.self, forKey: .effort))
         case "title": self = .title(try c.decodeIfPresent(String.self, forKey: .title))
-        case "named": self = .named(label: try c.decodeIfPresent(String.self, forKey: .label), ticket: try c.decodeIfPresent(String.self, forKey: .ticket))
+        case "named":
+            self = .named(
+                label: try c.decodeIfPresent(String.self, forKey: .label), ticket: try c.decodeIfPresent(String.self, forKey: .ticket))
         case "placed": self = .placed(try c.decodeIfPresent(String.self, forKey: .workspace))
         case "signedIn": self = .signedIn(try c.decodeIfPresent(String.self, forKey: .signin))
         case "permitted": self = .permitted(try c.decode(Permissions.self, forKey: .permissions))
-        case "status": self = .status(try c.decode(SessionStatus.self, forKey: .status), turn: try c.decodeIfPresent(String.self, forKey: .turn),
-                                      error: try c.decodeIfPresent(String.self, forKey: .error))
+        case "status":
+            self = .status(
+                try c.decode(SessionStatus.self, forKey: .status), turn: try c.decodeIfPresent(String.self, forKey: .turn),
+                error: try c.decodeIfPresent(String.self, forKey: .error))
         case "item": self = .item(try c.decode(ConversationItem.self, forKey: .item))
         case "delta": self = .delta(item: try c.decode(String.self, forKey: .item), text: try c.decode(String.self, forKey: .text))
         case "approval": self = .approval(try c.decode(Approval.self, forKey: .approval))
@@ -721,8 +760,10 @@ public enum Change: Decodable, Equatable, Sendable {
         case "snapshot": self = .snapshot
         case "attribute": self = .attribute(try c.decode(String.self, forKey: .name), try c.decodeIfPresent(String.self, forKey: .value))
         case "rewound": self = .rewound(try c.decode(String.self, forKey: .before))
-        case "switched": self = .switched(try c.decode(Provider.self, forKey: .provider), model: try c.decodeIfPresent(String.self, forKey: .model),
-                                          effort: try c.decodeIfPresent(String.self, forKey: .effort))
+        case "switched":
+            self = .switched(
+                try c.decode(Provider.self, forKey: .provider), model: try c.decodeIfPresent(String.self, forKey: .model),
+                effort: try c.decodeIfPresent(String.self, forKey: .effort))
         case let other: self = .other(other)
         }
     }
@@ -930,13 +971,21 @@ public final class ZerodLink: @unchecked Sendable {
     /// Every session, without its items.
     public func list() async throws -> [Conversation] { try decode([Conversation].self, from: await call("list")) }
 
-    public func get(_ session: String) async throws -> Conversation { try decode(Conversation.self, from: await call("get", ["session": session])) }
+    public func get(_ session: String) async throws -> Conversation {
+        try decode(Conversation.self, from: await call("get", ["session": session]))
+    }
 
     /// Starts a session and returns its id at once, while the provider starts.
-    public func start(provider: Provider, cwd: String, prompt: String, images: [String] = [], model: String? = nil, effort: String? = nil,
-                      permissions: Permissions = .auto, workspace: String? = nil) async throws -> String {
-        let result = try await call("start", ["provider": provider.rawValue, "cwd": cwd, "prompt": prompt, "images": images, "model": model, "effort": effort,
-                                              "permissions": permissions.rawValue, "workspace": workspace])
+    public func start(
+        provider: Provider, cwd: String, prompt: String, images: [String] = [], model: String? = nil, effort: String? = nil,
+        permissions: Permissions = .auto, workspace: String? = nil
+    ) async throws -> String {
+        let result = try await call(
+            "start",
+            [
+                "provider": provider.rawValue, "cwd": cwd, "prompt": prompt, "images": images, "model": model, "effort": effort,
+                "permissions": permissions.rawValue, "workspace": workspace,
+            ])
         guard let session = (result as? [String: Any])?["session"] as? String else { throw ZerodError(message: "zerod started no session") }
         return session
     }
@@ -953,13 +1002,17 @@ public final class ZerodLink: @unchecked Sendable {
     /// Lets a queue held since a stop go on.
     public func release(session: String) async throws { _ = try await call("release", ["session": session]) }
     /// The user asks two tasks to work together: each is told about the other and how to reach it.
-    public func introduce(session: String, to other: String) async throws { _ = try await call("introduce", ["session": session, "args": ["other": other]]) }
+    public func introduce(session: String, to other: String) async throws {
+        _ = try await call("introduce", ["session": session, "args": ["other": other]])
+    }
 
     public func interrupt(session: String) async throws { _ = try await call("interrupt", ["session": session]) }
     public func stop(session: String) async throws { _ = try await call("stop", ["session": session]) }
     /// Puts tasks and their workers on hold (every task, none named), and takes them off it; gives the sessions it did.
     public func pause(sessions: [String]) async throws -> [String] { try await call("pause", ["sessions": sessions]) as? [String] ?? [] }
-    public func unpause(sessions: [String]) async throws -> [String] { try await call("unpause", ["sessions": sessions]) as? [String] ?? [] }
+    public func unpause(sessions: [String]) async throws -> [String] {
+        try await call("unpause", ["sessions": sessions]) as? [String] ?? []
+    }
     /// Puts the task away: out of the list, its files kept in zerod's archive/.
     public func archive(session: String) async throws { _ = try await call("archive", ["session": session]) }
 
@@ -982,7 +1035,9 @@ public final class ZerodLink: @unchecked Sendable {
     /// A task saved for later, whole: off the board, on hold, an item in Later. The item.
     public func saveForLater(session: String) async throws { _ = try await call("saveForLater", ["session": session]) }
     /// A task saved for later back on the board: its session.
-    public func resumeLater(_ item: String) async throws -> String? { (try await call("resumeLater", ["args": ["item": item]]) as? [String: Any])?["session"] as? String }
+    public func resumeLater(_ item: String) async throws -> String? {
+        (try await call("resumeLater", ["args": ["item": item]]) as? [String: Any])?["session"] as? String
+    }
     public func unarchive(session: String) async throws -> [String] { try await call("unarchive", ["session": session]) as? [String] ?? [] }
 
     /// What going back to a message of yours would do to the folder.
@@ -992,7 +1047,8 @@ public final class ZerodLink: @unchecked Sendable {
 
     /// Back to just before a message of yours: the conversation, the folder's code, or both; the message comes back.
     public func rewind(session: String, message: String, conversation: Bool, code: Bool) async throws -> Rewound {
-        try decode(Rewound.self, from: await call("rewind", ["session": session, "message": message, "conversation": conversation, "code": code]))
+        try decode(
+            Rewound.self, from: await call("rewind", ["session": session, "message": message, "conversation": conversation, "code": code]))
     }
 
     /// A new task from just before a message of yours; this one stays. Its id comes back with the message.
@@ -1003,7 +1059,9 @@ public final class ZerodLink: @unchecked Sendable {
     /// Moves the task to another provider between turns; the next message starts it there.
     /// Hands the task to its provider's own terminal; zero-host's id for it.
     public func openTerminal(session: String) async throws -> String {
-        guard let terminal = (try await call("openTerminal", ["session": session]) as? [String: Any])?["terminal"] as? String else { throw ZerodError(message: "zerod opened no terminal") }
+        guard let terminal = (try await call("openTerminal", ["session": session]) as? [String: Any])?["terminal"] as? String else {
+            throw ZerodError(message: "zerod opened no terminal")
+        }
         return terminal
     }
     /// Back from the provider's terminal to Zero's UI, with what happened there.
@@ -1024,10 +1082,16 @@ public final class ZerodLink: @unchecked Sendable {
     // Leads and workers.
 
     /// Starts a worker of `lead`, in its folder and with its permissions unless given others.
-    public func spawn(lead: String, provider: Provider?, prompt: String, cwd: String? = nil, model: String? = nil, effort: String? = nil,
-                      permissions: Permissions? = nil, label: String? = nil, ticket: String? = nil, workspace: String? = nil) async throws -> String {
-        let result = try await call("spawn", ["session": lead, "provider": provider?.rawValue, "prompt": prompt, "cwd": cwd, "model": model,
-                                              "effort": effort, "permissions": permissions?.rawValue, "label": label, "ticket": ticket, "workspace": workspace])
+    public func spawn(
+        lead: String, provider: Provider?, prompt: String, cwd: String? = nil, model: String? = nil, effort: String? = nil,
+        permissions: Permissions? = nil, label: String? = nil, ticket: String? = nil, workspace: String? = nil
+    ) async throws -> String {
+        let result = try await call(
+            "spawn",
+            [
+                "session": lead, "provider": provider?.rawValue, "prompt": prompt, "cwd": cwd, "model": model,
+                "effort": effort, "permissions": permissions?.rawValue, "label": label, "ticket": ticket, "workspace": workspace,
+            ])
         guard let session = (result as? [String: Any])?["session"] as? String else { throw ZerodError(message: "zerod started no session") }
         return session
     }
@@ -1086,7 +1150,11 @@ public final class ZerodLink: @unchecked Sendable {
     public func agentGit() async throws -> (AgentGit, String?) {
         let settings = try await call("settings") as? [String: Any] ?? [:]
         var git = AgentGit()
-        if let raw = settings["git"], let data = try? JSONSerialization.data(withJSONObject: raw), let kept = try? JSONDecoder().decode(AgentGit.self, from: data) { git = kept }
+        if let raw = settings["git"], let data = try? JSONSerialization.data(withJSONObject: raw),
+            let kept = try? JSONDecoder().decode(AgentGit.self, from: data)
+        {
+            git = kept
+        }
         return (git, settings["gitPublicKey"] as? String)
     }
 
@@ -1120,15 +1188,15 @@ public final class ZerodLink: @unchecked Sendable {
     }
     public func setSubagents(_ on: Bool) async throws { _ = try await call("configure", ["subagents": on]) }
     #if os(macOS)
-    /// The models the user added to Zero, for each CLI.
-    public func customModels() async throws -> [CustomModels.Model] {
-        let kept = ((try await call("settings")) as? [String: Any])?["models"] ?? []
-        return try JSONDecoder().decode([CustomModels.Model].self, from: JSONSerialization.data(withJSONObject: kept))
-    }
-    public func setCustomModels(_ models: [CustomModels.Model]) async throws {
-        let list = try JSONSerialization.jsonObject(with: JSONEncoder().encode(models))
-        _ = try await call("configure", ["models": list])
-    }
+        /// The models the user added to Zero, for each CLI.
+        public func customModels() async throws -> [CustomModels.Model] {
+            let kept = ((try await call("settings")) as? [String: Any])?["models"] ?? []
+            return try JSONDecoder().decode([CustomModels.Model].self, from: JSONSerialization.data(withJSONObject: kept))
+        }
+        public func setCustomModels(_ models: [CustomModels.Model]) async throws {
+            let list = try JSONSerialization.jsonObject(with: JSONEncoder().encode(models))
+            _ = try await call("configure", ["models": list])
+        }
     #endif
 
     /// The sessions `session` started, without their items, each with how it's doing (which zerod tells, since the
@@ -1185,7 +1253,9 @@ public final class ZerodLink: @unchecked Sendable {
         public let link: String
         /// A task saved whole, by its session: off the board until it's resumed from Later.
         public let resume: String?
-        public struct Version: Decodable, Equatable, Sendable { public let version: Int; public let note: String; public let at: Int; public let by: String? }
+        public struct Version: Decodable, Equatable, Sendable {
+            public let version: Int; public let note: String; public let at: Int; public let by: String?
+        }
         public var createdAt: Date { Date(timeIntervalSince1970: TimeInterval(created)) }
     }
 
@@ -1237,10 +1307,14 @@ public final class ZerodLink: @unchecked Sendable {
     }
 
     /// Words for a session between its turns, marked as Zero's, or as `from`'s (another task's).
-    public func notify(session: String, text: String, from: String? = nil) async throws { _ = try await call("notify", ["session": session, "text": text, "from": from]) }
+    public func notify(session: String, text: String, from: String? = nil) async throws {
+        _ = try await call("notify", ["session": session, "text": text, "from": from])
+    }
 
     /// What a task's agent may do without asking, changed between turns: its next message starts it with them.
-    public func setPermissions(session: String, _ permissions: Permissions) async throws { _ = try await call("setPermissions", ["session": session, "permissions": permissions.rawValue]) }
+    public func setPermissions(session: String, _ permissions: Permissions) async throws {
+        _ = try await call("setPermissions", ["session": session, "permissions": permissions.rawValue])
+    }
 
     // Zero for Chrome (zerod's browser.rs).
 
@@ -1263,7 +1337,9 @@ public final class ZerodLink: @unchecked Sendable {
 
     /// While zerod restarts: what it's waiting for, each turn's task and the command it's letting finish.
     public struct RestartStatus: Decodable, Sendable, Equatable {
-        public struct Waiting: Decodable, Sendable, Equatable, Identifiable { public let session: String; public let task: String; public let command: String; public var id: String { session } }
+        public struct Waiting: Decodable, Sendable, Equatable, Identifiable {
+            public let session: String; public let task: String; public let command: String; public var id: String { session }
+        }
         public let restarting: Bool
         public let waiting: [Waiting]
         /// The longest a command is waited for, in seconds.
@@ -1281,8 +1357,12 @@ public final class ZerodLink: @unchecked Sendable {
     /// Firefox Developer Edition opened under Zero's remote control, its extension installed.
     public func openFirefox() async throws { _ = try await call("openFirefox") }
 
-    public func browserSettings() async throws -> [String] { ((try await call("browserSettings")) as? [String: Any])?["blocked"] as? [String] ?? [] }
-    public func saveBrowserSettings(blocked: [String]) async throws { _ = try await call("saveBrowserSettings", ["browser": ["blocked": blocked]]) }
+    public func browserSettings() async throws -> [String] {
+        ((try await call("browserSettings")) as? [String: Any])?["blocked"] as? [String] ?? []
+    }
+    public func saveBrowserSettings(blocked: [String]) async throws {
+        _ = try await call("saveBrowserSettings", ["browser": ["blocked": blocked]])
+    }
 
     // Workspaces: the user's work split by who it's for (zerod's workspaces.rs). "zero" is always there.
 
@@ -1316,8 +1396,11 @@ public final class ZerodLink: @unchecked Sendable {
     }
     public static let signInKeychain = "Zero sign-ins"
 
-    public func signIns() async throws -> (list: [SignIn], defaults: [String: String], usage: [String: Usage], refused: [String: [String]]) {
-        struct Listed: Decodable { let signins: [SignIn]; let defaults: [String: String]; let usage: [String: Usage]?; let refused: [String: [String]]? }
+    public func signIns() async throws -> (list: [SignIn], defaults: [String: String], usage: [String: Usage], refused: [String: [String]])
+    {
+        struct Listed: Decodable {
+            let signins: [SignIn]; let defaults: [String: String]; let usage: [String: Usage]?; let refused: [String: [String]]?
+        }
         let listed = try decode(Listed.self, from: await call("signIns"))
         return (listed.signins, listed.defaults, listed.usage ?? [:], listed.refused ?? [:])
     }
@@ -1357,13 +1440,18 @@ public final class ZerodLink: @unchecked Sendable {
             /// Kept in Zero's file only when that's where it comes from.
             public var value: String?
             public var from: Source
-            public init(name: String = "", value: String? = nil, from: Source = .keychain) { self.name = name; self.value = value; self.from = from }
+            public init(name: String = "", value: String? = nil, from: Source = .keychain) {
+                self.name = name; self.value = value; self.from = from
+            }
         }
 
         public enum Source: String, Codable, Sendable, CaseIterable { case keychain, command, file }
 
-        public init(id: String = "", name: String = "", command: String? = nil, args: [String] = [], url: String? = nil, env: [Value] = [], headers: [Value] = [],
-                    workspaces: [String] = [], enabled: Bool = true) {
+        public init(
+            id: String = "", name: String = "", command: String? = nil, args: [String] = [], url: String? = nil, env: [Value] = [],
+            headers: [Value] = [],
+            workspaces: [String] = [], enabled: Bool = true
+        ) {
             self.id = id; self.name = name; self.command = command; self.args = args; self.url = url; self.env = env; self.headers = headers
             self.workspaces = workspaces; self.enabled = enabled
         }
@@ -1387,7 +1475,9 @@ public final class ZerodLink: @unchecked Sendable {
     public func deleteWorkspace(_ id: String) async throws { _ = try await call("deleteWorkspace", ["workspace": id]) }
 
     /// Puts a session in a workspace; nil puts it back in its folder's.
-    public func placeInWorkspace(session: String, workspace: String?) async throws { _ = try await call("placeInWorkspace", ["session": session, "workspace": workspace]) }
+    public func placeInWorkspace(session: String, workspace: String?) async throws {
+        _ = try await call("placeInWorkspace", ["session": session, "workspace": workspace])
+    }
 
     // Following: what sessions hear of between their turns.
 
@@ -1425,21 +1515,30 @@ public final class ZerodLink: @unchecked Sendable {
     }
 
     /// Runs `command` in the session's folder and tells the session how it ended.
-    public func watch(session: String, command: String) async throws { _ = try await call("watch", ["session": session, "command": command]) }
+    public func watch(session: String, command: String) async throws {
+        _ = try await call("watch", ["session": session, "command": command])
+    }
 
     /// A file watched for the session (zerod's watches.rs): its id.
     public func watchFile(session: String, file: String, alerts: [String], done: String?, quiet: Int?) async throws -> String {
-        let result = try await call("watchFile", ["session": session, "watch": ["file": file, "alerts": alerts, "done": done as Any, "quiet": quiet as Any]]) as? [String: Any]
+        let result =
+            try await call(
+                "watchFile", ["session": session, "watch": ["file": file, "alerts": alerts, "done": done as Any, "quiet": quiet as Any]])
+            as? [String: Any]
         return result?["watch"] as? String ?? ""
     }
-    public func watches(session: String?) async throws -> [[String: Any]] { try await call("watches", ["session": session]) as? [[String: Any]] ?? [] }
+    public func watches(session: String?) async throws -> [[String: Any]] {
+        try await call("watches", ["session": session]) as? [[String: Any]] ?? []
+    }
     public func unwatch(_ id: String) async throws { _ = try await call("unwatch", ["watch": id]) }
 
     /// Wakes `session` at `at` with `text` (zerod's schedules.rs): the schedule, as zerod keeps it.
     public func schedule(session: String, at: Date, text: String) async throws -> [String: Any] {
         try await call("schedule", ["session": session, "at": Int(at.timeIntervalSince1970), "text": text]) as? [String: Any] ?? [:]
     }
-    public func schedules(session: String?) async throws -> [[String: Any]] { try await call("schedules", ["session": session]) as? [[String: Any]] ?? [] }
+    public func schedules(session: String?) async throws -> [[String: Any]] {
+        try await call("schedules", ["session": session]) as? [[String: Any]] ?? []
+    }
     public func unschedule(_ id: String) async throws { _ = try await call("unschedule", ["item": id]) }
 
     public func remind(session: String, minutes: Int, text: String) async throws {
@@ -1456,15 +1555,20 @@ public final class ZerodLink: @unchecked Sendable {
 
     /// Older items of a session: the page before `before`, or all of them from `from` up to it.
     public func items(session: String, before: String?, from: String? = nil, limit: Int = 60) async throws -> [ConversationItem] {
-        try decode([ConversationItem].self, from: await call("items", ["session": session, "before": before, "from": from, "limit": limit]))
+        try decode(
+            [ConversationItem].self, from: await call("items", ["session": session, "before": before, "from": from, "limit": limit]))
     }
     /// A page anywhere in a session: from a message, after one, or the latest; with how many items lie either side.
-    public func window(session: String, from: String? = nil, after: String? = nil, limit: Int = 60) async throws -> (items: [ConversationItem], earlier: Int, later: Int) {
+    public func window(session: String, from: String? = nil, after: String? = nil, limit: Int = 60) async throws -> (
+        items: [ConversationItem], earlier: Int, later: Int
+    ) {
         struct Window: Decodable { let items: [ConversationItem]; let earlier: Int; let later: Int }
         let page = try decode(Window.self, from: await call("window", ["session": session, "from": from, "after": after, "limit": limit]))
         return (page.items, page.earlier, page.later)
     }
-    public func outline(session: String) async throws -> [OutlineMark] { try decode([OutlineMark].self, from: await call("outline", ["session": session])) }
+    public func outline(session: String) async throws -> [OutlineMark] {
+        try decode([OutlineMark].self, from: await call("outline", ["session": session]))
+    }
 
     // Scratchpads: one op, `pad`, taking the same tools and arguments as the MCP server.
     public func pad<T: Decodable>(_ tool: String, _ args: [String: Any], as type: T.Type) async throws -> T {
@@ -1493,7 +1597,9 @@ public final class ZerodLink: @unchecked Sendable {
     public func cachedItems(_ integration: String, view: String) async throws -> [IntegrationItem]? {
         try decode([IntegrationItem]?.self, from: await call("viewItems", ["integration": integration, "view": view, "cached": true]))
     }
-    public func linearTeams(cached: Bool = false) async throws -> [LinearTeam]? { try decode([LinearTeam]?.self, from: await call("linearTeams", ["cached": cached])) }
+    public func linearTeams(cached: Bool = false) async throws -> [LinearTeam]? {
+        try decode([LinearTeam]?.self, from: await call("linearTeams", ["cached": cached]))
+    }
     /// The item's task: the one it has, or a new one from its view's template.
     public func startTask(_ integration: String, view: String, item: IntegrationItem) async throws -> StartedTask {
         let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(item))
@@ -1501,12 +1607,20 @@ public final class ZerodLink: @unchecked Sendable {
     }
     /// The page to open in the browser; zerod waits for Linear to come back.
     public func connectLinear() async throws -> URL {
-        guard let url = ((try await call("connectLinear")) as? [String: Any])?["url"] as? String, let link = URL(string: url) else { throw ZerodError(message: "zerod gave no Linear page") }
+        guard let url = ((try await call("connectLinear")) as? [String: Any])?["url"] as? String, let link = URL(string: url) else {
+            throw ZerodError(message: "zerod gave no Linear page")
+        }
         return link
     }
-    public func disconnectLinear() async throws -> IntegrationState { try decode(IntegrationState.self, from: await call("disconnectLinear")) }
-    public func connectSlack(token: String) async throws -> IntegrationState { try decode(IntegrationState.self, from: await call("connectSlack", ["token": token])) }
-    public func disconnectSlack(team: String) async throws -> IntegrationState { try decode(IntegrationState.self, from: await call("disconnectSlack", ["team": team])) }
+    public func disconnectLinear() async throws -> IntegrationState {
+        try decode(IntegrationState.self, from: await call("disconnectLinear"))
+    }
+    public func connectSlack(token: String) async throws -> IntegrationState {
+        try decode(IntegrationState.self, from: await call("connectSlack", ["token": token]))
+    }
+    public func disconnectSlack(team: String) async throws -> IntegrationState {
+        try decode(IntegrationState.self, from: await call("disconnectSlack", ["team": team]))
+    }
     /// Slack's channels again: new ones get ids too.
     public func refreshSlack() async throws -> IntegrationState { try decode(IntegrationState.self, from: await call("refreshSlack")) }
 
@@ -1538,7 +1652,9 @@ public final class ZerodLink: @unchecked Sendable {
 
     public func choose(_ ask: String, option: Int) async throws { _ = try await call("choose", ["ask": ask, "option": option]) }
     /// A text option with its text.
-    public func answer(_ ask: String, option: Int, text: String) async throws { _ = try await call("answerAsk", ["ask": ask, "option": option, "text": text]) }
+    public func answer(_ ask: String, option: Int, text: String) async throws {
+        _ = try await call("answerAsk", ["ask": ask, "option": option, "text": text])
+    }
     public func reply(_ ask: String, text: String) async throws { _ = try await call("reply", ["ask": ask, "text": text]) }
     public func takeBack(_ ask: String) async throws -> Bool { try await call("takeBack", ["ask": ask]) as? Bool ?? false }
     public func withdraw(_ ask: String, reason: String?) async throws { _ = try await call("withdraw", ["ask": ask, "text": reason]) }
@@ -1550,7 +1666,9 @@ public final class ZerodLink: @unchecked Sendable {
     public func close(agent: String, stop: Bool) async throws { _ = try await call("close", ["agent": agent, "stop": stop]) }
     public func screen(of agent: String) async throws -> String? { try await call("screen", ["agent": agent]) as? String }
     /// Keys into the agent's terminal; the screen just after.
-    public func press(_ keys: [UInt8], on agent: String) async throws -> String? { try await call("press", ["agent": agent, "keys": keys.map(Int.init)]) as? String }
+    public func press(_ keys: [UInt8], on agent: String) async throws -> String? {
+        try await call("press", ["agent": agent, "keys": keys.map(Int.init)]) as? String
+    }
     public func switchModel(of agent: String, model: String?, effort: String?) async throws {
         _ = try await call("switchModel", ["agent": agent, "model": model, "effort": effort])
     }
@@ -1576,7 +1694,8 @@ public final class ZerodLink: @unchecked Sendable {
                 let line = String(decoding: try JSONSerialization.data(withJSONObject: body), as: UTF8.self)
                 try writing.withLock { try connection.write(line: line) }
             } catch {
-                lock.withLock { waiting.removeValue(forKey: id) }?.resume(throwing: ZerodError(message: "Couldn't write to zerod: \(error)"))
+                lock.withLock { waiting.removeValue(forKey: id) }?.resume(
+                    throwing: ZerodError(message: "Couldn't write to zerod: \(error)"))
             }
         }
     }
@@ -1625,21 +1744,27 @@ public final class ZerodLink: @unchecked Sendable {
                 if event == "signins" { onFeed?(.signins); continue }
                 if event == "restarting" { onFeed?(.restarting); continue }
                 if event == "clear" { onFeed?(.clear((try? JSONDecoder().decode(Cleared.self, from: data))?.ids ?? [])); continue }
-                let decoded: ZerodMirror.Message? = switch event {
-                case "session": (try? JSONDecoder().decode(Snapshot.self, from: data)).map { snapshot in
-                    onMessage?(.earlier(session: snapshot.conversation.id, count: snapshot.earlier ?? 0))
-                    return .session(snapshot.conversation)
-                }
-                case "change": (try? JSONDecoder().decode(ZerodEvent.self, from: data)).map { .change($0) }
-                default: nil
-                }
+                let decoded: ZerodMirror.Message? =
+                    switch event {
+                    case "session":
+                        (try? JSONDecoder().decode(Snapshot.self, from: data)).map { snapshot in
+                            onMessage?(.earlier(session: snapshot.conversation.id, count: snapshot.earlier ?? 0))
+                            return .session(snapshot.conversation)
+                        }
+                    case "change": (try? JSONDecoder().decode(ZerodEvent.self, from: data)).map { .change($0) }
+                    default: nil
+                    }
                 if let decoded { onMessage?(decoded) } else if let inbox = Self.inbox(event, data) { onInbox?(inbox) }
                 continue
             }
             guard let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let id = message["id"] as? Int, let answer = lock.withLock({ waiting.removeValue(forKey: id) }) else { continue }
-            if message["ok"] as? Bool == true { answer.resume(returning: message["result"] ?? NSNull()) }
-            else { answer.resume(throwing: ZerodError(message: message["error"] as? String ?? "zerod refused the request")) }
+                let id = message["id"] as? Int, let answer = lock.withLock({ waiting.removeValue(forKey: id) })
+            else { continue }
+            if message["ok"] as? Bool == true {
+                answer.resume(returning: message["result"] ?? NSNull())
+            } else {
+                answer.resume(throwing: ZerodError(message: message["error"] as? String ?? "zerod refused the request"))
+            }
         }
         let pending = lock.withLock {
             closed = true
@@ -1655,7 +1780,8 @@ public final class ZerodLink: @unchecked Sendable {
 
     /// zerod next to this program (Zero.app's MacOS folder, or the build folder), else the installed app's.
     public static var executable: String {
-        let sibling = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent().appendingPathComponent("zerod").path
+        let sibling = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
+            .appendingPathComponent("zerod").path
         return FileManager.default.isExecutableFile(atPath: sibling) ? sibling : "/Applications/Zero.app/Contents/MacOS/zerod"
     }
 
@@ -1667,21 +1793,21 @@ public final class ZerodLink: @unchecked Sendable {
     public static func launch(binary: String, home: String, socket: String) async -> Bool {
         if answers(socket) { return true }
         #if os(macOS)
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: binary)
-        process.arguments = ["--home", home, "--socket", socket]
-        let log = URL(fileURLWithPath: socket).deletingLastPathComponent().appendingPathComponent("zerod.log")
-        try? FileManager.default.createDirectory(at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if !FileManager.default.fileExists(atPath: log.path) { FileManager.default.createFile(atPath: log.path, contents: nil) }
-        let output = try? FileHandle(forWritingTo: log)
-        _ = try? output?.seekToEnd()
-        process.standardOutput = output
-        process.standardError = output
-        guard (try? process.run()) != nil else { return false }
-        for _ in 0..<30 {
-            try? await Task.sleep(for: .milliseconds(100))
-            if answers(socket) { return true }
-        }
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: binary)
+            process.arguments = ["--home", home, "--socket", socket]
+            let log = URL(fileURLWithPath: socket).deletingLastPathComponent().appendingPathComponent("zerod.log")
+            try? FileManager.default.createDirectory(at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if !FileManager.default.fileExists(atPath: log.path) { FileManager.default.createFile(atPath: log.path, contents: nil) }
+            let output = try? FileHandle(forWritingTo: log)
+            _ = try? output?.seekToEnd()
+            process.standardOutput = output
+            process.standardError = output
+            guard (try? process.run()) != nil else { return false }
+            for _ in 0..<30 {
+                try? await Task.sleep(for: .milliseconds(100))
+                if answers(socket) { return true }
+            }
         #endif
         return false
     }

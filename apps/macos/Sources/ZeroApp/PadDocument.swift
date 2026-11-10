@@ -52,10 +52,12 @@ struct PadDocument: View {
                         Group {
                             switch part {
                             case let .text(words, gap):
-                                PadTextField(text: Binding(get: { words }, set: { set(index, .text($0, gap: gap)) }),
-                                             firstLine: firstLine(of: index), isLast: index == parts.count - 1, placeholder: parts.count == 1 ? "Write in Markdown…" : "",
-                                             showLine: showing?.part == index ? showing?.line : nil,
-                                             sectionLink: sectionLink, padLink: padLink, done: regroup)
+                                PadTextField(
+                                    text: Binding(get: { words }, set: { set(index, .text($0, gap: gap)) }),
+                                    firstLine: firstLine(of: index), isLast: index == parts.count - 1,
+                                    placeholder: parts.count == 1 ? "Write in Markdown…" : "",
+                                    showLine: showing?.part == index ? showing?.line : nil,
+                                    sectionLink: sectionLink, padLink: padLink, done: regroup)
                             case let .table(lead, body, gap):
                                 TableGrid(markdown: Binding(get: { body }, set: { set(index, .table(lead: lead, body: $0, gap: gap)) }))
                                     .padding(.vertical, 10)
@@ -178,7 +180,8 @@ private struct PadTextField: NSViewRepresentable {
             guard let view, let path = PadImages.keep(image) else { return }
             view.insertText("![](\(path))", replacementRange: view.selectedRange())
         }
-        context.coordinator.observer = NotificationCenter.default.addObserver(forName: Self.focusLast, object: nil, queue: .main) { [weak view] _ in
+        context.coordinator.observer = NotificationCenter.default.addObserver(forName: Self.focusLast, object: nil, queue: .main) {
+            [weak view] _ in
             // Only the last text of the pad takes it: the one with nothing after it in the page.
             guard let view, context.coordinator.parent.isLast else { return }
             view.window?.makeFirstResponder(view)
@@ -232,22 +235,25 @@ private struct PadTextField: NSViewRepresentable {
         // Formatting, from the toolbar (through the responder chain) and the keyboard.
 
         override func performKeyEquivalent(with event: NSEvent) -> Bool {
-            guard window?.firstResponder === self, let key = event.charactersIgnoringModifiers?.lowercased() else { return super.performKeyEquivalent(with: event) }
-            let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
-            let action: Selector? = switch (flags, key) {
-            case ([.command], "b"): #selector(zeroBold(_:))
-            case ([.command], "i"): #selector(zeroItalic(_:))
-            case ([.command], "e"): #selector(zeroCode(_:))
-            case ([.command], "k"): #selector(zeroLink(_:))
-            case ([.command, .shift], "x"): #selector(zeroStrike(_:))
-            case ([.command, .option], "1"): #selector(zeroHeading1(_:))
-            case ([.command, .option], "2"): #selector(zeroHeading2(_:))
-            case ([.command, .option], "3"): #selector(zeroHeading3(_:))
-            case ([.command, .shift], "7"), ([.command, .shift], "&"): #selector(zeroNumbers(_:))
-            case ([.command, .shift], "8"), ([.command, .shift], "*"): #selector(zeroBullets(_:))
-            case ([.command, .shift], "9"), ([.command, .shift], "("): #selector(zeroChecklist(_:))
-            default: nil
+            guard window?.firstResponder === self, let key = event.charactersIgnoringModifiers?.lowercased() else {
+                return super.performKeyEquivalent(with: event)
             }
+            let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+            let action: Selector? =
+                switch (flags, key) {
+                case ([.command], "b"): #selector(zeroBold(_:))
+                case ([.command], "i"): #selector(zeroItalic(_:))
+                case ([.command], "e"): #selector(zeroCode(_:))
+                case ([.command], "k"): #selector(zeroLink(_:))
+                case ([.command, .shift], "x"): #selector(zeroStrike(_:))
+                case ([.command, .option], "1"): #selector(zeroHeading1(_:))
+                case ([.command, .option], "2"): #selector(zeroHeading2(_:))
+                case ([.command, .option], "3"): #selector(zeroHeading3(_:))
+                case ([.command, .shift], "7"), ([.command, .shift], "&"): #selector(zeroNumbers(_:))
+                case ([.command, .shift], "8"), ([.command, .shift], "*"): #selector(zeroBullets(_:))
+                case ([.command, .shift], "9"), ([.command, .shift], "("): #selector(zeroChecklist(_:))
+                default: nil
+                }
             guard let action else { return super.performKeyEquivalent(with: event) }
             perform(action, with: nil)
             return true
@@ -271,7 +277,11 @@ private struct PadTextField: NSViewRepresentable {
             let link = "[\(words.isEmpty ? "text" : words)](https://)"
             // The address selected, to type over: the words were already there.
             let address = (link as NSString).range(of: "https://")
-            replace(range, with: link, select: words.isEmpty ? NSRange(location: range.location + 1, length: 4) : NSRange(location: range.location + address.location, length: address.length))
+            replace(
+                range, with: link,
+                select: words.isEmpty
+                    ? NSRange(location: range.location + 1, length: 4)
+                    : NSRange(location: range.location + address.location, length: address.length))
         }
 
         @objc func zeroCodeBlock(_ sender: Any?) {
@@ -279,7 +289,9 @@ private struct PadTextField: NSViewRepresentable {
             var words = (string as NSString).substring(with: lines)
             let ends = words.hasSuffix("\n")
             if ends { words.removeLast() }
-            replace(lines, with: "```\n" + words + "\n```" + (ends ? "\n" : ""), select: NSRange(location: lines.location + 4, length: (words as NSString).length))
+            replace(
+                lines, with: "```\n" + words + "\n```" + (ends ? "\n" : ""),
+                select: NSRange(location: lines.location + 4, length: (words as NSString).length))
         }
 
         @objc func zeroTable(_ sender: Any?) {
@@ -305,12 +317,16 @@ private struct PadTextField: NSViewRepresentable {
             let range = selectedRange()
             let length = (mark as NSString).length
             let before = range.location >= length ? text.substring(with: NSRange(location: range.location - length, length: length)) : ""
-            let after = NSMaxRange(range) + length <= text.length ? text.substring(with: NSRange(location: NSMaxRange(range), length: length)) : ""
+            let after =
+                NSMaxRange(range) + length <= text.length ? text.substring(with: NSRange(location: NSMaxRange(range), length: length)) : ""
             if before == mark && after == mark {
-                replace(NSRange(location: range.location - length, length: range.length + 2 * length), with: text.substring(with: range),
-                        select: NSRange(location: range.location - length, length: range.length))
+                replace(
+                    NSRange(location: range.location - length, length: range.length + 2 * length), with: text.substring(with: range),
+                    select: NSRange(location: range.location - length, length: range.length))
             } else {
-                replace(range, with: mark + text.substring(with: range) + mark, select: NSRange(location: range.location + length, length: range.length))
+                replace(
+                    range, with: mark + text.substring(with: range) + mark,
+                    select: NSRange(location: range.location + length, length: range.length))
             }
         }
 
@@ -356,11 +372,14 @@ private struct PadTextField: NSViewRepresentable {
         private func box(at event: NSEvent) -> NSRange? {
             guard let manager = layoutManager, let container = textContainer else { return nil }
             let point = convert(event.locationInWindow, from: nil)
-            let index = manager.characterIndex(for: NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y), in: container, fractionOfDistanceBetweenInsertionPoints: nil)
+            let index = manager.characterIndex(
+                for: NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y), in: container,
+                fractionOfDistanceBetweenInsertionPoints: nil)
             let text = string as NSString
             guard index < text.length else { return nil }
             let line = text.lineRange(for: NSRange(location: index, length: 0))
-            guard let found = try? NSRegularExpression(pattern: #"^\s*(?:[-*+]|\d+[.)])\s+(\[[ xX]\])"#).firstMatch(in: string, range: line) else { return nil }
+            guard let found = try? NSRegularExpression(pattern: #"^\s*(?:[-*+]|\d+[.)])\s+(\[[ xX]\])"#).firstMatch(in: string, range: line)
+            else { return nil }
             let box = found.range(at: 1)
             return NSLocationInRange(index, NSRange(location: box.location, length: box.length + 1)) ? box : nil
         }
@@ -368,10 +387,13 @@ private struct PadTextField: NSViewRepresentable {
         func show(line: Int) {
             let text = string as NSString
             var location = 0
-            for _ in 1..<max(1, line) where location < text.length { location = NSMaxRange(text.lineRange(for: NSRange(location: location, length: 0))) }
+            for _ in 1..<max(1, line) where location < text.length {
+                location = NSMaxRange(text.lineRange(for: NSRange(location: location, length: 0)))
+            }
             let range = text.lineRange(for: NSRange(location: min(location, text.length), length: 0))
             guard let manager = layoutManager, let container = textContainer else { return }
-            let rect = manager.boundingRect(forGlyphRange: manager.glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: container)
+            let rect = manager.boundingRect(
+                forGlyphRange: manager.glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: container)
             scrollToVisible(NSRect(x: 0, y: rect.minY, width: 1, height: visibleRect.height * 0.8))
             showFindIndicator(for: range)
         }
@@ -379,7 +401,8 @@ private struct PadTextField: NSViewRepresentable {
         override func draw(_ dirtyRect: NSRect) {
             super.draw(dirtyRect)
             if string.isEmpty, !placeholder.isEmpty {
-                (placeholder as NSString).draw(at: NSPoint(x: 0, y: 0), withAttributes: [.font: MarkdownStyle.body, .foregroundColor: NSColor.tertiaryLabelColor])
+                (placeholder as NSString).draw(
+                    at: NSPoint(x: 0, y: 0), withAttributes: [.font: MarkdownStyle.body, .foregroundColor: NSColor.tertiaryLabelColor])
             }
         }
     }
@@ -405,13 +428,18 @@ private struct PadTextField: NSViewRepresentable {
             reveal(view, around: view.selectedRange())
         }
 
-        func textStorage(_ storage: NSTextStorage, didProcessEditing edited: NSTextStorageEditActions, range: NSRange, changeInLength: Int) {
+        func textStorage(_ storage: NSTextStorage, didProcessEditing edited: NSTextStorageEditActions, range: NSRange, changeInLength: Int)
+        {
             guard edited.contains(.editedCharacters) else { return }
             MarkdownStyle.apply(to: storage)
             // The marks hidden again but on the line being written (the selection's change redraws them).
-            hide(in: storage, showing: storage.layoutManagers.first?.firstTextView.flatMap { view in
-                view.window?.firstResponder === view ? (storage.string as NSString).lineRange(for: NSRange(location: min(range.location, storage.length), length: 0)) : nil
-            })
+            hide(
+                in: storage,
+                showing: storage.layoutManagers.first?.firstTextView.flatMap { view in
+                    view.window?.firstResponder === view
+                        ? (storage.string as NSString).lineRange(for: NSRange(location: min(range.location, storage.length), length: 0))
+                        : nil
+                })
         }
 
         // Marks are shown on the lines the selection is on and hidden elsewhere: the text reads as written, not as
@@ -430,7 +458,11 @@ private struct PadTextField: NSViewRepresentable {
         private func reveal(_ view: NSTextView, around selection: NSRange?) {
             guard let storage = view.textStorage, let manager = view.layoutManager else { return }
             let text = storage.string as NSString
-            let lines = selection.map { text.lineRange(for: NSRange(location: min($0.location, text.length), length: min($0.length, text.length - min($0.location, text.length)))) }
+            let lines = selection.map {
+                text.lineRange(
+                    for: NSRange(
+                        location: min($0.location, text.length), length: min($0.length, text.length - min($0.location, text.length))))
+            }
             guard lines != shownLines else { return }
             shownLines = lines
             storage.beginEditing()
@@ -444,18 +476,26 @@ private struct PadTextField: NSViewRepresentable {
 
         /// A hidden mark's glyphs are kept but not drawn and given no width, as control characters are: a null glyph
         /// would drop out of its line's measure, and the line would move when the mark came back.
-        func layoutManager(_ manager: NSLayoutManager, shouldGenerateGlyphs glyphs: UnsafePointer<CGGlyph>, properties: UnsafePointer<NSLayoutManager.GlyphProperty>,
-                           characterIndexes: UnsafePointer<Int>, font: NSFont, forGlyphRange range: NSRange) -> Int {
+        func layoutManager(
+            _ manager: NSLayoutManager, shouldGenerateGlyphs glyphs: UnsafePointer<CGGlyph>,
+            properties: UnsafePointer<NSLayoutManager.GlyphProperty>,
+            characterIndexes: UnsafePointer<Int>, font: NSFont, forGlyphRange range: NSRange
+        ) -> Int {
             guard let storage = manager.textStorage, range.length > 0 else { return 0 }
             // Most runs hide nothing: one look over their characters says so, before any glyph is looked at alone.
             let first = characterIndexes[0], last = characterIndexes[range.length - 1]
             let characters = NSRange(location: first, length: min(last + 1, storage.length) - first)
             var any = false
             if characters.length > 0 {
-                storage.enumerateAttribute(.zeroHidden, in: characters) { value, _, stop in if value != nil { any = true; stop.pointee = true } }
+                storage.enumerateAttribute(.zeroHidden, in: characters) { value, _, stop in
+                    if value != nil { any = true; stop.pointee = true }
+                }
             }
             guard any else { return 0 }
-            let hidden = (0..<range.length).map { characterIndexes[$0] < storage.length && storage.attribute(.zeroHidden, at: characterIndexes[$0], effectiveRange: nil) != nil }
+            let hidden = (0..<range.length).map {
+                characterIndexes[$0] < storage.length
+                    && storage.attribute(.zeroHidden, at: characterIndexes[$0], effectiveRange: nil) != nil
+            }
             let changed = UnsafeMutablePointer<NSLayoutManager.GlyphProperty>.allocate(capacity: range.length)
             defer { changed.deallocate() }
             for i in 0..<range.length { changed[i] = hidden[i] ? .controlCharacter : properties[i] }
@@ -463,8 +503,12 @@ private struct PadTextField: NSViewRepresentable {
             return range.length
         }
 
-        func layoutManager(_ manager: NSLayoutManager, shouldUse action: NSLayoutManager.ControlCharacterAction, forControlCharacterAt index: Int) -> NSLayoutManager.ControlCharacterAction {
-            guard let storage = manager.textStorage, index < storage.length, storage.attribute(.zeroHidden, at: index, effectiveRange: nil) != nil else { return action }
+        func layoutManager(
+            _ manager: NSLayoutManager, shouldUse action: NSLayoutManager.ControlCharacterAction, forControlCharacterAt index: Int
+        ) -> NSLayoutManager.ControlCharacterAction {
+            guard let storage = manager.textStorage, index < storage.length,
+                storage.attribute(.zeroHidden, at: index, effectiveRange: nil) != nil
+            else { return action }
             return .zeroAdvancement
         }
 
@@ -481,7 +525,8 @@ private struct PadTextField: NSViewRepresentable {
             let caret = view.selectedRange()
             let line = text.lineRange(for: NSRange(location: caret.location, length: 0))
             let before = text.substring(with: NSRange(location: line.location, length: caret.location - line.location))
-            guard caret.length == 0, let marker = before.range(of: #"^\s*([-*+]|\d+[.)])\s+(\[[ xX]\]\s+)?"#, options: .regularExpression) else { return false }
+            guard caret.length == 0, let marker = before.range(of: #"^\s*([-*+]|\d+[.)])\s+(\[[ xX]\]\s+)?"#, options: .regularExpression)
+            else { return false }
             if before[marker.upperBound...].trimmingCharacters(in: .whitespaces).isEmpty {
                 view.insertText("", replacementRange: NSRange(location: line.location, length: caret.location - line.location))
                 return true
@@ -494,13 +539,17 @@ private struct PadTextField: NSViewRepresentable {
         private func next(_ marker: String) -> String {
             let indent = String(marker.prefix { $0 == " " || $0 == "\t" })
             let bare = marker.trimmingCharacters(in: .whitespaces)
-            if let number = Int(bare.prefix { $0.isNumber }) { return indent + "\(number + 1)" + String(bare.drop { $0.isNumber }.prefix(1)) + " " }
+            if let number = Int(bare.prefix { $0.isNumber }) {
+                return indent + "\(number + 1)" + String(bare.drop { $0.isNumber }.prefix(1)) + " "
+            }
             return indent + String(bare.prefix(1)) + (bare.contains("[") ? " [ ] " : " ")
         }
 
         /// Right-click: a link to the section here, and to the pad.
         func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
-            let line = parent.firstLine + (view.string as NSString).substring(to: min(charIndex, (view.string as NSString).length)).filter { $0 == "\n" }.count
+            let line =
+                parent.firstLine
+                + (view.string as NSString).substring(to: min(charIndex, (view.string as NSString).length)).filter { $0 == "\n" }.count
             var items: [NSMenuItem] = []
             if let section = parent.sectionLink(line) {
                 items.append(MarkdownEditor.LinkItem(title: "Copy link to “\(section.title)”", link: section.link, label: section.title))
@@ -546,7 +595,9 @@ private struct PadToolbar: View {
     private var divider: some View { Rectangle().fill(Theme.stroke).frame(width: 1, height: 16).padding(.horizontal, 5) }
 
     private func button(_ icon: String, _ name: String, _ shortcut: String?, _ action: Selector) -> some View {
-        Button { NSApp.sendAction(action, to: nil, from: nil) } label: {
+        Button {
+            NSApp.sendAction(action, to: nil, from: nil)
+        } label: {
             NucleoIcon(icon, size: 15).foregroundStyle(.secondary).frame(width: 28, height: 28)
         }
         .buttonStyle(Hovering())
@@ -574,18 +625,41 @@ private struct TableGrid: View {
                                         rows[r][c] = value.replacingOccurrences(of: "\n", with: " ")
                                     }
                                 }
-                                    .padding(.horizontal, 10).padding(.vertical, 7)
-                                    .frame(minWidth: 90, maxWidth: 280, alignment: .leading)
-                                    .background(r == 0 ? Theme.fieldTab : Color.clear)
-                                    .overlay(alignment: .trailing) { if c < width - 1 { Rectangle().fill(Theme.stroke).frame(width: 1) } }
-                                    .overlay(alignment: .bottom) { if r < rows.count - 1 { Rectangle().fill(Theme.stroke).frame(height: 1) } }
-                                    // Behind the cell's text field, so the field keeps its own Cut, Copy and Paste.
-                                    .background { RightClick { ZeroContextMenu.open("cell-\(r)-\(c)") {[
-                                        [MenuItem("Add row below", "plus") { change { $0.insert(Array(repeating: "", count: width), at: r + 1) } },
-                                         MenuItem("Add column after", "plus") { change { rows in for i in rows.indices { rows[i].insert(i == 0 ? "Column" : "", at: min(c + 1, rows[i].count)) } } }],
-                                        (r > 0 ? [MenuItem("Delete row", "trash") { change { $0.remove(at: r) } }] : [])
-                                            + (width > 1 ? [MenuItem("Delete column", "trash") { change { rows in for i in rows.indices where c < rows[i].count { rows[i].remove(at: c) } } }] : []),
-                                    ]} } }
+                                .padding(.horizontal, 10).padding(.vertical, 7)
+                                .frame(minWidth: 90, maxWidth: 280, alignment: .leading)
+                                .background(r == 0 ? Theme.fieldTab : Color.clear)
+                                .overlay(alignment: .trailing) { if c < width - 1 { Rectangle().fill(Theme.stroke).frame(width: 1) } }
+                                .overlay(alignment: .bottom) { if r < rows.count - 1 { Rectangle().fill(Theme.stroke).frame(height: 1) } }
+                                // Behind the cell's text field, so the field keeps its own Cut, Copy and Paste.
+                                .background {
+                                    RightClick {
+                                        ZeroContextMenu.open("cell-\(r)-\(c)") {
+                                            [
+                                                [
+                                                    MenuItem("Add row below", "plus") {
+                                                        change { $0.insert(Array(repeating: "", count: width), at: r + 1) }
+                                                    },
+                                                    MenuItem("Add column after", "plus") {
+                                                        change { rows in
+                                                            for i in rows.indices {
+                                                                rows[i].insert(i == 0 ? "Column" : "", at: min(c + 1, rows[i].count))
+                                                            }
+                                                        }
+                                                    },
+                                                ],
+                                                (r > 0 ? [MenuItem("Delete row", "trash") { change { $0.remove(at: r) } }] : [])
+                                                    + (width > 1
+                                                        ? [
+                                                            MenuItem("Delete column", "trash") {
+                                                                change { rows in
+                                                                    for i in rows.indices where c < rows[i].count { rows[i].remove(at: c) }
+                                                                }
+                                                            }
+                                                        ] : []),
+                                            ]
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -594,8 +668,16 @@ private struct TableGrid: View {
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke))
             }
             HStack(spacing: 14) {
-                Button { change { $0.append(Array(repeating: "", count: width)) } } label: { NucleoLabel("Add row", icon: "plus", size: 12) }
-                Button { change { rows in for i in rows.indices { rows[i].append(i == 0 ? "Column" : "") } } } label: { NucleoLabel("Add column", icon: "plus", size: 12) }
+                Button {
+                    change { $0.append(Array(repeating: "", count: width)) }
+                } label: {
+                    NucleoLabel("Add row", icon: "plus", size: 12)
+                }
+                Button {
+                    change { rows in for i in rows.indices { rows[i].append(i == 0 ? "Column" : "") } }
+                } label: {
+                    NucleoLabel("Add column", icon: "plus", size: 12)
+                }
             }
             .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.secondary)
             // Always laid out, shown on hover: nothing moves as the pointer passes.
@@ -632,7 +714,8 @@ private struct CellField: View {
 /// Images pasted into a pad: kept in the pads' own hidden folder, linked by their path.
 enum PadImages {
     static func keep(_ image: NSImage) -> String? {
-        guard let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return nil }
+        guard let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
+        else { return nil }
         let folder = Paths.dir.appendingPathComponent("scratchpads/.assets")
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let file = folder.appendingPathComponent(String(UUID().uuidString.prefix(8)).lowercased() + ".png")

@@ -3,8 +3,9 @@ import Foundation
 /// Linear issues ("OPS-3096", "eng-9559"), pull requests ("#12846", "app#12846") and commits ("064c6bb7b5") in
 /// what agents write, as links.
 public enum References {
-    private static let pattern = try! NSRegularExpression(pattern:
-        #"\b([A-Za-z]{1,5})-(\d+)\b|(?:\b([\w.-]+/[\w.-]+|[\w.-]+))?#(\d+)\b|\b([0-9a-f]{7,40})\b|(?<![\w/&#])#([a-z][a-z0-9._-]+)\b"#)
+    private static let pattern = try! NSRegularExpression(
+        pattern:
+            #"\b([A-Za-z]{1,5})-(\d+)\b|(?:\b([\w.-]+/[\w.-]+|[\w.-]+))?#(\d+)\b|\b([0-9a-f]{7,40})\b|(?<![\w/&#])#([a-z][a-z0-9._-]+)\b"#)
 
     /// Each reference's range in `text` (UTF-16, as NSString counts) and where it goes. A bare "#123" or commit
     /// needs `repo` ("owner/name"); "name#123" takes `repo`'s owner. Issues are ids whose prefix is a team in
@@ -13,8 +14,10 @@ public enum References {
     /// `owner` stands in for `repo`'s when the folder is one of repositories, not a repository ("name#123" still
     /// links). `github` off, no pull request or commit links. `slack` are the workspaces connected: with one,
     /// "#channel" opens the channel in Slack.
-    public static func find(in text: String, repo: String?, linear: [String: String], linearApp: Bool, owner: String? = nil, github: Bool = true,
-                            slack: [Slack.State] = []) -> [(range: NSRange, url: URL)] {
+    public static func find(
+        in text: String, repo: String?, linear: [String: String], linearApp: Bool, owner: String? = nil, github: Bool = true,
+        slack: [Slack.State] = []
+    ) -> [(range: NSRange, url: URL)] {
         let ns = text as NSString
         func group(_ match: NSTextCheckingResult, _ i: Int) -> String? {
             match.range(at: i).location == NSNotFound ? nil : ns.substring(with: match.range(at: i))
@@ -27,11 +30,12 @@ public enum References {
                 link = linearApp ? "linear://\(path)" : "https://linear.app/\(path)"
             } else if let number = group(match, 4) {
                 guard github else { return nil }
-                let target: String? = switch group(match, 3) {
-                case nil: repo
-                case let name? where name.contains("/"): name
-                case let name?: (repo.map { String($0.split(separator: "/")[0]) } ?? owner).map { $0 + "/" + name }
-                }
+                let target: String? =
+                    switch group(match, 3) {
+                    case nil: repo
+                    case let name? where name.contains("/"): name
+                    case let name?: (repo.map { String($0.split(separator: "/")[0]) } ?? owner).map { $0 + "/" + name }
+                    }
                 link = target.map { "https://github.com/\($0)/pull/\(number)" }
             } else if let sha = group(match, 5) {
                 guard github else { return nil }
@@ -40,7 +44,9 @@ public enum References {
                 link = repo.map { "https://github.com/\($0)/commit/\(sha)" }
             } else if let channel = group(match, 6) {
                 link = SlackLinks.channel(channel, in: slack)
-            } else { link = nil }
+            } else {
+                link = nil
+            }
             return link.flatMap(URL.init(string:)).map { (match.range, $0) }
         }
     }
@@ -58,7 +64,9 @@ public enum References {
     public static func owner(of cwd: String) -> String? {
         if let own = repo(of: cwd) { return String(own.split(separator: "/")[0]) }
         if let hit = lock.withLock({ owners[cwd] }) { return hit }
-        let found = children(of: cwd, depth: 2).lazy.compactMap { origin($0).flatMap(parse) }.first.map { String($0.split(separator: "/")[0]) }
+        let found = children(of: cwd, depth: 2).lazy.compactMap { origin($0).flatMap(parse) }.first.map {
+            String($0.split(separator: "/")[0])
+        }
         lock.withLock { owners[cwd] = .some(found) }
         return found
     }
@@ -106,7 +114,8 @@ public enum SlackLinks {
     public static func channel(_ name: String, in teams: [Slack.State]) -> String? {
         guard let workspace = teams.first(where: { $0.channels[name] != nil }) ?? teams.first else { return nil }
         let team = workspace.team.id
-        return workspace.channels[name].map { "slack://channel?team=\(team)&id=\($0)" } ?? "https://slack.com/app_redirect?team=\(team)&channel=\(name)"
+        return workspace.channels[name].map { "slack://channel?team=\(team)&id=\($0)" }
+            ?? "https://slack.com/app_redirect?team=\(team)&channel=\(name)"
     }
 
     /// A Slack link as the app's, in the workspace its domain names.
@@ -119,7 +128,9 @@ public enum SlackLinks {
             let digits = parts[2].dropFirst()
             query += "&message=\(digits.dropLast(6)).\(digits.suffix(6))"
         }
-        if let thread = URLComponents(url: link, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "thread_ts" })?.value {
+        if let thread = URLComponents(url: link, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "thread_ts" })?
+            .value
+        {
             query += "&thread_ts=\(thread)"
         }
         return URL(string: "slack://channel?" + query)

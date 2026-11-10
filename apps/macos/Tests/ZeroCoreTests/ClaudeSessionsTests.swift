@@ -10,8 +10,9 @@ import Testing
     #expect(folder.lastPathComponent == "-Users-x-proj-app")
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     let a = folder.appendingPathComponent("aaaa.jsonl"), b = folder.appendingPathComponent("bbbb.jsonl")
-    try #"{"type":"user","message":{"role":"user","content":"say \"hi\" please"}}"# .write(to: a, atomically: true, encoding: .utf8)
-    try (#"{"type":"user","message":{"role":"user","content":"other"}}"# + "\n" + #"{"aiTitle":"Other task"}"#).write(to: b, atomically: true, encoding: .utf8)
+    try #"{"type":"user","message":{"role":"user","content":"say \"hi\" please"}}"#.write(to: a, atomically: true, encoding: .utf8)
+    try (#"{"type":"user","message":{"role":"user","content":"other"}}"# + "\n" + #"{"aiTitle":"Other task"}"#).write(
+        to: b, atomically: true, encoding: .utf8)
     #expect(ClaudeSessions.find(prompt: "say \"hi\" please", cwd: cwd) == "aaaa")
     #expect(ClaudeSessions.find(prompt: "other", cwd: cwd) == "bbbb")
     #expect(ClaudeSessions.find(prompt: "missing", cwd: cwd) == nil)

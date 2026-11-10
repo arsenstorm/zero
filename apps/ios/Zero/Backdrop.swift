@@ -37,17 +37,19 @@ struct DitherBackdrop: UIViewRepresentable {
 
         func draw(in view: MTKView) {
             guard let device = view.device, prepare(device, view.colorPixelFormat), let pipeline, let queue,
-                  let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
-                  let commands = queue.makeCommandBuffer(), let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { return }
+                let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
+                let commands = queue.makeCommandBuffer(), let encoder = commands.makeRenderCommandEncoder(descriptor: pass)
+            else { return }
             let now = CACurrentMediaTime()
             if started == nil { started = now }
             let t = UIAccessibility.isReduceMotionEnabled || !animated ? 1 : min(1, (now - started!) / duration)
             let traits = view.traitCollection
             var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
             UIColor.systemBackground.resolvedColor(with: traits).getRed(&r, green: &g, blue: &b, alpha: &a)
-            var uniforms = Dither.Uniforms(size: SIMD2(Float(view.drawableSize.width), Float(view.drawableSize.height)),
-                                           cell: 3 * Float(view.contentScaleFactor), dark: traits.userInterfaceStyle == .dark,
-                                           ground: SIMD4(Float(r), Float(g), Float(b), 1), reveal: Float(t * t * (3 - 2 * t)))
+            var uniforms = Dither.Uniforms(
+                size: SIMD2(Float(view.drawableSize.width), Float(view.drawableSize.height)),
+                cell: 3 * Float(view.contentScaleFactor), dark: traits.userInterfaceStyle == .dark,
+                ground: SIMD4(Float(r), Float(g), Float(b), 1), reveal: Float(t * t * (3 - 2 * t)))
             encoder.setRenderPipelineState(pipeline)
             encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Dither.Uniforms>.stride, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
@@ -118,7 +120,9 @@ struct EmptyInbox: View {
                 // A third of the way down, on the sky above the glow, not in the middle where the planet's edge runs.
                 VStack(spacing: 0) {
                     Spacer()
-                    ContentUnavailableView { Text("Nothing for you") } description: {
+                    ContentUnavailableView {
+                        Text("Nothing for you")
+                    } description: {
                         Text("Asks, steps for you and unread replies show here.")
                             .foregroundStyle(scheme == .dark ? AnyShapeStyle(.white.opacity(0.8)) : AnyShapeStyle(.secondary))
                     }

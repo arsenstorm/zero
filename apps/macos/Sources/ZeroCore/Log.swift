@@ -7,7 +7,9 @@ public enum Log {
     public static let file = Paths.dir.appendingPathComponent("zero.log")
     private static let limit = 5 * 1024 * 1024
     private static let lock = NSLock()
-    private static let stamp: ISO8601DateFormatter = { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f }()
+    private static let stamp: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f
+    }()
 
     public nonisolated static func write(_ line: String) {
         lock.withLock {
@@ -17,8 +19,12 @@ public enum Log {
                 try? FileManager.default.removeItem(at: old)
                 try? FileManager.default.moveItem(at: file, to: old)
             }
-            if let handle = try? FileHandle(forWritingTo: file) { handle.seekToEndOfFile(); handle.write(data); try? handle.close() }
-            else { try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true); try? data.write(to: file) }
+            if let handle = try? FileHandle(forWritingTo: file) {
+                handle.seekToEndOfFile(); handle.write(data); try? handle.close()
+            } else {
+                try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true);
+                try? data.write(to: file)
+            }
         }
     }
 }

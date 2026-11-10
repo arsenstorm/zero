@@ -230,21 +230,21 @@ struct CardView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-            .mask {
-                VStack(spacing: 0) {
-                    Color.black
-                    LinearGradient(colors: [.black, folded ? .clear : .black], startPoint: .top, endPoint: .bottom)
-                        .frame(height: 16)
-                }
+        .mask {
+            VStack(spacing: 0) {
+                Color.black
+                LinearGradient(colors: [.black, folded ? .clear : .black], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 16)
             }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                guard long else { return }
-                controller.holdTop = true
-                withAnimation(.easeOut(duration: 0.2)) { detailExpanded.toggle() }
-            }
-            .pointerStyle(long ? .link : nil)
-            .tip(long ? (detailExpanded ? "Click to fold" : "Click to read it all") : "")
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard long else { return }
+            controller.holdTop = true
+            withAnimation(.easeOut(duration: 0.2)) { detailExpanded.toggle() }
+        }
+        .pointerStyle(long ? .link : nil)
+        .tip(long ? (detailExpanded ? "Click to fold" : "Click to read it all") : "")
     }
 
     @ViewBuilder private func commandBlock(_ command: String) -> some View {
@@ -267,7 +267,11 @@ struct CardView: View {
         .background(Theme.code).clipShape(RoundedRectangle(cornerRadius: 10))
         // Copied in one click, the script with it: what you run is what you read.
         .overlay(alignment: .topTrailing) { CopyCommand(text: [command, ask.script].compactMap { $0 }.joined(separator: "\n")).padding(6) }
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { controller.measured[ask.id] = ($0, optionsHeight) }
+        .onGeometryChange(for: CGFloat.self) {
+            $0.size.height
+        } action: {
+            controller.measured[ask.id] = ($0, optionsHeight)
+        }
     }
 
     @ViewBuilder private func scriptText(_ script: String) -> some View {
@@ -294,8 +298,10 @@ struct CardView: View {
     }
 
     private func foldButton(_ title: String, _ expanded: Binding<Bool>) -> some View {
-        Button(title) { controller.holdTop = true; expanded.wrappedValue.toggle() }
-            .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+        Button(title) {
+            controller.holdTop = true; expanded.wrappedValue.toggle()
+        }
+        .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
     }
 
     private var tellStep: some View {
@@ -330,11 +336,19 @@ struct CardView: View {
                 }
             }
             if decided, ask.options.isEmpty, let answer = ask.answer, ask.kind != .run {
-                Button { controller.store.deliverAnswer(ask.id) } label: { optionRow(answer, key: nil, chosen: true, decided: true) }
-                    .buttonStyle(.plain).allowsHitTesting(ask.delivery == .failed)
+                Button {
+                    controller.store.deliverAnswer(ask.id)
+                } label: {
+                    optionRow(answer, key: nil, chosen: true, decided: true)
+                }
+                .buttonStyle(.plain).allowsHitTesting(ask.delivery == .failed)
             }
         }
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { if $0 > 0 { controller.measured[ask.id] = (commandHeight, $0) } }
+        .onGeometryChange(for: CGFloat.self) {
+            $0.size.height
+        } action: {
+            if $0 > 0 { controller.measured[ask.id] = (commandHeight, $0) }
+        }
     }
 
     private func optionButton(_ index: Int, _ option: String) -> some View {
@@ -347,18 +361,26 @@ struct CardView: View {
         let typed = decided && ask.choice == index && Ask.expectsText(option)
         let label = option.replacingOccurrences(of: "…", with: "").replacingOccurrences(of: "...", with: "")
         let answer = ask.answer ?? option
-        let shown = typed && answer.hasPrefix(label + ": ") ? String(answer.dropFirst(label.count + 2)) : decided && ask.choice == index ? answer : option
-        return Button { if retry { controller.store.deliverAnswer(ask.id) } else if !decided { controller.choose(index, on: ask.id) } } label: {
+        let shown =
+            typed && answer.hasPrefix(label + ": ")
+            ? String(answer.dropFirst(label.count + 2)) : decided && ask.choice == index ? answer : option
+        return Button {
+            if retry { controller.store.deliverAnswer(ask.id) } else if !decided { controller.choose(index, on: ask.id) }
+        } label: {
             optionRow(shown, key: typed ? nil : "\(index + 1)", chosen: decided && ask.choice == index, decided: decided, boxLike: typed)
         }.buttonStyle(.plain).allowsHitTesting(!decided || retry)
     }
 
     private func replyBox(placeholder: String, autofocus: Bool = false) -> some View {
-        ReplyBox(placeholder: placeholder,
-                 text: Binding(get: { controller.drafts[ask.id, default: ""] }, set: { controller.drafts[ask.id] = $0 }),
-                 key: ask.id, focus: focus, dictating: dictating,
-                 onMic: { controller.select(ask.id); controller.toggleDictation() }, onSend: { controller.send(ask.id) }, autofocus: autofocus)
-            .background(done ? Theme.doneRow : Theme.choice).clipShape(RoundedRectangle(cornerRadius: 10))
+        ReplyBox(
+            placeholder: placeholder,
+            text: Binding(get: { controller.drafts[ask.id, default: ""] }, set: { controller.drafts[ask.id] = $0 }),
+            key: ask.id, focus: focus, dictating: dictating,
+            onMic: {
+                controller.select(ask.id); controller.toggleDictation()
+            }, onSend: { controller.send(ask.id) }, autofocus: autofocus
+        )
+        .background(done ? Theme.doneRow : Theme.choice).clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     /// Same language as the pill: orange needs you, red blocked, green done, blue working.
@@ -419,8 +441,10 @@ struct CardView: View {
         // An answer Zero types into an agent that isn't waiting stays orange until it lands, and goes red if it can't.
         let failed = ask.delivery == .failed
         let settled = ask.state.isFinal && ask.delivery != .sending && !failed
-        let surface: Color = chosen ? (failed ? Theme.redRow : settled ? Theme.greenRow : Theme.orangeRow) : done ? Theme.doneRow : Theme.choice
-        let cap: Color = chosen ? (failed ? Theme.redCap : settled ? Theme.greenCap : Theme.orangeCap) : done ? Theme.doneCap : Theme.choiceCap
+        let surface: Color =
+            chosen ? (failed ? Theme.redRow : settled ? Theme.greenRow : Theme.orangeRow) : done ? Theme.doneRow : Theme.choice
+        let cap: Color =
+            chosen ? (failed ? Theme.redCap : settled ? Theme.greenCap : Theme.orangeCap) : done ? Theme.doneCap : Theme.choiceCap
         // Answered from the box: its state where the box's send button was, at its foot, not centred on the row.
         return HStack(alignment: boxLike ? .bottom : .center, spacing: 10) {
             if let key {
@@ -430,7 +454,10 @@ struct CardView: View {
             }
             // A text option reads like a placeholder: pick it and the input appears with the same wording.
             Text(text).font(.system(size: 13))
-                .foregroundStyle(!chosen && Ask.expectsText(text) ? (done ? AnyShapeStyle(Theme.doneMuted) : AnyShapeStyle(.secondary)) : AnyShapeStyle(.primary))
+                .foregroundStyle(
+                    !chosen && Ask.expectsText(text)
+                        ? (done ? AnyShapeStyle(Theme.doneMuted) : AnyShapeStyle(.secondary)) : AnyShapeStyle(.primary)
+                )
                 // The reply box's room at the end (its 56 pt, less the state icon and the gap before it).
                 .padding(.trailing, boxLike ? 56 - 15 - 10 : 0)
                 .frame(maxWidth: .infinity, alignment: .leading)

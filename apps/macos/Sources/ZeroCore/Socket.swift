@@ -81,8 +81,11 @@ public final class UnixSocket: LineConnection {
                 start = newline + 1
                 scanned = 0
                 // Given out to its end: emptied in place. Far into it: what's left moves to the front.
-                if start == buffer.count { buffer.removeAll(keepingCapacity: true); start = 0 }
-                else if start > 1 << 22 { buffer.removeFirst(start); start = 0 }
+                if start == buffer.count {
+                    buffer.removeAll(keepingCapacity: true); start = 0
+                } else if start > 1 << 22 {
+                    buffer.removeFirst(start); start = 0
+                }
                 return line
             }
             scanned = buffer.count - start

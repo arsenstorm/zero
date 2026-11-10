@@ -35,7 +35,8 @@ public final class TokenSetup: @unchecked Sendable {
     /// cursor moves, links) are taken out first, so none can cut it short.
     func token() -> String? {
         let screen = lock.withLock { text }
-        let plain = screen
+        let plain =
+            screen
             .replacingOccurrences(of: #"\u{1B}\][^\u{07}\u{1B}]*(\u{07}|\u{1B}\\)"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"\u{1B}\[[0-9;?<>=]*[ -/]*[@-~]"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"\u{1B}[()][A-Za-z0-9]"#, with: "", options: .regularExpression)

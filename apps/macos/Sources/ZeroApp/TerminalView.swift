@@ -121,12 +121,16 @@ struct ContainedList<Content: View>: View {
     @State private var settled = false
 
     var body: some View {
-        HostedScroll(content: content(),
-                     moreAbove: Binding(get: { moreAbove }, set: { value in quietly { moreAbove = value } }),
-                     moreBelow: Binding(get: { moreBelow }, set: { value in quietly { moreBelow = value } }))
-            .frame(height: height)
-            .mask(EdgeFadeMask(above: moreAbove, below: moreBelow, fade: fade))
-            .task { try? await Task.sleep(for: .milliseconds(400)); settled = true }
+        HostedScroll(
+            content: content(),
+            moreAbove: Binding(get: { moreAbove }, set: { value in quietly { moreAbove = value } }),
+            moreBelow: Binding(get: { moreBelow }, set: { value in quietly { moreBelow = value } })
+        )
+        .frame(height: height)
+        .mask(EdgeFadeMask(above: moreAbove, below: moreBelow, fade: fade))
+        .task {
+            try? await Task.sleep(for: .milliseconds(400)); settled = true
+        }
     }
 
     /// Without animation until the list has settled.
@@ -177,7 +181,8 @@ private struct HostedScroll<Content: View>: NSViewRepresentable {
         scroll.documentView = document
         scroll.contentView.postsBoundsChangedNotifications = true
         context.coordinator.observer = NotificationCenter.default.addObserver(
-            forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main) { [weak scroll] _ in
+            forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main
+        ) { [weak scroll] _ in
             guard let scroll else { return }
             report(scroll, context.coordinator)
         }

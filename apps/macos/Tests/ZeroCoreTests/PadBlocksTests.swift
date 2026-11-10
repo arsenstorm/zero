@@ -2,33 +2,33 @@ import Testing
 @testable import ZeroCore
 
 private let pad = """
-# Working with worktrees
+    # Working with worktrees
 
-This is the ledger. Edit only your own row.
-It has two lines.
+    This is the ledger. Edit only your own row.
+    It has two lines.
 
-The CLI lives in the workbench repo:
+    The CLI lives in the workbench repo:
 
-| Folder | Bench | Status |
-|---|:-:|---|
-| `copper/gray-wolf` | gray-wolf | held |
-| a \\| b | c | |
+    | Folder | Bench | Status |
+    |---|:-:|---|
+    | `copper/gray-wolf` | gray-wolf | held |
+    | a \\| b | c | |
 
-- [ ] Ship it
-- [x] Test it
+    - [ ] Ship it
+    - [x] Test it
 
-  indented under the list
-- one more
+      indented under the list
+    - one more
 
-```swift
-let a = 1
+    ```swift
+    let a = 1
 
-let b = 2
-```
-> A quote
----
-![shot](/tmp/shot.png)
-"""
+    let b = 2
+    ```
+    > A quote
+    ---
+    ![shot](/tmp/shot.png)
+    """
 
 @Test func blocksJoinedAreThePadExactly() {
     for text in [pad, pad + "\n", "\n\n" + pad + "\n\n\n", "", "\n", "one line", "```\nunclosed\n\nstill code"] {
@@ -38,7 +38,8 @@ let b = 2
 
 @Test func eachBlockIsOneThingThePageShows() {
     let blocks = PadBlocks.split(pad)
-    #expect(blocks.map(\.kind) == [.heading(1), .paragraph, .paragraph, .table, .list, .code, .quote, .rule, .image(path: "/tmp/shot.png")])
+    #expect(
+        blocks.map(\.kind) == [.heading(1), .paragraph, .paragraph, .table, .list, .code, .quote, .rule, .image(path: "/tmp/shot.png")])
     #expect(blocks[1].body == "This is the ledger. Edit only your own row.\nIt has two lines.")
     #expect(blocks[4].body.hasSuffix("- one more"), "a list runs on past a blank line to what's indented under it")
     #expect(blocks[5].body.contains("let a = 1\n\nlet b = 2"), "a blank line inside code stays in the code")
@@ -52,7 +53,9 @@ let b = 2
     #expect(rows == [["Folder", "Bench", "Status"], ["`copper/gray-wolf`", "gray-wolf", "held"], ["a | b", "c", ""]])
     let divider = PadBlocks.divider(of: table)
     #expect(divider == "|---|:-:|---|")
-    #expect(PadBlocks.table(rows, divider: divider) == "| Folder | Bench | Status |\n|---|:-:|---|\n| `copper/gray-wolf` | gray-wolf | held |\n| a \\| b | c |  |")
+    #expect(
+        PadBlocks.table(rows, divider: divider)
+            == "| Folder | Bench | Status |\n|---|:-:|---|\n| `copper/gray-wolf` | gray-wolf | held |\n| a \\| b | c |  |")
     // A column added: the old divider no longer fits, so a plain one.
     #expect(PadBlocks.table([["A", "B"], ["1"]], divider: "|---|") == "| A | B |\n|---|---|\n| 1 |  |")
 }

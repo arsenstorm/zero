@@ -25,7 +25,8 @@ struct ArchiveSheet: View {
                     if let archived {
                         let shown = archived.filter { search.isEmpty || $0.task.localizedCaseInsensitiveContains(search) }
                         if shown.isEmpty {
-                            Text(archived.isEmpty ? "Nothing archived." : "No archived task matches.").font(.system(size: 13)).foregroundStyle(.tertiary).padding(.top, 20)
+                            Text(archived.isEmpty ? "Nothing archived." : "No archived task matches.").font(.system(size: 13))
+                                .foregroundStyle(.tertiary).padding(.top, 20)
                         }
                         if !search.isEmpty {
                             ForEach(shown) { task in row(task) }
@@ -34,10 +35,14 @@ struct ArchiveSheet: View {
                             let under = Dictionary(grouping: shown.filter { $0.parent.map(leads.contains) ?? false }) { $0.parent! }
                             ForEach(shown.filter { $0.parent == nil }) { task in
                                 row(task)
-                                if let workers = under[task.id] { folded(task.id, "\(workers.count) closed \(workers.count == 1 ? "worker" : "workers")", workers) }
+                                if let workers = under[task.id] {
+                                    folded(task.id, "\(workers.count) closed \(workers.count == 1 ? "worker" : "workers")", workers)
+                                }
                             }
                             let orphans = shown.filter { $0.parent != nil && !leads.contains($0.parent!) }
-                            if !orphans.isEmpty { folded("others", "\(orphans.count) closed workers of tasks still here", orphans, indent: 0) }
+                            if !orphans.isEmpty {
+                                folded("others", "\(orphans.count) closed workers of tasks still here", orphans, indent: 0)
+                            }
                         }
                     } else {
                         Spinner().frame(width: 16, height: 16).padding(.top, 20)
@@ -53,7 +58,9 @@ struct ArchiveSheet: View {
     /// Closed workers, folded away until asked for.
     @ViewBuilder private func folded(_ key: String, _ title: String, _ workers: [ZerodLink.Archived], indent: CGFloat = 20) -> some View {
         let open = unfolded.contains(key)
-        Button { if open { unfolded.remove(key) } else { unfolded.insert(key) } } label: {
+        Button {
+            if open { unfolded.remove(key) } else { unfolded.insert(key) }
+        } label: {
             HStack(spacing: 6) {
                 NucleoIcon("chevron-down", size: 10).rotationEffect(.degrees(open ? 0 : -90)).frame(width: 10)
                 Text(title).font(.system(size: 12))

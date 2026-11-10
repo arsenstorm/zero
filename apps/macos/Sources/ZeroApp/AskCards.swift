@@ -17,7 +17,10 @@ struct QuestionCard: View {
     private var asks: [Ask] {
         let order = question.fields.map { question.id + "#" + $0.id }
         return inbox.store.asks
-            .filter { ask in ask.state != .expired && order.contains(ask.request ?? "") && (ask.agent.ref == session || ask.agent.name == "zerod-" + session) }
+            .filter { ask in
+                ask.state != .expired && order.contains(ask.request ?? "")
+                    && (ask.agent.ref == session || ask.agent.name == "zerod-" + session)
+            }
             .sorted { (order.firstIndex(of: $0.request ?? "") ?? 0) < (order.firstIndex(of: $1.request ?? "") ?? 0) }
     }
 
@@ -27,7 +30,9 @@ struct QuestionCard: View {
         ArticlePanel {
             HStack(spacing: 6) {
                 NucleoIcon("circle-question", fill: "glyph", size: 13)
-                Text(question.fields.count == 1 ? (question.fields.first?.header ?? "Question") : "Questions").font(.system(size: 12, weight: .medium)).tracking(-0.2)
+                Text(question.fields.count == 1 ? (question.fields.first?.header ?? "Question") : "Questions").font(
+                    .system(size: 12, weight: .medium)
+                ).tracking(-0.2)
             }
             .foregroundStyle(.secondary)
             .padding(.horizontal, 14).padding(.vertical, 7)
@@ -95,7 +100,9 @@ struct AgentAskCard: View {
         ArticlePanel {
             HStack(spacing: 6) {
                 NucleoIcon(ask.kind == .run ? "terminal" : "circle-question", fill: ask.kind == .run ? "outline" : "glyph", size: 13)
-                Text(ask.kind == .run ? "Run on your Mac" : ask.kind == .approve ? "Approval" : "Question").font(.system(size: 12, weight: .medium)).tracking(-0.2)
+                Text(ask.kind == .run ? "Run on your Mac" : ask.kind == .approve ? "Approval" : "Question").font(
+                    .system(size: 12, weight: .medium)
+                ).tracking(-0.2)
             }
             // Whether the task is done: a question still, in the Done state's colour, so it reads as the one it is.
             .foregroundStyle(ask.doneCheck == true ? AnyShapeStyle(Theme.doneInk) : AnyShapeStyle(.secondary))
@@ -143,39 +150,49 @@ private struct PlainQuestionCard: View {
     }
 
     var body: some View {
-            VStack(alignment: .leading, spacing: 14) {
-                ForEach(question.fields) { field in
-                    VStack(alignment: .leading, spacing: 10) {
-                        if question.fields.count > 1, let header = field.header {
-                            Text(header).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                        }
-                        Text((try? AttributedString(markdown: field.question, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(field.question))
-                            .font(.system(size: 13, weight: .medium)).lineSpacing(4).textSelection(.enabled)
-                        if !field.options.isEmpty {
-                            WrappingStack(spacing: 6) {
-                                ForEach(field.options, id: \.label) { option in
-                                    let on = picked[field.id, default: []].contains(option.label)
-                                    Button(option.label) {
-                                        if field.multiple { picked[field.id, default: []].formSymmetricDifference([option.label]) }
-                                        else { picked[field.id] = on ? [] : [option.label] }
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(question.fields) { field in
+                VStack(alignment: .leading, spacing: 10) {
+                    if question.fields.count > 1, let header = field.header {
+                        Text(header).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    }
+                    Text(
+                        (try? AttributedString(markdown: field.question, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+                            ?? AttributedString(field.question)
+                    )
+                    .font(.system(size: 13, weight: .medium)).lineSpacing(4).textSelection(.enabled)
+                    if !field.options.isEmpty {
+                        WrappingStack(spacing: 6) {
+                            ForEach(field.options, id: \.label) { option in
+                                let on = picked[field.id, default: []].contains(option.label)
+                                Button(option.label) {
+                                    if field.multiple {
+                                        picked[field.id, default: []].formSymmetricDifference([option.label])
+                                    } else {
+                                        picked[field.id] = on ? [] : [option.label]
                                     }
-                                    .buttonStyle(ChoiceChip(on: on)).tip(option.description ?? "")
                                 }
+                                .buttonStyle(ChoiceChip(on: on)).tip(option.description ?? "")
                             }
                         }
-                        if field.secret {
-                            SecureField("Secret", text: Binding(get: { typed[field.id, default: ""] }, set: { typed[field.id] = $0 })).modifier(AnswerField())
-                        } else if field.other || field.options.isEmpty {
-                            TextField(field.options.isEmpty ? "Your answer" : "Or say something else", text: Binding(get: { typed[field.id, default: ""] }, set: { typed[field.id] = $0 }))
-                                .modifier(AnswerField())
-                        }
+                    }
+                    if field.secret {
+                        SecureField("Secret", text: Binding(get: { typed[field.id, default: ""] }, set: { typed[field.id] = $0 })).modifier(
+                            AnswerField())
+                    } else if field.other || field.options.isEmpty {
+                        TextField(
+                            field.options.isEmpty ? "Your answer" : "Or say something else",
+                            text: Binding(get: { typed[field.id, default: ""] }, set: { typed[field.id] = $0 })
+                        )
+                        .modifier(AnswerField())
                     }
                 }
-                Button("Answer") { send(Dictionary(uniqueKeysWithValues: question.fields.map { ($0.id, answer($0)) })) }
-                    .buttonStyle(Prominent()).keyboardShortcut(.defaultAction).disabled(question.fields.contains { answer($0).isEmpty })
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
+            Button("Answer") { send(Dictionary(uniqueKeysWithValues: question.fields.map { ($0.id, answer($0)) })) }
+                .buttonStyle(Prominent()).keyboardShortcut(.defaultAction).disabled(question.fields.contains { answer($0).isEmpty })
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
     }
 
     /// An option: a pill, solid once picked.
@@ -219,7 +236,8 @@ struct ApprovalCard: View {
     /// Claude describes a file approval by the file's name, which the title already says.
     private var reason: String? {
         guard let reason = approval.reason?.trimmingCharacters(in: .whitespacesAndNewlines), !reason.isEmpty,
-              !approval.title.localizedCaseInsensitiveContains(reason) else { return nil }
+            !approval.title.localizedCaseInsensitiveContains(reason)
+        else { return nil }
         return reason
     }
 
@@ -263,7 +281,9 @@ struct ApprovalCard: View {
                 // As the question card's options: a numbered row each.
                 VStack(spacing: 6) {
                     ForEach(Array(approval.choices.enumerated()), id: \.element.id) { index, choice in
-                        let row = Button { choose(choice) } label: {
+                        let row = Button {
+                            choose(choice)
+                        } label: {
                             HStack(spacing: 10) {
                                 Text("\(index + 1)").font(.system(size: 10, weight: .bold)).frame(width: 18, height: 18)
                                     .background(Theme.choiceCap).clipShape(RoundedRectangle(cornerRadius: 5))
@@ -319,11 +339,20 @@ private struct PagedStrip: ViewModifier {
             Spacer(minLength: 8)
             if let pager, pager.count > 1 {
                 HStack(spacing: 2) {
-                    Button { pager.move(-1) } label: { NucleoIcon("chevron-right", size: 11).rotationEffect(.degrees(180)).frame(width: 22, height: 22).contentShape(Rectangle()) }
-                        .disabled(pager.index == 0)
+                    Button {
+                        pager.move(-1)
+                    } label: {
+                        NucleoIcon("chevron-right", size: 11).rotationEffect(.degrees(180)).frame(width: 22, height: 22).contentShape(
+                            Rectangle())
+                    }
+                    .disabled(pager.index == 0)
                     Text("\(pager.index + 1) of \(pager.count)").font(.system(size: 12, weight: .medium)).monospacedDigit()
-                    Button { pager.move(1) } label: { NucleoIcon("chevron-right", size: 11).frame(width: 22, height: 22).contentShape(Rectangle()) }
-                        .disabled(pager.index == pager.count - 1)
+                    Button {
+                        pager.move(1)
+                    } label: {
+                        NucleoIcon("chevron-right", size: 11).frame(width: 22, height: 22).contentShape(Rectangle())
+                    }
+                    .disabled(pager.index == pager.count - 1)
                 }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
                 .padding(.trailing, 8)
@@ -338,7 +367,8 @@ private struct PagedStrip: ViewModifier {
 struct AskDock: View, Equatable {
     /// Drawn again only when what waits changes, not with each redraw of the conversation (a keystroke, a send).
     static func == (a: AskDock, b: AskDock) -> Bool {
-        a.session == b.session && a.cwd == b.cwd && a.questions == b.questions && a.approvals == b.approvals && a.asks == b.asks && a.page == b.page
+        a.session == b.session && a.cwd == b.cwd && a.questions == b.questions && a.approvals == b.approvals && a.asks == b.asks
+            && a.page == b.page
     }
 
     let session: String
@@ -383,23 +413,32 @@ struct AskDock: View, Equatable {
             card(ids[shown])
                 .modifier(HeldHeight(height: held, on: stepping))
                 .environment(\.dockOwn, stepping ? { own in settle(own) } : nil)
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { if !stepping { shownHeight = $0 } }
+                .onGeometryChange(for: CGFloat.self) {
+                    $0.size.height
+                } action: {
+                    if !stepping { shownHeight = $0 }
+                }
                 .environment(\.askDockMax, max(160, page * 0.45))
-                .environment(\.askPager, AskPager(index: shown, count: ids.count) { step in
-                    let next = max(0, min(ids.count - 1, shown + step))
-                    guard next != shown, !stepping else { return }
-                    held = shownHeight
-                    stepping = true
-                    index = next
-                    // Never told its own height: let go of it, at its own at once.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { if stepping && !easing { stepping = false } }
-                })
+                .environment(
+                    \.askPager,
+                    AskPager(index: shown, count: ids.count) { step in
+                        let next = max(0, min(ids.count - 1, shown + step))
+                        guard next != shown, !stepping else { return }
+                        held = shownHeight
+                        stepping = true
+                        index = next
+                        // Never told its own height: let go of it, at its own at once.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { if stepping && !easing { stepping = false } }
+                    }
+                )
                 .modifier(SinkingIn(foot: foot))
                 .geometryGroup()
                 // In, it rises from behind the composer (Sinker), with the conversation's scroll; out, it fades.
                 // In, it slides up from behind the composer (Sinker); out, it slides back down as it fades.
-                .transition(.asymmetric(insertion: foot == nil ? .offset(y: 36).combined(with: .opacity) : .identity,
-                                        removal: .offset(y: 48).combined(with: .opacity)))
+                .transition(
+                    .asymmetric(
+                        insertion: foot == nil ? .offset(y: 36).combined(with: .opacity) : .identity,
+                        removal: .offset(y: 48).combined(with: .opacity)))
         }
     }
 
@@ -410,7 +449,11 @@ struct AskDock: View, Equatable {
         guard abs(to - held) > 0.5 else { stepping = false; return }
         easing = true
         // Its height measured as it eased isn't kept (it was the held one's): the one it ends at is.
-        withAnimation(ConversationView.slide) { held = to } completion: { shownHeight = to; stepping = false; easing = false }
+        withAnimation(ConversationView.slide) {
+            held = to
+        } completion: {
+            shownHeight = to; stepping = false; easing = false
+        }
     }
 
     @ViewBuilder private func card(_ id: String) -> some View {

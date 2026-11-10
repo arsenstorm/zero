@@ -140,7 +140,6 @@ struct ConversationView: View {
         }
     }
 
-
     /// The next older page, with what's read kept where it is: the offset moves by exactly what was added above once
     /// the new rows have measured (the scroll view's own anchoring isn't to be relied on through that).
     /// A page that adds nothing to see (its turns all folded into the quiet ones already there) leaves the top on
@@ -175,15 +174,15 @@ struct ConversationView: View {
     /// conversation is animated with it.
     static let fade = AnyTransition.opacity.animation(.easeOut(duration: 0.2))
 
-
-
     /// A block. The asks its turn made are among its steps, folded as thinking is; the card to answer one is above
     /// the composer.
     private func row(_ block: TimelineBlock, turns: [String: String]) -> some View { blockRow(block, turns: turns) }
 
     private func blockRow(_ block: TimelineBlock, turns: [String: String]) -> some View {
-        BlockRow(block: block, cwd: conversation.cwd, quote: quote, save: save, rewind: { rewinding = $0 },
-                 later: { [workspace, id = conversation.id] text in Task { await workspace.askToSaveForLater(id, answer: text) } }).equatable()
+        BlockRow(
+            block: block, cwd: conversation.cwd, quote: quote, save: save, rewind: { rewinding = $0 },
+            later: { [workspace, id = conversation.id] text in Task { await workspace.askToSaveForLater(id, answer: text) } }
+        ).equatable()
             .id(block.id)
             .onScrollVisibilityChange(threshold: 0.05) { shown in
                 guard let turn = turns[block.id] else { return }
@@ -213,7 +212,8 @@ struct ConversationView: View {
     /// The message kept as a scratchpad in Saved, named by its first line.
     private func save(_ text: String) {
         let first = text.split(separator: "\n").first.map { String($0.prefix(60)) } ?? "Saved"
-        let title = first.replacingOccurrences(of: "/", with: "\u{2215}").trimmingCharacters(in: CharacterSet(charactersIn: "#> ").union(.whitespaces))
+        let title = first.replacingOccurrences(of: "/", with: "\u{2215}").trimmingCharacters(
+            in: CharacterSet(charactersIn: "#> ").union(.whitespaces))
         Task { await workspace.createPad(title: title.isEmpty ? "Saved" : title, folder: "Saved", content: text) }
     }
 
@@ -227,36 +227,44 @@ struct ConversationView: View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 scrollingTimeline
-                // Soft edges: at the top, there's more above; just above the composer, the text fades out before it,
-                // as Codex's does, with nothing behind the composer but the page.
-                // Under the composer: nothing, so the conversation doesn't show at its sides.
-                .mask { SoftFoot(foot: foot) }
-                // Scrolled up: a way back down, just above the composer (and its question card's strip), under the card.
-                .overlay(alignment: .bottom) { wayDown(proxy) }
-                // The composer lies over the conversation's foot; the conversation runs the full height under it.
-                .overlay(alignment: .bottom) { composerOverlay }
-                .overlay(alignment: .trailing) { ThinScrollbar(tracker: tracker) { following = false; lifted = false; position.scrollTo(y: $0) }.padding(.trailing, 2) }
-                .overlay(alignment: .leading) { rail(proxy) }
-                // Fetched again as your messages come and go, not with every word streamed.
-                .task(id: conversation.items.count(where: { if case .user = $0.kind { true } else { false } }) + live.earlier) {
-                    await workspace.outline(conversation.id)
-                }
-                // Left, it goes back to its latest items: memory doesn't grow with every long task opened.
-                .onDisappear { rememberScroll(); workspace.trim(conversation.id); lifted = false }
-                // Opened (or another task in its place): a reply under way now is shown as it stands, not replayed.
-                .onAppear { Reveal.opened = Date() }
-                .onChange(of: conversation.id) { Reveal.opened = Date() }
-                // Back where you were: the block that was at the top of the screen, its older page loaded first if
-                // it isn't any more. At the end, it opens at the end, as ever.
-                .task { await restoreScroll() }
-                .onAppear { opened() }
-                .onDisappear { if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }; escapeMonitor = nil }
-                .onChange(of: active, initial: true) { isActive = active }
-                // An answer that lands while you're here is seen once you do something in the task (click, scroll,
-                // type): just having it open isn't reading it.
-                .simultaneousGesture(TapGesture().onEnded { workspace.markSeen(conversation.id) })
-                .onChange(of: images) { Drafts.save("task:" + conversation.id, text: box.text, images: images) }
-                .overlay { rewindOverlay }
+                    // Soft edges: at the top, there's more above; just above the composer, the text fades out before it,
+                    // as Codex's does, with nothing behind the composer but the page.
+                    // Under the composer: nothing, so the conversation doesn't show at its sides.
+                    .mask { SoftFoot(foot: foot) }
+                    // Scrolled up: a way back down, just above the composer (and its question card's strip), under the card.
+                    .overlay(alignment: .bottom) { wayDown(proxy) }
+                    // The composer lies over the conversation's foot; the conversation runs the full height under it.
+                    .overlay(alignment: .bottom) { composerOverlay }
+                    .overlay(alignment: .trailing) {
+                        ThinScrollbar(tracker: tracker) {
+                            following = false; lifted = false; position.scrollTo(y: $0)
+                        }.padding(.trailing, 2)
+                    }
+                    .overlay(alignment: .leading) { rail(proxy) }
+                    // Fetched again as your messages come and go, not with every word streamed.
+                    .task(id: conversation.items.count(where: { if case .user = $0.kind { true } else { false } }) + live.earlier) {
+                        await workspace.outline(conversation.id)
+                    }
+                    // Left, it goes back to its latest items: memory doesn't grow with every long task opened.
+                    .onDisappear {
+                        rememberScroll(); workspace.trim(conversation.id); lifted = false
+                    }
+                    // Opened (or another task in its place): a reply under way now is shown as it stands, not replayed.
+                    .onAppear { Reveal.opened = Date() }
+                    .onChange(of: conversation.id) { Reveal.opened = Date() }
+                    // Back where you were: the block that was at the top of the screen, its older page loaded first if
+                    // it isn't any more. At the end, it opens at the end, as ever.
+                    .task { await restoreScroll() }
+                    .onAppear { opened() }
+                    .onDisappear {
+                        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }; escapeMonitor = nil
+                    }
+                    .onChange(of: active, initial: true) { isActive = active }
+                    // An answer that lands while you're here is seen once you do something in the task (click, scroll,
+                    // type): just having it open isn't reading it.
+                    .simultaneousGesture(TapGesture().onEnded { workspace.markSeen(conversation.id) })
+                    .onChange(of: images) { Drafts.save("task:" + conversation.id, text: box.text, images: images) }
+                    .overlay { rewindOverlay }
             }
         }
     }
@@ -264,32 +272,33 @@ struct ConversationView: View {
     /// The timeline in its scroll view, with how the page is held: at the end, on what's read, or on a lifted message.
     private var scrollingTimeline: some View {
         ScrollView { timelineColumn }
-        .scrollIndicators(.never)
-        // Opened at the end, and held there as answers measure themselves and new ones come, while you're at
-        // the end; content added above (an older page) leaves what you're reading where it is.
-        .defaultScrollAnchor(.bottom, for: .initialOffset)
-        // Only you scroll: what's read keeps its distance from the top as the agent adds words below, so
-        // nothing moves under your eyes. The end is kept only while you're at it (following), and while an
-        // older page comes in above.
-        // Following, the end isn't held by the anchor (which moved the page the whole way in a frame) but scrolled to
-        // as the page grows (scrollGeometryChanged): slid, a step at a time.
-        .defaultScrollAnchor(loadingAbove && !lifted && !settling ? .bottom : .top, for: .sizeChanges)
-        .onAppear { _ = Self.clickWatch }
-        .scrollPosition($position)
-        .onScrollGeometryChange(for: CGFloat.self, of: { $0.containerSize.height }) { _, height in pageHeight = height }
-        // The message just sent goes to the top of the page once it's in the conversation.
-        .onChange(of: conversation.items.last(where: \.isYours)?.id) { _, id in placeLift(id) }
-        // Where you were in it, kept when scrolling stops and when you leave.
-        .onScrollPhaseChange { _, phase in scrollPhaseChanged(phase) }
-        .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { before, now in scrollGeometryChanged(from: before, to: now) }
+            .scrollIndicators(.never)
+            // Opened at the end, and held there as answers measure themselves and new ones come, while you're at
+            // the end; content added above (an older page) leaves what you're reading where it is.
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            // Only you scroll: what's read keeps its distance from the top as the agent adds words below, so
+            // nothing moves under your eyes. The end is kept only while you're at it (following), and while an
+            // older page comes in above.
+            // Following, the end isn't held by the anchor (which moved the page the whole way in a frame) but scrolled to
+            // as the page grows (scrollGeometryChanged): slid, a step at a time.
+            .defaultScrollAnchor(loadingAbove && !lifted && !settling ? .bottom : .top, for: .sizeChanges)
+            .onAppear { _ = Self.clickWatch }
+            .scrollPosition($position)
+            .onScrollGeometryChange(for: CGFloat.self, of: { $0.containerSize.height }) { _, height in pageHeight = height }
+            // The message just sent goes to the top of the page once it's in the conversation.
+            .onChange(of: conversation.items.last(where: \.isYours)?.id) { _, id in placeLift(id) }
+            // Where you were in it, kept when scrolling stops and when you leave.
+            .onScrollPhaseChange { _, phase in scrollPhaseChanged(phase) }
+            .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { before, now in scrollGeometryChanged(from: before, to: now) }
     }
 
     /// Laid out in full, not lazily: a lazy stack keeps the heights it guessed for rows measured off
     /// screen, so its end could sit below its last row and the page open blank. The page loaded is a
     /// few dozen rows; older pages come in on demand above.
     private var timelineColumn: some View {
-        shape.update(items: conversation.items, sending: workspace.sending[conversation.id] ?? [],
-                     working: conversation.status == .working || conversation.status == .waiting)
+        shape.update(
+            items: conversation.items, sending: workspace.sending[conversation.id] ?? [],
+            working: conversation.status == .working || conversation.status == .waiting)
         let (blocks, turns) = (shape.blocks, shape.turns)
         let (head, tail) = split(blocks)
         return VStack(alignment: .leading, spacing: 18) {
@@ -298,7 +307,11 @@ struct ConversationView: View {
                 switch line {
                 case let .block(block): row(block, turns: turns)
                 case let .quiet(id, blocks, count):
-                    QuietTurns(turns: count, open: Binding(get: { openQuiet.contains(id) }, set: { if $0 { openQuiet.insert(id) } else { openQuiet.remove(id) } })) {
+                    QuietTurns(
+                        turns: count,
+                        open: Binding(
+                            get: { openQuiet.contains(id) }, set: { if $0 { openQuiet.insert(id) } else { openQuiet.remove(id) } })
+                    ) {
                         ForEach(blocks) { block in row(block, turns: turns) }
                     }
                     .id(id)
@@ -320,7 +333,11 @@ struct ConversationView: View {
             // message can sit at the top.
             EndRoom(foot: foot).id("end")
         }
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { [tracker] in tracker.columnHeight = $0 }
+        .onGeometryChange(for: CGFloat.self) {
+            $0.size.height
+        } action: { [tracker] in
+            tracker.columnHeight = $0
+        }
         .frame(minHeight: room, alignment: .top)
         .padding(.top, 20)
         .centredColumn(760)
@@ -461,9 +478,13 @@ struct ConversationView: View {
         // Just after a click, it grew because something was opened (a step, a notice): it opens down from where it is,
         // the page not following the end (which pushed all above it up, as if it shifted).
         if following, !lifted, !loadingAbove, !userScrolling, grew > 0.5, Self.end(of: before) - before.contentOffset.y < 2,
-           Date().timeIntervalSince(Self.clicked) > 0.6 {
-            if grew < now.containerSize.height { withAnimation(Self.rise) { position.scrollTo(edge: .bottom) } }
-            else { position.scrollTo(edge: .bottom) }
+            Date().timeIntervalSince(Self.clicked) > 0.6
+        {
+            if grew < now.containerSize.height {
+                withAnimation(Self.rise) { position.scrollTo(edge: .bottom) }
+            } else {
+                position.scrollTo(edge: .bottom)
+            }
         }
         // How far up from the end: the question card on the composer sinks as far, behind it.
         // From where the scroll stops (the toolbar's inset at the top taken off: left in, the end read 38 pt off and the
@@ -490,10 +511,14 @@ struct ConversationView: View {
         // layout, and the list's height can settle far from its first guess (a long conversation came out
         // 2,000 pt shorter, leaving the view past its end, blank). It stays at the end of what's there.
         let end = Self.end(of: now)
-        if following, end > 0, abs(now.contentOffset.y - end) > 2 { position.scrollTo(edge: .bottom) }
+        if following, end > 0, abs(now.contentOffset.y - end) > 2 {
+            position.scrollTo(edge: .bottom)
+        }
         // Past the end is never a place to be (a page left blank until scrolled): back to the end, whether
         // following it or restoring where you were.
-        else if end > 0, now.contentOffset.y > end + 2 { position.scrollTo(edge: .bottom) }
+        else if end > 0, now.contentOffset.y > end + 2 {
+            position.scrollTo(edge: .bottom)
+        }
         // Scrolled up past the room under a sent message (it's wholly below the page): the room goes, out
         // of sight, so scrolling back down ends at the conversation's end.
     }
@@ -512,18 +537,31 @@ struct ConversationView: View {
     private var composerOverlay: some View {
         VStack(spacing: 8) {
             let queued = shownQueue
-            DockSlot(conversation: conversation, inbox: inbox, foot: foot, page: pageHeight, behindQueue: !queued.isEmpty || held,
-                     answer: { [workspace, id = conversation.id] question, answers in Task { await workspace.answer(id, question: question, answers: answers) } },
-                     decide: { [workspace, id = conversation.id] approval, choice in Task { await workspace.decide(id, approval: approval, choice: choice) } },
-                     // An answered card leaving: the page keeps its height (see `room`).
-                     left: { [tracker] in room = max(room, tracker.columnHeight) })
+            DockSlot(
+                conversation: conversation, inbox: inbox, foot: foot, page: pageHeight, behindQueue: !queued.isEmpty || held,
+                answer: { [workspace, id = conversation.id] question, answers in
+                    Task { await workspace.answer(id, question: question, answers: answers) }
+                },
+                decide: { [workspace, id = conversation.id] approval, choice in
+                    Task { await workspace.decide(id, approval: approval, choice: choice) }
+                },
+                // An answered card leaving: the page keeps its height (see `room`).
+                left: { [tracker] in room = max(room, tracker.columnHeight) })
             if !queued.isEmpty || held {
-                QueueStrip(queued: queued, held: held, hover: { [foot] inside in if foot.overQueue != inside { foot.overQueue = inside } },
-                           steer: { item in Task { await workspace.steer(conversation.id, item: item) } },
-                           edit: { item in Task { if await workspace.unqueue(conversation.id, item: item.id) { draft = item.text; images = (item.images ?? []).map { URL(fileURLWithPath: $0) } } } },
-                           remove: { item in Task { _ = await workspace.unqueue(conversation.id, item: item.id) } },
-                           release: { Task { await workspace.release(conversation.id) } })
-                    .frame(maxWidth: 680)
+                QueueStrip(
+                    queued: queued, held: held, hover: { [foot] inside in if foot.overQueue != inside { foot.overQueue = inside } },
+                    steer: { item in Task { await workspace.steer(conversation.id, item: item) } },
+                    edit: { item in
+                        Task {
+                            if await workspace.unqueue(conversation.id, item: item.id) {
+                                draft = item.text; images = (item.images ?? []).map { URL(fileURLWithPath: $0) }
+                            }
+                        }
+                    },
+                    remove: { item in Task { _ = await workspace.unqueue(conversation.id, item: item.id) } },
+                    release: { Task { await workspace.release(conversation.id) } }
+                )
+                .frame(maxWidth: 680)
             }
             composer
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] in if foot.composer != $0 { foot.composer = $0 } }
@@ -611,21 +649,31 @@ struct ConversationView: View {
         let id = conversation.id
         let (key, imagesNow) = ("task:" + id, { images })
         // Typing in it is doing something in it: its reply is seen.
-        box.saved = { [weak workspace] text in Drafts.save(key, text: text, images: imagesNow()); workspace?.markSeen(id) }
+        box.saved = { [weak workspace] text in
+            Drafts.save(key, text: text, images: imagesNow()); workspace?.markSeen(id)
+        }
         if let waiting = workspace.pendingDrafts.removeValue(forKey: conversation.id) { draft = waiting }
-        Task { try? await Task.sleep(for: .milliseconds(600)); workspace.markSeen(id) }
+        Task {
+            try? await Task.sleep(for: .milliseconds(600)); workspace.markSeen(id)
+        }
         watchEscape()
     }
 
     @ViewBuilder private var rewindOverlay: some View {
         if pickingRewind {
-            RewindPicker(messages: conversation.items.filter { if case .user = $0.kind { true } else { false } }.reversed(),
-                         close: { pickingRewind = false }) { item in pickingRewind = false; rewinding = item }
+            RewindPicker(
+                messages: conversation.items.filter { if case .user = $0.kind { true } else { false } }.reversed(),
+                close: { pickingRewind = false }
+            ) { item in
+                pickingRewind = false; rewinding = item
+            }
         } else if let item = rewinding {
             RewindCard(workspace: workspace, task: conversation.id, item: item, close: { rewinding = nil }) { rewound, conversationToo in
                 // The message back in the box, to send again or change.
                 if conversationToo { draft = rewound.text; images = rewound.images.map { URL(fileURLWithPath: $0) } }
-            } branched: { open($0) }
+            } branched: {
+                open($0)
+            }
         }
     }
 
@@ -650,31 +698,40 @@ struct ConversationView: View {
     private var composer: some View {
         let busy = conversation.status == .working || conversation.status == .waiting
         // Typing to a task whose agent has stopped starts it now, so the message goes the moment it's sent.
-        return Composer(draft: Binding(get: { box.text }, set: { box.text = $0; if !$0.isEmpty { workspace.warm(conversation.id) } }), placeholder: placeholder, canSend: conversation.status != .starting, folder: conversation.cwd, workspace: workspace,
-                 images: $images, active: active, stop: busy && conversation.terminal == nil ? { Task { await workspace.interrupt(conversation.id) } } : nil,
-                 queue: busy && conversation.terminal == nil ? {
-                     // Return while it works: the message waits for after this turn, in the strip above.
-                     let (text, attached) = ImageToken.outgoing(draft, images: images.map(\.path))
-                     draft = ""
-                     images = []
-                     // In the strip at once, in the same frame the composer empties: waiting for zerod's word, the
-                     // composer shrank one frame and the strip came the next, the page dropping and jumping back.
-                     let pending = Queued(id: "pending-" + UUID().uuidString, text: text, images: attached)
-                     queuing.append(pending)
-                     Task {
-                         await workspace.queue(conversation.id, text: text, images: attached)
-                         try? await Task.sleep(for: .seconds(5))
-                         queuing.removeAll { $0.id == pending.id }
-                     }
-                 } : nil,
-                 // ponytail: the first agent ask waiting, not the dock's page shown; follow the pager if several wait.
-                 pick: { [inbox, conversation] digit in
-                     guard conversation.questions.isEmpty, conversation.approvals.isEmpty,
-                           let ask = inbox.store.asks.first(where: { $0.isAgents(in: conversation.id) && !$0.state.isFinal }),
-                           digit <= ask.options.count else { return false }
-                     inbox.choose(digit - 1, on: ask.id)
-                     return true
-                 }) {
+        return Composer(
+            draft: Binding(
+                get: { box.text },
+                set: {
+                    box.text = $0; if !$0.isEmpty { workspace.warm(conversation.id) }
+                }), placeholder: placeholder, canSend: conversation.status != .starting, folder: conversation.cwd, workspace: workspace,
+            images: $images, active: active,
+            stop: busy && conversation.terminal == nil ? { Task { await workspace.interrupt(conversation.id) } } : nil,
+            queue: busy && conversation.terminal == nil
+                ? {
+                    // Return while it works: the message waits for after this turn, in the strip above.
+                    let (text, attached) = ImageToken.outgoing(draft, images: images.map(\.path))
+                    draft = ""
+                    images = []
+                    // In the strip at once, in the same frame the composer empties: waiting for zerod's word, the
+                    // composer shrank one frame and the strip came the next, the page dropping and jumping back.
+                    let pending = Queued(id: "pending-" + UUID().uuidString, text: text, images: attached)
+                    queuing.append(pending)
+                    Task {
+                        await workspace.queue(conversation.id, text: text, images: attached)
+                        try? await Task.sleep(for: .seconds(5))
+                        queuing.removeAll { $0.id == pending.id }
+                    }
+                } : nil,
+            // ponytail: the first agent ask waiting, not the dock's page shown; follow the pager if several wait.
+            pick: { [inbox, conversation] digit in
+                guard conversation.questions.isEmpty, conversation.approvals.isEmpty,
+                    let ask = inbox.store.asks.first(where: { $0.isAgents(in: conversation.id) && !$0.state.isFinal }),
+                    digit <= ask.options.count
+                else { return false }
+                inbox.choose(digit - 1, on: ask.id)
+                return true
+            }
+        ) {
             let (text, attached) = ImageToken.outgoing(draft, images: images.map(\.path))
             draft = ""
             images = []
@@ -690,41 +747,67 @@ struct ConversationView: View {
             // Mid-turn, what's kept for the next turn shows, marked so; a pick then is kept for it too.
             let kept = busy && (next?.provider != nil || next?.model != nil || next?.effort != nil)
             let current = kept ? (next?.provider ?? conversation.provider) : provider ?? conversation.provider
-            let chosen = kept ? (next?.model ?? (next?.provider == nil ? conversation.model : nil)) : provider == nil ? (model ?? conversation.model) : model
-            let level = kept ? (next?.effort ?? (next?.provider == nil && next?.model == nil ? conversation.effort : nil)) : effort ?? (provider == nil && model == nil ? conversation.effort : nil)
+            let chosen =
+                kept
+                ? (next?.model ?? (next?.provider == nil ? conversation.model : nil))
+                : provider == nil ? (model ?? conversation.model) : model
+            let level =
+                kept
+                ? (next?.effort ?? (next?.provider == nil && next?.model == nil ? conversation.effort : nil))
+                : effort ?? (provider == nil && model == nil ? conversation.effort : nil)
             // The model is the subject, its provider the icon: "Opus 5.5 · High". No model picked, the provider's first;
             // a provider with no catalogue (OpenCode) by its name.
             let catalogue = ComposerRows.catalogue(current)
             let name = catalogue.first { $0.id == chosen }?.name ?? chosen ?? catalogue.first?.name ?? current.title
-            ComposerChip(id: "task.\(conversation.id).agent", label: [name, level.map { effortLabel($0, short: true) }].compactMap { $0 }.joined(separator: " · "),
-                         symbol: "terminal", icon: current.mark, kind: .runtime, prominent: true, pending: kept, rows: {
-                ComposerRows.taskModels(conversation, chosen: (current, chosen)) { picked, choice in
-                    if busy {
-                        Task { await workspace.switchProvider(conversation.id, to: picked, model: choice.id.isEmpty ? nil : choice.id, effort: choice.levels.contains { $0.id == level } ? level : nil) }
-                        return
+            ComposerChip(
+                id: "task.\(conversation.id).agent",
+                label: [name, level.map { effortLabel($0, short: true) }].compactMap { $0 }.joined(separator: " · "),
+                symbol: "terminal", icon: current.mark, kind: .runtime, prominent: true, pending: kept,
+                rows: {
+                    ComposerRows.taskModels(conversation, chosen: (current, chosen)) { picked, choice in
+                        if busy {
+                            Task {
+                                await workspace.switchProvider(
+                                    conversation.id, to: picked, model: choice.id.isEmpty ? nil : choice.id,
+                                    effort: choice.levels.contains { $0.id == level } ? level : nil)
+                            }
+                            return
+                        }
+                        provider = picked == conversation.provider ? nil : picked
+                        model = choice.id.isEmpty ? nil : choice.id
+                        if let effort, !choice.levels.contains(where: { $0.id == effort }) { self.effort = nil }
                     }
-                    provider = picked == conversation.provider ? nil : picked
-                    model = choice.id.isEmpty ? nil : choice.id
-                    if let effort, !choice.levels.contains(where: { $0.id == effort }) { self.effort = nil }
+                }, level: { id in id == "\(current.rawValue)/\(chosen ?? "")" ? level : nil },
+                setLevel: { _, picked in
+                    if busy { Task { await workspace.switchProvider(conversation.id, to: current, model: chosen, effort: picked) }; return }
+                    effort = picked
                 }
-            }, level: { id in id == "\(current.rawValue)/\(chosen ?? "")" ? level : nil }, setLevel: { _, picked in
-                if busy { Task { await workspace.switchProvider(conversation.id, to: current, model: chosen, effort: picked) }; return }
-                effort = picked
-            })
+            )
             .tip(kept ? "From the next turn" : "")
             // Mid-turn, a pick is kept for the next turn (the agent starts again with it then), marked so.
             let permissions = busy ? (next?.permissions ?? conversation.permissions) : conversation.permissions
-            ComposerChip(id: "task.\(conversation.id).permissions", label: permissions == .auto ? "Auto" : "Unrestricted",
-                         symbol: permissions == .auto ? "wand-sparkle" : "bolt-lightning:glyph", tint: permissions == .auto ? nil : .orange,
-                         pending: busy && next?.permissions != nil) {
-                ComposerRows.list("Permissions", [
-                    ("auto", "Auto", "\(conversation.provider.title) decides what's safe, and asks you the rest", permissions == .auto,
-                     { Task { await workspace.setPermissions(conversation.id, .auto) } }),
-                    ("unrestricted", "Unrestricted", "Anything, without asking", permissions == .unrestricted,
-                     { Task { await workspace.setPermissions(conversation.id, .unrestricted) } }),
-                ])
+            ComposerChip(
+                id: "task.\(conversation.id).permissions", label: permissions == .auto ? "Auto" : "Unrestricted",
+                symbol: permissions == .auto ? "wand-sparkle" : "bolt-lightning:glyph", tint: permissions == .auto ? nil : .orange,
+                pending: busy && next?.permissions != nil
+            ) {
+                ComposerRows.list(
+                    "Permissions",
+                    [
+                        (
+                            "auto", "Auto", "\(conversation.provider.title) decides what's safe, and asks you the rest",
+                            permissions == .auto,
+                            { Task { await workspace.setPermissions(conversation.id, .auto) } }
+                        ),
+                        (
+                            "unrestricted", "Unrestricted", "Anything, without asking", permissions == .unrestricted,
+                            { Task { await workspace.setPermissions(conversation.id, .unrestricted) } }
+                        ),
+                    ])
             }
-            .tip(busy && next?.permissions != nil ? "From the next turn" : busy ? "Picked now, it applies from the next turn" : "What the agent may do without asking")
+            .tip(
+                busy && next?.permissions != nil
+                    ? "From the next turn" : busy ? "Picked now, it applies from the next turn" : "What the agent may do without asking")
         }
         // A little narrower than the conversation.
         .centredColumn(680)
@@ -754,7 +837,9 @@ struct ConversationView: View {
     }
 
     private func carryOn(with other: Provider) {
-        send("You've taken this task over from \(conversation.provider.title), which ran out of usage. Carry on from where it stopped.", with: other)
+        send(
+            "You've taken this task over from \(conversation.provider.title), which ran out of usage. Carry on from where it stopped.",
+            with: other)
     }
 
     /// What's wrong, and what to do about it: the session's attention beyond working or waiting.
@@ -762,7 +847,10 @@ struct ConversationView: View {
         switch conversation.attention {
         case .stuck: return ("Stuck", conversation.stalled ?? "It has stopped making progress.")
         case .limited:
-            let reset = (conversation.usage?.resetsAt).map { " Resets \(Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .omitted, time: .shortened))." } ?? ""
+            let reset =
+                (conversation.usage?.resetsAt).map {
+                    " Resets \(Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .omitted, time: .shortened))."
+                } ?? ""
             return ("Usage limit", "The provider's usage limit is reached.\(reset)")
         // A failure is in the conversation itself, as a callout.
         default: return nil
@@ -851,13 +939,15 @@ private struct DockSlot: View {
     var body: some View {
         let asks = inbox.store.asks.filter { $0.isAgents(in: conversation.id) && !$0.state.isFinal }
         let ids = conversation.questions.map(\.id) + asks.map(\.id) + conversation.approvals.map(\.id)
-        AskDock(session: conversation.id, cwd: conversation.cwd, questions: conversation.questions, approvals: conversation.approvals,
-                asks: asks, inbox: inbox, page: page, foot: foot, answer: answer, decide: decide)
-            .equatable()
-            .padding(.horizontal, behindQueue ? 26 : 13)
-            .frame(maxWidth: 680)
-            .padding(.bottom, ids.isEmpty ? 0 : -(AskDock.tuck + 8))
-            .onChange(of: ids) { old, new in if !Set(old).subtracting(new).isEmpty { left() } }
+        AskDock(
+            session: conversation.id, cwd: conversation.cwd, questions: conversation.questions, approvals: conversation.approvals,
+            asks: asks, inbox: inbox, page: page, foot: foot, answer: answer, decide: decide
+        )
+        .equatable()
+        .padding(.horizontal, behindQueue ? 26 : 13)
+        .frame(maxWidth: 680)
+        .padding(.bottom, ids.isEmpty ? 0 : -(AskDock.tuck + 8))
+        .onChange(of: ids) { old, new in if !Set(old).subtracting(new).isEmpty { left() } }
     }
 }
 
@@ -900,7 +990,9 @@ private struct Sinker<Card: View>: View {
             // its sides kept.
             .mask { Rectangle().padding(.horizontal, -Ring.width).padding(.top, -Ring.width) }
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] in if foot.card != $0 { foot.card = $0 } }
-            .onDisappear { [foot] in foot.card = 0; foot.overCard = false; foot.typing = false }
+            .onDisappear { [foot] in
+                foot.card = 0; foot.overCard = false; foot.typing = false
+            }
             .onAppear {
                 // There as the conversation opened (waiting already): in place at once. Only one that comes while
                 // it's open comes in.

@@ -17,16 +17,27 @@ struct SignInsPage: View {
         VStack(alignment: .leading, spacing: 32) {
             if let workspace {
                 ForEach([Provider.claude, .codex, .opencode], id: \.self) { cli in
-                    SettingsSection(title: cli.title,
-                                    icon: cli.mark.map { AnyView($0.resizable().aspectRatio(contentMode: .fit).frame(width: 16, height: 16).clipShape(RoundedRectangle(cornerRadius: 4))) },
-                                    accessory: AnyView(HStack(spacing: 4) {
-                                        GhostButton(title: "Add model", icon: "plus", open: addingModel == cli) { addingModel = addingModel == cli ? nil : cli }
-                                        AddAccountButton(cli: cli) { way in adding = Adding(cli: cli, way: way) }
-                                    })) {
+                    SettingsSection(
+                        title: cli.title,
+                        icon: cli.mark.map {
+                            AnyView(
+                                $0.resizable().aspectRatio(contentMode: .fit).frame(width: 16, height: 16).clipShape(
+                                    RoundedRectangle(cornerRadius: 4)))
+                        },
+                        accessory: AnyView(
+                            HStack(spacing: 4) {
+                                GhostButton(title: "Add model", icon: "plus", open: addingModel == cli) {
+                                    addingModel = addingModel == cli ? nil : cli
+                                }
+                                AddAccountButton(cli: cli) { way in adding = Adding(cli: cli, way: way) }
+                            })
+                    ) {
                         section(cli, in: workspace)
                     }
                 }
-                .zeroDialog(item: $adding) { adding in AddAccount(cli: adding.cli, way: adding.way, replacing: adding.replacing, workspace: workspace) }
+                .zeroDialog(item: $adding) { adding in
+                    AddAccount(cli: adding.cli, way: adding.way, replacing: adding.replacing, workspace: workspace)
+                }
                 .zeroDialog(item: $addingModel) { cli in AddModel(cli: cli) }
 
             }
@@ -80,7 +91,12 @@ private struct Adding: Identifiable {
 /// How an account is added: its CLI's own sign-in in the browser, or a key (OpenCode's: for which provider).
 private enum AddWay: Equatable, CustomStringConvertible {
     case signIn, key(AddAccount.OpenCodeProvider?)
-    var description: String { switch self { case .signIn: "signIn"; case .key(let provider): "key-\(provider?.rawValue ?? "")" } }
+    var description: String {
+        switch self {
+        case .signIn: "signIn";
+        case .key(let provider): "key-\(provider?.rawValue ?? "")"
+        }
+    }
 }
 
 /// The heading's ghost button: Zero's menu of the ways to add one of this CLI's accounts.
@@ -95,19 +111,27 @@ private struct AddAccountButton: View {
         GhostButton(title: "Add account", icon: "plus", open: WorkspaceSelector.shared.open == id) {
             WorkspaceSelector.shared.toggle(id, kind: .menu, anchor: anchor, rows: { rows })
         }
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { anchor = $0 }
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
+        } action: {
+            anchor = $0
+        }
     }
 
     private var rows: [SelectorSection] {
         if cli == .opencode {
-            return ComposerRows.menu([AddAccount.OpenCodeProvider.allCases.map { option in
-                (option.rawValue, "\(option.rawValue) key", "key", false, { pick(.key(option)) })
-            }])
+            return ComposerRows.menu([
+                AddAccount.OpenCodeProvider.allCases.map { option in
+                    (option.rawValue, "\(option.rawValue) key", "key", false, { pick(.key(option)) })
+                }
+            ])
         }
-        return ComposerRows.menu([[
-            ("signIn", cli == .claude ? "Sign in with Claude" : "Sign in with ChatGPT", "circle-user", false, { pick(.signIn) }),
-            ("key", cli == .claude ? "Anthropic API key" : "OpenAI API key", "key", false, { pick(.key(nil)) }),
-        ]])
+        return ComposerRows.menu([
+            [
+                ("signIn", cli == .claude ? "Sign in with Claude" : "Sign in with ChatGPT", "circle-user", false, { pick(.signIn) }),
+                ("key", cli == .claude ? "Anthropic API key" : "OpenAI API key", "key", false, { pick(.key(nil)) }),
+            ]
+        ])
     }
 }
 
@@ -133,57 +157,66 @@ private struct SignInRow: View {
         case .token: signin.plan.map { "\($0.capitalized) plan" } ?? "Subscription"
         case .apiKey: signin.variable.map { "API key · \($0)" } ?? "API key"
         case .codexHome: signin.plan.map { "ChatGPT \($0.capitalized)" } ?? "ChatGPT"
-        case .claudeHome: [signin.plan.map { "\($0.capitalized) plan" }, "its own folder: your MCP sign-ins aren't shared"].compactMap { $0 }.joined(separator: " · ")
+        case .claudeHome:
+            [signin.plan.map { "\($0.capitalized) plan" }, "its own folder: your MCP sign-ins aren't shared"].compactMap { $0 }.joined(
+                separator: " · ")
         }
     }
 
-
     var body: some View {
         VStack(spacing: 0) {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                if let naming {
-                    TextField("A name for it", text: Binding(get: { naming }, set: { self.naming = $0 }), prompt: Text("Whose account is this? (its email, or a name)"))
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    if let naming {
+                        TextField(
+                            "A name for it", text: Binding(get: { naming }, set: { self.naming = $0 }),
+                            prompt: Text("Whose account is this? (its email, or a name)")
+                        )
                         .textFieldStyle(.plain).font(.system(size: 13, weight: .medium)).focused($focused)
                         .onSubmit(rename).onExitCommand { self.naming = nil }
                         .onChange(of: focused) { if !focused { rename() } }
-                } else {
-                    Text(signin.label).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                }
-                if signin.pending == true {
-                    HStack(spacing: 6) { Spinner().frame(width: 10, height: 10); Text("Signing in… finish in your browser") }
+                    } else {
+                        Text(signin.label).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    }
+                    if signin.pending == true {
+                        HStack(spacing: 6) {
+                            Spinner().frame(width: 10, height: 10); Text("Signing in… finish in your browser")
+                        }
                         .font(.system(size: 11.5)).foregroundStyle(.secondary)
-                } else {
-                    Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    } else {
+                        Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 8)
+                if removing {
+                    Button("Cancel") { removing = false }.buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(
+                        .secondary)
+                    Button("Remove") { Task { await workspace.removeSignIn(signin) } }
+                        .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.red)
+                        .tip("Its tasks can't restart as it, and it has to be signed in again to come back")
+                } else if workspace.signinUsage[signin.id]?.limited == true {
+                    Text("At its limit").font(.system(size: 11.5, weight: .medium)).foregroundStyle(.red)
+                }
+                if !removing && naming == nil && signin.pending != true {
+                    NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0))
+                    menuButton
                 }
             }
-            Spacer(minLength: 8)
-            if removing {
-                Button("Cancel") { removing = false }.buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
-                Button("Remove") { Task { await workspace.removeSignIn(signin) } }
-                    .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.red)
-                    .tip("Its tasks can't restart as it, and it has to be signed in again to come back")
-            } else if workspace.signinUsage[signin.id]?.limited == true {
-                Text("At its limit").font(.system(size: 11.5, weight: .medium)).foregroundStyle(.red)
+            .padding(.leading, 18).padding(.trailing, 10).padding(.vertical, 10)
+            .frame(minHeight: 56)
+            .background(hovered && !open && naming == nil && !removing ? Theme.row : .clear, in: Rectangle())
+            .contentShape(Rectangle())
+            .onHover { hovered = $0 }
+            // A click opens it in place, taller: its usage and when it resets, then its activity. Its ⋯ has rename, switch
+            // and remove.
+            .onTapGesture {
+                if naming == nil && !removing && signin.pending != true { withAnimation(.snappy(duration: 0.22)) { open.toggle() } }
             }
-            if !removing && naming == nil && signin.pending != true {
-                NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0))
-                menuButton
+            if open {
+                AccountDetails(signin: signin, workspace: workspace)
+                    .padding(.horizontal, 18).padding(.bottom, 16).padding(.top, 2)
+                    .transition(.opacity)
             }
-        }
-        .padding(.leading, 18).padding(.trailing, 10).padding(.vertical, 10)
-        .frame(minHeight: 56)
-        .background(hovered && !open && naming == nil && !removing ? Theme.row : .clear, in: Rectangle())
-        .contentShape(Rectangle())
-        .onHover { hovered = $0 }
-        // A click opens it in place, taller: its usage and when it resets, then its activity. Its ⋯ has rename, switch
-        // and remove.
-        .onTapGesture { if naming == nil && !removing && signin.pending != true { withAnimation(.snappy(duration: 0.22)) { open.toggle() } } }
-        if open {
-            AccountDetails(signin: signin, workspace: workspace)
-                .padding(.horizontal, 18).padding(.bottom, 16).padding(.top, 2)
-                .transition(.opacity)
-        }
         }
         // Claude doesn't say whose a token is: a new one asks, in its own row.
         .onAppear { if signin.kind == .token && signin.label == "Claude account" && naming == nil { naming = ""; focused = true } }
@@ -192,9 +225,17 @@ private struct SignInRow: View {
     private var menuButton: some View {
         Button {
             let width = SelectorView.width(.menu)
-            WorkspaceSelector.shared.toggle("signin-\(signin.id)", kind: .menu, anchor: CGRect(x: menuFrame.maxX - width, y: menuFrame.minY, width: width, height: menuFrame.height)) {
+            WorkspaceSelector.shared.toggle(
+                "signin-\(signin.id)", kind: .menu,
+                anchor: CGRect(x: menuFrame.maxX - width, y: menuFrame.minY, width: width, height: menuFrame.height)
+            ) {
                 var rows: [(id: String, title: String, glyph: String, selected: Bool, pick: () -> Void)] = [
-                    ("rename", "Rename", "pen", false, { naming = signin.label; focused = true }),
+                    (
+                        "rename", "Rename", "pen", false,
+                        {
+                            naming = signin.label; focused = true
+                        }
+                    )
                 ]
                 if signin.kind == .claudeHome { rows.append(("token", "Switch to a token", "key", false, switchToToken)) }
                 return ComposerRows.menu([rows, [("remove", "Remove…", "trash", false, { removing = true })]])
@@ -203,7 +244,11 @@ private struct SignInRow: View {
             NucleoIcon("dots", size: 14).foregroundStyle(.secondary).frame(width: 26, height: 26).contentShape(Rectangle())
         }
         .buttonStyle(Hovering(radius: 6))
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { menuFrame = $0 }
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
+        } action: {
+            menuFrame = $0
+        }
     }
 
     private func rename() {
@@ -227,7 +272,9 @@ struct UsageColumns: View {
                 ForEach(Self.slots, id: \.0) { name, short in
                     if let window = usage.windows.first(where: { $0.name == name }) {
                         let live = (window.resetsAt ?? Int.max) > now
-                        column(short, used: live ? min(1, window.used) : 0, resets: live ? window.resetsAt.map { UsageMeter.resets($0, now: now) } : nil)
+                        column(
+                            short, used: live ? min(1, window.used) : 0,
+                            resets: live ? window.resetsAt.map { UsageMeter.resets($0, now: now) } : nil)
                     } else {
                         Color.clear.frame(width: Self.width, height: 1)
                     }
@@ -287,9 +334,10 @@ struct UsageFooter: View {
     private var used: [(ZerodLink.SignIn, Usage)] {
         let since = Int((Date().timeIntervalSince1970 - Self.recent) * 1000)
         let sessions = workspace.board.filter { ($0.at ?? Int.max) > since }.flatMap { [$0.session] + ($0.team ?? []).map(\.session) }
-        let ids = Set(sessions.compactMap { id in
-            workspace.conversation(id).flatMap { $0.signin ?? workspace.signinDefaults[$0.provider.rawValue] }
-        })
+        let ids = Set(
+            sessions.compactMap { id in
+                workspace.conversation(id).flatMap { $0.signin ?? workspace.signinDefaults[$0.provider.rawValue] }
+            })
         return workspace.signins.filter { ids.contains($0.id) }
             .sorted { ($0.cli.rawValue, $0.label) < ($1.cli.rawValue, $1.label) }
             .compactMap { signin in workspace.signinUsage[signin.id].flatMap { $0.windows.isEmpty ? nil : (signin, $0) } }
@@ -347,7 +395,8 @@ struct UsageFooter: View {
                 Text(signin.label).font(.system(size: 12, weight: .medium)).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 4)
                 if let full {
-                    Text(UsageMeter.resets(full, now: now).replacingOccurrences(of: "Resets ", with: "")).font(.system(size: 11)).foregroundStyle(.red).monospacedDigit().fixedSize()
+                    Text(UsageMeter.resets(full, now: now).replacingOccurrences(of: "Resets ", with: "")).font(.system(size: 11))
+                        .foregroundStyle(.red).monospacedDigit().fixedSize()
                 }
             }
             ForEach(windows, id: \.0) { short, window in
@@ -356,7 +405,9 @@ struct UsageFooter: View {
                 HStack(spacing: 8) {
                     Text(short).foregroundStyle(.secondary).frame(width: 30, alignment: .leading)
                     Capsule().fill(Color.primary.opacity(0.08)).frame(height: 4)
-                        .overlay(alignment: .leading) { GeometryReader { space in Capsule().fill(UsageMeter.color(used)).frame(width: space.size.width * used) } }
+                        .overlay(alignment: .leading) {
+                            GeometryReader { space in Capsule().fill(UsageMeter.color(used)).frame(width: space.size.width * used) }
+                        }
                     Text(UsageMeter.percent(used)).monospacedDigit().foregroundStyle(used >= 1 ? .red : .secondary)
                         .frame(width: 32, alignment: .trailing)
                 }
@@ -402,7 +453,9 @@ private struct AddAccount: View {
 
     private var title: String {
         if let replacing { return "Sign \(replacing.label) in again as a token" }
-        if case .key(let option) = way { return option.map { "\($0.rawValue) key" } ?? (cli == .claude ? "Anthropic API key" : "OpenAI API key") }
+        if case .key(let option) = way {
+            return option.map { "\($0.rawValue) key" } ?? (cli == .claude ? "Anthropic API key" : "OpenAI API key")
+        }
         return cli == .claude ? "Sign in with Claude" : "Sign in with ChatGPT"
     }
 
@@ -432,7 +485,9 @@ private struct AddAccount: View {
                 } else if case .failed = claude.status {
                     DialogButton(title: "Try again", kind: .primary) { claude.start(replacing: replacing, in: workspace) }
                 } else if cli == .codex && problem != nil {
-                    DialogButton(title: "Try again", kind: .primary) { problem = nil; Task { await codex(apiKey: nil) } }
+                    DialogButton(title: "Try again", kind: .primary) {
+                        problem = nil; Task { await codex(apiKey: nil) }
+                    }
                 }
             }
         }
@@ -500,7 +555,11 @@ private struct AddAccount: View {
             switch cli {
             case .codex: await codex(apiKey: key.trimmed)
             case .claude: await keep(.init(cli: .claude, kind: .apiKey, label: label.trimmed.isEmpty ? "Anthropic API key" : label.trimmed))
-            case .opencode: await keep(.init(cli: .opencode, kind: .apiKey, label: label.trimmed.isEmpty ? provider.rawValue : label.trimmed, variable: provider.variable))
+            case .opencode:
+                await keep(
+                    .init(
+                        cli: .opencode, kind: .apiKey, label: label.trimmed.isEmpty ? provider.rawValue : label.trimmed,
+                        variable: provider.variable))
             }
             working = false
         }
@@ -511,7 +570,8 @@ private struct AddAccount: View {
     }
 
     private func codex(apiKey: String?) async {
-        let (page, error) = await workspace.signInCodex(label: apiKey == nil ? nil : (label.trimmed.isEmpty ? "OpenAI API key" : label.trimmed), apiKey: apiKey)
+        let (page, error) = await workspace.signInCodex(
+            label: apiKey == nil ? nil : (label.trimmed.isEmpty ? "OpenAI API key" : label.trimmed), apiKey: apiKey)
         if let error { problem = error; return }
         if let page { NSWorkspace.shared.open(page) }
         done()
@@ -580,9 +640,12 @@ private struct AccountDetails: View {
         VStack(alignment: .leading, spacing: 18) {
             // Each window its plan has, a tile apiece side by side: what's used, large, its bar, when it resets.
             if windows.isEmpty {
-                Text(usage?.limited == true ? "At its limit. Its CLI hasn't said how much of each window it has used."
-                     : "No usage figures yet. A Claude Code token's usage comes from its tasks as they run, so it shows once one has.")
-                    .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(
+                    usage?.limited == true
+                        ? "At its limit. Its CLI hasn't said how much of each window it has used."
+                        : "No usage figures yet. A Claude Code token's usage comes from its tasks as they run, so it shows once one has."
+                )
+                .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             } else {
                 HStack(spacing: 10) {
                     ForEach(windows, id: \.name) { window in tile(window, now: now) }
@@ -594,7 +657,9 @@ private struct AccountDetails: View {
             let hours = await workspace.accountActivity()[signin.id] ?? [:]
             var byDay: [Date: Int] = [:]
             let calendar = Calendar.current
-            for (hour, count) in hours { byDay[calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(hour * 3600))), default: 0] += count }
+            for (hour, count) in hours {
+                byDay[calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(hour * 3600))), default: 0] += count
+            }
             days = byDay
         }
     }
@@ -607,7 +672,9 @@ private struct AccountDetails: View {
             Text(UsageMeter.percent(used)).font(.system(size: 20, weight: .semibold)).monospacedDigit()
                 .foregroundStyle(used >= 1 ? .red : .primary)
             Capsule().fill(Color.primary.opacity(0.08)).frame(height: 4)
-                .overlay(alignment: .leading) { GeometryReader { space in Capsule().fill(UsageMeter.color(used)).frame(width: space.size.width * used) } }
+                .overlay(alignment: .leading) {
+                    GeometryReader { space in Capsule().fill(UsageMeter.color(used)).frame(width: space.size.width * used) }
+                }
             Text(live ? window.resetsAt.map { UsageMeter.resets($0, now: now) } ?? " " : "Reset since it was read")
                 .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
         }
@@ -647,7 +714,8 @@ struct ActivityGraph: View {
                 HStack(spacing: Self.gap) {
                     Color.clear.frame(width: Self.labels - Self.gap, height: 1)
                     ForEach(Array(columns.enumerated()), id: \.offset) { index, sunday in
-                        let starts = index == 0 || calendar.component(.month, from: sunday) != calendar.component(.month, from: columns[index - 1])
+                        let starts =
+                            index == 0 || calendar.component(.month, from: sunday) != calendar.component(.month, from: columns[index - 1])
                         Text(starts && index < columns.count - 2 ? sunday.formatted(.dateTime.month(.abbreviated)) : "")
                             .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize()
                             .frame(width: Self.cell, alignment: .leading)
@@ -657,8 +725,10 @@ struct ActivityGraph: View {
                     // Monday, Wednesday and Friday, as GitHub labels its rows.
                     VStack(alignment: .leading, spacing: Self.gap) {
                         ForEach(0..<7, id: \.self) { row in
-                            Text([1, 3, 5].contains(row) ? calendar.shortWeekdaySymbols[row] : "").font(.system(size: 9.5)).foregroundStyle(.secondary)
-                                .frame(width: Self.labels - Self.gap, height: Self.cell, alignment: .leading)
+                            Text([1, 3, 5].contains(row) ? calendar.shortWeekdaySymbols[row] : "").font(.system(size: 9.5)).foregroundStyle(
+                                .secondary
+                            )
+                            .frame(width: Self.labels - Self.gap, height: Self.cell, alignment: .leading)
                         }
                     }
                     ForEach(Array(columns.enumerated()), id: \.offset) { _, sunday in
@@ -670,9 +740,15 @@ struct ActivityGraph: View {
                                 } else {
                                     let count = days[day] ?? 0
                                     RoundedRectangle(cornerRadius: 3).fill(Self.shade(count, busiest: busiest))
-                                        .overlay { if day == today { RoundedRectangle(cornerRadius: 3).strokeBorder(Color.primary.opacity(0.35), lineWidth: 1) } }
+                                        .overlay {
+                                            if day == today {
+                                                RoundedRectangle(cornerRadius: 3).strokeBorder(Color.primary.opacity(0.35), lineWidth: 1)
+                                            }
+                                        }
                                         .frame(width: Self.cell, height: Self.cell)
-                                        .tip("\(count == 0 ? "No" : "\(count)") turn\(count == 1 ? "" : "s") · " + day.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)))
+                                        .tip(
+                                            "\(count == 0 ? "No" : "\(count)") turn\(count == 1 ? "" : "s") · "
+                                                + day.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)))
                                 }
                             }
                         }
@@ -690,7 +766,9 @@ struct ActivityGraph: View {
             .font(.system(size: 10.5)).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+        .onGeometryChange(for: CGFloat.self) {
+            $0.size.width
+        } action: { width in
             weeks = max(8, min(53, Int((width - Self.labels + Self.gap) / (Self.cell + Self.gap))))
         }
     }
@@ -719,18 +797,25 @@ private struct AddModel: View {
     @State private var name = ""
 
     private var example: String {
-        switch cli { case .claude: "claude-mythos-5-2"; case .codex: "gpt-5.5-codex"; case .opencode: "provider/model" }
+        switch cli {
+        case .claude: "claude-mythos-5-2";
+        case .codex: "gpt-5.5-codex";
+        case .opencode: "provider/model"
+        }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
                 DialogTitle(text: "Add a \(cli.title) model")
-                Text("For a model \(cli.title) doesn't list yet. It's offered on every \(cli.title) account; an account that turns out not to have it is left out.")
-                    .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(
+                    "For a model \(cli.title) doesn't list yet. It's offered on every \(cli.title) account; an account that turns out not to have it is left out."
+                )
+                .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             VStack(spacing: 8) {
-                TextField("", text: $id, prompt: Text("Its id, as \(cli.title) takes it (\(example))")).textFieldStyle(.dialog).onSubmit(save)
+                TextField("", text: $id, prompt: Text("Its id, as \(cli.title) takes it (\(example))")).textFieldStyle(.dialog).onSubmit(
+                    save)
                 TextField("", text: $name, prompt: Text("Its name in the picker (Mythos 5.2)")).textFieldStyle(.dialog).onSubmit(save)
             }
             HStack {

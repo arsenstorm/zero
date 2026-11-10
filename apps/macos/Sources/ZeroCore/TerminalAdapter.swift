@@ -112,8 +112,9 @@ extension TerminalAdapter {
     public func spawnTargets() async throws -> [SpawnChoice] {
         let home = NSHomeDirectory()
         return Projects.folders.map { path in
-            SpawnChoice(id: path, name: Projects.name(of: path), detail: path.replacingOccurrences(of: home, with: "~"),
-                        icon: "folder", provider: name)
+            SpawnChoice(
+                id: path, name: Projects.name(of: path), detail: path.replacingOccurrences(of: home, with: "~"),
+                icon: "folder", provider: name)
         }
     }
 
@@ -183,7 +184,9 @@ enum AgentCommand {
 
     /// The command to start the agent again, resuming its session.
     static func resume(_ agent: AgentIdentity) throws -> [String] {
-        guard let session = agent.session, var command = agent.launch else { throw AdapterError("\(agent.label ?? agent.name)'s session is gone") }
+        guard let session = agent.session, var command = agent.launch else {
+            throw AdapterError("\(agent.label ?? agent.name)'s session is gone")
+        }
         if let i = command.firstIndex(of: "--resume"), i + 1 < command.count { command.removeSubrange(i...(i + 1)) }
         return command + ["--resume", session]
     }
@@ -195,7 +198,9 @@ enum AgentCommand {
     }
 
     static func onPath(_ program: String) -> Bool {
-        (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").contains { FileManager.default.isExecutableFile(atPath: "\($0)/\(program)") }
+        (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").contains {
+            FileManager.default.isExecutableFile(atPath: "\($0)/\(program)")
+        }
             || FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/\(program)")
             || FileManager.default.isExecutableFile(atPath: NSHomeDirectory() + "/.local/bin/\(program)")
     }

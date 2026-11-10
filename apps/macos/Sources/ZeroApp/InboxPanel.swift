@@ -5,7 +5,8 @@ import ZeroCore
 /// The bar and the inbox's panel beside it: placing them, opening, peeking and closing the inbox, and its keyboard.
 extension AppDelegate {
     func makePanel(size: NSSize, content: NSView) -> Panel {
-        let panel = Panel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let panel = Panel(
+            contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.level = .floating
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -18,20 +19,25 @@ extension AppDelegate {
     }
 
     func makePanels() {
-        pillHosting = FirstMouseHostingView(rootView: AnyView(PillView(
-            controller: inbox, settings: settings, workspace: workspace,
-            openInbox: { [weak self] in self?.pin(agent: nil) },
-            selectAgent: { [weak self] name in self?.pin(agent: name) },
-            moveHere: { [weak self] in self?.pinnedDisplay = nil; self?.layout() },
-            peek: { [weak self] agent in self?.peek(agent) },
-            openWorkspaces: { [weak self] in self?.pinWorkspaces() })))
+        pillHosting = FirstMouseHostingView(
+            rootView: AnyView(
+                PillView(
+                    controller: inbox, settings: settings, workspace: workspace,
+                    openInbox: { [weak self] in self?.pin(agent: nil) },
+                    selectAgent: { [weak self] name in self?.pin(agent: name) },
+                    moveHere: { [weak self] in
+                        self?.pinnedDisplay = nil; self?.layout()
+                    },
+                    peek: { [weak self] agent in self?.peek(agent) },
+                    openWorkspaces: { [weak self] in self?.pinWorkspaces() })))
         // Tall and transparent so the bar can morph inside it; the transparent rest is click-through.
         // Without clearing sizingOptions the hosting view shrinks the window to its content, top edge fixed.
         pillHosting.sizingOptions = []
         pill = makePanel(size: NSSize(width: 44, height: 600), content: pillHosting)
         pill.acceptsMouseMovedEvents = true
-        let inboxView = NSHostingView(rootView: InboxView(controller: inbox)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing))
+        let inboxView = NSHostingView(
+            rootView: InboxView(controller: inbox)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing))
         inboxView.sizingOptions = []
         inboxPanel = makePanel(size: NSSize(width: 380, height: 600), content: inboxView)
         inboxPanel.acceptsMouseMovedEvents = true
@@ -40,7 +46,9 @@ extension AppDelegate {
             return inbox.focusedReply != nil || inbox.dictatingFor != nil
         }
         layout()
-        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in self?.layout() }
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) {
+            [weak self] _ in self?.layout()
+        }
         pill.orderFrontRegardless()
     }
 
@@ -182,7 +190,8 @@ extension AppDelegate {
         hoverBar(at: mouse)
         // "Follow the active screen": move whenever the pointer is on a different display than Zero.
         if settings.followActiveScreen, let here = NSScreen.screens.first(where: { $0.frame.contains(mouse) }),
-           here.displayID != pinnedDisplay {
+            here.displayID != pinnedDisplay
+        {
             layout()
             placeBar()
         }
