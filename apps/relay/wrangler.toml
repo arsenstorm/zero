@@ -2,6 +2,10 @@
 name = "zero-relay"
 main = "relay.js"
 compatibility_date = "2026-10-01"
+# Zero's hosted relay: the withzero.dev account, at relay.withzero.dev (a custom domain makes its DNS record itself).
+# Your own copy: remove these two lines, and `npx wrangler deploy` puts it on your workers.dev address.
+account_id = "8dd0864e5cce87fba700990f062744f0"
+routes = [{ pattern = "relay.withzero.dev", custom_domain = true }]
 
 [[durable_objects.bindings]]
 name = "MACS"
