@@ -12,8 +12,6 @@ struct SignInsPage: View {
     @State private var adding: Adding?
     /// The CLI a model is being added for, in its dialog.
     @State private var addingModel: Provider?
-    /// The account opened: its usage and activity, in a dialog.
-    @State private var viewing: ZerodLink.SignIn?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
@@ -30,7 +28,7 @@ struct SignInsPage: View {
                 }
                 .zeroDialog(item: $adding) { adding in AddAccount(cli: adding.cli, way: adding.way, replacing: adding.replacing, workspace: workspace) }
                 .zeroDialog(item: $addingModel) { cli in AddModel(cli: cli) }
-                .zeroDialog(item: $viewing) { signin in AccountSheet(signin: signin, workspace: workspace) }
+
             }
         }
         .task { await CustomModels.shared.load() }
@@ -55,9 +53,11 @@ struct SignInsPage: View {
     private func accounts(_ cli: Provider, in workspace: Workspace) -> some View {
         let mine = workspace.signins.filter { $0.cli == cli }
         return VStack(spacing: 0) {
+            // A line between them; each row's hover fills it edge to edge, square (the card's corners round the first
+            // and last).
             ForEach(Array(mine.enumerated()), id: \.element.id) { index, signin in
                 if index > 0 { Divider().padding(.leading, 18) }
-                SignInRow(signin: signin, workspace: workspace, open: { viewing = signin }) { adding = Adding(cli: cli, way: .signIn, replacing: signin) }
+                SignInRow(signin: signin, workspace: workspace) { adding = Adding(cli: cli, way: .signIn, replacing: signin) }
             }
             if mine.isEmpty {
                 Text("None yet").font(.system(size: 13)).foregroundStyle(.secondary)
@@ -116,8 +116,8 @@ extension Provider: @retroactive Identifiable { public var id: String { rawValue
 private struct SignInRow: View {
     let signin: ZerodLink.SignIn
     let workspace: Workspace
-    /// A click on it: its usage and activity.
-    let open: () -> Void
+    /// Opened (a click): its usage and activity under it, in the card.
+    @State private var open = false
     /// A Claude account with a folder of its own: switched to a token, so it shares the user's MCP sign-ins.
     let switchToToken: () -> Void
     @State private var menuFrame = CGRect.zero
@@ -139,6 +139,7 @@ private struct SignInRow: View {
 
 
     var body: some View {
+        VStack(spacing: 0) {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 if let naming {
@@ -162,20 +163,28 @@ private struct SignInRow: View {
                 Button("Remove") { Task { await workspace.removeSignIn(signin) } }
                     .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.red)
                     .tip("Its tasks can't restart as it, and it has to be signed in again to come back")
-            } else if let usage = workspace.signinUsage[signin.id], !usage.windows.isEmpty {
-                UsageColumns(usage: usage)
             } else if workspace.signinUsage[signin.id]?.limited == true {
                 Text("At its limit").font(.system(size: 11.5, weight: .medium)).foregroundStyle(.red)
             }
-            if !removing && naming == nil && signin.pending != true { menuButton }
+            if !removing && naming == nil && signin.pending != true {
+                NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0))
+                menuButton
+            }
         }
         .padding(.leading, 18).padding(.trailing, 10).padding(.vertical, 10)
         .frame(minHeight: 56)
-        .background(hovered && naming == nil && !removing ? Theme.row : .clear)
+        .background(hovered && !open && naming == nil && !removing ? Theme.row : .clear, in: Rectangle())
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
-        // A click opens it (its usage and activity); its ⋯ has rename, switch and remove.
-        .onTapGesture { if naming == nil && !removing && signin.pending != true { open() } }
+        // A click opens it in place, taller: its usage and when it resets, then its activity. Its ⋯ has rename, switch
+        // and remove.
+        .onTapGesture { if naming == nil && !removing && signin.pending != true { withAnimation(.snappy(duration: 0.22)) { open.toggle() } } }
+        if open {
+            AccountDetails(signin: signin, workspace: workspace)
+                .padding(.horizontal, 18).padding(.bottom, 16).padding(.top, 2)
+                .transition(.opacity)
+        }
+        }
         // Claude doesn't say whose a token is: a new one asks, in its own row.
         .onAppear { if signin.kind == .token && signin.label == "Claude account" && naming == nil { naming = ""; focused = true } }
     }
@@ -555,62 +564,32 @@ private struct AddedModels: View {
     }
 }
 
-/// An account opened: how much of each of its plan's windows it has used and when each resets, then its activity, a
-/// square for each day of the last year, darker the more turns its tasks finished that day (Zero counts them from
-/// when it started to).
-private struct AccountSheet: View {
+/// An account opened, under its row: how much of each of its plan's windows it has used and when each resets, then
+/// its activity, a square for each day of the last year, darker the more turns its tasks finished that day (Zero
+/// counts them from when it started to).
+private struct AccountDetails: View {
     let signin: ZerodLink.SignIn
     let workspace: Workspace
-    @Environment(\.closeDialog) private var dismiss
     /// Turns by local day (its start), once read.
     @State private var days: [Date: Int] = [:]
 
     var body: some View {
         let usage = workspace.signinUsage[signin.id]
         let now = Int(Date().timeIntervalSince1970)
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 4) {
-                DialogTitle(text: signin.label)
-                Text([signin.cli.title, signin.plan.map(\.capitalized)].compactMap { $0 }.joined(separator: " · "))
-                    .font(.system(size: 12.5)).foregroundStyle(.secondary)
-            }
-            DialogPart(title: "Usage") {
-                if let usage, !usage.windows.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(UsageColumns.slots, id: \.0) { name, _ in
-                            if let window = usage.windows.first(where: { $0.name == name }) {
-                                let live = (window.resetsAt ?? Int.max) > now
-                                let used = live ? min(1, window.used) : 0
-                                VStack(alignment: .leading, spacing: 5) {
-                                    HStack {
-                                        Text(name == "7 days" ? "Week" : "5 hours").font(.system(size: 12.5, weight: .medium))
-                                        Spacer()
-                                        Text(UsageMeter.percent(used)).font(.system(size: 12.5, weight: .medium)).monospacedDigit().foregroundStyle(used >= 1 ? .red : .primary)
-                                    }
-                                    Capsule().fill(Color.primary.opacity(0.08)).frame(height: 6)
-                                        .overlay(alignment: .leading) { GeometryReader { space in Capsule().fill(UsageMeter.color(used)).frame(width: space.size.width * used) } }
-                                    if live, let at = window.resetsAt {
-                                        Text(UsageMeter.resets(at, now: now)).font(.system(size: 11.5)).foregroundStyle(.secondary).monospacedDigit()
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    Text(usage?.limited == true ? "At its limit. Its CLI hasn't said how much of each window it has used."
-                         : "No figures yet. A Claude Code token's usage comes from its tasks as they run, so it shows once one has.")
-                        .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        let windows = UsageColumns.slots.compactMap { name, _ in usage?.windows.first { $0.name == name } }
+        VStack(alignment: .leading, spacing: 18) {
+            // Each window its plan has, a tile apiece side by side: what's used, large, its bar, when it resets.
+            if windows.isEmpty {
+                Text(usage?.limited == true ? "At its limit. Its CLI hasn't said how much of each window it has used."
+                     : "No usage figures yet. A Claude Code token's usage comes from its tasks as they run, so it shows once one has.")
+                    .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            } else {
+                HStack(spacing: 10) {
+                    ForEach(windows, id: \.name) { window in tile(window, now: now) }
                 }
             }
-            DialogPart(title: "Activity") {
-                ActivityGraph(days: days)
-            }
-            HStack {
-                Spacer()
-                DialogButton(title: "Done", kind: .primary) { dismiss() }
-            }
+            ActivityGraph(days: days)
         }
-        .frame(width: ActivityGraph.width)
         .task {
             let hours = await workspace.accountActivity()[signin.id] ?? [:]
             var byDay: [Date: Int] = [:]
@@ -619,51 +598,100 @@ private struct AccountSheet: View {
             days = byDay
         }
     }
+
+    private func tile(_ window: UsageWindow, now: Int) -> some View {
+        let live = (window.resetsAt ?? Int.max) > now
+        let used = live ? min(1, window.used) : 0
+        return VStack(alignment: .leading, spacing: 8) {
+            Text(window.name == "7 days" ? "This week" : "Last 5 hours").font(.system(size: 11.5)).foregroundStyle(.secondary)
+            Text(UsageMeter.percent(used)).font(.system(size: 20, weight: .semibold)).monospacedDigit()
+                .foregroundStyle(used >= 1 ? .red : .primary)
+            Capsule().fill(Color.primary.opacity(0.08)).frame(height: 4)
+                .overlay(alignment: .leading) { GeometryReader { space in Capsule().fill(UsageMeter.color(used)).frame(width: space.size.width * used) } }
+            Text(live ? window.resetsAt.map { UsageMeter.resets($0, now: now) } ?? " " : "Reset since it was read")
+                .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.row.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+    }
 }
 
 /// The last year a square a day, a column a week (Sunday at the top), as GitHub's contribution graph: empty grey, then
 /// four greens by how many turns that day had against the busiest day. A day's count on hover.
 struct ActivityGraph: View {
     let days: [Date: Int]
-    static let cell: CGFloat = 10, gap: CGFloat = 3, weeks = 53
-    static var width: CGFloat { CGFloat(weeks) * (cell + gap) - gap }
+    static let gap: CGFloat = 3, cell: CGFloat = 12, labels: CGFloat = 26
+    /// As many weeks as the width holds at full size, up to a year: squares that fill the card rather than a year's
+    /// worth of specks.
+    @State private var weeks = 26
 
     var body: some View {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
         let weekday = calendar.component(.weekday, from: today) - 1
         // The first column's Sunday: the grid ends on today's column, today in its weekday's row.
-        let start = calendar.date(byAdding: .day, value: -(Self.weeks - 1) * 7 - weekday, to: today) ?? today
+        let start = calendar.date(byAdding: .day, value: -(weeks - 1) * 7 - weekday, to: today) ?? today
         let busiest = max(1, days.values.max() ?? 1)
         let total = days.filter { $0.key >= start }.values.reduce(0, +)
+        let columns = (0..<weeks).map { calendar.date(byAdding: .day, value: $0 * 7, to: start) ?? start }
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: Self.gap) {
-                ForEach(0..<Self.weeks, id: \.self) { week in
-                    VStack(spacing: Self.gap) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Activity").font(.system(size: 12.5, weight: .medium))
+                Spacer()
+                Text(total == 0 ? "Counted from today" : "\(total) turn\(total == 1 ? "" : "s") in \(weeks) weeks")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary).monospacedDigit()
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                // A month's name over the week it starts in.
+                HStack(spacing: Self.gap) {
+                    Color.clear.frame(width: Self.labels - Self.gap, height: 1)
+                    ForEach(Array(columns.enumerated()), id: \.offset) { index, sunday in
+                        let starts = index == 0 || calendar.component(.month, from: sunday) != calendar.component(.month, from: columns[index - 1])
+                        Text(starts && index < columns.count - 2 ? sunday.formatted(.dateTime.month(.abbreviated)) : "")
+                            .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize()
+                            .frame(width: Self.cell, alignment: .leading)
+                    }
+                }
+                HStack(alignment: .top, spacing: Self.gap) {
+                    // Monday, Wednesday and Friday, as GitHub labels its rows.
+                    VStack(alignment: .leading, spacing: Self.gap) {
                         ForEach(0..<7, id: \.self) { row in
-                            let day = calendar.date(byAdding: .day, value: week * 7 + row, to: start) ?? start
-                            if day > today {
-                                Color.clear.frame(width: Self.cell, height: Self.cell)
-                            } else {
-                                let count = days[day] ?? 0
-                                RoundedRectangle(cornerRadius: 2).fill(Self.shade(count, busiest: busiest))
-                                    .frame(width: Self.cell, height: Self.cell)
-                                    .tip("\(count == 0 ? "No" : "\(count)") turn\(count == 1 ? "" : "s") · " + day.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)))
+                            Text([1, 3, 5].contains(row) ? calendar.shortWeekdaySymbols[row] : "").font(.system(size: 9.5)).foregroundStyle(.secondary)
+                                .frame(width: Self.labels - Self.gap, height: Self.cell, alignment: .leading)
+                        }
+                    }
+                    ForEach(Array(columns.enumerated()), id: \.offset) { _, sunday in
+                        VStack(spacing: Self.gap) {
+                            ForEach(0..<7, id: \.self) { row in
+                                let day = calendar.date(byAdding: .day, value: row, to: sunday) ?? sunday
+                                if day > today {
+                                    Color.clear.frame(width: Self.cell, height: Self.cell)
+                                } else {
+                                    let count = days[day] ?? 0
+                                    RoundedRectangle(cornerRadius: 3).fill(Self.shade(count, busiest: busiest))
+                                        .overlay { if day == today { RoundedRectangle(cornerRadius: 3).strokeBorder(Color.primary.opacity(0.35), lineWidth: 1) } }
+                                        .frame(width: Self.cell, height: Self.cell)
+                                        .tip("\(count == 0 ? "No" : "\(count)") turn\(count == 1 ? "" : "s") · " + day.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)))
+                                }
                             }
                         }
                     }
                 }
             }
             HStack(spacing: 4) {
-                Text(total == 0 ? "No turns counted yet: Zero counts them from today" : "\(total) turn\(total == 1 ? "" : "s") in the last year")
                 Spacer()
                 Text("Less")
                 ForEach([0, 1, 2, 3, 4], id: \.self) { level in
-                    RoundedRectangle(cornerRadius: 2).fill(Self.level(level)).frame(width: Self.cell, height: Self.cell)
+                    RoundedRectangle(cornerRadius: 2).fill(Self.level(level)).frame(width: 10, height: 10)
                 }
                 Text("More")
             }
-            .font(.system(size: 11)).foregroundStyle(.secondary)
+            .font(.system(size: 10.5)).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+            weeks = max(8, min(53, Int((width - Self.labels + Self.gap) / (Self.cell + Self.gap))))
         }
     }
 

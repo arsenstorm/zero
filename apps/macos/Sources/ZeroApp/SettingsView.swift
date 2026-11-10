@@ -416,6 +416,9 @@ struct SettingsSection<Content: View>: View {
                 Text(title).font(.system(size: 13, weight: .semibold))
                 if let accessory { Spacer(); accessory }
             }
+            // One height for every heading, with or without its icon or buttons (Add account's 26 pt): otherwise the
+            // first heading of a page sat lower on a page whose headings had them, and moved between pages.
+            .frame(height: 26)
             content()
         }
         .environment(\.cardBleed, 18)
@@ -737,7 +740,7 @@ private struct PlacesCommandField: View {
 
     var body: some View {
         TextField("", text: $command, prompt: Text("Command"))
-            .textFieldStyle(.roundedBorder).font(.system(size: 12).monospaced()).frame(width: 260)
+            .textFieldStyle(.dialog).font(.system(size: 12).monospaced()).frame(width: 260)
             .focused($focused)
             .onSubmit(save)
             .onChange(of: focused) { if !focused { save() } }

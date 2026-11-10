@@ -418,52 +418,50 @@ import ZeroCore
 /// Settings › Phone: the relay, the phones paired, and Add a phone's QR code.
 struct DevicesPage: View {
     @Bindable private var phones = Phones.shared
-    @State private var relay = Phones.shared.relay
+    /// Your own relay's address, being written in its dialog.
+    @State private var editing = false
+    /// Pairing a phone, in its wizard.
+    @State private var pairing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
             SettingsSection(title: "Relay") {
                 Rows {
-                    SettingRow(title: "Address", detail: phones.relay == Phones.hosted
-                               ? "Zero's relay passes your phone's encrypted messages; it can't read them. Or run your own (apps/relay)."
-                               : "Your relay passes your phone's encrypted messages; it can't read them.") {
-                        HStack(spacing: 8) {
-                            if phones.relay != Phones.hosted {
-                                RowButton(title: "Use Zero's") { phones.useHostedRelay(); relay = phones.relay }
-                            }
-                            TextField("", text: $relay, prompt: Text("wss://zero-relay.you.workers.dev"))
-                                .textFieldStyle(.roundedBorder).frame(width: 260)
-                                .onSubmit { phones.relay = relay }
-                        }
+                    // Which relay and how it's doing, in one row: Zero's own chip on the right, not a text box.
+                    SettingRow(title: "Relay", detail: statusDetail) {
+                        SettingChoice(id: "phones.relay", choices: relayChoices, selection: Binding(
+                            get: { phones.relay == Phones.hosted ? "hosted" : "own" },
+                            set: { picked in
+                                if picked == "hosted" { phones.useHostedRelay() } else if picked == "edit" { editing = true }
+                            }))
                     }
-                    SettingRow(title: "Status", detail: statusDetail) { EmptyView() }
                 }
+                Text("It passes your phone's messages to this Mac, end-to-end encrypted: it can't read them. You can run your own from apps/relay.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            SettingsSection(title: "Phones") {
+            // Pairing as Accounts adds an account: a quiet button by the heading, its steps in a dialog.
+            SettingsSection(title: "Phones", accessory: AnyView(GhostButton(title: "Pair phone", icon: "plus", open: pairing) { pairing = true }
+                                                                 .disabled(phones.relay.isEmpty))) {
                 Rows {
                     ForEach(phones.devices) { device in
                         SettingRow(title: device.name, detail: "Paired \(device.added.formatted(date: .abbreviated, time: .omitted))") {
                             RowButton(title: "Remove") { phones.remove(device) }
                         }
                     }
-                    SettingRow(title: "Add a phone", detail: "Scan the code with Zero on your phone; it lasts five minutes.") {
-                        RowButton(title: phones.invite == nil ? "Show code" : "New code") { phones.addPhone() }
-                            .disabled(phones.relay.isEmpty)
-                    }
-                }
-                if let invite = phones.invite, let code = QRCode.image(invite.link) {
-                    HStack(alignment: .bottom, spacing: 16) {
-                        Image(nsImage: code).interpolation(.none).resizable().frame(width: 200, height: 200)
-                            .padding(12).background(.white, in: RoundedRectangle(cornerRadius: 12))
-                        // For a phone without a camera to hand (a simulator): the same code as a link to open.
-                        RowButton(title: "Copy link") {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(invite.link, forType: .string)
-                        }
+                    if phones.devices.isEmpty {
+                        Text("None yet. Pair your iPhone, and your tasks come with you.").font(.system(size: 13)).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 14)
                     }
                 }
             }
         }
+        .zeroDialog(isPresented: $editing) { RelaySheet(address: phones.relay == Phones.hosted ? "" : phones.relay) { phones.relay = $0 } }
+        .zeroDialog(isPresented: $pairing) { PairPhone() }
+    }
+
+    private var relayChoices: [[(title: String, value: String)]] {
+        let own = phones.relay == Phones.hosted ? nil : URL(string: phones.relay)?.host ?? phones.relay
+        return [[("Zero's relay", "hosted")] + (own.map { [($0, "own")] } ?? []), [(own == nil ? "Your own relay…" : "Change address…", "edit")]]
     }
 
     private var statusDetail: String {
@@ -472,7 +470,7 @@ struct DevicesPage: View {
         case .connecting: "Connecting…"
         case .connected: "Connected: your phones can reach this Mac"
         case .failed(let why): "Can't reach it: \(why)"
-        case .closed(let message): (phones.relay == Phones.hosted ? "Zero's relay has closed: " : "This relay has closed: ") + message
+        case .closed(let message): "It has closed: " + message
         }
     }
 }
@@ -542,4 +540,134 @@ enum PhoneUse {
     nonisolated(unsafe) private static var at = Date.distantPast
     static func touched() { lock.lock(); at = Date(); lock.unlock() }
     static var last: Date { lock.lock(); defer { lock.unlock() }; return at }
+}
+
+/// Your own relay's address, in a dialog: the one Settings › Phone's chip offers instead of Zero's.
+private struct RelaySheet: View {
+    @State var address: String
+    let done: (String) -> Void
+    @Environment(\.closeDialog) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                DialogTitle(text: "Your own relay")
+                Text("Where your relay runs, deployed from apps/relay. Phones paired before pair again with a new code.")
+                    .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            TextField("", text: $address, prompt: Text("wss://zero-relay.you.workers.dev")).textFieldStyle(.dialog).onSubmit(save)
+            HStack {
+                Spacer()
+                DialogButton(title: "Cancel") { dismiss() }
+                DialogButton(title: "Use it", kind: .primary, enabled: address.trimmingCharacters(in: .whitespaces).hasPrefix("wss://"), action: save)
+            }
+        }
+        .frame(width: 400)
+    }
+
+    private func save() {
+        let address = address.trimmingCharacters(in: .whitespaces)
+        guard address.hasPrefix("wss://") else { return }
+        done(address)
+        dismiss()
+    }
+}
+
+
+/// Pairing a phone, step by step: Zero on the iPhone, then this Mac's code to scan (it lasts five minutes), then the
+/// phone that paired. Moves on to the last step by itself once the phone has.
+private struct PairPhone: View {
+    @Bindable private var phones = Phones.shared
+    @Environment(\.closeDialog) private var dismiss
+    @State private var step = 0
+    @State private var codeAt = Date.now
+    /// The phones paired when the code was made: one more is the one that just paired.
+    @State private var before: Set<String> = []
+
+    private static let steps = ["Get Zero", "Scan the code", "Paired"]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 6) {
+                ForEach(Array(Self.steps.enumerated()), id: \.offset) { index, name in
+                    Capsule().fill(index <= step ? Color.primary : Theme.row).frame(height: 3)
+                        .accessibilityLabel("Step \(index + 1): \(name)")
+                }
+            }
+            Group {
+                switch step {
+                case 0: getZero
+                case 1: scan
+                default: paired
+                }
+            }
+            .frame(minHeight: 230, alignment: .top)
+            HStack {
+                if step == 1 { DialogButton(title: "Back") { step = 0 } }
+                Spacer()
+                switch step {
+                case 0:
+                    DialogButton(title: "Cancel") { close() }
+                    DialogButton(title: "Next", kind: .primary) { newCode(); step = 1 }
+                case 1:
+                    DialogButton(title: "Cancel") { close() }
+                default:
+                    DialogButton(title: "Done", kind: .primary) { close() }
+                }
+            }
+        }
+        .frame(width: 440)
+        // The phone paired: on to the last step.
+        .onChange(of: phones.devices.map(\.id)) { _, ids in if step == 1, !Set(ids).subtracting(before).isEmpty { step = 2 } }
+    }
+
+    private var getZero: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            DialogTitle(text: "Get Zero on your iPhone")
+            Text("Your tasks and questions come with you: answer what's waiting, write to a task, and get notified when something needs you.")
+                .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Install Zero on your iPhone, open it, and choose Next here when it shows Scan the code.")
+                .font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true).padding(.top, 6)
+        }
+    }
+
+    private var scan: some View {
+        HStack(alignment: .top, spacing: 18) {
+            if let invite = phones.invite, let code = QRCode.image(invite.link) {
+                Image(nsImage: code).interpolation(.none).resizable().frame(width: 168, height: 168)
+                    .padding(10).background(.white, in: RoundedRectangle(cornerRadius: 10))
+                VStack(alignment: .leading, spacing: 8) {
+                    DialogTitle(text: "Scan the code")
+                    Text("In Zero on your iPhone, tap Scan the code and point the camera here.")
+                        .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        let left = max(0, 300 - Int(context.date.timeIntervalSince(codeAt)))
+                        Text(left == 0 ? "This code has expired" : String(format: "Expires in %d:%02d", left / 60, left % 60))
+                            .font(.system(size: 12)).monospacedDigit().foregroundStyle(left == 0 ? .red : .secondary)
+                    }
+                    Spacer(minLength: 0)
+                    GhostButton(title: "New code", icon: "arrow-rotate-clockwise:glyph") { newCode() }
+                    // For a phone without a camera to hand (a simulator): the same code as a link to open.
+                    GhostButton(title: "Copy link", icon: "copy") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(invite.link, forType: .string)
+                    }
+                }
+                .frame(height: 188, alignment: .top)
+            }
+        }
+    }
+
+    private var paired: some View {
+        let phone = phones.devices.first { !before.contains($0.id) }
+        return VStack(alignment: .leading, spacing: 8) {
+            DialogTitle(text: "\(phone?.name ?? "Your phone") is paired")
+            Text("It reaches this Mac through the relay whenever Zero is open here. Remove it from this page any time.")
+                .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func newCode() { before = Set(phones.devices.map(\.id)); phones.addPhone(); codeAt = .now }
+
+    private func close() { phones.invite = nil; dismiss() }
 }
