@@ -74,7 +74,7 @@ struct State {
     ticks: u64,
     take_back: Duration,
     default_ttl: i64,
-    /// `zero done`'s tokens, by agent: the second word that confirms a task done, good once, for DONE_WINDOW.
+    /// `zero done`'s and `zero blocked`'s tokens, by "<status> <agent>": the second word that confirms one, good once, for DONE_WINDOW.
     done_tokens: HashMap<String, (String, std::time::Instant)>,
 }
 
@@ -294,23 +294,41 @@ impl Inbox {
     /// confirmed. A bare "done" cost an agent nothing to say, and it said it when a piece felt finished (committed, not
     /// shipped), putting the task away.
     pub fn done(&self, agent: &AgentIdentity, said: &str, token: Option<&str>) -> Result<(), String> {
-        let mut state = self.lock();
         let quoted = said.replace('"', "'");
+        self.second_word(agent, said, token, "done", || format!("Not marked done yet. Done means one of these, not a piece that feels finished:\n\
+            - the user said the task is done;\n\
+            - the work is finished end to end: merged, deployed and checked, its ticket closed, nothing left that \
+            anyone has to do for it. Committed, pushed, or sent for review is not done.\n\
+            If one of those is so, confirm within 5 minutes: zero done \"{quoted}\" --confirm {{token}}\n\
+            Unsure? Ask the user instead: zero done \"{quoted}\" --ask"))
+    }
+
+    /// `zero blocked`: an agent's word that its task can't go on at all, taken in two as done is: red on the board,
+    /// so it's kept for what's big. Waiting on a review or CI is Waiting; what the user can give is an ask.
+    pub fn blocked(&self, agent: &AgentIdentity, said: &str, token: Option<&str>) -> Result<(), String> {
+        let quoted = said.replace('"', "'");
+        self.second_word(agent, said, token, "blocked", || format!("Not marked blocked yet. Blocked means the task can't go on at all, on any \
+            part of it, until something outside you and the user changes: an outage, access only another team can \
+            grant, a dependency broken upstream. It shows red, so keep it for that.\n\
+            - Waiting on a review, CI, a deploy or QA is waiting: zero note \"…\" --waiting.\n\
+            - Something the user can give (an answer, access, a decision) is an ask: zero ask.\n\
+            If it is blocked, confirm within 5 minutes: zero blocked \"{quoted}\" --confirm {{token}}"))
+    }
+
+    /// Done or blocked, confirmed with the token the first call gave: a note with that status the board believes.
+    fn second_word(&self, agent: &AgentIdentity, said: &str, token: Option<&str>, status: &str, meaning: impl Fn() -> String) -> Result<(), String> {
+        let key = format!("{status} {}", agent.name);
+        let mut state = self.lock();
         let Some(token) = token else {
             let token = crate::ask::new_id();
-            state.done_tokens.insert(agent.name.clone(), (token.clone(), std::time::Instant::now()));
-            return Err(format!("Not marked done yet. Done means one of these, not a piece that feels finished:\n\
-                - the user said the task is done;\n\
-                - the work is finished end to end: merged, deployed and checked, its ticket closed, nothing left that \
-                anyone has to do for it. Committed, pushed, or sent for review is not done.\n\
-                If one of those is so, confirm within 5 minutes: zero done \"{quoted}\" --confirm {token}\n\
-                Unsure? Ask the user instead: zero done \"{quoted}\" --ask"));
+            state.done_tokens.insert(key, (token.clone(), std::time::Instant::now()));
+            return Err(meaning().replace("{token}", &token));
         };
-        let good = state.done_tokens.get(&agent.name).is_some_and(|(kept, at)| kept == token && at.elapsed() < DONE_WINDOW);
-        if !good { return Err("That token isn't good (wrong, used, or older than 5 minutes): run zero done again.".into()) }
-        state.done_tokens.remove(&agent.name);
+        let good = state.done_tokens.get(&key).is_some_and(|(kept, at)| kept == token && at.elapsed() < DONE_WINDOW);
+        if !good { return Err(format!("That token isn't good (wrong, used, or older than 5 minutes): run zero {status} again.")) }
+        state.done_tokens.remove(&key);
         drop(state);
-        self.confirm_done(agent, said);
+        self.confirm(agent, said, status);
         Ok(())
     }
 
@@ -326,11 +344,11 @@ impl Inbox {
         self.ask(&created.id).unwrap_or(created)
     }
 
-    /// The task done, confirmed: a done note the board takes as done.
-    fn confirm_done(&self, agent: &AgentIdentity, said: &str) {
+    /// The task done or blocked, confirmed: a note the board takes as said.
+    fn confirm(&self, agent: &AgentIdentity, said: &str, status: &str) {
         let mut note = Ask::new(AskKind::Note, "Update", agent.clone(), 0);
         note.body = said.to_string();
-        note.status = Some("done".into());
+        note.status = Some(status.into());
         let created = self.create(note, false);
         self.update(&created.id, |a| { a.confirmed = true; true });
     }
@@ -383,7 +401,7 @@ impl Inbox {
         if let Some(timer) = self.lock().timers.remove(&format!("expire-{id}")) { timer.abort() }
         // Asked whether its task is done, the user said Done: done, confirmed.
         if state == AskState::Answered && let Some(question) = self.ask(id).filter(|a| a.done_check && a.choice == Some(0)) {
-            self.confirm_done(&question.agent, &question.body);
+            self.confirm(&question.agent, &question.body, "done");
         }
         self.update(id, |a| {
             a.state = state;

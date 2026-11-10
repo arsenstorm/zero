@@ -52,6 +52,10 @@ fn agent_ask(zerod: &Zerod, request: &Request) -> Result<Value, String> {
         if args["ask"].as_bool() == Some(true) { return Ok(json!({"id": zerod.inbox.ask_done(&agent, &said).id})) }
         return zerod.inbox.done(&agent, &said, args["confirm"].as_str()).map(|_| json!({"done": true}));
     }
+    if args["tool"] == "blocked" {
+        let said = args["text"].as_str().unwrap_or("Blocked").trim().to_string();
+        return zerod.inbox.blocked(&agent, &said, args["confirm"].as_str()).map(|_| json!({"blocked": true}));
+    }
     let ttl = Settings::load(daemon.home()).ttl.unwrap_or(3600);
     let mut ask = ask_of(&args, &conversation, agent, ttl)?;
     // A tool call returns at once, so nothing waits on the answer: it goes to the task as a message, as `--async`'s.

@@ -212,6 +212,19 @@ fn a_lead_is_done_only_once_its_agent_has_confirmed_it() {
 }
 
 #[test]
+fn a_lead_is_blocked_only_once_its_agent_has_confirmed_it() {
+    // Blocked is for a task that can't go on at all: said alone (a note, an ending, a stuck screen's note) it's Waiting.
+    let mut lead = session("a", "/work/app", Status::Idle);
+    lead.items.push(Item { id: "1".into(), turn: None, kind: ItemKind::Agent { text: "The API is down.\n\n[zero: blocked]".into(), final_answer: true }, status: ItemStatus::Done, at: None });
+    assert_eq!(board(std::slice::from_ref(&lead), &[])[0].state, State::Waiting);
+    assert_eq!(board(std::slice::from_ref(&lead), &[note("a", "API down", Some("blocked"), None)])[0].state, State::Waiting);
+    let blocked = confirmed(note("a", "The vendor's API is down for everyone", Some("blocked"), None));
+    let row = &board(&[lead], &[blocked])[0];
+    assert_eq!((row.state, row.now.as_deref()), (State::Blocked, Some("The vendor's API is down for everyone")));
+    assert!(State::Blocked < State::Working, "it sorts with what needs the user's eye");
+}
+
+#[test]
 fn a_place_can_say_where_it_is_on_disk_and_the_row_carries_it() {
     let mut listed = session("b", "/wt", Status::Idle);
     listed.ticket = Some("WEB-2".into());

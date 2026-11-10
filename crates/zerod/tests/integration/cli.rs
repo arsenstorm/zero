@@ -143,3 +143,17 @@ async fn status_list_withdraw_and_prompt_answer_as_the_app_did() {
     let unknown = Line::open(&socket, json!({"op": "fly"})).await.next().await.unwrap();
     assert_eq!(unknown["op"], "error");
 }
+
+#[tokio::test]
+async fn blocked_is_refused_then_marked_with_its_token() {
+    let (inbox, socket) = serve("blocked").await;
+    let said = json!({"id": "", "kind": "note", "title": "Update", "body": "The API is down", "options": [], "agent": agent(),
+        "createdAt": "2026-10-26T12:00:00Z", "expiresAt": "2026-10-26T12:00:00Z", "state": "waiting", "output": ""});
+    let refused = Line::open(&socket, json!({"op": "blocked", "ask": said})).await.next().await.unwrap();
+    assert_eq!(refused["op"], "notBlocked");
+    let message = refused["message"].as_str().unwrap();
+    let token = message.split("--confirm ").nth(1).unwrap().split_whitespace().next().unwrap();
+    let marked = Line::open(&socket, json!({"op": "blocked", "ask": said, "id": token})).await.next().await.unwrap();
+    assert_eq!(marked["op"], "marked");
+    assert!(inbox.asks().iter().any(|a| a.confirmed && a.status.as_deref() == Some("blocked")));
+}

@@ -140,6 +140,20 @@ async fn done_takes_a_second_word_with_its_token() {
 }
 
 #[tokio::test]
+async fn blocked_takes_a_second_word_with_its_token() {
+    // As done: told what blocked means (can't go on at all; waiting on a review or CI isn't it) and given a token.
+    let s = inbox();
+    let agent = ask(AskKind::Note, "x", &[]).agent;
+    let refused = s.blocked(&agent, "The vendor's API is down", None).unwrap_err();
+    assert!(refused.contains("--waiting") && refused.contains("--confirm "), "{refused}");
+    let token = refused.split("--confirm ").nth(1).unwrap().split_whitespace().next().unwrap().trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+    assert!(s.done(&agent, "x", Some(&token)).is_err(), "a blocked token doesn't confirm done");
+    assert!(s.blocked(&agent, "The vendor's API is down", Some(&token)).is_ok());
+    assert!(s.asks().iter().any(|a| a.kind == AskKind::Note && a.confirmed && a.status.as_deref() == Some("blocked")));
+    assert!(s.blocked(&agent, "The vendor's API is down", Some(&token)).is_err(), "a token is good once");
+}
+
+#[tokio::test]
 async fn done_can_be_the_users_word() {
     // Unsure: the user is asked, and their Done marks it done, confirmed; Not yet doesn't.
     let s = inbox();

@@ -18,6 +18,9 @@ pub enum State {
     NeedsYou,
     /// Failing, stuck or out of usage, on its own.
     Trouble,
+    /// Can't go on at all until something outside the agent and the user changes (an outage, another team's access),
+    /// confirmed (`zero blocked`, its token): red, kept for what's big. Said alone it's Waiting.
+    Blocked,
     Working,
     /// Over to the user: done, with a step only they can take (its note's `needs`: merge, deploy, check). A to-do, not a
     /// decision.
@@ -252,6 +255,7 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
     }
     if let Some(note) = own && state > State::Trouble {
         state = match note.status.as_deref() {
+            Some("blocked") if note.confirmed => State::Blocked,
             // Waiting on what isn't the user (what needs them is an ask).
             Some("blocked" | "waiting") => State::Waiting,
             _ if state == State::Working => state,

@@ -92,7 +92,7 @@ pub fn light(state: crate::board::State) -> &'static str {
     use crate::board::State::*;
     match state {
         NeedsYou => "needs",
-        Trouble | Waiting => "blocked",
+        Trouble | Blocked | Waiting => "blocked",
         Working => "working",
         _ => "done",
     }

@@ -104,6 +104,15 @@ async fn connection(inbox: Arc<Inbox>, stream: UnixStream) {
             };
             send(&mut out, reply).await;
         }
+        // `zero blocked`: as done, refused with what blocked means and a token; with the token, blocked.
+        "blocked" => {
+            let Some(said) = request.ask else { send(&mut out, error("blocked needs the agent and what blocks it".into())).await; return };
+            let reply = match inbox.blocked(&said.agent, &said.body, request.id.as_deref()) {
+                Ok(()) => Response { op: "marked", ..Default::default() },
+                Err(why) => Response { op: "notBlocked", message: Some(why), ..Default::default() },
+            };
+            send(&mut out, reply).await;
+        }
         "withdraw" => {
             let Some(id) = request.id else { send(&mut out, error("withdraw needs an id".into())).await; return };
             inbox.withdraw(&id, request.text.as_deref());
