@@ -874,6 +874,9 @@ public final class Workspace {
         if usage != signinUsage { signinUsage = usage }
     }
 
+    /// Each account's finished turns by the hour (Unix hours): its activity graph's.
+    public func accountActivity() async -> [String: [Int: Int]] { (try? await link?.accountActivity()) ?? [:] }
+
     /// Each account's usage asked of its CLI, rather than as its tasks last heard it.
     public func readUsage() async { try? await link?.readUsage() }
 
