@@ -1,5 +1,6 @@
 import AVFoundation
-import AppKit
+import ImageIO
+import UniformTypeIdentifiers
 
 /// A video as an agent can look at it: the CLIs take images, not video, so frames are cut from it as PNGs, at the times
 /// asked for (`zero video`, and the composer's overview of a video attached).
@@ -40,9 +41,11 @@ public enum VideoFrames {
         var frames: [Frame] = []
         for at in times {
             let (image, _) = try await generator.image(at: CMTime(seconds: at, preferredTimescale: 600))
-            guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { continue }
             let file = folder.appendingPathComponent(String(format: "frame-%08.3f.png", at))
-            try png.write(to: file)
+            // ImageIO, not AppKit: ZeroCore is in every `zero` command, and AppKit cost each one a millisecond to load.
+            guard let out = CGImageDestinationCreateWithURL(file as CFURL, UTType.png.identifier as CFString, 1, nil) else { continue }
+            CGImageDestinationAddImage(out, image, nil)
+            guard CGImageDestinationFinalize(out) else { continue }
             frames.append(Frame(at: at, path: file.path))
         }
         return frames
