@@ -854,6 +854,7 @@ struct StreamingText: View {
     /// Read out and faded in: plain text from here, no clock. (Two views of one reply share its runs: the one that
     /// didn't prune them never saw them go, its clock kept ticking at 30 a second, a third of a core, for good.)
     @State private var done = false
+    @State private var letters: [Character] = []
 
     static let pace: Double = 240
     static let fade: Double = 0.7
@@ -903,7 +904,10 @@ struct StreamingText: View {
         var next = min(total, shown + max(1, Int((pace * step).rounded())))
         // Whole words: the clock's place carried on to the end of the word it's in, so each word fades as one (Codex's
         // look), never a word cut off with half of it there.
-        let characters = Array(text)
+        // Its letters kept between frames, made again only when more text came (built every frame, a long reply's
+        // whole text was copied 30 times a second).
+        if letters.count != text.count { letters = Array(text) }
+        let characters = letters
         while next < total, !characters[next].isWhitespace { next += 1 }
         runs.append((shown, now))
         shown = next

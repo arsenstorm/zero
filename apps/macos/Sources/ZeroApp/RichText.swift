@@ -641,11 +641,41 @@ final class RichTextView: NSTextView {
 
     func show(_ text: NSAttributedString) {
         guard text !== shown else { return }
+        let before = shown
         shown = text
         measured = nil
-        textStorage?.setAttributedString(text)
+        if let storage = textStorage, let before, storage.length == before.length, let from = Self.changedFrom(before, text) {
+            // Only what changed, from the start of its paragraph: a reply fading in grows at its end and changes its
+            // last few hundred letters' colour, and setting it whole laid all of it out again, 30 times a second.
+            storage.beginEditing()
+            storage.replaceCharacters(in: NSRange(location: from, length: storage.length - from),
+                                      with: text.attributedSubstring(from: NSRange(location: from, length: text.length - from)))
+            storage.endEditing()
+        } else {
+            textStorage?.setAttributedString(text)
+        }
         hovered = nil
         hideReply()
+    }
+
+    /// Where `after` stops being `before` with more on its end: the start of the paragraph of the first letter that
+    /// differs, or of the last stretch a fade can recolour (MarkdownText.faded), whichever is earlier. Nil when
+    /// it's barely shorter to change part than all.
+    static func changedFrom(_ before: NSAttributedString, _ after: NSAttributedString) -> Int? {
+        let (old, new) = (before.string as NSString, after.string as NSString)
+        let shared = min(old.length, new.length)
+        guard shared > 1000 else { return nil }
+        var same = 0
+        // Words come in whole, so the texts agree far into them: compared in chunks, a letter at a time only at the end.
+        while same + 256 <= shared, old.substring(with: NSRange(location: same, length: 256)) == new.substring(with: NSRange(location: same, length: 256)) { same += 256 }
+        while same < shared, old.character(at: same) == new.character(at: same) { same += 1 }
+        let from = min(same, max(0, new.length - MarkdownText.fadeReach))
+        let paragraph = min(new.paragraphRange(for: NSRange(location: min(from, max(0, new.length - 1)), length: 0)).location, old.length)
+        guard paragraph > 200 else { return nil }
+        // The stretch before it styled as it was too (a block still being written, a list or code, can be styled anew
+        // as it grows): otherwise all of it.
+        let check = NSRange(location: max(0, paragraph - 2000), length: paragraph - max(0, paragraph - 2000))
+        return before.attributedSubstring(from: check).isEqual(to: after.attributedSubstring(from: check)) ? paragraph : nil
     }
 
     // Copying: a code block's lines are joined by line separators (one paragraph, one panel); copied, they're newlines.
