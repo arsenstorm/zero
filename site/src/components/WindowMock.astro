@@ -84,7 +84,7 @@ const tasks: Task[] = [
 const selected = "flaky";
 const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
 ---
-<div data-window aria-label="Zero's window: a demo you can use" role="region" class="relative mx-auto max-w-[1240px] rounded-[16px] bg-rail border border-stroke shadow-[0_24px_60px_-20px_rgb(0_0_0/0.25)] flex h-[720px] overflow-hidden text-left">
+<div data-window aria-label="Zero's window: a demo you can use" role="region" class="relative mx-auto max-w-[1240px] rounded-[16px] bg-window border border-stroke shadow-[0_24px_60px_-20px_rgb(0_0_0/0.25)] flex h-[720px] overflow-hidden text-left">
   {/* The title bar: back and forward, then a line and the task's name from where the page starts (TaskView.swift's
       TitleBar). A worker's page shows its lead's name. */}
   <div class="absolute inset-x-0 top-0 h-[38px] flex items-center pl-4 pr-4 text-muted" aria-hidden="true">
@@ -104,14 +104,14 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
   </div>
   <div aria-hidden="true" class="w-12 shrink-0 flex flex-col items-center pt-[50px] pb-3 gap-1 relative">
     {rail.map((icon, i) => (
-      <span class:list={["size-8 grid place-items-center rounded-[8px]", i === 0 ? "bg-hover text-ink" : "text-muted"]}><Icon name={icon} size={17} /></span>
+      <span class:list={["size-8 grid place-items-center rounded-[8px]", i === 0 ? "bg-rail-selected text-ink" : "text-muted"]}><Icon name={icon} size={17} /></span>
     ))}
     <span class="flex-1"></span>
     <span class="size-8 grid place-items-center text-muted"><Icon name="gear" size={17} /></span>
   </div>
   <div class="flex-1 min-w-0 mt-[38px] mr-1 mb-1 rounded-[12px] border border-stroke bg-card flex overflow-hidden">
     {/* Sidebar */}
-    <div class="hidden md:flex w-[248px] shrink-0 border-r border-stroke bg-rail/60 flex-col px-2 pt-3">
+    <div class="hidden md:flex w-[248px] shrink-0 border-r border-stroke bg-composer flex-col px-2 pt-3">
       <Blueprint title="Zero" chevron class="-mx-2 -mt-3 -mb-1" />
       <div class="h-[30px] flex items-center gap-[9px] px-2.5 rounded-[8px] text-[13px]" aria-hidden="true"><span class="w-[18px] grid place-items-center"><Icon name="compose" size={15} /></span>New task</div>
       <div class="h-[30px] flex items-center gap-[9px] px-2.5 rounded-[8px] text-[13px]" aria-hidden="true"><span class="w-[18px] grid place-items-center"><Icon name="list-checkbox" size={15} /></span>All tasks</div>

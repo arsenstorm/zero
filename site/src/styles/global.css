@@ -16,6 +16,9 @@
 :root {
   color-scheme: light dark;
   --rail: #ececec;
+  /* The window's own grey: the rail tinted over the desktop's blur (railTint), as it shows on a typical wallpaper. */
+  --window: #e9e9e9;
+  --rail-selected: #d6d6d6;
   --card: #ffffff;
   --row: #f0f0f0;
   --hover: #f1f1f1;
@@ -56,6 +59,8 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --rail: #121212;
+    --window: #1f1f1f;
+    --rail-selected: #3d3d3d;
     --card: #1c1c1c;
     --row: #292929;
     --hover: #333333;
@@ -100,6 +105,8 @@
   --color-white: #fff;
   --color-black: #000;
   --color-rail: var(--rail);
+  --color-window: var(--window);
+  --color-rail-selected: var(--rail-selected);
   --color-card: var(--card);
   --color-row: var(--row);
   --color-hover: var(--hover);
@@ -238,7 +245,7 @@
 [aria-expanded="true"] > .worked-chevron { transform: rotate(90deg); }
 /* The window's sidebar rows: the open task in the hover grey. */
 .task-row { transition: background-color 150ms ease-out; }
-.task-row[aria-pressed="true"] { background: var(--hover); }
+.task-row[aria-pressed="true"] { background: var(--chip); }
 @media (hover: hover) {
   .task-row:hover { background: var(--hover); }
 }
