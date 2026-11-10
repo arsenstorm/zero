@@ -99,7 +99,9 @@ const peeks = [
       const fit = Math.max(w / SCREEN.width, h / SCREEN.height);
       const close = Math.min(w / 470, h / 400, 1.15);
       const from = { s: fit, x: (w - SCREEN.width * fit) / 2, y: (h - SCREEN.height * fit) / 2 };
-      const to = { s: close, x: w - SCREEN.width * close, y: h / 2 - (SCREEN.height / 2) * close };
+      // A pixel past the stage's right edge: placed exactly on it, rounding left a hairline of the stage between the
+      // bar and the edge.
+      const to = { s: close, x: w - SCREEN.width * close + 1, y: h / 2 - (SCREEN.height / 2) * close };
       // The screen point drawn at the same stage point in both: x1 + s1·p = x2 + s2·p.
       const d = from.s - to.s || 1;
       const fixed = { x: (to.x - from.x) / d, y: (to.y - from.y) / d };
