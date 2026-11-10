@@ -81,6 +81,7 @@ struct StateGlyph: View {
         switch state {
         case .needsYou: ("hand-3-glyph", .blue, "Needs you")
         case .trouble: ("triangle-warning-glyph", .orange, "In trouble")
+        case .blocked: ("circle-minus-glyph", .red, "Blocked")
         case .working: ("arrow-rotate-clockwise-glyph", .blue, "Working")
         case .handed: ("hand-holding-box-glyph", .teal, "Over to you")
         case .waiting: ("hourglass-glyph", .secondary, "Waiting")

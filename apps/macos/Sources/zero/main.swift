@@ -22,6 +22,9 @@ func usage(help: Bool = false) -> Never {
                    marks the task done, in two steps: alone, it's refused with what done means and a token; if it
                    is so (the user said it's done, or it's finished end to end: merged, deployed and checked), run it
                    again with --confirm TOKEN within 5 minutes. Unsure: --ask asks the user (end [zero: asked <id>])
+      zero blocked "what blocks it" [--confirm TOKEN]
+                   marks the task blocked (red), in two steps as done: only when it can't go on at all until
+                   something outside you and the user changes (an outage, another team's access)
       zero withdraw <id> [--reason "why"]   (take back an open ask that no longer needs the user)
       zero wait    <id>
       zero status  <id>
@@ -178,6 +181,7 @@ case "prompt": promptCommand()
 case "run": runCommand()
 case "note": noteCommand()
 case "done": doneCommand()
+case "blocked": blockedCommand()
 case "wait" where positional.first.map(isSession) == true: await waitSessionsCommand()
 case "wait": waitCommand()
 case "status": statusCommand()

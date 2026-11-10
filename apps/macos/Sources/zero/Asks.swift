@@ -181,6 +181,19 @@ func reason(_ ask: Ask) -> String? {
     }
 }
 
+/// `zero blocked`: as done, refused at first with what blocked means and a token; with --confirm TOKEN, blocked.
+@MainActor func blockedCommand() {
+    guard let text = positional.first else { usage() }
+    let socket = connect()
+    try? socket.send(Request(op: "blocked", ask: Ask(kind: .note, title: "Update", body: text, agent: agentIdentity()), id: flag("confirm")))
+    guard let reply = socket.receive(Response.self) else { fail("zero: no reply from Zero.app") }
+    switch reply.op {
+    case "marked": print("Marked blocked. End your turn with [zero: blocked].")
+    case "notBlocked": print(reply.message ?? "Not marked blocked yet."); exit(1)
+    default: fail("zero: \(reply.message ?? "no reply")")
+    }
+}
+
 @MainActor func waitCommand() {
     guard let id = positional.first else { usage() }
     let socket = connect()

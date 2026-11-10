@@ -43,7 +43,7 @@ final class Settings {
     static func defaultSound(_ state: BoardRow.State) -> String {
         switch state {
         case .needsYou: "Blow"
-        case .trouble: "Bottle"
+        case .trouble, .blocked: "Bottle"
         default: "Hero"
         }
     }

@@ -267,6 +267,7 @@ final class InboxController {
                     switch row.state {
                     case .needsYou: status = .needsYou
                     case .trouble: status = .trouble
+                    case .blocked: status = .blocked
                     case .waiting: status = .waiting
                     case .handed: status = .handed
                     case .working: status = .working

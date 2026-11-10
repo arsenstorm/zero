@@ -324,12 +324,13 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     public enum State: String, Decodable, Sendable {
         /// `read`: Replied, and the user has seen the reply (it greys); the chat that's open shows it as Replied still.
         /// `done`: nothing left that the agent can do, last of all and archived after a while.
-        case needsYou, trouble, working, handed, answered, waiting, paused, read, done, idle, offline
+        case needsYou, trouble, blocked, working, handed, answered, waiting, paused, read, done, idle, offline
         /// Most urgent first, as the board sorts its rows.
         public var urgency: Int {
             switch self {
             case .needsYou: 0
             case .trouble: 1
+            case .blocked: 1
             case .working: 2
             case .handed: 3
             case .answered: 4
@@ -343,6 +344,7 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
             switch self {
             case .needsYou: "Needs you"
             case .trouble: "In trouble"
+            case .blocked: "Blocked"
             case .working: "Working"
             case .handed: "Over to you"
             case .answered, .read: "Replied"

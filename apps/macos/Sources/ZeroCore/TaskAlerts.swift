@@ -21,7 +21,8 @@ public enum TaskAlerts {
         if own == .needsYou { return (.needsYou, own, false) }
         if row.state == .needsYou { return (.needsYou, .needsYou, true) }
         switch own {
-        case .trouble: return (.trouble, own, false)
+        // Blocked: can't go on at all, confirmed: as big as trouble, and told the same way.
+        case .trouble, .blocked: return (.trouble, own, false)
         // A reply to a turn Zero started (an event, a worker's report): there to read, nothing to tell.
         case .answered where row.quiet == true: return nil
         case .handed, .done, .answered, .waiting: return (.finished, own, false)
@@ -134,6 +135,7 @@ public enum TaskAlerts {
         let name = switch state {
         case .needsYou: "Needs you"
         case .trouble: "In trouble"
+        case .blocked: "Blocked"
         case .handed: "Over to you"
         case .answered: "Replied"
         case .waiting: "Waiting"

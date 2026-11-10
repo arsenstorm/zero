@@ -128,6 +128,8 @@ struct TaskStateIcon: View {
         switch state {
         case .needsYou: ("hand-3", .blue, "Needs you")
         case .trouble: ("triangle-warning", .orange, "In trouble")
+        // Can't go on at all, as its agent confirmed (zero blocked): red, kept for what's big.
+        case .blocked: ("circle-minus", .red, "Blocked")
         case .working: ("arrow-rotate-clockwise", .blue, "Working")
         // Done, with a step for the user: a calm to-do, not a decision.
         case .handed: ("hand-holding-box", .teal, "Over to you")

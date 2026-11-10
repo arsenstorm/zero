@@ -512,10 +512,10 @@ private struct GeneralPage: View {
                     SettingRow(title: "Needs you", detail: "A task asks you something, or one of its workers does.") {
                         Switch(isOn: $settings.notifyNeedsYou)
                     }
-                    SettingRow(title: "In trouble", detail: "A task fails, gets stuck or runs out of usage.") {
+                    SettingRow(title: "In trouble", detail: "A task fails, gets stuck, runs out of usage, or is blocked.") {
                         Switch(isOn: $settings.notifyTrouble)
                     }
-                    SettingRow(title: "Finished", detail: "A task is done, replied, blocked or over to you.") {
+                    SettingRow(title: "Finished", detail: "A task is done, replied, waiting or over to you.") {
                         Switch(isOn: $settings.notifyFinished)
                     }
                     SettingRow(title: "Sounds", detail: "With each notification; in Zero, a sound instead.") {

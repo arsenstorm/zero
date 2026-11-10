@@ -118,7 +118,7 @@ func shortAge(_ date: Date, now: Date = Date()) -> String {
 /// grey it waits on someone else, purple it's done, blue it is working. Closed means the user shut it: no dot until it
 /// speaks again.
 enum AgentStatus {
-    case needsYou, trouble, handed, waiting, done, working, closed, offline
+    case needsYou, trouble, blocked, handed, waiting, done, working, closed, offline
 
     static func of(_ asks: [Ask]) -> AgentStatus {
         if asks.contains(where: { $0.state == .waiting || $0.state == .pending }) { return .needsYou }
@@ -135,6 +135,7 @@ enum AgentStatus {
         switch self {
         case .needsYou: return .blue
         case .trouble: return .orange
+        case .blocked: return .red
         case .handed: return .teal
         case .waiting: return .gray
         // Done: purple, as GitHub shows a merged pull request.
