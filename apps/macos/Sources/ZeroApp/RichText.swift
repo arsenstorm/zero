@@ -612,6 +612,17 @@ final class RichTextView: NSTextView {
         let chip = NSHostingView(rootView: ReplyChip { [weak self] in onReply(words); self?.hideReply() })
         let size = chip.fittingSize
         chip.frame = NSRect(x: min(max(0, rect.minX), max(0, bounds.width - size.width)), y: rect.minY - size.height - 4, width: size.width, height: size.height)
+        // No room above it in this text (a step's words, the step before close above): beside where the selection
+        // ends, or under it, not over what's above.
+        if chip.frame.minY < -6 {
+            var lastLine = NSRange()
+            layout.lineFragmentRect(forGlyphAt: max(start, layout.glyphIndexForCharacter(at: NSMaxRange(range) - 1)), effectiveRange: &lastLine)
+            let onLast = NSIntersectionRange(lastLine, layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil))
+            let end = layout.boundingRect(forGlyphRange: onLast, in: container).offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+            chip.frame.origin = end.maxX + 8 + size.width <= bounds.width
+                ? NSPoint(x: end.maxX + 8, y: end.midY - size.height / 2)
+                : NSPoint(x: min(max(0, end.minX), max(0, bounds.width - size.width)), y: end.maxY + 4)
+        }
         addSubview(chip)
         replyChip = chip
     }
