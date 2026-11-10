@@ -165,3 +165,15 @@ async fn blocked_is_refused_then_marked_with_its_token() {
     assert_eq!(marked["op"], "marked");
     assert!(inbox.asks().iter().any(|a| a.confirmed && a.status.as_deref() == Some("blocked")));
 }
+
+#[tokio::test]
+async fn an_ask_with_a_time_out_of_range_is_refused_not_a_crash() {
+    let (_inbox, socket) = serve("time-range").await;
+    for time in ["2027-10-2222222222222222227T12:00:00Z", "2026-10-26T9999999999999999:00:00Z", "2026-10-26T12:00:00+9999999999999999"] {
+        let mut sent = ask("question", "When?", &[]);
+        sent["createdAt"] = json!(time);
+        let mut cli = Line::open(&socket, json!({"op": "create", "ask": sent})).await;
+        let reply = cli.next().await.expect("an answer, not a dropped connection");
+        assert_eq!(reply["op"], "error", "{time}");
+    }
+}

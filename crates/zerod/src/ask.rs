@@ -224,14 +224,23 @@ impl Time {
         let mut t = clock.split(':');
         let (hour, minute) = (t.next()?.parse::<i64>().ok()?, t.next()?.parse::<i64>().ok()?);
         let second = t.next().unwrap_or("0").split('.').next()?.parse::<i64>().ok()?;
-        let offset_seconds = if offset.is_empty() {
-            0
+        let sign = if offset.starts_with('-') { -1 } else { 1 };
+        let (offset_hours, offset_minutes) = if offset.is_empty() {
+            (0, 0)
         } else {
-            let sign = if offset.starts_with('-') { -1 } else { 1 };
             let mut o = offset[1..].split(':');
-            sign * (o.next()?.parse::<i64>().ok()? * 3600 + o.next().unwrap_or("0").parse::<i64>().ok()? * 60)
+            (o.next()?.parse::<i64>().ok()?, o.next().unwrap_or("0").parse::<i64>().ok()?)
         };
-        Some(Time(days_from_civil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second - offset_seconds))
+        // What a client sends: out of range, it's no time, and nothing past here can overflow.
+        let mut fields = [(year, 1, 9999), (month, 1, 12), (day, 1, 31), (hour, 0, 23), (minute, 0, 59), (second, 0, 60)]
+            .into_iter()
+            .chain([(offset_hours, 0, 23), (offset_minutes, 0, 59)]);
+        if fields.any(|(v, low, high)| !(low..=high).contains(&v)) {
+            return None;
+        }
+        let local = days_from_civil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second;
+        // Kept to years 1 to 9999, so `iso` writes every time that reads as one that reads back.
+        Some(Time(local - sign * (offset_hours * 3600 + offset_minutes * 60))).filter(|t| (-62135596800..=253402300799).contains(&t.0))
     }
 }
 
