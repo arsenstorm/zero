@@ -18,7 +18,7 @@ export const docMarkdown = (page: {
 /** Each page's icon in the docs sidebar: the app's own where the page matches one of its places (its Settings pages and
  *  rail), one each, none shared. And the sidebar's groups. Site-only: the Markdown stays as the help agent reads it. */
 export const docIcons: Record<string, string> = {
-  index: "book",
+  index: "house-4",
   "getting-started": "rocket",
   "tasks-and-workers": "list-checkbox",
   "inbox-and-asks": "inbox",
@@ -29,7 +29,7 @@ export const docIcons: Record<string, string> = {
   "following-and-integrations": "eye",
   "browsers-and-mcp": "globe",
   settings: "gear",
-  "keyboard-shortcuts": "keyboard",
+  "keyboard-shortcuts": "command",
   iphone: "mobile",
   cli: "terminal",
   troubleshooting: "circle-question",
