@@ -95,6 +95,11 @@ struct ConversationView: View {
         var deepest: CGFloat { max(0, card - AskDock.tuck - 24) }
     }
     private var composerHeight: CGFloat { foot.height }
+    /// Queued from here, not yet in zerod's queue: shown in the strip until it is.
+    @State private var queuing: [Queued] = []
+    private var shownQueue: [Queued] {
+        queued + queuing.filter { pending in !queued.contains { $0.text == pending.text } }
+    }
     /// Just sent: the message sits at the top of the page with room under it for the answer, which fills that room
     /// without moving anything, as Codex's does. Over once you scroll.
     @State private var lifted = false
@@ -238,6 +243,9 @@ struct ConversationView: View {
                 }
                 // Left, it goes back to its latest items: memory doesn't grow with every long task opened.
                 .onDisappear { rememberScroll(); workspace.trim(conversation.id); lifted = false }
+                // Opened (or another task in its place): a reply under way now is shown as it stands, not replayed.
+                .onAppear { Reveal.opened = Date() }
+                .onChange(of: conversation.id) { Reveal.opened = Date() }
                 // Back where you were: the block that was at the top of the screen, its older page loaded first if
                 // it isn't any more. At the end, it opens at the end, as ever.
                 .task { await restoreScroll() }
@@ -503,6 +511,7 @@ struct ConversationView: View {
     /// you first (questions, approvals, the agent's asks), so answering never moves the conversation.
     private var composerOverlay: some View {
         VStack(spacing: 8) {
+            let queued = shownQueue
             DockSlot(conversation: conversation, inbox: inbox, foot: foot, page: pageHeight, behindQueue: !queued.isEmpty || held,
                      answer: { [workspace, id = conversation.id] question, answers in Task { await workspace.answer(id, question: question, answers: answers) } },
                      decide: { [workspace, id = conversation.id] approval, choice in Task { await workspace.decide(id, approval: approval, choice: choice) } },
@@ -520,6 +529,8 @@ struct ConversationView: View {
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] in if foot.composer != $0 { foot.composer = $0 } }
                 .onHover { [foot] inside in if foot.overComposer != inside { foot.overComposer = inside } }
         }
+        // Once zerod has it, the one shown at once goes: left until it went, it came back when the queue emptied.
+        .onChange(of: queued) { _, now in queuing.removeAll { pending in now.contains { $0.text == pending.text } } }
         .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] height in
             guard foot.height != height else { return }
             // Lifted (just sent, the message at the top): the room under it takes the change (a step to a taller
@@ -542,7 +553,8 @@ struct ConversationView: View {
             if follow && !following { DispatchQueue.main.async { withAnimation(Self.rise) { position.scrollTo(edge: .bottom) } } }
             // Shrunk (the queue's strip gone, a step to a shorter card) while at the end: still at it. Left where it
             // was, the page sat that far short of its end, and the card, reading it as scrolled up, sank as far.
-            if !grew, atEnd { DispatchQueue.main.async { position.scrollTo(edge: .bottom) } }
+            // In the same frame: a frame later, the page showed shifted for one (68 px as a turn ended).
+            if !grew, atEnd { position.scrollTo(edge: .bottom) }
         }
     }
 
@@ -642,10 +654,18 @@ struct ConversationView: View {
                  images: $images, active: active, stop: busy && conversation.terminal == nil ? { Task { await workspace.interrupt(conversation.id) } } : nil,
                  queue: busy && conversation.terminal == nil ? {
                      // Return while it works: the message waits for after this turn, in the strip above.
-                     let (text, attached) = ImageToken.compact(draft, images: images.map(\.path))
+                     let (text, attached) = ImageToken.outgoing(draft, images: images.map(\.path))
                      draft = ""
                      images = []
-                     Task { await workspace.queue(conversation.id, text: text, images: attached) }
+                     // In the strip at once, in the same frame the composer empties: waiting for zerod's word, the
+                     // composer shrank one frame and the strip came the next, the page dropping and jumping back.
+                     let pending = Queued(id: "pending-" + UUID().uuidString, text: text, images: attached)
+                     queuing.append(pending)
+                     Task {
+                         await workspace.queue(conversation.id, text: text, images: attached)
+                         try? await Task.sleep(for: .seconds(5))
+                         queuing.removeAll { $0.id == pending.id }
+                     }
                  } : nil,
                  // ponytail: the first agent ask waiting, not the dock's page shown; follow the pager if several wait.
                  pick: { [inbox, conversation] digit in
@@ -655,11 +675,12 @@ struct ConversationView: View {
                      inbox.choose(digit - 1, on: ask.id)
                      return true
                  }) {
-            let (text, attached) = ImageToken.compact(draft, images: images.map(\.path))
+            let (text, attached) = ImageToken.outgoing(draft, images: images.map(\.path))
             draft = ""
             images = []
             send(text, images: attached, with: provider ?? conversation.provider)
             lifted = true
+            NotificationCenter.default.post(name: WorkBlock.fold, object: nil)
             liftPlaced = false
             liftScrolled = false
             following = false

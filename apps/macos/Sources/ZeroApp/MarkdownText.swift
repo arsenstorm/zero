@@ -23,6 +23,9 @@ struct MarkdownText: View {
     var onClick: (() -> Void)?
     /// Still being revealed (StreamingText): each frame's text is styled without being kept, as it's gone by the next.
     var streaming = false
+    /// While streaming: how far each character of the text (by its place in it) has faded in, and how long the text is.
+    var fade: ((Int) -> Double)?
+    var fadeLength = 0
 
     init(_ text: String, cwd: String? = nil, size: CGFloat = 13, compact: Bool = false, hugs: Bool = false, yours: Bool = false, onClick: (() -> Void)? = nil) {
         self.text = text
@@ -55,7 +58,11 @@ struct MarkdownText: View {
     /// The text styled: kept from before, styled now when short, or, for a long one still arriving, the part styled
     /// so far, which stays while the rest is styled rather than falling back to plain words with each new piece.
     private var styled: NSAttributedString? {
-        if streaming { return Self.renderGrowing(text, size: size, links: links) }
+        if streaming {
+            let made = Self.renderGrowing(text, size: size, links: links)
+            guard let fade else { return made }
+            return Self.faded(made, sourceLength: fadeLength, alpha: fade)
+        }
         if let kept = RichMarkdown.kept(text, size: size, compact: compact, repo: repo, yours: yours) { return kept }
         if text.count < Self.long { return Self.render(text, size: size, compact: compact, links: links) }
         if let last, text.hasPrefix(last.text) { return last.rich }
@@ -63,6 +70,32 @@ struct MarkdownText: View {
     }
 
     func streaming(_ on: Bool) -> MarkdownText { var copy = self; copy.streaming = on; return copy }
+    func fading(shown: Int, alpha: @escaping (Int) -> Double) -> MarkdownText { var copy = self; copy.fade = alpha; copy.fadeLength = shown; return copy }
+
+    /// The rendered text with its newest characters faded: matched to the source from the end (the Markdown's marks
+    /// are few there), each run of one opacity (in 24 steps) set once.
+    nonisolated static func faded(_ made: NSAttributedString, sourceLength: Int, alpha: (Int) -> Double) -> NSAttributedString {
+        let out = NSMutableAttributedString(attributedString: made)
+        let length = out.length
+        // Only the last 700 ms' worth can be fading: at most a few hundred characters.
+        let reach = min(length, 600)
+        var i = length - reach
+        while i < length {
+            let source = sourceLength - (length - i)
+            let step = (alpha(source) * 24).rounded() / 24
+            var end = i + 1
+            while end < length, (alpha(sourceLength - (length - end)) * 24).rounded() / 24 == step { end += 1 }
+            if step < 1 {
+                let range = NSRange(location: i, length: end - i)
+                out.enumerateAttribute(.foregroundColor, in: range) { value, run, _ in
+                    let color = (value as? NSColor) ?? .labelColor
+                    out.addAttribute(.foregroundColor, value: color.withAlphaComponent(color.alphaComponent * step), range: run)
+                }
+            }
+            i = end
+        }
+        return out
+    }
 
     /// The last long text styled here.
     @State private var last: (text: String, rich: NSAttributedString)?

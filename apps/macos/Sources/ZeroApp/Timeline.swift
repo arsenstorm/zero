@@ -35,8 +35,11 @@ struct BlockRow: View, Equatable {
             // Zero's ending isn't shown: it's the task's state, in the sidebar, the pane and the board.
             if case let .agent(said, _) = item.kind, case let text = ZeroEnding.split(said).0, !text.isEmpty {
                 MessageBlock(text: text, date: item.date, mine: false, quote: quote, save: save, later: later) {
-                    // Still being revealed when the turn ended: it carries on at its pace, rather than jumping to the end.
-                    if Reveal.unfinished(item.id, of: text) { StreamingText(id: item.id, text: text, cwd: cwd) }
+                    // Still being revealed when the turn ended (the agent writes faster than it's read out): it carries on
+                    // at its pace, fading as it was, rather than jumping to the end.
+                    // Or new, never read out (it came whole as the turn ended, its words never streamed live): from its
+                    // first word, rather than all at once, half under the composer, then the page jumping up for it.
+                    if Reveal.unfinished(item.id, of: text) || Reveal.fresh(item) { StreamingText(id: item.id, text: text, cwd: cwd) }
                     else { MarkdownText(text, cwd: cwd, size: 14.5) }
                 }
             }
@@ -55,6 +58,8 @@ func workedFor(_ seconds: TimeInterval) -> String { Took.length(seconds) }
 /// for 2m 37s ›"), unless you say otherwise. A turn that only thought says "Thinking", then "Thought for 8s", as Codex
 /// does; one that did nothing at all says nothing.
 struct WorkBlock: View {
+    /// Posted as you send a message: the turns before it fold.
+    static let fold = Notification.Name("zero.foldWork")
     let items: [ConversationItem]
     let start: Date?
     let end: Date?
@@ -62,16 +67,34 @@ struct WorkBlock: View {
     let cwd: String
     /// Your choice against the default (open while live, folded after); forgotten when the turn ends.
     @State private var toggled = false
+    /// You opened or shut it yourself: left as you set it.
+    @State private var chosen = false
+    /// Its words were seen streaming while it was live (it folded then).
+    @State private var spoke = false
     private var open: Bool { live != toggled }
-    /// Steps of substance: reading, running, editing. Thought alone isn't work.
-    private var worked: Bool { items.contains { if case .reasoning = $0.kind { false } else { true } } }
+    /// Steps of substance: reading, running, editing. Thought alone isn't work, nor its words.
+    private var worked: Bool { items.contains { if case .reasoning = $0.kind { false } else if case .agent = $0.kind { false } else { true } } }
+    /// Answering with no steps, its words streaming in: the header it ends with (none, or "Thought for…") already,
+    /// not "Working for…" taken away as the answer lands.
+    private var speaking: Bool { live && !worked && items.last.map { if case .agent = $0.kind { true } else { false } } == true }
+    /// The words the agent is writing now, the last of its items.
+    private var streamingWords: String? {
+        guard let last = items.last, case let .agent(said, _) = last.kind, case let text = ZeroEnding.split(said).0, !text.isEmpty else { return nil }
+        return text
+    }
+    private var thought: Bool { items.contains { if case .reasoning = $0.kind { true } else { false } } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if live || !items.isEmpty {
-                Button { withAnimation(.easeOut(duration: 0.15)) { toggled.toggle() } } label: {
+            if speaking && !thought {
+                // Just its words: Codex's "Thinking" goes as they start.
+            } else if live || !items.isEmpty {
+                Button { chosen = true; withAnimation(.easeOut(duration: 0.15)) { toggled.toggle() } } label: {
                     HStack(spacing: 6) {
-                        if live, !worked {
+                        if speaking {
+                            // As it'll read once answered: how long it thought, until its words began.
+                            Text(Took.text("Thought", start.flatMap { start in items.last?.date.map { $0.timeIntervalSince(start) } }))
+                        } else if live, !worked {
                             Thinking(text: "Thinking")
                         } else if live {
                             TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -93,10 +116,12 @@ struct WorkBlock: View {
                 .overlay(alignment: .bottom) { if worked { Rectangle().fill(Theme.stroke).frame(height: 1).offset(y: 6) } }
                 .tip(open ? "Hide the steps" : "Show every step")
             }
-            if open, !items.isEmpty {
+            // The words streaming in aren't a step: they're read out below, fading in, open or folded.
+            let steps = live && streamingWords != nil ? Array(items.dropLast()) : items
+            if open, !steps.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     // Each step knows when the next began (a thought's length); the last, when the turn ended.
-                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    ForEach(Array(steps.enumerated()), id: \.element.id) { index, item in
                         StepOrAsk(item: item, cwd: cwd, until: index + 1 < items.count ? items[index + 1].date : (live ? nil : end))
                     }
                 }
@@ -105,9 +130,9 @@ struct WorkBlock: View {
             }
             if live {
                 // Open, every step is above, the words being written among them; this is what's still to say.
-                if let last = items.last, case let .agent(said, _) = last.kind, case let text = ZeroEnding.split(said).0, !text.isEmpty {
+                if let last = items.last, let text = streamingWords {
                     // What it's saying, as the words stream in, at Zero's own steady pace.
-                    if !open { StreamingText(id: last.id, text: text, cwd: cwd) }
+                    StreamingText(id: last.id, text: text, cwd: cwd)
                 } else {
                     // Where it is: its latest step, quietly, on one line of fixed height whatever kind of step it is;
                     // under it "Thinking…", always holding its place and shown only between steps (or before the
@@ -123,7 +148,27 @@ struct WorkBlock: View {
             }
         }
         .padding(.top, 4)
-        .onChange(of: live) { toggled = false }
+        // Its turn over, it stays as it was (folding it then moved everything above up by its steps' height, in
+        // a frame); one still open folds when you send your next message, as the page moves for that anyway.
+        .onChange(of: live) { _, now in
+            toggled.toggle()
+            // Its words came whole as it ended (Claude Code sends a reply at once once it has thought): they start
+            // reading out now, under the heading, so the steps fold now, with the answer, not after it.
+            if !now, !spoke, !chosen, worked, open { toggled.toggle() }
+        }
+        // Its words starting: the steps fold under "Working for…", as ChatGPT's do once it answers, so the answer
+        // reads on from the heading and nothing folds as the turn ends. (Unless you've opened or shut it yourself.)
+        // Its words still the last thing a moment and a half after they started (an answer, not a note between
+        // steps, which a step follows at once): the steps fold under "Working for…", as ChatGPT's do once it answers.
+        // A note between steps folds nothing.
+        .task(id: streamingWords == nil ? nil : items.last?.id) {
+            guard live, streamingWords != nil else { return }
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled, live, streamingWords != nil else { return }
+            spoke = true
+            if !chosen, !toggled, worked { withAnimation(.easeOut(duration: 0.2)) { toggled = true } }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: WorkBlock.fold)) { _ in if !live, open { toggled.toggle() } }
     }
 }
 
@@ -773,36 +818,85 @@ struct StepLine: View {
 /// with carries on from where the live text was.
 @MainActor enum Reveal {
     static var shown: [String: Int] = [:]
+    /// What's still fading of each, kept with it: the live reply and the answer it becomes are two views, and the
+    /// answer's, starting with none, showed the words still fading at full at once.
+    static var runs: [String: [(at: Int, since: Date)]] = [:]
+    /// When the conversation on screen was opened: a reply first shown just after it was already there.
+    static var opened = Date.distantPast
 
-    static func unfinished(_ id: String, of text: String) -> Bool { shown[id].map { $0 < text.count } ?? false }
+    /// An answer that has just come, with the conversation open, and was never read out.
+    static func fresh(_ item: ConversationItem) -> Bool {
+        shown[item.id] == nil && Date().timeIntervalSince(opened) > 1 && item.date.map { Date().timeIntervalSince($0) < 15 } == true
+    }
+
+    /// Still being read out, or its last words still fading.
+    static func unfinished(_ id: String, of text: String) -> Bool { shown[id].map { $0 < text.count } ?? false || runs[id] != nil }
 }
 
-/// Words as they stream, shown at Zero's own pace rather than in the bursts they arrive in: fast enough to catch up
-/// with what's arrived within a third of a second, never slower than 400 characters a second, so text flows on
-/// steadily, ahead of the bursts, instead of jumping.
+/// Words as they stream, as Codex reveals them (measured from a recording): on a clock, not as they arrive, about
+/// 240 characters a second whatever the bursts; each run the clock passes fades in from nothing, linearly, over 700 ms,
+/// so the newest words are an even gradient a line or so long. Nothing moves, blurs or scales; no pause at a wrap, a
+/// paragraph or a bullet. Far behind, it keeps six seconds' lag, no more.
 struct StreamingText: View {
     let id: String
     let text: String
     let cwd: String
     @State private var shown: Int = 0
     @State private var last: Date?
+    /// Where each run the clock passed starts, and when: what's fading now (Reveal.runs). Runs whole 700 ms ago are
+    /// dropped.
+    private var runs: [(at: Int, since: Date)] {
+        get { Reveal.runs[id] ?? [] }
+        nonmutating set { Reveal.runs[id] = newValue.isEmpty ? nil : newValue }
+    }
+    /// Redrawn as runs change (they're kept outside the view).
+    @State private var tick = 0
+
+    static let pace: Double = 240
+    static let fade: Double = 0.7
 
     var body: some View {
         let total = text.count
-        TimelineView(.animation(minimumInterval: 1 / 60, paused: shown >= total)) { context in
+        TimelineView(.animation(minimumInterval: 1 / 60, paused: shown >= total && runs.isEmpty)) { context in
+            let now = context.date
             MarkdownText(String(text.prefix(shown)), cwd: cwd, size: 14.5).streaming(true)
+                .fading(shown: shown, alpha: { i in alpha(of: i, now: now) })
                 .onChange(of: context.date) { _, now in advance(to: now, total: total) }
         }
-        .onAppear { shown = min(Reveal.shown[id] ?? 0, total) }
+        .onAppear {
+            // New while the conversation was open: from its start, however much has come (Claude Code sends a reply
+            // in one burst once it has thought, a whole answer in a few milliseconds). Already under way as the
+            // conversation opened: what's there is there, a short stretch still to come; never the whole replayed.
+            let fresh = Date().timeIntervalSince(Reveal.opened) > 1
+            shown = min(Reveal.shown[id] ?? (fresh ? 0 : max(0, total - Int(Self.pace / 2))), total)
+        }
+    }
+
+    /// How far character `i` has faded in: from when the clock passed it.
+    private func alpha(of i: Int, now: Date) -> Double {
+        guard let run = runs.last(where: { $0.at <= i }) else { return 1 }
+        return min(1, max(0, now.timeIntervalSince(run.since) / Self.fade))
     }
 
     private func advance(to now: Date, total: Int) {
         let step = min(now.timeIntervalSince(last ?? now.addingTimeInterval(-1 / 60)), 0.1)
         last = now
+        if runs.contains(where: { now.timeIntervalSince($0.since) >= Self.fade }) { runs = runs.filter { now.timeIntervalSince($0.since) < Self.fade }; tick += 1 }
         let behind = total - shown
         guard behind > 0 else { return }
-        let pace = max(400, Double(behind) / 0.33)
-        shown = min(total, shown + max(1, Int(pace * step)))
+        // Steady, a burst read out at the same pace (a reply arrives whole once Claude has thought); only a backlog of
+        // more than six seconds' worth goes faster, keeping six seconds behind.
+        let pace = max(Self.pace, Double(behind) / 6)
+        var next = min(total, shown + max(1, Int((pace * step).rounded())))
+        // Whole words: the clock's place carried on to the end of the word it's in, so each word fades as one (Codex's
+        // look), never a word cut off with half of it there.
+        let characters = Array(text)
+        while next < total, !characters[next].isWhitespace { next += 1 }
+        runs.append((shown, now))
+        shown = next
+        tick += 1
         Reveal.shown[id] = shown
     }
 }
+
+
