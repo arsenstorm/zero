@@ -150,6 +150,23 @@ fn a_task_runs_as_the_account_with_the_least_of_its_week_left_that_isnt_at_a_lim
     assert_eq!(chosen(None), None, "every account at a limit: none to switch to");
 }
 
+/// What a task hears of its account's usage adds to what's known, rather than wiping it: a report without window
+/// figures (a limit said in an error, an account just switched to) keeps the windows read before, and one with a
+/// window keeps the others.
+#[test]
+fn a_report_without_figures_keeps_the_accounts_windows() {
+    let store = SignIns::open(&temp_dir("signins-merge"));
+    let account = store.save(signin(Provider::Claude, Kind::ClaudeHome, "a@example.com")).unwrap();
+    store.record_usage(&account.id, &usage(0.4, 0.7, NOW + DAY));
+    store.record_usage(&account.id, &zerod::model::Usage { limited: false, resets_at: None, windows: vec![] });
+    assert_eq!(store.usage(&account.id).unwrap().windows.len(), 2, "kept");
+    let week = zerod::model::UsageWindow { name: "7 days".into(), used: 0.8, resets_at: Some(NOW + DAY) };
+    store.record_usage(&account.id, &zerod::model::Usage { limited: false, resets_at: None, windows: vec![week] });
+    let now = store.usage(&account.id).unwrap();
+    let used = |name: &str| now.windows.iter().find(|w| w.name == name).map(|w| w.used);
+    assert_eq!((used("5 hours"), used("7 days")), (Some(0.4), Some(0.8)), "the week updated, the 5 hours kept");
+}
+
 /// An account its provider refused a model on (no access to it) isn't chosen for that model again; for others it is.
 #[test]
 fn an_account_refused_a_model_isnt_chosen_for_it() {
