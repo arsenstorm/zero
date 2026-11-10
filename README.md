@@ -1,5 +1,8 @@
 # Zero
 
+[![CI](https://github.com/arsenstorm/zero/actions/workflows/ci.yml/badge.svg)](https://github.com/arsenstorm/zero/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/arsenstorm/zero/badge)](https://scorecard.dev/viewer/?uri=github.com/arsenstorm/zero)
+
 A native workspace for coding agents: start them, talk to them, approve what they do, and see their work, across
 Codex, Claude Code and OpenCode. The Rust daemon does the work; the Swift apps show it. docs/workspace.md has the
 architecture and the order of work.
@@ -19,7 +22,9 @@ Swift is moving to UI only: zero-host's terminals and the asks store move into z
 ## Build and test
 
 ```sh
+make setup    # once per clone: the pre-commit hook that formats what you stage
 make test     # cargo test --workspace, then swift test
+make lint     # formatting (rustfmt, swift-format, Biome) and clippy, as CI checks them
 make zerod    # the daemon, at target/release/zerod
 make run      # build, sign, install /Applications/Zero.app and start it
 cargo test -p zerod --test integration e2e -- --ignored   # the daemon against the real Codex, Claude Code and
@@ -47,5 +52,5 @@ Test first. A change to zerod starts with a failing test in `crates/zerod/tests/
 ## License
 
 Zero is free software under the [GNU General Public License, version 3](LICENSE) or (at your option) any later
-version. Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md), which asks you to sign the
+version. [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES) lists the works it includes and their licences. Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md), which asks you to sign the
 [Contributor License Agreement](CLA.md) once, on your first pull request.
