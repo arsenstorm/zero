@@ -9,6 +9,15 @@ public enum AskState: String, Codable, Sendable {
     public var isFinal: Bool { self == .answered || self == .declined || self == .expired }
 }
 
+public extension AgentIdentity {
+    /// This Mac's name, from the kernel: ProcessInfo's hostName asks the network for it, 8 to 70 ms a call, and every
+    /// `zero` ask and note named its agent with it.
+    static let thisHost: String = {
+        var name = [CChar](repeating: 0, count: 256)
+        return gethostname(&name, name.count) == 0 ? String(cString: name) : "mac"
+    }()
+}
+
 public struct AgentIdentity: Codable, Hashable, Sendable {
     public var name: String
     public var host: String

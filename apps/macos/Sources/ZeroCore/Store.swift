@@ -298,7 +298,7 @@ public struct ZerodSpawner: AgentAdapter {
         defer { link.close() }
         let session = try await link.start(provider: provider, cwd: target.id, prompt: prompt, model: model.flatMap { $0.id.isEmpty ? nil : $0.id },
                                            effort: settings["reasoning"].flatMap { $0.isEmpty ? nil : $0 })
-        var identity = AgentIdentity(name: "zerod-" + session, host: ProcessInfo.processInfo.hostName, cwd: target.id)
+        var identity = AgentIdentity(name: "zerod-" + session, host: AgentIdentity.thisHost, cwd: target.id)
         identity.runtime = "zerod"
         identity.ref = session
         return identity

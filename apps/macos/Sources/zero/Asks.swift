@@ -20,7 +20,7 @@ func shortDetail(_ text: String?, flag name: String) {
     let own: String? = env["ZERO_HOST_TERMINAL"].map { "claude-" + String($0.suffix(6)) }
     let hyperfocus: String? = env["HF_SESSION_ID"].map { "hf-" + $0 }
     let name: String = flag("agent") ?? env["ZERO_AGENT"] ?? solo ?? own ?? rex ?? hyperfocus ?? "shell-\(getppid())"
-    var identity = AgentIdentity(name: name, host: ProcessInfo.processInfo.hostName,
+    var identity = AgentIdentity(name: name, host: AgentIdentity.thisHost,
                          cwd: FileManager.default.currentDirectoryPath,
                          soloProcessID: env["SOLO_PROCESS_ID"].flatMap(Int.init), soloProjectID: env["SOLO_PROJECT_ID"].flatMap(Int.init),
                          ticket: flag("ticket"))

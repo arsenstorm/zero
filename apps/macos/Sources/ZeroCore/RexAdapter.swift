@@ -105,7 +105,7 @@ public struct RexAdapter: TerminalAdapter {
               let session = json["session_id"] as? String, let block = Self.blockID(in: created.output) else {
             throw AdapterError(created.status == 4 ? "Rex isn't running" : "Rex couldn't start the agent")
         }
-        var identity = AgentIdentity(name: "claude-" + String(block.suffix(6)), host: ProcessInfo.processInfo.hostName, cwd: target.id)
+        var identity = AgentIdentity(name: "claude-" + String(block.suffix(6)), host: AgentIdentity.thisHost, cwd: target.id)
         identity.runtime = self.runtime
         identity.ref = block
         identity.refGroup = session

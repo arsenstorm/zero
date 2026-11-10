@@ -1,7 +1,7 @@
 #!/bin/sh
 # A Zero-run turn may only end on Zero's ending line; otherwise the agent is sent back once to finish properly.
 # The ending is the reliable signal: a need parked in prose ("waiting for your go") has none.
-. "$(dirname "$0")/managed.sh"
+. "${0%/*}/managed.sh"
 zero_managed || exit 0
 input=$(cat)
 case "$input" in *'"stop_hook_active":true'*) exit 0 ;; esac # already sent back once: let it stop
@@ -22,12 +22,16 @@ if ! printf '%s' "$last_message" | grep -Eq "$asked" \
   exit 0
 fi
 if printf '%s' "$last_message" | grep -Eq "$ending"; then exit 0; fi
+# The last message was given and has no ending: that's the answer, no need to wait on the transcript (3 s, every such
+# turn). Only without it, the transcript, a moment later if it's still being written.
+if [ -z "$last_message" ]; then
 transcript=$(printf '%s' "$input" | sed -n 's/.*"transcript_path":"\([^"]*\)".*/\1/p')
 [ -f "$transcript" ] || exit 0
-for wait in 0 1 2; do
+for wait in 0 0.3 0.7; do
   sleep "$wait"
   last=$(tail -n 400 "$transcript" | grep '"type":"assistant"' | tail -n 1)
   if printf '%s' "$last" | grep -Eq "$ending"; then exit 0; fi
 done
+fi
 reason="This turn has no Zero ending. If you need the user, ask them now with $ZERO_CLIENT ask or $ZERO_CLIENT approve (use --async if you must end the turn) and end with [zero: asked <id>]. If the work is finished end to end, with good reason to say so (merged and deployed, verified, its ticket closed, or the user said it's done), end with [zero: done]. If the next move is someone else's (a review, CI, a deploy, QA), end with [zero: waiting]. If you are only pausing between steps, end with [zero: working] (a note is optional; post one only when something changed)."
 printf '{"decision":"block","reason":"%s"}\n' "$reason"

@@ -57,7 +57,7 @@ public struct HostAdapter: TerminalAdapter {
     public func spawn(prompt: String, target: SpawnChoice, runtime: SpawnChoice, model: SpawnChoice?, settings: [String: String]) async throws -> AgentIdentity {
         let command = AgentCommand.build(runtime: runtime, model: model, settings: settings)
         let terminal = try await start(command, in: target.id, label: AgentCommand.label(for: prompt))
-        var identity = AgentIdentity(name: "claude-" + String(terminal.suffix(6)), host: ProcessInfo.processInfo.hostName, cwd: target.id)
+        var identity = AgentIdentity(name: "claude-" + String(terminal.suffix(6)), host: AgentIdentity.thisHost, cwd: target.id)
         identity.runtime = self.runtime
         identity.ref = terminal
         identity.launch = command

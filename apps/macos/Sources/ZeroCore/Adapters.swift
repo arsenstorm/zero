@@ -367,7 +367,7 @@ public struct SoloAdapter: AgentAdapter {
         // the next one. Named like the CLI's agents instead: claude-119.
         let base = ((created["name"] as? String) ?? "agent").lowercased().replacingOccurrences(of: " ", with: "-")
         let name = "\(base)-\(processID)"
-        var identity = AgentIdentity(name: name, host: ProcessInfo.processInfo.hostName, soloProcessID: processID, soloProjectID: projectID)
+        var identity = AgentIdentity(name: name, host: AgentIdentity.thisHost, soloProcessID: processID, soloProjectID: projectID)
         try await waitUntilReady(processID, in: projectID, name: name)
         try await send(prompt, to: identity)
         return identity

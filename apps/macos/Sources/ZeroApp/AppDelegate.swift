@@ -244,7 +244,7 @@ import ZeroCore
 
     /// The ask an agent would send, so the first card answered is a real one; the inbox opens on it.
     private func sendSampleAsk() {
-        let zero = AgentIdentity(name: "zero", host: ProcessInfo.processInfo.hostName, label: "Zero")
+        let zero = AgentIdentity(name: "zero", host: AgentIdentity.thisHost, label: "Zero")
         store.create(Ask(kind: .approve, title: "Onboarding", body: "Zero is set up. Finish onboarding?",
                              options: ["Yes", "No", "Suggest something else…"], agent: zero, ttl: 600))
         pin(agent: nil)
