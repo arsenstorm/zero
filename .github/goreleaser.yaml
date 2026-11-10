@@ -1,0 +1,19 @@
+# GoReleaser only publishes the GitHub release: release.yml has built, signed, notarised and attested Zero.zip on macOS.
+version: 2
+project_name: zero
+
+# Nothing to build here. Not a Go build, so GoReleaser doesn't look for Go.
+builds:
+  - builder: rust
+    skip: true
+
+checksum:
+  disable: true
+
+changelog:
+  use: github-native
+
+release:
+  name_template: "Zero {{ .Version }}"
+  extra_files:
+    - glob: "{{ .Env.ASSETS }}/Zero.zip*"

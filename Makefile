@@ -4,6 +4,9 @@ identity = $(shell security find-identity -v -p codesigning | grep -m1 -o '"$(1)
 ifndef SIGN
 SIGN := $(or $(call identity,Developer ID Application),$(call identity,Apple Development))
 endif
+# With the hardened runtime, as notarisation requires. CI adds a secure timestamp (SIGNFLAGS=--timestamp), which asks
+# Apple's server for every binary, so local builds skip it.
+CODESIGN = codesign --force --options runtime $(SIGNFLAGS) --sign "$(SIGN)"
 VERSION = $(shell /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' $(MACOS)/Resources/Info.plist)
 MACOS  = apps/macos
 APP    = build/Zero.app
@@ -59,23 +62,24 @@ bundle: build
 	cp target/drop/zero-drop $(APP)/Contents/Resources/zero-drop-darwin-arm64
 	cp target/x86_64-unknown-linux-musl/drop/zero-drop $(APP)/Contents/Resources/zero-drop-linux-x86_64
 	cp target/aarch64-unknown-linux-musl/drop/zero-drop $(APP)/Contents/Resources/zero-drop-linux-aarch64
-	codesign --force --sign "$(SIGN)" $(APP)/Contents/Resources/zero-drop-darwin-arm64
-	codesign --force --sign "$(SIGN)" $(APP)/Contents/MacOS/zero-cli
-	codesign --force --sign "$(SIGN)" $(APP)/Contents/MacOS/zero-full
-	codesign --force --sign "$(SIGN)" $(APP)/Contents/MacOS/zero-host
-	codesign --force --sign "$(SIGN)" $(APP)/Contents/MacOS/zerod
-	codesign --force --sign "$(SIGN)" $(APP)
+	$(CODESIGN) $(APP)/Contents/Resources/zero-drop-darwin-arm64
+	$(CODESIGN) $(APP)/Contents/MacOS/zero-cli
+	$(CODESIGN) $(APP)/Contents/MacOS/zero-full
+	$(CODESIGN) $(APP)/Contents/MacOS/zero-host
+	$(CODESIGN) $(APP)/Contents/MacOS/zerod
+	$(CODESIGN) --entitlements $(MACOS)/Resources/Zero.entitlements $(APP)
 
 # The app quits and opens again where you were; zerod, only when it changed, restarts gracefully (install.sh).
 install: bundle
 	@sh $(MACOS)/Resources/install.sh $(APP) $$(cmp -s target/release/zerod build/zerod.installed && echo keep || echo restart)
 	@cp target/release/zerod build/zerod.installed
 
-# A GitHub release of the version in Info.plist (raise it first), from HEAD as pushed: Zero's updater offers it.
-release: bundle
+# Releases are built, signed, notarised and published by CI (.github/workflows/release.yml, docs/releasing.md) from a
+# pushed tag: raise the version in Info.plist (X.Y.Z), commit and push, then `make release` tags HEAD and pushes the tag.
+release:
 	git merge-base --is-ancestor HEAD origin/main || { echo "Push HEAD first"; exit 1; }
-	ditto -c -k --keepParent $(APP) build/Zero.zip
-	gh release create v$(VERSION) build/Zero.zip --target $$(git rev-parse HEAD) --title "Zero $(VERSION)" --generate-notes
+	git tag -s v$(VERSION) -m "Zero $(VERSION)"
+	git push origin v$(VERSION)
 
 run: install
 

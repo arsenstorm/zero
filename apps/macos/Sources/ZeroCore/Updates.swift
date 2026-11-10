@@ -21,8 +21,8 @@ public struct Release: Decodable, Equatable, Sendable {
     public var app: Asset? { assets.first { $0.name.hasSuffix(".zip") } }
 }
 
-/// Zero's updates, from its GitHub releases (`make release` makes them). Nothing installs unless it's signed as the
-/// running build is.
+/// Zero's updates, from its GitHub releases (CI makes them from a pushed tag: docs/releasing.md). Nothing installs unless it's
+/// signed as the running build is.
 public enum Updates {
     public static let repository = "arsenstorm/zero"
 
