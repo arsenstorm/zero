@@ -774,17 +774,18 @@ public struct ZerodMirror: Sendable {
             order.removeAll { $0 == event.session }
             return true
         case let .change(event):
-            guard var conversation = conversations[event.session] else { return false }
-            if event.seq <= conversation.seq { return true }
-            guard event.seq == conversation.seq + 1 else { return false }
-            let count = conversation.items.count
-            conversation.apply(event.change)
+            guard let seq = conversations[event.session]?.seq else { return false }
+            if event.seq <= seq { return true }
+            guard event.seq == seq + 1 else { return false }
+            // Changed where it is: copied out and back, every item of a long task was copied for each word streamed.
+            let count = conversations[event.session]!.items.count
+            conversations[event.session]!.apply(event.change)
             // Short of the end, what's new lies past the window: counted there, not put after its last item.
-            if let cut = later[event.session], cut > 0, conversation.items.count > count {
-                later[event.session] = cut + conversation.items.count - count
-                conversation.items.removeLast(conversation.items.count - count)
+            let now = conversations[event.session]!.items.count
+            if let cut = later[event.session], cut > 0, now > count {
+                later[event.session] = cut + now - count
+                conversations[event.session]!.items.removeLast(now - count)
             }
-            conversations[event.session] = conversation
             return true
         }
     }
@@ -1590,11 +1591,15 @@ public final class ZerodLink: @unchecked Sendable {
         }
     }
 
+    private struct EventName: Decodable { let event: String? }
+    private struct Cleared: Decodable { let ids: [String]? }
+
     private func read() {
         while let line = connection.readLine() {
             let data = Data(line.utf8)
-            guard let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-            if let event = message["event"] as? String {
+            // An event's name read with the decoder, not the whole line made into Foundation objects first and then
+            // decoded again (a snapshot of every session: 29 ms of the one, then 91 ms of the other).
+            if let event = (try? JSONDecoder().decode(EventName.self, from: data))?.event {
                 if event == "board" {
                     if let rows = try? JSONDecoder().decode(BoardFeed.self, from: data).rows { onFeed?(.board(rows)) }
                     continue
@@ -1606,7 +1611,7 @@ public final class ZerodLink: @unchecked Sendable {
                 if event == "workspaces" { onFeed?(.workspaces); continue }
                 if event == "signins" { onFeed?(.signins); continue }
                 if event == "restarting" { onFeed?(.restarting); continue }
-                if event == "clear" { onFeed?(.clear(message["ids"] as? [String] ?? [])); continue }
+                if event == "clear" { onFeed?(.clear((try? JSONDecoder().decode(Cleared.self, from: data))?.ids ?? [])); continue }
                 let decoded: ZerodMirror.Message? = switch event {
                 case "session": (try? JSONDecoder().decode(Snapshot.self, from: data)).map { snapshot in
                     onMessage?(.earlier(session: snapshot.conversation.id, count: snapshot.earlier ?? 0))
@@ -1618,7 +1623,8 @@ public final class ZerodLink: @unchecked Sendable {
                 if let decoded { onMessage?(decoded) } else if let inbox = Self.inbox(event, data) { onInbox?(inbox) }
                 continue
             }
-            guard let id = message["id"] as? Int, let answer = lock.withLock({ waiting.removeValue(forKey: id) }) else { continue }
+            guard let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let id = message["id"] as? Int, let answer = lock.withLock({ waiting.removeValue(forKey: id) }) else { continue }
             if message["ok"] as? Bool == true { answer.resume(returning: message["result"] ?? NSNull()) }
             else { answer.resume(throwing: ZerodError(message: message["error"] as? String ?? "zerod refused the request")) }
         }
