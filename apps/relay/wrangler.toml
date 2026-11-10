@@ -6,6 +6,10 @@ compatibility_date = "2026-10-01"
 # Your own copy: remove these two lines, and `npx wrangler deploy` puts it on your workers.dev address.
 account_id = "8dd0864e5cce87fba700990f062744f0"
 routes = [{ pattern = "relay.withzero.dev", custom_domain = true }]
+# Its workers.dev address too: Macs and phones paired before the custom domain still reach it there (both are the
+# same Worker, the same Macs), and a deploy without this line switches that address off.
+workers_dev = true
+preview_urls = false
 
 [[durable_objects.bindings]]
 name = "MACS"
