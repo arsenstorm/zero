@@ -2,6 +2,7 @@
 name = "zerod"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 description = "Zero's daemon: runs agent sessions and keeps them, whether or not the app is open"
 
 [dependencies]

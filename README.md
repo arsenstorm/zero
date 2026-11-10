@@ -43,3 +43,9 @@ Test first. A change to zerod starts with a failing test in `crates/zerod/tests/
 - `process.rs`: runtime processes, their environment and their end.
 - `server.rs`: the socket protocol as the apps use it, restarts included.
 - `e2e.rs`: the real CLIs, ignored unless asked for.
+
+## License
+
+Zero is free software under the [GNU General Public License, version 3](LICENSE) or (at your option) any later
+version. Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md), which asks you to sign the
+[Contributor License Agreement](CLA.md) once, on your first pull request.
