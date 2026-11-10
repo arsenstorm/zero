@@ -857,7 +857,9 @@ struct StreamingText: View {
 
     var body: some View {
         let total = text.count
-        TimelineView(.animation(minimumInterval: 1 / 60, paused: shown >= total && runs.isEmpty)) { context in
+        // 30 frames a second: each one styles and lays out the reply again (and the window with it), and the fade has
+        // 24 steps over its 700 ms, about one a frame at 30; at 60, every other frame changed nothing.
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: shown >= total && runs.isEmpty)) { context in
             let now = context.date
             MarkdownText(String(text.prefix(shown)), cwd: cwd, size: 14.5).streaming(true)
                 .fading(shown: shown, alpha: { i in alpha(of: i, now: now) })

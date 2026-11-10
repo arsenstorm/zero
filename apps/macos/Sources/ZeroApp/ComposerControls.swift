@@ -310,8 +310,15 @@ extension EnvironmentValues {
 
     /// The models a provider's CLI offers the signed-in account, from its own cache, and those the user added to Zero.
     static func catalogue(_ provider: Provider) -> [SpawnChoice] {
-        CustomModels.shared.adding(to: own(provider), for: provider)
+        // Kept for a few seconds: the control bar names every task's model on every redraw, each a read of the CLI's
+        // cache (and a look at Claude Code's config). Its lists change rarely; a pick shows within seconds.
+        // ponytail: a short TTL, not invalidation; drop it on the CLIs' cache changes if a stale list is ever seen.
+        if let kept = kept[provider], Date().timeIntervalSince(kept.at) < 3, kept.added == CustomModels.shared.models { return kept.list }
+        let list = CustomModels.shared.adding(to: own(provider), for: provider)
+        kept[provider] = (Date(), CustomModels.shared.models, list)
+        return list
     }
+    private static var kept: [Provider: (at: Date, added: [CustomModels.Model], list: [SpawnChoice])] = [:]
 
     private static func own(_ provider: Provider) -> [SpawnChoice] {
         switch provider {
