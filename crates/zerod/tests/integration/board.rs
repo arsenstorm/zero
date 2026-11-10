@@ -488,3 +488,22 @@ fn an_asked_ending_without_its_ask_is_no_ending() {
     assert_eq!(reply("Which do you mostly use?\n\n[zero: asked]"), State::NeedsYou);
     assert_eq!(zerod::board::without_ending("Done for now.\n[zero: asked]"), "Done for now.", "not words to read either");
 }
+
+/// The inbox keeps every agent's latest ask, hundreds of them from tasks long archived: the board, built several times
+/// a second while a turn streams, looks only at the asks of tasks on it (by name or by reference), and stays quick.
+#[test]
+fn the_board_stays_quick_with_thousands_of_gone_agents_in_the_inbox() {
+    let sessions: Vec<Conversation> = (0..80).map(|i| session(&format!("s{i}"), "/work/app", Status::Idle)).collect();
+    let mut asks: Vec<Ask> = (0..6000).map(|i| note(&format!("gone{i}"), "Merged", Some("done"), None)).collect();
+    let mut by_name = note("s1", "Named only", Some("waiting"), None);
+    by_name.agent.reference = None;
+    let mut by_reference = note("s2", "Referenced only", Some("waiting"), None);
+    by_reference.agent.name = "solo-7".into();
+    asks.extend([by_name, by_reference]);
+    let started = std::time::Instant::now();
+    let rows = board(&sessions, &asks);
+    let took = started.elapsed();
+    let now = |id: &str| rows.iter().find(|r| r.session == id).and_then(|r| r.now.clone());
+    assert_eq!((now("s1").as_deref(), now("s2").as_deref(), now("s3")), (Some("Named only"), Some("Referenced only"), None));
+    assert!(took < std::time::Duration::from_millis(15), "{took:?}");
+}

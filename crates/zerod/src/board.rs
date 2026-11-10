@@ -150,6 +150,10 @@ pub fn board_full(conversations: &[Conversation], asks: &[Ask], places: &HashMap
 /// `workspace_of` says which workspace each lead is in.
 pub fn board_in(conversations: &[Conversation], asks: &[Ask], places: &HashMap<String, Place>, queues: &HashMap<String, (Vec<Queued>, bool)>,
                 workspace_of: &dyn Fn(&Conversation) -> String) -> Vec<Row> {
+    // Only the asks of tasks on the board, looked through once: the inbox also keeps every agent's latest, hundreds
+    // of them long gone.
+    let on_board: std::collections::HashSet<&str> = conversations.iter().map(|c| c.id.as_str()).collect();
+    let asks: &Vec<Ask> = &asks.iter().filter(|a| [a.agent.reference.as_deref(), a.agent.name.strip_prefix("zerod-")].into_iter().flatten().any(|id| on_board.contains(id))).cloned().collect();
     let queue = |id: &str| queues.get(id).cloned().unwrap_or_default();
     let known = |id: &Option<String>| id.as_ref().is_some_and(|id| conversations.iter().any(|c| &c.id == id));
     let leads: Vec<&Conversation> = conversations.iter().filter(|c| !known(&c.parent)).collect();
@@ -384,7 +388,7 @@ fn team<'a>(lead: &'a Conversation, all: &'a [Conversation]) -> Vec<&'a Conversa
 }
 
 fn is(ask: &Ask, conversation: &Conversation) -> bool {
-    ask.agent.reference.as_deref() == Some(&conversation.id) || ask.agent.name == format!("zerod-{}", conversation.id)
+    ask.agent.reference.as_deref() == Some(&conversation.id) || ask.agent.name.strip_prefix("zerod-") == Some(&conversation.id)
 }
 
 /// The agent's latest own note, unless a turn started after it (zerod notes each new turn, and what the note said was
