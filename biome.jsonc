@@ -1,0 +1,26 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "extends": [
+    "ultracite/biome/core",
+    "ultracite/biome/react",
+    "ultracite/biome/astro"
+  ],
+  "files": {
+    // Zero's JavaScript: the site, the relay and the browser extension. Rust and Swift have their own formatters
+    // (rustfmt.toml, .swift-format); the docs' Markdown and the icons are left as written.
+    "includes": [
+      "**",
+      "!!apps/ios",
+      "!!apps/macos",
+      "!!crates",
+      "!!docs",
+      "!!plugin",
+      "!!.github",
+      "!!site-research",
+      "!!site/public",
+      "!!target",
+      "!!build",
+      "!!**/*.svg"
+    ]
+  }
+}

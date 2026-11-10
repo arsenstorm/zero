@@ -4,11 +4,15 @@
 (() => {
   if (globalThis.__zeroIndicator) return;
   globalThis.__zeroIndicator = true;
-  let host = null, shadow = null, hiddenForShot = false, name = null;
+  let host = null,
+    shadow = null,
+    hiddenForShot = false,
+    name = null;
 
   function build() {
     host = document.createElement("zero-indicator");
-    host.style.cssText = "all: initial; position: fixed; inset: 0; pointer-events: none; z-index: 2147483647;";
+    host.style.cssText =
+      "all: initial; position: fixed; inset: 0; pointer-events: none; z-index: 2147483647;";
     shadow = host.attachShadow({ mode: "closed" });
     shadow.innerHTML = `
       <style>
@@ -33,10 +37,14 @@
 
   function show(task) {
     name = task;
-    if (!name) { host?.remove(); return }
+    if (!name) {
+      host?.remove();
+      return;
+    }
     if (!host) build();
     shadow.querySelector(".name").textContent = `${name} is using this tab`;
-    for (const part of shadow.querySelectorAll(".border, .pill")) part.style.display = recording ? "none" : "";
+    for (const part of shadow.querySelectorAll(".border, .pill"))
+      part.style.display = recording ? "none" : "";
     host.style.display = hiddenForShot ? "none" : "block";
     if (!host.isConnected) document.documentElement.appendChild(host);
   }
@@ -48,12 +56,16 @@
     if (!host) build();
     if (!host.isConnected) document.documentElement.appendChild(host);
     host.style.display = "block";
-    for (const part of shadow.querySelectorAll(".border, .pill")) part.style.display = recording || !name ? "none" : "";
+    for (const part of shadow.querySelectorAll(".border, .pill"))
+      part.style.display = recording || !name ? "none" : "";
     const ring = document.createElement("div");
     ring.style.cssText = `position: fixed; left: ${x - 14}px; top: ${y - 14}px; width: 28px; height: 28px; border-radius: 50%;
       border: 3px solid rgba(249, 115, 22, .95); background: rgba(249, 115, 22, .2); pointer-events: none; transition: transform .45s ease-out, opacity .45s ease-out;`;
     shadow.appendChild(ring);
-    requestAnimationFrame(() => { ring.style.transform = "scale(1.8)"; ring.style.opacity = "0" });
+    requestAnimationFrame(() => {
+      ring.style.transform = "scale(1.8)";
+      ring.style.opacity = "0";
+    });
     setTimeout(() => ring.remove(), 600);
   }
 
@@ -63,7 +75,8 @@
     if (!host) build();
     if (!host.isConnected) document.documentElement.appendChild(host);
     host.style.display = "block";
-    for (const part of shadow.querySelectorAll(".border, .pill")) part.style.display = recording || !name ? "none" : "";
+    for (const part of shadow.querySelectorAll(".border, .pill"))
+      part.style.display = recording || !name ? "none" : "";
     if (!cursor) {
       cursor = document.createElement("div");
       cursor.innerHTML = `<svg width="22" height="26" viewBox="0 0 22 26"><path d="M2 2 L2 21 L7.2 16.6 L10.6 24 L14 22.4 L10.7 15.2 L17.6 15.2 Z" fill="#111" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
@@ -77,14 +90,22 @@
 
   chrome.runtime.onMessage.addListener((message, _, answer) => {
     if (message.type === "zero-cursor") glide(message.x, message.y);
-    if (message.type === "zero-recording" && !message.on && cursor) { cursor.remove(); cursor = null }
+    if (message.type === "zero-recording" && !message.on && cursor) {
+      cursor.remove();
+      cursor = null;
+    }
     if (message.type === "zero-click") ripple(message.x, message.y);
     // While recording, the border and pill stay out of the video; the clicks' ripples stay in.
     if (message.type === "zero-recording") {
       recording = message.on;
-      if (shadow) for (const part of shadow.querySelectorAll(".border, .pill")) part.style.display = recording ? "none" : "";
+      if (shadow)
+        for (const part of shadow.querySelectorAll(".border, .pill"))
+          part.style.display = recording ? "none" : "";
     }
-    if (message.type === "zero-driving") { if (typeof message.recording === "boolean") recording = message.recording; show(message.name) }
+    if (message.type === "zero-driving") {
+      if (typeof message.recording === "boolean") recording = message.recording;
+      show(message.name);
+    }
     if (message.type === "zero-hide") {
       hiddenForShot = message.hidden;
       if (host) host.style.display = hiddenForShot ? "none" : "block";

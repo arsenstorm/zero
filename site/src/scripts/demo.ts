@@ -8,11 +8,18 @@ import checkIcon from "../../../apps/macos/Resources/nucleo/check-outline.svg?ra
 const TAKE_BACK_MS = 1000;
 const spinner = (size: number) =>
   `<svg width="${size}" height="${size}" viewBox="0 0 12 12" aria-hidden="true" class="spinner"><circle cx="6" cy="6" r="4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" pathLength="100" stroke-dasharray="85 100" /></svg>`;
-const check = checkIcon.replace('width="18" height="18"', 'width="13" height="13"').replace("<svg ", '<svg aria-hidden="true" ');
+const check = checkIcon
+  .replace('width="18" height="18"', 'width="13" height="13"')
+  .replace("<svg ", '<svg aria-hidden="true" ');
 
 // Asks
 
-type Ask = { headline: string; cards: HTMLElement[]; timer?: number; answer?: { index: number; text: string } };
+type Ask = {
+  headline: string;
+  cards: HTMLElement[];
+  timer?: number;
+  answer?: { index: number; text: string };
+};
 const asks = new Map<string, Ask>();
 let selected: Ask | undefined;
 
@@ -24,10 +31,16 @@ for (const card of document.querySelectorAll<HTMLElement>("[data-ask]")) {
   // As in the inbox, the card under the pointer (or holding the keyboard) is the one the keys answer.
   card.addEventListener("pointerenter", () => (selected = ask));
   card.addEventListener("focusin", () => (selected = ask));
-  for (const button of card.querySelectorAll<HTMLButtonElement>("[data-option]")) {
-    button.addEventListener("click", () => choose(ask, Number(button.dataset.option), card));
+  for (const button of card.querySelectorAll<HTMLButtonElement>(
+    "[data-option]"
+  )) {
+    button.addEventListener("click", () =>
+      choose(ask, Number(button.dataset.option), card)
+    );
   }
-  for (const form of card.querySelectorAll<HTMLFormElement>("form[data-reply]")) {
+  for (const form of card.querySelectorAll<HTMLFormElement>(
+    "form[data-reply]"
+  )) {
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const text = form.querySelector("input")!.value.trim();
@@ -45,8 +58,11 @@ function choose(ask: Ask, index: number, card = ask.cards[0]) {
   if (ask.answer) return;
   const button = option(card, index);
   if (!button) return;
-  if (button.dataset.typed === undefined) return pick(ask, index, button.dataset.label!);
-  const form = card.querySelector<HTMLFormElement>(`form[data-reply="${index}"]`)!;
+  if (button.dataset.typed === undefined)
+    return pick(ask, index, button.dataset.label!);
+  const form = card.querySelector<HTMLFormElement>(
+    `form[data-reply="${index}"]`
+  )!;
   button.hidden = true;
   form.hidden = false;
   form.querySelector("input")!.focus();
@@ -71,10 +87,15 @@ function deliver(ask: Ask) {
   ask.timer = undefined;
   render(ask, "done");
   // Answered, a docked ask leaves the task's conversation, as the app's does; the answer shows there instead.
-  for (const card of ask.cards) card.closest<HTMLElement>("[data-docked]")?.setAttribute("hidden", "");
+  for (const card of ask.cards)
+    card.closest<HTMLElement>("[data-docked]")?.setAttribute("hidden", "");
   const task = ask.cards[0].dataset.task;
   if (task) setWorking(task);
-  document.dispatchEvent(new CustomEvent("zero:answered", { detail: { headline: ask.headline, ...ask.answer } }));
+  document.dispatchEvent(
+    new CustomEvent("zero:answered", {
+      detail: { headline: ask.headline, ...ask.answer },
+    })
+  );
 }
 
 // An ask asked again (the inbox section's pile, which never runs out): unanswered everywhere it shows.
@@ -91,15 +112,27 @@ document.addEventListener("zero:reask", (event) => {
 function render(ask: Ask, state: "waiting" | "pending" | "done") {
   for (const card of ask.cards) {
     card.toggleAttribute("data-decided", state !== "waiting");
-    for (const button of card.querySelectorAll<HTMLButtonElement>("[data-option]")) {
-      const chosen = state !== "waiting" && Number(button.dataset.option) === ask.answer!.index;
+    for (const button of card.querySelectorAll<HTMLButtonElement>(
+      "[data-option]"
+    )) {
+      const chosen =
+        state !== "waiting" &&
+        Number(button.dataset.option) === ask.answer!.index;
       button.dataset.state = chosen ? state : "";
       button.disabled = state !== "waiting";
       button.hidden = false;
-      button.querySelector("[data-text]")!.textContent = chosen ? ask.answer!.text : button.dataset.label!;
-      button.querySelector("[data-mark]")!.innerHTML = chosen ? (state === "pending" ? spinner(12) : check) : "";
+      button.querySelector("[data-text]")!.textContent = chosen
+        ? ask.answer!.text
+        : button.dataset.label!;
+      button.querySelector("[data-mark]")!.innerHTML = chosen
+        ? state === "pending"
+          ? spinner(12)
+          : check
+        : "";
     }
-    for (const form of card.querySelectorAll<HTMLFormElement>("form[data-reply]")) {
+    for (const form of card.querySelectorAll<HTMLFormElement>(
+      "form[data-reply]"
+    )) {
       form.hidden = true;
       form.reset();
     }
@@ -108,11 +141,18 @@ function render(ask: Ask, state: "waiting" | "pending" | "done") {
 
 document.addEventListener("keydown", (event) => {
   // Not while you type, and never for the search box in the header.
-  if (event.metaKey || event.ctrlKey || event.altKey || (event.target as HTMLElement).closest("[data-search]")) return;
+  if (
+    event.metaKey ||
+    event.ctrlKey ||
+    event.altKey ||
+    (event.target as HTMLElement).closest("[data-search]")
+  )
+    return;
   const typing = (event.target as HTMLElement).closest("input, textarea");
   if (event.key === "Escape") {
     // Esc takes back the last answer, wherever it was given, as the inbox's Esc does.
-    for (const ask of asks.values()) if (takeBack(ask)) return event.preventDefault();
+    for (const ask of asks.values())
+      if (takeBack(ask)) return event.preventDefault();
     return;
   }
   if (typing || !selected || !/^[1-3]$/.test(event.key)) return;
@@ -123,7 +163,9 @@ document.addEventListener("keydown", (event) => {
 // Task states: answering a task's ask sets it working everywhere it shows.
 
 function setWorking(task: string) {
-  for (const icon of document.querySelectorAll<HTMLElement>(`[data-task-state="${task}"]`)) {
+  for (const icon of document.querySelectorAll<HTMLElement>(
+    `[data-task-state="${task}"]`
+  )) {
     icon.innerHTML = spinner(12);
     icon.className = "size-3.5 shrink-0 grid place-items-center text-blue";
     icon.title = "Working";
@@ -136,10 +178,16 @@ const win = document.querySelector<HTMLElement>("[data-window]");
 if (win) {
   const composer = win.querySelector<HTMLFormElement>("[data-composer]")!;
   const input = composer.querySelector("input")!;
-  let open = win.querySelector<HTMLElement>("[data-conversation]:not([hidden])")!.dataset.conversation!;
+  let open = win.querySelector<HTMLElement>(
+    "[data-conversation]:not([hidden])"
+  )!.dataset.conversation!;
 
-  const conversation = (id: string) => win.querySelector<HTMLElement>(`[data-conversation="${id}"]`)!;
-  const placeholder = (id: string) => (conversation(id).dataset.state === "working" ? "Steer it while it works" : "Reply");
+  const conversation = (id: string) =>
+    win.querySelector<HTMLElement>(`[data-conversation="${id}"]`)!;
+  const placeholder = (id: string) =>
+    conversation(id).dataset.state === "working"
+      ? "Steer it while it works"
+      : "Reply";
 
   const stop = composer.querySelector<HTMLButtonElement>("[data-stop]")!;
   const send = composer.querySelector<HTMLButtonElement>("[data-send]")!;
@@ -152,17 +200,24 @@ if (win) {
   input.addEventListener("input", buttons);
   stop.addEventListener("click", () => {
     conversation(open).dataset.state = "stopped";
-    append(open, `<div class="flex items-center gap-[7px] text-[12.5px] text-muted"><span>Stopped</span></div>`);
+    append(
+      open,
+      `<div class="flex items-center gap-[7px] text-[12.5px] text-muted"><span>Stopped</span></div>`
+    );
     input.placeholder = placeholder(open);
     buttons();
   });
 
   function show(id: string) {
     open = id;
-    for (const c of win!.querySelectorAll<HTMLElement>("[data-conversation]")) c.hidden = c.dataset.conversation !== id;
-    for (const row of win!.querySelectorAll<HTMLElement>("[data-open-task]")) row.setAttribute("aria-pressed", String(row.dataset.openTask === id));
+    for (const c of win!.querySelectorAll<HTMLElement>("[data-conversation]"))
+      c.hidden = c.dataset.conversation !== id;
+    for (const row of win!.querySelectorAll<HTMLElement>("[data-open-task]"))
+      row.setAttribute("aria-pressed", String(row.dataset.openTask === id));
     input.placeholder = placeholder(id);
-    win!.querySelector<HTMLElement>("[data-title]:not([data-conversation])")!.textContent = conversation(id).dataset.title!;
+    win!.querySelector<HTMLElement>(
+      "[data-title]:not([data-conversation])"
+    )!.textContent = conversation(id).dataset.title!;
     buttons();
     toEnd(id);
   }
@@ -177,19 +232,27 @@ if (win) {
     items.insertAdjacentHTML("beforeend", html);
     items.scrollTop = items.scrollHeight;
   }
-  const escape = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
-  const bubble = (text: string) => `<div class="self-end max-w-[78%] rounded-[18px] bg-knob text-on-knob px-3.5 py-3 text-pretty">${escape(text)}</div>`;
+  const escape = (s: string) =>
+    s.replace(
+      /[&<>"]/g,
+      (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!
+    );
+  const bubble = (text: string) =>
+    `<div class="self-end max-w-[78%] rounded-[18px] bg-knob text-on-knob px-3.5 py-3 text-pretty">${escape(text)}</div>`;
   const step = (text: string) =>
     `<div class="flex items-center gap-[7px] text-[12.5px] text-muted"><span class="text-blue">${spinner(11)}</span><span class="truncate">${escape(text)}</span></div>`;
 
-  for (const row of win.querySelectorAll<HTMLElement>("[data-open-task]")) row.addEventListener("click", () => show(row.dataset.openTask!));
+  for (const row of win.querySelectorAll<HTMLElement>("[data-open-task]"))
+    row.addEventListener("click", () => show(row.dataset.openTask!));
   // "Worked for …" opens to the steps it folds, and closes again.
   for (const group of win.querySelectorAll<HTMLElement>("[data-worked]")) {
     const toggle = group.querySelector("button")!;
     toggle.addEventListener("click", () => {
       const open = toggle.getAttribute("aria-expanded") !== "true";
       toggle.setAttribute("aria-expanded", String(open));
-      group.querySelector<HTMLElement>("div[hidden], div:not([data-worked])")!.hidden = !open;
+      group.querySelector<HTMLElement>(
+        "div[hidden], div:not([data-worked])"
+      )!.hidden = !open;
     });
   }
   input.placeholder = placeholder(open);
@@ -201,7 +264,14 @@ if (win) {
     const text = input.value.trim();
     if (!text) return;
     append(open, bubble(text));
-    append(open, step(conversation(open).dataset.state === "working" ? "Queued: the agent reads your message between steps" : "Working on it"));
+    append(
+      open,
+      step(
+        conversation(open).dataset.state === "working"
+          ? "Queued: the agent reads your message between steps"
+          : "Working on it"
+      )
+    );
     input.value = "";
     conversation(open).dataset.state = "working";
     input.placeholder = placeholder(open);
@@ -211,28 +281,43 @@ if (win) {
 
   // An answer reaches the task that asked, in its conversation.
   document.addEventListener("zero:answered", (event) => {
-    const { headline, text } = (event as CustomEvent<{ headline: string; text: string }>).detail;
+    const { headline, text } = (
+      event as CustomEvent<{ headline: string; text: string }>
+    ).detail;
     const card = asks.get(headline)?.cards[0];
     const task = card?.dataset.task;
     if (!task || !win.querySelector(`[data-conversation="${task}"]`)) return;
     append(task, bubble(text));
-    append(task, step(headline === "Open a pull request with the fix?" && text === "Yes" ? "Opening a pull request" : "Carrying on"));
+    append(
+      task,
+      step(
+        headline === "Open a pull request with the fix?" && text === "Yes"
+          ? "Opening a pull request"
+          : "Carrying on"
+      )
+    );
   });
 }
 
 // The control bar
 
 for (const bar of document.querySelectorAll<HTMLElement>("[data-bar]")) {
-  const controls = [...bar.querySelectorAll<HTMLButtonElement>("[data-peek-open]")];
+  const controls = [
+    ...bar.querySelectorAll<HTMLButtonElement>("[data-peek-open]"),
+  ];
   // Pointing at a control pins it, as a click does in the app: its view in the inbox beside the bar and, for a task's
   // mark, the mark grown, until you point at another. No clicks needed, and none do anything more.
   function pin(control: HTMLButtonElement) {
     const id = control.dataset.peekOpen!;
-    for (const peek of bar.querySelectorAll<HTMLElement>("[data-peek]")) peek.hidden = peek.dataset.peek !== id;
+    for (const peek of bar.querySelectorAll<HTMLElement>("[data-peek]"))
+      peek.hidden = peek.dataset.peek !== id;
     for (const c of controls) {
       const pinned = c === control;
       c.setAttribute("aria-pressed", String(pinned));
-      c.toggleAttribute("data-shown", pinned && c.hasAttribute("data-task-mark"));
+      c.toggleAttribute(
+        "data-shown",
+        pinned && c.hasAttribute("data-task-mark")
+      );
     }
   }
   for (const control of controls) {

@@ -7,55 +7,112 @@ import SearchSheet from "../components/SearchSheet.tsx";
 import { site } from "../lib/site";
 
 // `sidebar`: the page has the docs' 248 px sidebar, whose edge the panel's top carries on through while you scroll.
-interface Props { title: string; description: string; noindex?: boolean; sidebar?: boolean }
+interface Props {
+  title: string;
+  description: string;
+  noindex?: boolean;
+  sidebar?: boolean;
+}
 const { title, description, noindex = false, sidebar = false } = Astro.props;
 const path = Astro.url.pathname;
 // Canonical address: no trailing slash and no .html (a build sees the file's name), as people see it.
-const canonical = new URL(path.replace(/(\/index)?\.html$/, "").replace(/\/$/, "") || "/", site.url).href;
+const canonical = new URL(
+  path.replace(/(\/index)?\.html$/, "").replace(/\/$/, "") || "/",
+  site.url
+).href;
 const nav = [{ href: "/docs", label: "Docs" }];
 
 // The footer's columns: pages that exist now, no placeholders.
 const columns = [
-  { title: site.name, links: [{ href: "/", label: "Home" }, { href: "/docs", label: "Docs" }, { href: "/docs/getting-started", label: "Getting started" }, { href: site.repo, label: "GitHub" }, { href: `${site.repo}/blob/main/LICENSE`, label: "Licence: GPL v3" }] },
-  { title: "Docs", links: [{ href: "/docs/tasks-and-workers", label: "Tasks and workers" }, { href: "/docs/inbox-and-asks", label: "The inbox and asks" }, { href: "/docs/control-bar", label: "The control bar" }, { href: "/docs/settings", label: "Settings" }, { href: "/docs/troubleshooting", label: "Troubleshooting" }] },
-  { title: "For agents", links: [{ href: "/docs/cli", label: "The zero command" }, { href: "/docs.md", label: "All the docs as Markdown" }] },
+  {
+    title: site.name,
+    links: [
+      { href: "/", label: "Home" },
+      { href: "/docs", label: "Docs" },
+      { href: "/docs/getting-started", label: "Getting started" },
+      { href: site.repo, label: "GitHub" },
+      { href: `${site.repo}/blob/main/LICENSE`, label: "Licence: GPL v3" },
+    ],
+  },
+  {
+    title: "Docs",
+    links: [
+      { href: "/docs/tasks-and-workers", label: "Tasks and workers" },
+      { href: "/docs/inbox-and-asks", label: "The inbox and asks" },
+      { href: "/docs/control-bar", label: "The control bar" },
+      { href: "/docs/settings", label: "Settings" },
+      { href: "/docs/troubleshooting", label: "Troubleshooting" },
+    ],
+  },
+  {
+    title: "For agents",
+    links: [
+      { href: "/docs/cli", label: "The zero command" },
+      { href: "/docs.md", label: "All the docs as Markdown" },
+    ],
+  },
 ];
 // Phones fill two columns top to bottom, so the short groups go first and For agents lands under Zero; wider screens
 // put them back in order along the row.
 const phoneOrder = [columns[0], columns[2], columns[1]];
 const wideOrder = ["sm:order-1", "sm:order-2", "sm:order-3"];
 ---
+
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{title}</title>
-    <meta name="description" content={description} />
-    <meta name="color-scheme" content="light dark" />
-    <meta property="og:type" content="website" />
-    {noindex ? <meta name="robots" content="noindex" /> : <><link rel="canonical" href={canonical} /><meta property="og:url" content={canonical} /></>}
-    <meta property="og:site_name" content={site.name} />
-    <meta property="og:image" content={new URL("/og.png", site.url).href} />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content={`${site.name}: engineer with care.`} />
-    <meta property="og:title" content={title} />
-    <meta property="og:description" content={description} />
-    <meta name="twitter:card" content="summary_large_image" />
-    <link rel="sitemap" href="/sitemap.xml" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <meta name="theme-color" content="#ececec" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#121212" media="(prefers-color-scheme: dark)" />
+    <meta name="description" content={description}>
+    <meta name="color-scheme" content="light dark">
+    <meta property="og:type" content="website">
+    {noindex ? (
+      <meta name="robots" content="noindex" />
+    ) : (
+      <>
+        <link rel="canonical" href={canonical} />
+        <meta property="og:url" content={canonical} />
+      </>
+    )}
+    <meta property="og:site_name" content={site.name}>
+    <meta property="og:image" content={new URL("/og.png", site.url).href}>
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content={`${site.name}: engineer with care.`}>
+    <meta property="og:title" content={title}>
+    <meta property="og:description" content={description}>
+    <meta name="twitter:card" content="summary_large_image">
+    <link rel="sitemap" href="/sitemap.xml">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <meta
+      name="theme-color"
+      content="#ececec"
+      media="(prefers-color-scheme: light)"
+    >
+    <meta
+      name="theme-color"
+      content="#121212"
+      media="(prefers-color-scheme: dark)"
+    >
   </head>
   {/* As the app's window: its grey rail around one panel, the panel 4 px in from the edges. */}
   <body class="min-h-dvh bg-rail font-sans text-ink flex flex-col">
-    <a href="#content" class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-40 focus:h-9 focus:px-4 focus:flex focus:items-center focus:rounded-full focus:bg-knob focus:text-on-knob focus:text-[14px] focus:font-medium">Skip to content</a>
+    <a
+      href="#content"
+      class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-40 focus:h-9 focus:px-4 focus:flex focus:items-center focus:rounded-full focus:bg-knob focus:text-on-knob focus:text-[14px] focus:font-medium"
+      >Skip to content</a
+    >
     {/* The header stays on the rail as you scroll, the panel passing under it. Under it, the panel's own top (its
         rounded corners and border, on the rail's grey) stays too, so scrolled or not the panel starts round. At the
         top of the page it lies exactly over the panel's real top. */}
-    <header class="sticky top-0 z-30 h-12 shrink-0 flex items-center justify-between px-5 bg-rail">
-      <a href="/" class="flex items-center gap-2 text-[15px] font-semibold tracking-[-0.01em]">
+    <header
+      class="sticky top-0 z-30 h-12 shrink-0 flex items-center justify-between px-5 bg-rail"
+    >
+      <a
+        href="/"
+        class="flex items-center gap-2 text-[15px] font-semibold tracking-[-0.01em]"
+      >
         <Mark size={18} />
         {site.name}
       </a>
@@ -69,43 +126,75 @@ const wideOrder = ["sm:order-1", "sm:order-2", "sm:order-3"];
             href={item.href}
             class:list={[
               "h-9 sm:h-7 px-3 flex items-center rounded-[8px] font-medium hover:bg-hover transition-colors duration-150",
-              path.startsWith(item.href) ? "text-ink" : "text-muted hover:text-ink",
+              path.startsWith(item.href)
+                ? "text-ink"
+                : "text-muted hover:text-ink",
             ]}
-          >{item.label}</a>
+          >
+            {item.label}
+          </a>
         ))}
       </nav>
-      <div aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-full h-3">
+      <div
+        aria-hidden="true"
+        class="pointer-events-none absolute inset-x-0 top-full h-3"
+      >
         {/* The panel's own top, drawn and nothing more, so the text runs right up to it: the rail's grey outside its
             two 12 px corners, then its border and corners over them. */}
         <div class="panel-corner-left absolute left-1 top-0 size-3"></div>
         <div class="panel-corner-right absolute right-1 top-0 size-3"></div>
-        <div class="absolute inset-x-1 top-0 h-3 rounded-t-[12px] border border-b-0 border-stroke">
+        <div
+          class="absolute inset-x-1 top-0 h-3 rounded-t-[12px] border border-b-0 border-stroke"
+        >
           {/* The sidebar's edge, laid out as the sidebar's own: a 248 px box with a border on its right, so the two land on
               the same screen pixel at any zoom. */}
-          {sidebar && <div class="hidden md:block absolute inset-y-0 left-0 w-[248px] border-r border-stroke"></div>}
+          {sidebar && (
+            <div class="hidden md:block absolute inset-y-0 left-0 w-[248px] border-r border-stroke"></div>
+          )}
         </div>
       </div>
     </header>
     {/* overflow-clip, not hidden: it rounds the corners without becoming a scroller, so the docs' panes can stick. */}
-    <main id="content" class="flex-1 mx-1 rounded-[12px] border border-stroke bg-card overflow-clip">
+    <main
+      id="content"
+      class="flex-1 mx-1 rounded-[12px] border border-stroke bg-card overflow-clip"
+    >
       <slot />
     </main>
     {/* The footer sits on the rail, under the panel, as the app's window keeps its controls on its grey. */}
     <footer class="overflow-clip px-6 sm:px-10 pt-16 text-[13px]">
       {/* Phones: the name, then the groups in two columns that fill top to bottom, so For agents sits straight under
           Zero, not under the end of the taller Docs. Wider: one row, in the columns' own order. */}
-      <div class="mx-auto max-w-5xl sm:grid sm:gap-10 sm:grid-cols-[1.6fr_1fr_1fr_1fr]">
+      <div
+        class="mx-auto max-w-5xl sm:grid sm:gap-10 sm:grid-cols-[1.6fr_1fr_1fr_1fr]"
+      >
         <div class="mb-10 sm:mb-0">
-          <a href="/" class="inline-flex items-center gap-2 text-[15px] font-semibold tracking-[-0.01em]"><Mark size={18} />{site.name}</a>
+          <a
+            href="/"
+            class="inline-flex items-center gap-2 text-[15px] font-semibold tracking-[-0.01em]"
+            ><Mark size={18} />{site.name}</a
+          >
           <p class="mt-3 text-muted">Engineer with care.</p>
         </div>
         <div class="columns-2 gap-10 sm:contents">
           {phoneOrder.map((column) => (
-            <div class:list={["break-inside-avoid mb-10 sm:mb-0", wideOrder[columns.indexOf(column)]]}>
+            <div
+              class:list={[
+                "break-inside-avoid mb-10 sm:mb-0",
+                wideOrder[columns.indexOf(column)],
+              ]}
+            >
               <p class="text-muted">{column.title}</p>
               <ul class="mt-2 flex flex-col">
                 {column.links.map((link) => (
-                  <li><a href={link.href} class="inline-block py-1 text-ink/80 hover:text-ink transition-colors duration-150">{link.label}</a></li>
+                  <li>
+                    <a
+                      href={link.href}
+                      class="inline-block py-1 text-ink/80 hover:text-ink transition-colors duration-150"
+                    >
+                      {link.label}
+                    </a>
+                  </li>
                 ))}
               </ul>
             </div>
@@ -115,8 +204,14 @@ const wideOrder = ["sm:order-1", "sm:order-2", "sm:order-3"];
       {/* Zero's mark and name, large: the mark at the name's cap height, both on the baseline, together exactly the
           column's width (sized in container units), left edges flush with the column above. The page ends on the
           baseline: the part of the line box below it (0.1227 em, measured) is taken back. */}
-      <div aria-hidden="true" class="@container mx-auto max-w-5xl mt-16 select-none pointer-events-none">
-        <div data-fit class="flex items-baseline gap-[0.1em] text-[38.4cqw] leading-none font-semibold tracking-[-0.05em] text-ink/[0.08] -mb-[0.1227em]">
+      <div
+        aria-hidden="true"
+        class="@container mx-auto max-w-5xl mt-16 select-none pointer-events-none"
+      >
+        <div
+          data-fit
+          class="flex items-baseline gap-[0.1em] text-[38.4cqw] leading-none font-semibold tracking-[-0.05em] text-ink/[0.08] -mb-[0.1227em]"
+        >
           <Mark size={200} class="w-auto h-[0.727em] shrink-0" />
           <span>{site.name}</span>
         </div>
@@ -124,10 +219,17 @@ const wideOrder = ["sm:order-1", "sm:order-2", "sm:order-3"];
     </footer>
     <script>
       // Light to dark or back: the page switches in one frame, without every hover colour easing across on its own.
-      matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-        document.documentElement.classList.add("no-transitions");
-        requestAnimationFrame(() => requestAnimationFrame(() => document.documentElement.classList.remove("no-transitions")));
-      });
+      matchMedia("(prefers-color-scheme: dark)").addEventListener(
+        "change",
+        () => {
+          document.documentElement.classList.add("no-transitions");
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() =>
+              document.documentElement.classList.remove("no-transitions")
+            )
+          );
+        }
+      );
     </script>
-            </body>
+  </body>
 </html>

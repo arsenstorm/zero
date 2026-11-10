@@ -3,11 +3,29 @@
 // dithered backdrop (Dither.astro) with its planet where `planet` puts it.
 import Icon from "./Icon.astro";
 import Dither from "./Dither.astro";
-interface Props { class?: string; planet?: [number, number, number]; fade?: number }
+interface Props {
+  class?: string;
+  planet?: [number, number, number];
+  fade?: number;
+}
 const { class: className = "", planet, fade } = Astro.props;
 ---
-<div class:list={["relative overflow-hidden border bg-black border-white/10 text-white px-8 sm:px-12 py-16 sm:py-20 flex flex-col md:flex-row md:items-center justify-between gap-8", className]}>
+
+<div
+  class:list={[
+    "relative overflow-hidden border bg-black border-white/10 text-white px-8 sm:px-12 py-16 sm:py-20 flex flex-col md:flex-row md:items-center justify-between gap-8",
+    className,
+  ]}
+>
   <Dither mode="dark" planet={planet} fade={fade} />
-  <h2 class="relative text-[28px] sm:text-[32px] leading-[1.15] font-semibold tracking-[-0.025em]">Give your agents one place to reach you.</h2>
-  <a href="/docs/getting-started" class="relative self-start md:self-auto h-9 pl-4 pr-3.5 gap-1.5 flex items-center rounded-full bg-white text-black text-[14px] font-medium whitespace-nowrap transition-transform duration-150 active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100">Get started<Icon name="arrow-right" size={14} /></a>
+  <h2
+    class="relative text-[28px] sm:text-[32px] leading-[1.15] font-semibold tracking-[-0.025em]"
+  >
+    Give your agents one place to reach you.
+  </h2>
+  <a
+    href="/docs/getting-started"
+    class="relative self-start md:self-auto h-9 pl-4 pr-3.5 gap-1.5 flex items-center rounded-full bg-white text-black text-[14px] font-medium whitespace-nowrap transition-transform duration-150 active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
+    >Get started<Icon name="arrow-right" size={14} /></a
+  >
 </div>

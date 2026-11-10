@@ -9,7 +9,13 @@ import { heroAsk } from "../lib/demo";
 import Blueprint from "./Blueprint.astro";
 import claude from "../../../apps/macos/Resources/icons/claude.png";
 
-type State = "needsYou" | "working" | "handed" | "waiting" | "answered" | "done";
+type State =
+  | "needsYou"
+  | "working"
+  | "handed"
+  | "waiting"
+  | "answered"
+  | "done";
 type Step = { run: string; done?: boolean };
 type Item =
   | { user: string }
@@ -19,121 +25,312 @@ type Item =
   /** A turn's steps once it has ended, folded into one row, as the app folds them: "Worked for 2m 10s". */
   | { worked: string; steps: Step[] };
 /** `kind`: what the dock's strip calls it, as the app's (AskCards.swift): an approval, a command to run, a question. */
-type Ask = { kind?: "approve" | "run" | "question"; headline: string; byline?: string; supporting?: string; command?: string; options: string[] };
+type Ask = {
+  kind?: "approve" | "run" | "question";
+  headline: string;
+  byline?: string;
+  supporting?: string;
+  command?: string;
+  options: string[];
+};
 /** `ask`: the ask the task is waiting on, docked above the composer as the app docks it; the same ask as in the inbox. */
-type Task = { id: string; title: string; state: State; worker?: boolean; last?: boolean; items: Item[]; ask?: Ask };
-const leadTitle = (task: Task) => (task.worker ? "Fix the flaky login test" : task.title);
+type Task = {
+  id: string;
+  title: string;
+  state: State;
+  worker?: boolean;
+  last?: boolean;
+  items: Item[];
+  ask?: Ask;
+};
+const leadTitle = (task: Task) =>
+  task.worker ? "Fix the flaky login test" : task.title;
 
 const tasks: Task[] = [
-  { id: "notes", title: "Release notes for 2.4", state: "needsYou", items: [
-    { user: "Write the release notes for 2.4 from the pull requests merged since 2.3." },
-    { worked: "1m 52s", steps: [
-      { run: "gh pr list --state merged --base main --search \"merged:>2026-10-01\"", done: true },
-      { run: "gh pr view 482 --json title,body,labels", done: true },
-    ] },
-    { agent: "Here is a draft with 14 changes, in groups by area. I asked you if I can ship it as it is." },
-  ], ask: { kind: "approve", headline: "Ship the release notes as they are?", byline: "Release notes for 2.4", options: ["Yes", "No", "Suggest something else…"] } },
-  { id: "flaky", title: "Fix the flaky login test", state: "needsYou", items: [
-    { user: "The login test fails about one run in ten on CI. Find out why and fix it." },
-    { worked: "2m 40s", steps: [{ run: "npm test -- login.spec.ts --repeat 50", done: true }] },
-    { agent: "The test fails when the app writes the session cookie after the redirect starts. I started two workers. One worker reproduces the failure on CI. The other worker finds the change that caused it." },
-    { worked: "5m 12s", steps: [
-      { run: "git show --stat a41c9e2", done: true },
-      { run: "npm test -- login.spec.ts --repeat 50", done: true },
-    ] },
-    { agent: "The worker found the cause: the session refactor. I moved the cookie write before the redirect. Now the test passes 50 runs out of 50." },
-  ], ask: heroAsk },
-  { id: "ci", title: "Reproduce it on CI", state: "needsYou", worker: true, items: [
-    { note: "Started by Fix the flaky login test", state: "answered" },
-    { agent: "I must run the test against the CI image 50 times. I asked you to allow the command." },
-  ], ask: { kind: "run", headline: "Allow this command?", byline: "Fix the flaky login test · Reproduce it on CI", command: "docker run --rm ci-image npm test -- login.spec.ts --repeat 50", options: ["Run", "Reject", "Suggest something else…"] } },
-  { id: "bisect", title: "Find the change that broke it", state: "done", worker: true, last: true, items: [
-    { note: "Started by Fix the flaky login test", state: "answered" },
-    { worked: "6m 04s", steps: [
-      { run: "git log --oneline v2.3..HEAD -- src/session", done: true },
-      { run: "git bisect run npm test -- login.spec.ts --repeat 20", done: true },
-    ] },
-    { agent: "The session refactor caused the failure. The app now writes the cookie after the redirect starts. I told the lead task." },
-    { note: "Done", state: "done" },
-  ] },
-  { id: "sqlite", title: "Move settings to SQLite", state: "handed", items: [
-    { user: "Move the settings from the JSON file to SQLite, with a migration for existing installs." },
-    { worked: "14m 31s", steps: [
-      { run: "npm run migrate -- --dry-run", done: true },
-      { run: "npm test -- settings", done: true },
-    ] },
-    { agent: "I wrote the migration and tested it on a copy of the settings from production. The next step is yours. When you are ready, run it on staging." },
-    { note: "Over to you", state: "handed" },
-  ] },
-  { id: "parser", title: "Upgrade the Markdown parser", state: "waiting", items: [
-    { user: "Upgrade the Markdown parser to the new major version." },
-    { worked: "3m 18s", steps: [
-      { run: "npm install markdown-parser@latest", done: true },
-      { run: "npm test -- --update-snapshots", done: true },
-      { run: "gh pr create --fill", done: true },
-    ] },
-    { agent: "The upgrade is done, in a pull request. Two tests needed new snapshots. Nothing else changed. The pull request waits for a review." },
-    { note: "Waiting on a review", state: "waiting" },
-  ] },
-  { id: "onboarding", title: "Onboarding copy", state: "answered", items: [
-    { user: "Tighten the welcome screen’s copy." },
-    { worked: "48s", steps: [{ run: "git diff --stat", done: true }] },
-    { agent: "The copy is done. It is five lines shorter and has the same steps. The changes are in the welcome view." },
-  ] },
+  {
+    id: "notes",
+    title: "Release notes for 2.4",
+    state: "needsYou",
+    items: [
+      {
+        user: "Write the release notes for 2.4 from the pull requests merged since 2.3.",
+      },
+      {
+        worked: "1m 52s",
+        steps: [
+          {
+            run: 'gh pr list --state merged --base main --search "merged:>2026-10-01"',
+            done: true,
+          },
+          { run: "gh pr view 482 --json title,body,labels", done: true },
+        ],
+      },
+      {
+        agent:
+          "Here is a draft with 14 changes, in groups by area. I asked you if I can ship it as it is.",
+      },
+    ],
+    ask: {
+      kind: "approve",
+      headline: "Ship the release notes as they are?",
+      byline: "Release notes for 2.4",
+      options: ["Yes", "No", "Suggest something else…"],
+    },
+  },
+  {
+    id: "flaky",
+    title: "Fix the flaky login test",
+    state: "needsYou",
+    items: [
+      {
+        user: "The login test fails about one run in ten on CI. Find out why and fix it.",
+      },
+      {
+        worked: "2m 40s",
+        steps: [{ run: "npm test -- login.spec.ts --repeat 50", done: true }],
+      },
+      {
+        agent:
+          "The test fails when the app writes the session cookie after the redirect starts. I started two workers. One worker reproduces the failure on CI. The other worker finds the change that caused it.",
+      },
+      {
+        worked: "5m 12s",
+        steps: [
+          { run: "git show --stat a41c9e2", done: true },
+          { run: "npm test -- login.spec.ts --repeat 50", done: true },
+        ],
+      },
+      {
+        agent:
+          "The worker found the cause: the session refactor. I moved the cookie write before the redirect. Now the test passes 50 runs out of 50.",
+      },
+    ],
+    ask: heroAsk,
+  },
+  {
+    id: "ci",
+    title: "Reproduce it on CI",
+    state: "needsYou",
+    worker: true,
+    items: [
+      { note: "Started by Fix the flaky login test", state: "answered" },
+      {
+        agent:
+          "I must run the test against the CI image 50 times. I asked you to allow the command.",
+      },
+    ],
+    ask: {
+      kind: "run",
+      headline: "Allow this command?",
+      byline: "Fix the flaky login test · Reproduce it on CI",
+      command: "docker run --rm ci-image npm test -- login.spec.ts --repeat 50",
+      options: ["Run", "Reject", "Suggest something else…"],
+    },
+  },
+  {
+    id: "bisect",
+    title: "Find the change that broke it",
+    state: "done",
+    worker: true,
+    last: true,
+    items: [
+      { note: "Started by Fix the flaky login test", state: "answered" },
+      {
+        worked: "6m 04s",
+        steps: [
+          { run: "git log --oneline v2.3..HEAD -- src/session", done: true },
+          {
+            run: "git bisect run npm test -- login.spec.ts --repeat 20",
+            done: true,
+          },
+        ],
+      },
+      {
+        agent:
+          "The session refactor caused the failure. The app now writes the cookie after the redirect starts. I told the lead task.",
+      },
+      { note: "Done", state: "done" },
+    ],
+  },
+  {
+    id: "sqlite",
+    title: "Move settings to SQLite",
+    state: "handed",
+    items: [
+      {
+        user: "Move the settings from the JSON file to SQLite, with a migration for existing installs.",
+      },
+      {
+        worked: "14m 31s",
+        steps: [
+          { run: "npm run migrate -- --dry-run", done: true },
+          { run: "npm test -- settings", done: true },
+        ],
+      },
+      {
+        agent:
+          "I wrote the migration and tested it on a copy of the settings from production. The next step is yours. When you are ready, run it on staging.",
+      },
+      { note: "Over to you", state: "handed" },
+    ],
+  },
+  {
+    id: "parser",
+    title: "Upgrade the Markdown parser",
+    state: "waiting",
+    items: [
+      { user: "Upgrade the Markdown parser to the new major version." },
+      {
+        worked: "3m 18s",
+        steps: [
+          { run: "npm install markdown-parser@latest", done: true },
+          { run: "npm test -- --update-snapshots", done: true },
+          { run: "gh pr create --fill", done: true },
+        ],
+      },
+      {
+        agent:
+          "The upgrade is done, in a pull request. Two tests needed new snapshots. Nothing else changed. The pull request waits for a review.",
+      },
+      { note: "Waiting on a review", state: "waiting" },
+    ],
+  },
+  {
+    id: "onboarding",
+    title: "Onboarding copy",
+    state: "answered",
+    items: [
+      { user: "Tighten the welcome screen’s copy." },
+      { worked: "48s", steps: [{ run: "git diff --stat", done: true }] },
+      {
+        agent:
+          "The copy is done. It is five lines shorter and has the same steps. The changes are in the welcome view.",
+      },
+    ],
+  },
 ];
 const selected = "flaky";
 const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
 ---
-<div data-window aria-label="Zero's window: a demo you can use" role="region" class="relative mx-auto max-w-[1240px] rounded-[16px] bg-window border border-stroke shadow-[0_24px_60px_-20px_rgb(0_0_0/0.25)] flex h-[720px] overflow-hidden text-left">
+
+<div
+  data-window
+  aria-label="Zero's window: a demo you can use"
+  role="region"
+  class="relative mx-auto max-w-[1240px] rounded-[16px] bg-window border border-stroke shadow-[0_24px_60px_-20px_rgb(0_0_0/0.25)] flex h-[720px] overflow-hidden text-left"
+>
   {/* The title bar: back and forward, then a line and the task's name from where the page starts (TaskView.swift's
       TitleBar). A worker's page shows its lead's name. */}
-  <div class="absolute inset-x-0 top-0 h-[38px] flex items-center pl-4 pr-4 text-muted" aria-hidden="true">
+  <div
+    class="absolute inset-x-0 top-0 h-[38px] flex items-center pl-4 pr-4 text-muted"
+    aria-hidden="true"
+  >
     <span class="flex gap-2">
-      <span class="size-3.5 rounded-full bg-[#ff5f57]"></span><span class="size-3.5 rounded-full bg-[#febc2e]"></span><span class="size-3.5 rounded-full bg-[#28c840]"></span>
+      <span class="size-3.5 rounded-full bg-[#ff5f57]"></span
+      ><span class="size-3.5 rounded-full bg-[#febc2e]"></span
+      ><span class="size-3.5 rounded-full bg-[#28c840]"></span>
     </span>
     {/* Back and forward: not on phones, where the window has no room for them. */}
     <span class="ml-5 hidden md:flex gap-1.5">
-      <span class="size-6 grid place-items-center"><Icon name="arrow-left" size={15} /></span>
-      <span class="size-6 grid place-items-center opacity-50"><Icon name="arrow-right" size={15} /></span>
+      <span class="size-6 grid place-items-center"
+        ><Icon name="arrow-left" size={15} /></span
+      >
+      <span class="size-6 grid place-items-center opacity-50"
+        ><Icon name="arrow-right" size={15} /></span
+      >
     </span>
     {/* From where the page starts: the rail (48), the sidebar (248) and the panel's edge. */}
-    <span class="absolute left-[88px] md:left-[297px] right-4 flex items-center min-w-0">
+    <span
+      class="absolute left-[88px] md:left-[297px] right-4 flex items-center min-w-0"
+    >
       <span class="w-px h-4 bg-stroke mr-3"></span>
-      <span data-title class="text-[13px] font-medium text-ink truncate">{leadTitle(tasks.find((t) => t.id === selected)!)}</span>
+      <span data-title class="text-[13px] font-medium text-ink truncate"
+        >{leadTitle(tasks.find((t) => t.id === selected)!)}</span
+      >
     </span>
   </div>
-  <div aria-hidden="true" class="w-12 shrink-0 flex flex-col items-center pt-[50px] pb-3 gap-1 relative">
+  <div
+    aria-hidden="true"
+    class="w-12 shrink-0 flex flex-col items-center pt-[50px] pb-3 gap-1 relative"
+  >
     {rail.map((icon, i) => (
-      <span class:list={["size-8 grid place-items-center rounded-[8px]", i === 0 ? "bg-rail-selected text-ink" : "text-muted"]}><Icon name={icon} size={17} /></span>
+      <span
+        class:list={[
+          "size-8 grid place-items-center rounded-[8px]",
+          i === 0 ? "bg-rail-selected text-ink" : "text-muted",
+        ]}
+      >
+        <Icon name={icon} size={17} />
+      </span>
     ))}
     <span class="flex-1"></span>
-    <span class="size-8 grid place-items-center text-muted"><Icon name="gear" size={17} /></span>
+    <span class="size-8 grid place-items-center text-muted"
+      ><Icon name="gear" size={17} /></span
+    >
   </div>
-  <div class="flex-1 min-w-0 mt-[38px] mr-1 mb-1 rounded-[12px] border border-stroke bg-card flex overflow-hidden">
+  <div
+    class="flex-1 min-w-0 mt-[38px] mr-1 mb-1 rounded-[12px] border border-stroke bg-card flex overflow-hidden"
+  >
     {/* Sidebar */}
-    <div class="hidden md:flex w-[248px] shrink-0 border-r border-stroke bg-composer flex-col px-2 pt-3">
+    <div
+      class="hidden md:flex w-[248px] shrink-0 border-r border-stroke bg-composer flex-col px-2 pt-3"
+    >
       <Blueprint title="Zero" chevron class="-mx-2 -mt-3 -mb-1" />
-      <div class="h-[30px] flex items-center gap-[9px] px-2.5 rounded-[8px] text-[13px]" aria-hidden="true"><span class="w-[18px] grid place-items-center"><Icon name="compose" size={15} /></span>New task</div>
-      <div class="h-[30px] flex items-center gap-[9px] px-2.5 rounded-[8px] text-[13px]" aria-hidden="true"><span class="w-[18px] grid place-items-center"><Icon name="list-checkbox" size={15} /></span>All tasks</div>
-      <div class="h-8 mt-3 flex items-center justify-between" aria-hidden="true">
+      <div
+        class="h-[30px] flex items-center gap-[9px] px-2.5 rounded-[8px] text-[13px]"
+        aria-hidden="true"
+      >
+        <span class="w-[18px] grid place-items-center"
+          ><Icon name="compose" size={15} /></span
+        >New task
+      </div>
+      <div
+        class="h-[30px] flex items-center gap-[9px] px-2.5 rounded-[8px] text-[13px]"
+        aria-hidden="true"
+      >
+        <span class="w-[18px] grid place-items-center"
+          ><Icon name="list-checkbox" size={15} /></span
+        >All tasks
+      </div>
+      <div
+        class="h-8 mt-3 flex items-center justify-between"
+        aria-hidden="true"
+      >
         <span class="pl-2.5 text-[13px] text-muted">Tasks</span>
-        <span class="size-6 grid place-items-center text-muted"><Icon name="sliders" size={13} /></span>
+        <span class="size-6 grid place-items-center text-muted"
+          ><Icon name="sliders" size={13} /></span
+        >
       </div>
       {tasks.map((task) => (
         <button
           type="button"
           data-open-task={task.id}
           aria-pressed={String(task.id === selected)}
-          class:list={["task-row h-[30px] flex items-center gap-1.5 pr-2.5 rounded-[8px] text-[13px] text-left", task.worker ? "pl-0" : "pl-2.5"]}
+          class:list={[
+            "task-row h-[30px] flex items-center gap-1.5 pr-2.5 rounded-[8px] text-[13px] text-left",
+            task.worker ? "pl-0" : "pl-2.5",
+          ]}
         >
           {task.worker && (
             <span class="w-[34px] h-full relative shrink-0" aria-hidden="true">
-              <span class:list={["absolute left-[11.5px] top-0 w-px bg-faint", task.last ? "h-1/2" : "h-full"]}></span>
+              <span
+                class:list={[
+                  "absolute left-[11.5px] top-0 w-px bg-faint",
+                  task.last ? "h-1/2" : "h-full",
+                ]}
+              ></span>
               <span class="absolute left-[12.5px] top-1/2 h-px w-[18px] bg-faint"></span>
             </span>
           )}
           <span class="flex-1 truncate">{task.title}</span>
-          {task.id === "flaky" && <span class="w-4 grid place-items-center text-muted" aria-hidden="true"><Icon name="chevron-down" size={9} /></span>}
+          {task.id === "flaky" && (
+            <span
+              class="w-4 grid place-items-center text-muted"
+              aria-hidden="true"
+            >
+              <Icon name="chevron-down" size={9} />
+            </span>
+          )}
           <TaskState state={task.state} task={task.id} />
         </button>
       ))}
@@ -141,38 +338,68 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
     {/* The open task's conversation */}
     <div class="flex-1 min-w-0 flex flex-col">
       {tasks.map((task) => (
-        <div data-conversation={task.id} data-state={task.state} data-title={leadTitle(task)} hidden={task.id !== selected} class="contents">
-          <div data-items class="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable_both-edges] px-4 sm:px-9 pt-6 pb-2 flex flex-col gap-4 text-[13px] leading-[1.5]">
+        <div
+          data-conversation={task.id}
+          data-state={task.state}
+          data-title={leadTitle(task)}
+          hidden={task.id !== selected}
+          class="contents"
+        >
+          <div
+            data-items
+            class="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable_both-edges] px-4 sm:px-9 pt-6 pb-2 flex flex-col gap-4 text-[13px] leading-[1.5]"
+          >
             {task.items.map((item) =>
               "user" in item ? (
-                <div class="self-end max-w-[78%] rounded-[18px] bg-knob text-on-knob px-3.5 py-3 text-pretty">{item.user}</div>
+                <div class="self-end max-w-[78%] rounded-[18px] bg-knob text-on-knob px-3.5 py-3 text-pretty">
+                  {item.user}
+                </div>
               ) : "agent" in item ? (
                 <p class="max-w-[60ch]">{item.agent}</p>
               ) : "worked" in item ? (
                 <div data-worked class="flex flex-col gap-2">
-                  <button type="button" aria-expanded="false" class="self-start flex items-center gap-[7px] text-[12.5px] text-muted hover:text-ink transition-colors duration-150">
-                    <span class="worked-chevron grid place-items-center"><Icon name="chevron-right" size={10} /></span>Worked for {item.worked}
+                  <button
+                    type="button"
+                    aria-expanded="false"
+                    class="self-start flex items-center gap-[7px] text-[12.5px] text-muted hover:text-ink transition-colors duration-150"
+                  >
+                    <span class="worked-chevron grid place-items-center">
+                      <Icon name="chevron-right" size={10} />
+                    </span>
+                    Worked for {item.worked}
                   </button>
                   <div hidden class="flex flex-col gap-2 pl-[17px]">
                     {item.steps.map((step) => (
                       <div class="flex items-center gap-[7px] text-[12.5px] text-muted min-w-0">
                         <Icon name="circle-check" fill="glyph" size={12} />
-                        <span class="font-mono text-[12px] truncate">$ {step.run}</span>
+                        <span class="font-mono text-[12px] truncate">
+                          $ {step.run}
+                        </span>
                       </div>
                     ))}
                   </div>
                 </div>
               ) : "run" in item ? (
                 <div class="flex items-center gap-[7px] text-[12.5px] text-muted min-w-0">
-                  {item.done ? <Icon name="circle-check" fill="glyph" size={12} /> : <Spinner size={11} class="text-blue shrink-0" />}
-                  <span class="font-mono text-[12px] truncate">$ {item.run}</span>
+                  {item.done ? (
+                    <Icon name="circle-check" fill="glyph" size={12} />
+                  ) : (
+                    <Spinner size={11} class="text-blue shrink-0" />
+                  )}
+                  <span class="font-mono text-[12px] truncate">
+                    $ {item.run}
+                  </span>
                 </div>
               ) : (
                 <div class="flex items-center gap-[7px] text-[12.5px] text-muted">
-                  {item.state === "working" ? <Spinner size={11} class="text-blue" /> : <TaskState state={item.state ?? "answered"} />}
+                  {item.state === "working" ? (
+                    <Spinner size={11} class="text-blue" />
+                  ) : (
+                    <TaskState state={item.state ?? "answered"} />
+                  )}
                   <span class="truncate">{item.note}</span>
                 </div>
-              ),
+              )
             )}
           </div>
           {task.ask && (
@@ -181,11 +408,25 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
             <div data-docked class="relative px-4 sm:px-10 pt-2 -mb-[22px]">
               <div class="rounded-t-[18px] bg-field-tab px-0.5">
                 <div class="flex items-center gap-1.5 px-3.5 py-[7px] text-[12px] font-medium tracking-[-0.2px] text-muted">
-                  {task.ask.kind === "run" ? <Icon name="terminal" size={13} /> : <Icon name="circle-question" fill="glyph" size={13} />}
-                  {task.ask.kind === "run" ? "Run on your Mac" : task.ask.kind === "approve" ? "Approval" : "Question"}
+                  {task.ask.kind === "run" ? (
+                    <Icon name="terminal" size={13} />
+                  ) : (
+                    <Icon name="circle-question" fill="glyph" size={13} />
+                  )}
+                  {task.ask.kind === "run"
+                    ? "Run on your Mac"
+                    : task.ask.kind === "approve"
+                      ? "Approval"
+                      : "Question"}
                 </div>
                 <div class="rounded-t-[16px] bg-composer pt-0.5 pb-[14px]">
-                  <AskCard interactive docked task={task.id} {...task.ask} supporting={undefined} />
+                  <AskCard
+                    interactive
+                    docked
+                    task={task.id}
+                    {...task.ask}
+                    supporting={undefined}
+                  />
                 </div>
               </div>
             </div>
@@ -196,19 +437,65 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
           below them +, the agent's chip (its mark, model and effort), the permissions chip, then Stop while the task
           works or Send, grey until there's something to send. */}
       <form data-composer class="px-4 sm:px-10 pt-2 pb-4 sm:pb-6">
-        <div class="relative rounded-[26px] border border-field-edge bg-field p-[14px] shadow-[0_5px_14px_rgb(0_0_0/0.06),0_1px_1.5px_rgb(0_0_0/0.03)]">
-          <input type="text" aria-label="Message to the task" placeholder="Steer it while it works" autocomplete="off" class="w-full h-5 bg-transparent text-[16px] sm:text-[13px] outline-none placeholder:text-faint" />
+        <div
+          class="relative rounded-[26px] border border-field-edge bg-field p-[14px] shadow-[0_5px_14px_rgb(0_0_0/0.06),0_1px_1.5px_rgb(0_0_0/0.03)]"
+        >
+          <input
+            type="text"
+            aria-label="Message to the task"
+            placeholder="Steer it while it works"
+            autocomplete="off"
+            class="w-full h-5 bg-transparent text-[16px] sm:text-[13px] outline-none placeholder:text-faint"
+          >
           <div class="mt-3 flex items-center gap-1.5">
-            <span aria-hidden="true" class="size-7 grid place-items-center rounded-full"><Icon name="plus" size={15} /></span>
-            <span aria-hidden="true" class="h-7 px-2 flex items-center gap-[5px] rounded-full text-[13px] whitespace-nowrap">
-              <img src={claude.src} width="14" height="14" alt="" class="rounded-[3px]" />Opus 5.5 · High<span class="text-muted"><Icon name="chevron-down" size={10} /></span>
+            <span
+              aria-hidden="true"
+              class="size-7 grid place-items-center rounded-full"
+              ><Icon name="plus" size={15} /></span
+            >
+            <span
+              aria-hidden="true"
+              class="h-7 px-2 flex items-center gap-[5px] rounded-full text-[13px] whitespace-nowrap"
+            >
+              <img
+                src={claude.src}
+                width="14"
+                height="14"
+                alt=""
+                class="rounded-[3px]"
+              >Opus 5.5 · High<span class="text-muted"
+                ><Icon name="chevron-down" size={10} /></span
+              >
             </span>
-            <span aria-hidden="true" class="hidden sm:flex h-7 px-2 items-center gap-[5px] rounded-full text-[13px] text-muted whitespace-nowrap">
-              <Icon name="wand-sparkle" size={13} />Auto<Icon name="chevron-down" size={10} />
+            <span
+              aria-hidden="true"
+              class="hidden sm:flex h-7 px-2 items-center gap-[5px] rounded-full text-[13px] text-muted whitespace-nowrap"
+            >
+              <Icon name="wand-sparkle" size={13} />Auto<Icon
+                name="chevron-down"
+                size={10}
+              />
             </span>
             <span class="flex-1"></span>
-            <button type="button" data-stop aria-label="Stop" class="size-7 shrink-0 grid place-items-center rounded-full bg-knob text-on-knob"><Icon name="media-stop" fill="glyph" size={12} /></button>
-            <button type="submit" data-send aria-label="Send" hidden class="size-7 shrink-0 grid place-items-center rounded-full bg-send-idle text-white data-[ready]:bg-knob data-[ready]:text-on-knob"><span class="-translate-x-[0.5px] translate-y-[0.5px]"><Icon name="paper-plane" fill="glyph" size={13} /></span></button>
+            <button
+              type="button"
+              data-stop
+              aria-label="Stop"
+              class="size-7 shrink-0 grid place-items-center rounded-full bg-knob text-on-knob"
+            >
+              <Icon name="media-stop" fill="glyph" size={12} />
+            </button>
+            <button
+              type="submit"
+              data-send
+              aria-label="Send"
+              hidden
+              class="size-7 shrink-0 grid place-items-center rounded-full bg-send-idle text-white data-[ready]:bg-knob data-[ready]:text-on-knob"
+            >
+              <span class="-translate-x-[0.5px] translate-y-[0.5px]"
+                ><Icon name="paper-plane" fill="glyph" size={13} /></span
+              >
+            </button>
           </div>
         </div>
       </form>

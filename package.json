@@ -1,0 +1,14 @@
+{
+  "name": "zero-tooling",
+  "private": true,
+  "description": "Formatting and lint for Zero's JavaScript: the site, the relay and the Chrome extension (biome.jsonc)",
+  "scripts": {
+    "format": "biome format --write",
+    "format:check": "biome format",
+    "lint": "ultracite check"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.6",
+    "ultracite": "8.1.1"
+  }
+}

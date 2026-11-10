@@ -2,13 +2,33 @@
 import Base from "../layouts/Base.astro";
 import { site } from "../lib/site";
 ---
-<Base title={`Page not found · ${site.name}`} description="There's no page at this address." noindex>
+
+<Base
+  title={`Page not found · ${site.name}`}
+  description="There's no page at this address."
+  noindex
+>
   <section class="px-6 py-28 flex flex-col items-center text-center">
-    <h1 class="text-[32px] leading-[1.1] font-semibold tracking-[-0.02em]">There’s no page here</h1>
-    <p class="mt-4 max-w-[28rem] text-[16px] leading-[1.55] text-muted">The address may be mistyped, or the page has moved. Search the docs, or start from their first page.</p>
+    <h1 class="text-[32px] leading-[1.1] font-semibold tracking-[-0.02em]">
+      There’s no page here
+    </h1>
+    <p class="mt-4 max-w-[28rem] text-[16px] leading-[1.55] text-muted">
+      The address may be mistyped, or the page has moved. Search the docs, or
+      start from their first page.
+    </p>
     <div class="mt-8 flex flex-wrap justify-center items-center gap-3">
-      <a href="/docs" class="h-9 px-4 flex items-center rounded-full bg-knob text-on-knob text-[14px] font-medium whitespace-nowrap transition-transform duration-150 active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100">Go to the docs</a>
-      <button type="button" data-search-open class="h-9 px-4 flex items-center rounded-full bg-row text-[14px] font-medium whitespace-nowrap">Search the docs</button>
+      <a
+        href="/docs"
+        class="h-9 px-4 flex items-center rounded-full bg-knob text-on-knob text-[14px] font-medium whitespace-nowrap transition-transform duration-150 active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
+        >Go to the docs</a
+      >
+      <button
+        type="button"
+        data-search-open
+        class="h-9 px-4 flex items-center rounded-full bg-row text-[14px] font-medium whitespace-nowrap"
+      >
+        Search the docs
+      </button>
     </div>
   </section>
 </Base>

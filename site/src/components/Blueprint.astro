@@ -4,26 +4,62 @@
 // fading into the sidebar over its lower third. 96 px tall, its drawing laid out for a 248 px sidebar.
 import Icon from "./Icon.astro";
 import Mark from "./Mark.astro";
-interface Props { title: string; icon?: string; chevron?: boolean; class?: string }
+interface Props {
+  title: string;
+  icon?: string;
+  chevron?: boolean;
+  class?: string;
+}
 const { title, icon, chevron = false, class: className = "" } = Astro.props;
 const grid = `blueprint-grid-${Math.random().toString(36).slice(2, 8)}`;
 ---
-<div aria-hidden="true" class:list={["blueprint relative h-[96px] shrink-0 overflow-hidden", className]}>
+
+<div
+  aria-hidden="true"
+  class:list={[
+    "blueprint relative h-[96px] shrink-0 overflow-hidden",
+    className,
+  ]}
+>
   <div class="absolute inset-0 bg-blueprint"></div>
-  <svg width="248" height="96" viewBox="0 0 248 96" class="absolute inset-0 text-on-blueprint">
-    <defs><pattern id={grid} width="12" height="12" patternUnits="userSpaceOnUse"><path d="M12 0V12M0 12H12" fill="none" stroke="currentColor" stroke-width="0.5" /></pattern></defs>
+  <svg
+    width="248"
+    height="96"
+    viewBox="0 0 248 96"
+    class="absolute inset-0 text-on-blueprint"
+  >
+    <defs>
+      <pattern id={grid} width="12" height="12" patternUnits="userSpaceOnUse">
+        <path
+          d="M12 0V12M0 12H12"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="0.5"
+        />
+      </pattern>
+    </defs>
     <rect width="248" height="96" fill={`url(#${grid})`} opacity="0.07" />
     <g fill="none" stroke="currentColor" stroke-width="0.8" opacity="0.35">
       <circle cx="178" cy="46" r="18" stroke-dasharray="3 3" />
       <path d="M171 46H185M178 39V53" />
       <rect x="182" y="76" width="50" height="20" stroke-dasharray="3 3" />
       <path d="M232 14V70M228 14H236M228 70H236" />
-      <path d="M125 30H131M128 27V33M107 18H113M110 15V21M147 64H153M150 61V67" />
+      <path
+        d="M125 30H131M128 27V33M107 18H113M110 15V21M147 64H153M150 61V67"
+      />
     </g>
   </svg>
-  <div class="absolute left-5 top-[17px] h-[22px] flex items-center gap-[5px] text-on-blueprint">
-    <span class="w-[18px] mr-1 grid place-items-center">{icon ? <Icon name={icon} size={18} /> : <Mark size={18} />}</span>
+  <div
+    class="absolute left-5 top-[17px] h-[22px] flex items-center gap-[5px] text-on-blueprint"
+  >
+    <span class="w-[18px] mr-1 grid place-items-center"
+      >{icon ? <Icon name={icon} size={18} /> : <Mark size={18} />}</span
+    >
     <span class="text-[17px] font-semibold tracking-[-0.01em]">{title}</span>
-    {chevron && <span class="opacity-55"><Icon name="chevron-down" size={11} /></span>}
+    {chevron && (
+      <span class="opacity-55">
+        <Icon name="chevron-down" size={11} />
+      </span>
+    )}
   </div>
 </div>

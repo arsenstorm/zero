@@ -3,7 +3,8 @@ export const heroAsk = {
   kind: "approve" as const,
   headline: "Open a pull request with the fix?",
   byline: "Fix the flaky login test",
-  supporting: "With the cookie write before the redirect, the test passes 50 runs out of 50.",
+  supporting:
+    "With the cookie write before the redirect, the test passes 50 runs out of 50.",
   options: ["Yes", "No", "Suggest something else…"],
 };
 
@@ -13,7 +14,8 @@ export const inboxAsks = [
     agent: "Claude Code",
     task: "Add rate limits to the API",
     headline: "Limit each account, not each key?",
-    supporting: "One account can hold many keys, so a limit per key lets it go past the limit.",
+    supporting:
+      "One account can hold many keys, so a limit per key lets it go past the limit.",
     options: ["Yes", "No", "Suggest something else…"],
   },
   {
@@ -47,7 +49,8 @@ export const inboxAsks = [
     agent: "OpenCode",
     task: "Speed up the search index",
     headline: "Rebuild the index tonight?",
-    supporting: "It takes about 20 minutes, and search is slower while it runs.",
+    supporting:
+      "It takes about 20 minutes, and search is slower while it runs.",
     options: ["Yes", "No", "Suggest something else…"],
   },
 ];

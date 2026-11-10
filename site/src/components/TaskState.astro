@@ -13,9 +13,21 @@ const states = {
   done: { icon: "badge-check", color: "text-purple", name: "Done" },
 } as const;
 
-interface Props { state: keyof typeof states; /** The demo task it belongs to, so answering that task's ask can set it working. */ task?: string }
+interface Props {
+  state: keyof typeof states /** The demo task it belongs to, so answering that task's ask can set it working. */;
+  task?: string;
+}
 const look = states[Astro.props.state];
 ---
-<span data-task-state={Astro.props.task} class:list={["size-3.5 shrink-0 grid place-items-center", look.color]} title={look.name}>
-  {look.icon ? <Icon name={look.icon} fill="glyph" size={14} /> : <Spinner size={12} />}
+
+<span
+  data-task-state={Astro.props.task}
+  class:list={["size-3.5 shrink-0 grid place-items-center", look.color]}
+  title={look.name}
+>
+  {look.icon ? (
+    <Icon name={look.icon} fill="glyph" size={14} />
+  ) : (
+    <Spinner size={12} />
+  )}
 </span>

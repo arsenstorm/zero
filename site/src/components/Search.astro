@@ -4,38 +4,88 @@
 // (Ctrl K elsewhere) puts the cursor in whichever shows. The search itself is src/lib/search.ts.
 import Icon from "./Icon.astro";
 ---
+
 {/* z-20 on the box itself: centred by a transform, it's a layer of its own, so its results' z-index alone stayed
     under the panel top's fade. Centred on the window: placed by its own centre, so the name and links either side
     don't push it. Open, the box grows down into one surface with its results, over the page and not pushing it. Its
     corners stay the pill's 16 px open or closed; the rows inside are 10 px, 6 px in: 10 + 6 = 16. */}
-<div data-search data-search-surface-root class="hidden sm:block absolute z-20 left-1/2 -translate-x-1/2 w-[min(420px,calc(100%-180px))] h-8">
-  <div data-search-surface class="absolute inset-x-0 top-0 z-20 rounded-[16px] border border-stroke bg-card focus-within:border-hairline data-[open]:shadow-[0_16px_40px_-12px_rgb(0_0_0/0.25)]">
-    <label class="h-[30px] pl-3 pr-1.5 flex items-center gap-2 text-[13px] text-muted">
+<div
+  data-search
+  data-search-surface-root
+  class="hidden sm:block absolute z-20 left-1/2 -translate-x-1/2 w-[min(420px,calc(100%-180px))] h-8"
+>
+  <div
+    data-search-surface
+    class="absolute inset-x-0 top-0 z-20 rounded-[16px] border border-stroke bg-card focus-within:border-hairline data-[open]:shadow-[0_16px_40px_-12px_rgb(0_0_0/0.25)]"
+  >
+    <label
+      class="h-[30px] pl-3 pr-1.5 flex items-center gap-2 text-[13px] text-muted"
+    >
       <Icon name="magnifier" size={14} />
-      <input data-search-input type="text" role="combobox" aria-label="Search the docs" aria-autocomplete="list" aria-expanded="false" aria-controls="search-results" enterkeyhint="search" placeholder="Search docs" autocomplete="off" spellcheck="false" class="flex-1 min-w-0 h-full bg-transparent text-[13px] pointer-coarse:text-[16px] text-ink outline-none placeholder:text-muted" />
+      <input
+        data-search-input
+        type="text"
+        role="combobox"
+        aria-label="Search the docs"
+        aria-autocomplete="list"
+        aria-expanded="false"
+        aria-controls="search-results"
+        enterkeyhint="search"
+        placeholder="Search docs"
+        autocomplete="off"
+        spellcheck="false"
+        class="flex-1 min-w-0 h-full bg-transparent text-[13px] pointer-coarse:text-[16px] text-ink outline-none placeholder:text-muted"
+      >
       {/* 20 px pill, 5 px in from the 30 px field: the pill's 10 + 5 = the field's 15. */}
-      <kbd data-search-key class="h-5 px-2 grid place-items-center rounded-full bg-keycap text-[11px] font-medium font-sans text-muted">⌘K</kbd>
+      <kbd
+        data-search-key
+        class="h-5 px-2 grid place-items-center rounded-full bg-keycap text-[11px] font-medium font-sans text-muted"
+        >⌘K</kbd
+      >
     </label>
     <div data-search-popover hidden class="border-t border-stroke">
-      <ul id="search-results" data-search-results role="listbox" aria-label="Results" class="max-h-[min(420px,60vh)] overflow-y-auto p-1.5 empty:hidden"></ul>
-      <p data-search-empty class="h-[72px] grid place-items-center px-4 text-center text-[13px] text-muted">Type to search every page of the docs.</p>
+      <ul
+        id="search-results"
+        data-search-results
+        role="listbox"
+        aria-label="Results"
+        class="max-h-[min(420px,60vh)] overflow-y-auto p-1.5 empty:hidden"
+      ></ul>
+      <p
+        data-search-empty
+        class="h-[72px] grid place-items-center px-4 text-center text-[13px] text-muted"
+      >
+        Type to search every page of the docs.
+      </p>
       <p data-search-status class="sr-only" aria-live="polite"></p>
     </div>
   </div>
 </div>
 
-
 <script>
-  import { emptyText, highlight, load, search, snippet, words, type Section } from "../lib/search";
+  import {
+    emptyText,
+    highlight,
+    load,
+    search,
+    snippet,
+    words,
+    type Section,
+  } from "../lib/search";
 
   const pill = document.querySelector<HTMLElement>("[data-search]")!;
   const surface = pill.querySelector<HTMLElement>("[data-search-surface]")!;
   const popover = pill.querySelector<HTMLElement>("[data-search-popover]")!;
   const input = pill.querySelector<HTMLInputElement>("[data-search-input]")!;
   const list = pill.querySelector<HTMLUListElement>("[data-search-results]")!;
-  const empty = pill.querySelector<HTMLParagraphElement>("[data-search-empty]")!;
-  const status = pill.querySelector<HTMLParagraphElement>("[data-search-status]")!;
-  if (!/Mac|iPhone|iPad/.test(navigator.platform)) pill.querySelector("[data-search-key]")!.textContent = "Ctrl K";
+  const empty = pill.querySelector<HTMLParagraphElement>(
+    "[data-search-empty]"
+  )!;
+  const status = pill.querySelector<HTMLParagraphElement>(
+    "[data-search-status]"
+  )!;
+  if (!/Mac|iPhone|iPad/.test(navigator.platform))
+    pill.querySelector("[data-search-key]")!.textContent = "Ctrl K";
   let results: Section[] = [];
   let active = 0;
 
@@ -44,13 +94,20 @@ import Icon from "./Icon.astro";
     results = search(input.value);
     empty.hidden = results.length > 0;
     empty.textContent = emptyText(input.value);
-    status.textContent = ws.length ? `${results.length} ${results.length === 1 ? "result" : "results"}` : "";
+    status.textContent = ws.length
+      ? `${results.length} ${results.length === 1 ? "result" : "results"}`
+      : "";
     list.innerHTML = results
-      .map((r, i) => `<li role="option" id="search-results-${i}" aria-selected="false">
+      .map(
+        (
+          r,
+          i
+        ) => `<li role="option" id="search-results-${i}" aria-selected="false">
         <a href="${r.href}" tabindex="-1" class="block rounded-[10px] px-3 py-2">
           <span class="block text-[13px] text-muted">${highlight(r.page, [])}${r.heading ? " › " : ""}<span class="text-ink font-medium">${highlight(r.heading, ws)}</span></span>
           <span class="mt-0.5 text-[13px] leading-[1.45] text-muted line-clamp-2">${highlight(snippet(r.text, ws), ws)}</span>
-        </a></li>`)
+        </a></li>`
+      )
       .join("");
     select(0);
   }
@@ -59,7 +116,9 @@ import Icon from "./Icon.astro";
     const items = [...list.querySelectorAll("li")];
     if (!items.length) return input.removeAttribute("aria-activedescendant");
     active = (i + items.length) % items.length;
-    items.forEach((li, n) => li.setAttribute("aria-selected", String(n === active)));
+    items.forEach((li, n) =>
+      li.setAttribute("aria-selected", String(n === active))
+    );
     input.setAttribute("aria-activedescendant", `search-results-${active}`);
     items[active].scrollIntoView({ block: "nearest" });
   }
@@ -75,29 +134,62 @@ import Icon from "./Icon.astro";
     input.setAttribute("aria-expanded", "false");
   }
 
-  input.addEventListener("focus", async () => { open(); await load(); render(); });
-  input.addEventListener("input", async () => { open(); await load(); render(); });
+  input.addEventListener("focus", async () => {
+    open();
+    await load();
+    render();
+  });
+  input.addEventListener("input", async () => {
+    open();
+    await load();
+    render();
+  });
   input.addEventListener("keydown", (e) => {
-    if (e.key === "ArrowDown") { e.preventDefault(); select(active + 1); }
-    if (e.key === "ArrowUp") { e.preventDefault(); select(active - 1); }
-    if (e.key === "Enter" && results[active]) { e.preventDefault(); location.href = results[active].href; close(); }
-    if (e.key === "Escape") { e.preventDefault(); close(); input.blur(); }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      select(active + 1);
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      select(active - 1);
+    }
+    if (e.key === "Enter" && results[active]) {
+      e.preventDefault();
+      location.href = results[active].href;
+      close();
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      close();
+      input.blur();
+    }
   });
   list.addEventListener("mousemove", (e) => {
     const li = (e.target as Element).closest("li");
     if (li) select([...list.children].indexOf(li));
   });
   // A press anywhere outside closes it; focus leaving it (Tab) does too.
-  document.addEventListener("pointerdown", (e) => { if (!pill.contains(e.target as Node)) close(); });
-  pill.addEventListener("focusout", (e) => { if (!pill.contains(e.relatedTarget as Node)) close(); });
+  document.addEventListener("pointerdown", (e) => {
+    if (!pill.contains(e.target as Node)) close();
+  });
+  pill.addEventListener("focusout", (e) => {
+    if (!pill.contains(e.relatedTarget as Node)) close();
+  });
 
   // ⌘K, and the 404's Search the docs: the pill where it shows, the phone's sheet where it doesn't.
   function focusSearch() {
-    if (getComputedStyle(pill).display !== "none") { input.focus(); input.select(); }
-    else document.dispatchEvent(new Event("zero:search-sheet"));
+    if (getComputedStyle(pill).display !== "none") {
+      input.focus();
+      input.select();
+    } else document.dispatchEvent(new Event("zero:search-sheet"));
   }
   document.addEventListener("keydown", (e) => {
-    if (e.key === "k" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); focusSearch(); }
+    if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      focusSearch();
+    }
   });
-  document.querySelectorAll("[data-search-open]").forEach((b) => b.addEventListener("click", focusSearch));
+  document
+    .querySelectorAll("[data-search-open]")
+    .forEach((b) => b.addEventListener("click", focusSearch));
 </script>

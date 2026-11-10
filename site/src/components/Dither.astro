@@ -9,10 +9,27 @@
 // `planet`: where it is: its centre across as a share of the width, then down and its radius in the scene's units (the
 // height). The app's new task page has it at 1.55 across (in heights), 2.45 down, radius 2.
 // `fade`: how much it dims toward its foot: the app's 0.6 (its composer sits there); none for a horizon at the bottom.
-interface Props { mode?: "dark" | "auto"; class?: string; planet?: [number, number, number]; fade?: number }
-const { mode = "auto", class: className = "", planet, fade = 0.6 } = Astro.props;
+interface Props {
+  mode?: "dark" | "auto";
+  class?: string;
+  planet?: [number, number, number];
+  fade?: number;
+}
+const {
+  mode = "auto",
+  class: className = "",
+  planet,
+  fade = 0.6,
+} = Astro.props;
 ---
-<canvas data-dither={mode} data-planet={planet?.join(",")} data-fade={fade} aria-hidden="true" class:list={["absolute inset-0 size-full pointer-events-none", className]}></canvas>
+
+<canvas
+  data-dither={mode}
+  data-planet={planet?.join(",")}
+  data-fade={fade}
+  aria-hidden="true"
+  class:list={["absolute inset-0 size-full pointer-events-none", className]}
+></canvas>
 
 <script>
   const fragment = `#version 300 es
@@ -99,13 +116,21 @@ const { mode = "auto", class: className = "", planet, fade = 0.6 } = Astro.props
     const probe = document.createElement("span");
     probe.style.color = getComputedStyle(canvas.parentElement!).backgroundColor;
     document.body.append(probe);
-    const [r, g, b] = getComputedStyle(probe).color.match(/[\d.]+/g)!.map(Number);
+    const [r, g, b] = getComputedStyle(probe)
+      .color.match(/[\d.]+/g)!
+      .map(Number);
     probe.remove();
     return [r / 255, g / 255, b / 255];
   }
 
-  for (const canvas of document.querySelectorAll<HTMLCanvasElement>("canvas[data-dither]")) {
-    const gl = canvas.getContext("webgl2", { antialias: false, alpha: true, preserveDrawingBuffer: true });
+  for (const canvas of document.querySelectorAll<HTMLCanvasElement>(
+    "canvas[data-dither]"
+  )) {
+    const gl = canvas.getContext("webgl2", {
+      antialias: false,
+      alpha: true,
+      preserveDrawingBuffer: true,
+    });
     if (!gl) continue;
     const shader = (type: number, source: string) => {
       const s = gl.createShader(type)!;
@@ -119,7 +144,8 @@ const { mode = "auto", class: className = "", planet, fade = 0.6 } = Astro.props
     gl.linkProgram(program);
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) continue;
     const at = (name: string) => gl.getUniformLocation(program, name);
-    const frostTarget = canvas.parentElement!.querySelector<HTMLElement>("[data-frost]");
+    const frostTarget =
+      canvas.parentElement!.querySelector<HTMLElement>("[data-frost]");
 
     function draw() {
       const scale = devicePixelRatio || 1;
@@ -132,7 +158,12 @@ const { mode = "auto", class: className = "", planet, fade = 0.6 } = Astro.props
       let frost = [0, 0, 0, 0];
       if (frostTarget) {
         const f = frostTarget.getBoundingClientRect();
-        frost = [(f.left - box.left) * scale, (f.top - box.top) * scale, f.width * scale, f.height * scale];
+        frost = [
+          (f.left - box.left) * scale,
+          (f.top - box.top) * scale,
+          f.width * scale,
+          f.height * scale,
+        ];
       }
       gl!.uniform2f(at("size"), canvas.width, canvas.height);
       gl!.uniform1f(at("cell"), 3 * scale);
@@ -143,15 +174,25 @@ const { mode = "auto", class: className = "", planet, fade = 0.6 } = Astro.props
       gl!.uniform1f(at("feather"), 4 * scale);
       gl!.uniform1f(at("fade"), Number(canvas.dataset.fade ?? 0.6));
       // The planet: across as a share of the width, turned into the scene's units (heights, or widths if taller).
-      const [across, down, radius] = (canvas.dataset.planet ?? "").split(",").map(Number);
+      const [across, down, radius] = (canvas.dataset.planet ?? "")
+        .split(",")
+        .map(Number);
       const side = Math.min(canvas.width, canvas.height);
-      if (canvas.dataset.planet) gl!.uniform3f(at("planet"), (across * canvas.width) / side, down, radius);
+      if (canvas.dataset.planet)
+        gl!.uniform3f(
+          at("planet"),
+          (across * canvas.width) / side,
+          down,
+          radius
+        );
       else gl!.uniform3f(at("planet"), 1.55, 2.45, 2.0);
       gl!.drawArrays(gl!.TRIANGLES, 0, 3);
     }
     new ResizeObserver(draw).observe(canvas);
     darkQuery.addEventListener("change", draw);
     // Shown again (the picker, a tab coming back): drawn at its size now.
-    new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && draw()).observe(canvas);
+    new IntersectionObserver(
+      (entries) => entries.some((e) => e.isIntersecting) && draw()
+    ).observe(canvas);
   }
 </script>

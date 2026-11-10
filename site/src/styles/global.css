@@ -8,8 +8,10 @@
   font-style: normal;
   font-weight: 100 900;
   font-display: optional;
-  src: url("../../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2") format("woff2");
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  src: url("../../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2")
+    format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
 /* The app's own surfaces (apps/macos/Sources/ZeroApp/Theme.swift), both appearances, as the system sets them. */
@@ -141,7 +143,9 @@
   --color-orange-cap: var(--orange-cap);
   --color-blueprint: var(--blueprint);
   --color-on-blueprint: var(--on-blueprint);
-  --font-sans: -apple-system, BlinkMacSystemFont, "Inter", system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Inter", system-ui, "Segoe UI", Roboto,
+    sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
 }
 
@@ -159,35 +163,70 @@
   /* The phone's search sheet (Vaul, on Radix's scroll lock) adds the scrollbar's width to the body as margin while it's
      open, to make up for the scrollbar it hides. The gutter above already keeps that space, so the page would move
      left by it: the margin goes. */
-  html body[data-scroll-locked] { margin-right: 0 !important; }
+  html body[data-scroll-locked] {
+    margin-right: 0 !important;
+  }
   /* One scrollbar everywhere, as arsenstorm.com's: thin, no track, a rounded thumb. */
   * {
     scrollbar-width: thin;
     scrollbar-color: #a3a3a3 transparent;
   }
   @media (prefers-color-scheme: dark) {
-    * { scrollbar-color: #737373 transparent; }
+    * {
+      scrollbar-color: #737373 transparent;
+    }
   }
-  ::-webkit-scrollbar { width: 8px; height: 8px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background-color: rgb(163 163 163 / 0.7); background-clip: content-box; border: 2px solid transparent; border-radius: 999px; }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: rgb(163 163 163 / 0.7);
+    background-clip: content-box;
+    border: 2px solid transparent;
+    border-radius: 999px;
+  }
   @media (prefers-color-scheme: dark) {
-    ::-webkit-scrollbar-thumb { background-color: rgb(115 115 115 / 0.7); }
+    ::-webkit-scrollbar-thumb {
+      background-color: rgb(115 115 115 / 0.7);
+    }
   }
   /* Keyboard focus: visible and neutral, never removed. */
   :focus-visible {
     outline: 2px solid var(--ink);
     outline-offset: 2px;
   }
-  button, a, input, summary { touch-action: manipulation; }
-  button { user-select: none; -webkit-user-select: none; }
-  /* Clear of the sticky header (48 px) and a little more. */
-  [id] { scroll-margin-top: 72px; }
-  @media (prefers-reduced-motion: no-preference) {
-    html { scroll-behavior: smooth; }
+  button,
+  a,
+  input,
+  summary {
+    touch-action: manipulation;
   }
-  h1, h2, h3 { text-wrap: balance; }
-  p, li { text-wrap: pretty; }
+  button {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  /* Clear of the sticky header (48 px) and a little more. */
+  [id] {
+    scroll-margin-top: 72px;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  p,
+  li {
+    text-wrap: pretty;
+  }
   ::selection {
     background: color-mix(in srgb, var(--blue) 25%, transparent);
   }
@@ -196,68 +235,184 @@
 /* The phone's search sheet (Vaul) under Reduce Motion: it fades in and out instead of sliding. Dragging it still moves
    it, as that's your finger. */
 @media (prefers-reduced-motion: reduce) {
-  [data-vaul-drawer][data-state="open"] { animation: sheet-fade-in 200ms ease-out !important; }
-  [data-vaul-drawer][data-state="closed"] { animation: sheet-fade-out 150ms ease-out !important; }
+  [data-vaul-drawer][data-state="open"] {
+    animation: sheet-fade-in 200ms ease-out !important;
+  }
+  [data-vaul-drawer][data-state="closed"] {
+    animation: sheet-fade-out 150ms ease-out !important;
+  }
 }
-@keyframes sheet-fade-in { from { opacity: 0; } }
-@keyframes sheet-fade-out { to { opacity: 0; } }
+@keyframes sheet-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes sheet-fade-out {
+  to {
+    opacity: 0;
+  }
+}
 
 /* Search results, in the pill and the phone's sheet alike: the matching words underlined, not marked yellow; the row the
    arrows are on in the hover grey. */
-[data-search-surface-root] mark { background: none; color: var(--ink); font-weight: inherit; text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 3px; }
-[data-search-surface-root] li[aria-selected="true"] > a { background: var(--hover); }
+[data-search-surface-root] mark {
+  background: none;
+  color: var(--ink);
+  font-weight: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--faint);
+  text-underline-offset: 3px;
+}
+[data-search-surface-root] li[aria-selected="true"] > a {
+  background: var(--hover);
+}
 
 /* While the appearance switches (Base.astro's script), every colour changes at once instead of each easing on its own. */
-.no-transitions, .no-transitions * { transition: none !important; }
+.no-transitions,
+.no-transitions * {
+  transition: none !important;
+}
 
 /* The app's spinner, for spinners drawn by script too: an arc turning once a second; a dot under Reduce Motion. */
-.spinner { animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(-360deg); } }
+.spinner {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(-360deg);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
-  .spinner { animation: none; }
-  .spinner circle { fill: currentColor; stroke-dasharray: none; }
+  .spinner {
+    animation: none;
+  }
+  .spinner circle {
+    fill: currentColor;
+    stroke-dasharray: none;
+  }
 }
 
 /* The home page's demo (src/scripts/demo.ts). Answers: orange while Esc can take them back, then green; the rest fade.
    Colour only: the rows never move. */
 /* The answer rows' hover is instant, as Zero's are; picking an answer still eases its colour, as the app does. */
-.ask-option { transition: none; }
-.ask-option[data-state="pending"], .ask-option[data-state="done"], [data-decided] .ask-option { transition: background-color 200ms ease-out, opacity 200ms ease-out; }
-.ask-option:disabled { cursor: default; }
-@media (hover: hover) {
-  [data-ask]:not([data-decided]) .ask-option:hover { background: var(--choice-cap); }
+.ask-option {
+  transition: none;
 }
-.ask-option[data-state="pending"] { background: var(--orange-row); }
-.ask-option[data-state="pending"] .ask-cap { background: var(--orange-cap); color: #fff; }
-.ask-option[data-state="pending"] [data-mark] { color: var(--orange); }
-.ask-option[data-state="done"] { background: var(--green-row); }
-.ask-option[data-state="done"] .ask-cap { background: var(--green-cap); color: #fff; }
-.ask-option[data-state="done"] [data-mark] { color: var(--green); }
-[data-decided] .ask-option:not([data-state="pending"], [data-state="done"]) { opacity: 0.4; }
-.ask-option [data-text] { color: inherit; }
+.ask-option[data-state="pending"],
+.ask-option[data-state="done"],
+[data-decided] .ask-option {
+  transition:
+    background-color 200ms ease-out,
+    opacity 200ms ease-out;
+}
+.ask-option:disabled {
+  cursor: default;
+}
+@media (hover: hover) {
+  [data-ask]:not([data-decided]) .ask-option:hover {
+    background: var(--choice-cap);
+  }
+}
+.ask-option[data-state="pending"] {
+  background: var(--orange-row);
+}
+.ask-option[data-state="pending"] .ask-cap {
+  background: var(--orange-cap);
+  color: #fff;
+}
+.ask-option[data-state="pending"] [data-mark] {
+  color: var(--orange);
+}
+.ask-option[data-state="done"] {
+  background: var(--green-row);
+}
+.ask-option[data-state="done"] .ask-cap {
+  background: var(--green-cap);
+  color: #fff;
+}
+.ask-option[data-state="done"] [data-mark] {
+  color: var(--green);
+}
+[data-decided] .ask-option:not([data-state="pending"], [data-state="done"]) {
+  opacity: 0.4;
+}
+.ask-option [data-text] {
+  color: inherit;
+}
 /* The sidebar's blueprint heading fades into the sidebar over its lower third, eased (smootherstep). */
-.blueprint { mask-image: linear-gradient(to bottom, #000 64%, rgb(0 0 0 / 0.84) 72%, rgb(0 0 0 / 0.5) 82%, rgb(0 0 0 / 0.16) 92%, transparent); }
+.blueprint {
+  mask-image: linear-gradient(
+    to bottom,
+    #000 64%,
+    rgb(0 0 0 / 0.84) 72%,
+    rgb(0 0 0 / 0.5) 82%,
+    rgb(0 0 0 / 0.16) 92%,
+    transparent
+  );
+}
 /* Under the sticky header, the rail's grey outside the panel's rounded top corners: a quarter circle cut out of each,
    centred where the panel's own corner is. */
-.panel-corner-left { background: radial-gradient(circle at 100% 100%, transparent 11.5px, var(--rail) 12px); }
-.panel-corner-right { background: radial-gradient(circle at 0% 100%, transparent 11.5px, var(--rail) 12px); }
+.panel-corner-left {
+  background: radial-gradient(
+    circle at 100% 100%,
+    transparent 11.5px,
+    var(--rail) 12px
+  );
+}
+.panel-corner-right {
+  background: radial-gradient(
+    circle at 0% 100%,
+    transparent 11.5px,
+    var(--rail) 12px
+  );
+}
 /* A folded turn's chevron turns down while it's open. */
-[aria-expanded="true"] > .worked-chevron { transform: rotate(90deg); }
+[aria-expanded="true"] > .worked-chevron {
+  transform: rotate(90deg);
+}
 /* The window's sidebar rows: the open task in the hover grey. */
-.task-row { transition: background-color 150ms ease-out; }
-.task-row[aria-pressed="true"] { background: var(--chip); }
+.task-row {
+  transition: background-color 150ms ease-out;
+}
+.task-row[aria-pressed="true"] {
+  background: var(--chip);
+}
 @media (hover: hover) {
-  .task-row:hover { background: var(--hover); }
+  .task-row:hover {
+    background: var(--hover);
+  }
 }
 /* The control bar's fillets where it meets the screen's edge: its fill outside a 10 px quarter circle, the border along
    the curve. Each reaches 1 px over the bar's own top or bottom border, so that border stops where the curve begins. */
-.bar-fillet-top { background: radial-gradient(circle at 0 0, transparent 9.5px, var(--stroke) 10px, var(--stroke) 10.5px, var(--pill) 11px); }
-.bar-fillet-bottom { background: radial-gradient(circle at 0 100%, transparent 9.5px, var(--stroke) 10px, var(--stroke) 10.5px, var(--pill) 11px); }
+.bar-fillet-top {
+  background: radial-gradient(
+    circle at 0 0,
+    transparent 9.5px,
+    var(--stroke) 10px,
+    var(--stroke) 10.5px,
+    var(--pill) 11px
+  );
+}
+.bar-fillet-bottom {
+  background: radial-gradient(
+    circle at 0 100%,
+    transparent 9.5px,
+    var(--stroke) 10px,
+    var(--stroke) 10.5px,
+    var(--pill) 11px
+  );
+}
 /* The control bar's marks grow by transform only, so their centre never moves: 1.18 while pinned, as the app's. */
-.bar-mark > [data-task-state] { transition: transform 150ms ease-out; }
-.bar-mark[data-shown] > [data-task-state] { transform: scale(1.18); }
+.bar-mark > [data-task-state] {
+  transition: transform 150ms ease-out;
+}
+.bar-mark[data-shown] > [data-task-state] {
+  transform: scale(1.18);
+}
 @media (prefers-reduced-motion: reduce) {
-  .bar-mark > [data-task-state] { transition: none; }
+  .bar-mark > [data-task-state] {
+    transition: none;
+  }
 }
 
 /* Links as the app's properties show them: medium weight on a dashed underline, no blue. */
@@ -269,7 +424,9 @@
   text-underline-offset: 4px;
   text-decoration-thickness: 1px;
   @media (hover: hover) {
-    &:hover { text-decoration-color: var(--muted); }
+    &:hover {
+      text-decoration-color: var(--muted);
+    }
   }
 }
 
@@ -277,34 +434,138 @@
 .doc {
   font-size: 15px;
   line-height: 1.65;
-  & > * + * { margin-top: 1em; }
-  & h2 { margin-top: 2.2em; font-size: 19px; font-weight: 600; line-height: 1.3; letter-spacing: -0.01em; scroll-margin-top: 72px; }
-  & h3 { margin-top: 1.8em; font-size: 15px; font-weight: 600; scroll-margin-top: 72px; }
-  & h2 + *, & h3 + * { margin-top: 0.5em; }
-  & a { @apply link; }
-  & strong { font-weight: 600; }
-  & ul, & ol { padding-left: 1.25em; }
-  & ul { list-style: disc; }
-  & ol { list-style: decimal; }
-  & li + li { margin-top: 0.35em; }
-  & li::marker { color: var(--faint); }
-  & code { font-family: var(--font-mono); font-size: 0.86em; background: var(--code); border-radius: 5px; padding: 0.12em 0.35em; }
-  & .code { position: relative; }
-  & pre { font-family: var(--font-mono); font-size: 13px; line-height: 1.55; background: var(--code); border-radius: 10px; padding: 12px 44px 12px 14px; overflow-x: auto; }
-  /* The copy button: 28 px in a 10 px-radius block, 6 px in, so 4 + 6 = 10. */
-  & .code-copy { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 4px; color: var(--muted); background: linear-gradient(var(--code), var(--code)), var(--card); transition: color 150ms ease-out, background-color 150ms ease-out; }
-  & .code-copy::before { content: ""; position: absolute; inset: -8px; }
-  @media (hover: hover) {
-    & .code-copy:hover { color: var(--ink); background: var(--hover); }
+  & > * + * {
+    margin-top: 1em;
   }
-  & pre code { background: none; padding: 0; font-size: inherit; }
-  & kbd { font-family: var(--font-sans); font-size: 12px; font-weight: 600; background: var(--keycap); border-radius: 5px; padding: 1px 6px; }
-  & table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  & th { text-align: left; font-weight: 500; color: var(--muted); }
-  & th, & td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--stroke); vertical-align: top; }
-  & .table-scroll { overflow-x: auto; }
-  & code .word { white-space: nowrap; }
+  & h2 {
+    margin-top: 2.2em;
+    font-size: 19px;
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    scroll-margin-top: 72px;
+  }
+  & h3 {
+    margin-top: 1.8em;
+    font-size: 15px;
+    font-weight: 600;
+    scroll-margin-top: 72px;
+  }
+  & h2 + *,
+  & h3 + * {
+    margin-top: 0.5em;
+  }
+  & a {
+    @apply link;
+  }
+  & strong {
+    font-weight: 600;
+  }
+  & ul,
+  & ol {
+    padding-left: 1.25em;
+  }
+  & ul {
+    list-style: disc;
+  }
+  & ol {
+    list-style: decimal;
+  }
+  & li + li {
+    margin-top: 0.35em;
+  }
+  & li::marker {
+    color: var(--faint);
+  }
+  & code {
+    font-family: var(--font-mono);
+    font-size: 0.86em;
+    background: var(--code);
+    border-radius: 5px;
+    padding: 0.12em 0.35em;
+  }
+  & .code {
+    position: relative;
+  }
+  & pre {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.55;
+    background: var(--code);
+    border-radius: 10px;
+    padding: 12px 44px 12px 14px;
+    overflow-x: auto;
+  }
+  /* The copy button: 28 px in a 10 px-radius block, 6 px in, so 4 + 6 = 10. */
+  & .code-copy {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    border-radius: 4px;
+    color: var(--muted);
+    background: linear-gradient(var(--code), var(--code)), var(--card);
+    transition:
+      color 150ms ease-out,
+      background-color 150ms ease-out;
+  }
+  & .code-copy::before {
+    content: "";
+    position: absolute;
+    inset: -8px;
+  }
+  @media (hover: hover) {
+    & .code-copy:hover {
+      color: var(--ink);
+      background: var(--hover);
+    }
+  }
+  & pre code {
+    background: none;
+    padding: 0;
+    font-size: inherit;
+  }
+  & kbd {
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--keycap);
+    border-radius: 5px;
+    padding: 1px 6px;
+  }
+  & table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  & th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--muted);
+  }
+  & th,
+  & td {
+    padding: 8px 12px 8px 0;
+    border-bottom: 1px solid var(--stroke);
+    vertical-align: top;
+  }
+  & .table-scroll {
+    overflow-x: auto;
+  }
+  & code .word {
+    white-space: nowrap;
+  }
   /* A long path in a sentence breaks where it must rather than running into the margin. */
-  & p code, & li code { overflow-wrap: anywhere; }
-  & blockquote { border-left: 2px solid var(--stroke); padding-left: 14px; color: var(--muted); }
+  & p code,
+  & li code {
+    overflow-wrap: anywhere;
+  }
+  & blockquote {
+    border-left: 2px solid var(--stroke);
+    padding-left: 14px;
+    color: var(--muted);
+  }
 }

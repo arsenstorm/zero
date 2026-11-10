@@ -1,27 +1,101 @@
 <!doctype html>
 <html>
-<head>
-  <meta charset="utf-8">
-  <style>
-    body { margin: 0; width: 300px; font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1c1c1e; background: #fff; }
-    @media (prefers-color-scheme: dark) { body { color: #f2f2f7; background: #1c1c1e; } .task:hover { background: #2c2c2e !important; } .muted { color: #98989f !important; } }
-    header { display: flex; align-items: center; gap: 8px; padding: 12px 14px 8px; font-weight: 600; font-size: 14px; }
-    .state { margin-left: auto; font-weight: 500; font-size: 12px; }
-    .state.on { color: #34c759; } .state.off { color: #ff3b30; }
-    .muted { color: #6e6e73; font-size: 12px; padding: 0 14px 8px; line-height: 1.4; }
-    h2 { font-size: 12px; font-weight: 600; margin: 6px 14px 4px; color: #6e6e73; }
-    .list { padding: 0 6px 8px; max-height: 320px; overflow: auto; }
-    .task { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; background: none; padding: 7px 8px; border-radius: 8px; font: inherit; color: inherit; cursor: pointer; }
-    .task:hover { background: #f2f2f7; }
-    .task .title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .task .tick { color: #f97316; font-weight: 700; }
-  </style>
-</head>
-<body>
-  <header>Zero <span class="state" id="state"></span></header>
-  <p class="muted" id="about"></p>
-  <h2 id="heading" hidden>Give this tab to a task</h2>
-  <div class="list" id="tasks"></div>
-  <script src="popup.js" type="module"></script>
-</body>
+  <head>
+    <meta charset="utf-8">
+    <style>
+      body {
+        margin: 0;
+        width: 300px;
+        font:
+          13px -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        color: #1c1c1e;
+        background: #fff;
+      }
+      @media (prefers-color-scheme: dark) {
+        body {
+          color: #f2f2f7;
+          background: #1c1c1e;
+        }
+        .task:hover {
+          background: #2c2c2e !important;
+        }
+        .muted {
+          color: #98989f !important;
+        }
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 14px 8px;
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .state {
+        margin-left: auto;
+        font-weight: 500;
+        font-size: 12px;
+      }
+      .state.on {
+        color: #34c759;
+      }
+      .state.off {
+        color: #ff3b30;
+      }
+      .muted {
+        color: #6e6e73;
+        font-size: 12px;
+        padding: 0 14px 8px;
+        line-height: 1.4;
+      }
+      h2 {
+        font-size: 12px;
+        font-weight: 600;
+        margin: 6px 14px 4px;
+        color: #6e6e73;
+      }
+      .list {
+        padding: 0 6px 8px;
+        max-height: 320px;
+        overflow: auto;
+      }
+      .task {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        text-align: left;
+        border: 0;
+        background: none;
+        padding: 7px 8px;
+        border-radius: 8px;
+        font: inherit;
+        color: inherit;
+        cursor: pointer;
+      }
+      .task:hover {
+        background: #f2f2f7;
+      }
+      .task .title {
+        flex: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .task .tick {
+        color: #f97316;
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <header>Zero <span class="state" id="state"></span></header>
+    <p class="muted" id="about"></p>
+    <h2 id="heading" hidden>Give this tab to a task</h2>
+    <div class="list" id="tasks"></div>
+    <script src="popup.js" type="module"></script>
+  </body>
 </html>

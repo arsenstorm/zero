@@ -11,3 +11,6 @@ apps/macos/Vendor/
 # The iPhone app's project is kept (nothing generates it); Xcode's per-user state isn't
 !apps/ios/Zero.xcodeproj/
 xcuserdata/
+
+# The formatter for the site, the relay and the browser extension (package.json)
+node_modules/

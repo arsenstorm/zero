@@ -6,19 +6,35 @@ import Mark from "../components/Mark.astro";
 import AskCard from "../components/AskCard.astro";
 import { site } from "../lib/site";
 ---
+
 <!doctype html>
 <html lang="en" style="color-scheme: light">
   <head>
-    <meta charset="utf-8" />
-    <meta name="robots" content="noindex" />
+    <meta charset="utf-8">
+    <meta name="robots" content="noindex">
     <title>{site.name}: share image</title>
   </head>
-  <body class="m-0 w-[1200px] h-[630px] overflow-hidden bg-rail font-sans text-ink p-1 pt-12">
-    <div class="h-full rounded-[12px] border border-stroke bg-card flex items-center gap-16 px-20">
+  <body
+    class="m-0 w-[1200px] h-[630px] overflow-hidden bg-rail font-sans text-ink p-1 pt-12"
+  >
+    <div
+      class="h-full rounded-[12px] border border-stroke bg-card flex items-center gap-16 px-20"
+    >
       <div class="flex-1">
-        <p class="flex items-center gap-3 text-[28px] font-semibold tracking-[-0.01em]"><Mark size={30} />{site.name}</p>
-        <h1 class="mt-8 text-[68px] leading-[1.02] font-semibold tracking-[-0.035em]">Engineer with care.</h1>
-        <p class="mt-6 text-[24px] leading-[1.4] text-muted">A Mac workspace for coding agents. It runs Claude Code, Codex and OpenCode. You answer them in one inbox.</p>
+        <p
+          class="flex items-center gap-3 text-[28px] font-semibold tracking-[-0.01em]"
+        >
+          <Mark size={30} />{site.name}
+        </p>
+        <h1
+          class="mt-8 text-[68px] leading-[1.02] font-semibold tracking-[-0.035em]"
+        >
+          Engineer with care.
+        </h1>
+        <p class="mt-6 text-[24px] leading-[1.4] text-muted">
+          A Mac workspace for coding agents. It runs Claude Code, Codex and
+          OpenCode. You answer them in one inbox.
+        </p>
       </div>
       <div class="w-[400px] shrink-0 rounded-[28px] bg-rail p-2.5">
         <AskCard

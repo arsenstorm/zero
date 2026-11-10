@@ -20,11 +20,25 @@ export async function GET() {
     const slugs = headings.filter((h) => h.depth === 2);
     const parts = (page.body ?? "").split(/^## +/m);
     const href = docHref(page.id);
-    sections.push({ page: page.data.title, title: page.data.title, heading: "", href, text: plain(`${page.data.description} ${parts[0]}`) });
+    sections.push({
+      page: page.data.title,
+      title: page.data.title,
+      heading: "",
+      href,
+      text: plain(`${page.data.description} ${parts[0]}`),
+    });
     parts.slice(1).forEach((part, i) => {
       const [line, ...rest] = part.split("\n");
-      sections.push({ page: page.data.title, title: page.data.title, heading: line.trim(), href: `${href}#${slugs[i]?.slug ?? ""}`, text: plain(rest.join("\n")) });
+      sections.push({
+        page: page.data.title,
+        title: page.data.title,
+        heading: line.trim(),
+        href: `${href}#${slugs[i]?.slug ?? ""}`,
+        text: plain(rest.join("\n")),
+      });
     });
   }
-  return new Response(JSON.stringify(sections), { headers: { "Content-Type": "application/json" } });
+  return new Response(JSON.stringify(sections), {
+    headers: { "Content-Type": "application/json" },
+  });
 }

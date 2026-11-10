@@ -9,7 +9,16 @@ import { site } from "./src/lib/site";
 // (Not "table": that's a Tailwind utility, display: table, and a table box doesn't scroll.)
 const wrapTables = {
   name: "wrap-tables",
-  element: { filter: ["table"], visit: (node, ctx) => ctx.wrapNode(node, { type: "element", tagName: "div", properties: { className: ["table-scroll"] }, children: [] }) },
+  element: {
+    filter: ["table"],
+    visit: (node, ctx) =>
+      ctx.wrapNode(node, {
+        type: "element",
+        tagName: "div",
+        properties: { className: ["table-scroll"] },
+        children: [],
+      }),
+  },
 };
 
 // Each word of inline code in its own <span class="word">, which doesn't break: --permissions stays whole, never
@@ -20,8 +29,21 @@ const keepWords = {
     filter: ["code"],
     visit: (node, ctx) => {
       const parts = ctx.textContent(node).split(/(\s+)/).filter(Boolean);
-      const word = (text) => ({ type: "element", tagName: "span", properties: { className: ["word"] }, children: [{ type: "text", value: text }] });
-      ctx.setField(node, "children", parts.map((text) => (/\s/.test(text) || text.length > 24 ? { type: "text", value: text } : word(text))));
+      const word = (text) => ({
+        type: "element",
+        tagName: "span",
+        properties: { className: ["word"] },
+        children: [{ type: "text", value: text }],
+      });
+      ctx.setField(
+        node,
+        "children",
+        parts.map((text) =>
+          /\s/.test(text) || text.length > 24
+            ? { type: "text", value: text }
+            : word(text)
+        )
+      );
     },
   },
 };
@@ -36,5 +58,8 @@ export default defineConfig({
   vite: { plugins: [tailwindcss()] },
   devToolbar: { enabled: false },
   // Plain code blocks on the app's own surface: a syntax theme sets its own background in one appearance only.
-  markdown: { syntaxHighlight: false, processor: satteri({ hastPlugins: [wrapTables, keepWords] }) },
+  markdown: {
+    syntaxHighlight: false,
+    processor: satteri({ hastPlugins: [wrapTables, keepWords] }),
+  },
 });
