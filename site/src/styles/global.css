@@ -149,6 +149,10 @@
     font-synthesis: none;
     scrollbar-gutter: stable both-edges;
   }
+  /* The phone's search sheet (Vaul, on Radix's scroll lock) adds the scrollbar's width to the body as margin while it's
+     open, to make up for the scrollbar it hides. The gutter above already keeps that space, so the page would move
+     left by it: the margin goes. */
+  html body[data-scroll-locked] { margin-right: 0 !important; }
   /* One scrollbar everywhere, as arsenstorm.com's: thin, no track, a rounded thumb. */
   * {
     scrollbar-width: thin;
