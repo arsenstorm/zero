@@ -273,27 +273,6 @@ const wideOrder = ["sm:order-1", "sm:order-2", "sm:order-3"];
       );
     </script>
     <script>
-      // Stages whose cards come up one after another (global.css, [data-reveal]): once, the first time each is well
-      // in view. Under Reduce Motion nothing waits, and they're simply there.
-      if (!matchMedia("(prefers-reduced-motion: reduce)").matches)
-        for (const stage of document.querySelectorAll<HTMLElement>(
-          "[data-reveal]"
-        )) {
-          [...stage.children].forEach((child, i) =>
-            (child as HTMLElement).style.setProperty("--i", String(i))
-          );
-          stage.toggleAttribute("data-waiting", true);
-          new IntersectionObserver(
-            (entries, observer) => {
-              if (!entries.some((e) => e.isIntersecting)) return;
-              observer.disconnect();
-              stage.removeAttribute("data-waiting");
-            },
-            { threshold: 0.4 }
-          ).observe(stage);
-        }
-    </script>
-    <script>
       // The phone's search sheet: loaded and opened by the first ask for it (the Search button, ⌘K, the 404's Search
       // the docs); from then on it opens itself on the same event.
       let loaded = false;
