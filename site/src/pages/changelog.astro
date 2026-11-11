@@ -1,0 +1,98 @@
+---
+// What changed in each release, newest first, built from GitHub as the site builds (src/lib/releases.ts): the
+// features and fixes people notice, each as its commit says it. An RSS feed of the same is /changelog.xml.
+import Base from "../layouts/Base.astro";
+import Icon from "../components/Icon.astro";
+import { site } from "../lib/site";
+import { releases } from "../lib/releases";
+
+const all = await releases();
+const day = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+  timeZone: "UTC",
+});
+const sections = [
+  { kind: "feat", title: "New" },
+  { kind: "fix", title: "Fixed" },
+] as const;
+---
+
+<Base
+  title={`Changelog · ${site.name}`}
+  description="What changed in each release of Zero."
+>
+  <section class="px-6 sm:px-8 pt-20 sm:pt-28 pb-24">
+    <div class="mx-auto max-w-5xl">
+      <h1
+        class="text-[44px] sm:text-[60px] leading-[1.02] font-semibold tracking-[-0.035em]"
+      >
+        Changelog
+      </h1>
+      <p class="mt-5 max-w-[32rem] text-[17px] leading-[1.5] text-muted">
+        What changed in each release. Zero tells you when a new one is out.{" "}
+        <a href="/changelog.xml" class="link text-ink">RSS feed</a>
+      </p>
+
+      {all.length === 0 && (
+        <p class="mt-12 text-[15px] text-muted">
+          The releases are on{" "}
+          <a href={site.releases} class="link text-ink">
+            GitHub
+          </a>
+          .
+        </p>
+      )}
+
+      <ol class="mt-14 flex flex-col">
+        {all.map((release) => (
+          <li
+            id={release.tag}
+            class="grid md:grid-cols-[200px_1fr] gap-x-12 gap-y-3 py-10 border-t border-stroke first:border-t-0 first:pt-0 scroll-mt-20"
+          >
+            <div>
+              <h2 class="text-[22px] font-semibold tracking-[-0.015em]">
+                <a href={`#${release.tag}`}>{release.version}</a>
+              </h2>
+              <p class="mt-1 text-[13px] text-muted">
+                <time datetime={release.date.toISOString()}>
+                  {day.format(release.date)}
+                </time>
+              </p>
+            </div>
+            <div class="flex flex-col gap-6 text-[15px] leading-[1.55]">
+              {release.first && <p>The first release of {site.name}.</p>}
+              {sections.map((section) => {
+                const items = release.changes.filter(
+                  (c) => c.kind === section.kind
+                );
+                return (
+                  items.length > 0 && (
+                    <div>
+                      <h3 class="text-[13px] font-medium text-muted">
+                        {section.title}
+                      </h3>
+                      <ul class="mt-2 flex flex-col gap-1.5 list-disc pl-5 marker:text-faint">
+                        {items.map((c) => (
+                          <li>{c.text}.</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )
+                );
+              })}
+              <a
+                href={release.url}
+                class="self-start inline-flex items-center gap-1 text-[14px] font-medium"
+              >
+                {release.version} on GitHub
+                <Icon name="arrow-right" size={14} />
+              </a>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  </section>
+</Base>

@@ -30,6 +30,9 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Build
         working-directory: site
+        env:
+          # The changelog reads the releases from GitHub's API as the site builds.
+          GITHUB_TOKEN: ${{ github.token }}
         run: bun run build
       - name: Deploy
         working-directory: site
