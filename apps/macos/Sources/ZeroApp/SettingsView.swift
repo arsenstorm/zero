@@ -326,9 +326,13 @@ struct Rows<Content: View>: View {
     }
 }
 
+/// The Mac's own switch at the size System Settings draws it (44 by 20): the switch macOS gives SwiftUI is 54 by 24
+/// whatever its control size, large beside a row's 13 point words.
 struct Switch: View {
     @Binding var isOn: Bool
-    var body: some View { Toggle("", isOn: $isOn).labelsHidden().toggleStyle(.switch) }
+    var body: some View {
+        Toggle("", isOn: $isOn).labelsHidden().toggleStyle(.switch).scaleEffect(44 / 54).frame(width: 44, height: 20)
+    }
 }
 
 /// A card's row that is its own menu: a soft fill under the pointer (or while it's open), and a click opens Zero's

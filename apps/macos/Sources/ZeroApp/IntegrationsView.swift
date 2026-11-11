@@ -569,20 +569,20 @@ private struct StartFields: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Toggle(
-                isOn: Binding(
-                    get: { start != nil },
-                    set: { on in
-                        start = on ? TaskStart(cwd: "", prompt: "Work on {key}: {title} ({url}).", provider: "claude") : nil
-                    })
-            ) {
+            HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Start a task from each \(noun)").font(.system(size: 12, weight: .medium))
                     Text("One task per \(noun), with a scratchpad of its own for its state.").font(.system(size: 11)).foregroundStyle(
                         .secondary)
                 }
+                Spacer(minLength: 0)
+                Switch(
+                    isOn: Binding(
+                        get: { start != nil },
+                        set: { on in
+                            start = on ? TaskStart(cwd: "", prompt: "Work on {key}: {title} ({url}).", provider: "claude") : nil
+                        }))
             }
-            .toggleStyle(.switch).controlSize(.small)
             if let current = start {
                 let field = { (key: WritableKeyPath<TaskStart, String>) in
                     Binding(get: { current[keyPath: key] }, set: { start?[keyPath: key] = $0 })

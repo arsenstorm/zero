@@ -78,12 +78,11 @@ struct OnboardingView: View {
                     }
                     Divider()
                     OnboardingRow(icon: "power-off", title: "Launch Zero at login", detail: "So agents can always reach you.") {
-                        Toggle("", isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 })).labelsHidden()
-                            .toggleStyle(.switch)
+                        Switch(isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
                     }
                     Divider()
                     OnboardingRow(icon: "monitor", title: "Follow the active screen", detail: "The bar moves to the screen you use.") {
-                        Toggle("", isOn: $settings.followActiveScreen).labelsHidden().toggleStyle(.switch)
+                        Switch(isOn: $settings.followActiveScreen)
                     }
                 }
             }

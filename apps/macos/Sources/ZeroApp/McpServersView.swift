@@ -57,8 +57,7 @@ struct McpServersPage: View {
                 if server.workspaces.isEmpty { pill("Every workspace") }
                 ForEach(server.workspaces, id: \.self) { id in pill(workspace.workspaces.first { $0.id == id }?.name ?? id) }
             }
-            Toggle(
-                "",
+            Switch(
                 isOn: Binding(
                     get: { server.enabled },
                     set: { on in
@@ -66,7 +65,7 @@ struct McpServersPage: View {
                         changed.enabled = on
                         Task { _ = await workspace.saveMcpServer(changed, secrets: [:]) }
                     })
-            ).toggleStyle(.switch).controlSize(.mini).labelsHidden().tip(server.enabled ? "On: given to tasks as they start" : "Off")
+            ).tip(server.enabled ? "On: given to tasks as they start" : "Off")
             Button("Edit") { editing = server }
         }
         .padding(.horizontal, 18).padding(.vertical, 10)
