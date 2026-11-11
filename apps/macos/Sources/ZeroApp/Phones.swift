@@ -15,7 +15,8 @@ import ZeroCore
     static let shared = Phones()
 
     /// `closed`: the relay said it's closed for good (its CLOSED message): not tried again until its address changes.
-    enum Status: Equatable { case off, connecting, connected, failed(String), closed(String) }
+    /// `limited`: connected, but the relay passes nothing for now (its day's bytes for this Mac are used): its words.
+    enum Status: Equatable { case off, connecting, connected, failed(String), closed(String), limited(String) }
     private(set) var status = Status.off
     private(set) var devices: [Tunnel.Device] = []
     /// The QR code's invite while Add a phone is showing.
@@ -258,7 +259,8 @@ import ZeroCore
                 switch result {
                 case .success(.string(let text)):
                     self.heardAt = .now
-                    if self.status != .connected { self.status = .connected; self.retry = 1 }
+                    // Not over the relay's limit: only a phone getting through again says that's past (heard).
+                    if self.status == .connecting { self.status = .connected; self.retry = 1 }
                     self.heard(text)
                     self.receive(on: task)
                 case .success: self.receive(on: task)
@@ -289,13 +291,21 @@ import ZeroCore
     }
 
     private struct Frame: Codable { var conn: String; var open: Bool?; var data: String?; var close: Bool? }
+    /// The relay's {"limit": why}: said until a phone reaches this Mac again.
+    private struct Limit: Decodable { var limit: String }
 
     private func heard(_ text: String) {
+        if let said = try? JSONDecoder().decode(Limit.self, from: Data(text.utf8)) {
+            Log.write("phones: the relay's limit, \(said.limit)")
+            status = .limited(said.limit)
+            return
+        }
         guard let frame = try? JSONDecoder().decode(Frame.self, from: Data(text.utf8)) else {
             Log.write("phones: unreadable frame"); return
         }
         if frame.open == true {
             Log.write("phones: a phone opened \(frame.conn.prefix(8))")
+            status = .connected
             bridges[frame.conn] = Bridge(
                 link: host.link(), send: { [weak self] data in self?.send(data, to: frame.conn) },
                 close: { [weak self] in self?.close(frame.conn) },
@@ -543,6 +553,7 @@ struct DevicesPage: View {
         case .connected: "Connected: your phones can reach this Mac"
         case .failed(let why): "Can't reach it: \(why)"
         case .closed(let message): "It has closed: " + message
+        case .limited(let why): why
         }
     }
 }
