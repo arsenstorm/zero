@@ -279,7 +279,9 @@ enum RichMarkdown {
                 out.append(added)
                 continue
             }
-            if let link = run.link { attributes[.link] = link }
+            // A link's colour is its own, in the text (not the view's link style): so it fades in with the words around
+            // it as they stream, rather than showing at full strength ahead of them.
+            if let link = run.link { attributes[.link] = link; attributes[.foregroundColor] = NSColor.linkColor }
             // An image's token (ImageToken.linked): its pill, which opens the image.
             if let link = run.link, link.isFileURL, let named = ImageToken.number(inLabel: piece) {
                 let token = NSMutableAttributedString(attributedString: ImageToken.attachment(named.number, font: font, video: named.video))
@@ -508,7 +510,8 @@ final class RichTextView: NSTextView {
         textContainerInset = .zero
         isVerticallyResizable = false
         isHorizontallyResizable = false
-        linkTextAttributes = [.foregroundColor: NSColor.linkColor, .cursor: NSCursor.pointingHand]
+        // Only the cursor: a link's colour is set with its words (`attributes[.foregroundColor]`), so it fades with them.
+        linkTextAttributes = [.cursor: NSCursor.pointingHand]
     }
 
     /// How far the view reaches past its text on each side.
