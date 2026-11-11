@@ -1,4 +1,5 @@
-// The relay's pushes without Apple: `node --test apps/relay`. Apple's answers are faked, everything else is relay.js.
+// The relay without Cloudflare or Apple: `node --test apps/relay/relay.test.js`. Sockets, storage and Apple's answers
+// are faked, everything else is relay.js.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { registerHooks } from "node:module";
@@ -14,6 +15,42 @@ registerHooks({
       : next(specifier, context),
 });
 const { default: worker, Mac, limits } = await import("./relay.js");
+
+/** A WebSocket as the Durable Object sees it: what it was sent, how it was closed. */
+const socket = () => ({
+  readyState: 1,
+  sent: [],
+  closed: null,
+  send(message) {
+    this.sent.push(message);
+  },
+  close(code, reason) {
+    this.closed = { code, reason };
+    this.readyState = 3;
+  },
+  accept() {},
+  serializeAttachment(value) {
+    this.attachment = value;
+  },
+  deserializeAttachment() {
+    return this.attachment;
+  },
+});
+globalThis.WebSocketPair = class {
+  constructor() {
+    const [client, server] = [socket(), socket()];
+    client.server = server;
+    return { 0: client, 1: server };
+  }
+};
+// Node's Response refuses 101, the Workers runtime's answer to an upgrade.
+const NodeResponse = Response;
+globalThis.Response = class extends NodeResponse {
+  constructor(body, init) {
+    super(body, init?.status === 101 ? undefined : init);
+    if (init?.status === 101) this.webSocket = init.webSocket;
+  }
+};
 
 const keys = await crypto.subtle.generateKey(
   { name: "ECDSA", namedCurve: "P-256" },
@@ -47,7 +84,15 @@ function relay(env = secrets, apple = () => new Response("", { status: 200 })) {
             get: async (key) => structuredClone(kept.get(key)),
             put: async (key, value) => kept.set(key, structuredClone(value)),
           };
-          macs.set(id, new Mac({ storage, getWebSockets: () => [] }, env));
+          const sockets = [];
+          const ctx = {
+            storage,
+            acceptWebSocket: (ws, tags) =>
+              sockets.push(Object.assign(ws, { tags })),
+            getWebSockets: (tag) =>
+              sockets.filter((ws) => ws.tags.includes(tag)),
+          };
+          macs.set(id, new Mac(ctx, env));
         }
         return macs.get(id);
       },
@@ -208,4 +253,130 @@ test("30 a minute and 1000 a day per Mac", async (t) => {
   t.mock.timers.tick(24 * 3600_000);
   assert.equal((await push(env, { token: PHONE })).status, 200);
   assert.equal(sent.length, limits.minute + 2);
+});
+
+/** A connection to the relay: the server's end of its socket, as the Durable Object holds it. */
+const connect = async (env, side, token = TOKEN) =>
+  (
+    await worker.fetch(
+      new Request(`https://relay.test/${side}/macmacmacmacmacmac`, {
+        headers: { Upgrade: "websocket", Authorization: `Bearer ${token}` },
+      }),
+      env
+    )
+  ).webSocket.server;
+
+const fromPhone = (mac, phone, size) =>
+  mac.webSocketMessage(phone, new Uint8Array(size).buffer);
+const toPhone = (mac, from, phone, size) =>
+  mac.webSocketMessage(
+    from,
+    JSON.stringify({
+      conn: phone.attachment.conn,
+      data: Buffer.alloc(size).toString("base64"),
+    })
+  );
+
+test("one Mac, which a new connection replaces, and ten phones at once", async () => {
+  const { env, mac } = relay();
+  const first = await connect(env, "mac");
+  const second = await connect(env, "mac");
+  assert.equal(first.closed?.code, 1012);
+  assert.equal(second.closed, null);
+  const phones = [];
+  for (let i = 0; i < limits.phones; i++)
+    phones.push(await connect(env, "phone"));
+  assert.ok(phones.every((phone) => phone.closed === null));
+  const more = await connect(env, "phone");
+  assert.equal(more.closed?.code, 1008);
+  assert.match(more.closed.reason, /10 phones/);
+  assert.equal(mac.ctx.getWebSockets("phone").length, limits.phones);
+  phones[0].close(1000, "");
+  assert.equal((await connect(env, "phone")).closed, null);
+});
+
+test("a frame over the most closes its socket, unpassed", async () => {
+  const { env, mac } = relay();
+  const macSocket = await connect(env, "mac");
+  const phone = await connect(env, "phone");
+  // Noise's largest frame, 64 KB, and the Mac's base64 of it.
+  await fromPhone(mac, phone, 65535);
+  await toPhone(mac, macSocket, phone, 65535);
+  assert.equal(macSocket.sent.length, 2);
+  assert.equal(phone.sent.length, 1);
+  await fromPhone(mac, phone, limits.frame + 1);
+  assert.equal(phone.closed?.code, 1009);
+  assert.equal(macSocket.sent.length, 2);
+  const other = await connect(env, "phone");
+  await mac.webSocketMessage(macSocket, "x".repeat(limits.frame + 1));
+  assert.equal(macSocket.closed?.code, 1009);
+  assert.equal(other.sent.length, 0);
+});
+
+test("a day's bytes both ways, then nothing passed until the next UTC day", async (t) => {
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: Date.parse("2026-11-10T12:00:00Z"),
+  });
+  const { env, mac } = relay();
+  await mac.ctx.storage.put("relayed", {
+    day: "2026-11-10",
+    bytes: limits.daily - 2000,
+  });
+  const macSocket = await connect(env, "mac");
+  const phone = await connect(env, "phone");
+  await fromPhone(mac, phone, 1000);
+  await toPhone(mac, macSocket, phone, 1000);
+  assert.equal(macSocket.sent.length, 2);
+  assert.equal(phone.sent.length, 1);
+
+  // Spent: the frame isn't passed, the Mac is told why and its phones are closed with it.
+  await fromPhone(mac, phone, 1000);
+  assert.equal(macSocket.sent.length, 3);
+  const { limit } = JSON.parse(macSocket.sent[2]);
+  assert.match(limit, /Today/);
+  assert.deepEqual(phone.closed, { code: 1008, reason: limit });
+  assert.equal(macSocket.closed, null);
+  const refused = await connect(env, "phone");
+  assert.deepEqual(refused.closed, { code: 1008, reason: limit });
+  // Said again to a Mac that connects, and kept through the object's eviction.
+  const again = await connect(env, "mac");
+  assert.deepEqual(JSON.parse(again.sent[0]), { limit });
+  await new Mac(mac.ctx, env).webSocketMessage(
+    phone,
+    new Uint8Array(10).buffer
+  );
+  assert.deepEqual(JSON.parse(again.sent[1]), { limit });
+
+  t.mock.timers.tick(12 * 3600_000);
+  const tomorrow = await connect(env, "phone");
+  assert.equal(tomorrow.closed, null);
+  await fromPhone(mac, tomorrow, 1000);
+  assert.equal(JSON.parse(again.sent.at(-1)).data.length, 1336);
+});
+
+test("a burst passes, a flood is cut off", async (t) => {
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: Date.parse("2026-11-10T12:00:00Z"),
+  });
+  const { env, mac } = relay();
+  const macSocket = await connect(env, "mac");
+  const phone = await connect(env, "phone");
+  for (let i = 0; i < limits.burst; i++) await fromPhone(mac, phone, 100);
+  assert.equal(phone.closed, null);
+  assert.equal(macSocket.sent.length, 1 + limits.burst);
+  await fromPhone(mac, phone, 100);
+  assert.equal(phone.closed?.code, 1008);
+  assert.match(phone.closed.reason, /frames/);
+  assert.equal(macSocket.sent.length, 1 + limits.burst);
+
+  // Refilled at the rate: a second on, that many more.
+  t.mock.timers.tick(1000);
+  const next = await connect(env, "phone");
+  for (let i = 0; i < limits.rate; i++)
+    await toPhone(mac, macSocket, next, 100);
+  assert.equal(next.sent.length, limits.rate);
+  await toPhone(mac, macSocket, next, 100);
+  assert.equal(macSocket.closed?.code, 1008);
 });

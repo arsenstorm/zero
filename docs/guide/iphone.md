@@ -21,6 +21,7 @@ Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> or the gear at the foot of the wi
 | Connecting… | Zero is connecting to the relay. |
 | Connected: your phones can reach this Mac | The relay works. |
 | Can't reach it: … | Zero couldn't connect. The reason follows. |
+| Today's 2 GB through the relay are used: … | Your phones and this Mac passed more through Zero's relay today than it allows. Your phones reach the Mac again after midnight UTC. To have no limit, run your own relay. |
 | Zero's relay has closed: … | Zero's relay no longer runs. The message says what to do instead, such as where to run your own. Zero stops connecting to it. |
 
 ## Pair your iPhone

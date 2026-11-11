@@ -19,6 +19,10 @@
 // Pushes: the payload is sealed for the phone already (its Notify extension opens it), so the relay passes it on unread.
 // It needs an APNs key in its secrets (README); without one /push answers 501 and the Mac sends with its own key.
 // Kept short of a free push service: phones the Mac registered (up to 10), 30 a minute and 1000 a day per Mac, 4 KB.
+//
+// The tunnel, kept short of a free pipe (per Mac, `limits` below, README): 10 phones at once, frames of 128 KB at most,
+// 100 frames a second after a burst of 1000, 2 GB a UTC day. Past a limit the socket that broke it is closed with the
+// reason; past the day's, the Mac is told {"limit": why} (on connecting too) and phones are closed until the next day.
 
 import { DurableObject } from "cloudflare:workers";
 
@@ -65,7 +69,22 @@ const sha256 = async (text) =>
     )
   );
 
-export const limits = { phones: 10, minute: 30, day: 1000, payload: 4096 };
+export const limits = {
+  // Pushes (and the phones they go to).
+  phones: 10,
+  minute: 30,
+  day: 1000,
+  payload: 4096,
+  // The tunnel. A frame as it arrives: Noise's are 64 KB at most, 87 KB as the Mac's base64 of one.
+  frame: 128 * 1024,
+  // Bytes a UTC day, both ways, each frame counted as 1 KB at least so a flood of small ones counts too.
+  daily: 2 * 1024 ** 3,
+  // Frames a second, both ways, after a burst of `burst` (a page of a conversation, a photo shared).
+  rate: 100,
+  burst: 1000,
+};
+const MB = 1024 * 1024;
+const spent = `Today's ${+(limits.daily / 1024 ** 3).toFixed(1)} GB through the relay are used: phones reach this Mac again after 00:00 UTC.`;
 
 // The provider token Apple takes for an hour: made again after fifty minutes.
 let made;
@@ -103,6 +122,11 @@ async function providerToken(env) {
 }
 
 export class Mac extends DurableObject {
+  // In memory, so not a write a frame: the bucket starts full again after the object sleeps, which takes quiet anyway.
+  bucket = { frames: limits.burst, at: Date.now() };
+  /** Today's bytes, as {day, bytes}: loaded from storage once awake (`relayed`), kept there each MB. */
+  used;
+
   async fetch(request) {
     // What threw, in the answer: the relay keeps no logs of its own.
     try {
@@ -119,6 +143,7 @@ export class Mac extends DurableObject {
   async open(request) {
     const side = new URL(request.url).pathname.split("/")[1];
     const [client, server] = Object.values(new WebSocketPair());
+    const over = (await this.today()).bytes >= limits.daily;
     if (side === "mac") {
       const refused = await this.refused(request, true);
       if (refused) return refused;
@@ -134,9 +159,24 @@ export class Mac extends DurableObject {
       // Phones connected meanwhile start again with it.
       for (const phone of this.ctx.getWebSockets("phone"))
         phone.close(1012, "Mac reconnected");
+      if (over) server.send(JSON.stringify({ limit: spent }));
     } else {
       const mac = this.mac();
       if (!mac) return new Response("The Mac isn't connected", { status: 503 });
+      const phones = this.ctx
+        .getWebSockets("phone")
+        .filter((ws) => ws.readyState === 1).length;
+      const refusal = over
+        ? spent
+        : phones >= limits.phones
+          ? `${limits.phones} phones at once at most`
+          : null;
+      if (refusal) {
+        // Accepted only to say why: not the object's to keep (no events for it).
+        server.accept();
+        server.close(1008, refusal);
+        return new Response(null, { status: 101, webSocket: client });
+      }
       const conn = crypto.randomUUID();
       this.ctx.acceptWebSocket(server, ["phone", conn]);
       server.serializeAttachment({ conn });
@@ -251,13 +291,56 @@ export class Mac extends DurableObject {
     return newest;
   }
 
+  /** Whether one more frame is over the rate: a bucket of `burst` frames, filled at `rate` a second. */
+  flooding() {
+    const now = Date.now();
+    this.bucket.frames = Math.min(
+      limits.burst,
+      this.bucket.frames + ((now - this.bucket.at) / 1000) * limits.rate
+    );
+    this.bucket.at = now;
+    if (this.bucket.frames < 1) return true;
+    this.bucket.frames--;
+    return false;
+  }
+
+  async today() {
+    const day = new Date().toISOString().slice(0, 10);
+    this.used ??= (await this.ctx.storage.get("relayed")) ?? { day, bytes: 0 };
+    if (this.used.day !== day) this.used = { day, bytes: 0 };
+    return this.used;
+  }
+
+  /** Counts a frame's bytes against today's; false, with the Mac told and its phones closed, once they're spent.
+   * ponytail: kept each MB crossed, not each frame (a write costs): an eviction forgets under 1 MB of it. */
+  async spend(bytes) {
+    const used = await this.today();
+    if (used.bytes >= limits.daily) {
+      this.mac()?.send(JSON.stringify({ limit: spent }));
+      for (const phone of this.ctx.getWebSockets("phone"))
+        phone.close(1008, spent);
+      return false;
+    }
+    const before = used.bytes;
+    used.bytes += Math.max(bytes, 1024);
+    if (Math.floor(used.bytes / MB) > Math.floor(before / MB))
+      await this.ctx.storage.put("relayed", used);
+    return true;
+  }
+
   async webSocketMessage(ws, message) {
+    if (this.flooding())
+      return ws.close(1008, `Too many frames: ${limits.rate} a second at most`);
+    const size = message.byteLength ?? message.length;
+    if (size > limits.frame)
+      return ws.close(1009, `Frames are ${limits.frame / 1024} KB at most`);
     const from = ws.deserializeAttachment();
     if (from?.conn) {
       // A phone's frame, for the Mac.
       if (typeof message === "string") return;
       const mac = this.mac();
       if (!mac) return ws.close(1013, "The Mac went away");
+      if (!(await this.spend(size))) return;
       mac.send(
         JSON.stringify({
           conn: from.conn,
@@ -286,8 +369,10 @@ export class Mac extends DurableObject {
     const phone = frame.conn && this.phone(frame.conn);
     if (!phone) return;
     if (frame.close) return phone.close(1000, "Closed by the Mac");
-    if (frame.data)
-      phone.send(Uint8Array.from(atob(frame.data), (c) => c.charCodeAt(0)));
+    if (frame.data) {
+      const bytes = Uint8Array.from(atob(frame.data), (c) => c.charCodeAt(0));
+      if (await this.spend(bytes.length)) phone.send(bytes);
+    }
   }
 
   async webSocketClose(ws) {

@@ -5,8 +5,22 @@ Passes frames between Zero on a Mac and Zero on a phone. It can't read them: the
 service (below).
 
 What it keeps, per Mac: the hash of its token; its phones' push tokens (up to 10, as the Mac registers them) and
-whether each is a development build's (Apple's sandbox) or not; and how many pushes it sent this minute and today.
-Nothing else.
+whether each is a development build's (Apple's sandbox) or not; how many pushes it sent this minute and today; and how
+many bytes it passed today. Nothing else.
+
+## Limits
+
+So the hosted relay isn't a free pipe, each Mac gets:
+
+| Limit | Value | Past it |
+|---|---|---|
+| Mac connections | 1 | A new one replaces the old (a restart, a network change). |
+| Phone connections | 10 at once | Refused: closed with 1008 and the reason. |
+| Frame size | 128 KB | The socket that sent it is closed with 1009. Noise's frames are 64 KB at most (87 KB as the Mac's base64). |
+| Frames | 100 a second, after a burst of 1000 | The socket that sent it is closed with 1008. A page of a conversation or a shared photo fits in the burst. |
+| Data | 2 GB a UTC day, both ways | Nothing passed until 00:00 UTC: phones are closed (1008) and refused with the reason, and the Mac is told `{"limit": reason}`, which Settings › Phone shows. Each frame counts as 1 KB at least. |
+
+Running your own, change them in `limits` in `relay.js`.
 
 Deploy it to your own Cloudflare account (Workers with Durable Objects, on the free plan):
 

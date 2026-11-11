@@ -105,6 +105,7 @@ On the Mac, open **Settings › Phone**:
 | **Connecting…** | Zero is connecting to the relay. |
 | **Connected: your phones can reach this Mac** | The Mac side works. |
 | **Can't reach it:** and a reason | Make sure that the address is correct and that the Mac is online. |
+| **Today's 2 GB through the relay are used** | Your phones reach this Mac again after midnight UTC. To have no limit, run your own relay from `apps/relay`. |
 | **Zero's relay has closed:** and a message | Zero's relay no longer runs. Follow the message, such as running your own relay from `apps/relay`, then type its address. |
 
 While there's no relay address, **Add a phone › Show code** stays greyed out. The code lasts five minutes. To get another code, click **New code**.
