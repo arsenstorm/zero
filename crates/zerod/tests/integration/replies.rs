@@ -25,7 +25,7 @@ async fn turn(session: &zerod::session::Session, n: usize, said: &str) {
     session.change(Change::Status { status: Status::Working, turn: Some(format!("t{n}")), error: None });
     // A turn takes a while: zerod reads a task as it is when it hears of it, so it sees this one under way.
     tokio::time::sleep(Duration::from_millis(100)).await;
-    session.change(item(&format!("u{n}"), ItemKind::User { text: said.into(), images: vec![] }));
+    session.change(item(&format!("u{n}"), ItemKind::User { text: said.into(), images: vec![], sent: None }));
     session.change(item(&format!("a{n}"), ItemKind::Agent { text: format!("answer {n}"), final_answer: true }));
     session.change(Change::Status { status: Status::Idle, turn: None, error: None });
     tokio::time::sleep(Duration::from_millis(200)).await;

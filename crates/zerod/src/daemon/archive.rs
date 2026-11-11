@@ -121,6 +121,17 @@ impl Daemon {
         })
     }
 
+    /// The archived tasks called `name` (whatever the case).
+    pub(super) fn archived_named(&self, name: &str) -> Vec<String> {
+        self.archive_index(|index| index.iter().filter(|a| a.task.eq_ignore_ascii_case(name)).map(|a| a.id.clone()).collect())
+    }
+
+    /// An archived task as it was put away, read from its folder: what `zero wait` finds of it.
+    pub(super) fn archived_summary(&self, id: &str) -> Option<Conversation> {
+        let dir = self.home.join("archive").join(id);
+        dir.join("meta.json").exists().then(|| Session::load(&dir, self.events.clone()).ok().map(|s| s.summary()))?
+    }
+
     /// The archive's index, read from archive.json the first time, or rebuilt from the folders when that's missing or
     /// older than the archive (a zerod that kept none put something away).
     fn archive_index<T>(&self, then: impl FnOnce(&mut Vec<Archived>) -> T) -> T {

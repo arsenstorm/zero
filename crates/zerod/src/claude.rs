@@ -169,7 +169,7 @@ impl Adapter for Claude {
                         at: None,
                         id: format!("user-{}", conversation.seq + 1),
                         turn: conversation.turn.clone(),
-                        kind: ItemKind::User { text, images: vec![] },
+                        kind: ItemKind::User { text, images: vec![], sent: None },
                         status: ItemStatus::Done,
                     },
                 }];
@@ -610,6 +610,7 @@ fn tool(conversation: &Conversation, name: &Value, input: &Value) -> ItemKind {
             output: String::new(),
             exit_code: None,
             duration_ms: None,
+            description: field("description"),
         },
         "Write" => ItemKind::FileChange {
             changes: vec![FileChange { path: field("file_path"), kind: "add".into(), move_path: None, diff: field("content") }],

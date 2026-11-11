@@ -188,7 +188,7 @@ fn start_first_turn(session: Session, transport: Transport, prompt: &str, option
         match session
             .start(
                 transport,
-                Message { text: &prompt, images: &images, context: None },
+                Message { text: &prompt, images: &images, ..Default::default() },
                 ModelChoice { model: model.as_deref(), effort: effort.as_deref() },
             )
             .await

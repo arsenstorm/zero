@@ -113,7 +113,8 @@ async fn connection(inbox: Arc<Inbox>, stream: UnixStream) {
                 send(&mut out, error("done needs the agent and what's done".into())).await;
                 return;
             };
-            let reply = if request.text.as_deref() == Some("ask") {
+            // A worker's `--ask` asks no one: its done is its lead's to judge (Inbox::done).
+            let reply = if request.text.as_deref() == Some("ask") && !inbox.is_worker(&said.agent) {
                 Response { op: "created", id: Some(inbox.ask_done(&said.agent, &said.body).id), ..Default::default() }
             } else {
                 match inbox.done(&said.agent, &said.body, request.id.as_deref()) {

@@ -64,7 +64,7 @@ async fn a_transcript_replays_each_providers_lines_through_its_own_adapter() {
 fn the_record_becomes_a_claude_code_session_with_every_message_and_command() {
     let mut conversation = Conversation::new("s", Provider::Codex, "/work/project");
     conversation.items = vec![
-        item("1", ItemKind::User { text: "Remember PERIWINKLE-42.".into(), images: vec![] }),
+        item("1", ItemKind::User { text: "Remember PERIWINKLE-42.".into(), images: vec![], sent: None }),
         item("2", ItemKind::Reasoning { text: "thinking".into() }),
         item("3", ItemKind::Agent { text: "Checking the machine.".into(), final_answer: false }),
         item(
@@ -75,6 +75,7 @@ fn the_record_becomes_a_claude_code_session_with_every_message_and_command() {
                 output: "frostbite-7\n".into(),
                 exit_code: Some(0),
                 duration_ms: None,
+                description: String::new(),
             },
         ),
         item(
@@ -85,6 +86,7 @@ fn the_record_becomes_a_claude_code_session_with_every_message_and_command() {
                 output: String::new(),
                 exit_code: Some(1),
                 duration_ms: None,
+                description: String::new(),
             },
         ),
         item(

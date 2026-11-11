@@ -104,7 +104,7 @@ fn done_or_merged_stands_through_turns_zero_started_until_the_user_speaks() {
         at: Some(at * 1000),
         id: format!("u{at}"),
         turn: None,
-        kind: ItemKind::User { text: text.into(), images: vec![] },
+        kind: ItemKind::User { text: text.into(), images: vec![], sent: None },
         status: ItemStatus::Done,
     };
     lead.items.push(said(&from_line("zero", "1 new event on what you follow"), 1_100));
@@ -478,7 +478,7 @@ fn a_lead_that_replied_stays_replied_while_parked() {
         at: None,
         id: "u1".into(),
         turn: None,
-        kind: ItemKind::User { text: "go on".into(), images: vec![] },
+        kind: ItemKind::User { text: "go on".into(), images: vec![], sent: None },
         status: ItemStatus::Done,
     });
     assert_eq!(board(&[quiet], &[])[0].state, State::Idle, "offline with no answer to read");
@@ -593,7 +593,7 @@ fn a_reply_to_a_turn_zero_started_is_quiet() {
         at: None,
         id: id.into(),
         turn: None,
-        kind: ItemKind::User { text: text.into(), images: vec![] },
+        kind: ItemKind::User { text: text.into(), images: vec![], sent: None },
         status: ItemStatus::Done,
     };
     let answer = |id: &str| Item {
@@ -767,4 +767,116 @@ fn the_users_word_that_a_task_is_done_settles_a_turn_that_ended_asking_them() {
     let mut open = Ask::new(AskKind::Choice, "Deploy now?", agent("a"), 600);
     open.state = AskState::Waiting;
     assert_eq!(board(&[lead], &[marked(), open])[0].state, State::NeedsYou, "an open ask is still theirs");
+}
+
+/// The user's own message at `at` seconds, and the agent's answer after it, ending its turn as `ending`.
+fn spoke_then_ended(lead: &mut Conversation, at: i64, ending: &str) {
+    let item = |id: &str, ms: i64, kind: ItemKind| Item { at: Some(ms), id: id.into(), turn: None, kind, status: ItemStatus::Done };
+    lead.items.push(item(&format!("u{at}"), at * 1000, ItemKind::User { text: "How's it going?".into(), images: vec![], sent: None }));
+    let answer = format!("Looked into it.\n\n[zero: {ending}]");
+    lead.items.push(item(&format!("a{at}"), at * 1000 + 1, ItemKind::Agent { text: answer, final_answer: true }));
+}
+
+#[test]
+fn an_issue_on_the_user_set_before_they_last_spoke_doesnt_decide_the_task() {
+    // Set "you" hours ago; the user has talked to it since and its turns ended working: the row still says you, but the
+    // task is as its turn left it. Set (or set again) after the user spoke, it needs them.
+    use zerod::model::{Issue, IssueState};
+    let mut lead = session("a", "/work/app", Status::Idle);
+    lead.apply(Change::Issue { issue: Issue::set(None, "T-1", IssueState::You, "merge decision", 100_000) });
+    spoke_then_ended(&mut lead, 200, "working");
+    let row = &board(std::slice::from_ref(&lead), &[])[0];
+    assert_eq!((row.state, row.issues[0].state), (State::Answered, IssueState::You), "stale: the turn's own state");
+    let was = lead.issues[0].clone();
+    lead.apply(Change::Issue { issue: Issue::set(Some(&was), "T-1", IssueState::You, "merge decision", 300_000) });
+    assert_eq!(board(&[lead], &[])[0].state, State::NeedsYou, "set again after the user spoke: it needs them");
+}
+
+#[test]
+fn an_issue_handed_over_is_the_users_to_do() {
+    // `zero issue T-2 over "…"`: done on the agents' side, the next step the user's (review, merge, deploy): Over to
+    // you, a to-do rather than a decision; an issue on the user still comes first, and nothing old decides it.
+    use zerod::model::{Issue, IssueState};
+    assert_eq!(IssueState::named("over"), Some(IssueState::Over));
+    let mut lead = session("a", "/work/app", Status::Idle);
+    lead.apply(Change::Issue { issue: Issue::set(None, "T-3", IssueState::Waiting, "CI", 50_000) });
+    lead.apply(Change::Issue { issue: Issue::set(None, "T-2", IssueState::Over, "review and merge #12", 100_000) });
+    spoke_then_ended(&mut lead, 90, "working");
+    let row = &board(std::slice::from_ref(&lead), &[])[0];
+    assert_eq!((row.state, row.needs.as_deref()), (State::Handed, Some("T-2: review and merge #12")));
+    assert_eq!(row.issues.iter().map(|i| i.ticket.as_str()).collect::<Vec<_>>(), ["T-2", "T-3"], "on the user first");
+    let mut deciding = lead.clone();
+    deciding.apply(Change::Issue { issue: Issue::set(None, "T-1", IssueState::You, "which fix?", 110_000) });
+    assert_eq!(board(&[deciding], &[])[0].state, State::NeedsYou, "a decision comes before a to-do");
+    spoke_then_ended(&mut lead, 200, "working");
+    assert_eq!(board(&[lead], &[])[0].state, State::Answered, "handed over before the user last spoke: theirs to say");
+}
+
+#[test]
+fn what_is_over_to_the_user_stands_through_turns_zero_started_until_they_speak() {
+    // `zero note "PR ready" --needs "merge #12"`, then an event it follows wakes it: still over to the user.
+    let mut lead = session("a", "/work/app", Status::Idle);
+    let mut handed = note("a", "PR ready", None, Some("merge #12"));
+    handed.created_at = zerod::ask::Time(1_000);
+    lead.items.push(Item {
+        at: Some(1_100_000),
+        id: "u1".into(),
+        turn: None,
+        kind: ItemKind::User { text: from_line("zero", "1 new event on what you follow"), images: vec![], sent: None },
+        status: ItemStatus::Done,
+    });
+    let asks = [handed, dot("Working", None), dot("Done", Some("done"))];
+    assert_eq!(board(&[lead.clone()], &asks)[0].state, State::Handed);
+    spoke_then_ended(&mut lead, 1_200, "working");
+    assert_ne!(board(&[lead], &asks)[0].state, State::Handed, "the user's own word since: theirs to settle again");
+}
+
+/// A worker of `lead` whose last turn ended on `answer`.
+fn answered(id: &str, lead: &str, answer: &str) -> Conversation {
+    let mut worker = session(id, "/work/app", Status::Idle);
+    worker.parent = Some(lead.into());
+    worker.items.push(Item {
+        id: format!("{id}-answer"),
+        turn: None,
+        status: ItemStatus::Done,
+        at: None,
+        kind: ItemKind::Agent { text: answer.into(), final_answer: true },
+    });
+    worker
+}
+
+#[test]
+fn a_task_between_turns_with_a_background_run_waits_on_it() {
+    // Its turn ended with a command it started in the background still running: its CLI wakes it when that finishes.
+    use zerod::board::mark_background;
+    let worker = answered("w", "a", "Started the suite.");
+    let mut rows = board(&[session("a", "/work/app", Status::Idle), worker], &[]);
+    mark_background(&mut rows, &|id| id == "w");
+    assert_eq!(rows[0].team[0].state, State::Waiting);
+    assert_eq!((rows[0].state, rows[0].own), (State::Idle, State::Idle), "a worker waiting says nothing of its lead");
+    mark_background(&mut rows, &|_| true);
+    assert_eq!((rows[0].state, rows[0].own), (State::Waiting, State::Waiting), "a lead the same way");
+}
+
+#[test]
+fn a_finished_worker_is_due_to_be_put_away_a_while_after_its_answer() {
+    use zerod::board::finished_workers;
+    let mut question = Ask::new(AskKind::Question, "Merge it?", agent("open"), 600);
+    question.id = "q1".into();
+    let rows = board(
+        &[
+            session("a", "/work/app", Status::Idle),
+            answered("done", "a", "All 4 files listed."),
+            answered("confirmed", "a", "Shipped.\n\n[zero: done]"),
+            answered("waiting", "a", "CI is down.\n\n[zero: waiting]"),
+            answered("asked", "a", "Which colour?\n\n[zero: asked n25cmk]"),
+            answered("open", "a", "Listed, merge it?"),
+        ],
+        &[question],
+    );
+    let said = |_: &str| Some(1_000);
+    let hour = 3600;
+    assert!(finished_workers(&rows, 1_000 + hour - 1, hour, &said).is_empty(), "not yet");
+    assert_eq!(finished_workers(&rows, 1_000 + hour, hour, &said), ["confirmed", "done"], "only those that finished, nothing open");
+    assert!(finished_workers(&rows, 1_000 + hour, hour, &|_| None).is_empty(), "not known to have said so: not due");
 }

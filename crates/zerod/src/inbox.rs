@@ -107,7 +107,12 @@ pub struct Inbox {
     /// Where the user's commands run, out of zerod's reach (runs.rs).
     runs: Arc<crate::runs::Runs>,
     me: Weak<Inbox>,
+    /// Which agents are workers (a task under a lead), as the daemon knows it: their done is their lead's to judge.
+    workers: std::sync::OnceLock<WorkerTest>,
 }
+
+/// Whether an agent is a worker, given once by whoever holds the daemon (server.rs).
+pub type WorkerTest = Box<dyn Fn(&AgentIdentity) -> bool + Send + Sync>;
 
 impl Inbox {
     pub fn open(log: Option<PathBuf>, runtimes: Vec<Arc<dyn Runtime>>) -> Arc<Inbox> {
@@ -136,6 +141,7 @@ impl Inbox {
             log,
             runtimes,
             me: me.clone(),
+            workers: std::sync::OnceLock::new(),
         });
         inbox.load();
         inbox
@@ -150,6 +156,16 @@ impl Inbox {
         let mut state = self.lock();
         state.take_back = take_back;
         state.default_ttl = default_ttl;
+    }
+
+    /// How to tell a worker, given once.
+    pub fn know_workers(&self, test: WorkerTest) {
+        let _ = self.workers.set(test);
+    }
+
+    /// A worker (a task under a lead): its done goes to its lead with its report, never asked of the user.
+    pub fn is_worker(&self, agent: &AgentIdentity) -> bool {
+        self.workers.get().is_some_and(|test| test(agent))
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<InboxEvent> {
@@ -346,6 +362,12 @@ impl Inbox {
     /// confirmed. A bare "done" cost an agent nothing to say, and it said it when a piece felt finished (committed, not
     /// shipped), putting the task away.
     pub fn done(&self, agent: &AgentIdentity, said: &str, token: Option<&str>) -> Result<(), String> {
+        // Done in two, and the user asked when unsure, is a lead's word to the user. A worker's goes to its lead with its
+        // report, which judges it: taken at its word.
+        if self.is_worker(agent) {
+            self.confirm(agent, said, "done");
+            return Ok(());
+        }
         let quoted = said.replace('"', "'");
         self.second_word(agent, said, token, "done", || {
             format!(

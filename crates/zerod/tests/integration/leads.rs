@@ -714,3 +714,122 @@ async fn a_transcript_keeps_claudes_init_only_when_it_changes() {
     let again = Daemon::open(&w.home, runtime(w.claude.clone())).unwrap();
     assert_eq!(again.get(&lead).unwrap().thread.as_deref(), Some("t2"), "replayed, the latest init's thread");
 }
+
+/// The id the user's message went by (the app's, sent or queued with it): on the item zerod records for it.
+fn sent_as(conversation: &Conversation) -> Vec<Option<String>> {
+    conversation
+        .items
+        .iter()
+        .filter_map(|i| match &i.kind {
+            zerod::model::ItemKind::User { sent, .. } => Some(sent.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_message_keeps_the_id_it_was_sent_or_queued_with() {
+    // The app knows its own copy of a message (shown at once) and its queue entry by an id of its own: zerod's item for
+    // that message carries it, so the two are matched by what they are, never by their words, which can repeat.
+    let w = world("sent-as");
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "same words");
+    let seen = lead_runtime(&w).await;
+    seen.said("user", 1).await;
+    let queued = w.daemon.queue_as(&lead, "same words", &[], Some("queue-1")).unwrap();
+    assert_eq!(queued.id, "queue-1", "queued under the app's id");
+    seen.say(turn_ends());
+    seen.said("user", 2).await;
+    let now = until(&w.daemon, &lead, |c| sent_as(c).len() == 2).await;
+    assert_eq!(sent_as(&now), [None, Some("queue-1".into())]);
+    seen.say(turn_ends());
+    until(&w.daemon, &lead, |c| c.status == Status::Idle).await;
+    let message = zerod::session::Message { text: "same words", sent: Some("sending-1"), ..Default::default() };
+    w.daemon.send(&lead, message, Default::default()).await.unwrap();
+    let now = until(&w.daemon, &lead, |c| sent_as(c).len() == 3).await;
+    assert_eq!(sent_as(&now)[2], Some("sending-1".into()));
+    // Kept through a restart: the transcript says so.
+    let again = zerod::session::Session::load(&w.home.join("sessions").join(&lead), tokio::sync::broadcast::channel(8).0).unwrap();
+    assert_eq!(sent_as(&again.snapshot()), sent_as(&now));
+}
+
+/// A Claude worker that ends its turn while a command it started in the background still runs isn't stopped: Claude
+/// wakes it when that finishes. Its lead hears it's waiting on that run, and then how its next turn ends, as any.
+#[tokio::test]
+async fn a_worker_waiting_on_a_background_run_is_reported_waiting_not_stopped() {
+    let w = world("leads-background");
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let led = lead_runtime(&w).await;
+    led.said("user", 1).await;
+    led.say(turn_ends());
+    until(&w.daemon, &lead, |c| c.attention() == Attention::Idle).await;
+    let worker = w.daemon.spawn(&lead, Provider::Claude, "run the suite", named("Suite", None)).unwrap();
+    let running = nth_runtime(&w, 1).await;
+    running.said("user", 1).await;
+    running.say(json!({"type": "assistant", "message": {"id": "m1", "content": [{"type": "tool_use", "id": "t1", "name": "Bash",
+        "input": {"command": "cargo test --workspace", "run_in_background": true}}]}}));
+    running.say(json!({"type": "system", "subtype": "task_started", "task_id": "b1", "tool_use_id": "t1", "is_backgrounded": true}));
+    running.say(json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "Running in the background"}]}}));
+    running.say(json!({"type": "result", "subtype": "success", "is_error": false, "result": ""}));
+    let told = led.said("user", 2).await;
+    let text = told[1]["message"]["content"].as_str().unwrap();
+    assert!(
+        text.contains("Worker Suite is waiting on a background run: it carries on when it finishes (running: cargo test --workspace)"),
+        "{text}"
+    );
+    assert_eq!(w.daemon.background(&worker), Some(vec!["cargo test --workspace".to_string()]));
+    // Its lead waiting on it waits on, too.
+    assert!(w.daemon.wait(std::slice::from_ref(&worker), false, Duration::from_millis(200)).await.is_err(), "still running");
+    led.say(turn_ends());
+    // The run finishes, and Claude carries the worker on: that turn's end reaches its lead as any.
+    running.say(json!({"type": "system", "subtype": "task_notification", "task_id": "b1", "tool_use_id": "t1", "status": "completed"}));
+    running.say(json!({"type": "assistant", "message": {"id": "m2", "content": [{"type": "text", "text": "All 312 tests pass."}]}}));
+    until(&w.daemon, &worker, |c| c.attention() == Attention::Working).await;
+    running.say(turn_ends());
+    let told = led.said("user", 3).await;
+    assert!(told[2]["message"]["content"].as_str().unwrap().contains("Worker Suite finished: All 312 tests pass."), "{told:?}");
+    assert_eq!(w.daemon.background(&worker), None);
+}
+
+/// A worker is finished once its lead has its report: in the lead's conversation, not while it's queued there.
+#[tokio::test]
+async fn a_worker_is_finished_once_its_lead_has_its_report() {
+    let w = world("leads-reported");
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let led = lead_runtime(&w).await;
+    led.said("user", 1).await;
+    let worker = finished_worker(&w, &lead).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!w.daemon.finished(&worker), "queued behind the lead's turn");
+    led.say(turn_ends());
+    led.said("user", 2).await;
+    for _ in 0..200 {
+        if w.daemon.finished(&worker) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("never counted as reported");
+}
+
+/// A message to a closed worker isn't lost: by its id, or its name when only one task has it, the worker comes back
+/// from the archive to hear it. `zero wait` finds it there as it is.
+#[tokio::test]
+async fn a_message_to_an_archived_worker_brings_it_back() {
+    let w = world("leads-archived-send");
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let led = lead_runtime(&w).await;
+    led.said("user", 1).await;
+    led.say(turn_ends());
+    until(&w.daemon, &lead, |c| c.attention() == Attention::Idle).await;
+    let worker = finished_worker(&w, &lead).await;
+    w.daemon.archive(&worker).await.unwrap();
+    assert!(w.daemon.get(&worker).is_none());
+    let settled = w.daemon.wait(std::slice::from_ref(&worker), false, Duration::from_secs(1)).await.unwrap();
+    assert_eq!(settled[0].id, worker, "found in the archive");
+    assert_eq!(w.daemon.resolve(&worker).unwrap(), worker);
+    assert_eq!(w.daemon.get(&worker).unwrap().parent.as_deref(), Some(lead.as_str()), "back, under its lead");
+    w.daemon.archive(&worker).await.unwrap();
+    assert_eq!(w.daemon.resolve("listing").unwrap(), worker, "by its name");
+    assert!(w.daemon.get(&worker).is_some());
+    assert_eq!(w.daemon.resolve("nothing").unwrap_err(), "No task nothing");
+}

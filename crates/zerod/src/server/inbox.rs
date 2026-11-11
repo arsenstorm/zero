@@ -71,7 +71,7 @@ fn agent_ask(zerod: &Zerod, request: &Request) -> Result<Value, String> {
         let state = args["state"]
             .as_str()
             .and_then(crate::model::IssueState::named)
-            .ok_or("An issue's state is one of you, working, waiting, parked or done")?;
+            .ok_or("An issue's state is one of you, over, working, waiting, parked or done")?;
         daemon.set_issue(&id, args["ticket"].as_str().ok_or("Which issue? Its ticket")?, state, args["text"].as_str().unwrap_or(""))?;
         return Ok(json!({}));
     }
@@ -79,7 +79,7 @@ fn agent_ask(zerod: &Zerod, request: &Request) -> Result<Value, String> {
     // zero_done: as `zero done` (Inbox::done): refused with a token, done with it, or the user asked.
     if args["tool"] == "done" {
         let said = args["text"].as_str().unwrap_or("Done").trim().to_string();
-        if args["ask"].as_bool() == Some(true) {
+        if args["ask"].as_bool() == Some(true) && !zerod.inbox.is_worker(&agent) {
             return Ok(json!({"id": zerod.inbox.ask_done(&agent, &said).id}));
         }
         return zerod.inbox.done(&agent, &said, args["confirm"].as_str()).map(|_| json!({"done": true}));

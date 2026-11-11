@@ -474,22 +474,32 @@ impl Daemon {
         self.blocked.get().is_some_and(|blocked| blocked(id))
     }
 
-    /// A task by its id, or by its name (as the sidebar shows it, whatever the case) when only one task has it.
+    /// A task by its id, or by its name (as the sidebar shows it, whatever the case) when only one task has it. One
+    /// archived (a finished worker put away, a task closed) comes back for what's sent to it, with its workers, as
+    /// unarchiving brings them; a live task by that name comes first.
     pub fn resolve(&self, reference: &str) -> Result<String, String> {
         let reference = reference.trim();
         if self.session(reference).is_ok() {
             return Ok(reference.to_string());
         }
-        let named: Vec<Conversation> =
-            self.list().into_iter().filter(|c| crate::bridge::label(c).eq_ignore_ascii_case(reference)).collect();
+        let mut named: Vec<String> =
+            self.list().into_iter().filter(|c| crate::bridge::label(c).eq_ignore_ascii_case(reference)).map(|c| c.id).collect();
+        if named.is_empty() {
+            named = if !reference.contains('/') && self.exists(reference) {
+                vec![reference.to_string()]
+            } else {
+                self.archived_named(reference)
+            };
+            if let [one] = named.as_slice() {
+                // Back with the lead it went with, if it went with one: its tree as it was.
+                let root = archived_with(&self.home.join("archive").join(one)).unwrap_or_else(|| one.clone());
+                self.unarchive(&root)?;
+            }
+        }
         match named.as_slice() {
-            [one] => Ok(one.id.clone()),
+            [one] => Ok(one.clone()),
             [] => Err(format!("No task {reference}")),
-            several => Err(format!(
-                "{} tasks are called {reference}: say which by its id ({})",
-                several.len(),
-                several.iter().map(|c| c.id.as_str()).collect::<Vec<_>>().join(", ")
-            )),
+            several => Err(format!("{} tasks are called {reference}: say which by its id ({})", several.len(), several.join(", "))),
         }
     }
 
@@ -532,9 +542,13 @@ impl Daemon {
         let mut events = self.events.subscribe();
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
-            let now: Vec<Conversation> =
-                ids.iter().map(|id| self.get(id).ok_or_else(|| format!("No session {id}"))).collect::<Result<_, _>>()?;
-            let settled = |c: &Conversation| !busy(c.attention());
+            // Archived, it's found there as it was put away.
+            let now: Vec<Conversation> = ids
+                .iter()
+                .map(|id| self.get(id).or_else(|| self.archived_summary(id)).ok_or_else(|| format!("No session {id}")))
+                .collect::<Result<_, _>>()?;
+            // Between turns with a run of its own in the background, it's carried on when that finishes: not settled.
+            let settled = |c: &Conversation| !busy(c.attention()) && self.background(&c.id).is_none();
             if if any { now.iter().any(settled) } else { now.iter().all(settled) } {
                 return Ok(now);
             }
@@ -542,6 +556,26 @@ impl Daemon {
                 return Err(format!("Still working after {} minutes", timeout.as_secs() / 60));
             }
         }
+    }
+
+    /// What a task left running in the background as its turn ended, which wakes it when it finishes (Session::background).
+    pub fn background(&self, id: &str) -> Option<Vec<String>> {
+        self.session(id).ok()?.background()
+    }
+
+    /// Whether a worker finished (its last turn ended on an answer, not waiting, asked or between steps) and its lead
+    /// has had that report: a message from it in the lead's conversation since, not one still queued there.
+    pub fn finished(&self, worker: &str) -> bool {
+        let Some(conversation) = self.get(worker).filter(|c| c.ended() == Attention::Done) else { return false };
+        let answered =
+            conversation.items.iter().rev().find(|i| matches!(i.kind, ItemKind::Agent { final_answer: true, .. })).and_then(|i| i.at);
+        let (Some(answered), Some(lead)) = (answered, conversation.parent.as_deref().and_then(|lead| self.get(lead))) else { return false };
+        let marked = crate::model::from_line(worker, "");
+        lead.items
+            .iter()
+            .rev()
+            .take_while(|i| i.at.is_none_or(|at| at >= answered))
+            .any(|i| matches!(&i.kind, ItemKind::User { text, .. } if text.contains(&marked)))
     }
 
     /// A task there, live or archived: done and put away, it still follows things, and hears of them (`notify`).

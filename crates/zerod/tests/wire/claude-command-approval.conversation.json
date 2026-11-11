@@ -35,7 +35,8 @@
         "cwd": "/work/project",
         "output": "",
         "exitCode": null,
-        "durationMs": null
+        "durationMs": null,
+        "description": "Create build directory and touch marker file"
       },
       "status": "done"
     },

@@ -88,14 +88,16 @@ pub fn from_claude_session(records: &[Value]) -> Vec<Item> {
         let content = &record["message"]["content"];
         match (record["type"].as_str(), content) {
             (Some("user"), Value::String(text)) if !text.starts_with('<') => {
-                items.push(item(uuid, 0, ItemKind::User { text: text.clone(), images: vec![] }))
+                items.push(item(uuid, 0, ItemKind::User { text: text.clone(), images: vec![], sent: None }))
             }
             (Some("user"), Value::Array(blocks)) => {
                 for (n, block) in blocks.iter().enumerate() {
                     match block["type"].as_str() {
-                        Some("text") if !block["text"].as_str().unwrap_or("").starts_with('<') => {
-                            items.push(item(uuid, n, ItemKind::User { text: block["text"].as_str().unwrap_or("").into(), images: vec![] }))
-                        }
+                        Some("text") if !block["text"].as_str().unwrap_or("").starts_with('<') => items.push(item(
+                            uuid,
+                            n,
+                            ItemKind::User { text: block["text"].as_str().unwrap_or("").into(), images: vec![], sent: None },
+                        )),
                         Some("tool_result") => {
                             let output = match &block["content"] {
                                 Value::String(text) => text.clone(),
@@ -134,6 +136,7 @@ pub fn from_claude_session(records: &[Value]) -> Vec<Item> {
                                         output: String::new(),
                                         exit_code: None,
                                         duration_ms: None,
+                                        description: input["description"].as_str().unwrap_or("").into(),
                                     }
                                 } else {
                                     ItemKind::Tool { name: block["name"].as_str().unwrap_or("tool").into(), detail: detail(input) }
@@ -178,7 +181,7 @@ pub fn from_codex_rollout(records: &[Value]) -> Option<(String, Vec<Item>)> {
         let it = &record["payload"]["item"];
         let text = || it["content"].as_array().into_iter().flatten().filter_map(|c| c["text"].as_str()).collect::<Vec<_>>().join("\n");
         let kind = match it["type"].as_str() {
-            Some("UserMessage") => ItemKind::User { text: text(), images: vec![] },
+            Some("UserMessage") => ItemKind::User { text: text(), images: vec![], sent: None },
             Some("AgentMessage") if !text().trim().is_empty() => ItemKind::Agent { text: text(), final_answer: false },
             Some("CommandExecution") => {
                 // The shell's own wrapper (zsh -lc 'the command') left off: the command as it was given.
@@ -196,6 +199,7 @@ pub fn from_codex_rollout(records: &[Value]) -> Option<(String, Vec<Item>)> {
                     output: it["aggregated_output"].as_str().unwrap_or("").into(),
                     exit_code,
                     duration_ms,
+                    description: String::new(),
                 }
             }
             Some("McpToolCall") => ItemKind::Tool {
@@ -224,7 +228,7 @@ pub fn from_opencode_export(export: &Value) -> Option<(String, Vec<Item>)> {
             items.push(Item { id: format!("opencode-{id}-{n}"), turn: None, kind, status: ItemStatus::Done, at })
         };
         match message["type"].as_str() {
-            Some("user") => push(0, ItemKind::User { text: message["text"].as_str().unwrap_or("").into(), images: vec![] }),
+            Some("user") => push(0, ItemKind::User { text: message["text"].as_str().unwrap_or("").into(), images: vec![], sent: None }),
             Some("assistant") => {
                 for (n, part) in message["content"].as_array().into_iter().flatten().enumerate() {
                     let state = &part["state"];
@@ -246,6 +250,7 @@ pub fn from_opencode_export(export: &Value) -> Option<(String, Vec<Item>)> {
                                     .join("\n"),
                                 exit_code: None,
                                 duration_ms: None,
+                                description: state["input"]["description"].as_str().unwrap_or("").into(),
                             },
                         ),
                         (Some("tool"), name) => {

@@ -276,6 +276,26 @@ fn a_tool_claudes_classifier_blocks_reads_as_blocked() {
     );
 }
 
+#[test]
+fn a_command_carries_the_agents_words_for_what_it_does() {
+    let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+    core.receive(&json!({"type": "assistant", "message": {"id": "m1", "content": [{"type": "tool_use", "id": "t1", "name": "Bash",
+        "input": {"command": "python3 - <<'EOF'\nprint(1)\nEOF", "description": "Render six frames of the sweep"}}]}}));
+    assert!(matches!(&core.conversation().items[0].kind,
+        ItemKind::Command { description, .. } if description == "Render six frames of the sweep"));
+    // OpenCode's, where it gives one.
+    let mut core = Core::new(Conversation::new("s1", Provider::Opencode, "/work/project"));
+    core.receive(&json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "s", "update": {
+        "sessionUpdate": "tool_call", "toolCallId": "c1", "title": "bash", "kind": "execute", "status": "pending",
+        "rawInput": {"command": "make", "description": "Build the app"}}}}));
+    assert!(matches!(&core.conversation().items[0].kind, ItemKind::Command { description, .. } if description == "Build the app"));
+    // Kept before it was carried, a command still reads, without one.
+    let old: ItemKind =
+        serde_json::from_value(json!({"type": "command", "command": "ls", "cwd": "/", "output": "", "exitCode": 0, "durationMs": null}))
+            .unwrap();
+    assert!(matches!(old, ItemKind::Command { description, .. } if description.is_empty()));
+}
+
 fn ask_user_question() -> serde_json::Value {
     json!({"type": "control_request", "request_id": "q1", "request": {"subtype": "can_use_tool", "tool_name": "AskUserQuestion", "tool_use_id": "t9",
         "input": {"questions": [

@@ -12,8 +12,9 @@ fn session(turns: usize) -> Session {
     let session = Session::new(Conversation::new("s", Provider::Claude, "/w"), None, events).unwrap();
     for n in 0..turns {
         let item = |id: String, kind| Item { id, turn: None, kind, status: ItemStatus::Done, at: None };
-        session
-            .change(Change::Item { item: item(format!("u{n}"), ItemKind::User { text: format!("question {n}\nmore"), images: vec![] }) });
+        session.change(Change::Item {
+            item: item(format!("u{n}"), ItemKind::User { text: format!("question {n}\nmore"), images: vec![], sent: None }),
+        });
         session.change(Change::Item { item: item(format!("a{n}"), ItemKind::Agent { text: format!("answer {n}"), final_answer: true }) });
     }
     session
@@ -79,8 +80,8 @@ fn a_page_starts_at_a_message_of_yours_so_a_long_turn_comes_whole() {
     let (events, _) = broadcast::channel(1024);
     let session = Session::new(Conversation::new("s", Provider::Claude, "/w"), None, events).unwrap();
     let item = |id: &str, kind| Item { id: id.into(), turn: None, kind, status: ItemStatus::Done, at: None };
-    session.change(Change::Item { item: item("u0", ItemKind::User { text: "first".into(), images: vec![] }) });
-    session.change(Change::Item { item: item("u1", ItemKind::User { text: "long one".into(), images: vec![] }) });
+    session.change(Change::Item { item: item("u0", ItemKind::User { text: "first".into(), images: vec![], sent: None }) });
+    session.change(Change::Item { item: item("u1", ItemKind::User { text: "long one".into(), images: vec![], sent: None }) });
     for n in 0..50 {
         session.change(Change::Item { item: item(&format!("s{n}"), ItemKind::Agent { text: format!("step {n}"), final_answer: false }) })
     }

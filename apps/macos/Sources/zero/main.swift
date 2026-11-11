@@ -17,7 +17,8 @@ func usage(help: Bool = false) -> Never {
                        time); the user can allow that kind for the rest of the task, and later ones run without asking
           zero note    "where you are now" [--waiting] [--needs "what the user should do, when they can"]
                        (no answer; sets your agent's dot and its row on Zero's board: working, or waiting on something
-                       other than the user. Done is zero done's)
+                       other than the user; --needs, Over to you: done on your side, a step left that only they can
+                       take, standing until they speak or a later note. Done is zero done's)
           zero done    "what's done" [--confirm TOKEN | --ask]
                        marks the task done, in two steps: alone, it's refused with what done means and a token; if it
                        is so (the user said it's done, or it's finished end to end: merged, deployed and checked), run it
@@ -74,8 +75,9 @@ func usage(help: Bool = false) -> Never {
                        (a table for the user, drawn by Zero in your conversation: a cell that is a state (working, waiting,
                        done) shows as its pill, and in a column named for a risk, a cell opening with low, medium
                        or high shows that as a pill, the rest on hover; tickets and PRs as links; or JSON on stdin: {"title","columns","rows"})
-          zero issue   TICKET you|working|waiting|parked|done ["text"] [--session ID]   (a row for one of the issues you lead,
-                       which the user reads coming back: you, with what you need from them; waiting, on whom; parked, why.
+          zero issue   TICKET you|over|working|waiting|parked|done ["text"] [--session ID]   (a row for one of the issues you
+                       lead, which the user reads coming back: you, with what you need them to decide or give; over, done
+                       on your side and the step theirs (review, merge, deploy); waiting, on whom; parked, why.
                        Set it whenever the issue's state changes)
           zero attr    NAME [VALUE] [--session ID]   (something about this task for the user to see on it, such as
                        zero attr PR https://github.com/org/repo/pull/12; a link opens. No value takes it back)

@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub enum IssueState {
     You,
+    /// Over to the user: done on the agents' side, the next step theirs (a review, a merge, a deploy, a check). A
+    /// to-do, not a decision.
+    Over,
     Working,
     Waiting,
     Parked,
@@ -19,6 +22,7 @@ impl IssueState {
     pub fn named(word: &str) -> Option<IssueState> {
         Some(match word {
             "you" | "user" | "needs-you" => IssueState::You,
+            "over" | "over-to-you" | "handed" => IssueState::Over,
             "working" => IssueState::Working,
             "waiting" | "blocked" => IssueState::Waiting,
             "parked" | "later" => IssueState::Parked,
@@ -201,6 +205,9 @@ pub enum ItemKind {
         text: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         images: Vec<String>,
+        /// The id the app sent or queued it with: its own copy of the message and its queue entry are this item.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sent: Option<String>,
     },
     /// `final_answer`: the turn's answer, as opposed to commentary while working.
     Agent {
@@ -220,6 +227,9 @@ pub enum ItemKind {
         output: String,
         exit_code: Option<i64>,
         duration_ms: Option<i64>,
+        /// What it does, in the agent's words ("Render six frames of the sweep"), where the provider gives them.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        description: String,
     },
     FileChange {
         changes: Vec<FileChange>,
@@ -911,8 +921,14 @@ mod tests {
     fn a_delta_appends_to_text_or_to_a_commands_output() {
         let mut conversation = Conversation::new("s", Provider::Codex, "/");
         conversation.apply(Change::Item { item: agent("a", "Hel") });
-        let command =
-            ItemKind::Command { command: "ls".into(), cwd: "/".into(), output: String::new(), exit_code: None, duration_ms: None };
+        let command = ItemKind::Command {
+            command: "ls".into(),
+            cwd: "/".into(),
+            output: String::new(),
+            exit_code: None,
+            duration_ms: None,
+            description: String::new(),
+        };
         conversation
             .apply(Change::Item { item: Item { at: None, id: "c".into(), turn: None, kind: command, status: ItemStatus::Running } });
         conversation.apply(Change::Delta { item: "a".into(), text: "lo".into() });
@@ -934,7 +950,14 @@ mod tests {
             at: None,
             id: "c".into(),
             turn: None,
-            kind: ItemKind::Command { command: "ls".into(), cwd: "/".into(), output: "".into(), exit_code: Some(0), duration_ms: None },
+            kind: ItemKind::Command {
+                command: "ls".into(),
+                cwd: "/".into(),
+                output: "".into(),
+                exit_code: Some(0),
+                duration_ms: None,
+                description: String::new(),
+            },
             status: ItemStatus::Done,
         };
         let json = serde_json::to_value(item).unwrap();

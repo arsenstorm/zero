@@ -97,6 +97,7 @@ fn open_inbox(daemon: &Arc<zerod::daemon::Daemon>, args: &Args) -> (Arc<zerod::i
     zerod::bridge::Bridge::start(daemon.clone(), inbox.clone());
     zerod::recap::start(daemon.clone(), inbox.clone());
     zerod::server::hold_while_blocked(daemon, &inbox);
+    zerod::server::know_workers(daemon, &inbox);
     (inbox, drops)
 }
 

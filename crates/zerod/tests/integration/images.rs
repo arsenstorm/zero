@@ -25,7 +25,7 @@ fn the_images_go_on_the_next_message_of_yours_seen() {
         item: Item {
             id: "u".into(),
             turn: None,
-            kind: ItemKind::User { text: "look".into(), images: vec![] },
+            kind: ItemKind::User { text: "look".into(), images: vec![], sent: None },
             status: ItemStatus::Done,
             at: None,
         },
@@ -34,7 +34,7 @@ fn the_images_go_on_the_next_message_of_yours_seen() {
         item: Item {
             id: "v".into(),
             turn: None,
-            kind: ItemKind::User { text: "and this".into(), images: vec![] },
+            kind: ItemKind::User { text: "and this".into(), images: vec![], sent: None },
             status: ItemStatus::Done,
             at: None,
         },
@@ -90,7 +90,7 @@ async fn a_message_with_an_image_keeps_it_through_a_restart() {
     std::fs::write(&png, [1, 2, 3]).unwrap();
     session
         .send(
-            zerod::session::Message { text: "what's this?", images: &[png.to_str().unwrap().to_string()], context: None },
+            zerod::session::Message { text: "what's this?", images: &[png.to_str().unwrap().to_string()], context: None, sent: None },
             Default::default(),
         )
         .await
@@ -118,7 +118,7 @@ async fn a_task_starts_with_images_as_any_message_has_them() {
     session
         .start(
             transport,
-            zerod::session::Message { text: "what's this?", images: std::slice::from_ref(&path), context: None },
+            zerod::session::Message { text: "what's this?", images: std::slice::from_ref(&path), context: None, sent: None },
             Default::default(),
         )
         .await
@@ -171,7 +171,12 @@ async fn the_message_of_yours_keeps_its_words_beside_its_images() {
     std::fs::write(&png, [1, 2, 3]).unwrap();
     session
         .send(
-            zerod::session::Message { text: "what's [Image #1] here?", images: &[png.to_str().unwrap().to_string()], context: None },
+            zerod::session::Message {
+                text: "what's [Image #1] here?",
+                images: &[png.to_str().unwrap().to_string()],
+                context: None,
+                sent: None,
+            },
             Default::default(),
         )
         .await

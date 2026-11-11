@@ -7,7 +7,7 @@ impl Session {
     /// Starts the runtime's side of the session, with `message` as its first turn; its images (their files) kept as
     /// any message's are.
     pub async fn start(&self, transport: Transport, message: Message<'_>, choice: ModelChoice<'_>) -> Result<(), String> {
-        self.keep_images(message.images);
+        self.keep(&message);
         match self.provider() {
             Provider::Codex => codex::start(self, transport, message.text, message.images, choice.model, choice.effort).await,
             Provider::Claude => claude::start(self, transport, message.text, message.images).await,
@@ -15,14 +15,22 @@ impl Session {
         }
     }
 
-    /// The images go on the next message of yours, now and on replay.
-    fn keep_images(&self, images: &[String]) {
-        if images.is_empty() {
+    /// The images and the app's id go on the next message of yours, now and on replay.
+    fn keep(&self, message: &Message) {
+        if message.images.is_empty() && message.sent.is_none() {
             return;
         }
         let mut inner = self.lock();
-        inner.record(json!({"attach": images}));
-        inner.core().attach(images.to_vec());
+        let mut entry = json!({});
+        if !message.images.is_empty() {
+            entry["attach"] = json!(message.images);
+            inner.core().attach(message.images.to_vec());
+        }
+        if let Some(sent) = message.sent {
+            entry["sent"] = json!(sent);
+            inner.core().mark(Some(sent.into()));
+        }
+        inner.record(entry);
     }
 
     /// Gives an offline session a new process on its conversation.
@@ -68,12 +76,17 @@ impl Session {
         if !self.is_attached() {
             return Err(format!("{} is offline; resume it first", conversation.id));
         }
-        self.keep_images(message.images);
-        match conversation.provider {
+        self.keep(&message);
+        let sent = match conversation.provider {
             Provider::Codex => codex::send(self, message.text, message.images, choice.model, choice.effort).await,
             Provider::Claude => claude::send(self, message.text, message.images, choice.model).await,
             Provider::Opencode => acp::send(self, message, choice).await,
+        };
+        // Not sent: its id mustn't go on whatever message comes next.
+        if sent.is_err() && message.sent.is_some() {
+            self.lock().core().mark(None)
         }
+        sent
     }
 
     pub async fn interrupt(&self) -> Result<(), String> {
@@ -116,6 +129,8 @@ pub struct Message<'a> {
     pub text: &'a str,
     pub images: &'a [String],
     pub context: Option<&'a str>,
+    /// The app's id for it (its own copy, shown at once; its queue entry): kept on the item zerod records for it.
+    pub sent: Option<&'a str>,
 }
 
 impl<'a> Message<'a> {

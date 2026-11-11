@@ -54,7 +54,7 @@ impl Adapter for Acp {
                             at: None,
                             id: format!("user-{}", conversation.seq + 1),
                             turn: turn.clone(),
-                            kind: ItemKind::User { text, images: vec![] },
+                            kind: ItemKind::User { text, images: vec![], sent: None },
                             status: ItemStatus::Done,
                         },
                     },
@@ -183,7 +183,7 @@ impl Acp {
                 let id = format!("{}-{}", kind.trim_end_matches("_chunk"), conversation.seq + 1);
                 let item = match kind {
                     "agent_thought_chunk" => ItemKind::Reasoning { text },
-                    "user_message_chunk" => ItemKind::User { text, images: vec![] },
+                    "user_message_chunk" => ItemKind::User { text, images: vec![], sent: None },
                     _ => ItemKind::Agent { text, final_answer: false },
                 };
                 let status = if kind == "user_message_chunk" { ItemStatus::Done } else { ItemStatus::Running };
@@ -308,6 +308,7 @@ fn tool(conversation: &Conversation, call: &Value) -> ItemKind {
             output: texts(),
             exit_code: call["rawOutput"]["metadata"]["exit"].as_i64(),
             duration_ms: None,
+            description: input["description"].as_str().unwrap_or("").into(),
         },
         Some("edit") => {
             let diffs: Vec<FileChange> = call["content"]

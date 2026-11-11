@@ -784,7 +784,7 @@ async fn a_lead_sets_its_issues_rows_and_the_board_shows_them() {
     assert_eq!(control.call(set("ENG-1", "you", "merge decision")).await["ok"], true);
     assert_eq!(control.call(set("ENG-2", "waiting", "CI on app#12")).await["ok"], true);
     let refused = control.call(set("ENG-3", "dancing", "")).await;
-    assert!(refused["error"].as_str().unwrap().contains("you, working, waiting, parked or done"), "{refused}");
+    assert!(refused["error"].as_str().unwrap().contains("you, over, working, waiting, parked or done"), "{refused}");
     let board = control.call(json!({"op": "board"})).await;
     let row = board["result"]["rows"]
         .as_array()

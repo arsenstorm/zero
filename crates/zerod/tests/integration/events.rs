@@ -196,7 +196,7 @@ async fn after_compacting_the_agent_hears_zeros_record_word_for_word_not_only_it
             at: None,
             id: id.into(),
             turn: None,
-            kind: ItemKind::User { text: text.into(), images: vec![] },
+            kind: ItemKind::User { text: text.into(), images: vec![], sent: None },
             status: ItemStatus::Done,
         },
     };

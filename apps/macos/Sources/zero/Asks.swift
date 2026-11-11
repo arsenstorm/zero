@@ -163,7 +163,8 @@ func reason(_ ask: Ask) -> String? {
     note.status = ["blocked", "done", "completed", "merged", "waiting"].first { flag($0) != nil }.map { $0 == "merged" ? "completed" : $0 }
     note.needs = flag("needs")
     shortDetail(note.needs, flag: "needs")
-    if note.status == "done" || note.status == "completed" {
+    // With --needs it's over to the user, as documented: the warning is for a note that says done alone.
+    if note.needs == nil && (note.status == "done" || note.status == "completed") {
         FileHandle.standardError.write(
             Data("zero: a note's --done doesn't mark the task done; zero done does (it asks you to confirm)\n".utf8))
     }
@@ -175,6 +176,9 @@ func reason(_ ask: Ask) -> String? {
 /// with --ask, the user asked (its id printed, to end the turn on).
 @MainActor func doneCommand() {
     guard let text = positional.first else { usage() }
+    if flag("needs") != nil {
+        fail("zero: a step left to the user isn't done: zero note \"what's done\" --needs \"their step\" shows Over to you")
+    }
     let socket = connect()
     let said = Ask(kind: .note, title: "Update", body: text, agent: agentIdentity())
     try? socket.send(Request(op: "done", ask: said, id: flag("confirm"), text: flag("ask") != nil ? "ask" : nil))

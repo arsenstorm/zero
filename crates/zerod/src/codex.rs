@@ -372,7 +372,7 @@ fn item(value: &Value, turn: Option<&str>) -> Option<Item> {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            (ItemKind::User { text, images: vec![] }, ItemStatus::Done)
+            (ItemKind::User { text, images: vec![], sent: None }, ItemStatus::Done)
         }
         "agentMessage" => {
             // Started with no text yet, it is still being written.
@@ -397,6 +397,7 @@ fn item(value: &Value, turn: Option<&str>) -> Option<Item> {
                 output: text("aggregatedOutput"),
                 exit_code: value["exitCode"].as_i64(),
                 duration_ms: value["durationMs"].as_i64(),
+                description: String::new(),
             };
             (kind, status("status"))
         }

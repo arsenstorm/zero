@@ -102,7 +102,7 @@ pub enum Rewind {
 fn yours(conversation: &Conversation, item: &str) -> Result<(usize, String, Vec<String>), String> {
     let at = conversation.items.iter().position(|i| i.id == item).ok_or("That message isn't in the conversation")?;
     match &conversation.items[at].kind {
-        ItemKind::User { text, images } => Ok((at, text.clone(), images.clone())),
+        ItemKind::User { text, images, .. } => Ok((at, text.clone(), images.clone())),
         _ => Err("Only a message of yours can be gone back to".into()),
     }
 }

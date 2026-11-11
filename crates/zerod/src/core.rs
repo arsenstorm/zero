@@ -14,6 +14,8 @@ pub struct Core {
     /// Images sent with the message on its way: they go on the next message of yours seen, however its provider
     /// echoes it (at once, or when the turn starts).
     attach: Vec<String>,
+    /// The app's id for the message on its way: it goes on the next message of yours seen, as its images do.
+    sent: Option<String>,
     /// Being paused for Zero's update: the agent's own note of the stop says so.
     pausing: bool,
 }
@@ -21,12 +23,17 @@ pub struct Core {
 impl Core {
     pub fn new(conversation: Conversation) -> Self {
         let adapter = conversation.provider.adapter();
-        Core { conversation, adapter, clock: None, attach: vec![], pausing: false }
+        Core { conversation, adapter, clock: None, attach: vec![], sent: None, pausing: false }
     }
 
     /// The images sent with the next message of yours.
     pub fn attach(&mut self, images: Vec<String>) {
         self.attach = images;
+    }
+
+    /// The app's id for the next message of yours; none clears it (a send that failed).
+    pub fn mark(&mut self, sent: Option<String>) {
+        self.sent = sent;
     }
 
     /// Sets the time of what's read next: now when live, the transcript's record on replay.
@@ -41,12 +48,24 @@ impl Core {
         if item.at.is_none() {
             item.at = known.and_then(|known| known.at).or(self.clock)
         }
-        if let ItemKind::User { images, .. } = &mut item.kind
-            && images.is_empty()
-        {
+        if let ItemKind::User { images, sent, .. } = &mut item.kind {
             match known.map(|k| &k.kind) {
-                Some(ItemKind::User { images: kept, .. }) if !kept.is_empty() => *images = kept.clone(),
-                None if !self.attach.is_empty() => *images = std::mem::take(&mut self.attach),
+                Some(ItemKind::User { images: kept, sent: was, .. }) => {
+                    if images.is_empty() {
+                        images.clone_from(kept)
+                    }
+                    if sent.is_none() {
+                        sent.clone_from(was)
+                    }
+                }
+                None => {
+                    if images.is_empty() && !self.attach.is_empty() {
+                        *images = std::mem::take(&mut self.attach)
+                    }
+                    if sent.is_none() {
+                        *sent = self.sent.take()
+                    }
+                }
                 _ => {}
             }
         }

@@ -12,7 +12,9 @@ fn kept(name: &str, turns: usize) -> std::path::PathBuf {
     let session = Session::new(Conversation::new("s", Provider::Claude, "/w"), Some(dir.clone()), events).unwrap();
     for n in 0..turns {
         let item = |id: String, kind| Item { id, turn: None, kind, status: ItemStatus::Done, at: None };
-        session.change(Change::Item { item: item(format!("u{n}"), ItemKind::User { text: format!("question {n}"), images: vec![] }) });
+        session.change(Change::Item {
+            item: item(format!("u{n}"), ItemKind::User { text: format!("question {n}"), images: vec![], sent: None }),
+        });
         session.change(Change::Item { item: item(format!("a{n}"), ItemKind::Agent { text: format!("answer {n}"), final_answer: true }) });
     }
     dir

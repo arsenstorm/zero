@@ -32,7 +32,7 @@ import ZeroCore
 @MainActor func issueCommand() async {
     guard positional.count >= 2, let session = targetSession() else {
         fail(
-            "zero: which issue, and who has it? (zero issue TICKET you|working|waiting|parked|done [\"what it needs, where it stands, or why\"] [--session ID])"
+            "zero: which issue, and who has it? (zero issue TICKET you|over|working|waiting|parked|done [\"what it needs, where it stands, or why\"] [--session ID])"
         )
     }
     let text = positional.dropFirst(2).joined(separator: " ")

@@ -89,7 +89,7 @@ The sidebar and the control bar show each task's state as an icon. The board and
 | Blue spinner | Working | The agent is working. |
 | Teal box | Over to you | The task is finished, and there's a step only you can take, such as a merge or a check. |
 | Indigo speech bubble | Replied | The task answered you and isn't waiting on anything. It turns grey once you've read it. |
-| Grey hourglass | Waiting | The task is waiting on someone or something other than you, such as a review or a build. |
+| Grey hourglass | Waiting | The task is waiting on someone or something other than you, such as a review or a build, or a command it started in the background. |
 | Grey pause | Paused | You put the task on hold. |
 | Purple badge | Done | The task is finished end to end, and the agent confirmed it. An agent that only says it's done shows Replied. |
 | Grey moon | Idle | The agent is between turns with nothing to report. |
@@ -202,6 +202,10 @@ Workers show in several places:
 - **In the task's conversation.** When a worker finishes, fails or gets stuck, its report arrives as a line that starts with "Worker". Click it to read the report.
 
 When a worker needs you or is in trouble, its task shows that state too. The task's card in the sidebar says so, for example "1 worker needs you".
+
+A worker that ends its turn while a command it started in the background still runs shows **Waiting**. Its task hears that it's waiting on the command, and the worker carries on when the command finishes.
+
+Zero archives a finished worker an hour after its task has its report, so finished workers don't pile up under a task. A worker that's waiting, asking or in the middle of its work stays, and so does one with an ask, a follow, a watch or a wake-up still open. Zero doesn't archive workers when **Archive done tasks** is **Never**. A message to an archived worker, from you or its task, brings it back.
 
 ## Pause, end or resume a task
 

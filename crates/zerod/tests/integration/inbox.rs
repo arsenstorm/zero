@@ -532,3 +532,16 @@ async fn every_ask_with_options_lets_the_user_answer_in_their_own_words() {
     let question = zerod::ask::Ask::new(zerod::ask::AskKind::Question, "Why?", agent, 3600);
     assert!(inbox.create(question, false).options.is_empty(), "a question is answered in words already");
 }
+
+#[tokio::test]
+async fn a_workers_done_is_for_its_lead_not_the_user() {
+    // Done in two, and the user asked when unsure, is a lead's word to the user. A worker's done goes to its lead with
+    // its report: taken at its word, the user never asked.
+    let s = inbox();
+    s.know_workers(Box::new(|agent| agent.name == "worker"));
+    let worker = agent("worker");
+    assert!(s.done(&worker, "Built and reviewed", None).is_ok(), "no token for a worker");
+    assert!(s.asks().iter().any(|a| a.agent.name == "worker" && a.confirmed && a.status.as_deref() == Some("done")));
+    assert!(s.is_worker(&worker) && !s.is_worker(&agent("lead")));
+    assert!(s.done(&agent("lead"), "Merged", None).is_err(), "a lead's done still takes its token");
+}

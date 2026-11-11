@@ -177,7 +177,9 @@ impl Daemon {
             Attention::Done | Attention::Failed | Attention::Stuck | Attention::Limited | Attention::Blocked | Attention::Offline
         );
         let waiting_on_workers = unanswered
-            && self.workers(id).iter().any(|w| matches!(w.attention(), Attention::Starting | Attention::Working | Attention::NeedsYou));
+            && self.workers(id).iter().any(|w| {
+                matches!(w.attention(), Attention::Starting | Attention::Working | Attention::NeedsYou) || self.background(&w.id).is_some()
+            });
         // Nor the turn it was just sent back from (no Zero ending): its lead hears the turn as it ends properly, once.
         let sent_back = self.sent_back.lock().unwrap().contains(id);
         if let Some(lead) = &conversation.parent
@@ -188,15 +190,22 @@ impl Daemon {
             && !waiting_on_workers
             && !sent_back
         {
+            // Its turn ended (finished or not) with a run of its own still going in the background, which its CLI
+            // wakes it for: waiting on that, not stopped. Its next turn's end is the news.
+            let background = self.background(id).filter(|_| matches!(now, Attention::Idle | Attention::Done));
             // Done is done-done: once the lead has this report, the worker leaves its tree (deliver).
             // Only said so: a report without an ending is a turn finished, which may not be the work.
             let said_done = conversation.answer().is_some_and(|answer| crate::board::ending(answer) == Some("done"));
-            if now == Attention::Done && said_done {
+            if now == Attention::Done && said_done && background.is_none() {
                 self.leaving.lock().unwrap().insert(conversation.id.clone());
             } else {
                 self.leaving.lock().unwrap().remove(&conversation.id);
             }
-            self.tell(lead, crate::model::from_line(&conversation.id, &report(&conversation, now)));
+            let said = match background {
+                Some(runs) => waiting_on_background(&conversation, &runs),
+                None => report(&conversation, now),
+            };
+            self.tell(lead, crate::model::from_line(&conversation.id, &said));
         }
         // What its CLI says of its account's usage is the account's, for choosing accounts by.
         if let (Some(signin), Some(usage)) = (&conversation.signin, &conversation.usage) {
@@ -337,18 +346,47 @@ impl Daemon {
     }
 }
 
+/// A worker as its lead's report names it: its name, and its ticket.
+fn named(worker: &Conversation) -> String {
+    let name = worker.label.clone().unwrap_or_else(|| worker.id.clone());
+    match &worker.ticket {
+        Some(ticket) => format!("{name} ({ticket})"),
+        None => name,
+    }
+}
+
+/// How a lead is told to answer a worker's report.
+fn reply_to(worker: &Conversation) -> String {
+    format!("(It is session {}: `zero send {} \"…\"` to reply to it, `zero wait {}` to wait on it.)", worker.id, worker.id, worker.id)
+}
+
+/// What a lead is told when a worker's turn ends with a run of its own still going in the background (`runs`: what
+/// runs, as far as its steps say), and what it said so far.
+fn waiting_on_background(worker: &Conversation, runs: &[String]) -> String {
+    let running = if runs.is_empty() { String::new() } else { format!(" (running: {})", runs.join("; ")) };
+    // Its answer, if this turn ended on one (an earlier turn's isn't news).
+    let said =
+        worker.answer().filter(|_| worker.ended() == Attention::Done).map(|a| format!(" It said: {}", clipped(a))).unwrap_or_default();
+    format!(
+        "Worker {} is waiting on a background run: it carries on when it finishes{running}.{said}\n\n{}",
+        named(worker),
+        reply_to(worker)
+    )
+}
+
+/// A worker's answer for its report: without its ending, its first 4,000 characters.
+fn clipped(answer: &str) -> String {
+    let answer = crate::board::without_ending(answer).trim();
+    if answer.chars().count() > 4000 { answer.chars().take(4000).collect::<String>() + "…" } else { answer.to_string() }
+}
+
 /// What a lead is told when a worker stops working, and how to answer it.
 pub fn report(worker: &Conversation, attention: Attention) -> String {
-    let mut name = worker.label.clone().unwrap_or_else(|| worker.id.clone());
-    if let Some(ticket) = &worker.ticket {
-        name = format!("{name} ({ticket})")
-    }
+    let name = named(worker);
     let what = match attention {
         Attention::Done => {
             let full = worker.answer().unwrap_or("");
-            let answer = crate::board::without_ending(full);
-            let answer =
-                if answer.chars().count() > 4000 { answer.chars().take(4000).collect::<String>() + "…" } else { answer.to_string() };
+            let answer = clipped(full);
             // How it ended its turn says what its answer is: a worker waiting on the user, or blocked, isn't finished.
             match crate::board::ending(full) {
                 Some("asked") => {
@@ -367,10 +405,7 @@ pub fn report(worker: &Conversation, attention: Attention) -> String {
         Attention::Offline => "stopped: its process ended".into(),
         _ => "stopped without an answer".into(),
     };
-    format!(
-        "Worker {name} {what}\n\n(It is session {}: `zero send {} \"…\"` to reply to it, `zero wait {}` to wait on it.)",
-        worker.id, worker.id, worker.id
-    )
+    format!("Worker {name} {what}\n\n{}", reply_to(worker))
 }
 
 /// How long a row set by its lead still stands for the issue, whatever reports come.
@@ -413,8 +448,8 @@ impl Daemon {
                 "zero",
                 &format!(
                     "{ISSUE_ROW_MARK} after {ticket}'s report: it's what the user reads \
-            coming back. Set it with `zero issue {ticket} you|working|waiting|parked|done \"…\"` (on the user: what it needs from them; \
-            waiting: on whom; parked: why), then end your turn."
+            coming back. Set it with `zero issue {ticket} you|over|working|waiting|parked|done \"…\"` (on the user: what it needs from \
+            them; over: their step to take, such as a review or merge; waiting: on whom; parked: why), then end your turn."
                 ),
             ),
         );

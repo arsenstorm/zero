@@ -343,7 +343,8 @@ func note() -> Never {
     let status = ["blocked", "done", "completed", "merged", "waiting"].first { flag($0) != nil }.map { $0 == "merged" ? "completed" : $0 }
     let note = ask(
         kind: "note", title: flag("ticket") ?? "Update", body: text, agent: agentIdentity(), status: status, needs: flag("needs"))
-    if status == "done" || status == "completed" {
+    // With --needs it's over to the user, as documented: the warning is for a note that says done alone.
+    if flag("needs") == nil && (status == "done" || status == "completed") {
         fputs("zero: a note's --done doesn't mark the task done; zero done does (it asks you to confirm)\n", stderr)
     }
     socket.write(line: object([("op", quote("create")), ("ask", note), ("wait", "false")]))
@@ -352,7 +353,7 @@ func note() -> Never {
 }
 
 func done() -> Never {
-    guard let text = positional.first else { delegate() }
+    guard let text = positional.first, flag("needs") == nil else { delegate() }
     let socket = connectAsks()
     let said = ask(kind: "note", title: "Update", body: text, agent: agentIdentity())
     socket.write(

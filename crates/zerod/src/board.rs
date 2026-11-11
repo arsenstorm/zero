@@ -22,8 +22,8 @@ pub enum State {
     /// confirmed (`zero blocked`, its token): red, kept for what's big. Said alone it's Waiting.
     Blocked,
     Working,
-    /// Over to the user: done, with a step only they can take (its note's `needs`: merge, deploy, check). A to-do, not a
-    /// decision.
+    /// Over to the user: done, with a step only they can take (its note's `needs`, or an issue's row `over`: merge,
+    /// deploy, check). A to-do, not a decision.
     Handed,
     /// It answered the user and waits on nothing: Replied, until the user has read it.
     Answered,
@@ -290,6 +290,40 @@ pub fn due_to_archive(rows: &[Row], now: i64, after: Option<i64>, said: &dyn Fn(
     due
 }
 
+/// Workers that look finished, due to be put away: replied or done (not waiting, asked or blocked), with nothing open
+/// (no ask, nothing queued, no background run), `after` seconds since they said so (`said`, as for due_to_archive).
+/// Whether it ended between steps (`[zero: working]`) and its lead has its report are the daemon's (Daemon::finished).
+/// Leads stay: theirs is due_to_archive.
+pub fn finished_workers(rows: &[Row], now: i64, after: i64, said: &dyn Fn(&str) -> Option<i64>) -> Vec<String> {
+    let mut due: Vec<String> = rows
+        .iter()
+        .flat_map(|r| &r.team)
+        .filter(|m| matches!(m.state, State::Answered | State::Done) && m.asks.is_empty() && m.queued.is_empty())
+        .filter(|m| said(&m.session).is_some_and(|at| now - at >= after))
+        .map(|m| m.session.clone())
+        .collect();
+    due.sort();
+    due
+}
+
+/// Tasks between turns with a run of their own still going in the background (a command, a subagent), which their CLI
+/// wakes them for: Waiting on it, not idle or finished. A lead's reply the user hasn't read stays Replied.
+pub fn mark_background(rows: &mut [Row], running: &dyn Fn(&str) -> bool) {
+    for row in rows.iter_mut() {
+        for member in row.team.iter_mut().filter(|m| matches!(m.state, State::Idle | State::Answered | State::Read) && running(&m.session))
+        {
+            member.state = State::Waiting
+        }
+        if matches!(row.own, State::Idle | State::Read) && running(&row.session) {
+            if row.state == row.own {
+                row.state = State::Waiting
+            }
+            row.own = State::Waiting
+        }
+    }
+    rows.sort_by_key(|row| row.state);
+}
+
 /// The rows of tasks the user paused, and their paused workers, shown as Paused whatever they were doing.
 pub fn mark_paused(rows: &mut [Row], paused: &dyn Fn(&str) -> bool) {
     for row in rows.iter_mut() {
@@ -322,8 +356,12 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
     if !open.is_empty() {
         state = State::NeedsYou
     }
-    // An issue its agent says is on the user (`zero issue … you`): the task needs them, as an ask would.
-    if session.issues.iter().any(|i| i.state == crate::model::IssueState::You) {
+    // An issue its agent says is on the user (`zero issue … you`, `… over`), set since the user last spoke: one they
+    // spoke to it after is the turn's to settle, its row kept as it was.
+    let spoke = spoke(session);
+    let fresh = |state| session.issues.iter().filter(move |i| i.state == state && spoke.is_none_or(|at| i.updated.max(i.since) >= at));
+    // On the user: the task needs them, as an ask would.
+    if fresh(crate::model::IssueState::You).next().is_some() {
         state = state.min(State::NeedsYou)
     }
     // Ended on an ask that's no longer open (answered, withdrawn, expired), its question no longer anyone's: what it
@@ -373,6 +411,11 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
     if state == State::Done && !own.is_some_and(|n| n.confirmed) {
         state = State::Answered
     }
+    // Handed over (`zero issue … over`): the user's to-do, unless something needs them more or it's done.
+    let over = fresh(crate::model::IssueState::Over).next();
+    if over.is_some() && state > State::Handed && state != State::Done {
+        state = State::Handed
+    }
     // Its first line of prose: a table, heading or rule says nothing on its own; a list's item without its marker.
     let prose = |l: &&str| !l.is_empty() && !l.starts_with('|') && !l.starts_with('#') && !l.starts_with("---") && !l.starts_with("[zero:");
     let answer = session.answer().and_then(|a| a.lines().map(str::trim).find(prose)).map(|line| unlisted(line).to_string());
@@ -380,7 +423,7 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
         state,
         online,
         now: own.map(|n| n.body.clone()).filter(|b| !b.is_empty()).or(answer),
-        needs: own.and_then(|n| n.needs.clone()),
+        needs: own.and_then(|n| n.needs.clone()).or_else(|| over.map(|i| format!("{}: {}", i.ticket, i.text))),
         asks: open,
     }
 }
@@ -524,25 +567,19 @@ fn is(ask: &Ask, conversation: &Conversation) -> bool {
 /// about the last one) or it was closed since.
 fn note<'a>(conversation: &Conversation, asks: &'a [Ask]) -> Option<&'a Ask> {
     let notes = asks.iter().filter(|a| a.kind == AskKind::Note && is(a, conversation));
-    // When the user last said something themselves (not Zero passing on an event, a worker's report, a wake-up).
-    let spoke = conversation
-        .items
-        .iter()
-        .filter_map(|i| match &i.kind {
-            ItemKind::User { text, .. } if !text.starts_with(crate::model::FROM) => i.at.map(|ms| ms / 1000),
-            _ => None,
-        })
-        .max();
+    let spoke = spoke(conversation).map(|ms| ms / 1000);
     let mut own: Option<&Ask> = None;
     for note in notes {
         // Closed, by the user or its runtime: nothing it said still stands.
         // zerod's own "Offline" dot is no closing: a restart takes every session offline.
         let ours = note.request.as_deref() == Some(ATTENTION);
         let closed = !ours && note.status.as_deref() == Some("closed");
-        // A new turn clears what it said, except that done or merged stands through turns Zero started (an event it
-        // follows, a worker's report): only the user's own word since makes it theirs to settle again.
+        // A new turn clears what it said, except that done or merged, or a step over to the user (`--needs`), stands
+        // through turns Zero started (an event it follows, a worker's report): only the user's own word since makes it
+        // theirs to settle again.
         let final_state = own.is_some_and(|n| {
-            matches!(n.status.as_deref(), Some("done" | "merged" | "completed")) && spoke.is_none_or(|at| at < n.created_at.0)
+            matches!((n.status.as_deref(), &n.needs), (Some("done" | "merged" | "completed"), _) | (None, Some(_)))
+                && spoke.is_none_or(|at| at < n.created_at.0)
         });
         if closed || (ours && note.status.is_none() && !final_state) {
             own = None
@@ -551,6 +588,18 @@ fn note<'a>(conversation: &Conversation, asks: &'a [Ask]) -> Option<&'a Ask> {
         }
     }
     own
+}
+
+/// When the user last said something themselves (not Zero passing on an event, a worker's report, a wake-up), in ms.
+fn spoke(conversation: &Conversation) -> Option<i64> {
+    conversation
+        .items
+        .iter()
+        .filter_map(|i| match &i.kind {
+            ItemKind::User { text, .. } if !text.starts_with(crate::model::FROM) => i.at,
+            _ => None,
+        })
+        .max()
 }
 
 fn attention(conversation: &Conversation) -> State {

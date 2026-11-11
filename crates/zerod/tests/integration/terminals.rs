@@ -98,9 +98,16 @@ fn claude_codes_session_file_comes_back_as_the_tasks_items() {
     assert_eq!(
         kinds,
         [
-            ItemKind::User { text: "List the files".into(), images: vec![] },
+            ItemKind::User { text: "List the files".into(), images: vec![], sent: None },
             ItemKind::Agent { text: "Listing them.".into(), final_answer: false },
-            ItemKind::Command { command: "ls".into(), cwd: String::new(), output: "a.txt".into(), exit_code: Some(0), duration_ms: None },
+            ItemKind::Command {
+                command: "ls".into(),
+                cwd: String::new(),
+                output: "a.txt".into(),
+                exit_code: Some(0),
+                duration_ms: None,
+                description: String::new()
+            },
             ItemKind::Tool { name: "Read".into(), detail: "/w/a.txt".into() },
             ItemKind::Agent { text: "There is one file, a.txt.".into(), final_answer: true },
         ],

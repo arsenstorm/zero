@@ -1,9 +1,9 @@
 {"session":"s1","seq":1,"change":{"type":"item","item":{"id":"user-1","turn":null,"kind":{"type":"user","text":"Run the shell command uname -s with the Bash tool, then tell me in one sentence what it printed."},"status":"done"}}}
 {"session":"s1","seq":2,"change":{"type":"status","status":"working","turn":"turn-1","error":null}}
 {"session":"s1","seq":3,"change":{"type":"thread","thread":"de7c0e2b-badd-439a-a46b-9e187476cb40","model":"claude-haiku-5-5","effort":null}}
-{"session":"s1","seq":4,"change":{"type":"item","item":{"id":"toolu_013N1umJJU8yEqYEeYsTc4s6","turn":"turn-1","kind":{"type":"command","command":"uname -s","cwd":"/work/project","output":"","exitCode":null,"durationMs":null},"status":"running"}}}
+{"session":"s1","seq":4,"change":{"type":"item","item":{"id":"toolu_013N1umJJU8yEqYEeYsTc4s6","turn":"turn-1","kind":{"type":"command","command":"uname -s","cwd":"/work/project","output":"","exitCode":null,"durationMs":null,"description":"Print the kernel name"},"status":"running"}}}
 {"session":"s1","seq":5,"change":{"type":"usage","usage":{"limited":false,"resetsAt":null,"windows":[{"name":"5 hours","used":0.18,"resetsAt":1793026800},{"name":"7 days","used":0.05,"resetsAt":1793613600}]}}}
-{"session":"s1","seq":6,"change":{"type":"item","item":{"id":"toolu_013N1umJJU8yEqYEeYsTc4s6","turn":"turn-1","kind":{"type":"command","command":"uname -s","cwd":"/work/project","output":"Darwin","exitCode":null,"durationMs":null},"status":"done"}}}
+{"session":"s1","seq":6,"change":{"type":"item","item":{"id":"toolu_013N1umJJU8yEqYEeYsTc4s6","turn":"turn-1","kind":{"type":"command","command":"uname -s","cwd":"/work/project","output":"Darwin","exitCode":null,"durationMs":null,"description":"Print the kernel name"},"status":"done"}}}
 {"session":"s1","seq":7,"change":{"type":"item","item":{"id":"msg_011CgQp76isAk2TLpkkjZNUf:0","turn":"turn-1","kind":{"type":"agent","text":"","finalAnswer":false},"status":"running"}}}
 {"session":"s1","seq":8,"change":{"type":"delta","item":"msg_011CgQp76isAk2TLpkkjZNUf:0","text":"The command"}}
 {"session":"s1","seq":9,"change":{"type":"delta","item":"msg_011CgQp76isAk2TLpkkjZNUf:0","text":" printed `"}}

@@ -38,7 +38,7 @@ fn item(id: &str, kind: ItemKind) -> Change {
 async fn turn(session: &zerod::session::Session, n: usize, said: &str, answer: &str) {
     session.change(Change::Status { status: Status::Working, turn: Some(format!("t{n}")), error: None });
     tokio::time::sleep(Duration::from_millis(100)).await;
-    session.change(item(&format!("u{n}"), ItemKind::User { text: said.into(), images: vec![] }));
+    session.change(item(&format!("u{n}"), ItemKind::User { text: said.into(), images: vec![], sent: None }));
     session.change(item(&format!("a{n}"), ItemKind::Agent { text: answer.into(), final_answer: true }));
     session.change(Change::Status { status: Status::Idle, turn: None, error: None });
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -144,7 +144,7 @@ async fn a_turn_stopped_by_the_user_or_a_restart_isnt_sent_back() {
     // Then a turn stopped before it answered: the earlier answer isn't this turn's.
     session.change(Change::Status { status: Status::Working, turn: Some("t3".into()), error: None });
     tokio::time::sleep(Duration::from_millis(100)).await;
-    session.change(item("u3", ItemKind::User { text: "Fix it".into(), images: vec![] }));
+    session.change(item("u3", ItemKind::User { text: "Fix it".into(), images: vec![], sent: None }));
     session.change(item("a3", ItemKind::Agent { text: "Looking at the logs.".into(), final_answer: false }));
     session.change(item("n3", ItemKind::Notice { text: "Interrupted".into(), error: false }));
     session.change(Change::Status { status: Status::Idle, turn: None, error: None });
@@ -159,7 +159,7 @@ async fn a_turn_stopped_after_it_said_something_isnt_sent_back_either() {
     let session = daemon.session(&id).unwrap();
     session.change(Change::Status { status: Status::Working, turn: Some("t1".into()), error: None });
     tokio::time::sleep(Duration::from_millis(100)).await;
-    session.change(item("u1", ItemKind::User { text: "Fix it".into(), images: vec![] }));
+    session.change(item("u1", ItemKind::User { text: "Fix it".into(), images: vec![], sent: None }));
     session.change(item("a1", ItemKind::Agent { text: "Fixed the CLI too:".into(), final_answer: true }));
     session.change(item("n1", ItemKind::Notice { text: "Interrupted".into(), error: false }));
     session.change(Change::Status { status: Status::Idle, turn: None, error: None });
@@ -212,7 +212,10 @@ async fn a_lead_told_of_an_issue_that_leaves_its_row_alone_is_reminded_once() {
     // Set during the turn: nothing to remind.
     session.change(Change::Status { status: Status::Working, turn: Some("t2".into()), error: None });
     tokio::time::sleep(Duration::from_millis(100)).await;
-    session.change(item("u2", ItemKind::User { text: zerod::model::from_line(&worker, "Worker ENG-7 finished: merged."), images: vec![] }));
+    session.change(item(
+        "u2",
+        ItemKind::User { text: zerod::model::from_line(&worker, "Worker ENG-7 finished: merged."), images: vec![], sent: None },
+    ));
     daemon.set_issue(&lead, "ENG-7", zerod::model::IssueState::Done, "merged").unwrap();
     session.change(item("a2", ItemKind::Agent { text: "ENG-7 is merged.\n\n[zero: done]".into(), final_answer: true }));
     session.change(Change::Status { status: Status::Idle, turn: None, error: None });
@@ -223,7 +226,7 @@ async fn a_lead_told_of_an_issue_that_leaves_its_row_alone_is_reminded_once() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     session.change(item(
         "u3",
-        ItemKind::User { text: zerod::model::from_line(&worker, "Worker ENG-7 failed: API Error: 500"), images: vec![] },
+        ItemKind::User { text: zerod::model::from_line(&worker, "Worker ENG-7 failed: API Error: 500"), images: vec![], sent: None },
     ));
     session.change(Change::Failed { failure: Some(Failure { kind: FailureKind::Other, message: "Something odd".into() }) });
     session.change(Change::Status { status: Status::Idle, turn: None, error: Some("Something odd".into()) });

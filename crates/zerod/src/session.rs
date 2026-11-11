@@ -323,6 +323,24 @@ impl Session {
             })
     }
 
+    /// Between turns with work of its own still running in the background (a command Claude started with
+    /// `run_in_background`, a subagent), which its CLI wakes it for when it finishes: what runs, as far as its steps say
+    /// (a command's first line, a tool's name). None when nothing does. Only Claude has such work (adapter `stops`).
+    pub fn background(&self) -> Option<Vec<String>> {
+        let inner = self.lock();
+        let core = inner.core.as_ref()?;
+        let conversation = core.conversation();
+        if inner.out.is_none() || conversation.status != crate::model::Status::Idle || core.stops().is_empty() {
+            return None;
+        }
+        let runs = conversation.items.iter().rev().take(200).filter(|i| i.status == ItemStatus::Running).filter_map(|i| match &i.kind {
+            ItemKind::Command { command, .. } => command.lines().next().map(String::from),
+            ItemKind::Tool { name, .. } => Some(name.clone()),
+            _ => None,
+        });
+        Some(runs.collect())
+    }
+
     /// What Stop sends to stop the provider's background work.
     pub fn stops(&self) -> Vec<Value> {
         self.lock().core.as_ref().map(|c| c.stops()).unwrap_or_default()
@@ -544,6 +562,9 @@ pub fn replay_entry(core: &mut Core, entry: &Value) {
     }
     if let Some(images) = entry["attach"].as_array() {
         core.attach(images.iter().filter_map(|i| i.as_str().map(String::from)).collect())
+    }
+    if let Some(sent) = entry["sent"].as_str() {
+        core.mark(Some(sent.into()))
     }
     if let Some(message) = entry.get("out") {
         core.sent(message);

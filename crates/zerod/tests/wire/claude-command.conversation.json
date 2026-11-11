@@ -35,7 +35,8 @@
         "cwd": "/work/project",
         "output": "Darwin",
         "exitCode": null,
-        "durationMs": null
+        "durationMs": null,
+        "description": "Print the kernel name"
       },
       "status": "done"
     },

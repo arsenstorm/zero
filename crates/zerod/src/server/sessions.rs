@@ -107,12 +107,14 @@ pub(super) async fn messages(zerod: &Zerod, request: Request) -> Result<Value, S
         "send" => {
             let (id, text, images) = message(zerod, &request, "Send needs text")?;
             let text = with_open_asks(&zerod.inbox, &id, text);
-            daemon.send(&id, Message { text: &text, images: &images, context: None }, request.choice()).await.map(|_| Value::Null)
+            // `item`: the app's id for it, which zerod's item for the message keeps.
+            let sent = request.item.as_ref().and_then(Value::as_str);
+            daemon.send(&id, Message { text: &text, images: &images, context: None, sent }, request.choice()).await.map(|_| Value::Null)
         }
         // For after the current turn: queued, one turn each; between turns it goes now.
         "queue" => {
             let (id, text, images) = message(zerod, &request, "Queue needs text")?;
-            daemon.queue(&id, &text, &images).map(|queued| json!(queued))
+            daemon.queue_as(&id, &text, &images, request.item.as_ref().and_then(Value::as_str)).map(|queued| json!(queued))
         }
         "unqueue" => daemon
             .unqueue(&request.session()?, request.item.as_ref().and_then(Value::as_str).ok_or("Which queued message?")?)
@@ -171,7 +173,7 @@ pub(super) async fn properties(zerod: &Zerod, request: Request) -> Result<Value,
                 .state
                 .as_deref()
                 .and_then(crate::model::IssueState::named)
-                .ok_or("An issue's state is one of you, working, waiting, parked or done")?;
+                .ok_or("An issue's state is one of you, over, working, waiting, parked or done")?;
             daemon
                 .set_issue(
                     &request.session()?,

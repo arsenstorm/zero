@@ -286,6 +286,7 @@ impl Zerod {
             &|c| daemon.workspace_of(c),
         );
         crate::board::mark_read(&mut rows, &|id| daemon.has_read(id));
+        crate::board::mark_background(&mut rows, &|id| daemon.background(id).is_some());
         crate::board::mark_paused(&mut rows, &|id| daemon.is_paused(id) || daemon.is_paused_for_update(id));
         // Saved for later: in Later until it's resumed from there.
         rows.retain(|r| !daemon.is_saved(&r.session));
@@ -295,6 +296,15 @@ impl Zerod {
         }
         rows
     }
+}
+
+/// The inbox tells a worker (a task under a lead) by the daemon's sessions: its done is its lead's to judge.
+pub fn know_workers(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
+    let daemon = Arc::downgrade(daemon);
+    inbox.know_workers(Box::new(move |agent| {
+        let session = agent.reference.as_deref().or_else(|| agent.name.strip_prefix("zerod-"));
+        daemon.upgrade().zip(session).and_then(|(daemon, id)| daemon.get(id)).is_some_and(|c| c.parent.is_some())
+    }));
 }
 
 /// A task with a blocking ask open (`zero ask --block`) hears nothing else until it's answered: the inbox tells the
@@ -310,6 +320,9 @@ pub fn hold_while_blocked(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
         })
     }));
 }
+
+/// How long a finished worker stays after its answer before it's put away, in seconds.
+const FINISHED_WORKER_AFTER: i64 = 3600;
 
 /// Archives each task done for as long as the settings say (a day, unless the user changed it), or once the user has
 /// read it, looked at every minute. Counted from when it said it was done, so a restart doesn't start it again.
@@ -332,10 +345,27 @@ pub async fn archive_completed(zerod: Zerod) {
             // Items are stamped in milliseconds, asks in seconds.
             answered.map(|ms| ms / 1000).max(noted)
         };
-        let due = crate::board::due_to_archive(&zerod.board(), now, settings.archive_after(), &said);
+        let board = zerod.board();
+        let due = crate::board::due_to_archive(&board, now, settings.archive_after(), &said);
         for id in due.into_iter().filter(|id| !settings.archive_once_read() || zerod.daemon.has_read(id)) {
             if let Err(error) = zerod.daemon.archive(&id).await {
                 eprintln!("zerod: couldn't archive completed {id}: {error}")
+            }
+        }
+        // A worker that finished, its lead has its report and nothing of its own is open (no follow, watch or wake-up
+        // either): put away a while after, a message to it brings it back (Daemon::resolve). Off with the setting off.
+        if settings.archive_after().is_none() {
+            continue;
+        }
+        let daemon = &zerod.daemon;
+        for id in crate::board::finished_workers(&board, now, FINISHED_WORKER_AFTER, &said) {
+            let open =
+                !zerod.following.list(Some(&id)).is_empty() || !daemon.watches(Some(&id)).is_empty() || daemon.next_wake(&id).is_some();
+            if !open
+                && daemon.finished(&id)
+                && let Err(error) = daemon.archive(&id).await
+            {
+                eprintln!("zerod: couldn't put away finished worker {id}: {error}")
             }
         }
     }

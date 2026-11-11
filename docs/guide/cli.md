@@ -57,10 +57,10 @@ Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> or the gear at the foot of the wi
 
 | Command | Flags | What you see in Zero |
 |---|---|---|
-| `zero note "where I am"` | `--waiting`, `--needs "what you should do"` | The words show on the task's row in the sidebar. `--waiting` marks the task **Waiting**: on someone other than you. `--needs` marks it **Over to you**: its work is done and a step is left for you. |
+| `zero note "where I am"` | `--waiting`, `--needs "what you should do"` | The words show on the task's row in the sidebar. `--waiting` marks the task **Waiting**: on someone other than you. `--needs` marks it **Over to you**: its work is done and a step is left for you. It stays until you write to the task or the agent posts a note without `--needs`. |
 | `zero done "what's done"` | `--confirm TOKEN`, `--ask` | Marks the task **Done**. It takes two steps. Zero refuses the first run and gives what done means and a token. The agent then runs the command again with `--confirm` and the token within 5 minutes. With `--ask`, Zero asks you whether the task is done. |
 | `zero blocked "what blocks it"` | `--confirm TOKEN` | Marks the task **Blocked**: it can't go on until something outside the agent and you changes, such as an outage or another team's access. It takes two steps, as `zero done` does. Agents that run in a sandbox use the `zero_blocked` tool instead. Until it's confirmed, the task shows **Waiting**. |
-| `zero issue TICKET STATE ["text"]` | `--session` | One row for an issue the task leads, under the task in the sidebar. The state is `you`, `working`, `waiting`, `parked` or `done`. `you` marks the task **Needs you**. |
+| `zero issue TICKET STATE ["text"]` | `--session` | One row for an issue the task leads, under the task in the sidebar. The state is `you`, `over`, `working`, `waiting`, `parked` or `done`. `you` marks the task **Needs you**: the agent needs a decision or something only you can give. `over` marks it **Over to you**: the agent's part is done, and a step is left for you, such as a review or a merge. A `you` or `over` row set before your last message to the task no longer sets the task's state. |
 
 Zero starts a turn for a message from another task, an event or a reminder. The agent ends such a turn with a line that sets the task's state.
 
@@ -79,8 +79,8 @@ Inside a task, `zero spawn` starts a worker of that task. The worker shows under
 | Command | Flags | What it does |
 |---|---|---|
 | `zero spawn "task"` | `--brief FILE`, `--loop NAME`, `--provider codex\|claude\|opencode`, `--model`, `--effort`, `--cwd`, `--label`, `--ticket`, `--permissions auto\|unrestricted`, `--workspace ID` | Starts a worker, or a new task, and prints its id. A worker gets its lead's folder and permissions, unless the flags give others. A new task gets Claude Code, **Auto** permissions and the current folder, unless the flags give others. `--label` names it. |
-| `zero send <task> "text"` | | Sends a message to a task, by id or name. Zero resumes an offline task first. When the sender is another task, the message is marked as that task's and arrives between turns. |
-| `zero wait <task>...` | `--any`, `--timeout MINUTES` | Waits until the tasks stop working, then prints how each ended. |
+| `zero send <task> "text"` | | Sends a message to a task, by id or name. Zero resumes an offline task first, and brings an archived one back. When the sender is another task, the message is marked as that task's and arrives between turns. |
+| `zero wait <task>...` | `--any`, `--timeout MINUTES` | Waits until the tasks stop working, then prints how each ended. A task waiting on a command it started in the background is still working. An archived task is found as it was put away. |
 | `zero result <task>` | | Prints the task's last answer. |
 | `zero workers` | `--session` | Lists the task's workers. |
 | `zero adopt <task>` | `--session` | Makes another task, or a Claude Code session, a worker of this one. |

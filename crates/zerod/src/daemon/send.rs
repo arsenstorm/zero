@@ -7,12 +7,19 @@ impl Daemon {
     /// A message of the user's for after the current turn: queued behind what's already waiting, one turn each.
     /// Between turns already, it goes now. Queueing releases a held queue: the user is back with it.
     pub fn queue(&self, id: &str, text: &str, images: &[String]) -> Result<Queued, String> {
+        self.queue_as(id, text, images, None)
+    }
+
+    /// Queued under the app's own id for it (its copy in the strip until zerod's queue has it), or a new one: the
+    /// message zerod sends on carries it.
+    pub fn queue_as(&self, id: &str, text: &str, images: &[String], sent: Option<&str>) -> Result<Queued, String> {
         let session = self.session(id)?;
         if text.trim().is_empty() && images.is_empty() {
             return Err("A message needs words or an image".into());
         }
         self.heard_from_user(id);
-        let queued = Queued { id: new_id(), text: text.into(), images: images.to_vec(), report: false };
+        let item = sent.filter(|s| !s.is_empty()).map_or_else(new_id, String::from);
+        let queued = Queued { id: item, text: text.into(), images: images.to_vec(), report: false };
         self.pending.lock().unwrap().entry(id.into()).or_default().push(queued.clone());
         self.hold(id, false);
         self.keep_pending(id);
@@ -96,7 +103,7 @@ impl Daemon {
             && now.provider == Provider::Opencode
             && now.turn.is_some()
         {
-            return self.queue(id, message.text, message.images).map(|_| ());
+            return self.queue_as(id, message.text, message.images, message.sent).map(|_| ());
         }
         // The folder as it is before the agent reads the message: what rewinding to it brings back.
         let kept = self.keep_folder(&session).await;
@@ -377,7 +384,7 @@ impl Daemon {
             return;
         }
         let mut reporters: Vec<String> = vec![];
-        let (text, images) = {
+        let (text, images, sent) = {
             let mut pending = self.pending.lock().unwrap();
             let Some(list) = pending.get_mut(id).filter(|l| !l.is_empty()) else {
                 self.delivering.lock().unwrap().remove(id);
@@ -390,24 +397,25 @@ impl Daemon {
                     return;
                 };
                 let next = list.remove(at);
-                (self.noted(id, next.text), next.images)
+                (self.noted(id, next.text), next.images, Some(next.id))
             } else if list[0].report {
                 let reports = list.iter().take_while(|q| q.report).count();
                 let given: Vec<Queued> = list.drain(..reports).collect();
                 reporters =
                     given.iter().filter_map(|q| crate::model::from(&q.text)).filter(|who| *who != "zero").map(String::from).collect();
-                (given.into_iter().map(|q| q.text).collect::<Vec<_>>().join("\n\n"), vec![])
+                (given.into_iter().map(|q| q.text).collect::<Vec<_>>().join("\n\n"), vec![], None)
             } else {
                 // The user's words as they wrote them, kept so in the queue; what's open is told as they go.
                 let next = list.remove(0);
-                (self.noted(id, next.text), next.images)
+                (self.noted(id, next.text), next.images, Some(next.id))
             }
         };
         self.keep_pending(id);
         let (me, id) = (self.me.clone(), id.to_string());
         tokio::spawn(async move {
             // ponytail: word that fails to go through is dropped with a notice; keep it if sends start failing in practice.
-            let sent = session.send(Message { text: &text, images: &images, context: None }, ModelChoice::default()).await;
+            let message = Message { text: &text, images: &images, context: None, sent: sent.as_deref() };
+            let sent = session.send(message, ModelChoice::default()).await;
             if let Err(error) = &sent {
                 session.report(&format!("Couldn't pass on: {error}"))
             }

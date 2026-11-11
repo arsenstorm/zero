@@ -28,6 +28,7 @@ fn command(status: ItemStatus) -> Change {
                 output: String::new(),
                 exit_code: None,
                 duration_ms: None,
+                description: String::new(),
             },
             status,
             at: None,
