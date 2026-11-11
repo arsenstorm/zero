@@ -96,7 +96,7 @@ struct Composer<Controls: View>: View {
     private func watchKeys() {
         guard monitor == nil else { return }
         let (focus, draft, focused, caret) = (focus, $draft, $focused, $caret)
-        let attach = { (urls: [URL]) in attach(urls) }
+        let attach: ([URL]) -> Void = { self.attach($0) }
         let shown = shown, picker = picker, images = $images
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard shown.on else { return event }
