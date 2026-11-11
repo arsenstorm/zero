@@ -152,6 +152,9 @@ private struct McpServerForm: View {
                 TextField("Command (npx, uvx, a path)", text: Binding(get: { server.command ?? "" }, set: { server.command = $0 }))
                     .textFieldStyle(.dialog)
                 TextField("Arguments, separated by spaces", text: $arguments).textFieldStyle(.dialog)
+                SettingRow(title: "Start when first used", detail: "Answers from what it said last time; starts on the first call.") {
+                    Switch(isOn: $server.lazy)
+                }
             }
             values(remote ? "Headers" : "Environment", list: remote ? $server.headers : $server.env)
             DialogPart(title: "Workspaces") {
@@ -240,7 +243,7 @@ private struct McpServerForm: View {
 
     private func save() {
         if remote {
-            server.command = nil; server.args = []; server.env = []
+            server.command = nil; server.args = []; server.env = []; server.lazy = false
         } else {
             server.url = nil; server.headers = []; server.args = arguments.split(separator: " ").map(String.init)
         }

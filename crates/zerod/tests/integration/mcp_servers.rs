@@ -15,6 +15,7 @@ fn server(name: &str, workspaces: &[&str]) -> McpServer {
         headers: vec![],
         workspaces: workspaces.iter().map(|w| w.to_string()).collect(),
         enabled: true,
+        lazy: false,
     }
 }
 
@@ -127,4 +128,19 @@ fn codex_and_opencode_are_given_them_with_their_thread() {
         acp[1],
         serde_json::json!({"type": "http", "name": "docs", "url": "https://docs.example/mcp", "headers": [{"name": "Authorization", "value": "Bearer t"}]})
     );
+}
+
+#[test]
+fn a_server_that_starts_when_first_used_is_given_as_zerods_stand_in_for_it() {
+    let lazy = McpServer { lazy: true, ..server("Icons", &[]) }.resolve(&|_, _| None);
+    assert_eq!(lazy.command.as_deref(), std::env::current_exe().ok().as_deref().and_then(|p| p.to_str()));
+    assert_eq!(lazy.args, ["mcp", "lazy", "cve-mcp", "--stdio"]);
+    // A remote one has nothing to start.
+    let remote =
+        McpServer { lazy: true, command: None, args: vec![], url: Some("https://mcp.example/mcp".into()), ..server("Remote", &[]) };
+    assert_eq!(remote.resolve(&|_, _| None).url.as_deref(), Some("https://mcp.example/mcp"));
+    // Kept as set, and read as off from a file written before there was the setting.
+    let old: McpServer = serde_json::from_str(r#"{"id": "a", "name": "A", "command": "x"}"#).unwrap();
+    assert!(!old.lazy);
+    assert_eq!(serde_json::to_value(McpServer { lazy: true, ..server("Icons", &[]) }).unwrap()["lazy"], true);
 }

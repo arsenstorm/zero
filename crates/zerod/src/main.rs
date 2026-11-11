@@ -31,6 +31,11 @@ async fn main() {
         // Out at once: the runtime would otherwise wait on its blocking read of Chrome's stdin, which Chrome keeps open.
         std::process::exit(0);
     }
+    // `zerod mcp lazy <command> <args…>`: standing in for an MCP server until it's first used (mcp_lazy.rs).
+    if mcp && args.next_if_eq("lazy").is_some() {
+        let Some(command) = args.next() else { return eprintln!("usage: zerod mcp lazy <command> [args…]") };
+        return zerod::mcp_lazy::serve(command, args.collect()).await;
+    }
     let args = Args::parse(args, &zero);
     if mcp {
         return zerod::mcp::serve(&args.socket).await;

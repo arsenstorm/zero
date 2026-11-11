@@ -1458,6 +1458,9 @@ public final class ZerodLink: @unchecked Sendable {
         /// The workspaces it's for; none, every workspace.
         public var workspaces: [String]
         public var enabled: Bool
+        /// Started when a task first calls it, not as the task starts: until then its tools are answered from what it
+        /// said last time (zerod's). A command's server only; sent back with every save, as zerod keeps what it's given.
+        public var lazy: Bool
 
         public struct Value: Codable, Equatable, Sendable {
             public var name: String
@@ -1474,10 +1477,25 @@ public final class ZerodLink: @unchecked Sendable {
         public init(
             id: String = "", name: String = "", command: String? = nil, args: [String] = [], url: String? = nil, env: [Value] = [],
             headers: [Value] = [],
-            workspaces: [String] = [], enabled: Bool = true
+            workspaces: [String] = [], enabled: Bool = true, lazy: Bool = false
         ) {
             self.id = id; self.name = name; self.command = command; self.args = args; self.url = url; self.env = env; self.headers = headers
-            self.workspaces = workspaces; self.enabled = enabled
+            self.workspaces = workspaces; self.enabled = enabled; self.lazy = lazy
+        }
+
+        /// As synthesized, but `lazy` may be missing (an older zerod's): off.
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            name = try c.decode(String.self, forKey: .name)
+            command = try c.decodeIfPresent(String.self, forKey: .command)
+            args = try c.decode([String].self, forKey: .args)
+            url = try c.decodeIfPresent(String.self, forKey: .url)
+            env = try c.decode([Value].self, forKey: .env)
+            headers = try c.decode([Value].self, forKey: .headers)
+            workspaces = try c.decode([String].self, forKey: .workspaces)
+            enabled = try c.decode(Bool.self, forKey: .enabled)
+            lazy = try c.decodeIfPresent(Bool.self, forKey: .lazy) ?? false
         }
 
         /// The Keychain's service for its values; each value's account is "<id>.<name>" (as zerod reads them).

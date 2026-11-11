@@ -35,6 +35,9 @@ pub struct McpServer {
     pub workspaces: Vec<String>,
     #[serde(default = "on")]
     pub enabled: bool,
+    /// A local server started when first used: until then `zerod mcp lazy` (mcp_lazy.rs) stands in for it.
+    #[serde(default)]
+    pub lazy: bool,
 }
 
 fn on() -> bool {
@@ -87,11 +90,19 @@ impl McpServer {
                 })
                 .collect()
         };
+        // Started when first used: zerod's stand-in in its place, given what it stands in for.
+        let stand_in = std::env::current_exe().ok().map(|exe| exe.to_string_lossy().to_string()).filter(|_| self.lazy);
+        let (command, args) = match (&self.command, stand_in) {
+            (Some(command), Some(zerod)) => {
+                (Some(zerod), ["mcp", "lazy", command].into_iter().map(String::from).chain(self.args.iter().cloned()).collect())
+            }
+            _ => (self.command.clone(), self.args.clone()),
+        };
         Resolved {
             id: self.id.clone(),
             name: self.name.clone(),
-            command: self.command.clone(),
-            args: self.args.clone(),
+            command,
+            args,
             url: self.url.clone(),
             env: read(&self.env),
             headers: read(&self.headers),
