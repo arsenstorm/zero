@@ -123,15 +123,15 @@ const {
     return [r / 255, g / 255, b / 255];
   }
 
-  for (const canvas of document.querySelectorAll<HTMLCanvasElement>(
-    "canvas[data-dither]"
-  )) {
+  // Each backdrop starts only when it's about to come into view: compiling its shader and drawing it fill the GPU and
+  // the main thread for a moment, and on the home page that stalled the page's arrival for a backdrop at its foot.
+  function start(canvas: HTMLCanvasElement) {
     const gl = canvas.getContext("webgl2", {
       antialias: false,
       alpha: true,
       preserveDrawingBuffer: true,
     });
-    if (!gl) continue;
+    if (!gl) return;
     const shader = (type: number, source: string) => {
       const s = gl.createShader(type)!;
       gl.shaderSource(s, source);
@@ -142,7 +142,7 @@ const {
     gl.attachShader(program, shader(gl.VERTEX_SHADER, vertex));
     gl.attachShader(program, shader(gl.FRAGMENT_SHADER, fragment));
     gl.linkProgram(program);
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) continue;
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return;
     const at = (name: string) => gl.getUniformLocation(program, name);
     const frostTarget =
       canvas.parentElement!.querySelector<HTMLElement>("[data-frost]");
@@ -193,6 +193,19 @@ const {
     // Shown again (the picker, a tab coming back): drawn at its size now.
     new IntersectionObserver(
       (entries) => entries.some((e) => e.isIntersecting) && draw()
+    ).observe(canvas);
+  }
+
+  for (const canvas of document.querySelectorAll<HTMLCanvasElement>(
+    "canvas[data-dither]"
+  )) {
+    new IntersectionObserver(
+      (entries, observer) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        observer.disconnect();
+        start(canvas);
+      },
+      { rootMargin: "400px 0px" }
     ).observe(canvas);
   }
 </script>
