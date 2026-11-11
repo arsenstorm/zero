@@ -160,6 +160,26 @@ pub fn subagents() -> bool {
     SUBAGENTS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// The context size agents compact at (Settings › Compact context at), in tokens; 0, the CLIs' own. Read as each
+/// process starts: Claude Code from its environment (process::environment), Codex from `compact_config`.
+static COMPACT_WINDOW: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub fn set_compact_window(tokens: Option<u64>) {
+    COMPACT_WINDOW.store(tokens.unwrap_or(0), std::sync::atomic::Ordering::Relaxed)
+}
+pub fn compact_window() -> Option<u64> {
+    Some(COMPACT_WINDOW.load(std::sync::atomic::Ordering::Relaxed)).filter(|&tokens| tokens > 0)
+}
+
+/// Claude Code's window at the user's size, as the variable it reads over its own settings (none set, its own).
+pub fn claude_compact() -> Option<(String, String)> {
+    compact_window().map(|tokens| ("CLAUDE_CODE_AUTO_COMPACT_WINDOW".to_string(), tokens.to_string()))
+}
+
+/// Codex's compaction threshold at the user's size, for this run only (none set, Codex's own).
+fn codex_compact() -> Vec<String> {
+    compact_window().map(|tokens| vec!["-c".into(), format!("model_auto_compact_token_limit={tokens}")]).unwrap_or_default()
+}
+
 /// Codex's own subagents (its multi-agent tools), off for this run only.
 const CODEX_NO_SUBAGENTS: &[&str] = &["-c", "features.multi_agent=false"];
 
@@ -212,7 +232,11 @@ impl Provider {
     ) -> Vec<String> {
         match self {
             Provider::Codex => {
-                login_shell(&[&["codex", "app-server"][..], CODEX_NO_BROWSER, if subagents { &[] } else { CODEX_NO_SUBAGENTS }].concat())
+                let compact = codex_compact();
+                let compact: Vec<&str> = compact.iter().map(String::as_str).collect();
+                login_shell(
+                    &[&["codex", "app-server"][..], CODEX_NO_BROWSER, if subagents { &[] } else { CODEX_NO_SUBAGENTS }, &compact].concat(),
+                )
             }
             Provider::Claude => claude::command(conversation, resume, model, effort, subagents),
             Provider::Opencode => login_shell(&["opencode", "acp"]),
@@ -223,6 +247,7 @@ impl Provider {
     pub fn terminal(self, conversation: &Conversation) -> Result<Vec<String>, String> {
         let thread = conversation.thread.as_deref().ok_or_else(|| format!("{} hasn't started this task's thread yet", self.title()))?;
         let unrestricted = conversation.permissions == crate::model::Permissions::Unrestricted;
+        let compact = codex_compact();
         let mut args: Vec<&str> = match self {
             Provider::Claude => [
                 &[
@@ -250,6 +275,7 @@ impl Provider {
                 ][..],
                 CODEX_NO_BROWSER,
                 if subagents() { &[] } else { CODEX_NO_SUBAGENTS },
+                &compact.iter().map(String::as_str).collect::<Vec<_>>(),
             ]
             .concat(),
             Provider::Opencode => vec!["opencode", "--session", thread],

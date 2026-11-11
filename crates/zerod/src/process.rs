@@ -39,6 +39,8 @@ pub fn environment(login: impl Iterator<Item = (String, String)>, id: &str) -> V
         ]
         .map(|(k, v)| (k.to_string(), v)),
     );
+    // Settings › Compact context at, for Claude Code (which reads it over its own settings); other CLIs ignore it.
+    env.extend(crate::adapter::claude_compact());
     env.extend(SESSION_ENV.lock().unwrap().get(id).cloned().unwrap_or_default());
     env
 }

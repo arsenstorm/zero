@@ -773,6 +773,13 @@ private struct AgentsPage: View {
                         SubagentsSwitch()
                     }
                     SettingRow(
+                        title: "Compact context at",
+                        detail:
+                            "Agents summarise their conversation once it reaches this size, so each turn sends less. Claude Code and Codex; OpenCode keeps its own. Applies to tasks as they start."
+                    ) {
+                        CompactWindowPicker()
+                    }
+                    SettingRow(
                         title: "Where tasks run",
                         detail:
                             "A command printing [{\"ticket\": \"ENG-1\", \"place\": \"my-bench\"}], run in your login shell every five minutes. Each task's Where is its place, by ticket, in place of its folder."
@@ -823,6 +830,53 @@ private struct SubagentsSwitch: View {
                 })
         )
         .task { if let kept = try? await link?.subagents() { on = kept } }
+    }
+}
+
+/// The context size agents compact at: off (the CLIs' own), a common size, or one of the user's, in tokens ("350k"
+/// or "350000"). zerod's setting, read as each agent starts.
+private struct CompactWindowPicker: View {
+    /// 0 off, -1 a size of the user's.
+    @State private var choice = 0
+    @State private var text = ""
+    @State private var link = try? ZerodLink()
+    @FocusState private var focused: Bool
+    static let sizes = [200_000, 400_000, 600_000, 800_000]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if choice == -1 {
+                TextField("", text: $text, prompt: Text("350k"))
+                    .textFieldStyle(.dialog).font(.system(size: 12)).frame(width: 80)
+                    .focused($focused)
+                    .onSubmit(save)
+                    .onChange(of: focused) { if !focused { save() } }
+            }
+            SettingChoice(
+                id: "compactWindow",
+                choices: [
+                    [(title: "Off", value: 0)], Self.sizes.map { (title: "\($0 / 1000)k", value: $0) }, [(title: "Other", value: -1)],
+                ],
+                selection: Binding(
+                    get: { choice },
+                    set: { chosen in
+                        choice = chosen
+                        if chosen == -1 { focused = true } else { Task { try? await link?.setCompactWindow(chosen) } }
+                    })
+            )
+        }
+        .task {
+            guard let kept = try? await link?.compactWindow() else { return }
+            choice = Self.sizes.contains(kept) ? kept : -1
+            if choice == -1 { text = "\(kept / 1000)k" }
+        }
+    }
+
+    private func save() {
+        let typed = text.trimmingCharacters(in: .whitespaces).lowercased()
+        guard let number = Int(typed.hasSuffix("k") ? String(typed.dropLast()) : typed), number > 0 else { return }
+        let tokens = typed.hasSuffix("k") ? number * 1000 : number
+        Task { try? await link?.setCompactWindow(tokens) }
     }
 }
 

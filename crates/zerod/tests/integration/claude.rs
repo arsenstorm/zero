@@ -520,3 +520,33 @@ fn the_clis_own_subagents_are_off_unless_the_user_allows_them() {
     // Told where such work goes instead.
     assert!(zerod::adapter::INSTRUCTIONS.contains("zero spawn") && zerod::adapter::INSTRUCTIONS.contains("own subagents"));
 }
+
+/// Every turn resends the whole context, so a long task on a 1M-token model rereads most of it each time: the user may
+/// have agents compact at a smaller size (Settings › Compact context at). Claude Code reads it from its environment
+/// (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`, which beats its own settings), Codex from its config; OpenCode keeps its own.
+#[test]
+fn agents_compact_their_context_at_the_size_the_user_chose() {
+    let window = |settings: serde_json::Value| serde_json::from_value::<zerod::server::Settings>(settings).unwrap().compact_window();
+    assert_eq!(window(json!({})), None, "unset, the CLIs' own");
+    assert_eq!(window(json!({"compactWindow": 0})), None, "0 turns it back off");
+    assert_eq!(window(json!({"compactWindow": 400000})), Some(400_000));
+    assert_eq!(window(json!({"compactWindow": 5000})), Some(100_000), "Claude Code's smallest");
+    assert_eq!(window(json!({"compactWindow": 9000000})), Some(1_000_000), "and largest");
+
+    let variable = || {
+        zerod::process::environment(std::iter::empty(), "s1")
+            .into_iter()
+            .find(|(k, _)| k == "CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            .map(|(_, v)| v)
+    };
+    let mut codex = Conversation::new("s", Provider::Codex, "/w");
+    codex.thread = Some("t1".into());
+    let limit = "model_auto_compact_token_limit=400000";
+    zerod::adapter::set_compact_window(Some(400_000));
+    assert_eq!(variable().as_deref(), Some("400000"));
+    assert!(Provider::Codex.command(&codex, false, None, None).windows(2).any(|w| w == ["-c", limit]));
+    assert!(Provider::Codex.terminal(&codex).unwrap().windows(2).any(|w| w == ["-c", limit]));
+    zerod::adapter::set_compact_window(None);
+    assert_eq!(variable(), None);
+    assert!(!Provider::Codex.command(&codex, false, None, None).iter().any(|a| a.contains("compact")));
+}

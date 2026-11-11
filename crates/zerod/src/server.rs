@@ -192,6 +192,9 @@ pub struct Settings {
     /// Models the user added for a CLI, Zero-wide: the pickers list them with the CLI's own.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub models: Option<Vec<CustomModel>>,
+    /// The context size, in tokens, agents compact at; 0 or unset, the CLIs' own (adapter::compact_window).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compact_window: Option<u64>,
 }
 
 /// A model the user added: for which CLI, the id it's started with (`--model`), and the name the picker shows.
@@ -211,6 +214,11 @@ impl Settings {
             Some(-1) => Some(0),
             Some(seconds) => Some(seconds.max(60)),
         }
+    }
+
+    /// Within what Claude Code takes (100k to 1M tokens), so Claude and Codex compact at the same size.
+    pub fn compact_window(&self) -> Option<u64> {
+        self.compact_window.filter(|&tokens| tokens > 0).map(|tokens| tokens.clamp(100_000, 1_000_000))
     }
 
     pub fn allows_subagents(&self) -> bool {
@@ -234,6 +242,7 @@ impl Settings {
     pub fn apply(&self, inbox: &Inbox, drops: Option<&Drops>) {
         inbox.configure(std::time::Duration::from_secs_f64(self.take_back.unwrap_or(2.0).max(0.0)), self.ttl.unwrap_or(3600));
         crate::adapter::allow_subagents(self.allows_subagents());
+        crate::adapter::set_compact_window(self.compact_window());
         if let (Some(drops), Some(patterns)) = (drops, &self.patterns) {
             drops.set_patterns(patterns.clone())
         }
@@ -509,6 +518,7 @@ fn configure(zerod: &Zerod, given: Settings) -> Result<Value, String> {
     settings.git = given.git.or(settings.git);
     settings.subagents = given.subagents.or(settings.subagents);
     settings.models = given.models.or(settings.models);
+    settings.compact_window = given.compact_window.or(settings.compact_window);
     settings.apply_git(daemon.home());
     settings.apply(&zerod.inbox, zerod.drops.as_deref());
     let _ = std::fs::write(daemon.home().join("settings.json"), serde_json::to_vec_pretty(&settings).unwrap_or_default());

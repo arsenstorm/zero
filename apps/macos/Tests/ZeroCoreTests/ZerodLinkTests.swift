@@ -145,3 +145,14 @@ private final class InboxHeard: @unchecked Sendable {
     let answered = heard.all.compactMap { if case let .ask(a) = $0, a.id == ask.id { a } else { nil } }.last
     #expect((answered?.state, answered?.answer) == (.answered, "Yes"))
 }
+
+@Test func theCompactWindowIsKeptByZerodAndTurnsBackOff() async throws {
+    let (socket, home) = try await launch("compact")
+    let link = try ZerodLink(path: socket)
+    defer { link.close(); shutDown(socket, home) }
+    #expect(try await link.compactWindow() == nil, "unset, the CLIs' own")
+    try await link.setCompactWindow(400_000)
+    #expect(try await link.compactWindow() == 400_000)
+    try await link.setCompactWindow(nil)
+    #expect(try await link.compactWindow() == nil)
+}

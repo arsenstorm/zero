@@ -1211,6 +1211,11 @@ public final class ZerodLink: @unchecked Sendable {
         ((try await call("settings")) as? [String: Any])?["subagents"] as? Bool ?? false
     }
     public func setSubagents(_ on: Bool) async throws { _ = try await call("configure", ["subagents": on]) }
+    /// The context size, in tokens, agents compact at; nil, the CLIs' own.
+    public func compactWindow() async throws -> Int? {
+        (((try await call("settings")) as? [String: Any])?["compactWindow"] as? Int).flatMap { $0 > 0 ? $0 : nil }
+    }
+    public func setCompactWindow(_ tokens: Int?) async throws { _ = try await call("configure", ["compactWindow": tokens ?? 0]) }
     #if os(macOS)
         /// The models the user added to Zero, for each CLI.
         public func customModels() async throws -> [CustomModels.Model] {

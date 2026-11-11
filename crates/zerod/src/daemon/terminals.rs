@@ -14,7 +14,9 @@ impl Daemon {
         if matches!(conversation.status, Status::Working | Status::Waiting) {
             return Err(format!("{} is working; stop its turn first", conversation.provider.title()));
         }
-        let argv = terminal_command(&conversation, &crate::git::variables(Path::new(&conversation.cwd)))?;
+        let mut vars = crate::git::variables(Path::new(&conversation.cwd));
+        vars.extend(crate::adapter::claude_compact());
+        let argv = terminal_command(&conversation, &vars)?;
         self.take_offline(&session).await;
         let mark = match conversation.provider {
             Provider::Claude => std::fs::read_to_string(self.claude_file(&conversation)).map(|text| text.lines().count()).unwrap_or(0),
