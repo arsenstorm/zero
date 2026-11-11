@@ -301,6 +301,17 @@
 
 /* Scroll moments (index.astro's script marks a stage `data-waiting` as the page loads and takes it off when the stage
    comes into view; under Reduce Motion it never marks it, and the stage is simply drawn). */
+/* A stage's cards or rows that come up one after another the first time it's well in view (`data-reveal` on their
+   parent; Base.astro's script marks it waiting and numbers the children). */
+[data-reveal]:not([data-waiting]) > * {
+  transition:
+    opacity 300ms ease-out calc(var(--i, 0) * 70ms),
+    transform 450ms var(--settle) calc(var(--i, 0) * 70ms);
+}
+[data-reveal][data-waiting] > * {
+  opacity: 0;
+  transform: translateY(10px);
+}
 /* The states arrive in the order a task goes through them. */
 [data-states]:not([data-waiting]) > li {
   transition:
