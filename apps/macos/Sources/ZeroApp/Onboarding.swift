@@ -361,7 +361,8 @@ struct ZeroMark: View {
     private static let large = load("mark"), compact = load("mark-small")
     var body: some View {
         if let image = small ? Self.compact : Self.large {
-            Image(nsImage: image).resizable().aspectRatio(contentMode: .fit).foregroundStyle(.primary)
+            // Its colour from around it (primary unless set): set here, it overrode every caller's.
+            Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
         }
     }
 }

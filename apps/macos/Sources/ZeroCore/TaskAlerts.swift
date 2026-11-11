@@ -96,15 +96,15 @@ public enum TaskAlerts {
     }
 
     /// Alerts sounded while the user was at the Mac (no notification, no phone) that still stand `after` seconds on:
-    /// the user may have walked away just then, so they go to the phone. Not one for the task open in front when the
-    /// user has touched the Mac since it came: that one was read there.
+    /// the user may have walked away just then, so they go to the phone. Not when the user has touched the Mac since it
+    /// sounded, whatever task they were on: they were there to hear it, and the news five minutes late only repeats it.
     public static func due(
-        _ held: [String: (alert: TaskAlert, at: Date)], rows: [BoardRow], now: Date, front: String?, lastInput: Date,
+        _ held: [String: (alert: TaskAlert, at: Date)], rows: [BoardRow], now: Date, lastInput: Date,
         after: TimeInterval = 300
     ) -> [TaskAlert] {
         held.values.filter { alert, at in
             guard now.timeIntervalSince(at) >= after, let row = rows.first(where: { $0.session == alert.session }) else { return false }
-            let read = front == alert.session && lastInput > at
+            let read = lastInput > at
             return standing(row)?.state == alert.state && !read
         }.map(\.alert).sorted { $0.session < $1.session }
     }

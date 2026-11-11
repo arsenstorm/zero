@@ -238,17 +238,21 @@ struct TaskPeekCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     // One line, as in the sidebar: a long name glides to its end while the card shows.
                     Marquee(text: title, moving: true).font(.system(size: 13.5, weight: .semibold)).id(title)
-                    if let ticket = row.ticket { Text(ticket).font(.system(size: 11.5)).foregroundStyle(.secondary) }
                     if let calling = Self.calling(row) { Text(calling).font(.system(size: 11.5)).foregroundStyle(.secondary) }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 StateLabel(state: row.ownState)
             }
-            if let now = row.now, !now.isEmpty {
-                Text(now).font(.system(size: 12.5)).foregroundStyle(.secondary).lineLimit(3).fixedSize(horizontal: false, vertical: true)
-            }
-            if let needs = row.needs {
-                line("hand-holding-box:glyph", "For you: " + needs)
+            // Over to you: what's yours to do is the whole story, in the description's place (the pill says whose).
+            if row.ownState == .handed, let needs = row.needs {
+                Text("For you: " + needs).font(.system(size: 12.5)).foregroundStyle(.secondary).lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                if let now = row.now, !now.isEmpty {
+                    Text(now).font(.system(size: 12.5)).foregroundStyle(.secondary).lineLimit(3).fixedSize(
+                        horizontal: false, vertical: true)
+                }
+                if let needs = row.needs { line("hand-holding-box:glyph", "For you: " + needs) }
             }
             ForEach(row.asks.prefix(3), id: \.id) { ask in line("circle-question", ask.title) }
             if row.asks.count > 3 { Text("and \(row.asks.count - 3) more asks").font(.system(size: 11.5)).foregroundStyle(.tertiary) }

@@ -190,7 +190,7 @@ struct CardView: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(headline).font(.system(size: 15, weight: .semibold))
+                Text(linked(headline)).font(.system(size: 15, weight: .semibold))
                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 if showsByline, let byline {
                     Text(byline).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
@@ -216,6 +216,14 @@ struct CardView: View {
         if ask.status == "blocked" { Text("Blocked").font(.system(size: 11, weight: .medium)).foregroundStyle(.red) }
     }
 
+    /// Its words with what they name made links, as a message's are: a Linear ticket, a pull request (repo#123, #123 in
+    /// the agent's own repository), a commit, a Slack channel.
+    private func linked(_ words: String) -> AttributedString {
+        let cwd = ask.agent.cwd ?? ask.cwd ?? ""
+        let links = MarkdownText.links(repo: References.repo(of: cwd), owner: References.owner(of: cwd), yours: false)
+        return MarkdownText.inline(words, links: links)
+    }
+
     /// Three lines; a longer one fades out on its last line instead of being cut mid-word, and a
     /// click on the text opens it in place. No button and no extra row.
     private func supportingText(_ supporting: String) -> some View {
@@ -224,9 +232,9 @@ struct CardView: View {
         return Group {
             // Folded, a click opens it; selecting text would take that click. Open, it is selectable.
             if folded {
-                Text(supporting).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(3, reservesSpace: true)
+                Text(linked(supporting)).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(3, reservesSpace: true)
             } else {
-                Text(supporting).font(.system(size: 13)).foregroundStyle(.secondary).textSelection(.enabled)
+                Text(linked(supporting)).font(.system(size: 13)).foregroundStyle(.secondary).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

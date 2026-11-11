@@ -15,7 +15,7 @@ struct WorkspaceView: View {
     var body: some View {
         ZStack {
             window.opacity(navigation.ready ? 1 : 0)
-            if !navigation.ready { ZeroMark().frame(width: 64, height: 64).foregroundStyle(.secondary).transition(.opacity) }
+            if !navigation.ready { LoadingMark().frame(width: 64, height: 64).transition(.opacity) }
             DialogHost()
         }
         .frame(minWidth: 980, minHeight: 600)
@@ -46,11 +46,17 @@ struct WorkspaceView: View {
         // the sidebar's tasks, loop names for the pills, and the page the window opens on with its words already
         // styled, so nothing loads or reflows once the window shows.
         .task {
+            // zerod first, for as long as it takes to come back (an update restarts it, finishing running commands
+            // first: seconds, not the 5 the window used to wait before showing empty, on a new task's page).
+            let started = ContinuousClock.now
+            while !workspace.connected, ContinuousClock.now < started + .seconds(30) {
+                try? await Task.sleep(for: .milliseconds(30))
+            }
+            // Then the rest, from when it answered.
             let deadline = ContinuousClock.now + .seconds(4.5)
             func until(_ done: @autoclosure () -> Bool) async {
                 while !done(), ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(30)) }
             }
-            await until(workspace.connected)
             await workspace.loadIntegrations()
             await workspace.refreshBoard()
             await workspace.loadLoops()
@@ -69,9 +75,9 @@ struct WorkspaceView: View {
                 if let live = workspace.live(row.session) { await MarkdownText.warm(live.conversation) }
             }
         }
-        // Never held on the mark: a slow gh or zerod shows the window as it is.
+        // Never held on the mark for good: a zerod that doesn't come back shows the window as it is, saying so.
         .task {
-            try? await Task.sleep(for: .seconds(5))
+            try? await Task.sleep(for: .seconds(35))
             show()
         }
     }
@@ -141,15 +147,21 @@ struct WorkspaceView: View {
                 if navigation.place == .task(asked.id) { navigation.place = .home }
             }
         }
-        .overlay(alignment: .top) {
-            if let updating = workspace.updating { UpdatingBar(updating: updating).padding(.top, 44) }
-        }
-        .overlay(alignment: .bottom) {
-            if let error = workspace.lastError, workspace.updating == nil {
-                Text(error).font(.callout).padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(Theme.redRow, in: Capsule()).padding(16)
-                    .onTapGesture { workspace.lastError = nil }
+        // What went wrong, or Zero updating: a toast in the window's corner, clear of the composer and of a turn's
+        // heading (at the top, the update covered it), on a menu's card (Linear's); an error gone on a click or after
+        // a while. Eased in and out, never popping in a frame.
+        .overlay(alignment: .bottomTrailing) {
+            ZStack(alignment: .bottomTrailing) {
+                if let updating = workspace.updating {
+                    UpdatingBar(updating: updating).transition(.opacity.combined(with: .offset(y: 8)))
+                } else if let error = workspace.lastError {
+                    ErrorToast(text: error) { workspace.lastError = nil }
+                        .transition(.opacity.combined(with: .offset(y: 8)))
+                }
             }
+            .animation(.easeOut(duration: 0.15), value: workspace.lastError)
+            .animation(.easeOut(duration: 0.2), value: workspace.updating == nil)
+            .padding(16)
         }
     }
 
@@ -360,5 +372,63 @@ private struct Rail: View {
                 .frame(width: 32, height: 32)
         }
         .buttonStyle(Hovering(selected: selected, fill: Theme.railSelected, hover: Theme.railHover)).tip(help, shortcut: shortcut)
+    }
+}
+
+/// An error, said quietly: its icon and words on a menu's card, and a close button. It goes by itself after six
+/// seconds (a new error starts the count again).
+private struct ErrorToast: View {
+    let text: String
+    let close: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            NucleoIcon("triangle-warning", fill: "glyph", size: 14).foregroundStyle(.orange)
+            Text(text).font(.system(size: 13)).foregroundStyle(Theme.menuText).fixedSize(horizontal: false, vertical: true)
+            Button(action: close) {
+                NucleoIcon("xmark", size: 11).foregroundStyle(Theme.menuIcon).frame(width: 18, height: 18).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).tip("Dismiss")
+        }
+        .padding(.leading, 12).padding(.trailing, 8).padding(.vertical, 10)
+        .frame(maxWidth: 360, alignment: .leading)
+        .modifier(MenuCard(radius: 12, linear: true))
+        .task(id: text) {
+            try? await Task.sleep(for: .seconds(6))
+            if !Task.isCancelled { close() }
+        }
+    }
+}
+
+/// Zero's mark while the window gets ready: soft grey, with a brighter band of it sweeping across, corner to corner,
+/// every 1.6 s, so a wait (an update restarting zerod) reads as loading. With Reduce Motion, it breathes instead.
+private struct LoadingMark: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private static let period = 1.6
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: Self.period) / Self.period
+            if reduceMotion {
+                ZeroMark().foregroundStyle(.secondary).opacity(0.55 + 0.45 * (0.5 - 0.5 * cos(phase * 2 * .pi)))
+            } else {
+                // The band's middle, from just off one corner to just off the other, easing in and out.
+                let eased = 0.5 - 0.5 * cos(phase * .pi)
+                let at = -0.35 + 1.7 * eased
+                ZeroMark().foregroundStyle(.tertiary)
+                    .overlay {
+                        ZeroMark().foregroundStyle(.primary)
+                            .mask {
+                                // Sampled along the diagonal (a gradient's stops must lie within it): bright at the band's
+                                // middle, nothing 0.3 either side.
+                                LinearGradient(
+                                    stops: (0...20).map { step in
+                                        let x = Double(step) / 20
+                                        return .init(color: .black.opacity(max(0, 1 - abs(x - at) / 0.3)), location: x)
+                                    }, startPoint: .topLeading, endPoint: .bottomTrailing)
+                            }
+                    }
+            }
+        }
     }
 }

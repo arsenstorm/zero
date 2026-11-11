@@ -144,17 +144,20 @@ private func row(
     let replied = TaskAlert(session: "1", kind: .finished, state: .answered, title: "Task 1", body: "Replied: done")
     let held = ["1": (alert: replied, at: start)]
     let still = [row("1", state: "answered")]
-    #expect(TaskAlerts.due(held, rows: still, now: start + 299, front: nil, lastInput: start).isEmpty, "not yet")
+    #expect(TaskAlerts.due(held, rows: still, now: start + 299, lastInput: start).isEmpty, "not yet")
     #expect(
-        TaskAlerts.due(held, rows: still, now: start + 300, front: nil, lastInput: start) == [replied], "unseen five minutes on: the phone")
-    #expect(TaskAlerts.due(held, rows: [row("1", state: "read")], now: start + 300, front: nil, lastInput: start).isEmpty, "seen meanwhile")
-    #expect(TaskAlerts.due(held, rows: [row("1", state: "working")], now: start + 300, front: nil, lastInput: start).isEmpty, "moved on")
+        TaskAlerts.due(held, rows: still, now: start + 300, lastInput: start) == [replied], "unseen five minutes on: the phone")
+    #expect(TaskAlerts.due(held, rows: [row("1", state: "read")], now: start + 300, lastInput: start).isEmpty, "seen meanwhile")
+    #expect(TaskAlerts.due(held, rows: [row("1", state: "working")], now: start + 300, lastInput: start).isEmpty, "moved on")
     #expect(
-        TaskAlerts.due(held, rows: still, now: start + 300, front: "1", lastInput: start + 60).isEmpty,
+        TaskAlerts.due(held, rows: still, now: start + 300, lastInput: start + 60).isEmpty,
         "open in front, and the user was there after it came")
     #expect(
-        TaskAlerts.due(held, rows: still, now: start + 300, front: "1", lastInput: start - 1) == [replied],
+        TaskAlerts.due(held, rows: still, now: start + 300, lastInput: start - 1) == [replied],
         "open in front, but nobody there since")
+    #expect(
+        TaskAlerts.due(held, rows: still, now: start + 300, lastInput: start + 60).isEmpty,
+        "at the Mac since it sounded, on another task: they were there to hear it, nothing goes on five minutes late")
 }
 
 @Test func anIssueThatTurnsToTheUserSaysWhichAndWhatItNeeds() {
@@ -204,4 +207,13 @@ private func row(
         from: [row("1", state: "working", onYou: issue)], to: [row("1", state: "needsYou", now: "Opened #2.", onYou: issue)],
         announced: &announced)
     #expect(back.alerts.isEmpty)
+}
+
+@Test func anIssueOverToTheUserIsDrawnOverToYouAndAnUnknownStateStillDecodes() {
+    let issue = { (state: String) in
+        try! JSONDecoder().decode(BoardRow.Issue.self, from: Data(#"{"ticket":"T-1","state":"\#(state)","text":"","since":0}"#.utf8))
+    }
+    #expect(issue("over").boardState == .handed)
+    #expect(issue("you").boardState == .needsYou)
+    #expect(issue("someday").boardState == .done)
 }

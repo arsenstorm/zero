@@ -617,7 +617,7 @@ struct RightClick: NSViewRepresentable {
 }
 
 /// A menu's card: Linear's (its surface under a hairline edge, three soft shadows), or the model selector's lighter one.
-private struct MenuCard: ViewModifier {
+struct MenuCard: ViewModifier {
     let radius: CGFloat
     let linear: Bool
     func body(content: Content) -> some View {

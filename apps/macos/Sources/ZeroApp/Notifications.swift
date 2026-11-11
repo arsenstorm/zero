@@ -73,9 +73,8 @@ import ZeroCore
     /// What was only sounded and still stands, five minutes on, goes to the phones (and the Mac's notifications).
     private func catchUp() {
         guard !held.isEmpty, let rows = last else { return }
-        let front: String? = if case let .task(id) = navigation.place, NSApp.isActive, windowShown(), atMac { id } else { nil }
         let now = Date()
-        for alert in TaskAlerts.due(held, rows: rows, now: now, front: front, lastInput: now.addingTimeInterval(-Self.idle)) {
+        for alert in TaskAlerts.due(held, rows: rows, now: now, lastInput: now.addingTimeInterval(-Self.idle)) {
             held[alert.session] = nil
             notifyAway(alert)
         }
