@@ -44,7 +44,14 @@ async fn a_restart_waits_for_a_running_command_then_pauses_the_turn_to_carry_on(
         daemon.start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
     let idle =
         daemon.start(Provider::Claude, "done already", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
-    tokio::time::sleep(Duration::from_millis(100)).await; // their processes connect
+    // Their processes connect: a session not yet attached is one a restart has nothing to wait for. Waited for, not
+    // slept on: a busy CI runner took longer than 100 ms, and the restart went ahead at once.
+    for _ in 0..100 {
+        if [&working, &idle].iter().all(|id| daemon.session(id).unwrap().is_attached()) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     let session = daemon.session(&working).unwrap();
     session.change(Change::Status { status: Status::Working, turn: Some("t1".into()), error: None });
     session.change(command(ItemStatus::Running));
