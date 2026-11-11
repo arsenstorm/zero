@@ -43,6 +43,8 @@
   /* The app's secondary label is 0.5; on the web that's 3.9:1 on white, under AA's 4.5:1, so a step darker. */
   --muted: rgb(0 0 0 / 0.6);
   --faint: rgb(0 0 0 / 0.26);
+  /* The faint grey as a solid colour on the rail, for lines that cross or meet: see-through, their overlaps doubled. */
+  --line: #afafaf;
   --blue: #007aff;
   --orange: #ff9500;
   --red: #ff3b30;
@@ -86,6 +88,7 @@
     --ink: rgb(255 255 255 / 0.85);
     --muted: rgb(255 255 255 / 0.55);
     --faint: rgb(255 255 255 / 0.25);
+    --line: #4d4d4d;
     --blue: #0a84ff;
     --orange: #ff9f0a;
     --red: #ff453a;
@@ -132,6 +135,7 @@
   --color-ink: var(--ink);
   --color-muted: var(--muted);
   --color-faint: var(--faint);
+  --color-line: var(--line);
   --color-blue: var(--blue);
   --color-orange: var(--orange);
   --color-red: var(--red);
@@ -720,4 +724,25 @@
     padding: 10px;
     overflow: visible;
   }
+}
+
+/* The window demo's docked ask: the conversation just around it, above and at its sides, blurred and faded out to a
+   soft edge, as the app's Ring is (thin material with the card's colour at 0.45 over it). The two masks, across and
+   down, meet as one soft-cornered edge. */
+.dock-ring {
+  border-radius: 40px 40px 0 0;
+  background: color-mix(in srgb, var(--card) 45%, transparent);
+  -webkit-backdrop-filter: blur(10px) saturate(1.4);
+  backdrop-filter: blur(10px) saturate(1.4);
+  mask:
+    linear-gradient(to bottom, transparent, #000 18px),
+    linear-gradient(
+      to right,
+      transparent,
+      #000 18px,
+      #000 calc(100% - 18px),
+      transparent
+    );
+  mask-composite: intersect;
+  -webkit-mask-composite: source-in;
 }

@@ -405,9 +405,18 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
           {task.ask && (
             // Docked as the app docks it (ArticlePanel): a tab in the composer's grey with a strip naming it, and the
             // inbox's card laid flat on the composer's well, its foot running 14 px under the composer (22 here: the form's 8 px above it too). 16 + 2 = 18.
-            <div data-docked class="relative px-4 sm:px-10 pt-2 -mb-[22px]">
+            <div
+              data-docked
+              class="relative px-4 sm:px-10 pt-2 -mb-[22px] [--dock-inset:29px] sm:[--dock-inset:53px]"
+            >
+              {/* What's just around the ask, above and at its sides, blurred and faded out to a soft edge
+                  (ConversationView's Ring: 22 pt of thin material, the card's colour at 0.45 over it). */}
+              <div
+                aria-hidden="true"
+                class="dock-ring absolute inset-x-[calc(var(--dock-inset)-22px)] top-[-14px] bottom-0 pointer-events-none"
+              ></div>
               {/* 13 pt in from the composer's sides, as ConversationView docks it. */}
-              <div class="mx-[13px] rounded-t-[18px] bg-field-tab px-0.5">
+              <div class="relative mx-[13px] rounded-t-[18px] bg-field-tab px-0.5">
                 <div class="flex items-center gap-1.5 px-3.5 py-[7px] text-[12px] font-medium tracking-[-0.2px] text-muted">
                   {task.ask.kind === "run" ? (
                     <Icon name="terminal" size={13} />
