@@ -56,25 +56,27 @@ const middles = workers.map((_, i) => i * (CARD + GAP) + CARD / 2);
   aria-label="A task, Upgrade the payments SDK, with three workers: Update the API calls, Fix the failing tests, and Check the webhooks on staging."
   class="mx-auto w-full max-w-[780px] flex flex-col sm:grid sm:grid-cols-[minmax(0,260px)_minmax(40px,1fr)_minmax(0,320px)] sm:items-center gap-3 sm:gap-0"
 >
-  <div class="rounded-[18px] bg-card border border-stroke px-4 py-3.5">
-    <div class="flex items-center gap-2">
-      <span class="relative size-3.5 shrink-0">
-        {lead.states.map((state, i) => (
-          <span
-            data-icon="lead"
-            data-state={state}
-            class:list={[
-              "absolute inset-0 grid place-items-center",
-              i > 0 && "opacity-0",
-            ]}
-          >
-            <TaskState state={state} />
-          </span>
-        ))}
-      </span>
-      <span class="text-[14.5px] font-semibold truncate">{lead.title}</span>
+  <div
+    class="rounded-[18px] bg-card border border-stroke px-4 py-3.5 flex items-center gap-3"
+  >
+    <span class="relative size-5 shrink-0 [&_svg]:size-5 [&>span>span]:size-5">
+      {lead.states.map((state, i) => (
+        <span
+          data-icon="lead"
+          data-state={state}
+          class:list={[
+            "absolute inset-0 grid place-items-center",
+            i > 0 && "opacity-0",
+          ]}
+        >
+          <TaskState state={state} />
+        </span>
+      ))}
+    </span>
+    <div class="min-w-0">
+      <p class="text-[14.5px] font-semibold truncate">{lead.title}</p>
+      <p class="mt-0.5 text-[12.5px] text-muted">Lead · 3 workers</p>
     </div>
-    <p class="mt-0.5 pl-[22px] text-[12.5px] text-muted">Lead · 3 workers</p>
   </div>
 
   <svg
@@ -117,39 +119,40 @@ const middles = workers.map((_, i) => i * (CARD + GAP) + CARD / 2);
     {workers.map((w) => (
       <div
         data-w={w.id}
-        class="worker-card relative rounded-[16px] bg-card border border-stroke px-4 flex flex-col justify-center"
+        class="worker-card relative rounded-[16px] bg-card border border-stroke px-4 flex items-center gap-3"
         style={`height: ${CARD}px`}
       >
-        <div class="flex items-center gap-2">
-          <span class="relative size-3.5 shrink-0">
-            {w.states.map((state, i) => (
-              <span
-                data-icon={w.id}
-                data-state={state}
-                class:list={[
-                  "absolute inset-0 grid place-items-center",
-                  i > 0 && "opacity-0",
-                ]}
-              >
-                <TaskState state={state} />
-              </span>
-            ))}
-          </span>
-          <span class="text-[13.5px] font-medium truncate">{w.title}</span>
-        </div>
-        <div class="relative mt-0.5 ml-[22px] h-[18px] text-[12.5px] text-muted">
+        {/* The state's icon, 20 px, centred on the title and the line under it together. */}
+        <span class="relative size-5 shrink-0 [&_svg]:size-5 [&>span>span]:size-5">
           {w.states.map((state, i) => (
             <span
-              data-now={w.id}
+              data-icon={w.id}
               data-state={state}
               class:list={[
-                "now absolute inset-0 truncate",
+                "absolute inset-0 grid place-items-center",
                 i > 0 && "opacity-0",
               ]}
             >
-              {nowOf(w, state)}
+              <TaskState state={state} />
             </span>
           ))}
+        </span>
+        <div class="min-w-0 flex-1">
+          <p class="text-[13.5px] font-medium truncate">{w.title}</p>
+          <div class="relative mt-0.5 h-[18px] text-[12.5px] text-muted">
+            {w.states.map((state, i) => (
+              <span
+                data-now={w.id}
+                data-state={state}
+                class:list={[
+                  "now absolute inset-0 truncate",
+                  i > 0 && "opacity-0",
+                ]}
+              >
+                {nowOf(w, state)}
+              </span>
+            ))}
+          </div>
         </div>
       </div>
     ))}
@@ -162,7 +165,7 @@ const middles = workers.map((_, i) => i * (CARD + GAP) + CARD / 2);
     background:
       repeating-linear-gradient(
         to bottom,
-        var(--faint) 0 4px,
+        var(--line) 0 4px,
         transparent 4px 8px
       )
       0 0 / 1.5px 100% no-repeat;
@@ -176,9 +179,9 @@ const middles = workers.map((_, i) => i * (CARD + GAP) + CARD / 2);
     height: 1.5px;
     background: linear-gradient(
       to right,
-      var(--faint) 0 3px,
+      var(--line) 0 3px,
       transparent 3px 7px,
-      var(--faint) 7px
+      var(--line) 7px
     );
     clip-path: inset(0 0 0 0);
     transition: clip-path 220ms cubic-bezier(0.32, 0.72, 0, 1) 160ms;
@@ -206,7 +209,7 @@ const middles = workers.map((_, i) => i * (CARD + GAP) + CARD / 2);
     color: var(--blue);
   }
   .worker-line[data-state="waiting"] {
-    color: var(--faint);
+    color: var(--line);
   }
   .worker-line[data-state="done"] {
     color: var(--purple);
