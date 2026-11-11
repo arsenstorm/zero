@@ -21,6 +21,11 @@ struct SelectorRow: Identifiable {
     let pick: () -> Void
     /// A menu row's mark before its title: a Nucleo icon's name or an emoji; "" for Zero's own mark.
     var glyph: String? = nil
+    /// The mark's fill and colour, where they say something (a task's state: its glyph in its colour).
+    var fill = "outline"
+    var tint: Color? = nil
+    /// A menu row's own menu, opened beside it as the pointer comes onto it.
+    var children: [SelectorRow] = []
 }
 
 /// A provider (Anthropic, OpenAI): one tab of the selector.
@@ -41,6 +46,12 @@ final class SelectorState {
     var sections: [SelectorSection] = []
     /// The card's laid-out height: the app treats a click in the rest of its strip as a click outside.
     @ObservationIgnored var cardHeight: CGFloat = 0
+    /// Each row's frame in the selector's window (top left origin), the card's and its open submenu's.
+    @ObservationIgnored var rowFrames: [String: CGRect] = [:]
+    @ObservationIgnored var cardFrame: CGRect = .zero
+    @ObservationIgnored var submenuFrame: CGRect?
+    /// The menu row whose own menu is open beside it.
+    var submenu: String?
     /// What the selector asks of whoever opened it (the inbox, or a workspace composer): to close it, a model's
     /// effort level and a new one for it, and its rows again after a level changes.
     @ObservationIgnored var close: () -> Void = {}
@@ -65,17 +76,45 @@ struct SelectorView: View {
         case .menu: 220
         }
     }
+    /// A menu as wide as its longest row needs, as Linear's are (no fixed width: a short menu is narrow), its rows'
+    /// contents at most Linear's 400.
+    static func width(_ state: SelectorState) -> CGFloat {
+        state.kind == .menu ? menuWidth(state.sections.flatMap(\.rows)) : width(state.kind)
+    }
+    static func menuWidth(_ rows: [SelectorRow]) -> CGFloat {
+        let font: [NSAttributedString.Key: Any] = [.font: menuNSFont]
+        // A row's icon and the gap after it, then its words; a check's place where something can be checked, a
+        // chevron's where a row has its own menu.
+        let widest = rows.map { ($0.glyph == nil ? 0 : 24) + ($0.title as NSString).size(withAttributes: font).width }.max() ?? 0
+        let check: CGFloat = rows.contains(where: \.selected) ? 8 + 13 : 0
+        let chevron: CGFloat = rows.contains { !$0.children.isEmpty } ? 8 + 12 : 0
+        // Edge and inset and the row's leading; the gap before the spacer, trailing, inset and edge (the row's HStack).
+        return (1 + 6 + 8 + min(400, widest + check + chevron) + 8 + 12 + 6 + 1).rounded(.up)
+    }
+    /// Room beside a menu for the widest of its rows' own menus (and the gap between), none without.
+    static func submenuRoom(_ state: SelectorState) -> CGFloat {
+        guard state.kind == .menu else { return 0 }
+        return state.sections.flatMap(\.rows).filter { !$0.children.isEmpty }.map { menuWidth($0.children) + submenuGap }.max() ?? 0
+    }
+    static let submenuGap: CGFloat = 4
     private static let paneWidth: CGFloat = 240
     /// The model list is always eight rows tall, so neither a tab change nor a hover moves anything.
     private static let modelListHeight: CGFloat = 8 * rowHeight + 8 + 7
     private static let rowHeight: CGFloat = 28
+    /// Linear's menu words: 13 points at weight 450, between regular and medium.
+    private static let menuStroke: CGFloat = 1.7
+    private static let menuNSFont = NSFont.systemFont(ofSize: 13, weight: NSFont.Weight(0.115))
+    private static let menuFont = Font(menuNSFont)
+    /// Room around a menu's card in its window for its shadow (Linear's: 18 points of blur, 6 down).
+    static func shadowRoom(_ kind: SelectorKind) -> CGFloat { kind == .runtime ? 0 : 24 }
     /// Menus and short lists as Linear's (measured): 10 pt corners, rows 32 tall 6 in from the edge, a 6 pt highlight
     /// (#323234, the row's words and icon white on it), its icon 9 in from the highlight's edge, the words 8 after it.
     /// The model selector keeps its own.
     private var linear: Bool { state.kind != .runtime }
-    private var radius: CGFloat { linear ? 10 : 14 }
+    /// Linear's: a 12 point card, its rows' highlight 8 (not concentric: Linear's own).
+    private var radius: CGFloat { linear ? 12 : 14 }
     private var inset: CGFloat { 6 }
-    private var highlightRadius: CGFloat { linear ? 6 : radius - inset }
+    private var highlightRadius: CGFloat { linear ? 8 : radius - inset }
     private var rowHeight: CGFloat { linear ? 32 : Self.rowHeight }
 
     private var sections: [SelectorSection] { state.sections }
@@ -88,9 +127,10 @@ struct SelectorView: View {
             if state.kind == .menu {
                 VStack(spacing: 0) {
                     ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
-                        // A line between groups, edge to edge, 5 above and below.
+                        // A line between groups, edge to edge, in Linear's 12 points (6 above it, 5 below).
                         if index > 0 {
-                            Rectangle().fill(Theme.menuLine).frame(height: 1).padding(.horizontal, -inset).padding(.vertical, 5)
+                            Rectangle().fill(Theme.menuLine).frame(height: 1).padding(.horizontal, -inset).padding(.top, 6)
+                                .padding(.bottom, 5)
                         }
                         VStack(spacing: 0) { ForEach(section.rows) { rowView($0) } }
                     }
@@ -118,19 +158,14 @@ struct SelectorView: View {
                 shortList
             }
         }
-        .frame(width: Self.width(state.kind))
-        // Lighter than a page's card: a hairline edge, a little less round. (The window gives it its shadow.)
-        .background(linear ? Theme.menu : Theme.card)
-        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(
-                linear ? Theme.menuStroke : Theme.stroke, lineWidth: linear ? 1 : 0.5)
-        )
-        .onGeometryChange(for: CGFloat.self) {
-            $0.size.height
+        .frame(width: Self.width(state))
+        .modifier(MenuCard(radius: radius, linear: linear))
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
         } action: {
-            state.cardHeight = $0
+            state.cardHeight = $0.height; state.cardFrame = $0
         }
+        .overlay(alignment: .topLeading) { submenu }
         .focusable()
         .focused($focused)
         .focusEffectDisabled()
@@ -222,34 +257,65 @@ struct SelectorView: View {
         .padding(.horizontal, 14).padding(.vertical, 10)
     }
 
-    private func rowView(_ row: SelectorRow) -> some View {
-        let current = state.highlighted == row.id
+    /// The open row's own menu, beside the card, its first row level with the row (past the card's edge and inset).
+    @ViewBuilder private var submenu: some View {
+        if state.kind == .menu, let id = state.submenu, let parent = rows.first(where: { $0.id == id }), let at = state.rowFrames[id] {
+            VStack(spacing: 0) { ForEach(parent.children) { rowView($0, in: parent.children) } }
+                .padding(inset)
+                .frame(width: Self.menuWidth(parent.children))
+                .modifier(MenuCard(radius: radius, linear: true))
+                .onGeometryChange(for: CGRect.self) {
+                    $0.frame(in: .global)
+                } action: {
+                    state.submenuFrame = $0
+                }
+                .onDisappear { state.submenuFrame = nil }
+                .offset(x: Self.width(state) + Self.submenuGap, y: at.minY - state.cardFrame.minY - inset - 1)
+        }
+    }
+
+    /// A row; `siblings` given, one of a row's own menu.
+    private func rowView(_ row: SelectorRow, in siblings: [SelectorRow]? = nil) -> some View {
+        // The row whose menu is open stays lit while the pointer is in that menu.
+        let current = state.highlighted == row.id || state.submenu == row.id
+        let parent = !row.children.isEmpty
         return Button {
-            row.pick()
-            state.close()
+            // A row with its own menu opens it; the rest act and close.
+            if parent {
+                state.submenu = row.id
+            } else {
+                row.pick()
+                state.close()
+            }
         } label: {
             let described = state.kind == .project ? describe(row) : ""
             HStack(alignment: described.isEmpty ? .center : .top, spacing: 8) {
-                if let glyph = row.glyph {
-                    WorkspaceGlyph(glyph: glyph, size: linear ? 16 : 14)
-                        .foregroundStyle(linear ? (current ? Theme.menuHot : Theme.menuIcon) : Color.secondary).frame(
+                if let glyph = row.glyph, row.fill != "outline" {
+                    // A filled mark in its own colour (a task's state, as the sidebar draws it).
+                    NucleoIcon(glyph, fill: row.fill, size: 16).foregroundStyle(row.tint ?? Theme.menuIcon).frame(width: 16)
+                } else if let glyph = row.glyph {
+                    // Linear's weight: 1.5 points at 16 (Nucleo's 1.5 on its 18 point grid drew 1.33).
+                    WorkspaceGlyph(glyph: glyph, size: linear ? 16 : 14, stroke: linear ? Self.menuStroke : nil)
+                        .foregroundStyle(row.tint ?? (linear ? (current ? Theme.menuHot : Theme.menuIcon) : Color.secondary)).frame(
                             width: linear ? 16 : 18)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(row.title).font(.system(size: 13, weight: state.kind == .menu ? .regular : .medium)).lineLimit(1)
+                    Text(row.title).font(state.kind == .menu ? Self.menuFont : .system(size: 13, weight: .medium)).lineLimit(1)
                         .foregroundStyle(linear ? (current ? Theme.menuHot : Theme.menuText) : Color.primary)
                     if !described.isEmpty {
                         Text(described).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(2).fixedSize(
                             horizontal: false, vertical: true)
                     }
                 }
-                Spacer(minLength: 6)
+                Spacer(minLength: linear ? 0 : 6)
                 // The check's place only where something can be checked: a menu of actions has none, and kept no gap.
-                if rows.contains(where: \.selected) {
+                if (siblings ?? rows).contains(where: \.selected) {
                     NucleoIcon("check", size: 13).foregroundStyle(Color.accentColor).opacity(row.selected ? 1 : 0)
                 }
+                if parent { NucleoIcon("chevron-right", size: 12).foregroundStyle(Theme.menuIcon) }
             }
-            .padding(.leading, linear ? 9 : 10).padding(.trailing, 10).padding(.vertical, described.isEmpty ? 0 : 7)
+            // Linear's: the icon 14 in from the card's edge, the words 18 from its far one.
+            .padding(.leading, linear ? 8 : 10).padding(.trailing, linear ? 12 : 10).padding(.vertical, described.isEmpty ? 0 : 7)
             .frame(minHeight: rowHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(current ? (linear ? Theme.menuHover : Theme.row) : .clear)
@@ -257,7 +323,18 @@ struct SelectorView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onHover { if $0 { state.highlighted = row.id } }
+        .onHover { inside in
+            guard inside else { return }
+            state.highlighted = row.id
+            // Onto a row of the menu itself: its own menu opens, any other closes.
+            if siblings == nil, state.kind == .menu { state.submenu = parent ? row.id : nil }
+        }
+        // Where it is in the window: a right-button drag (which hover doesn't follow) finds its row by it.
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
+        } action: {
+            state.rowFrames[row.id] = $0
+        }
     }
 
     /// The right pane: the highlighted model's logo, name and purpose, centred, with its effort slider below.
@@ -449,21 +526,56 @@ extension View {
     func scrollEdgeFades(_ fade: CGFloat = 28) -> some View { modifier(ScrollEdgeFades(fade: fade)) }
 }
 
-/// One item of a right-click menu: its words, a Nucleo icon's name, what it does.
+/// One item of a right-click menu: its words, a Nucleo icon's name, what it does; or, with `children`, a menu of its
+/// own opened beside it.
 struct MenuItem {
     let title: String
     var glyph: String? = nil
-    let action: () -> Void
+    var fill = "outline"
+    var tint: Color? = nil
+    var selected = false
+    var children: [MenuItem] = []
+    var action: () -> Void = {}
     init(_ title: String, _ glyph: String? = nil, action: @escaping () -> Void) {
         self.title = title; self.glyph = glyph; self.action = action
+    }
+    init(_ title: String, _ glyph: String?, children: [MenuItem]) {
+        self.title = title; self.glyph = glyph; self.children = children
+    }
+    /// A mark filled and coloured, and checked when it's the one in force (a task's state).
+    init(_ title: String, glyph: String, tint: Color, selected: Bool, action: @escaping () -> Void) {
+        self.title = title; self.glyph = glyph; self.fill = "glyph"; self.tint = tint; self.selected = selected; self.action = action
+    }
+
+    func row(_ id: String) -> SelectorRow {
+        SelectorRow(
+            id: id, title: title, provider: nil, providerIcon: nil, detail: nil, context: nil, levels: [], defaultLevel: nil,
+            modelID: nil, selected: selected, pick: action, glyph: glyph, fill: fill, tint: tint,
+            children: children.enumerated().map { $1.row("\(id)-\($0)") })
     }
 }
 
 extension View {
     /// A right-click menu in Zero's own look (Linear's, as every menu of Zero's), at the pointer, in place of the
-    /// system's: its groups with a line between. No submenus: what one held goes in a group of its own.
+    /// system's: its groups with a line between, a row with children opening its own menu beside it.
     func zeroContextMenu(_ id: String, _ groups: @escaping () -> [[MenuItem]]) -> some View {
-        overlay { RightClick { ZeroContextMenu.open(id, groups) } }
+        modifier(ContextMenuHost(id: id, groups: groups))
+    }
+}
+
+extension EnvironmentValues {
+    /// The view's right-click menu is open: what it lies over shows as under the pointer (Hovering's tile), as Linear's
+    /// rows do while their menu is up.
+    @Entry var menuShown = false
+}
+
+private struct ContextMenuHost: ViewModifier {
+    let id: String
+    let groups: () -> [[MenuItem]]
+    func body(content: Content) -> some View {
+        content
+            .environment(\.menuShown, WorkspaceSelector.shared.open == "menu-" + id)
+            .overlay { RightClick { ZeroContextMenu.open(id, groups) } }
     }
 }
 
@@ -480,11 +592,7 @@ extension View {
             groups().filter { !$0.isEmpty }.enumerated().map { index, items in
                 SelectorSection(
                     id: "group-\(index)", title: "", icon: nil,
-                    rows: items.enumerated().map { n, item in
-                        SelectorRow(
-                            id: "\(index)-\(n)", title: item.title, provider: nil, providerIcon: nil, detail: nil, context: nil, levels: [],
-                            defaultLevel: nil, modelID: nil, selected: false, pick: item.action, glyph: item.glyph)
-                    })
+                    rows: items.enumerated().map { n, item in item.row("\(index)-\(n)") })
             }
         }
     }
@@ -505,5 +613,25 @@ struct RightClick: NSViewRepresentable {
             return event == .rightMouseDown || event == .rightMouseUp ? super.hitTest(point) : nil
         }
         override func rightMouseDown(with event: NSEvent) { action() }
+    }
+}
+
+/// A menu's card: Linear's (its surface under a hairline edge, three soft shadows), or the model selector's lighter one.
+private struct MenuCard: ViewModifier {
+    let radius: CGFloat
+    let linear: Bool
+    func body(content: Content) -> some View {
+        content
+            .background(linear ? Theme.menu : Theme.card)
+            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(
+                    linear ? Theme.menuStroke : Theme.stroke, lineWidth: linear ? 1 : 0.5)
+            )
+            // Linear's three soft shadows (0 6 18 at 2%, 0 3 9 at 4%, 0 1 1 at 4%): a SwiftUI radius is half CSS's blur.
+            .compositingGroup()
+            .shadow(color: .black.opacity(linear ? 0.02 : 0), radius: 9, y: 6)
+            .shadow(color: .black.opacity(linear ? 0.04 : 0), radius: 4.5, y: 3)
+            .shadow(color: .black.opacity(linear ? 0.04 : 0), radius: 0.5, y: 1)
     }
 }

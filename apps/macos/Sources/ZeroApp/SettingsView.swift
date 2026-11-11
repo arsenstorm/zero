@@ -261,9 +261,14 @@ struct Hovering: ButtonStyle {
         let label: Label
         let style: Hovering
         @State private var hovering = false
+        /// Its right-click menu open: lit as under the pointer while the pointer is on the menu.
+        @Environment(\.menuShown) private var menuShown
         var body: some View {
             label
-                .background(style.selected ? style.fill : hovering ? style.hover : .clear, in: RoundedRectangle(cornerRadius: style.radius))
+                .background(
+                    style.selected ? style.fill : hovering || menuShown ? style.hover : .clear,
+                    in: RoundedRectangle(cornerRadius: style.radius)
+                )
                 .contentShape(RoundedRectangle(cornerRadius: style.radius))
                 .onHover { hovering = $0 }
         }
@@ -536,6 +541,13 @@ private struct GeneralPage: View {
             SettingsSection(title: "Zero") {
                 Rows {
                     UpdateRow()
+                    // The one difference between an official build and one from source, shown so no one wonders.
+                    SettingRow(
+                        title: Nucleo.set == "Nucleo" ? "Icons: Nucleo" : "Icons: Lucide (open-source build)",
+                        detail: Nucleo.set == "Nucleo"
+                            ? "Official builds draw Nucleo's licensed icons."
+                            : "Built from source, Zero draws Lucide's icons in place of Nucleo's. Nothing else differs."
+                    ) { EmptyView() }
                     SettingRow(title: "Launch Zero at login", detail: "So agents can always reach you.") {
                         Switch(isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
                     }

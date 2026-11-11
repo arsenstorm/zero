@@ -32,15 +32,25 @@ extension AppDelegate {
         let opensBelow = roomBelow >= 240 || roomBelow >= roomAbove
         // Whole points: a fraction left the window between pixels, and the card's hairline at its top edge went when
         // a hover redrew part of it.
-        let size = NSSize(width: SelectorView.width(selector.kind), height: min(480, opensBelow ? roomBelow : roomAbove).rounded(.down))
+        // The strip and room around it for the card's shadow (none for the runtime selector, which has none).
+        let pad = SelectorView.shadowRoom(selector.kind)
+        let strip = NSSize(width: SelectorView.width(selector), height: min(480, opensBelow ? roomBelow : roomAbove).rounded(.down))
+        // And room to its right for a row's own menu, when a row has one.
+        let room = SelectorView.submenuRoom(selector)
+        let size = NSSize(width: strip.width + room + 2 * pad, height: strip.height + 2 * pad)
         // Projects hang off their chip; the two-pane model selector is centred on the inbox, overhanging it equally.
-        let left = selector.kind == .runtime ? (centredOn ?? chip).midX - size.width / 2 : chip.minX
-        let x = max(screen.minX + 8, min(left, screen.maxX - size.width - 8)).rounded()
-        let y = (opensBelow ? chip.minY - 6 - size.height : chip.maxY + 6).rounded()
+        // An anchor as wide as a menu is the menu's own place (beside a button, its right edge on the button's): a menu
+        // wider than that grows to the left from it. A narrower one (the pointer) hangs the menu off its left.
+        let left =
+            selector.kind == .runtime
+            ? (centredOn ?? chip).midX - strip.width / 2
+            : selector.kind == .menu && chip.width >= SelectorView.width(.menu) ? chip.maxX - strip.width : chip.minX
+        let x = max(screen.minX + 8, min(left, screen.maxX - strip.width - room - 8)).rounded() - pad
+        let y = (opensBelow ? chip.minY - 6 - strip.height : chip.maxY + 6).rounded() - pad
         let view = FirstMouseHostingView(
             rootView: AnyView(
                 SelectorView(state: selector)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: opensBelow ? .top : .bottom)))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: opensBelow ? .topLeading : .bottomLeading).padding(pad)))
         view.sizingOptions = []
         // The animated layer is a plain container's, not the hosting view's: AppKit resets a hosting view's layer
         // geometry whenever SwiftUI lays out, which stutters a transform on it.
@@ -56,7 +66,7 @@ extension AppDelegate {
         panel.makeKeyAndOrderFront(nil)
         panel.layoutIfNeeded() // the heavy first layout happens now, invisible, not inside the animation
         selectorPanel = panel
-        selectorAnchor = CGPoint(x: chip.midX - x, y: opensBelow ? size.height : 0)
+        selectorAnchor = CGPoint(x: chip.midX - x, y: opensBelow ? size.height - pad : pad)
         DispatchQueue.main.async { [weak self, weak panel] in
             // One turn later the first frame is committed; the animation then has nothing to wait on.
             guard let self, let panel, selectorPanel === panel else { return }
@@ -76,14 +86,48 @@ extension AppDelegate {
             matching: .leftMouseDown,
             handler: { [weak self, weak selector] event in
                 guard let self, let panel = selectorPanel else { return event }
-                let y = event.locationInWindow.y, card = selector?.cardHeight ?? 0
-                let inCard = opensBelow ? y >= panel.frame.height - card : y <= card
+                // On the card or its open submenu (their frames top left origin, as SwiftUI gives them).
+                let at = CGPoint(x: event.locationInWindow.x, y: panel.frame.height - event.locationInWindow.y)
+                let inCard = selector.map { $0.cardFrame.contains(at) || $0.submenuFrame?.contains(at) == true } ?? false
                 if event.window !== panel || !inCard { selector?.close() }
                 return event
             })
         {
             selectorMonitors.append(local)
         }
+        if selector.kind == .menu, NSEvent.pressedMouseButtons & 0b10 != 0 { followRightDrag(selector) }
+    }
+
+    /// A menu opened by a right click still held: as the pointer moves with the button down (which hover doesn't
+    /// follow: the drag belongs to the window it started in), the row under it is highlighted, and letting go on one
+    /// picks it, as a Mac's and Linear's menus do. Let go where it opened (a plain right click), it stays open.
+    private func followRightDrag(_ selector: SelectorState) {
+        final class Moved { var far = false }
+        let start = NSEvent.mouseLocation, moved = Moved()
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDragged, .rightMouseUp]) { [weak self, weak selector] event in
+            guard let self, let panel = selectorPanel, let selector else { return event }
+            let screen = NSEvent.mouseLocation
+            if hypot(screen.x - start.x, screen.y - start.y) > 4 { moved.far = true }
+            let point = panel.convertPoint(fromScreen: screen)
+            let top = CGPoint(x: point.x, y: panel.frame.height - point.y)
+            // The menu's rows, and those of the submenu open beside it (only that one: others' frames are stale).
+            let rows = selector.sections.flatMap(\.rows)
+            let open = rows.first { $0.id == selector.submenu }?.children ?? []
+            let row = (rows + open).first { selector.rowFrames[$0.id]?.contains(top) == true }
+            if event.type == .rightMouseDragged {
+                if let row, selector.highlighted != row.id { selector.highlighted = row.id }
+                // Onto a row of the menu itself: its own menu opens, any other closes.
+                if let row, rows.contains(where: { $0.id == row.id }) {
+                    let submenu = row.children.isEmpty ? nil : row.id
+                    if selector.submenu != submenu { selector.submenu = submenu }
+                }
+            } else if moved.far, let row, row.children.isEmpty {
+                row.pick()
+                selector.close()
+            }
+            return event
+        }
+        if let monitor { selectorMonitors.append(monitor) }
     }
 
     func hideSelector(keepState: Bool = false) {
