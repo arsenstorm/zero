@@ -28,9 +28,13 @@ import Observation
     public private(set) var playing = false
     /// Everything given is on screen and read out.
     public private(set) var caughtUp = true
+    /// When the oldest thing not yet on screen came (the next words to read, or the next item): nil when nothing waits.
+    public private(set) var waitingSince: Date?
     /// What's worked with: the observed values above are written from these, never read back (see `settle`).
     @ObservationIgnored private var shownCount = 0 { didSet { if shownCount != oldValue { count = shownCount } } }
     @ObservationIgnored private var published = (playing: false, caughtUp: true)
+    @ObservationIgnored private var publishedWaiting: Date?
+    @ObservationIgnored private var cards: [String: Date] = [:]
 
     @ObservationIgnored private var items: [ConversationItem] = []
     @ObservationIgnored private var conversation: String?
@@ -98,6 +102,17 @@ import Observation
             show(through: items.count - 1, now: now, fading: true)
         }
         settle(now)
+    }
+
+    /// Whether something that came at `seen` (a question card) may show: everything that came before it is on screen,
+    /// the step that asked and the words leading to it. What came after it doesn't hold it back.
+    public func admits(_ seen: Date) -> Bool { waitingSince.map { seen < $0 } ?? true }
+
+    /// When a card was first seen in this conversation (`now` the first time it's asked about).
+    public func cardSeen(_ id: String, now: Date) -> Date {
+        if let at = cards[id] { return at }
+        cards[id] = now
+        return now
     }
 
     /// The clock's tick (at most 30 a second, while `playing`).
@@ -207,6 +222,8 @@ import Observation
         // Written only when changed, and never read here: this runs in the conversation's body, which would otherwise
         // be redrawn by what it read.
         if caughtUp != published.caughtUp { self.caughtUp = caughtUp }
+        let waiting = caughtUp ? nil : oldestWaiting
+        if waiting != publishedWaiting { waitingSince = waiting; publishedWaiting = waiting }
         let playing = !caughtUp || !active.isEmpty
         if playing, !published.playing { last = now }
         if playing != published.playing { self.playing = playing }
@@ -216,7 +233,7 @@ import Observation
     private func reset(_ conversation: String) {
         self.conversation = conversation
         items = []; through = nil; came = [:]; readouts = [:]; active = []; reading = nil; shownCount = 0
-        credit = Self.beat; last = nil
+        credit = Self.beat; last = nil; publishedWaiting = nil; waitingSince = nil; cards = [:]
     }
 
     /// An answer's length in characters, counted again only when its text changed.

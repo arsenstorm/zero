@@ -178,3 +178,23 @@ private func step(_ id: String) -> ConversationItem { item(id, .tool(name: "Read
     player.play(0.5)
     #expect((200...600).contains(player.read("a1")), "what's new read out from where it was")
 }
+
+@MainActor @Test func aCardComesOnceWhatCameBeforeItIsShown() {
+    // An ask comes as the agent is still being read out: it waits for the words and step before it, not for the words
+    // that came after it.
+    let player = Player([yours("u1")])
+    player.give([words("a1", 1000, final: false)])
+    player.play(0.2)
+    player.t += 0.01
+    player.give([step("s1")])
+    let seen = player.start.addingTimeInterval(player.t + 0.01)
+    #expect(!player.playback.admits(seen), "the words and step before it are still to show")
+    player.t += 0.02
+    player.give([words("a2", 2000)])
+    player.play(4.2)
+    #expect(player.shown.contains("s1") && player.read("a2") < 2000, "its step shown, the words after it still reading")
+    #expect(player.playback.admits(seen), "everything before it shown: up it comes, whatever came after")
+    // Opened with it already there: at once.
+    let opened = Player([yours("u1"), step("s1")])
+    #expect(opened.playback.admits(opened.start))
+}

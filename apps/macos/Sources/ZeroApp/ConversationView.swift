@@ -977,9 +977,10 @@ private struct DockSlot: View {
     @State private var shown: Set<String> = []
 
     var body: some View {
-        // A card comes once playback has shown what came before it (the step that asked, the words leading to it).
-        let caughtUp = playback.caughtUp
-        let admit = { (id: String) in caughtUp || shown.contains(id) }
+        // A card comes once playback has shown what came before it (the step that asked, the words leading to it), not
+        // what came after it, which plays on above it.
+        let now = Date()
+        let admit = { (id: String) in shown.contains(id) || playback.admits(playback.cardSeen(id, now: now)) }
         let asks = inbox.store.asks.filter { $0.isAgents(in: conversation.id) && !$0.state.isFinal && admit($0.id) }
         let questions = conversation.questions.filter { admit($0.id) }
         let approvals = conversation.approvals.filter { admit($0.id) }
