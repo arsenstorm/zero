@@ -356,7 +356,7 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "release" | "resume" | "openTerminal" | "closeTerminal" | "rewindPreview" | "rewind" | "branch" | "switch" | "interrupt"
         | "stop" | "pause" | "unpause" => sessions::control(zerod, request).await,
         "send" | "queue" | "unqueue" | "notify" | "decide" | "answer" | "seen" | "introduce" => sessions::messages(zerod, request).await,
-        "label" | "setPermissions" | "placeInWorkspace" | "attr" | "issue" | "table" | "place" => {
+        "label" | "setPermissions" | "placeInWorkspace" | "setStatus" | "attr" | "issue" | "table" | "place" => {
             sessions::properties(zerod, request).await
         }
         "hello" | "list" | "get" | "workers" | "result" | "wait" | "usage" | "board" | "recent" | "items" | "window" | "outline" => {

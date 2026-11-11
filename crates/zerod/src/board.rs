@@ -338,8 +338,11 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
     {
         state = State::Answered;
     }
+    // A confirmed note (the agent's `zero done` with its token, or the user's own word) settles it however the last
+    // turn ended (in a question, failing, stuck), unless something still asks the user.
+    let unasked = open.is_empty() && team.iter().all(|c| c.questions.is_empty() && c.approvals.is_empty());
     if let Some(note) = own
-        && state > State::Trouble
+        && (state > State::Trouble || (note.confirmed && unasked))
     {
         state = match note.status.as_deref() {
             Some("blocked") if note.confirmed => State::Blocked,

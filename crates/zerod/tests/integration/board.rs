@@ -748,3 +748,23 @@ fn the_board_stays_quick_with_thousands_of_gone_agents_in_the_inbox() {
     assert_eq!((now("s1").as_deref(), now("s2").as_deref(), now("s3")), (Some("Named only"), Some("Referenced only"), None));
     assert!(took < std::time::Duration::from_millis(15), "{took:?}");
 }
+
+#[test]
+fn the_users_word_that_a_task_is_done_settles_a_turn_that_ended_asking_them() {
+    // The agent ended asking the user to do the last of it themselves; they did, and marked the task done: Done, not
+    // still Needs you. A question or approval still open keeps it theirs.
+    let mut lead = session("a", "/work/app", Status::Idle);
+    lead.items.push(Item {
+        id: "1".into(),
+        turn: None,
+        kind: ItemKind::Agent { text: "Could you rotate the key in the dashboard?".into(), final_answer: true },
+        status: ItemStatus::Done,
+        at: None,
+    });
+    assert_eq!(board(std::slice::from_ref(&lead), &[])[0].state, State::NeedsYou);
+    let marked = || confirmed(note("a", "You marked it done", Some("done"), None));
+    assert_eq!(board(std::slice::from_ref(&lead), &[marked()])[0].state, State::Done);
+    let mut open = Ask::new(AskKind::Choice, "Deploy now?", agent("a"), 600);
+    open.state = AskState::Waiting;
+    assert_eq!(board(&[lead], &[marked(), open])[0].state, State::NeedsYou, "an open ask is still theirs");
+}

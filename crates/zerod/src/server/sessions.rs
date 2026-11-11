@@ -155,6 +155,16 @@ pub(super) async fn properties(zerod: &Zerod, request: Request) -> Result<Value,
             .await
             .map(|_| Value::Null),
         "placeInWorkspace" => daemon.place_in_workspace(&request.session()?, request.workspace_id().as_deref()).map(|_| Value::Null),
+        // The user's word on where a task stands, as its agent's confirmed note would say it: done when the last of it was
+        // theirs, waiting or blocked on what the agent can't see. What the agent's activity says (working, asking) isn't
+        // theirs to set.
+        "setStatus" => {
+            let state = request.state.as_deref().filter(|s| matches!(*s, "done" | "waiting" | "blocked"));
+            let state = state.ok_or("A task's status is one of done, waiting or blocked")?;
+            let task = daemon.get(&request.session()?).ok_or("No such session")?;
+            zerod.inbox.mark(&crate::bridge::identity(&task, &crate::bridge::hostname()), state);
+            Ok(Value::Null)
+        }
         // One of the issues the task drives, its row set: who has it, and what it needs, where it stands or why parked.
         "issue" => {
             let state = request

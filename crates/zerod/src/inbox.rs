@@ -412,6 +412,11 @@ impl Inbox {
         self.ask(&created.id).unwrap_or(created)
     }
 
+    /// The user's own word on where a task stands (done, waiting, blocked): taken as its agent's confirmed note.
+    pub fn mark(&self, agent: &AgentIdentity, status: &str) {
+        self.confirm(agent, &format!("You marked it {status}"), status)
+    }
+
     /// The task done or blocked, confirmed: a note the board takes as said.
     fn confirm(&self, agent: &AgentIdentity, said: &str, status: &str) {
         let mut note = Ask::new(AskKind::Note, "Update", agent.clone(), 0);

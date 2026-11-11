@@ -820,3 +820,31 @@ async fn custom_models_are_kept_zero_wide() {
     client.call(json!({"op": "configure", "models": []})).await;
     assert!(client.call(json!({"op": "settings"})).await["result"]["models"].as_array().is_none_or(|m| m.is_empty()));
 }
+
+#[tokio::test]
+async fn the_user_sets_a_tasks_status_done_waiting_or_blocked_as_a_confirmed_note_would() {
+    // Done without its agent knowing (the last of it was the user's own work): the user says so, and the row is Done as
+    // the agent's confirmed `zero done` makes it. Waiting and blocked likewise; what an agent's activity says isn't theirs to set.
+    let h = harness("server-set-status").await;
+    let mut client = Client::connect(&h.socket).await;
+    let started =
+        client.call(json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": "ls", "permissions": "unrestricted"})).await;
+    let session = started["result"]["session"].as_str().unwrap().to_string();
+    let state =
+        |board: &Value| board["result"].as_array().unwrap().iter().find(|r| r["session"] == session.as_str()).map(|r| r["state"].clone());
+    for (status, shown) in [("waiting", "waiting"), ("blocked", "blocked"), ("done", "done")] {
+        let set = client.call(json!({"op": "setStatus", "session": session, "state": status})).await;
+        assert_eq!(set["ok"], true, "{set}");
+        let mut board = client.call(json!({"op": "board"})).await;
+        for _ in 0..40 {
+            if state(&board) == Some(json!(shown)) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            board = client.call(json!({"op": "board"})).await;
+        }
+        assert_eq!(state(&board), Some(json!(shown)), "{status}: {board}");
+    }
+    let refused = client.call(json!({"op": "setStatus", "session": session, "state": "working"})).await;
+    assert_eq!(refused["ok"], false, "{refused}");
+}
