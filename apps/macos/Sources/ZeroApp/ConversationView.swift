@@ -391,6 +391,7 @@ struct ConversationView: View {
             LiftStack(room: start == nil ? 0 : liftMin) {
                 ForEach(shape.rows(blocks)) { line in
                     timelineRow(line, turns: turns, newest: newest).layoutValue(key: LiftStack.Start.self, value: line.id == start)
+                        .layoutValue(key: LiftStack.Headed.self, value: shape.headed.contains(line.id))
                 }
             }
             // Its provider still getting ready (signing in, say): say so, rather than an empty page.
@@ -947,14 +948,17 @@ struct ConversationView: View {
             // The model is the subject, its provider the icon: "Opus 5.5 · High". No model picked, the provider's first;
             // a provider with no catalogue (OpenCode) by its name.
             let catalogue = ComposerRows.catalogue(current)
+            // Claude's task carries the version Claude Code resolved ("claude-opus-5-5"): checked on the row it runs on,
+            // the alias it was started on ("Opus 5.5") or the version picked.
+            let row = current == .claude ? chosen.map { ClaudeModels.row(for: $0, in: catalogue) } : chosen
             let name =
-                catalogue.first { $0.id == chosen }?.name ?? chosen.map(ModelNames.readable) ?? catalogue.first?.name ?? current.title
+                catalogue.first { $0.id == row }?.name ?? chosen.map(ModelNames.readable) ?? catalogue.first?.name ?? current.title
             ComposerChip(
                 id: "task.\(conversation.id).agent",
                 label: [name, level.map { effortLabel($0, short: true) }].compactMap { $0 }.joined(separator: " · "),
                 symbol: "terminal", icon: current.mark, kind: .runtime, prominent: true, pending: kept,
                 rows: {
-                    ComposerRows.taskModels(conversation, chosen: (current, chosen)) { picked, choice in
+                    ComposerRows.taskModels(conversation, chosen: (current, row)) { picked, choice in
                         if busy {
                             Task {
                                 await workspace.switchProvider(
@@ -967,7 +971,7 @@ struct ConversationView: View {
                         model = choice.id.isEmpty ? nil : choice.id
                         if let effort, !choice.levels.contains(where: { $0.id == effort }) { self.effort = nil }
                     }
-                }, level: { id in id == "\(current.rawValue)/\(chosen ?? "")" ? level : nil },
+                }, level: { id in id == "\(current.rawValue)/\(row ?? "")" ? level : nil },
                 setLevel: { _, picked in
                     if busy { Task { await workspace.switchProvider(conversation.id, to: current, model: chosen, effort: picked) }; return }
                     effort = picked
@@ -1072,6 +1076,8 @@ final class TimelineShape {
     /// what folds them (WorkBlock).
     private(set) var answered: Set<String> = []
     private(set) var followed: Set<String> = []
+    /// Answers right under their turn's work: as near it as its steps and notes are to each other (LiftStack.Headed).
+    private(set) var headed: Set<String> = []
     private var folded: (blocks: [TimelineBlock], rows: [TimelineRow])?
 
     /// The conversation's items and what's just been sent, which shows at once, before its agent has it (Sending).
@@ -1105,12 +1111,13 @@ final class TimelineShape {
         turns = TimelineBlock.turns(blocks)
         answered = []
         followed = []
+        headed = []
         var work: [String] = []
         for (index, block) in blocks.enumerated() {
             switch block {
             case let .work(id, _, _, _, _):
                 work.append(id)
-                if index + 1 < blocks.count, case .answer = blocks[index + 1] { answered.insert(id) }
+                if index + 1 < blocks.count, case .answer = blocks[index + 1] { answered.insert(id); headed.insert(blocks[index + 1].id) }
             case .user: followed.formUnion(work); work = []
             default: break
             }
@@ -1189,6 +1196,9 @@ private struct CaughtUp<Content: View>: View {
 private struct LiftStack: Layout {
     /// The row the lift's room is measured from.
     struct Start: LayoutValueKey { static let defaultValue = false }
+    /// An answer under its own turn: the turn's spacing above it (WorkBlock.spacing), where its words were read out
+    /// inside the turn, not the gap between blocks.
+    struct Headed: LayoutValueKey { static let defaultValue = false }
     let room: CGFloat
     /// Each row's place: what has no height (an answer that was only Zero's ending) takes no gap either, or it left a
     /// second gap under its turn.
@@ -1199,7 +1209,7 @@ private struct LiftStack: Layout {
         var any = false
         for subview in subviews {
             let height = subview.sizeThatFits(ProposedViewSize(width: width, height: nil)).height
-            if height > 0, any { end += ConversationView.gap }
+            if height > 0, any { end += subview[Headed.self] ? WorkBlock.spacing : ConversationView.gap }
             if height > 0 { any = true }
             if start == nil, subview[Start.self] { start = end }
             y.append(end); heights.append(height)

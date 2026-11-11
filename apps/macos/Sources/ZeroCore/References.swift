@@ -98,7 +98,10 @@ public enum References {
         process.standardError = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return nil }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        // Not waitUntilExit: it runs the run loop, and this is called while SwiftUI lays a message out; whatever
+        // ran in it changed the view graph mid-update and SwiftUI aborted (crash 2026-11-11 17:46). Its output read
+        // to the end, git is exiting: a plain wait.
+        while process.isRunning { usleep(500) }
         guard process.terminationStatus == 0 else { return nil }
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }

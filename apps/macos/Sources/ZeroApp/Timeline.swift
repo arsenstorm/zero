@@ -151,7 +151,7 @@ struct WorkBlock: View {
     private func lead(steps: [ConversationItem]) -> CGFloat {
         if open, !steps.isEmpty { return 2 }
         if !open, !notes.isEmpty { return 0 }
-        return steps.isEmpty ? 4 : 0
+        return steps.isEmpty ? Self.first : 0
     }
 
     /// Your next message going (or come): the page moves for it anyway, so the turn folds (its notes staying). Sent from
@@ -163,8 +163,14 @@ struct WorkBlock: View {
         }
     }
 
+    /// Between its heading, steps and notes, and above its answer (LiftStack.Headed).
+    static let spacing: CGFloat = 10
+    /// The first thing under the heading, note or step, this far further down: a step's line has room above its words
+    /// and a note's text has none, so a first note touched the rule.
+    static let first: CGFloat = 4
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: Self.spacing) {
             // Its heading holds its place from the turn's start to its end ("Thinking…", "Thought for…" as its words
             // start, "Working for…" from its first step): taken away as words started and put back with the first step,
             // it pushed the words down.
@@ -218,13 +224,16 @@ struct WorkBlock: View {
                 ForEach(Array(pieces.enumerated()), id: \.element.id) { index, piece in
                     switch piece {
                     case let .note(item, text):
-                        if text.isEmpty {
-                            ItemView(item: item, cwd: cwd)
-                        } else if let readout = playback?.readout(item.id) {
-                            StreamingText(readout: readout, text: text, cwd: cwd)
-                        } else {
-                            MarkdownText(text, cwd: cwd, size: 14.5)
+                        Group {
+                            if text.isEmpty {
+                                ItemView(item: item, cwd: cwd)
+                            } else if let readout = playback?.readout(item.id) {
+                                StreamingText(readout: readout, text: text, cwd: cwd)
+                            } else {
+                                MarkdownText(text, cwd: cwd, size: 14.5)
+                            }
                         }
+                        .padding(.top, index == 0 ? Self.first : 0)
                     case let .run(steps):
                         if !(live && streamingWords == nil && index == pieces.count - 1) {
                             StepRun(steps: steps, items: items, end: live ? nil : end, cwd: cwd)
@@ -268,8 +277,8 @@ struct WorkBlock: View {
         }
         // Ended, its answer under it where its words were read out while it was live (the timeline's gap is wider).
         // Not for a turn read back later, nor once your next message has gone (the page moves anyway then).
-        // (Its words were 10 under what's above, plus the lead; the timeline's gap is wider, so this is negative.)
-        .padding(.bottom, !live && (notesKept || items.isEmpty) ? lead(steps: items) + 10 - ConversationView.gap : 0)
+        // (Its words were `spacing` under what's above, plus the lead; its answer is `spacing` under it: LiftStack.Headed.)
+        .padding(.bottom, !live && (notesKept || items.isEmpty) ? lead(steps: items) : 0)
         // Its turn over, it stays as it was, open or folded, its notes with it (folding it then, or its notes going,
         // moved the answer up by their height in a frame), until its answer starts to read out.
         .onChange(of: [live, answered]) { old, now in

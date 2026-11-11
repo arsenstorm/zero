@@ -232,6 +232,9 @@ struct Composer<Controls: View>: View {
                                 ready ? Theme.knob : Theme.sendIdle, in: Circle())
                     }
                     .buttonStyle(.plain).keyboardShortcut(.return, modifiers: .command).disabled(!ready).tip("Send", shortcut: "⌘↩")
+                    // Roomy, as far from what's before it as chips are from each other: the row's 2 pt alone put it
+                    // against an icon-only chip.
+                    .padding(.leading, translucent ? 6 : 0)
                 }
             }
         }
