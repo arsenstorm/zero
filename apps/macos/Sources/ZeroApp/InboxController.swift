@@ -629,12 +629,6 @@ final class InboxController {
                     spawnRuntime = spawnRuntimes.first?.id
                 }
             }
-            // Only when there is no list for this account yet: the refresh reads Claude Code's sign-in from the
-            // Keychain, and macOS asks about that every time Claude Code rewrites the item. Settings has a button.
-            if !ClaudeModels.hasCache, await adapter.refreshModels() {
-                modelsVersion += 1
-                if let selector { selector.sections = selectorSections(for: selector.kind) }
-            }
         }
     }
 

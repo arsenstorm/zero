@@ -1,37 +1,24 @@
 import Foundation
-import Security
 
-/// The models the active Claude Code account can use, from Anthropic's models endpoint, asked with Claude Code's
-/// own sign-in (its Keychain credential; macOS asks once before Zero may read it). Cached per account, so an
-/// account switch shows its list at once and refreshes in the background. Claude Code's local option cache
-/// (the `[1m]` variants and anything else the account was offered) is merged in.
+/// The models Claude Code offers, as its own picker does, with no call to Anthropic: Zero never calls a provider's
+/// service itself, nor uses a sign-in for anything but handing it to its CLI. Claude Code's aliases for the latest of
+/// each family (`claude --help`: "an alias for the latest model (e.g. 'fable', 'opus', or 'sonnet')"), which it
+/// resolves itself, so nothing here goes stale; then the options Claude Code caches for the signed-in account in
+/// ~/.claude.json (the `[1m]` variants and anything else it was offered), with their own names and descriptions.
 public enum ClaudeModels {
-    public struct Status: Sendable { public let source: String; public let error: String? }
-    public private(set) static var status = Status(source: "not loaded", error: nil)
-
     private static let home = FileManager.default.homeDirectoryForCurrentUser
 
-    /// The account Claude Code is signed in as, from its config; nil when signed out.
-    public static func accountID() -> String? {
-        guard let json = claudeConfig(), let account = json["oauthAccount"] as? [String: Any] else { return nil }
-        return account["accountUuid"] as? String
-    }
-
-    /// What we know right now, without touching the network.
-    /// True once the models endpoint has answered for the signed-in account.
-    public static var hasCache: Bool { accountID().flatMap { UserDefaults.standard.data(forKey: "claudeModels." + $0) } != nil }
+    /// Claude Code's aliases, most capable first.
+    static let aliases = ["fable", "opus", "sonnet", "haiku"]
 
     public static func cached() -> [SpawnChoice] {
-        let fromAPI =
-            (accountID().flatMap { UserDefaults.standard.data(forKey: "claudeModels." + $0) })
-            .flatMap { try? JSONDecoder().decode([Entry].self, from: $0) } ?? []
-        var choices = fromAPI.map {
+        var choices = aliases.map {
             SpawnChoice(
-                id: $0.id, name: shortName($0.name), detail: describe($0.id), icon: "claude", provider: "Anthropic",
-                levels: levels, defaultLevel: "high")
+                id: $0, name: $0.capitalized, detail: describe($0), icon: "claude", provider: "Anthropic", levels: levels,
+                defaultLevel: "high")
         }
         for extra in localExtras() where !choices.contains(where: { $0.id == extra.id }) { choices.append(extra) }
-        return choices.sorted { rank($0.name) < rank($1.name) }
+        return choices
     }
 
     /// Claude Code's `--effort` levels; it defaults to high.
@@ -45,50 +32,6 @@ public enum ClaudeModels {
         let version = Double(lower.split(separator: " ").first { Double($0) != nil } ?? "") ?? 0
         return (-version, family, name)
     }
-
-    /// Fetches the account's models and caches them. Returns true when the list changed.
-    @discardableResult
-    public static func refresh() async -> Bool {
-        guard let account = accountID() else { status = Status(source: "Claude Code is signed out", error: nil); return false }
-        guard let token = accessToken() else {
-            status = Status(
-                source: "Claude Code's local cache", error: "Zero was not allowed to read Claude Code's sign-in from the Keychain")
-            return false
-        }
-        var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/models?limit=100")!)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
-        request.timeoutInterval = 15
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-            guard code == 200 else {
-                let body = String(decoding: data.prefix(200), as: UTF8.self)
-                status = Status(source: "Claude Code's local cache", error: "models endpoint answered \(code): \(body)")
-                return false
-            }
-            let list = try JSONDecoder().decode(Listing.self, from: data)
-            let entries = list.data
-                .filter { $0.id.hasPrefix("claude-") }
-                .sorted { ($0.created_at ?? "") > ($1.created_at ?? "") }
-                .map { Entry(id: $0.id, name: $0.display_name ?? $0.id) }
-            let encoded = try JSONEncoder().encode(entries)
-            let changed = UserDefaults.standard.data(forKey: "claudeModels." + account) != encoded
-            UserDefaults.standard.set(encoded, forKey: "claudeModels." + account)
-            status = Status(source: "Anthropic models endpoint for this account", error: nil)
-            return changed
-        } catch {
-            status = Status(source: "Claude Code's local cache", error: error.localizedDescription)
-            return false
-        }
-    }
-
-    // MARK: - Pieces
-
-    private struct Listing: Decodable { let data: [Model] }
-    private struct Model: Decodable { let id: String; let display_name: String?; let created_at: String? }
-    private struct Entry: Codable { let id: String; let name: String }
 
     /// Claude Code's config, parsed again only once the file has changed: it's large (100 KB and more), and the control
     /// bar's every redraw named its tasks' models through it, a parse or two a dot.
@@ -122,27 +65,6 @@ public enum ClaudeModels {
                 id: value, name: shortName(title) + (long ? " (1M)" : ""), detail: detail, icon: "claude",
                 provider: "Anthropic", context: long ? "1M tokens" : nil, levels: levels, defaultLevel: "high")
         }
-    }
-
-    /// Claude Code's sign-in, as Claude Code stores it. Returns nil when the item is missing or access is refused.
-    /// Read through macOS's `security` tool, not the Keychain API: Claude Code writes the item with that tool, so
-    /// it stays allowed to read it, while an app's "Always Allow" is wiped each time Claude Code rewrites the item
-    /// on a token refresh. This way there is never a prompt.
-    private static func accessToken() -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        process.arguments = ["find-generic-password", "-s", "Claude Code-credentials", "-w"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0,
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let oauth = json["claudeAiOauth"] as? [String: Any]
-        else { return nil }
-        return oauth["accessToken"] as? String
     }
 
     /// "Claude Haiku 5.5" reads "Haiku 5.5": the provider is the tab, so the name need not repeat it.

@@ -171,7 +171,8 @@ enum ClaudeScreen {
 
 /// The models a new or running agent can be started with or switched to, and the account it will run as.
 public enum AgentModels {
-    public static func refresh() async -> Bool { await ClaudeModels.refresh() }
+    /// Nothing to fetch: Claude's list is Claude Code's own (ClaudeModels), read locally each time.
+    public static func refresh() async -> Bool { false }
 
     /// Claude Code takes `--model`. The choices are what its own picker offers the active account: the built-in
     /// aliases, plus the account-specific options Claude Code caches in ~/.claude.json after use. A model an
@@ -186,8 +187,7 @@ public enum AgentModels {
 
     /// Claude Code's picker for the active account: the built-in aliases, then the account's cached options with
     /// their own descriptions ("Fable 5.1 · Most capable…"), whose first part names the model precisely.
-    /// Claude's list comes from Anthropic's models endpoint for the active Claude Code account (see ClaudeModels),
-    /// merged with Claude Code's local option cache. Never a list typed here.
+    /// Claude's list is Claude Code's aliases and its local option cache (see ClaudeModels): never a call to Anthropic.
     private static func claudeModels() -> [SpawnChoice] { ClaudeModels.cached() }
 
     /// Codex's own catalogue for the signed-in account, from its cache: listed models in its order.
