@@ -28,7 +28,7 @@ no Finder to script. `make dmg` installs dmgbuild in `build/dmgbuild`, pinned wi
 makes `build/Zero.dmg` from `build/Zero.app` (run `make bundle` first). Locally the disk image is unsigned. To sign
 one, run `codesign --sign "Developer ID Application: …" --timestamp build/Zero.dmg`.
 
-The background is Zero's mark and name, very large and faint, as the website's footer draws them. To change it, edit
+The background is Zero's mark, very large and faint, behind a curved arrow from Zero to Applications and a line that says to drag it there. To change it, edit
 `background.swift` and run `swift apps/macos/dmg/background.swift`. It writes `background.png` and
 `background@2x.png`, and dmgbuild makes them one Retina TIFF.
 
