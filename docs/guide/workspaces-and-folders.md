@@ -63,9 +63,7 @@ In **Settings › Workspaces**, point at the workspace and click the bin, **Dele
 
 ## Move a task to another workspace
 
-Right-click the task in the tasks sidebar and choose **Move to**, then a workspace. **Move to** shows only when you have more than one workspace. The task's workers go with it.
-
-When a task is in a workspace other than Zero, the same menu also has **Its folder's workspace**. It moves the task back to the Zero workspace.
+Right-click the task in the tasks sidebar and choose **Move to** and the workspace's name (**Move to Zero** puts it back in the Zero workspace). These show only when you have more than one workspace. The task's workers go with it.
 
 ## Add your projects
 

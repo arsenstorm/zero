@@ -33,7 +33,7 @@ impl Daemon {
         let session = Session::new(conversation.clone(), Some(dir.clone()), self.events.clone()).map_err(|e| e.to_string())?;
         session.set_mcp(conversation.mcp.clone());
         // The workspace it starts in, kept in its history as a move into it is: restarted, it's still there (only
-        // memory had it, and a restart put it back in its folder's, or Zero).
+        // memory had it, and a restart put it back in Zero).
         if conversation.workspace.is_some() {
             session.change(Change::Placed { workspace: conversation.workspace.clone() })
         }

@@ -490,7 +490,7 @@ pub enum Change {
         label: Option<String>,
         ticket: Option<String>,
     },
-    /// Put in a workspace (none: back to its folder's).
+    /// Put in a workspace (none: back to Zero).
     Placed {
         workspace: Option<String>,
     },
