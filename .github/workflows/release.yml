@@ -30,6 +30,15 @@ jobs:
         with:
           persist-credentials: false
 
+      # The licensed Nucleo icons, which only official builds carry (the private repo's README), read with a deploy key.
+      - name: Check out the Nucleo icons
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: arsenstorm/zero-private
+          path: zero-private
+          ssh-key: ${{ secrets.ZERO_PRIVATE_KEY }}
+          persist-credentials: false
+
       # The updater compares the tag with the running build's CFBundleShortVersionString, so they must agree.
       - name: Check the tag is the version in Info.plist
         if: github.event_name == 'push'
@@ -77,7 +86,16 @@ jobs:
           echo "SIGN=$identity" >> "$GITHUB_ENV"
 
       - name: Build and sign
-        run: make bundle SIGNFLAGS=--timestamp
+        run: make bundle SIGNFLAGS=--timestamp ZERO_PRIVATE=zero-private
+
+      # A release never ships the Lucide icons builds from source draw.
+      - name: Check the build has the Nucleo icons
+        run: |
+          icons=$(/usr/libexec/PlistBuddy -c 'Print :ZeroIcons' build/Zero.app/Contents/Info.plist)
+          if [ "$icons" != Nucleo ]; then
+            echo "::error::The build has the $icons icons, not Nucleo's: is ZERO_PRIVATE_KEY set?"
+            exit 1
+          fi
 
       - name: Check the signatures
         run: |

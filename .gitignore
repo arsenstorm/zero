@@ -14,3 +14,6 @@ xcuserdata/
 
 # The formatter for the site, the relay and the browser extension (package.json)
 node_modules/
+
+# The iPhone app's icons, filled by apps/ios/icons.sh (Nucleo from zero-private, else Lucide)
+apps/ios/Zero/Icons.xcassets/

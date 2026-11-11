@@ -35,6 +35,13 @@ cargo test -p zerod --test integration e2e -- --ignored   # the daemon against t
 Needs Rust (with the `x86_64-` and `aarch64-unknown-linux-musl` targets for the drop clients), Xcode, and Zig
 for Ghostty's engine the first time (`brew install zig`).
 
+### Building from source
+
+Official builds draw licensed [Nucleo](https://nucleoapp.com) icons, kept in a private repository that `make` picks
+up when it's checked out beside this one. Without it, Zero builds with the closest [Lucide](https://lucide.dev) icons
+(ISC) instead. That's the only difference: Settings shows which you have ("Icons: Lucide (open-source build)"). For the
+iPhone app, run `sh apps/ios/icons.sh` once before building in Xcode; it does the same.
+
 ## Working on the daemon
 
 Test first. A change to zerod starts with a failing test in `crates/zerod/tests/integration/`:

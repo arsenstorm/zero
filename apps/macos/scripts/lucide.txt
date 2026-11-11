@@ -1,0 +1,106 @@
+# Zero's icon names and the Lucide icon (lucide.dev, ISC) drawn for each in builds without the Nucleo icons
+# (zero-private). Picked by meaning and shape. Regenerate Resources/lucide with scripts/lucide.sh.
+#
+# Zero's label           Lucide's name             The iPhone's fills (apps/ios/icons.sh makes an imageset for each)
+animation-repeat         repeat-2
+archive                  archive
+arrow-left               arrow-left
+arrow-right              arrow-right
+arrow-rotate-clockwise   rotate-cw                 glyph outline
+arrow-turn-up-2          corner-right-up           outline
+arrow-up                 arrow-up                  outline
+arrow-up-right           arrow-up-right            outline
+badge-check              badge-check               glyph
+ban                      ban                       outline
+bolt-lightning           zap                       glyph
+bookmark                 bookmark                  glyph
+brain                    brain                     outline
+check                    check
+checkbox-checked         square-check
+chevron-down             chevron-down              outline
+chevron-expand-y         chevrons-up-down          outline
+chevron-right            chevron-right
+circle-arrow-up          circle-arrow-up
+circle-check             circle-check              glyph
+circle-info              info                      outline
+circle-minus             circle-minus              glyph
+circle-pause             circle-pause              glyph
+circle-question          circle-question-mark      glyph
+circle-user              circle-user
+circle-xmark             circle-x                  glyph
+clock                    clock                     glyph
+code                     code
+code-branch              git-branch
+command                  command
+compose                  square-pen
+copy                     copy                      outline
+dots                     ellipsis                  glyph
+eye                      eye
+file                     file
+file-content             file-text
+folder                   folder                    glyph
+folder-download          folder-down
+folder-plus              folder-plus
+gear                     settings                  outline
+github                   git-pull-request
+globe                    globe
+hand-3                   hand                      glyph
+hand-holding-box         hand-platter              glyph
+heading-1                heading-1
+heading-2                heading-2
+heading-3                heading-3
+hourglass                hourglass                 glyph
+house-4                  house
+image                    image                     glyph
+inbox                    inbox                     glyph outline
+key                      key-round
+laptop                   laptop                    outline
+layers                   layers
+layout-top               panel-top
+link                     link
+link-slash               link-2-off                outline
+list-checkbox            list-todo                 glyph
+lock                     lock
+magnifier                search
+media-play               play
+media-stop               square                    glyph
+message-check            message-square-check      glyph
+microphone               mic                       outline
+minus                    minus
+mobile                   smartphone
+monitor                  monitor
+moon                     moon                      glyph
+note-3                   notepad-text
+ordered-list             list-ordered
+paper-plane              send
+pen                      pen                       glyph
+plug                     plug
+plus                     plus                      outline
+power-off                power                     glyph
+puzzle-piece             puzzle
+quote                    text-quote
+record                   circle-dot                glyph
+robot                    bot
+rocket                   rocket
+server                   server
+shape-circle             circle                    outline
+share-left               reply
+shield                   shield                    outline
+sidebar-right            panel-right
+slack                    hash
+sliders                  sliders-horizontal
+sparkle                  sparkles
+square-code              square-code
+suitcase                 briefcase
+table                    table
+terminal                 terminal                  outline
+text-bold                bold
+text-italic              italic
+text-strikethrough       strikethrough
+trash                    trash-2                   glyph outline
+triangle-warning         triangle-alert            glyph
+undo                     undo
+unordered-list           list
+wand-sparkle             wand-sparkles             outline
+waveform-lines           audio-lines               outline
+xmark                    x                         outline

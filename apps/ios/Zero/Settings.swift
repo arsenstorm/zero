@@ -39,6 +39,12 @@ struct SettingsView: View {
                     value:
                         "\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "–") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "–"))",
                     icon: "circle-info-outline")
+                // The one difference between an official build and one from source (apps/ios/icons.sh).
+                PageRow(
+                    title: "Icons",
+                    value: NSDataAsset(name: "icons").map { String(decoding: $0.data, as: UTF8.self) } == "Nucleo"
+                        ? "Nucleo" : "Lucide (open-source build)",
+                    icon: "image-glyph")
                 // Last, under the version: in a group of its own it had a heading's gap above it and nothing to head.
                 PageAction(title: "Unpair this phone", icon: "link-slash-outline", destructive: true) { unpairing = true }
                     // On the row: iOS points its confirmation at the view it's attached to (on the page, it

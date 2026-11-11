@@ -53,9 +53,11 @@ is their UI and the inbox where agents reach the user. `docs/workspace.md` has t
 - Codex and the control bar are the references. One of everything: one scrollbar (`thinScrollbar()`), one selector
   (Zero's own, `SelectorView`), one card for an ask (`CardView`; `flat` inside other surfaces, never a card in a card).
 - Zero's own popovers and cards, not native ones (slow, animated): drawn in place, instant.
-- Nucleo icons only (`apps/macos/Resources/nucleo`, the UI family at 18 px; fetch missing ones with the Nucleo tools).
-  Nucleo's licence caps the repo at 100 distinct icons (Mac, iPhone and site together, listed in
-  THIRD_PARTY_LICENSES): reuse one before adding one, and keep the total at 100 or fewer.
+- Nucleo icons only (the UI family at 18 px; fetch missing ones with the Nucleo tools). The apps' live in the private
+  `zero-private` repo (`icons/macos`, `icons/ios`; `make` and `apps/ios/icons.sh` take them from `../zero-private`),
+  never in this one; builds without it draw Lucide's. A new icon goes into zero-private and gets its closest Lucide
+  icon in `apps/macos/scripts/lucide.txt` (then `sh apps/macos/scripts/lucide.sh`). The site's are in this repo:
+  Nucleo's licence caps it at 100 distinct icons (listed in THIRD_PARTY_LICENSES).
 - Concentric corners: an inner radius plus its inset equals the outer radius. `compositingGroup()` before `shadow`
   on a stack (otherwise every row in it casts a shadow).
 - Links in properties: medium weight on a dashed underline, no icon, no blue. States as pills.

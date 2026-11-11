@@ -12,6 +12,12 @@ MACOS  = apps/macos
 APP    = build/Zero.app
 BIN    = $(MACOS)/.build/release
 LINUX  = x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+# The icons are the only difference between official builds and builds from source. Official builds bundle the
+# licensed Nucleo icons from the private zero-private repo (a checkout beside this one, or ZERO_PRIVATE=path); without
+# it, the closest Lucide icons (ISC) in $(MACOS)/Resources/lucide. The app shows which in Settings (ZeroIcons).
+ZERO_PRIVATE ?= ../zero-private
+ICONS     = $(if $(wildcard $(ZERO_PRIVATE)/icons/macos/*.svg),Nucleo,Lucide)
+ICONS_DIR = $(if $(filter Nucleo,$(ICONS)),$(ZERO_PRIVATE)/icons/macos,$(MACOS)/Resources/lucide)
 
 build: drop ghostty zerod
 	swift build -c release --package-path $(MACOS)
@@ -54,7 +60,9 @@ bundle: build
 	cp $(MACOS)/Resources/install.sh $(APP)/Contents/Resources/install.sh
 	cp $(MACOS)/Resources/icons/*.png $(APP)/Contents/Resources/
 	cd $(MACOS)/Resources && cp AppIcon.icns logo/menubar.png logo/menubar@2x.png logo/mark.svg logo/mark-small.svg $(CURDIR)/$(APP)/Contents/Resources/
-	cp -R $(MACOS)/Resources/nucleo $(APP)/Contents/Resources/nucleo
+	@echo "Icons: $(ICONS), from $(ICONS_DIR)"
+	cp -R $(ICONS_DIR) $(APP)/Contents/Resources/icons
+	/usr/libexec/PlistBuddy -c 'Add :ZeroIcons string $(ICONS)' $(APP)/Contents/Info.plist
 	cp /System/Library/Sounds/*.aiff $(APP)/Contents/Resources/
 	cp -R plugin $(APP)/Contents/Resources/plugin
 	rm -rf $(APP)/Contents/Resources/chrome && cp -R apps/chrome $(APP)/Contents/Resources/chrome

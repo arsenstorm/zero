@@ -29,118 +29,50 @@ The website (site/), in the JavaScript and fonts it serves
   - Inter, through @fontsource-variable/inter (https://github.com/rsms/inter): SIL Open Font License 1.1.
     Copyright 2016 The Inter Project Authors
 
+Lucide icons (https://lucide.dev), lucide-static 1.72.0
+  apps/macos/Resources/lucide, and the iPhone's icons apps/ios/icons.sh makes from them: the apps' icons in builds
+  from source. Saved under Zero's own names (apps/macos/scripts/lucide.txt), their stroke thinned.
+  ISC License. Copyright (c) 2026 Lucide Icons and Contributors. The icons Lucide derives from Feather: MIT License.
+  Copyright (c) 2013-present Cole Bemis
+
 Nucleo icons (https://nucleoapp.com)
-  apps/macos/Resources/nucleo, apps/ios/*/Assets.xcassets, site/src/icons
+  site/src/icons here; the Mac and iPhone apps' icons in official builds only, from a private repository, never this
+  one (builds from source draw Lucide's instead, the only difference between the two).
   Licensed to Zero's maintainer under Nucleo's licence (https://nucleoapp.com/license); not free software and not
-  covered by the GPL. That licence doesn't extend to you: to build on Zero, get your own Nucleo licence or replace
-  the icons.
-  The licence allows at most 100 distinct icons in a public repository. Zero uses 100, counted by name across the three
-  places above (an icon's outline and glyph are one icon), with the GitHub and Slack logos counted separately. An
-  addition must keep the total at 100 or fewer: reuse one from this list, or take one out. The 100:
-    animation-repeat
-    archive
-    arrow-left
-    arrow-right
-    arrow-rotate-clockwise
-    arrow-turn-up-2
-    arrow-up
-    arrow-up-right
-    badge-check
-    ban
-    bolt-lightning
-    bookmark
-    brain
-    check
-    checkbox-checked
-    chevron-down
-    chevron-expand-y
-    chevron-right
-    circle-arrow-up
-    circle-check
-    circle-info
-    circle-minus
-    circle-pause
-    circle-question
+  covered by the GPL. That licence doesn't extend to you.
+  The licence allows at most 100 distinct icons in a public repository. This one holds the site's 10:
     circle-user
-    circle-xmark
-    clock
-    code
-    code-branch
     command
-    compose
-    copy
-    dots
     eye
-    file
-    file-content
-    folder
-    folder-download
-    folder-plus
-    gear
     globe
-    hand-3
-    hand-holding-box
-    heading-1
-    heading-2
-    heading-3
-    hourglass
-    house-4
-    image
-    inbox
-    key
-    laptop
-    layers
     layout-top
-    link
-    link-slash
     list-checkbox
-    lock
-    magnifier
-    media-play
-    media-stop
-    message-check
-    microphone
-    minus
     mobile
-    monitor
-    moon
-    note-3
-    ordered-list
-    paper-plane
-    pen
-    plug
-    plus
-    power-off
-    puzzle-piece
-    quote
-    record
-    robot
     rocket
-    server
-    shape-circle
-    share-left
-    shield
-    sidebar-right
-    sliders
-    sparkle
-    square-code
     suitcase
-    table
     terminal
-    text-bold
-    text-italic
-    text-strikethrough
-    trash
-    triangle-warning
-    undo
-    unordered-list
-    wand-sparkle
-    waveform-lines
-    xmark
 
 Provider marks
   The Claude, OpenAI and OpenCode marks in the apps and the site belong to their owners and are used to name the
   agents Zero runs. They are not covered by the GPL.
+
+---
+
+ISC License (Lucide)
+
+Copyright (c) 2026 Lucide Icons and Contributors
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ---
 

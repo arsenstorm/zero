@@ -82,6 +82,7 @@ private struct WorkspaceRow: View {
 struct WorkspaceGlyph: View {
     let glyph: String
     let size: CGFloat
+    var stroke: CGFloat? = nil
 
     static func isEmoji(_ glyph: String) -> Bool { glyph.unicodeScalars.first?.properties.isEmoji == true && glyph.count <= 2 }
 
@@ -94,8 +95,8 @@ struct WorkspaceGlyph: View {
             Text(glyph).font(.system(size: size - 1))
         } else {
             // An icon no longer bundled (since taken out of the palette) draws the palette's first, not a blank.
-            let known = Bundle.main.url(forResource: "\(glyph)-outline", withExtension: "svg", subdirectory: "nucleo") != nil
-            NucleoIcon(known ? glyph : WorkspaceForm.icons[0], size: size)
+            let known = Nucleo.url(glyph) != nil
+            NucleoIcon(known ? glyph : WorkspaceForm.icons[0], size: size, stroke: stroke)
         }
     }
 }
@@ -197,7 +198,7 @@ private struct WorkspaceForm: View {
         }
     }
 
-    /// Zero's own icons (Resources/nucleo), each once, by name.
+    /// Zero's own icons, each once, by name.
     /// Icons that read as a workspace's logo: things and places, not the app's controls (arrows, headings).
     static let icons: [String] = [
         "layers", "suitcase", "house-4", "code", "terminal", "rocket", "globe", "shield", "lock", "key", "robot", "server",

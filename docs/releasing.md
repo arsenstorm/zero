@@ -24,7 +24,7 @@ The release has these files:
 
 In the repository, go to Settings › Environments › New environment and name it `signing`. Under "Deployment branches
 and tags", choose "Selected branches and tags" and add the branch `main` and the tag `v*`. Do not add reviewers, so
-rehearsals run without approval. Then add these five environment secrets. The `gh secret set` commands read the value
+rehearsals run without approval. Then add these six environment secrets. The `gh secret set` commands read the value
 from stdin, so it doesn't pass through your clipboard or shell history.
 
 **`DEVELOPER_ID_CERTIFICATE`** and **`DEVELOPER_ID_CERTIFICATE_PASSWORD`**: the Developer ID Application certificate
@@ -59,6 +59,16 @@ Store Connect API key that `notarytool` uses.
    ```
 
    Keep the .p8 somewhere safe, such as a password manager, or revoke the key and make a new one if you lose it.
+
+**`ZERO_PRIVATE_KEY`**: the private half of a read-only deploy key on `arsenstorm/zero-private`, the private repo
+with the Nucleo icons official builds carry. A release fails without them rather than ship the Lucide ones.
+
+```sh
+ssh-keygen -t ed25519 -N '' -C 'zero release' -f zero-private-key
+gh repo deploy-key add zero-private-key.pub -R arsenstorm/zero-private --title 'Zero release'
+gh secret set ZERO_PRIVATE_KEY --env signing -R arsenstorm/zero < zero-private-key
+rm zero-private-key zero-private-key.pub
+```
 
 ### The `release` environment
 
