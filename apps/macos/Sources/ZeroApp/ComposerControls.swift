@@ -9,6 +9,8 @@ import ZeroCore
 /// says so with Send.
 struct QueueStrip: View {
     let queued: [Queued]
+    /// Sent on by zerod already, waiting only for playback to reach them: shown, not changed.
+    var sent: Set<String> = []
     let held: Bool
     /// The pointer on it: the question card behind it comes up, as for the composer.
     var hover: (Bool) -> Void = { _ in }
@@ -48,33 +50,36 @@ struct QueueStrip: View {
                             Text(Self.gist(item)).font(.system(size: 13)).foregroundStyle(.primary).lineLimit(1).truncationMode(.tail)
                                 .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain).tip("Back into the composer")
+                        .buttonStyle(.plain).tip("Back into the composer").disabled(sent.contains(item.id))
                         // Edit and delete on squares that take the row's hover when the pointer is on them; then Steer
                         // as a pill, on a hairline so it reads on the hovered row too, solid under the pointer. The
                         // arrow turns the corner: out of the queue and up to the agent.
-                        HStack(spacing: 2) {
-                            square("pen", help: "Edit in the composer", id: item.id + "/edit") { edit(item) }
-                            square("trash", help: "Delete", id: item.id + "/delete") { remove(item) }
-                            let lit = control == item.id + "/steer"
-                            Button {
-                                steer(item)
-                            } label: {
-                                HStack(spacing: 5) {
-                                    Text("Steer").font(.system(size: 12, weight: .medium))
-                                    NucleoIcon("arrow-turn-up-2", size: 12)
+                        if !sent.contains(item.id) {
+                            HStack(spacing: 2) {
+                                square("pen", help: "Edit in the composer", id: item.id + "/edit") { edit(item) }
+                                square("trash", help: "Delete", id: item.id + "/delete") { remove(item) }
+                                let lit = control == item.id + "/steer"
+                                Button {
+                                    steer(item)
+                                } label: {
+                                    HStack(spacing: 5) {
+                                        Text("Steer").font(.system(size: 12, weight: .medium))
+                                        NucleoIcon("arrow-turn-up-2", size: 12)
+                                    }
+                                    .foregroundStyle(lit ? AnyShapeStyle(Theme.onKnob) : AnyShapeStyle(.primary))
+                                    .padding(.leading, 10).padding(.trailing, 8).frame(height: 24)
+                                    .background(lit ? Theme.knob : Theme.chip, in: Capsule())
+                                    .overlay(Capsule().strokeBorder(lit ? Color.clear : Theme.stroke))
                                 }
-                                .foregroundStyle(lit ? AnyShapeStyle(Theme.onKnob) : AnyShapeStyle(.primary))
-                                .padding(.leading, 10).padding(.trailing, 8).frame(height: 24)
-                                .background(lit ? Theme.knob : Theme.chip, in: Capsule())
-                                .overlay(Capsule().strokeBorder(lit ? Color.clear : Theme.stroke))
+                                .buttonStyle(PressableStyle()).tip("Send it now, mid-turn").padding(.leading, 4)
+                                .onHover { inside in
+                                    if inside { control = item.id + "/steer" } else if control == item.id + "/steer" { control = nil }
+                                }
                             }
-                            .buttonStyle(PressableStyle()).tip("Send it now, mid-turn").padding(.leading, 4)
-                            .onHover { inside in
-                                if inside { control = item.id + "/steer" } else if control == item.id + "/steer" { control = nil }
+                            .padding(.vertical, 4).contentShape(Rectangle())
+                            .onHover { inside in if inside { overControls = item.id } else if overControls == item.id { overControls = nil }
                             }
                         }
-                        .padding(.vertical, 4).contentShape(Rectangle())
-                        .onHover { inside in if inside { overControls = item.id } else if overControls == item.id { overControls = nil } }
                     }
                     .padding(.leading, 14).padding(.trailing, 4).frame(height: 32)
                     // The last row runs on under the composer's card by exactly what the card covers, hover and all.

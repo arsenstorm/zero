@@ -134,11 +134,29 @@ private func step(_ id: String) -> ConversationItem { item(id, .tool(name: "Read
     player.give([words("a1", 2000), step("s1")])
     player.play(0.3)
     #expect(player.read("a1") < 2000)
-    player.give([yours("u2")])
-    #expect(player.shown == ["u1", "a1", "s1", "u2"], "yours at once, and all before it")
+    // Just sent from the composer (Zero's own copy until zerod has it): at once, with all before it.
+    player.give([yours("sending-1")])
+    #expect(player.shown == ["u1", "a1", "s1", "sending-1"], "yours at once, and all before it")
     #expect(player.read("a1") == 2000, "the answer above it finished")
     player.play(0.8)
     #expect(player.playback.caughtUp && !player.playback.playing, "its last words faded in within the fade")
+    // zerod's copy in its place: shown as it was, not played again.
+    player.items.removeLast()
+    player.give([yours("u2")])
+    #expect(player.shown == ["u1", "a1", "s1", "u2"])
+}
+
+@MainActor @Test func aQueuedMessageWaitsForTheAnswerBeforeIt() {
+    // Queued while it worked (in the strip, not just sent): when the turn ends and zerod sends it on, it comes after
+    // the answer is read out, not cutting it short.
+    let player = Player([yours("u1")])
+    player.give([words("a1", 2000)])
+    player.play(0.3)
+    player.give([yours("u2"), step("s2")])
+    #expect(player.shown == ["u1", "a1"], "the answer still reading: the message waits")
+    #expect(player.read("a1") < 2000)
+    player.play(10)
+    #expect(player.shown == ["u1", "a1", "u2", "s2"], "then in its turn")
 }
 
 @MainActor @Test func zerosMessagesWaitTheirTurn() {

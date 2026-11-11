@@ -35,6 +35,8 @@ import Observation
     @ObservationIgnored private var published = (playing: false, caughtUp: true)
     @ObservationIgnored private var publishedWaiting: Date?
     @ObservationIgnored private var cards: [String: Date] = [:]
+    /// The words of yours shown as just sent: zerod's copy of one, in its place, shows at once too.
+    @ObservationIgnored private var sent: Set<String> = []
 
     @ObservationIgnored private var items: [ConversationItem] = []
     @ObservationIgnored private var conversation: String?
@@ -95,8 +97,9 @@ import Observation
         }
         if opening || !live {
             show(through: items.count - 1, now: now, fading: false)
-        } else if let yours = items.lastIndex(where: \.isYours), yours >= shownCount {
-            // Yours shows at once, and whatever is before it with it, fading in.
+        } else if let yours = items.lastIndex(where: justSent), yours >= shownCount {
+            // Yours just sent shows at once, and whatever is before it with it, fading in. One queued while it worked
+            // (sent on by zerod as the turn ended) waits its turn, as anything else does.
             show(through: yours, now: now, fading: true)
         } else if items.count - shownCount > Self.crowd {
             show(through: items.count - 1, now: now, fading: true)
@@ -167,9 +170,16 @@ import Observation
         credit = Self.beat
     }
 
+    /// Yours just sent from the composer: Zero's own copy (Sending), or zerod's in its place once it has it.
+    private func justSent(_ item: ConversationItem) -> Bool {
+        guard item.isYours, case let .user(text, _) = item.kind else { return false }
+        return item.id.hasPrefix("sending-") || sent.contains(text)
+    }
+
     private func reveal(_ item: ConversationItem, now: Date, whole: Bool, fading: Bool = true) {
         shownCount += 1
         through = item.id
+        if item.id.hasPrefix("sending-"), case let .user(text, _) = item.kind { sent.insert(text) }
         // Opened, only the last answer can still grow, and be read out.
         guard Self.words(item) != nil, !whole || fading || item.id == items.last?.id else { reading = nil; return }
         let readout = readouts[item.id] ?? Readout(id: item.id, now: now)
@@ -233,7 +243,7 @@ import Observation
     private func reset(_ conversation: String) {
         self.conversation = conversation
         items = []; through = nil; came = [:]; readouts = [:]; active = []; reading = nil; shownCount = 0
-        credit = Self.beat; last = nil; publishedWaiting = nil; waitingSince = nil; cards = [:]
+        credit = Self.beat; last = nil; publishedWaiting = nil; waitingSince = nil; cards = [:]; sent = []
     }
 
     /// An answer's length in characters, counted again only when its text changed.

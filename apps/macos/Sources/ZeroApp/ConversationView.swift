@@ -99,9 +99,21 @@ struct ConversationView: View {
     private var composerHeight: CGFloat { foot.height }
     /// Queued from here, not yet in zerod's queue: shown in the strip until it is.
     @State private var queuing: [Queued] = []
+    /// The strip's messages: those waiting (zerod's queue, and any just queued from here), then those zerod has sent on
+    /// that playback hasn't reached yet (they move into the conversation in their turn). Never in both places.
     private var shownQueue: [Queued] {
-        queued + queuing.filter { pending in !queued.contains { $0.text == pending.text } }
+        let items = conversation.items
+        let shown = min(playback.count, items.count)
+        let words = { (item: ConversationItem) -> String? in if item.isYours, case let .user(text, _) = item.kind { text } else { nil } }
+        // The last few of yours already in the conversation: a strip copy of one of them is stale.
+        let inChat = Set(items.prefix(shown).suffix(12).compactMap(words))
+        let unplayed = items.dropFirst(shown).compactMap { item in words(item).map { Queued(id: item.id, text: $0, images: nil) } }
+        let waiting = (queued + queuing.filter { pending in !queued.contains { $0.text == pending.text } })
+            .filter { q in !inChat.contains(q.text) && !unplayed.contains { $0.text == q.text } }
+        return unplayed + waiting
     }
+    /// Those in the strip zerod has sent on already: no edit, delete or Steer for them.
+    private var sentOn: Set<String> { Set(conversation.items.dropFirst(min(playback.count, conversation.items.count)).map(\.id)) }
     /// Just sent: the message sits at the top of the page with room under it for the answer, which fills that room
     /// without moving anything, as Codex's does. Over once you scroll.
     @State private var lifted = false
@@ -558,7 +570,8 @@ struct ConversationView: View {
                 left: { [tracker] in room = max(room, tracker.columnHeight) })
             if !queued.isEmpty || held {
                 QueueStrip(
-                    queued: queued, held: held, hover: { [foot] inside in if foot.overQueue != inside { foot.overQueue = inside } },
+                    queued: queued, sent: sentOn, held: held,
+                    hover: { [foot] inside in if foot.overQueue != inside { foot.overQueue = inside } },
                     steer: { item in Task { await workspace.steer(conversation.id, item: item) } },
                     edit: { item in
                         Task {
