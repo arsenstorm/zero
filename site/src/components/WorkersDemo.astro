@@ -1,6 +1,6 @@
 ---
 // A task splitting into workers: the lead, with a line out to each worker it starts, as the inbox section's agents
-// fan in. One story plays while it's in view, then loops: the lead starts three workers, one asks you something, one
+// fan in. One story plays as it comes into view, once: the lead starts three workers, one asks you something, one
 // waits on a deploy, each finishes and reports back, and the lead hands you the last step. A line takes its worker's
 // state colour. Under Reduce Motion it shows the workers under way and stays there.
 import TaskState from "./TaskState.astro";
@@ -210,7 +210,6 @@ const middles = workers.map((_, i) => i * (CARD + GAP) + CARD / 2);
     [1200, "state", "tests", "done"],
     [900, "state", "lead", "handed"],
   ];
-  const HOLD_MS = 3200;
   const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   for (const demo of document.querySelectorAll<HTMLElement>(
@@ -233,14 +232,9 @@ const middles = workers.map((_, i) => i * (CARD + GAP) + CARD / 2);
       visible = false;
     function next() {
       if (!visible) return;
-      if (step === STEPS.length) {
-        timer = window.setTimeout(() => {
-          reset();
-          step = 0;
-          next();
-        }, HOLD_MS);
-        return;
-      }
+      // Played through: it stays on the end, so nothing moves on its own for long (WCAG 2.2.2). Scrolled away and
+      // back, it plays again.
+      if (step === STEPS.length) return;
       const [delay, kind, id, state] = STEPS[step++];
       timer = window.setTimeout(() => {
         if (kind === "line") show(`[data-line="${id}"]`, true);
@@ -255,6 +249,10 @@ const middles = workers.map((_, i) => i * (CARD + GAP) + CARD / 2);
       (entries) => {
         visible = entries.some((e) => e.isIntersecting);
         clearTimeout(timer);
+        if (visible && step === STEPS.length) {
+          reset();
+          step = 0;
+        }
         if (visible) next();
       },
       { threshold: 0.5 }

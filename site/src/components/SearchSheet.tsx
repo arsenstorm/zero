@@ -1,7 +1,7 @@
-// Search on phones: a Search button in the header that opens a sheet from the foot of the screen, on Vaul, so it drags
-// down to close and follows the finger, as iOS sheets do. Loaded only on phone-sized screens (Base.astro's
-// client:media), so wider screens, which have the header's pill instead, load none of it. The search itself is the
-// pill's (src/lib/search.ts). Anywhere on the page can open it with the "zero:search-sheet" event (⌘K, the 404).
+// Search on phones: a sheet from the foot of the screen, on Vaul, so it drags down to close and follows the finger, as
+// iOS sheets do. Nothing of it loads with the page: the header's Search button (Base.astro) loads it on the first tap
+// (search-sheet-mount.tsx) and it opens at once; after that the "zero:search-sheet" event opens it (the button, ⌘K,
+// the 404). The search itself is the pill's (src/lib/search.ts).
 import { useEffect, useRef, useState } from "react";
 import { Drawer } from "vaul";
 import magnifier from "../icons/magnifier-outline.svg?raw";
@@ -20,8 +20,12 @@ const icon = (size: number) =>
     .replace('width="18" height="18"', `width="${size}" height="${size}"`)
     .replace("<svg ", '<svg aria-hidden="true" ');
 
-export default function SearchSheet() {
-  const [open, setOpen] = useState(false);
+export default function SearchSheet({
+  startOpen = false,
+}: {
+  startOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(startOpen);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Section[]>([]);
   const [active, setActive] = useState(0);
@@ -72,10 +76,6 @@ export default function SearchSheet() {
   const ws = words(query);
   return (
     <Drawer.Root open={open} onOpenChange={setOpen} autoFocus>
-      <Drawer.Trigger className="sm:hidden h-9 px-3 flex items-center gap-1.5 rounded-[8px] font-medium text-muted hover:bg-hover hover:text-ink transition-colors duration-150">
-        <span className="grid" dangerouslySetInnerHTML={{ __html: icon(14) }} />
-        Search
-      </Drawer.Trigger>
       <Drawer.Portal>
         <Drawer.Overlay className="search-sheet-overlay fixed inset-0 z-40 bg-black/25" />
         {/* 18 px top corners; most of the screen tall, its box at the top where the keyboard leaves it in view. */}
@@ -89,7 +89,7 @@ export default function SearchSheet() {
           />
           <Drawer.Title className="sr-only">Search the docs</Drawer.Title>
           <div className="flex items-center gap-2 px-3 pt-2 pb-2">
-            <label className="flex-1 h-10 pl-3 pr-3 flex items-center gap-2 rounded-full border border-stroke bg-card text-muted focus-within:border-hairline">
+            <label className="flex-1 h-10 pl-3 pr-3 flex items-center gap-2 rounded-full border border-stroke bg-card text-muted focus-within:border-faint">
               <span
                 className="grid"
                 dangerouslySetInnerHTML={{ __html: icon(15) }}
@@ -115,7 +115,7 @@ export default function SearchSheet() {
                 className="flex-1 min-w-0 h-full bg-transparent text-[16px] text-ink outline-none placeholder:text-muted"
               />
             </label>
-            <Drawer.Close className="h-10 px-2 text-[15px] font-medium">
+            <Drawer.Close className="h-11 px-2 text-[15px] font-medium">
               Cancel
             </Drawer.Close>
           </div>

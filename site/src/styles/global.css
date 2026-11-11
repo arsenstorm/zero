@@ -151,6 +151,8 @@
 
 @layer base {
   html {
+    /* No grey flash on tap: the demos' rows, answers and marks show their own state. */
+    -webkit-tap-highlight-color: transparent;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
@@ -432,7 +434,7 @@
 
 /* A docs page's Markdown. */
 .doc {
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.65;
   & > * + * {
     margin-top: 1em;
@@ -455,8 +457,24 @@
   & h3 + * {
     margin-top: 0.5em;
   }
-  & a {
+  & a:not(.heading-link) {
     @apply link;
+  }
+  /* A heading's link to itself: the heading as it was, with # after it while it's pointed at. */
+  & .heading-link {
+    color: inherit;
+    text-decoration: none;
+    &::after {
+      content: "#";
+      margin-left: 0.35em;
+      color: var(--faint);
+      opacity: 0;
+      transition: opacity 150ms ease;
+    }
+    &:hover::after,
+    &:focus-visible::after {
+      opacity: 1;
+    }
   }
   & strong {
     font-weight: 600;
@@ -473,6 +491,10 @@
   }
   & li + li {
     margin-top: 0.35em;
+  }
+  /* A step's number carries meaning, so it reads as text does; a bullet only marks a line. */
+  & ol > li::marker {
+    color: var(--muted);
   }
   & li::marker {
     color: var(--faint);
@@ -552,6 +574,10 @@
     border-bottom: 1px solid var(--stroke);
     vertical-align: top;
   }
+  /* A row's keys stay on one line on a phone: ⌥ and Space are one label. */
+  & td:has(> kbd:first-child) {
+    white-space: nowrap;
+  }
   & .table-scroll {
     overflow-x: auto;
   }
@@ -567,5 +593,24 @@
     border-left: 2px solid var(--stroke);
     padding-left: 14px;
     color: var(--muted);
+  }
+}
+
+/* A docs figure (DocFigure.astro) draws the app's pieces with their own measures: the prose's lists, list items and
+   code blocks are put back to what the pieces expect. */
+.doc .doc-figure {
+  & ul,
+  & ol {
+    padding-left: 0;
+    list-style: none;
+  }
+  & li + li {
+    margin-top: 0;
+  }
+  & pre {
+    font-size: 12px;
+    line-height: 1.45;
+    padding: 10px;
+    overflow: visible;
   }
 }

@@ -15,8 +15,29 @@ const wrapTables = {
       ctx.wrapNode(node, {
         type: "element",
         tagName: "div",
-        properties: { className: ["table-scroll"] },
+        // Focusable and named, so a keyboard can scroll a wide table sideways on a phone.
+        properties: {
+          className: ["table-scroll"],
+          tabIndex: 0,
+          role: "region",
+          ariaLabel: "Table",
+        },
         children: [],
+      }),
+  },
+};
+
+// A code block can be wider than a phone: focusable and named, so a keyboard can scroll it sideways.
+const scrollableCode = {
+  name: "scrollable-code",
+  element: {
+    filter: ["pre"],
+    visit: (node, ctx) =>
+      ctx.setField(node, "properties", {
+        ...node.properties,
+        tabIndex: 0,
+        role: "region",
+        ariaLabel: "Code",
       }),
   },
 };
@@ -60,6 +81,8 @@ export default defineConfig({
   // Plain code blocks on the app's own surface: a syntax theme sets its own background in one appearance only.
   markdown: {
     syntaxHighlight: false,
-    processor: satteri({ hastPlugins: [wrapTables, keepWords] }),
+    processor: satteri({
+      hastPlugins: [wrapTables, scrollableCode, keepWords],
+    }),
   },
 });

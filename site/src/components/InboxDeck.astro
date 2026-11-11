@@ -56,6 +56,10 @@ const { class: className = "" } = Astro.props;
     .deck-card[data-leaving] {
       transition: opacity 200ms ease;
     }
+    .deck-card[data-leaving] {
+      transform: none !important;
+      filter: none !important;
+    }
   }
 </style>
 

@@ -21,7 +21,11 @@ const plain = (md: string) =>
     .replace(/^[\s|:-]+$/gm, " ")
     .replace(/[*_`#>|]/g, " ")
     .replace(/^-{3,}$/gm, " ")
+    // A list's markers ("- ", "1. ") at a line's start are Markdown, not words.
+    .replace(/^\s*(?:[-+*]|\d+\.)\s+/gm, "")
     .replace(/\s+/g, " ")
+    // A colon or comma left after a removed mark joins its word again ("Account : a sign-in").
+    .replace(/\s+([:;,.])/g, "$1")
     .trim();
 
 export async function GET() {

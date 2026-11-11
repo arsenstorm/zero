@@ -84,21 +84,65 @@ const peeks = [
     class="absolute left-0 top-0 w-[1512px] h-[982px] overflow-hidden"
   >
     {/* Half Dome from Glacier Point: John Gibbons, CC0, https://commons.wikimedia.org/wiki/File:Half_Dome_Sunset_(Unsplash).jpg */}
-    <img
-      src="/yosemite.webp"
-      alt=""
-      loading="lazy"
-      decoding="async"
-      class="absolute inset-0 size-full object-cover pointer-events-none"
-    >
+    {/* AVIF where the browser takes it (143 KB), WebP otherwise (421 KB). */}
+    <picture>
+      <source srcset="/yosemite.avif" type="image/avif">
+      <img
+        src="/yosemite.webp"
+        alt=""
+        loading="lazy"
+        decoding="async"
+        class="absolute inset-0 size-full object-cover pointer-events-none"
+      >
+    </picture>
     {/* Pointing at a mark opens its task in the inbox beside the bar (src/scripts/demo.ts). */}
+    {/* The app's outline (PillView.swift's PillShape): round on the left, and where it meets the screen's edge it curves
+        out into it through a 10 px fillet above and below, like a tab grown out of the edge. */}
+    <div
+      data-bar-marks
+      class="absolute right-0 top-1/2 -translate-y-1/2 flex flex-col items-center gap-0.5 py-2 px-1.5 rounded-l-[22px] bg-pill border border-r-0 border-stroke"
+    >
+      <span
+        aria-hidden="true"
+        class="bar-fillet-top absolute -right-px -top-[11px] size-[11px]"
+      ></span>
+      <span
+        aria-hidden="true"
+        class="bar-fillet-bottom absolute -right-px -bottom-[11px] size-[11px]"
+      ></span>
+      <button
+        type="button"
+        data-peek-open="inbox"
+        aria-label="Open asks"
+        aria-pressed="false"
+        class="bar-mark size-8 grid place-items-center relative"
+      >
+        <Icon name="inbox" size={15} />
+        <span
+          class="absolute top-[6px] right-[6px] size-[7px] rounded-full bg-red"
+        ></span>
+      </button>
+      <span class="w-[18px] h-px bg-hairline my-1" aria-hidden="true"></span>
+      {peeks.map((peek) => (
+        <button
+          type="button"
+          data-peek-open={peek.id}
+          data-task-mark
+          aria-label={peek.title}
+          aria-pressed={String(peek.id === "notes")}
+          class="bar-mark relative w-8 h-7 grid place-items-center"
+        >
+          <TaskState state={peek.state} task={peek.task} />
+        </button>
+      ))}
+    </div>
     {/* The inbox panel, as InboxPanel.swift places it: 380 pt wide, 56 pt in from the edge, centred on the bar. In the
         app it's as tall as the screen; here it's as tall as the stage shows when closed in on the bar, so its fading
         top and bottom are in view. A task's mark shows its one card on the bar's centre line; the inbox control shows
         every ask (InboxView.swift). */}
     <div
       data-peeks
-      class="absolute right-[56px] inset-y-[250px] w-[380px] origin-right transition-[opacity,scale] duration-200 ease-out group-data-[closed]/desk:opacity-0 group-data-[closed]/desk:scale-[0.96] group-data-[closed]/desk:pointer-events-none"
+      class="absolute right-[56px] inset-y-[250px] w-[380px] origin-right transition-[opacity,scale] duration-200 ease-out group-data-[closed]/desk:opacity-0 group-data-[closed]/desk:scale-[0.96] motion-reduce:group-data-[closed]/desk:scale-100 group-data-[closed]/desk:pointer-events-none"
     >
       {/* The asks as InboxView lays them out: on one surface (10 pt in, 10 pt between cards), in a column that scrolls
           the whole panel's height and dissolves into its top and bottom over 40 pt. Padding of half the panel less half
@@ -146,46 +190,6 @@ const peeks = [
             />
           )}
         </div>
-      ))}
-    </div>
-    {/* The app's outline (PillView.swift's PillShape): round on the left, and where it meets the screen's edge it curves
-        out into it through a 10 px fillet above and below, like a tab grown out of the edge. */}
-    <div
-      data-bar-marks
-      class="absolute right-0 top-1/2 -translate-y-1/2 flex flex-col items-center gap-0.5 py-2 px-1.5 rounded-l-[22px] bg-pill border border-r-0 border-stroke"
-    >
-      <span
-        aria-hidden="true"
-        class="bar-fillet-top absolute -right-px -top-[11px] size-[11px]"
-      ></span>
-      <span
-        aria-hidden="true"
-        class="bar-fillet-bottom absolute -right-px -bottom-[11px] size-[11px]"
-      ></span>
-      <button
-        type="button"
-        data-peek-open="inbox"
-        aria-label="Open asks"
-        aria-pressed="false"
-        class="bar-mark size-8 grid place-items-center relative"
-      >
-        <Icon name="inbox" size={15} />
-        <span
-          class="absolute top-[6px] right-[6px] size-[7px] rounded-full bg-red"
-        ></span>
-      </button>
-      <span class="w-[18px] h-px bg-hairline my-1" aria-hidden="true"></span>
-      {peeks.map((peek) => (
-        <button
-          type="button"
-          data-peek-open={peek.id}
-          data-task-mark
-          aria-label={peek.title}
-          aria-pressed={String(peek.id === "notes")}
-          class="bar-mark relative w-8 h-7 grid place-items-center"
-        >
-          <TaskState state={peek.state} task={peek.task} />
-        </button>
       ))}
     </div>
     {/* The pointer, its tip at its box's top left. */}

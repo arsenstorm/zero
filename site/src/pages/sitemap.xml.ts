@@ -1,11 +1,12 @@
 import { docPages, docHref } from "../lib/docs";
 import { site } from "../lib/site";
 
-// Every page people read: the home page, Download and each page of the docs.
+// Every page people read: the home page, Download, the changelog and each page of the docs.
 export async function GET() {
   const paths = [
     "/",
     "/download",
+    "/changelog",
     ...(await docPages()).map((page) => docHref(page.id)),
   ];
   const urls = paths

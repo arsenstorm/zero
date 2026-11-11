@@ -3,17 +3,27 @@ import "../styles/global.css";
 import Mark from "../components/Mark.astro";
 import Icon from "../components/Icon.astro";
 import Search from "../components/Search.astro";
-import SearchSheet from "../components/SearchSheet.tsx";
 import { site } from "../lib/site";
 
 // `sidebar`: the page has the docs' 248 px sidebar, whose edge the panel's top carries on through while you scroll.
+// `image`: its own share image (a docs page's, public/og/<page>.png), else the site's. `data`: structured data for
+// search engines, as JSON-LD.
 interface Props {
   title: string;
   description: string;
   noindex?: boolean;
   sidebar?: boolean;
+  image?: { src: string; alt: string };
+  data?: Record<string, unknown>;
 }
-const { title, description, noindex = false, sidebar = false } = Astro.props;
+const {
+  title,
+  description,
+  noindex = false,
+  sidebar = false,
+  image = { src: "/og.png", alt: `${site.name}: engineer with care.` },
+  data,
+} = Astro.props;
 const path = Astro.url.pathname;
 // Canonical address: no trailing slash and no .html (a build sees the file's name), as people see it.
 const canonical = new URL(
@@ -32,6 +42,7 @@ const columns = [
     links: [
       { href: "/", label: "Home" },
       { href: "/download", label: "Download" },
+      { href: "/changelog", label: "Changelog" },
       { href: "/docs", label: "Docs" },
       { href: "/docs/getting-started", label: "Getting started" },
       { href: site.repo, label: "GitHub" },
@@ -63,7 +74,7 @@ const wideOrder = ["sm:order-1", "sm:order-2", "sm:order-3"];
 ---
 
 <!doctype html>
-<html lang="en">
+<html lang="en-GB">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -80,15 +91,25 @@ const wideOrder = ["sm:order-1", "sm:order-2", "sm:order-3"];
       </>
     )}
     <meta property="og:site_name" content={site.name}>
-    <meta property="og:image" content={new URL("/og.png", site.url).href}>
+    <meta property="og:image" content={new URL(image.src, site.url).href}>
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
-    <meta property="og:image:alt" content={`${site.name}: engineer with care.`}>
+    <meta property="og:image:alt" content={image.alt}>
+    {data && (
+      <script type="application/ld+json" set:html={JSON.stringify(data)} />
+    )}
     <meta property="og:title" content={title}>
     <meta property="og:description" content={description}>
     <meta name="twitter:card" content="summary_large_image">
     <link rel="sitemap" href="/sitemap.xml">
+    <link
+      rel="alternate"
+      type="application/rss+xml"
+      title="Zero changelog"
+      href="/changelog.xml"
+    >
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
     <meta
       name="theme-color"
       content="#ececec"
@@ -99,6 +120,15 @@ const wideOrder = ["sm:order-1", "sm:order-2", "sm:order-3"];
       content="#121212"
       media="(prefers-color-scheme: dark)"
     >
+    {/* In development only: React's refresh preamble, which Astro adds only to pages with an island. The phone's
+        search sheet loads its React later, with no island, and without this the dev server refuses it. */}
+    {import.meta.env.DEV && (
+      <script
+        type="module"
+        is:inline
+        set:html={`import R from "/@react-refresh"; R.injectIntoGlobalHook(window); window.$RefreshReg$ = () => {}; window.$RefreshSig$ = () => (t) => t; window.__vite_plugin_react_preamble_installed__ = true;`}
+      />
+    )}
   </head>
   {/* As the app's window: its grey rail around one panel, the panel 4 px in from the edges. */}
   <body class="min-h-dvh bg-rail font-sans text-ink flex flex-col">
@@ -115,21 +145,28 @@ const wideOrder = ["sm:order-1", "sm:order-2", "sm:order-3"];
     >
       <a
         href="/"
-        class="flex items-center gap-2 text-[15px] font-semibold tracking-[-0.01em]"
+        class="h-9 flex items-center gap-2 text-[15px] font-semibold tracking-[-0.01em]"
       >
         <Mark size={18} />
         {site.name}
       </a>
       <Search />
       <nav class="flex items-center gap-1 text-[13px]">
-        {/* Phones: Search, which opens the search sheet (loaded only on phone-sized screens); wider screens have the pill
-            in the middle instead. */}
-        <SearchSheet client:media="(max-width: 639px)" />
+        {/* Phones: Search, which loads the search sheet on its first tap (about 90 KB of React, which nobody else
+            downloads); wider screens have the pill in the middle instead. */}
+        <button
+          type="button"
+          data-search-sheet
+          class="sm:hidden relative before:absolute before:inset-x-0 before:-inset-y-1 h-9 px-3 flex items-center gap-1.5 rounded-[8px] font-medium text-muted hover:bg-hover hover:text-ink transition-[color,background-color,scale] duration-150 active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
+        >
+          <Icon name="magnifier" size={14} />Search
+        </button>
         {nav.map((item) => (
           <a
             href={item.href}
+            aria-current={path.startsWith(item.href) ? "page" : undefined}
             class:list={[
-              "h-9 sm:h-7 px-3 flex items-center rounded-[8px] font-medium hover:bg-hover transition-colors duration-150",
+              "relative before:absolute before:inset-x-0 before:-inset-y-1 sm:before:hidden h-9 sm:h-7 px-3 flex items-center rounded-[8px] font-medium hover:bg-hover transition-colors duration-150",
               path.startsWith(item.href)
                 ? "text-ink"
                 : "text-muted hover:text-ink",
@@ -194,7 +231,7 @@ const wideOrder = ["sm:order-1", "sm:order-2", "sm:order-3"];
                   <li>
                     <a
                       href={link.href}
-                      class="inline-block py-1 text-ink/80 hover:text-ink transition-colors duration-150"
+                      class="inline-block py-2 sm:py-1 text-ink/80 hover:text-ink transition-colors duration-150"
                     >
                       {link.label}
                     </a>
@@ -234,6 +271,32 @@ const wideOrder = ["sm:order-1", "sm:order-2", "sm:order-3"];
           );
         }
       );
+    </script>
+    <script>
+      // The phone's search sheet: loaded and opened by the first ask for it (the Search button, ⌘K, the 404's Search
+      // the docs); from then on it opens itself on the same event.
+      let loaded = false;
+      document.addEventListener("zero:search-sheet", () => {
+        if (loaded) return;
+        loaded = true;
+        import("../components/search-sheet-mount").then(({ mount }) => mount());
+      });
+      for (const button of document.querySelectorAll("[data-search-sheet]"))
+        button.addEventListener("click", () => {
+          // iOS raises the keyboard only for focus given inside the tap, and the sheet arrives a moment later: an
+          // unseen box takes the focus now, and the sheet's own box takes it over once it's there.
+          if (!loaded) {
+            const hold = document.createElement("input");
+            hold.setAttribute("aria-hidden", "true");
+            hold.tabIndex = -1;
+            hold.style.cssText =
+              "position:fixed;top:0;left:0;opacity:0;font-size:16px;pointer-events:none";
+            document.body.append(hold);
+            hold.focus();
+            setTimeout(() => hold.remove(), 3000);
+          }
+          document.dispatchEvent(new Event("zero:search-sheet"));
+        });
     </script>
   </body>
 </html>

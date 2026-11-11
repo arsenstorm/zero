@@ -1,8 +1,11 @@
 ---
 import { render } from "astro:content";
+import { experimental_AstroContainer as AstroContainer } from "astro/container";
+import DocFigure from "../../components/DocFigure.astro";
 import Base from "../../layouts/Base.astro";
 import Icon from "../../components/Icon.astro";
 import { docPages, docHref, docIcons, docGroups } from "../../lib/docs";
+import { existsSync } from "node:fs";
 import { site } from "../../lib/site";
 
 export async function getStaticPaths() {
@@ -14,8 +17,28 @@ export async function getStaticPaths() {
 }
 
 const { page, pages } = Astro.props;
+// Its own share image, once `bun run og` has made it.
+const image = existsSync(`public/og/${page.id}.png`)
+  ? { src: `/og/${page.id}.png`, alt: `${page.data.title}: ${site.name} docs` }
+  : undefined;
 const { Content, headings } = await render(page);
 const sections = headings.filter((h) => h.depth === 2);
+// The page as HTML, its figure comments (<!-- figure: states -->) swapped for the pictures (DocFigure.astro).
+const container = await AstroContainer.create();
+let html = await container.renderToString(Content);
+// Each section's heading links to itself, so a reader can copy a link to it.
+html = html.replace(
+  /<h([23]) id="([^"]+)">([\s\S]*?)<\/h\1>/g,
+  '<h$1 id="$2"><a href="#$2" class="heading-link">$3</a></h$1>'
+);
+for (const [comment, name] of html.matchAll(
+  /<!--\s*figure:\s*([a-z-]+)\s*-->/g
+)) {
+  html = html.replace(
+    comment,
+    await container.renderToString(DocFigure, { props: { name } })
+  );
+}
 const previous = pages[pages.indexOf(page) - 1];
 const next = pages[pages.indexOf(page) + 1];
 // The sidebar's groups, with any page none of them names at the end of the last, so a new page is never left out.
@@ -38,6 +61,7 @@ const row = (current: boolean) => [
 <Base
   title={`${page.data.title} · ${site.name} docs`}
   description={page.data.description}
+  image={image}
   sidebar
 >
   <div class="flex">
@@ -93,8 +117,8 @@ const row = (current: boolean) => [
     </div>
 
     <div class="flex-1 min-w-0 px-6 sm:px-12 pt-10 md:pt-12 pb-16">
-      {/* One width for everything on the page, text, tables and code: 38rem, about 84 characters of the docs' 15 px. */}
-      <article class="max-w-[38rem] mx-auto">
+      {/* One width for everything on the page, text, tables and code: 36rem, about 75 characters of the docs' 16 px. */}
+      <article class="max-w-[36rem] mx-auto">
         {/* Narrow screens: the pages as a menu above the page. */}
         <details
           class="docs-menu md:hidden mb-8 rounded-[12px] border border-stroke"
@@ -108,17 +132,25 @@ const row = (current: boolean) => [
             >
           </summary>
           <div class="px-1.5 pb-1.5">
-            {pages.map((p) => (
-              <a
-                href={docHref(p.id)}
-                aria-current={p === page ? "page" : undefined}
-                class:list={[
-                  "h-10 flex items-center px-2.5 rounded-[6px] text-[14px]",
-                  p === page && "bg-hover",
-                ]}
-              >
-                {p.data.title}
-              </a>
+            {/* The sidebar's groups, as on wider screens. */}
+            {groups.map((g) => (
+              <div>
+                <p class="h-8 flex items-center px-2.5 text-[13px] text-muted">
+                  {g.title}
+                </p>
+                {g.pages.map((p) => (
+                  <a
+                    href={docHref(p.id)}
+                    aria-current={p === page ? "page" : undefined}
+                    class:list={[
+                      "h-10 flex items-center px-2.5 rounded-[6px] text-[14px]",
+                      p === page && "bg-hover",
+                    ]}
+                  >
+                    {p.data.title}
+                  </a>
+                ))}
+              </div>
             ))}
           </div>
         </details>
@@ -149,7 +181,7 @@ const row = (current: boolean) => [
             <Icon name="file-content" size={13} />View as Markdown
           </a>
         </div>
-        <div class="doc mt-8"><Content /></div>
+        <div class="doc mt-8" set:html={html} />
         <nav
           class="mt-16 grid grid-cols-2 gap-3"
           aria-label="Previous and next page"
@@ -224,12 +256,6 @@ const row = (current: boolean) => [
   import copyIcon from "../../icons/copy-outline.svg?raw";
   import checkIcon from "../../icons/check-outline.svg?raw";
 
-  // A copy button that says it worked: a tick for a moment, in place of the copy icon.
-  async function copy(text: string, done: () => void) {
-    await navigator.clipboard.writeText(text);
-    done();
-  }
-
   // The page as Markdown, from its .md address. The clipboard write starts in the click itself, with the fetch inside
   // it: Safari refuses a write that only starts once a fetch has finished.
   const pageButton =
@@ -278,15 +304,22 @@ const row = (current: boolean) => [
     button.className = "code-copy";
     button.setAttribute("aria-label", "Copy code");
     button.innerHTML = svg(copyIcon);
+    // It says it worked, a tick for a moment in place of the icon, or that it couldn't.
+    const show = (icon: string, label: string) => {
+      button.innerHTML = svg(icon);
+      button.setAttribute("aria-label", label);
+      setTimeout(() => {
+        button.innerHTML = svg(copyIcon);
+        button.setAttribute("aria-label", "Copy code");
+      }, 1500);
+    };
     button.addEventListener("click", () =>
-      copy(pre.querySelector("code")?.innerText ?? pre.innerText, () => {
-        button.innerHTML = svg(checkIcon);
-        button.setAttribute("aria-label", "Copied");
-        setTimeout(() => {
-          button.innerHTML = svg(copyIcon);
-          button.setAttribute("aria-label", "Copy code");
-        }, 1500);
-      })
+      navigator.clipboard
+        .writeText(pre.querySelector("code")?.innerText ?? pre.innerText)
+        .then(
+          () => show(checkIcon, "Copied"),
+          () => show(copyIcon, "Couldn’t copy")
+        )
     );
     const wrap = document.createElement("div");
     wrap.className = "code";
@@ -299,11 +332,15 @@ const row = (current: boolean) => [
   const targets = links
     .map((a) => document.getElementById(a.dataset.toc!))
     .filter((h): h is HTMLElement => h !== null);
+  // Only when the section changes are the links touched, not on every scroll frame.
+  let marked: HTMLElement | undefined;
   function mark() {
     const line = innerHeight / 3;
     const current =
       targets.filter((h) => h.getBoundingClientRect().top < line).at(-1) ??
       targets[0];
+    if (current === marked) return;
+    marked = current;
     links.forEach((a) =>
       a.setAttribute("aria-current", String(a.dataset.toc === current?.id))
     );

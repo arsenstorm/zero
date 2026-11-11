@@ -7,7 +7,7 @@ import TaskState from "./TaskState.astro";
 import AskCard from "./AskCard.astro";
 import { heroAsk } from "../lib/demo";
 import Blueprint from "./Blueprint.astro";
-import claude from "../../../apps/macos/Resources/icons/claude.png";
+import claude from "../assets/agents/claude.png";
 
 type State =
   | "needsYou"
@@ -361,7 +361,7 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
                   <button
                     type="button"
                     aria-expanded="false"
-                    class="self-start flex items-center gap-[7px] text-[13px] text-muted hover:text-ink transition-colors duration-150"
+                    class="relative before:absolute before:inset-x-0 before:-inset-y-3 self-start flex items-center gap-[7px] text-[13px] text-muted hover:text-ink transition-colors duration-150"
                   >
                     <span class="worked-chevron grid place-items-center">
                       <Icon name="chevron-right" size={10} />
@@ -440,7 +440,7 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
             aria-label="Message to the task"
             placeholder="Steer it while it works"
             autocomplete="off"
-            class="w-full h-5 bg-transparent text-[16px] sm:text-[14.5px] outline-none placeholder:text-ink/60"
+            class="w-full h-5 bg-transparent text-[16px] sm:text-[14.5px] pointer-coarse:text-[16px] outline-none placeholder:text-ink/60"
           >
           <div class="mt-3 flex items-center gap-1.5">
             <span
