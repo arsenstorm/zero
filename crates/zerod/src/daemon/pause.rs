@@ -33,6 +33,13 @@ impl Daemon {
                 stop_group(pid);
                 continue;
             };
+            // Handed to another zerod than this one (the app started one mid-restart, and it won the lock): the
+            // numbers are no descriptors of ours, or someone else's, and closing them would cut another agent's pipe.
+            if handoff.zerod.is_some_and(|zerod| zerod != std::process::id()) {
+                stop_group(pid);
+                self.tell(&id, CARRY_ON.into());
+                continue;
+            }
             if let Ok(conversation) = self.get(&id).ok_or(())
                 && let Ok(servers) = self.mcp_for(&conversation)
             {

@@ -19,6 +19,10 @@ pub struct Handoff {
     pub stdout: i32,
     #[serde(default)]
     pub leftover: Vec<u8>,
+    /// The pid of the zerod that handed it, which exec keeps: its descriptors are that process's alone. None from a
+    /// zerod before this was kept.
+    #[serde(default)]
+    pub zerod: Option<u32>,
 }
 
 impl Session {
@@ -136,7 +140,7 @@ impl Session {
         let (give, given) = oneshot::channel();
         stop.send(give).ok()?;
         let leftover = given.await.ok()?;
-        Some(Handoff { session, pid, stdin, stdout, leftover })
+        Some(Handoff { session, pid, stdin, stdout, leftover, zerod: Some(std::process::id()) })
     }
 
     fn receive(&self, message: Value) {

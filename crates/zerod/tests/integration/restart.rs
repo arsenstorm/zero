@@ -392,6 +392,36 @@ async fn a_restart_hands_the_agents_running_process_to_the_new_zerod_mid_turn() 
 }
 
 #[tokio::test]
+async fn a_handoff_from_another_zerod_process_isnt_taken_over_by_its_descriptors() {
+    // The app starts a zerod when the socket is quiet, as it is mid-restart: that one can win the lock and find the
+    // handoff the restarting one wrote. Its descriptor numbers mean nothing in another process (or another pipe
+    // entirely): the agent is stopped and resumed to carry on instead.
+    let home = temp_dir("restart-handoff-foreign");
+    let started = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let old = Daemon::open(&home.join("zerod"), echoing(&home, started.clone())).unwrap();
+    let id = old
+        .start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() })
+        .unwrap();
+    says(&old, &id, "echo 1").await;
+    assert_eq!(old.hand_off().await, vec![id.clone()]);
+    let file = home.join("zerod/handoff.json");
+    let mut handed: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    assert_eq!(handed[0]["zerod"], std::process::id(), "says which zerod handed it");
+    handed[0]["zerod"] = 1.into();
+    std::fs::write(&file, handed.to_string()).unwrap();
+
+    let new = Daemon::open(&home.join("zerod"), echoing(&home, started.clone())).unwrap();
+    assert!(new.take_over().is_empty(), "not taken over");
+    for _ in 0..500 {
+        if started.load(std::sync::atomic::Ordering::SeqCst) == 2 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("never resumed to carry on");
+}
+
+#[tokio::test]
 async fn stop_on_a_task_that_reads_busy_with_nothing_running_puts_it_back_to_idle() {
     // A task left reading as working with no turn behind it (a provider that went quiet): Stop doesn't refuse with
     // "nothing is running", it sets the task right.
