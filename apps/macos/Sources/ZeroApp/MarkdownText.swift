@@ -203,18 +203,19 @@ struct MarkdownText: View {
         // follows it. Parsed whole, each frame's work grew with the answer.
         guard let cut = MarkdownBlock.settled(source) else { return render(source, true, true) }
         let head = String(source[..<cut])
-        let kept = Settled.lock.withLock { Settled.last.flatMap { $0.key == key && $0.size == size && $0.head == head ? $0.text : nil } }
+        let kept = Settled.lock.withLock { Settled.last.first { $0.key == key && $0.size == size && $0.head == head }?.text }
         let settled = kept ?? render(head, false, false)
-        if kept == nil { Settled.lock.withLock { Settled.last = (key, size, head, settled) } }
+        if kept == nil { Settled.lock.withLock { Settled.last = [(key, size, head, settled)] + Settled.last.prefix(1) } }
         let out = NSMutableAttributedString(attributedString: settled)
         out.append(render(String(source[cut...]), true, true))
         return out
     }
 
-    /// The settled start of the answer being read out, as last rendered.
+    /// The settled start of the answer being read out, as last rendered: two, so two answers styled by turns (a
+    /// reveal's restyle and another view's) don't style each other's settled start again each time.
     private enum Settled {
         static let lock = NSLock()
-        nonisolated(unsafe) static var last: (key: String, size: CGFloat, head: String, text: NSAttributedString)?
+        nonisolated(unsafe) static var last: [(key: String, size: CGFloat, head: String, text: NSAttributedString)] = []
     }
 
     /// Parsed, styled and kept. Zero's own ending ("[zero: done]") is for its hook, not for reading.

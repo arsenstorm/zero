@@ -275,7 +275,9 @@ public final class Workspace {
         guard !catchingUp else { return }
         catchingUp = true
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(33))
+            // A tenth of a second: an answer arriving word by word is read out a couple of seconds behind (Playback),
+            // and each sync redraws its conversation; at 33 ms that was up to 30 times a second.
+            try? await Task.sleep(for: .milliseconds(100))
             catchingUp = false
             let ids = stale
             stale = []

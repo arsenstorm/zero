@@ -765,11 +765,42 @@ final class RichTextView: NSTextView {
                 in: NSRange(location: from, length: storage.length - from),
                 with: text.attributedSubstring(from: NSRange(location: from, length: text.length - from)))
             storage.endEditing()
+            // A table lays out all its cells from all of them (its columns' widths, its rows' heights): one cell
+            // changed moves the others, which AppKit doesn't redraw, and they showed blank or stale until hovered.
+            // From the table's top down only: the whole answer, redrawn each tick of a read-out, cost more than it showed.
+            if let table = Self.table(in: storage, from: from), let layout = layoutManager {
+                let top =
+                    layout.lineFragmentRect(forGlyphAt: layout.glyphIndexForCharacter(at: table), effectiveRange: nil).minY
+                    + textContainerOrigin.y
+                setNeedsDisplay(NSRect(x: 0, y: top, width: bounds.width, height: max(0, bounds.height - top)))
+            }
         } else {
             textStorage?.setAttributedString(text)
         }
         hovered = nil
         hideReply()
+    }
+
+    /// Where the first table at or after `from` starts, or the table `from` is in: a cell changed moves the others.
+    static func table(in text: NSAttributedString, from: Int) -> Int? {
+        var found: Int?
+        text.enumerateAttribute(.paragraphStyle, in: NSRange(location: from, length: text.length - from)) { value, run, stop in
+            if let style = value as? NSParagraphStyle, !style.textBlocks.isEmpty { found = run.location; stop.pointee = true }
+        }
+        // In a table from its first row: back to where its blocks begin.
+        if let start = found,
+            let table = (text.attribute(.paragraphStyle, at: start, effectiveRange: nil) as? NSParagraphStyle)?
+                .textBlocks.first.flatMap({ ($0 as? NSTextTableBlock)?.table })
+        {
+            var at = start
+            while at > 0, let style = text.attribute(.paragraphStyle, at: at - 1, effectiveRange: nil) as? NSParagraphStyle,
+                (style.textBlocks.first as? NSTextTableBlock)?.table === table
+            {
+                at = (text.string as NSString).paragraphRange(for: NSRange(location: at - 1, length: 0)).location
+            }
+            found = at
+        }
+        return found
     }
 
     /// Where `after` stops being `before` with more on its end: the start of the paragraph of the first letter that
@@ -930,6 +961,13 @@ final class RichTextView: NSTextView {
 
     override func draw(_ dirtyRect: NSRect) {
         NSGraphicsContext.current?.cgContext.setShouldSmoothFonts(false)
+        // Measured at another width since it was laid out at its own (SwiftUI asks a text its size at several, a
+        // table's narrowest among them) with no change of frame after: laid out at its width again before it's drawn,
+        // or it drew as laid out for the measure, a table's cells missing or misplaced until something redrew it.
+        if let container = textContainer, bounds.width > 0, container.size.width != bounds.width {
+            _ = size(at: bounds.width)
+            if !dirtyRect.contains(bounds) { needsDisplay = true }
+        }
         super.draw(dirtyRect)
     }
 
@@ -937,7 +975,12 @@ final class RichTextView: NSTextView {
     /// too (a table's), and that measure left as the layout drew the words a letter a line, over the rows below.
     override func setFrameSize(_ size: NSSize) {
         super.setFrameSize(size)
-        if let container = textContainer, size.width > 0, container.size.width != size.width { _ = self.size(at: size.width) }
+        if let container = textContainer, size.width > 0, container.size.width != size.width {
+            _ = self.size(at: size.width)
+            // Laid out anew at this width: drawn anew, all of it (a table's cells move, and what AppKit kept of
+            // them showed until hovered).
+            needsDisplay = true
+        }
         // Moved or resized without a scroll (steps above it folding, the window resized): looked at again, so one
         // whose drawing was let go and has come near is drawn, never shown blank.
         if letGo { keepDrawn() }

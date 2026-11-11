@@ -205,6 +205,8 @@ import Observation
             track(readout)
         }
         readout.read = readout.total
+        // Shown whole, with nothing fading: done now (settle only finishes what it tracks, and this it never tracked).
+        if !fading || readout.runs.isEmpty { readout.finished = true }
     }
 
     private func track(_ readout: Readout) {
@@ -287,6 +289,10 @@ import Observation
     @ObservationIgnored var letters: [Character] = []
 
     init(id: String, now: Date) { self.id = id; self.now = now }
+
+    /// Characters read, as `shown`, but read without a view taking it as something it draws from: for a view made
+    /// in SwiftUI's update (RevealText), which would otherwise be updated on every tick.
+    public var readSoFar: Int { read }
 
     /// How far character `i` has faded in.
     public func alpha(_ i: Int) -> Double {

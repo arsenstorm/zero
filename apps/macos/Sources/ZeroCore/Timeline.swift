@@ -438,3 +438,104 @@ public enum StepSummary {
         return text.prefix(1).uppercased() + text.dropFirst()
     }
 }
+
+/// Where a prefix of an answer's Markdown source ends in its styled text, by matching their words in order: for
+/// reading an answer out against its text styled once, rather than styling each read part again (RevealText).
+/// A word the styled text doesn't have (a link's address, a mark on its own) is passed over; what's matched after it
+/// puts the two back in step. Never ahead: through a prefix, only words matched within it count.
+public struct RevealMarks {
+    /// Each matched word's end: in the source (characters), in the styled text (UTF-16).
+    private var marks: [(source: Int, styled: Int)] = []
+    private let sourceLength: Int
+    private let styledLength: Int
+
+    public init(source: String, styled: String) {
+        sourceLength = source.count
+        styledLength = styled.utf16.count
+        let shown = Self.styledWords(styled)
+        let words = Self.words(source)
+        var next = 0
+        for (index, word) in words.enumerated() {
+            // A few words on, the usual case; further only if the word after it matches next too (a run of words the
+            // source doesn't have, a link shown by its title: matched only nearby, the place was lost for good).
+            let near = shown[next..<min(shown.count, next + 6)].firstIndex { $0.key == word.key }
+            let far =
+                near
+                ?? shown[next..<min(shown.count, next + 64)].indices.first { at in
+                    shown[at].key == word.key && index + 1 < words.count && at + 1 < shown.count
+                        && shown[at + 1].key == words[index + 1].key
+                }
+            guard let found = far else { continue }
+            marks.append((word.end, shown[found].end))
+            next = found + 1
+        }
+    }
+
+    /// Where the first `count` characters of the source end in the styled text: the end of the last word matched
+    /// within them, or all of it once the source is read through.
+    public func styled(through count: Int) -> Int {
+        if count >= sourceLength { return styledLength }
+        var low = 0, high = marks.count
+        while low < high {
+            let mid = (low + high) / 2
+            if marks[mid].source <= count { low = mid + 1 } else { high = mid }
+        }
+        return low == 0 ? 0 : marks[low - 1].styled
+    }
+
+    /// The styled text's words, by its scalars: where they end in UTF-16, which is all that's needed of it (its
+    /// characters, walked as the source's are, were most of the time each styling took).
+    private static func styledWords(_ text: String) -> [(key: String, end: Int)] {
+        var words: [(key: String, end: Int)] = []
+        var key = String.UnicodeScalarView()
+        var offset = 0
+        var end = 0
+        for scalar in text.unicodeScalars {
+            offset += scalar.utf16.count
+            if scalar.properties.isWhitespace {
+                if !key.isEmpty { words.append((String(key), end)); key = String.UnicodeScalarView() }
+            } else if scalar.properties.isAlphabetic || scalar.properties.numericType != nil {
+                key.append(scalar)
+                end = offset
+            } else if !key.isEmpty {
+                end = offset
+            }
+        }
+        if !key.isEmpty { words.append((String(key), end)) }
+        return words
+    }
+
+    /// The source's words as letters and digits only, kept as the styled text's are (by scalar, so a letter with a
+    /// combining mark keys the same on both sides), with where each ends: in characters, as reading counts them. A code
+    /// fence's line is passed over: its language isn't in the styled text, and matched into the code it showed it early.
+    private static func words(_ text: String) -> [(key: String, end: Int)] {
+        var words: [(key: String, end: Int)] = []
+        var key = String.UnicodeScalarView()
+        var offset = 0
+        var end = 0
+        var line = ""
+        var fence = false
+        for character in text {
+            offset += 1
+            if character.isNewline {
+                line = ""; fence = false
+            } else if line.count < 3 {
+                line.append(character)
+                if line == "```" || line == "~~~" { fence = true }
+            }
+            if character.isWhitespace || fence {
+                if !key.isEmpty { words.append((String(key), end)); key = String.UnicodeScalarView() }
+                continue
+            }
+            let letters = character.unicodeScalars.filter { $0.properties.isAlphabetic || $0.properties.numericType != nil }
+            if !letters.isEmpty {
+                key.append(contentsOf: letters)
+                end = offset
+            } else if !key.isEmpty {
+                end = offset
+            }
+        }
+        if !key.isEmpty { words.append((String(key), end)) }
+        return words
+    }
+}

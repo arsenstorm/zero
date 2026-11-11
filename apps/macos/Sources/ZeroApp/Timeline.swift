@@ -42,10 +42,14 @@ struct BlockRow: View, Equatable {
         case let .answer(item):
             // Zero's ending isn't shown: it's the task's state, in the sidebar, the pane and the board.
             if case let .agent(said, _) = item.kind, case let text = ZeroEnding.split(said).0, !text.isEmpty {
-                MessageBlock(text: text, date: item.date, mine: false, quote: quote, save: save, later: later) {
+                let readout = playback?.readout(item.id)
+                MessageBlock(
+                    text: text, date: item.date, mine: false, quote: quote, save: save, later: later,
+                    stamped: (readout?.done ?? true) && item.status != .running
+                ) {
                     // Being read out (Playback), or its last words fading: carried on from where the live words were.
-                    if let readout = playback?.readout(item.id) {
-                        StreamingText(readout: readout, text: text, cwd: cwd)
+                    if let readout {
+                        StreamingText(readout: readout, text: text, cwd: cwd, growing: item.status == .running)
                     } else {
                         MarkdownText(text, cwd: cwd, size: 14.5)
                     }
@@ -164,6 +168,7 @@ struct WorkBlock: View {
             // start, "Working for…" from its first step): taken away as words started and put back with the first step,
             // it pushed the words down.
             Button {
+                ConversationView.folded = Date()
                 withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
             } label: {
                 HStack(spacing: 6) {
@@ -203,7 +208,9 @@ struct WorkBlock: View {
                     }
                 }
                 .padding(.top, 4)
-                .transition(.opacity)
+                // In once what's below has made room (the stack moves the rows under it over the same 0.15 s): faded in
+                // at once, they were drawn over the answer as it slid down past them. Gone at once on folding.
+                .transition(.asymmetric(insertion: .opacity.animation(.easeOut(duration: 0.15).delay(0.15)), removal: .identity))
             }
             // Folded, what it has said, each staying where it was; its steps aren't listed, only the one running now
             // (below). Its answer come, the notes fold away and the answer stands in their place.
@@ -407,6 +414,7 @@ struct QuietTurns<Content: View>: View {
         VStack(alignment: .leading, spacing: ConversationView.gap) {
             // A turn's heading, as WorkBlock's: what happened, and a chevron to open it.
             Button {
+                ConversationView.folded = Date()
                 open.toggle()
             } label: {
                 HStack(spacing: 6) {
@@ -447,6 +455,7 @@ struct GivenMessage: View {
                         .tip("Open \(sender)")
                 }
                 Button {
+                    ConversationView.folded = Date()
                     open.toggle()
                 } label: {
                     HStack(alignment: .top, spacing: 8) {
@@ -564,6 +573,8 @@ struct MessageBlock<Content: View>: View {
     var rewind: (() -> Void)? = nil
     /// The agent's: it's asked to save this for later.
     var later: ((String) -> Void)? = nil
+    /// Whether its time shows: not while its words are still being read out and fading in (its row keeps its room).
+    var stamped = true
     @ViewBuilder let content: () -> Content
     @State private var hovered = false
     /// The row under it (copy, menu, time): its own room, kept whether shown or not, well clear of the words above
@@ -590,33 +601,43 @@ struct MessageBlock<Content: View>: View {
         }
     }
 
+    /// Copy, and more in a menu: shown on hover.
+    private var actions: some View {
+        HStack(spacing: 0) {
+            CopyButton(text: text, size: Self.tile)
+            Button {
+                WorkspaceSelector.shared.toggle(menuID, kind: .menu, anchor: menuAnchor, rows: { menuSections })
+            } label: {
+                NucleoIcon("dots", size: 13).foregroundStyle(.secondary).frame(width: Self.tile, height: Self.tile)
+            }
+            .buttonStyle(Hovering(radius: 6)).tip("More")
+            .onGeometryChange(for: CGRect.self) {
+                $0.frame(in: .global)
+            } action: {
+                menuAnchor = $0
+            }
+        }
+        .opacity(hovered || WorkspaceSelector.shared.open == menuID ? 1 : 0)
+    }
+
     var body: some View {
         VStack(alignment: mine ? .trailing : .leading, spacing: 0) {
             content()
-            // Copy and more, a tile each with nothing between, so the icons sit evenly apart, and the time as far after;
-            // the first icon in line with the words above (its tile's inset taken back).
+            // When it was sent, always, in line with the words' edge; copy and more after it (before it, under yours,
+            // so the time is by the words' edge either way), a tile each with nothing between, so the icons sit evenly
+            // apart and the time as far from them. They're always there and show on hover (and while their menu is
+            // open): nothing moves as the pointer passes.
             HStack(spacing: 0) {
-                CopyButton(text: text, size: Self.tile)
-                Button {
-                    WorkspaceSelector.shared.toggle(menuID, kind: .menu, anchor: menuAnchor, rows: { menuSections })
-                } label: {
-                    NucleoIcon("dots", size: 13).foregroundStyle(.secondary).frame(width: Self.tile, height: Self.tile)
-                }
-                .buttonStyle(Hovering(radius: 6)).tip("More")
-                .onGeometryChange(for: CGRect.self) {
-                    $0.frame(in: .global)
-                } action: {
-                    menuAnchor = $0
-                }
+                if mine { actions }
                 if let date {
-                    Text(Self.stamp(date)).font(.system(size: 11.5)).foregroundStyle(.tertiary).padding(.leading, Self.inset)
+                    Text(Self.stamp(date)).font(.system(size: 11.5)).foregroundStyle(.tertiary)
+                        .padding(mine ? .leading : .trailing, Self.inset)
+                        .opacity(stamped ? 1 : 0)
                 }
+                if !mine { actions }
             }
-            .padding(mine ? .trailing : .leading, mine ? 0 : -Self.inset)
             .frame(height: Self.row)
             .padding(.top, Self.margin)
-            // Always there, shown on hover (and while its menu is open): nothing moves as the pointer passes.
-            .opacity(hovered || WorkspaceSelector.shared.open == menuID ? 1 : 0)
         }
         .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
         .contentShape(Rectangle())
@@ -1097,11 +1118,29 @@ struct StreamingText: View {
     let readout: Readout
     let text: String
     let cwd: String
+    /// Its item still arriving: read out the GPU way until it's whole, though reading catches up with it now and then
+    /// (each catch-up was otherwise a switch to the finished text and back, the view and its layout made anew).
+    var growing = false
 
     var body: some View {
+        // Revealed by Core Animation (RevealText), this reads only whether it's done: not every tick.
+        if RevealText.on, !readout.done || growing {
+            RevealText(readout: readout, text: text, cwd: cwd)
+        } else {
+            drawn
+        }
+    }
+
+    @ViewBuilder private var drawn: some View {
         let total = text.count
         let shown = min(readout.shown, total)
         if readout.done && shown >= total {
+            // Styled here and now (its blocks are kept from reading it out, so it's quick): a long text is otherwise
+            // styled off the main thread, and the answer just read out showed as raw Markdown meanwhile, the page
+            // jumping as it went from one to the other.
+            let _ = MarkdownText.render(
+                text, size: 14.5, compact: false,
+                links: MarkdownText.links(repo: References.repo(of: cwd), owner: References.owner(of: cwd), yours: false))
             MarkdownText(text, cwd: cwd, size: 14.5)
         } else {
             // Read here so the clock's tick redraws this, and only this.

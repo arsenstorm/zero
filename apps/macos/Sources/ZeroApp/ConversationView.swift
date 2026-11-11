@@ -65,6 +65,9 @@ struct ConversationView: View {
     static let slideDuration = 0.25
     /// When the user last clicked in the app (anywhere: what's opened by a click isn't the conversation's end growing).
     @MainActor static var clicked = Date.distantPast
+    /// When you last opened or folded something in the timeline (a turn's work, a folded run of turns, a report): what
+    /// it grew or shrank by is above the end, and the page holds still for it.
+    @MainActor static var folded = Date.distantPast
     @MainActor static let clickWatch: Any? = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
         MainActor.assumeIsolated { clicked = Date() }
         return event
@@ -540,6 +543,9 @@ struct ConversationView: View {
         workspace.markSeen(conversation.id)
         following = false
         foot.gap = 0
+        // The glide's slide on the render server stops too: left running, a scroll begun during it was off by what it
+        // still had to go, and a click landed where the page was going, not where it was drawn.
+        tracker.scroller?.contentView.layer?.removeAllAnimations()
         liftScrolled = true
         if olderShown, !olderArmed { olderArmed = true; Task { await loadOlder() } }
     }
@@ -569,6 +575,7 @@ struct ConversationView: View {
     }
 
     private func scrollGeometryChanged(from before: ScrollGeometry, to now: ScrollGeometry) {
+        var slides = false
         tracker.geometry = now
         tracker.scrollerAgrees = tracker.scroller.map { abs($0.contentView.bounds.origin.y - now.contentOffset.y) < 0.5 } ?? false
         let grew = now.contentSize.height - before.contentSize.height
@@ -582,8 +589,13 @@ struct ConversationView: View {
         if following, !lifted, !loadingAbove, !userScrolling, grew - pinned > 0.5, grew < now.containerSize.height,
             Date().timeIntervalSince(foot.opened) > 0.5, Date().timeIntervalSince(Self.clicked) > 0.6
         {
-            foot.gap = min(foot.gap + grew - pinned, now.containerSize.height)
-            startTicking()
+            // With the GPU reveal (RevealText.on): to the new end at once, slid there by the render server (slide).
+            if RevealText.on, tracker.scrollerAgrees, tracker.scroller?.contentView.layer != nil {
+                slides = true
+            } else {
+                foot.gap = min(foot.gap + grew - pinned, now.containerSize.height)
+                startTicking()
+            }
         }
         // Shorter at its end (what was under the composer gone): the way left is as much shorter and the page holds
         // still. Kept as long, the page was pulled down by what had gone.
@@ -619,9 +631,20 @@ struct ConversationView: View {
         // measure themselves after the first layout, and the list's height can settle far from its first guess (a
         // long conversation came out 2,000 pt shorter, leaving the view past its end, blank): it stays at the end of
         // what's there.
+        // Opened above the end by you: the page holds (its top anchor) and isn't following the end any more; kept to the
+        // end, everything above jumped up by what opened. Folded back to the end, it follows it again.
+        if Date().timeIntervalSince(Self.folded) < 0.3, !lifted, !loadingAbove {
+            if grew > 0.5, following {
+                following = false
+            } else if grew < -0.5, !following, live.later == 0, Self.end(of: now) - now.contentOffset.y < 2 {
+                following = true
+            }
+        }
         let end = Self.end(of: now)
         if following, end > 0 {
+            let from = tracker.scroller?.contentView.bounds.origin.y
             keepToEnd(now)
+            if slides, let from, let clip = tracker.scroller?.contentView { slide(clip, by: clip.bounds.origin.y - from) }
         }
         // Past the end is never a place to be (a page left blank until scrolled): back to the end, whether
         // following it or restoring where you were.
@@ -651,6 +674,23 @@ struct ConversationView: View {
     }
 
     private func startTicking() { if !foot.ticking { foot.ticking = true } }
+
+    /// The page's glide to its new end, run by the render server: the scroll view is at the end already, and its clip
+    /// layer is shown from where it was, sliding the rest of the way. Glided frame by frame instead, each frame was a
+    /// scroll SwiftUI took in, updating the window's whole view graph (60 a second while an answer streams).
+    private func slide(_ clip: NSClipView, by moved: CGFloat) {
+        guard moved > 0.5, let layer = clip.layer else { return }
+        let slide = CABasicAnimation(keyPath: "bounds.origin.y")
+        slide.fromValue = -moved
+        slide.toValue = 0
+        // Added to whatever slide is still under way: a line that comes mid-slide carries on from where the page is.
+        slide.isAdditive = true
+        slide.duration = Self.glide * 5
+        // Fast, then settling, as the frame-by-frame glide eases (its gap shrinks by e every `glide`).
+        slide.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.3, 1)
+        slide.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+        layer.add(slide, forKey: "glide-\(CACurrentMediaTime())")
+    }
 
     /// A frame: the card's rise and the strip's room eased on, the page's way to its end shortened. What it changes
     /// is laid out before the frame is drawn, the room and the card and the page together.
@@ -1188,9 +1228,57 @@ private struct PlaybackClock: View {
     let playback: Playback
     let shown: Bool
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: !playback.playing || !shown)) { context in
-            Color.clear.onChange(of: context.date) { _, now in playback.advance(to: now) }
+        FrameClock(fps: 30, paused: !playback.playing || !shown) { [playback] now in playback.advance(to: now) }
+    }
+}
+
+/// A clock from the display, outside SwiftUI: a TimelineView's every tick was an update of the window's whole view
+/// graph (30 and 60 a second while an answer streams), whatever the tick changed. Ticks here change only what reads
+/// what they change.
+private struct FrameClock: NSViewRepresentable {
+    let fps: Float
+    let paused: Bool
+    let tick: (Date) -> Void
+
+    func makeNSView(context: Context) -> Ticker { Ticker() }
+
+    func updateNSView(_ ticker: Ticker, context: Context) {
+        ticker.tick = tick
+        ticker.fps = fps
+        ticker.paused = paused
+    }
+
+    static func dismantleNSView(_ ticker: Ticker, coordinator: ()) { ticker.end() }
+
+    final class Ticker: NSView {
+        var tick: ((Date) -> Void)?
+        var fps: Float = 30
+        var paused = true { didSet { run() } }
+        private var link: CADisplayLink?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil { end() } else { run() }
         }
+
+        /// Made once it's in a window (a display link is a view's), paused and resumed after.
+        private func run() {
+            if link == nil, window != nil, !paused {
+                let link = displayLink(target: self, selector: #selector(fire))
+                link.preferredFrameRateRange = CAFrameRateRange(minimum: fps / 2, maximum: fps, preferred: fps)
+                link.add(to: .main, forMode: .common)
+                self.link = link
+            }
+            link?.isPaused = paused
+        }
+
+        /// The link holds this view: let go of it when the view leaves.
+        func end() {
+            link?.invalidate()
+            link = nil
+        }
+
+        @objc private func fire(_ link: CADisplayLink) { tick?(Date()) }
     }
 }
 
@@ -1269,9 +1357,7 @@ private struct FootClock: View {
     let foot: ConversationView.Foot
     let tick: (Date) -> Void
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 60, paused: !foot.ticking)) { context in
-            Color.clear.onChange(of: context.date) { _, now in tick(now) }
-        }
+        FrameClock(fps: 60, paused: !foot.ticking) { now in tick(now) }
     }
 }
 

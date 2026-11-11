@@ -256,3 +256,10 @@ private func step(_ id: String) -> ConversationItem { item(id, .tool(name: "Read
     player.play(0.8)
     #expect(player.shown == ["u1", "a1", "u2"])
 }
+
+/// An answer shown whole as its conversation opens is done at once: nothing reads it out or fades it in, so what waits
+/// for its end (its time, the plain text drawn instead of the read-out) doesn't wait forever.
+@MainActor @Test func anAnswerShownWholeIsDone() {
+    let player = Player([yours("u"), words("a", 400)])
+    #expect(player.playback.readout("a")?.done == true)
+}

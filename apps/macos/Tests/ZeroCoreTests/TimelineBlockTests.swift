@@ -113,3 +113,35 @@ private func item(_ id: String, _ kind: ConversationItem.Kind) -> ConversationIt
     #expect(rows() == TimelineRow.of(TimelineBlock.of(items, working: true)).map(\.id))
     #expect(rows() == ["u", "quiet-r1", "r2", "a2", "u2", "work-a3"], "\(rows())")
 }
+
+/// Where reading has got to in an answer's source, found in its styled text by its words: Markdown's marks aren't in
+/// the styled text, a list's bullets are only there, and a link shows only its words. Never ahead of what's read.
+@Test func revealMarksFindTheReadPartInTheStyledText() {
+    let source = "## Title\n\nSome **bold** words and a [link](https://x.dev/a) here.\n\n- one item\n- `two`"
+    let styled = "Title\nSome bold words and a link here.\n• one item\n• two"
+    let marks = RevealMarks(source: source, styled: styled)
+    let at = { (prefix: String) in marks.styled(through: prefix.count) }
+    #expect(at("## Title") == "Title".utf16.count)
+    #expect(at("## Title\n\nSome **bold**") == "Title\nSome bold".utf16.count)
+    // The link's address isn't shown: reading through it stays at what's shown before it, then catches up.
+    #expect(
+        at("## Title\n\nSome **bold** words and a [link](https://x.dev/a) here.") == "Title\nSome bold words and a link here.".utf16.count)
+    #expect(at(source) == styled.utf16.count)
+    #expect(at("") == 0)
+}
+
+/// The word map keeps its place past a run of styled words the source doesn't have (a link shown by its title), and
+/// past words keyed differently (a script with combining marks); a code fence's language isn't matched into the code.
+@Test func revealMarksKeepTheirPlace() {
+    let source = "See [the pad](zero://pad/abc#notes) now. नमस्ते दुनिया and more words after it here."
+    let styled = "See Release notes › Shipping and versions › Checklist now. नमस्ते दुनिया and more words after it here."
+    let marks = RevealMarks(source: source, styled: styled)
+    #expect(
+        marks.styled(through: (source as String).count - 1)
+            > ("See Release notes › Shipping and versions › Checklist now." as String).utf16.count)
+    let fenced = "Code:\n```swift\nlet x = swift\n```\nDone."
+    let shown = "Code:\nlet x = swift\nDone."
+    let fence = RevealMarks(source: fenced, styled: shown)
+    // Through the fence line only: nothing of the code yet.
+    #expect(fence.styled(through: "Code:\n```swift".count) <= "Code:".utf16.count)
+}
