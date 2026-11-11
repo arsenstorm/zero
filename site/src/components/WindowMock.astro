@@ -260,7 +260,7 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
           i === 0 ? "bg-rail-selected text-ink" : "text-muted",
         ]}
       >
-        <Icon name={icon} size={17} />
+        <Icon name={icon} fill={i === 0 ? "glyph" : "outline"} size={17} />
       </span>
     ))}
     <span class="flex-1"></span>
@@ -347,7 +347,7 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
         >
           <div
             data-items
-            class="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable_both-edges] px-4 sm:px-9 pt-6 pb-2 flex flex-col gap-4 text-[13px] leading-[1.5]"
+            class="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable_both-edges] px-4 sm:px-9 pt-6 pb-2 flex flex-col gap-4 text-[14.5px] leading-[1.5]"
           >
             {task.items.map((item) =>
               "user" in item ? (
@@ -361,7 +361,7 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
                   <button
                     type="button"
                     aria-expanded="false"
-                    class="self-start flex items-center gap-[7px] text-[12.5px] text-muted hover:text-ink transition-colors duration-150"
+                    class="self-start flex items-center gap-[7px] text-[13px] text-muted hover:text-ink transition-colors duration-150"
                   >
                     <span class="worked-chevron grid place-items-center">
                       <Icon name="chevron-right" size={10} />
@@ -370,7 +370,7 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
                   </button>
                   <div hidden class="flex flex-col gap-2 pl-[17px]">
                     {item.steps.map((step) => (
-                      <div class="flex items-center gap-[7px] text-[12.5px] text-muted min-w-0">
+                      <div class="flex items-center gap-[7px] text-[13px] text-muted min-w-0">
                         <Icon name="circle-check" fill="glyph" size={12} />
                         <span class="font-mono text-[12px] truncate">
                           $ {step.run}
@@ -380,7 +380,7 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
                   </div>
                 </div>
               ) : "run" in item ? (
-                <div class="flex items-center gap-[7px] text-[12.5px] text-muted min-w-0">
+                <div class="flex items-center gap-[7px] text-[13px] text-muted min-w-0">
                   {item.done ? (
                     <Icon name="circle-check" fill="glyph" size={12} />
                   ) : (
@@ -391,7 +391,7 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
                   </span>
                 </div>
               ) : (
-                <div class="flex items-center gap-[7px] text-[12.5px] text-muted">
+                <div class="flex items-center gap-[7px] text-[13px] text-muted">
                   {item.state === "working" ? (
                     <Spinner size={11} class="text-blue" />
                   ) : (
