@@ -40,7 +40,7 @@ Nucleo icons (https://nucleoapp.com)
   one (builds from source draw Lucide's instead, the only difference between the two).
   Licensed to Zero's maintainer under Nucleo's licence (https://nucleoapp.com/license); not free software and not
   covered by the GPL. That licence doesn't extend to you.
-  The licence allows at most 100 distinct icons in a public repository. This one holds the site's 39:
+  The licence allows at most 100 distinct icons in a public repository. This one holds the site's 40:
     animation-repeat
     arrow-left
     arrow-right
@@ -56,6 +56,7 @@ Nucleo icons (https://nucleoapp.com)
     command
     compose
     copy
+    download
     eye
     file-content
     gear

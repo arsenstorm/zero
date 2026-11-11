@@ -20,7 +20,10 @@ const canonical = new URL(
   path.replace(/(\/index)?\.html$/, "").replace(/\/$/, "") || "/",
   site.url
 ).href;
-const nav = [{ href: "/docs", label: "Docs" }];
+const nav = [
+  { href: "/download", label: "Download" },
+  { href: "/docs", label: "Docs" },
+];
 
 // The footer's columns: pages that exist now, no placeholders.
 const columns = [
@@ -28,6 +31,7 @@ const columns = [
     title: site.name,
     links: [
       { href: "/", label: "Home" },
+      { href: "/download", label: "Download" },
       { href: "/docs", label: "Docs" },
       { href: "/docs/getting-started", label: "Getting started" },
       { href: site.repo, label: "GitHub" },

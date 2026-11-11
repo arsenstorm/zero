@@ -7,6 +7,7 @@ import BarMock from "../components/BarMock.astro";
 import Cta from "../components/Cta.astro";
 import { site } from "../lib/site";
 import InboxDeck from "../components/InboxDeck.astro";
+import WorkersDemo from "../components/WorkersDemo.astro";
 import claudeIcon from "../../../apps/macos/Resources/icons/claude.png?url";
 import openaiIcon from "../../../apps/macos/Resources/icons/openai.png?url";
 import opencodeIcon from "../icons/opencode-mark.svg?url";
@@ -76,8 +77,8 @@ const h2 = "text-[28px] leading-[1.15] font-semibold tracking-[-0.02em]";
         {intro}
       </p>
       <div class="mt-8 flex flex-wrap items-center gap-3">
-        <a href="/docs/getting-started" class={`${primary} gap-1.5 pl-4 pr-3.5`}
-          >Get started<Icon name="arrow-right" size={14} /></a
+        <a href="/download" class={`${primary} gap-2 pl-4 pr-5`}
+          ><Icon name="download" size={16} />Download for Mac</a
         >
         <a href={site.repo} class={secondary}
           ><Icon name="github" fill="glyph" size={16} />View on GitHub</a
@@ -156,8 +157,27 @@ const h2 = "text-[28px] leading-[1.15] font-semibold tracking-[-0.02em]";
         <h2 class={h2}>Tasks and their workers</h2>
         <p class="text-[16px] leading-[1.55] text-muted md:text-right">
           Big jobs split into workers.{" "}
-          <a href="/docs/tasks-and-workers" class={more}
+          <a href="/docs/tasks-and-workers#follow-a-tasks-workers" class={more}
             >Learn more<span class="sr-only"> about tasks and workers</span>
+            <Icon name="arrow-right" size={16} /></a
+          >
+        </p>
+      </div>
+      <div class="mt-8 rounded-[28px] bg-rail px-4 py-12 sm:px-10">
+        <WorkersDemo />
+      </div>
+    </div>
+  </section>
+  <section class="px-4 sm:px-8 py-16">
+    <div class="mx-auto max-w-5xl">
+      <div class="grid md:grid-cols-2 gap-x-12 gap-y-3 items-end">
+        <h2 class={h2}>Every task at a glance</h2>
+        <p class="text-[16px] leading-[1.55] text-muted md:text-right">
+          Seven states tell you what each task needs.{" "}
+          <a
+            href="/docs/tasks-and-workers#what-a-tasks-state-means"
+            class={more}
+            >Learn more<span class="sr-only"> about task states</span>
             <Icon name="arrow-right" size={16} /></a
           >
         </p>

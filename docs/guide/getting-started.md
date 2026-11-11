@@ -19,7 +19,11 @@ Zero runs coding agents on your Mac: Claude Code, Codex and OpenCode. You give a
 
 ## Install Zero
 
-A download is coming soon. Once you have it, put **Zero.app** in your **Applications** folder and open it from there. The tools Zero gives your agents look for it in that folder.
+Download Zero from [withzero.dev/download](/download). It needs macOS 26 or later.
+
+1. Open **Zero.zip**. Safari opens it for you after the download.
+2. Drag **Zero.app** to your **Applications** folder. The tools Zero gives your agents look for it there.
+3. Open Zero from your **Applications** folder.
 
 Zero is a menu bar app. It shows in the Dock only while one of its windows is open.
 

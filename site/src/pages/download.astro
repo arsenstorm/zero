@@ -1,0 +1,130 @@
+---
+// Where to get Zero: the newest release's app, how to install and update it, how to check it's the one CI built, and
+// where the code is to build it yourself. The version is read from GitHub as the site builds; without it, the page
+// leaves the version out rather than show a wrong one.
+import Base from "../layouts/Base.astro";
+import Icon from "../components/Icon.astro";
+import { site } from "../lib/site";
+
+let version: string | undefined;
+try {
+  const response = await fetch(
+    "https://api.github.com/repos/arsenstorm/zero/releases/latest",
+    {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": "withzero.dev build",
+      },
+    }
+  );
+  if (response.ok)
+    version = (
+      (await response.json()) as { tag_name?: string }
+    ).tag_name?.replace(/^v/, "");
+} catch {
+  // No network as the site builds: the page shows no version.
+}
+
+const primary =
+  "h-10 flex items-center gap-2 pl-4 pr-5 rounded-full bg-knob text-on-knob text-[14px] font-medium whitespace-nowrap transition-transform duration-150 active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100";
+const secondary =
+  "h-10 px-4 gap-2 flex items-center rounded-full bg-hover text-ink text-[14px] font-medium whitespace-nowrap transition-[transform,background-color] duration-150 hover:bg-keycap active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100";
+const h2 = "text-[20px] leading-[1.25] font-semibold tracking-[-0.01em]";
+const card = "rounded-[18px] bg-card border border-stroke p-6";
+const code =
+  "mt-3 font-mono text-[12.5px] leading-[1.5] bg-code rounded-[10px] px-3 py-2.5 whitespace-pre-wrap";
+---
+
+<Base
+  title={`Download ${site.name}`}
+  description="Download Zero for Mac: free and open source, for macOS 26 or later."
+>
+  <section class="px-6 sm:px-8 pt-20 sm:pt-28 pb-12">
+    <div class="mx-auto max-w-5xl">
+      <h1
+        class="text-[44px] sm:text-[56px] leading-[1.04] font-semibold tracking-[-0.035em]"
+      >
+        Download {site.name}
+      </h1>
+      <p class="mt-5 max-w-[32rem] text-[17px] leading-[1.5] text-muted">
+        {site.name}
+        for Mac is free and open source, under the GNU GPL v3 or later. It needs
+        macOS 26 or later.
+      </p>
+      <div class="mt-8 flex flex-wrap items-center gap-3">
+        <a href={site.download} class={primary}
+          ><Icon name="download" size={16} />Download for Mac</a
+        >
+        <a href={site.releases} class={secondary}
+          ><Icon name="github" fill="glyph" size={16} />All releases</a
+        >
+      </div>
+      <p class="mt-4 h-5 text-[13px] text-muted">
+        {version && <>Version {version}. </>}Notarised by Apple and signed in
+        CI.
+      </p>
+    </div>
+  </section>
+
+  <section class="px-4 sm:px-8 pb-24">
+    <div
+      class="mx-auto max-w-5xl grid md:grid-cols-3 gap-4 rounded-[28px] bg-rail p-4 sm:p-6"
+    >
+      <div class={card}>
+        <h2 class={h2}>Install it</h2>
+        <ol
+          class="mt-4 space-y-2.5 text-[14px] leading-[1.55] list-decimal pl-5 marker:text-muted"
+        >
+          <li>
+            Open <span class="font-medium">Zero.zip</span>. Safari opens it for
+            you after the download.
+          </li>
+          <li>
+            Drag <span class="font-medium">Zero.app</span> to your
+            <span class="font-medium">Applications</span> folder.
+          </li>
+          <li>Open it from there. Zero lives in the menu bar.</li>
+        </ol>
+        <a
+          href="/docs/getting-started"
+          class="mt-5 inline-flex items-center gap-1 text-[14px] font-medium"
+          >Get started<Icon name="arrow-right" size={14} /></a
+        >
+      </div>
+      <div class={card}>
+        <h2 class={h2}>Stay up to date</h2>
+        <p class="mt-4 text-[14px] leading-[1.55] text-muted">
+          Zero checks for new versions. When one is out, the menu bar icon says
+          so, and
+          <span class="text-ink font-medium">Settings › General</span> shows
+          <span class="text-ink font-medium">Update and restart</span>. Zero
+          never updates without your click.
+        </p>
+      </div>
+      <div class={card}>
+        <h2 class={h2}>Check the download</h2>
+        <p class="mt-4 text-[14px] leading-[1.55] text-muted">
+          Each release comes with its SHA-256, a Sigstore signature and its
+          build provenance. To check that your Zero.zip is the one CI built from
+          this code:
+        </p>
+        <pre
+          class={code}
+        >gh attestation verify Zero.zip --repo arsenstorm/zero</pre>
+      </div>
+      <div class:list={[card, "md:col-span-3"]}>
+        <h2 class={h2}>Build it yourself</h2>
+        <p class="mt-4 max-w-[44rem] text-[14px] leading-[1.55] text-muted">
+          The code is on GitHub. Its README says how to build and test Zero. A
+          build from source draws open-source icons where the official app has
+          Nucleo's; the rest is the same.
+        </p>
+        <a
+          href={site.repo}
+          class="mt-4 inline-flex items-center gap-1 text-[14px] font-medium"
+          >View on GitHub<Icon name="arrow-right" size={14} /></a
+        >
+      </div>
+    </div>
+  </section>
+</Base>

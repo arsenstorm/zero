@@ -1,0 +1,263 @@
+---
+// A task splitting into workers: the lead, with a line out to each worker it starts, as the inbox section's agents
+// fan in. One story plays while it's in view, then loops: the lead starts three workers, one asks you something, one
+// waits on a deploy, each finishes and reports back, and the lead hands you the last step. A line takes its worker's
+// state colour. Under Reduce Motion it shows the workers under way and stays there.
+import TaskState from "./TaskState.astro";
+
+const lead = {
+  title: "Upgrade the payments SDK",
+  states: ["working", "handed"],
+} as const;
+const workers = [
+  {
+    id: "api",
+    title: "Update the API calls",
+    states: ["working", "done"],
+    now: {
+      working: "Moving calls to the new client",
+      done: "Updated 14 calls",
+    },
+  },
+  {
+    id: "tests",
+    title: "Fix the failing tests",
+    states: ["working", "needsYou", "done"],
+    now: {
+      working: "Running the test suite",
+      needsYou: "Asks you: skip the flaky test?",
+      done: "All 212 tests pass",
+    },
+  },
+  {
+    id: "hooks",
+    title: "Check the webhooks on staging",
+    states: ["working", "waiting", "done"],
+    now: {
+      working: "Sending test payments",
+      waiting: "Waiting on the staging deploy",
+      done: "Webhooks arrive as before",
+    },
+  },
+] as const;
+const nowOf = (w: (typeof workers)[number], state: string) =>
+  (w.now as Record<string, string>)[state];
+
+// The cards' measures, so each line ends on its card's middle: 72 px cards, 16 px apart.
+const CARD = 72;
+const GAP = 16;
+const HEIGHT = CARD * 3 + GAP * 2;
+const middles = workers.map((_, i) => i * (CARD + GAP) + CARD / 2);
+---
+
+<div
+  data-workers-demo
+  role="img"
+  aria-label="A task, Upgrade the payments SDK, with three workers: Update the API calls, Fix the failing tests, and Check the webhooks on staging."
+  class="mx-auto w-full max-w-[780px] flex flex-col sm:grid sm:grid-cols-[minmax(0,260px)_minmax(40px,1fr)_minmax(0,320px)] sm:items-center gap-3 sm:gap-0"
+>
+  <div class="rounded-[18px] bg-card border border-stroke px-4 py-3.5">
+    <div class="flex items-center gap-2">
+      <span class="relative size-3.5 shrink-0">
+        {lead.states.map((state, i) => (
+          <span
+            data-icon="lead"
+            data-state={state}
+            class:list={[
+              "absolute inset-0 grid place-items-center",
+              i > 0 && "opacity-0",
+            ]}
+          >
+            <TaskState state={state} />
+          </span>
+        ))}
+      </span>
+      <span class="text-[14.5px] font-semibold truncate">{lead.title}</span>
+    </div>
+    <p class="mt-0.5 pl-[22px] text-[12.5px] text-muted">Lead · 3 workers</p>
+  </div>
+
+  <svg
+    aria-hidden="true"
+    viewBox={`0 0 100 ${HEIGHT}`}
+    preserveAspectRatio="none"
+    class="hidden sm:block w-full"
+    style={`height: ${HEIGHT}px`}
+  >
+    {workers.map((w, i) => (
+      <path
+        data-line={w.id}
+        data-state="working"
+        d={`M0 ${HEIGHT / 2} C 55 ${HEIGHT / 2}, 45 ${middles[i]}, 100 ${middles[i]}`}
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-dasharray="4 4"
+        vector-effect="non-scaling-stroke"
+        class="worker-line"
+      />
+    ))}
+  </svg>
+
+  <div
+    class="flex flex-col pl-6 sm:pl-0 border-l border-dashed border-faint sm:border-0"
+    style={`gap: ${GAP}px`}
+  >
+    {workers.map((w) => (
+      <div
+        data-w={w.id}
+        class="worker-card rounded-[16px] bg-card border border-stroke px-4 flex flex-col justify-center"
+        style={`height: ${CARD}px`}
+      >
+        <div class="flex items-center gap-2">
+          <span class="relative size-3.5 shrink-0">
+            {w.states.map((state, i) => (
+              <span
+                data-icon={w.id}
+                data-state={state}
+                class:list={[
+                  "absolute inset-0 grid place-items-center",
+                  i > 0 && "opacity-0",
+                ]}
+              >
+                <TaskState state={state} />
+              </span>
+            ))}
+          </span>
+          <span class="text-[13.5px] font-medium truncate">{w.title}</span>
+        </div>
+        <div class="relative mt-0.5 ml-[22px] h-[18px] text-[12.5px] text-muted">
+          {w.states.map((state, i) => (
+            <span
+              data-now={w.id}
+              data-state={state}
+              class:list={[
+                "now absolute inset-0 truncate",
+                i > 0 && "opacity-0",
+              ]}
+            >
+              {nowOf(w, state)}
+            </span>
+          ))}
+        </div>
+      </div>
+    ))}
+  </div>
+</div>
+
+<style>
+  /* A line draws out from the lead to its worker, then the card settles in at its end. */
+  .worker-line {
+    clip-path: inset(0 0 0 0);
+    transition:
+      clip-path 420ms cubic-bezier(0.32, 0.72, 0, 1),
+      color 200ms ease;
+  }
+  .worker-line[data-off] {
+    clip-path: inset(0 100% 0 0);
+  }
+  /* The line in its worker's state colour, as the sidebar's icon is: at work blue, waiting grey, done purple. */
+  .worker-line[data-state="working"],
+  .worker-line[data-state="needsYou"] {
+    color: var(--blue);
+  }
+  .worker-line[data-state="waiting"] {
+    color: var(--faint);
+  }
+  .worker-line[data-state="done"] {
+    color: var(--purple);
+  }
+  .worker-card {
+    transition:
+      opacity 240ms ease-out,
+      translate 240ms cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  .worker-card[data-off] {
+    opacity: 0;
+    translate: 0 4px;
+  }
+  /* What a worker is on changes with a quick crossfade; its icon changes at once, as the app's does. */
+  .now {
+    transition: opacity 150ms ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .worker-line,
+    .worker-card {
+      transition: none;
+    }
+  }
+</style>
+
+<script>
+  type Step = [
+    delay: number,
+    kind: "line" | "card" | "state",
+    id: string,
+    state?: string,
+  ];
+  const STEPS: Step[] = [
+    [600, "line", "api"],
+    [260, "card", "api"],
+    [140, "line", "tests"],
+    [260, "card", "tests"],
+    [140, "line", "hooks"],
+    [260, "card", "hooks"],
+    [1500, "state", "tests", "needsYou"],
+    [900, "state", "hooks", "waiting"],
+    [1600, "state", "tests", "working"],
+    [700, "state", "api", "done"],
+    [1300, "state", "hooks", "done"],
+    [1200, "state", "tests", "done"],
+    [900, "state", "lead", "handed"],
+  ];
+  const HOLD_MS = 3200;
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  for (const demo of document.querySelectorAll<HTMLElement>(
+    "[data-workers-demo]"
+  )) {
+    const all = (sel: string) => [...demo.querySelectorAll<HTMLElement>(sel)];
+    const set = (id: string, state: string) => {
+      for (const el of all(`[data-icon="${id}"], [data-now="${id}"]`))
+        el.style.opacity = el.dataset.state === state ? "1" : "0";
+      for (const line of all(`[data-line="${id}"]`)) line.dataset.state = state;
+    };
+    const show = (sel: string, on: boolean) =>
+      all(sel).forEach((el) => el.toggleAttribute("data-off", !on));
+    function reset() {
+      show("[data-w], [data-line]", false);
+      for (const id of ["lead", "api", "tests", "hooks"]) set(id, "working");
+    }
+    let step = 0,
+      timer = 0,
+      visible = false;
+    function next() {
+      if (!visible) return;
+      if (step === STEPS.length) {
+        timer = window.setTimeout(() => {
+          reset();
+          step = 0;
+          next();
+        }, HOLD_MS);
+        return;
+      }
+      const [delay, kind, id, state] = STEPS[step++];
+      timer = window.setTimeout(() => {
+        if (kind === "line") show(`[data-line="${id}"]`, true);
+        if (kind === "card") show(`[data-w="${id}"]`, true);
+        if (kind === "state") set(id, state!);
+        next();
+      }, delay);
+    }
+    if (still) continue; // as drawn: the workers under way
+    reset();
+    new IntersectionObserver(
+      (entries) => {
+        visible = entries.some((e) => e.isIntersecting);
+        clearTimeout(timer);
+        if (visible) next();
+      },
+      { threshold: 0.5 }
+    ).observe(demo);
+  }
+</script>
