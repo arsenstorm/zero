@@ -99,6 +99,17 @@ struct MarkdownText: View {
                     let color = (value as? NSColor) ?? .labelColor
                     out.addAttribute(.foregroundColor, value: color.withAlphaComponent(color.alphaComponent * step), range: run)
                 }
+                // An image among them fades as they do: a copy of its cell at their alpha (the styled text is shared).
+                out.enumerateAttribute(.attachment, in: range) { value, run, _ in
+                    guard let picture = (value as? NSTextAttachment)?.attachmentCell as? PictureCell, let image = picture.image else {
+                        return
+                    }
+                    let cell = PictureCell(imageCell: image)
+                    cell.alpha = step
+                    let faded = NSTextAttachment()
+                    faded.attachmentCell = cell
+                    out.addAttribute(.attachment, value: faded, range: run)
+                }
             }
             i = end
         }

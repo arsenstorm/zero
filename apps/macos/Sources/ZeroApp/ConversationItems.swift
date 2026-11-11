@@ -19,10 +19,13 @@ struct ItemView: View {
                     WrappingStack(spacing: 6, trailing: true) {
                         ForEach(tiles, id: \.path) { tile in
                             if let video = tile.video {
-                                Thumbnail(path: tile.path, side: 88, tap: { NSWorkspace.shared.open(URL(fileURLWithPath: video)) }).overlay
-                                { VideoBadge() }
+                                Thumbnail(
+                                    path: tile.path, side: 200, fit: true, tap: { NSWorkspace.shared.open(URL(fileURLWithPath: video)) }
+                                )
+                                .overlay { VideoBadge() }
                             } else {
-                                Thumbnail(path: tile.path, side: 88, among: pictures)
+                                // Large enough to read what it shows (a screenshot is usually what the message is about).
+                                Thumbnail(path: tile.path, side: 200, fit: true, among: pictures)
                             }
                         }
                     }
@@ -46,23 +49,18 @@ struct ItemView: View {
                 if final { CopyButton(text: text) }
             }
         case let .reasoning(text):
-            ReasoningRow(text: text, seconds: until.flatMap { until in item.date.map { until.timeIntervalSince($0) } })
+            ReasoningRow(text: text, date: item.date, until: until)
         case let .plan(text):
             Text(text).font(.system(.callout, design: .monospaced)).padding(12).frame(maxWidth: .infinity, alignment: .leading).card()
-        case let .command(command, _, output, exitCode, _):
-            CommandCard(command: command, output: output, exitCode: exitCode, status: item.status)
+        case let .command(command, _, output, exitCode, _, description):
+            CommandCard(
+                command: command, description: description, output: output, exitCode: exitCode, status: item.status, started: item.date)
         case let .fileChange(changes):
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(changes, id: \.path) { change in FileChangeCard(change: change, status: item.status, cwd: cwd) }
             }
         case let .tool(name, detail):
-            // A row like every step's: its name as people say it, its arguments as their values, not JSON.
-            HStack(alignment: .top, spacing: 8) {
-                StatusIcon(status: item.status)
-                Text(ToolNames.name(name)).fontWeight(.medium)
-                Text(ToolNames.detail(detail)).foregroundStyle(.secondary).truncationMode(.tail)
-            }
-            .font(.callout).lineLimit(1).tip(detail)
+            ToolCard(name: name, detail: detail, status: item.status)
         case let .notice(text, error):
             if error {
                 CautionCallout(text: text)
@@ -109,9 +107,10 @@ private struct StatusIcon: View {
     var body: some View {
         Group {
             switch status {
+            // Done needs no colour, as Codex's steps: colour is kept for what needs you (failed, declined).
             case .running: Spinner().frame(width: 12, height: 12)
-            case .done: NucleoIcon("circle-check", fill: "glyph", size: 14).foregroundStyle(.green)
-            case .failed: NucleoIcon("circle-xmark", fill: "glyph", size: 14).foregroundStyle(.red)
+            case .done: NucleoIcon("check", size: 13).foregroundStyle(.tertiary)
+            case .failed: NucleoIcon("circle-xmark", size: 14).foregroundStyle(.red)
             case .declined: NucleoIcon("ban", size: 14).foregroundStyle(.orange)
             }
         }
@@ -268,64 +267,119 @@ private struct RiskLabel: View {
     }
 }
 
-/// A thought as a step's row: "Thought for 4s" and its first line; opened, all of it under.
+/// A step's row, as Codex draws them: quieter than the answer (secondary), the row itself the button, its chevron
+/// right after its words, shown on hover or while open (its place kept, so nothing shifts).
+private struct StepRow<Label: View, Trailing: View>: View {
+    @Binding var open: Bool
+    /// There's more to it to open.
+    let opens: Bool
+    @ViewBuilder let label: () -> Label
+    @ViewBuilder var trailing: () -> Trailing
+    @State private var hovered = false
+
+    var body: some View {
+        Button {
+            if opens { open.toggle() }
+        } label: {
+            HStack(alignment: .top, spacing: 8) {
+                label()
+                if opens {
+                    NucleoIcon("chevron-down", size: 10).rotationEffect(.degrees(open ? 180 : 0)).frame(height: 16)
+                        .opacity(hovered || open ? 1 : 0)
+                }
+                Spacer(minLength: 0)
+                trailing()
+            }
+            .font(.callout).foregroundStyle(.secondary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+    }
+}
+
+extension StepRow where Trailing == EmptyView {
+    init(open: Binding<Bool>, opens: Bool, @ViewBuilder label: @escaping () -> Label) {
+        self.init(open: open, opens: opens, label: label, trailing: { EmptyView() })
+    }
+}
+
+/// A thought as a step's row: "Thought for 4s" and its first line; opened, all of it under. The latest of a turn still
+/// going counts on, so its words never change as the next step comes.
 private struct ReasoningRow: View {
     let text: String
-    let seconds: TimeInterval?
+    let date: Date?
+    let until: Date?
     @State private var open = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Button {
-                open.toggle()
-            } label: {
-                HStack(alignment: .top, spacing: 8) {
-                    NucleoIcon("brain", size: 14).foregroundStyle(.secondary).frame(width: 14, height: 16)
-                    Text(Took.text("Thought", seconds)).fontWeight(.medium)
-                    if !open {
-                        Text(text.split(whereSeparator: \.isNewline).first.map(String.init) ?? "").foregroundStyle(.secondary).lineLimit(1)
-                            .truncationMode(.tail)
+            StepRow(open: $open, opens: true) {
+                NucleoIcon("brain", size: 14).frame(width: 14, height: 16)
+                Group {
+                    if let date, until == nil {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            Text(Took.text("Thought", context.date.timeIntervalSince(date)))
+                        }
+                    } else {
+                        Text(Took.text("Thought", until.flatMap { until in date.map { until.timeIntervalSince($0) } }))
                     }
-                    Spacer(minLength: 0)
-                    NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary)
                 }
-                .contentShape(Rectangle())
+                .fontWeight(.medium).monospacedDigit()
+                if !open {
+                    Text(text.split(whereSeparator: \.isNewline).first.map(String.init) ?? "").foregroundStyle(.tertiary).lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
-            .buttonStyle(.plain)
             if open { Text(text).foregroundStyle(.secondary).textSelection(.enabled).padding(.leading, 22) }
         }
         .font(.callout)
     }
 }
 
+/// A command's step, titled by what it does (the agent's words for it, where it gave them) with the command after it,
+/// quieter; without them, the command's line that says something. Running, how long it has been, and after a few
+/// seconds the latest line it printed in the command's place: on the row's one line, so nothing moves.
 private struct CommandCard: View {
     let command: String
+    let description: String
     let output: String
     let exitCode: Int?
     let status: ItemStatus
+    let started: Date?
     @State private var open = false
     /// How tall what it printed is: the box is that tall (up to 300 pt, then it scrolls), not the most it may be.
     @State private var outputHeight: CGFloat = 0
 
+    /// What it last printed: the last line with something on it.
+    private var latest: String? {
+        output.split(whereSeparator: \.isNewline).last { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    /// More to it than the row shows: what it printed, or the command whole.
+    private var opens: Bool { !output.isEmpty || !description.isEmpty || command.contains("\n") }
+
     var body: some View {
-        // A row like every step's; its output, opened, in a box beneath it, under its words.
+        // A row like every step's; opened, the command whole and its output in a box beneath it, under its words.
         VStack(alignment: .leading, spacing: 8) {
-            Button {
-                open.toggle()
-            } label: {
-                HStack(alignment: .top, spacing: 8) {
-                    StatusIcon(status: status)
-                    Text("$ " + command).font(.system(.callout, design: .monospaced)).lineLimit(open ? nil : 1)
-                    Spacer(minLength: 0)
-                    if let exitCode, exitCode != 0 { Text("exit \(exitCode)").font(.caption).foregroundStyle(.red) }
-                    if !output.isEmpty {
-                        NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary)
+            StepRow(open: $open, opens: opens) {
+                StatusIcon(status: status)
+                if status == .running, let started {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in title(running: context.date.timeIntervalSince(started)) }
+                } else {
+                    title(running: nil)
+                }
+            } trailing: {
+                if let exitCode, exitCode != 0 { Text("exit \(exitCode)").font(.caption).foregroundStyle(.red) }
+                if status == .running, let started {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text(Took.length(context.date.timeIntervalSince(started))).font(.caption.monospacedDigit()).foregroundStyle(
+                            .tertiary)
                     }
                 }
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            if open && !output.isEmpty {
+            if open && opens {
                 // As a terminal's pane, drawn as the diffs are: the command whole at its head with what it printed
                 // (how much, and a copy), then the output itself, quieter, under a hairline.
                 VStack(alignment: .leading, spacing: 0) {
@@ -333,29 +387,36 @@ private struct CommandCard: View {
                         (Text("$ ").foregroundStyle(.tertiary) + Text(command).foregroundStyle(.primary))
                             .font(.system(size: 11.5, design: .monospaced)).textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        let count = output.split(separator: "\n", omittingEmptySubsequences: false).count
-                        Text(count == 1 ? "1 line" : "\(count) lines").font(.system(size: 11).monospacedDigit()).foregroundStyle(.tertiary)
-                        CopyButton(text: output).tip("Copy the output")
+                        if !output.isEmpty {
+                            let count = output.split(separator: "\n", omittingEmptySubsequences: false).count
+                            Text(count == 1 ? "1 line" : "\(count) lines").font(.system(size: 11).monospacedDigit()).foregroundStyle(
+                                .tertiary)
+                            CopyButton(text: output).tip("Copy the output")
+                        } else {
+                            CopyButton(text: command).tip("Copy the command")
+                        }
                     }
                     .padding(.leading, 12).padding(.trailing, 6).padding(.vertical, 6)
                     .background(Color.primary.opacity(0.03))
-                    Rectangle().fill(Theme.stroke).frame(height: 1)
-                    // Scrolling both ways, a box larger than what's in it centres it: anchored top left instead, and
-                    // only as tall as the output.
-                    ScrollView([.vertical, .horizontal]) {
-                        Text(output).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary).lineSpacing(2)
-                            .textSelection(.enabled).fixedSize()
-                            .padding(.horizontal, 12).padding(.vertical, 10)
-                            .onGeometryChange(for: CGFloat.self) {
-                                $0.size.height
-                            } action: {
-                                outputHeight = $0
-                            }
+                    if !output.isEmpty {
+                        Rectangle().fill(Theme.stroke).frame(height: 1)
+                        // Scrolling both ways, a box larger than what's in it centres it: anchored top left instead, and
+                        // only as tall as the output.
+                        ScrollView([.vertical, .horizontal]) {
+                            Text(output).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary).lineSpacing(2)
+                                .textSelection(.enabled).fixedSize()
+                                .padding(.horizontal, 12).padding(.vertical, 10)
+                                .onGeometryChange(for: CGFloat.self) {
+                                    $0.size.height
+                                } action: {
+                                    outputHeight = $0
+                                }
+                        }
+                        .defaultScrollAnchor(.topLeading)
+                        .thinScrollbar()
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .frame(height: min(max(outputHeight, 1), 300))
                     }
-                    .defaultScrollAnchor(.topLeading)
-                    .thinScrollbar()
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .frame(height: min(max(outputHeight, 1), 300))
                 }
                 .background(Theme.code, in: RoundedRectangle(cornerRadius: 10))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -363,6 +424,20 @@ private struct CommandCard: View {
                 .padding(.leading, 22)
             }
         }
+    }
+
+    /// Its words, then the command (or, running a while, what it last printed), quieter, cut to the line.
+    @ViewBuilder private func title(running: TimeInterval?) -> some View {
+        let printing = running.map { $0 >= 3 } == true ? latest : nil
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            if description.isEmpty, printing == nil {
+                (Text("$ ").foregroundStyle(.tertiary) + Text(CommandText.line(command))).font(.system(.callout, design: .monospaced))
+            } else {
+                if !description.isEmpty { Text(description).layoutPriority(1) }
+                Text(printing ?? CommandText.line(command)).font(.system(size: 12, design: .monospaced)).foregroundStyle(.tertiary)
+            }
+        }
+        .lineLimit(1).truncationMode(.tail)
     }
 }
 
@@ -377,28 +452,17 @@ struct FileChangeCard: View {
         let path = relative(change.path, to: cwd)
         let (folder, name) = ((path as NSString).deletingLastPathComponent, (path as NSString).lastPathComponent)
         VStack(alignment: .leading, spacing: 8) {
-            Button {
-                open.toggle()
-            } label: {
-                HStack(alignment: .top, spacing: 8) {
-                    StatusIcon(status: status)
-                    Text(verb).font(.callout.weight(.medium))
-                    // The file first, its folder after it and quieter: the name is what's read.
-                    (Text(name).font(.system(.callout, design: .monospaced).weight(.medium))
-                        + Text(folder.isEmpty ? "" : "  " + folder).font(.system(.callout, design: .monospaced)).foregroundStyle(.tertiary))
-                        .lineLimit(1).truncationMode(.tail)
-                    Spacer(minLength: 6)
-                    let added = lines.count { $0.kind == .added }, removed = lines.count { $0.kind == .removed }
-                    if added > 0 { Text("+\(added)").foregroundStyle(DiffLine.green) }
-                    if removed > 0 { Text("−\(removed)").foregroundStyle(DiffLine.red) }
-                    if !lines.isEmpty {
-                        NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary)
-                    }
-                }
-                .font(.system(.callout).monospacedDigit())
-                .contentShape(Rectangle())
+            StepRow(open: $open, opens: !lines.isEmpty) {
+                StatusIcon(status: status)
+                Text(verb).fontWeight(.medium)
+                // The file first, its folder after it and quieter: the name is what's read.
+                (Text(name).font(.system(.callout, design: .monospaced).weight(.medium))
+                    + Text(folder.isEmpty ? "" : "  " + folder).font(.system(.callout, design: .monospaced)).foregroundStyle(.tertiary))
+                    .lineLimit(1).truncationMode(.tail)
+                let added = lines.count { $0.kind == .added }, removed = lines.count { $0.kind == .removed }
+                if added > 0 { Text("+\(added)").foregroundStyle(DiffLine.green).monospacedDigit().fixedSize() }
+                if removed > 0 { Text("−\(removed)").foregroundStyle(DiffLine.red).monospacedDigit().fixedSize() }
             }
-            .buttonStyle(.plain)
             if open && !lines.isEmpty {
                 DiffText(lines: lines)
                     .background(Theme.code, in: RoundedRectangle(cornerRadius: 10))
@@ -424,4 +488,89 @@ private func relative(_ path: String, to folder: String) -> String {
     let resolved = { (p: String) in p.hasPrefix("/private/") ? String(p.dropFirst("/private".count)) : p }
     let (inner, outer) = (resolved(path), resolved(base))
     return inner.hasPrefix(outer) ? String(inner.dropFirst(outer.count)) : (path as NSString).abbreviatingWithTildeInPath
+}
+
+/// A tool's step: a row like every step's, its name as people say it and its arguments' values on one line; opened (as a
+/// command is), each argument by its name with its whole value, in a box beneath it. No tooltip of raw JSON.
+private struct ToolCard: View {
+    let name: String
+    let detail: String
+    let status: ItemStatus
+    @State private var open = false
+
+    /// Its arguments by name, in the order given, each value as text (a nested value as compact JSON).
+    private var arguments: [(key: String, value: String)] {
+        guard let data = detail.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any]
+        else { return detail.isEmpty ? [] : [("", detail)] }
+        let order = Self.keys(in: detail)
+        let keys = order.filter { object[$0] != nil } + object.keys.filter { !order.contains($0) }.sorted()
+        return keys.compactMap { key in
+            guard let value = object[key] else { return nil }
+            switch value {
+            case let text as String: return (key, text)
+            case let number as NSNumber: return (key, number.stringValue)
+            default:
+                let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .fragmentsAllowed])
+                return (key, data.map { String(decoding: $0, as: UTF8.self) } ?? "\(value)")
+            }
+        }
+    }
+
+    /// The top level's keys in the order they're written (JSONSerialization's dictionary forgets it).
+    private static func keys(in json: String) -> [String] {
+        var keys: [String] = [], depth = 0, inString = false, escaped = false, start: String.Index?
+        var index = json.startIndex
+        while index < json.endIndex {
+            let c = json[index]
+            if inString {
+                if escaped {
+                    escaped = false
+                } else if c == "\\" {
+                    escaped = true
+                } else if c == "\"" {
+                    inString = false
+                    if depth == 1, let from = start {
+                        let after = json[json.index(after: index)...].drop { $0 == " " }
+                        if after.first == ":" { keys.append(String(json[json.index(after: from)..<index])) }
+                    }
+                }
+            } else if c == "\"" {
+                inString = true; start = index
+            } else if c == "{" || c == "[" {
+                depth += 1
+            } else if c == "}" || c == "]" {
+                depth -= 1
+            }
+            index = json.index(after: index)
+        }
+        return keys
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            StepRow(open: $open, opens: !detail.isEmpty) {
+                StatusIcon(status: status)
+                Text(ToolNames.name(name)).fontWeight(.medium).lineLimit(1)
+                Text(ToolNames.detail(detail)).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.tail)
+            }
+            if open && !detail.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(arguments.enumerated()), id: \.offset) { _, argument in
+                        VStack(alignment: .leading, spacing: 3) {
+                            if !argument.key.isEmpty {
+                                Text(argument.key).font(.system(size: 11, weight: .medium)).foregroundStyle(.tertiary)
+                            }
+                            Text(argument.value).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary)
+                                .lineSpacing(2).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke))
+            }
+        }
+    }
 }

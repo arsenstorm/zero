@@ -77,7 +77,6 @@ struct ComposeField: NSViewRepresentable {
     var handle: ComposeHandle?
     /// Scrolled inside: whether there's more above, and more below, for a fade at that edge.
     var onEdges: (Bool, Bool) -> Void = { _, _ in }
-    @Binding var height: CGFloat
 
     /// The messages' size, so what's typed reads as what's sent.
     static let font = NSFont.systemFont(ofSize: 14.5)
@@ -86,7 +85,7 @@ struct ComposeField: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSScrollView()
+        let scroll = ComposeScroll()
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = false
         scroll.borderType = .noBorder
@@ -154,8 +153,25 @@ struct ComposeField: NSViewRepresentable {
                 window.makeFirstResponder(nil)
             }
         }
-        context.coordinator.measure(view)
         context.coordinator.edges(scroll)
+    }
+
+    /// Two lines at least, eight at most; past that the text scrolls inside. Measured in SwiftUI's own layout pass,
+    /// at the width it's given: the height follows the text in the same frame, typed or set from outside (emptied as
+    /// it's sent), not a run loop later.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView scroll: NSScrollView, context: Context) -> CGSize? {
+        guard let view = scroll.documentView as? NSTextView, let manager = view.layoutManager, let container = view.textContainer
+        else { return nil }
+        let width = proposal.width ?? scroll.frame.width
+        let wrap = width - TokenTextView.inset.width * 2
+        // Laid out at the width asked about, then given back the view's own: SwiftUI may ask about others first.
+        let own = container.size.width
+        if wrap > 0, wrap.isFinite, wrap != own { container.size.width = wrap }
+        manager.ensureLayout(for: container)
+        let used = manager.usedRect(for: container).height
+        if container.size.width != own { container.size.width = own }
+        let lines = Self.lineHeight
+        return CGSize(width: width, height: (min(max(used, lines * 2), lines * 8) + TokenTextView.inset.height * 2).rounded(.up))
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -178,9 +194,7 @@ struct ComposeField: NSViewRepresentable {
             guard let view = notification.object as? TokenTextView else { return }
             parent.text = decode(view)
             restyle(view)
-            // At once, not on the next turn: the field grows in the same frame as its text, rather than the text
-            // scrolling a line inside the old height first and back again when the height follows.
-            measure(view, now: true)
+            view.enclosingScrollView?.invalidateIntrinsicContentSize() // measured again (sizeThatFits)
             report(view)
             if let scroll = view.enclosingScrollView { DispatchQueue.main.async { self.edges(scroll) } }
         }
@@ -303,23 +317,35 @@ struct ComposeField: NSViewRepresentable {
             if !tokens.isEmpty { view.setSelectedRange(NSRange(location: max(0, min(caret.location - shift, storage.length)), length: 0)) }
             view.needsDisplay = true
         }
+    }
+}
 
-        /// Two lines at least, eight at most; past that the text scrolls inside. From inside a SwiftUI update (`now`
-        /// false) the height is set after it.
-        func measure(_ view: NSTextView, now: Bool = false) {
-            guard let manager = view.layoutManager, let container = view.textContainer else { return }
-            manager.ensureLayout(for: container)
-            let used = manager.usedRect(for: container).height
-            let lines = ComposeField.lineHeight
-            let height = (min(max(used, lines * 2), lines * 8) + TokenTextView.inset.height * 2).rounded(.up)
-            guard abs(parent.height - height) > 0.5 else { return }
-            if now { parent.height = height } else { DispatchQueue.main.async { self.parent.height = height } }
-        }
+/// The field's scroll view, never left scrolled past its text. Grown to fit, the clip view kept the scroll it had
+/// while the text was taller than the old height (a new line scrolls the caret into view first), and hid the first line.
+final class ComposeScroll: NSScrollView {
+    override func tile() {
+        super.tile()
+        settle()
+    }
+
+    /// No further down than the text's foot: at the top whenever it all fits.
+    func settle() {
+        let clip = contentView.bounds
+        let top = max(0, min(clip.minY, (documentView?.frame.height ?? 0) - clip.height))
+        guard top != clip.minY else { return }
+        contentView.scroll(to: NSPoint(x: clip.minX, y: top))
+        reflectScrolledClipView(contentView)
     }
 }
 
 final class TokenTextView: NSTextView {
     weak var coordinator: ComposeField.Coordinator?
+
+    /// Shrunk (its text emptied or replaced): the scroll kept within it at once.
+    override func setFrameSize(_ size: NSSize) {
+        super.setFrameSize(size)
+        (enclosingScrollView as? ComposeScroll)?.settle()
+    }
 
     private func isCommandReturn(_ event: NSEvent) -> Bool {
         event.keyCode == 36 && event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command)

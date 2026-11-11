@@ -47,7 +47,8 @@ private let recordings = [
          {"id":"b","turn":"u","status":"done","kind":{"type":"plan","text":"- [x] one"}},
          {"id":"c","turn":null,"status":"failed","kind":{"type":"command","command":"make","cwd":"/","output":"no","exitCode":2,"durationMs":null}},
          {"id":"d","turn":null,"status":"declined","kind":{"type":"fileChange","changes":[{"path":"/a","kind":"update","movePath":"/b","diff":"-a\\n+b\\n"}]}},
-         {"id":"e","turn":null,"status":"done","kind":{"type":"notice","text":"Interrupted","error":false}}]
+         {"id":"e","turn":null,"status":"done","kind":{"type":"notice","text":"Interrupted","error":false}},
+         {"id":"f","turn":null,"status":"running","kind":{"type":"command","command":"make","cwd":"/","output":"","exitCode":null,"durationMs":null,"description":"Build the app"}}]
         """
     let items = try JSONDecoder().decode([ConversationItem].self, from: Data(json.utf8))
     #expect(items[0].kind == .tool(name: "Read", detail: "a.rs"))
@@ -56,6 +57,16 @@ private let recordings = [
     #expect(items[2].status == .failed)
     #expect(items[3].kind == .fileChange([FileChange(path: "/a", kind: "update", movePath: "/b", diff: "-a\n+b\n")]))
     #expect(items[4].kind == .notice(text: "Interrupted", error: false))
+    // What the command does, in the agent's words; without them (an older item), none.
+    #expect(items[5].kind == .command(command: "make", cwd: "/", output: "", exitCode: nil, durationMs: nil, description: "Build the app"))
+}
+
+@Test func aMessageKeepsTheIdItWasSentWith() throws {
+    let json =
+        #"[{"id":"u","turn":null,"status":"done","kind":{"type":"user","text":"hi","sent":"sending-1"}},"#
+        + #"{"id":"v","turn":null,"status":"done","kind":{"type":"user","text":"hi"}}]"#
+    let items = try JSONDecoder().decode([ConversationItem].self, from: Data(json.utf8))
+    #expect(items.map(\.sent) == ["sending-1", nil])
 }
 
 @Test func anItemZeroDoesNotKnowYetStillDecodes() throws {

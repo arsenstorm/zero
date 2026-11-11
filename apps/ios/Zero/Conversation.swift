@@ -355,7 +355,7 @@ struct StepView: View {
             if ask.state.isFinal { AskCard(model: model, ask: ask) } else { OpenAskRow(ask: ask) }
         } else {
             switch item.kind {
-            case let .command(command, _, output, exitCode, _):
+            case let .command(command, _, output, exitCode, _, _):
                 Button {
                     open.toggle()
                 } label: {

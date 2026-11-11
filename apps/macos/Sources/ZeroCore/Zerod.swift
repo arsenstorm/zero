@@ -42,6 +42,8 @@ public struct ConversationItem: Decodable, Equatable, Sendable, Identifiable {
     public var status: ItemStatus
     /// When zerod first saw it, in milliseconds since 1970; nil from before zerod kept times.
     public var at: Int?
+    /// A message of yours: the id the app sent or queued it with (its own copy, shown at once; its queue entry).
+    public var sent: String?
 
     public enum Kind: Equatable, Sendable {
         /// Your words, and the images sent with them (their files).
@@ -49,7 +51,8 @@ public struct ConversationItem: Decodable, Equatable, Sendable, Identifiable {
         case agent(text: String, finalAnswer: Bool)
         case reasoning(text: String)
         case plan(text: String)
-        case command(command: String, cwd: String, output: String, exitCode: Int?, durationMs: Int?)
+        /// `description`: what it does in the agent's words, where the provider gives them ("" otherwise).
+        case command(command: String, cwd: String, output: String, exitCode: Int?, durationMs: Int?, description: String = "")
         case fileChange([FileChange])
         case tool(name: String, detail: String)
         case notice(text: String, error: Bool)
@@ -57,8 +60,21 @@ public struct ConversationItem: Decodable, Equatable, Sendable, Identifiable {
         case table(title: String, columns: [String], rows: [[String]])
     }
 
-    public init(id: String, turn: String?, kind: Kind, status: ItemStatus, at: Int? = nil) {
-        self.id = id; self.turn = turn; self.kind = kind; self.status = status; self.at = at
+    public init(id: String, turn: String?, kind: Kind, status: ItemStatus, at: Int? = nil, sent: String? = nil) {
+        self.id = id; self.turn = turn; self.kind = kind; self.status = status; self.at = at; self.sent = sent
+    }
+
+    private enum Keys: String, CodingKey { case id, turn, kind, status, at, sent }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = try c.decode(String.self, forKey: .id)
+        turn = try c.decodeIfPresent(String.self, forKey: .turn)
+        kind = try c.decode(Kind.self, forKey: .kind)
+        status = try c.decode(ItemStatus.self, forKey: .status)
+        at = try c.decodeIfPresent(Int.self, forKey: .at)
+        // zerod keeps it with the message's words (model.rs ItemKind::User).
+        sent = try c.nestedContainer(keyedBy: Keys.self, forKey: .kind).decodeIfPresent(String.self, forKey: .sent)
     }
 
     public var date: Date? { at.map { Date(timeIntervalSince1970: Double($0) / 1000) } }
@@ -79,7 +95,8 @@ public struct ConversationItem: Decodable, Equatable, Sendable, Identifiable {
 
 extension ConversationItem.Kind: Decodable {
     private enum Keys: String, CodingKey {
-        case type, text, finalAnswer, command, cwd, output, exitCode, durationMs, changes, name, detail, error, images, title, columns, rows
+        case type, text, finalAnswer, command, cwd, output, exitCode, durationMs, description, changes, name, detail, error, images, title,
+            columns, rows
     }
 
     public init(from decoder: Decoder) throws {
@@ -94,7 +111,8 @@ extension ConversationItem.Kind: Decodable {
             self = .command(
                 command: try c.decode(String.self, forKey: .command), cwd: try c.decode(String.self, forKey: .cwd),
                 output: try c.decode(String.self, forKey: .output), exitCode: try c.decodeIfPresent(Int.self, forKey: .exitCode),
-                durationMs: try c.decodeIfPresent(Int.self, forKey: .durationMs))
+                durationMs: try c.decodeIfPresent(Int.self, forKey: .durationMs),
+                description: try c.decodeIfPresent(String.self, forKey: .description) ?? "")
         case "fileChange": self = .fileChange(try c.decode([FileChange].self, forKey: .changes))
         case "tool": self = .tool(name: try c.decode(String.self, forKey: .name), detail: try c.decode(String.self, forKey: .detail))
         case "notice": self = .notice(text: try text(), error: try c.decode(Bool.self, forKey: .error))
@@ -433,17 +451,18 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     /// One issue a lead drives (board.rs, model.rs Issue): who has it, in words what it needs or where it stands.
     public struct Issue: Decodable, Equatable, Sendable, Identifiable {
         public var ticket: String
-        /// you, working, waiting, parked or done.
+        /// you, over (the user's step to take), working, waiting, parked or done; one Zero doesn't know shows as done.
         public var state: String
         public var text: String
         /// When it came to its state, in milliseconds since 1970.
         public var since: Int
         public var id: String { ticket }
 
-        /// In the sidebar's states: on the user is Needs you, parked is Paused.
+        /// In the sidebar's states: on the user is Needs you, over to them Over to you, parked is Paused.
         public var boardState: BoardRow.State {
             switch state {
             case "you": .needsYou
+            case "over": .handed
             case "working": .working
             case "waiting": .waiting
             case "parked": .paused
@@ -634,8 +653,9 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
             case let .reasoning(body): items[i].kind = .reasoning(text: body + text)
             case let .plan(body): items[i].kind = .plan(text: body + text)
             case let .notice(body, error): items[i].kind = .notice(text: body + text, error: error)
-            case let .command(command, cwd, output, exitCode, durationMs):
-                items[i].kind = .command(command: command, cwd: cwd, output: output + text, exitCode: exitCode, durationMs: durationMs)
+            case let .command(command, cwd, output, exitCode, durationMs, description):
+                items[i].kind = .command(
+                    command: command, cwd: cwd, output: output + text, exitCode: exitCode, durationMs: durationMs, description: description)
             case .fileChange, .tool, .table: break
             }
         case let .approval(approval):
@@ -990,13 +1010,17 @@ public final class ZerodLink: @unchecked Sendable {
         return session
     }
 
-    public func send(session: String, text: String, images: [String] = [], model: String? = nil, effort: String? = nil) async throws {
-        _ = try await call("send", ["session": session, "text": text, "images": images, "model": model, "effort": effort])
+    /// `id`: the app's own for the message (its copy shown at once), which zerod's item for it keeps (`sent`).
+    public func send(
+        session: String, text: String, images: [String] = [], model: String? = nil, effort: String? = nil, id: String? = nil
+    ) async throws {
+        _ = try await call("send", ["session": session, "text": text, "images": images, "model": model, "effort": effort, "item": id])
     }
 
-    /// For after the current turn, one turn each; between turns it goes at once.
-    public func queue(session: String, text: String, images: [String] = []) async throws {
-        _ = try await call("queue", ["session": session, "text": text, "images": images])
+    /// For after the current turn, one turn each; between turns it goes at once. `id`: the app's own for it, which the
+    /// queue entry takes and zerod's item for the message keeps (`sent`).
+    public func queue(session: String, text: String, images: [String] = [], id: String? = nil) async throws {
+        _ = try await call("queue", ["session": session, "text": text, "images": images, "item": id])
     }
     public func unqueue(session: String, item: String) async throws { _ = try await call("unqueue", ["session": session, "item": item]) }
     /// Lets a queue held since a stop go on.

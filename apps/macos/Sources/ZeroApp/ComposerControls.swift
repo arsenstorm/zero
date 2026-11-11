@@ -54,7 +54,11 @@ struct QueueStrip: View {
                         // Edit and delete on squares that take the row's hover when the pointer is on them; then Steer
                         // as a pill, on a hairline so it reads on the hovered row too, solid under the pointer. The
                         // arrow turns the corner: out of the queue and up to the agent.
-                        if !sent.contains(item.id) {
+                        if sent.contains(item.id) {
+                            // Sent on by zerod, its turn under way: said so, in its buttons' place (a grey row with
+                            // none read as broken), and why the composer says the agent is working.
+                            Text("Next").font(.system(size: 12, weight: .medium)).foregroundStyle(.tertiary).padding(.trailing, 10)
+                        } else {
                             HStack(spacing: 2) {
                                 square("pen", help: "Edit in the composer", id: item.id + "/edit") { edit(item) }
                                 square("trash", help: "Delete", id: item.id + "/delete") { remove(item) }
@@ -114,10 +118,12 @@ struct QueueStrip: View {
         .onHover { inside in if inside { control = id } else if control == id { control = nil } }
     }
 
+    /// The message as one line, all of it (cut at the row's end), not its first line: that can be only "for this:".
     private static func gist(_ item: Queued) -> String {
         let line =
             item.text.replacingOccurrences(of: #"\s*\[Image #\d+\]"#, with: "", options: .regularExpression)
-            .split(whereSeparator: \.isNewline).first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+            .split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            .joined(separator: " ")
         let count = item.images?.count ?? 0
         let pictures = count == 0 ? "" : (count == 1 ? "an image" : "\(count) images")
         return line.isEmpty

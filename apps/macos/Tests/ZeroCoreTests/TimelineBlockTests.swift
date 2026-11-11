@@ -5,23 +5,36 @@ private func item(_ id: String, _ kind: ConversationItem.Kind) -> ConversationIt
     ConversationItem(id: id, turn: "t", kind: kind, status: .done)
 }
 
-/// A turn that ends on an ask: what the agent wrote before asking is the reasoning behind the question, shown in full
-/// above it, not folded away with the commands. The rest of the turn's words fold as before.
-@Test func theWordsBeforeAnAskShowInFull() {
+/// A turn that ends on an ask: what the agent wrote just before asking is the reasoning behind the question, shown in
+/// full above it, not folded away with the commands. The rest of the turn's words fold as before.
+@Test func theWordsJustBeforeAnAskShowInFull() {
     let items = [
         item("u", .user(text: "what's left?")),
         item("a1", .agent(text: "Checking main.", finalAnswer: false)),
-        item("c1", .command(command: "git log", cwd: "/", output: "", exitCode: 0, durationMs: 1)),
+        item("c1", .command(command: "zero ask \"Close it?\" --async", cwd: "/", output: "k3x9qa", exitCode: 0, durationMs: 1)),
         item("a2", .agent(text: "Here's how I'd decide: each item has to earn its place.", finalAnswer: false)),
-        item("c2", .command(command: "zero ask \"Close it?\" --async", cwd: "/", output: "k3x9qa", exitCode: 0, durationMs: 1)),
         item("a3", .agent(text: "I've asked in Zero.\n\n[zero: asked k3x9qa]", finalAnswer: true)),
     ]
     let ids = TimelineBlock.of(items, working: false).map(\.id)
     #expect(ids == ["u", "work-a1", "a2", "a3"], "\(ids)")
     // Ending otherwise, the words before the last stay in the work.
     var done = items
-    done[5] = item("a3", .agent(text: "Done.\n\n[zero: done]", finalAnswer: true))
+    done[4] = item("a3", .agent(text: "Done.\n\n[zero: done]", finalAnswer: true))
     #expect(TimelineBlock.of(done, working: false).map(\.id) == ["u", "work-a1", "a3"])
+}
+
+/// Words with steps after them stay where they were as the turn ends on an ask: above those steps, not moved below.
+@Test func wordsBeforeStepsStayAboveThemWhenTheTurnEndsOnAnAsk() {
+    let items = [
+        item("u", .user(text: "what's left?")),
+        item("a1", .agent(text: "Second note", finalAnswer: false)),
+        item("c1", .command(command: "git log", cwd: "/", output: "", exitCode: 0, durationMs: 1)),
+        item("c2", .command(command: "zero ask \"Close it?\" --async", cwd: "/", output: "k3x9qa", exitCode: 0, durationMs: 1)),
+        item("a2", .agent(text: "I've asked in Zero.\n\n[zero: asked k3x9qa]", finalAnswer: true)),
+    ]
+    let blocks = TimelineBlock.of(items, working: false)
+    #expect(blocks.map(\.id) == ["u", "work-a1", "a2"], "\(blocks.map(\.id))")
+    if case let .work(_, work, _, _, _) = blocks[1] { #expect(work.map(\.id) == ["a1", "c1", "c2"]) }
 }
 
 /// Turns a worker's report or an event started, that asked the user nothing and set no issue row, fold into one row,
@@ -59,4 +72,24 @@ private func item(_ id: String, _ kind: ConversationItem.Kind) -> ConversationIt
     ]
     let rows = TimelineRow.of(TimelineBlock.of(items, working: false))
     #expect(!rows.contains { if case .quiet = $0 { true } else { false } }, "\(rows.map(\.id))")
+}
+
+/// A command with no words for what it does reads as its line that says something, not a heredoc's interpreter.
+@Test func aCommandReadsAsItsLineThatSaysSomething() {
+    #expect(CommandText.line("python3 - <<'EOF'\nfrom PIL import Image\nEOF") == "python3 - · from PIL import Image")
+    #expect(CommandText.line("cd /work/zero && cat <<EOF > a.txt\nhello\nEOF") == "cat > a.txt · hello")
+    #expect(CommandText.line("git status\n") == "git status")
+    #expect(CommandText.line("") == "")
+}
+
+/// A run of steps between two notes, folded, says what they were.
+@Test func aFoldedRunOfStepsSaysWhatTheyWere() {
+    let steps = [
+        item("r", .reasoning(text: "Looking")),
+        item("c1", .command(command: "ls", cwd: "/", output: "", exitCode: 0, durationMs: 1)),
+        item("c2", .command(command: "make", cwd: "/", output: "", exitCode: 0, durationMs: 1)),
+        item("f", .fileChange([FileChange(path: "/a", kind: "update", movePath: nil, diff: "")])),
+    ]
+    #expect(StepSummary.text(steps) == "Thought, ran 2 commands, edited a file")
+    #expect(StepSummary.text([item("t", .tool(name: "Read", detail: "a.rs"))]) == "Used a tool")
 }

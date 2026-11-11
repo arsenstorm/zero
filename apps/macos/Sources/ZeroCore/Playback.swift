@@ -35,7 +35,8 @@ import Observation
     @ObservationIgnored private var published = (playing: false, caughtUp: true)
     @ObservationIgnored private var publishedWaiting: Date?
     @ObservationIgnored private var cards: [String: Date] = [:]
-    /// The words of yours shown as just sent: zerod's copy of one, in its place, shows at once too.
+    /// Zero's own copies of messages just sent (Sending) that have shown: zerod's copy of one (the item that keeps its
+    /// id, `sent`), in its place, shows at once too.
     @ObservationIgnored private var sent: Set<String> = []
 
     @ObservationIgnored private var items: [ConversationItem] = []
@@ -131,7 +132,7 @@ import Observation
                 guard read(reading, now: now) else { break }
                 continue
             }
-            guard shownCount < items.count else { credit = min(credit, Self.beat); break }
+            guard shownCount < items.count, !fadingBefore(items[shownCount], now: now) else { credit = min(credit, Self.beat); break }
             let item = items[shownCount]
             if Self.words(item) != nil {
                 reveal(item, now: now, whole: false)
@@ -146,6 +147,12 @@ import Observation
             readout.now = now
         }
         settle(now)
+    }
+
+    /// A message (the next turn's) waits for the last words before it to finish fading in, not just to be read.
+    private func fadingBefore(_ item: ConversationItem, now: Date) -> Bool {
+        guard case .user = item.kind, let reading else { return false }
+        return reading.runs.contains { now.timeIntervalSince($0.since) < Self.fade }
     }
 
     /// Reads on as far as the credit goes, to the end of a word; false when it goes nowhere.
@@ -170,16 +177,17 @@ import Observation
         credit = Self.beat
     }
 
-    /// Yours just sent from the composer: Zero's own copy (Sending), or zerod's in its place once it has it.
+    /// Yours just sent from the composer: Zero's own copy (Sending), or zerod's in its place once it has it, known by
+    /// the copy's id it keeps. Never by its words: one queued with the same words waits its turn.
     private func justSent(_ item: ConversationItem) -> Bool {
-        guard item.isYours, case let .user(text, _) = item.kind else { return false }
-        return item.id.hasPrefix("sending-") || sent.contains(text)
+        guard item.isYours else { return false }
+        return item.id.hasPrefix("sending-") || item.sent.map(sent.contains) == true
     }
 
     private func reveal(_ item: ConversationItem, now: Date, whole: Bool, fading: Bool = true) {
         shownCount += 1
         through = item.id
-        if item.id.hasPrefix("sending-"), case let .user(text, _) = item.kind { sent.insert(text) }
+        if item.id.hasPrefix("sending-") { sent.insert(item.id) }
         // Opened, only the last answer can still grow, and be read out.
         guard Self.words(item) != nil, !whole || fading || item.id == items.last?.id else { reading = nil; return }
         let readout = readouts[item.id] ?? Readout(id: item.id, now: now)

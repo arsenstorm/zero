@@ -35,13 +35,12 @@ public enum TimelineBlock: Identifiable, Equatable, Sendable {
                 blocks.append(.user(item))
                 start = item.date
             case let .agent(text, finalAnswer: true):
-                // Ending on an ask: the words before it are the reasoning behind the question, shown in full above it
-                // rather than folded with the commands.
+                // Ending on an ask: the words just before it are the reasoning behind the question, shown in full above
+                // it rather than folded with the commands. Only words that are the work's last: words with steps after
+                // them stay where they were, above those steps (moved below them, they jumped as the turn ended).
                 var before: ConversationItem?
-                if case .asked? = ZeroEnding.split(text).1,
-                    let at = work.lastIndex(where: { if case .agent(_, false) = $0.kind { true } else { false } })
-                {
-                    before = work.remove(at: at)
+                if case .asked? = ZeroEnding.split(text).1, case .agent(_, false)? = work.last?.kind {
+                    before = work.removeLast()
                 }
                 flush(end: item.date, live: false)
                 if let before { blocks.append(.answer(before)) }
@@ -136,7 +135,7 @@ public enum TimelineRow: Identifiable, Equatable, Sendable {
         if turn.contains(where: { if case let .work(_, _, _, _, live) = $0 { live } else { false } }) { return false }
         return !items.contains { item in
             switch item.kind {
-            case let .command(command, _, _, _, _): command.contains(changes)
+            case let .command(command, _, _, _, _, _): command.contains(changes)
             case let .tool(name, _): name.contains(changes)
             case let .agent(text, _): text.contains(changes)
             case .table: true
@@ -155,7 +154,7 @@ extension ConversationItem {
     nonisolated(unsafe) private static let askID = #/ask ([a-z0-9]{6})/#
 
     public func ask(in asks: [Ask], session: String) -> Ask? {
-        guard case let .command(command, _, output, _, _) = kind,
+        guard case let .command(command, _, output, _, _, _) = kind,
             command.firstMatch(of: Self.zeroAsks) != nil
         else { return nil }
         let own = asks.filter { $0.isAgents(in: session) }
@@ -373,5 +372,47 @@ public enum ToolNames {
             }
         }
         return values.sorted { $0.count < $1.count }.joined(separator: " · ")
+    }
+}
+
+/// A command as a step's row says it, when the agent gave no words for what it does: the line that says something.
+/// A heredoc's first line is only its interpreter (`python3 - <<'EOF'`), so its body's first line goes with it; a
+/// leading `cd somewhere &&` is where, not what.
+public enum CommandText {
+    nonisolated(unsafe) private static let heredoc = #/\s*<<-?\s*['"]?\w+['"]?/#
+    nonisolated(unsafe) private static let cd = #/^cd\s+\S+\s*&&\s*/#
+
+    public static func line(_ command: String) -> String {
+        let lines = command.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard var first = lines.first else { return "" }
+        first = first.replacing(cd, with: "")
+        guard first.contains(heredoc) else { return first }
+        let head = first.replacing(heredoc, with: "")
+        return lines.count > 1 ? head + " · " + lines[1] : head
+    }
+}
+
+/// A run of steps folded to one line, as Codex says them: "Thought, ran 3 commands, edited a file".
+public enum StepSummary {
+    public static func text(_ steps: [ConversationItem]) -> String {
+        var thought = false, commands = 0, files = 0, tools = 0, other = 0
+        for step in steps {
+            switch step.kind {
+            case .reasoning: thought = true
+            case .command: commands += 1
+            case let .fileChange(changes): files += changes.count
+            case .tool: tools += 1
+            default: other += 1
+            }
+        }
+        let count = { (n: Int, one: String, word: String) in n == 1 ? one : "\(n) \(word)s" }
+        var parts: [String] = []
+        if thought { parts.append("thought") }
+        if commands > 0 { parts.append("ran " + count(commands, "a command", "command")) }
+        if files > 0 { parts.append("edited " + count(files, "a file", "file")) }
+        if tools > 0 { parts.append("used " + count(tools, "a tool", "tool")) }
+        if other > 0 { parts.append(count(other, "a step", "step")) }
+        let text = parts.joined(separator: ", ")
+        return text.prefix(1).uppercased() + text.dropFirst()
     }
 }

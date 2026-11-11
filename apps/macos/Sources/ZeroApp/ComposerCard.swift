@@ -38,6 +38,9 @@ struct ReplyBox: View {
     /// Told when this box gains or loses focus: a question card on the composer stays up while it's typed in (the
     /// pointer, hidden while typing, no longer holds it there).
     @Environment(\.dockFocus) private var dockFocus
+    /// What this box last told the card: taken back as it goes. Its focus is already gone by then (removed focused, as
+    /// a card answered from it is), so going by the focus left the card held up, typed in by no one.
+    @State private var told = false
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -74,9 +77,12 @@ struct ReplyBox: View {
             }
         }
         .onDisappear {
-            if let pasting { NSEvent.removeMonitor(pasting) }; if focus.wrappedValue == key { dockFocus?(false) }
+            if let pasting { NSEvent.removeMonitor(pasting) }
+            if told { dockFocus?(false); told = false }
         }
-        .onChange(of: focus.wrappedValue == key) { _, on in dockFocus?(on) }
+        .onChange(of: focus.wrappedValue == key) { _, on in
+            told = on; dockFocus?(on)
+        }
         // A moment after appearing: in the same update, the field can't take focus yet and it's dropped.
         .task { if autofocus { try? await Task.sleep(for: .milliseconds(50)); focus.wrappedValue = key } }
     }
@@ -141,7 +147,6 @@ struct ComposerCard: View {
     let mode: Mode
     @State private var projectAnchor = CGRect.zero
     @State private var runtimeAnchor = CGRect.zero
-    @State private var fieldHeight = ComposeField.lineHeight * 2
     @State private var mentionHeight: CGFloat = 0
 
     private var agentName: String? { if case .agent(let name) = mode { return name } else { return nil } }
@@ -222,10 +227,8 @@ struct ComposerCard: View {
                 onSubmit: submit,
                 onTrigger: { controller.updateMention(key: key, trigger: $0) },
                 onKey: { controller.mentionKey($0, for: key) },
-                highlightFiles: controller.suggestFiles,
-                height: $fieldHeight
+                highlightFiles: controller.suggestFiles
             )
-            .frame(height: fieldHeight)
             .padding(.horizontal, -TokenTextView.inset.width) // text still starts under the card's 14 pt
             HStack(spacing: 6) {
                 if agentName == nil {

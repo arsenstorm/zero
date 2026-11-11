@@ -167,12 +167,12 @@ enum RichMarkdown {
                     let text = NSMutableAttributedString(
                         string: marker + "\t",
                         attributes: [.font: NSFont.systemFont(ofSize: size), .foregroundColor: NSColor.secondaryLabelColor])
-                    // A bullet larger than the text's own "•" (a speck beside it), lowered to sit on the line's middle
-                    // as it was: a font scales up from the baseline.
+                    // A bullet larger than the text's own "•" (a speck beside it): the heavy weight's, as large as one at
+                    // 1.4 times the size and centred on the letters' middle, at the text's own size, so the item's first
+                    // line is as tall as the lines under it (a larger font made it taller, its gap below wider).
                     if !ordered {
-                        text.addAttributes(
-                            [.font: NSFont.systemFont(ofSize: round(size * 1.4)), .baselineOffset: -round(size * 0.14)],
-                            range: NSRange(location: 0, length: 1))
+                        text.addAttribute(
+                            .font, value: NSFont.systemFont(ofSize: size, weight: .heavy), range: NSRange(location: 0, length: 1))
                     }
                     text.append(styled(inline(item.text), font: .systemFont(ofSize: size)))
                     let hang = indent + indentStep
@@ -233,7 +233,7 @@ enum RichMarkdown {
         // Drawn through a cell of its own, as the image pills are: answers are laid out by TextKit 1, which keeps an
         // attachment's `image` but draws nothing for it.
         let attachment = NSTextAttachment()
-        attachment.attachmentCell = NSTextAttachmentCell(imageCell: image)
+        attachment.attachmentCell = PictureCell(imageCell: image)
         let out = NSMutableAttributedString(attachment: attachment)
         out.append(NSAttributedString(string: "\n"))
         out.addAttributes([.paragraphStyle: paragraph, .toolTip: alt], range: NSRange(location: 0, length: out.length))
@@ -1101,4 +1101,14 @@ private struct ReplyChip: View {
 extension EnvironmentValues {
     /// In a conversation: what's selected in its words, quoted into its composer.
     @Entry var replyToSelection: ((String) -> Void)? = nil
+}
+
+/// An image an agent shows, drawn at `alpha`: as an answer reads out, it fades in with the words around it
+/// (MarkdownText.faded) rather than showing whole before the words that bring it.
+final class PictureCell: NSTextAttachmentCell {
+    var alpha: CGFloat = 1
+
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
+        image?.draw(in: cellFrame, from: .zero, operation: .sourceOver, fraction: alpha, respectFlipped: true, hints: nil)
+    }
 }

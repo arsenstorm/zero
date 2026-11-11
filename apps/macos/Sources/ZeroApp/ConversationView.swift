@@ -69,6 +69,23 @@ struct ConversationView: View {
     static let slide = Animation.smooth(duration: slideDuration)
     /// The card's rise: ease-out cubic, the curve the room at the end grows on, step for step.
     static let rise = Animation.timingCurve(0.33, 1, 0.68, 1, duration: slideDuration)
+    /// Following the end, how quickly the page closes on it: what's left of the way shrinks by e every 70 ms, frame by
+    /// frame, so growth on the way adds to the way left and the same movement carries on (a scroll animation started
+    /// again showed a frame at the new end, then went back).
+    static let glide = 0.07
+    /// Your message come into the conversation (from the queue's strip): seen once the page has brought it up from
+    /// behind the question card and the composer, not there.
+    static let enter = AnyTransition.opacity.animation(.easeOut(duration: 0.2).delay(0.12))
+
+    /// Eased from `from` to nothing over a slide, on the card's curve (ease-out cubic).
+    struct Ease {
+        let from: CGFloat
+        let start: Date
+        func at(_ now: Date) -> CGFloat {
+            let t = min(1, max(0, now.timeIntervalSince(start) / ConversationView.slideDuration))
+            return t >= 1 ? 0 : from * pow(1 - t, 3)
+        }
+    }
 
     @Observable final class Foot {
         /// When this conversation was opened: a question card there already shows in place, not coming in.
@@ -86,13 +103,33 @@ struct ConversationView: View {
         var overQueue = false
         /// A text box in the card focused: being typed in, it stays up whatever the pointer does.
         var typing = false
+        /// The card on show (Sinker): one fading out as another comes goes after it, and mustn't reset the new one's.
+        @ObservationIgnored var shownCard: UUID?
         var hovering: Bool { overCard || overComposer || overQueue || typing }
         /// How far the card has sunk behind the composer: as far as the conversation is scrolled up from its end, until
         /// only its strip shows (the surface under it gone too); none while the pointer is on it or the composer.
-        var sunk: CGFloat { arriving || hovering ? 0 : min(below, deepest) }
-        /// Just come: sliding up (Sinker) as the conversation slides up for it (EndRoom), neither sunk nor raised by
-        /// the scroll or the pointer meanwhile.
-        var arriving = false
+        var sunk: CGFloat { hovering ? 0 : min(below, deepest) }
+        /// Just come (DockSlot), and rising: `rise` is how far below its place it still is (all of it, `.infinity`,
+        /// until its room is known). The room for it at the conversation's end grows by as much as it rises (EndRoom),
+        /// frame by frame on one curve, and the page, kept to its end, moves with it: the card and the page start in
+        /// the same frame and go together.
+        @ObservationIgnored var arriving = false
+        var rise: CGFloat = 0
+        /// The room grows as it rises: not when the page holds still (a message just sent, its room under it).
+        var riseRoom = false
+        @ObservationIgnored var riseEase: Ease?
+        /// Room the rise added at the end since the page last moved: kept to, not glided to.
+        @ObservationIgnored var pinned: CGFloat = 0
+        /// The queue's strip just gone: its room, given back on the card's curve (StripRoom), so the card on it eases
+        /// down with the page rather than dropping in a frame.
+        var stripGone: CGFloat = 0
+        @ObservationIgnored var stripEase: Ease?
+        @ObservationIgnored var stripHeight: CGFloat = 0
+        /// Following the end: how far short of it the page still is, closed frame by frame (ConversationView.glide).
+        @ObservationIgnored var gap: CGFloat = 0
+        /// Something here eases (or the page glides): the frame clock (FootClock) runs.
+        var ticking = false
+        @ObservationIgnored var lastTick: Date?
         /// As far as it sinks: all but its strip.
         var deepest: CGFloat { max(0, card - AskDock.tuck - 24) }
     }
@@ -101,15 +138,20 @@ struct ConversationView: View {
     @State private var queuing: [Queued] = []
     /// The strip's messages: those waiting (zerod's queue, and any just queued from here), then those zerod has sent on
     /// that playback hasn't reached yet (they move into the conversation in their turn). Never in both places.
+    /// Known by id, never by words (the same words can be queued twice, or be an earlier message's): one queued here
+    /// keeps its id in zerod's queue and on zerod's item for it once sent on (`sent`).
     private var shownQueue: [Queued] {
         let items = conversation.items
         let shown = min(playback.count, items.count)
-        let words = { (item: ConversationItem) -> String? in if item.isYours, case let .user(text, _) = item.kind { text } else { nil } }
-        // The last few of yours already in the conversation: a strip copy of one of them is stale.
-        let inChat = Set(items.prefix(shown).suffix(12).compactMap(words))
-        let unplayed = items.dropFirst(shown).compactMap { item in words(item).map { Queued(id: item.id, text: $0, images: nil) } }
-        let waiting = (queued + queuing.filter { pending in !queued.contains { $0.text == pending.text } })
-            .filter { q in !inChat.contains(q.text) && !unplayed.contains { $0.text == q.text } }
+        // In the conversation already (the board's word that it went can come a moment after the message itself).
+        let carried = Set(items.compactMap(\.sent))
+        let unplayed = items.dropFirst(shown).compactMap { item -> Queued? in
+            // Its images as they were in the strip ("· an image"): only its buttons go as zerod sends it on.
+            guard item.isYours, case let .user(text, images) = item.kind else { return nil }
+            return Queued(id: item.id, text: text, images: images.isEmpty ? nil : images)
+        }
+        let waiting = (queued + queuing.filter { pending in !queued.contains { $0.id == pending.id } })
+            .filter { !carried.contains($0.id) }
         return unplayed + waiting
     }
     /// Those in the strip zerod has sent on already: no edit, delete or Steer for them.
@@ -130,6 +172,9 @@ struct ConversationView: View {
     @State private var pageHeight: CGFloat = 0
     /// The room just gone: growth still anchors to the top until scrolling settles, so taking it away moves nothing.
     @State private var settling = false
+    /// The scroll under way is your hand's (not a slide of Zero's): only then does where it stops say whether you're
+    /// following the end. A slide's own stop a point short of a moving end would otherwise let go of it.
+    @State private var handScrolled = false
     /// A question, ask or approval just answered: the page keeps the height it had, so the card fades out where it
     /// was and nothing above it moves; what comes next (its agent starting, its reply) fills that room. Given back
     /// when you scroll.
@@ -190,11 +235,14 @@ struct ConversationView: View {
 
     /// A block. The asks its turn made are among its steps, folded as thinking is; the card to answer one is above
     /// the composer.
-    private func row(_ block: TimelineBlock, turns: [String: String]) -> some View { blockRow(block, turns: turns) }
+    private func row(_ block: TimelineBlock, turns: [String: String], newest: String? = nil) -> some View {
+        blockRow(block, turns: turns).transition(block.id == newest && !lifted ? Self.enter : .identity)
+    }
 
     private func blockRow(_ block: TimelineBlock, turns: [String: String]) -> some View {
         BlockRow(
-            block: block, cwd: conversation.cwd, quote: quote, save: save, rewind: { rewinding = $0 },
+            block: block, cwd: conversation.cwd, answered: shape.answered.contains(block.id), followed: shape.followed.contains(block.id),
+            quote: quote, save: save, rewind: { rewinding = $0 },
             later: { [workspace, id = conversation.id] text in Task { await workspace.askToSaveForLater(id, answer: text) } }
         ).equatable()
             .id(block.id)
@@ -207,6 +255,8 @@ struct ConversationView: View {
 
     /// Where you are in the conversation: at its end (nothing kept), or the block at the top of the screen.
     private func rememberScroll() {
+        // Holding a message just sent at the top: reopened so, its room with it (Zero restarted, the task left).
+        ScrollMemory.keepLift(lifted && liftPlaced ? liftId : nil, in: conversation.id)
         guard let geometry = tracker.geometry else { return }
         if geometry.contentSize.height - (geometry.contentOffset.y + geometry.containerSize.height) < 60 {
             ScrollMemory.keep(nil, in: conversation.id)
@@ -231,10 +281,23 @@ struct ConversationView: View {
         Task { await workspace.createPad(title: title.isEmpty ? "Saved" : title, folder: "Saved", content: text) }
     }
 
-    /// The blocks before the lifted message, and from it on (none when nothing's lifted).
+    /// The blocks before the lifted message, and from it on (none when nothing's lifted). Lifted as Zero's own copy
+    /// (Sending), it's zerod's in its place, which keeps that copy's id.
     private func split(_ blocks: [TimelineBlock]) -> (head: [TimelineBlock], tail: [TimelineBlock]) {
-        guard lifted, let at = blocks.firstIndex(where: { $0.id == liftId }) else { return (blocks, []) }
+        guard lifted,
+            let at = blocks.firstIndex(where: { block in
+                if case let .user(item) = block, item.sent == liftId { return true }
+                return block.id == liftId
+            })
+        else { return (blocks, []) }
         return (Array(blocks[..<at]), Array(blocks[at...]))
+    }
+
+    /// Your last message, by the id it went with: Zero's own copy (shown the moment it's sent) and zerod's in its
+    /// place are one message, so the lift starts with the first and isn't made again for the second.
+    private var lastSent: String? {
+        let all = shape.merge(conversation.items, sending: workspace.sending[conversation.id] ?? [])
+        return all.last(where: \.isYours).map { $0.sent ?? $0.id }
     }
 
     private var conversationPane: some View {
@@ -251,7 +314,8 @@ struct ConversationView: View {
                     .overlay(alignment: .bottom) { composerOverlay }
                     .overlay(alignment: .trailing) {
                         ThinScrollbar(tracker: tracker) {
-                            following = false; lifted = false; position.scrollTo(y: $0)
+                            following = false; lifted = false; ScrollMemory.keepLift(nil, in: conversation.id)
+                            position.scrollTo(y: $0)
                         }.padding(.trailing, 2)
                     }
                     .overlay(alignment: .leading) { rail(proxy) }
@@ -296,12 +360,15 @@ struct ConversationView: View {
             .onAppear { _ = Self.clickWatch }
             .scrollPosition($position)
             .onScrollGeometryChange(for: CGFloat.self, of: { $0.containerSize.height }) { _, height in pageHeight = height }
-            // The message just sent goes to the top of the page once it's in the conversation.
-            .onChange(of: conversation.items.last(where: \.isYours)?.id) { _, id in placeLift(id) }
+            // The message just sent goes to the top of the page as it shows (Zero's own copy, at once).
+            .onChange(of: lastSent) { _, id in placeLift(id) }
+            // Following the end, or holding a message just sent: no way down while the room at the end grows.
+            .onChange(of: following || (lifted && !liftScrolled), initial: true) { _, held in tracker.held = held }
             // Where you were in it, kept when scrolling stops and when you leave.
             .onScrollPhaseChange { _, phase in scrollPhaseChanged(phase) }
             .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { before, now in scrollGeometryChanged(from: before, to: now) }
             .background { PlaybackClock(playback: playback) }
+            .background { FootClock(foot: foot) { tick($0) } }
     }
 
     /// Laid out in full, not lazily: a lazy stack keeps the heights it guessed for rows measured off
@@ -316,14 +383,19 @@ struct ConversationView: View {
             working: playback.working(conversation.status == .working || conversation.status == .waiting))
         let (blocks, turns) = (shape.blocks, shape.turns)
         let (head, tail) = split(blocks)
+        let newest = blocks.last { if case .user = $0 { true } else { false } }?.id
         return VStack(alignment: .leading, spacing: 18) {
             olderRows
             ForEach(shape.rows(head)) { line in
                 switch line {
-                case let .block(block): row(block, turns: turns)
+                case let .block(block): row(block, turns: turns, newest: newest)
                 case let .quiet(id, blocks, count):
                     QuietTurns(
                         turns: count,
+                        senders: blocks.compactMap { block in
+                            guard case let .user(item) = block, case let .user(text, _) = item.kind else { return nil }
+                            return ConversationItem.from(text)?.from
+                        },
                         open: Binding(
                             get: { openQuiet.contains(id) }, set: { if $0 { openQuiet.insert(id) } else { openQuiet.remove(id) } })
                     ) {
@@ -428,20 +500,29 @@ struct ConversationView: View {
         }
     }
 
-    /// The message just sent goes to the top of the page once it's in the conversation.
-    private func placeLift(_ id: String?) {
+    /// The message just sent goes to the top of the page as it shows: one slide, on the card's curve, from where it
+    /// came in (waiting for zerod's copy, it sat at the foot for half a second, then the page jumped).
+    private func placeLift(_ id: String?, animated: Bool = true) {
         // Once per send: a worker's report landing right after (a message of its own) mustn't move the page again.
         guard lifted, !liftPlaced, let id else { return }
         liftId = id
         liftMin = max(0, pageHeight - 52 - composerHeight - 32)
         Task {
-            try? await Task.sleep(for: .milliseconds(50))
+            // Laid out first, with its room (a frame): there's nowhere to slide to before.
+            try? await Task.sleep(for: .milliseconds(16))
             guard lifted else { return }
-            position.scrollTo(id: id, anchor: UnitPoint(x: 0, y: 52 / max(pageHeight, 1)))
+            let anchor = UnitPoint(x: 0, y: 52 / max(pageHeight, 1))
+            if animated {
+                tracker.slideEnds = Date().addingTimeInterval(Self.slideDuration)
+                withAnimation(Self.rise) { position.scrollTo(id: id, anchor: anchor) }
+            } else {
+                position.scrollTo(id: id, anchor: anchor)
+            }
             liftPlaced = true
+            ScrollMemory.keepLift(id, in: conversation.id)
             // The room as it came out, past the page's foot: what's beyond it taken off, so the page is at its end.
-            // Left, the question card read it as scrolled up and sat sunk by as much.
-            try? await Task.sleep(for: .milliseconds(50))
+            // Left, the question card read it as scrolled up and sat sunk by as much. Once the slide is over.
+            try? await Task.sleep(for: .seconds(Self.slideDuration + 0.05))
             guard lifted, let g = tracker.geometry else { return }
             let over = Self.end(of: g) - g.contentOffset.y
             if over > 0.5 { liftMin = max(0, liftMin - over) }
@@ -452,13 +533,14 @@ struct ConversationView: View {
     /// for older items show asks for the next page (one page per gesture, never a chain).
     private func scrollPhaseChanged(_ phase: ScrollPhase) {
         userScrolling = phase == .interacting || phase == .decelerating
-        if phase == .interacting { userScrolled() }
-        if phase == .idle { scrollStopped() }
+        if phase == .interacting { handScrolled = true; userScrolled() }
+        if phase == .idle { scrollStopped(); handScrolled = false }
     }
 
     private func userScrolled() {
         workspace.markSeen(conversation.id)
         following = false
+        foot.gap = 0
         liftScrolled = true
         if olderShown, !olderArmed { olderArmed = true; Task { await loadOlder() } }
     }
@@ -470,7 +552,7 @@ struct ConversationView: View {
         // At the end, following: never while lifted, whose room ends exactly at the page's foot (the
         // lift's own scroll settles here too, and would read as you having scrolled to the end).
         // At the end means at it, not near it: a release of the lift leaves the end a few points off.
-        guard let g = tracker.geometry, !lifted else { return }
+        guard handScrolled, let g = tracker.geometry, !lifted else { return }
         following = live.later == 0 && Self.end(of: g) - g.contentOffset.y < 2
     }
 
@@ -489,21 +571,22 @@ struct ConversationView: View {
 
     private func scrollGeometryChanged(from before: ScrollGeometry, to now: ScrollGeometry) {
         tracker.geometry = now
-        // Grown at its end while you were there (a card, a turn's end, words streaming, the composer taller): the page
-        // slides to its new end on the card's curve, not moved there in a frame. More than a page (a task opened, a
-        // window jumped to) goes at once: sliding a whole screen would only slow it.
         let grew = now.contentSize.height - before.contentSize.height
-        // Just after a click, it grew because something was opened (a step, a notice): it opens down from where it is,
-        // the page not following the end (which pushed all above it up, as if it shifted).
-        if following, !lifted, !loadingAbove, !userScrolling, grew > 0.5, Self.end(of: before) - before.contentOffset.y < 2,
-            Date().timeIntervalSince(Self.clicked) > 0.6
+        // The room a question card's rise added: the page keeps to the end through it, moving with the card.
+        let pinned = min(max(grew, 0), foot.pinned)
+        foot.pinned -= pinned
+        // Grown at its end while you were there (a turn's end, words streaming, the composer taller): the page glides
+        // to its new end, the growth added to the way it has left (one movement, however often it grows on the way).
+        // At once: more than a page (a task opened, a window jumped to: sliding a whole screen would only slow it),
+        // rows measuring themselves as it opens, or just after a click (something opened, a step, a notice).
+        if following, !lifted, !loadingAbove, !userScrolling, grew - pinned > 0.5, grew < now.containerSize.height,
+            Date().timeIntervalSince(foot.opened) > 0.5, Date().timeIntervalSince(Self.clicked) > 0.6
         {
-            if grew < now.containerSize.height {
-                withAnimation(Self.rise) { position.scrollTo(edge: .bottom) }
-            } else {
-                position.scrollTo(edge: .bottom)
-            }
+            foot.gap = min(foot.gap + grew - pinned, now.containerSize.height)
+            startTicking()
         }
+        // The lift's own slide under way.
+        let sliding = Date() < tracker.slideEnds
         // How far up from the end: the question card on the composer sinks as far, behind it.
         // From where the scroll stops (the toolbar's inset at the top taken off: left in, the end read 38 pt off and the
         // card sat sunk that much at the very bottom).
@@ -522,25 +605,61 @@ struct ConversationView: View {
         // work, and the page follows the end from here, as it would have without it.
         let wasAtFoot = Self.end(of: before) - before.contentOffset.y < 2
         let outgrown = Self.end(of: now) - now.contentOffset.y > 2
-        if liftHolding, wasAtFoot, outgrown {
+        if liftHolding, wasAtFoot, outgrown, !sliding {
             lifted = false; liftPlaced = false; liftId = nil; following = true
-            position.scrollTo(edge: .bottom)
+            ScrollMemory.keepLift(nil, in: conversation.id)
+            foot.gap = min(Self.end(of: now) - now.contentOffset.y, now.containerSize.height)
+            startTicking()
             return
         }
-        // Following the end (as it opens, and while you're at it): rows measure themselves after the first
-        // layout, and the list's height can settle far from its first guess (a long conversation came out
-        // 2,000 pt shorter, leaving the view past its end, blank). It stays at the end of what's there.
+        // Following the end (as it opens, and while you're at it): kept to it, short by the way still to glide. Rows
+        // measure themselves after the first layout, and the list's height can settle far from its first guess (a
+        // long conversation came out 2,000 pt shorter, leaving the view past its end, blank): it stays at the end of
+        // what's there.
         let end = Self.end(of: now)
-        if following, end > 0, abs(now.contentOffset.y - end) > 2 {
-            position.scrollTo(edge: .bottom)
+        if following, end > 0 {
+            keepToEnd(now)
         }
         // Past the end is never a place to be (a page left blank until scrolled): back to the end, whether
         // following it or restoring where you were.
         else if end > 0, now.contentOffset.y > end + 2 {
             position.scrollTo(edge: .bottom)
         }
-        // Scrolled up past the room under a sent message (it's wholly below the page): the room goes, out
-        // of sight, so scrolling back down ends at the conversation's end.
+    }
+
+    /// Following, the page where it's meant to be: at the end, short by the way it still has to glide.
+    private func keepToEnd(_ g: ScrollGeometry) {
+        guard following, !lifted, !loadingAbove, !userScrolling, Self.end(of: g) > 0 else { return }
+        let y = max(-g.contentInsets.top, Self.end(of: g) - foot.gap)
+        guard abs(g.contentOffset.y - y) > 0.25 else { return }
+        if foot.gap == 0 { position.scrollTo(edge: .bottom) } else { position.scrollTo(y: y) }
+    }
+
+    private func startTicking() { if !foot.ticking { foot.ticking = true } }
+
+    /// A frame: the card's rise and the strip's room eased on, the page's way to its end shortened. What it changes
+    /// is laid out before the frame is drawn, the room and the card and the page together.
+    private func tick(_ now: Date) {
+        let dt = min(max(now.timeIntervalSince(foot.lastTick ?? now), 0), 1.0 / 30)
+        foot.lastTick = now
+        if let ease = foot.riseEase {
+            let rise = ease.at(now)
+            if foot.riseRoom { foot.pinned += foot.rise - rise }
+            foot.rise = rise
+            if rise == 0 { foot.riseEase = nil; foot.arriving = false }
+        }
+        if let ease = foot.stripEase {
+            foot.stripGone = ease.at(now)
+            if foot.stripGone == 0 { foot.stripEase = nil }
+        }
+        if foot.gap > 0 {
+            foot.gap *= exp(-dt / Self.glide)
+            if foot.gap < 0.5 { foot.gap = 0 }
+            if let g = tracker.geometry { keepToEnd(g) }
+        }
+        if foot.riseEase == nil, foot.stripEase == nil, foot.gap == 0 {
+            foot.ticking = false; foot.lastTick = nil
+        }
     }
 
     /// The lift placed and your hand off the page.
@@ -584,15 +703,36 @@ struct ConversationView: View {
                     release: { Task { await workspace.release(conversation.id) } }
                 )
                 .frame(maxWidth: 680)
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] in foot.stripHeight = $0 }
+            } else {
+                StripRoom(foot: foot)
             }
             composer
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] in if foot.composer != $0 { foot.composer = $0 } }
                 .onHover { [foot] inside in if foot.overComposer != inside { foot.overComposer = inside } }
         }
         // Once zerod has it, the one shown at once goes: left until it went, it came back when the queue emptied.
-        .onChange(of: queued) { _, now in queuing.removeAll { pending in now.contains { $0.text == pending.text } } }
+        .onChange(of: queued) { _, now in queuing.removeAll { pending in now.contains { $0.id == pending.id } } }
+        // The strip gone (its last message moved into the conversation): its room given back on the card's curve, the
+        // card on it easing down with the page, not dropping by the strip's height in a frame.
+        .onChange(of: shownQueue.isEmpty && !held) { [foot] _, gone in
+            guard gone, foot.stripHeight > 0 else { return }
+            foot.stripGone = foot.stripHeight
+            foot.stripEase = Ease(from: foot.stripHeight, start: Date())
+            startTicking()
+        }
         .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] height in
             guard foot.height != height else { return }
+            // A question card come: its room at the conversation's end comes in as it rises (Foot.rise), on one curve,
+            // the page kept to the end moving with it; never at once, the page jumping, the card rising after.
+            let grown = height - foot.height
+            if foot.arriving, foot.riseEase == nil, grown > 0 {
+                foot.pinned = 0
+                foot.riseRoom = !(lifted && liftPlaced)
+                foot.rise = grown
+                foot.riseEase = Ease(from: grown, start: Date())
+                startTicking()
+            }
             // Lifted (just sent, the message at the top): the room under it takes the change (a step to a taller
             // card, the queue's strip), so the page's size holds and the message stays. Added at the foot instead,
             // it read as the reply outgrowing the room, and the lift was let go, the page thrown to its end.
@@ -601,20 +741,16 @@ struct ConversationView: View {
                 foot.height = height
                 return
             }
-            let grew = height > foot.height
             // Grown (a question card arriving) while at the end: the end followed, the last words above the card and
-            // the card all the way up. Held where it was (just sent, the page kept for the answer), the room the card
-            // added went below the page, and the card sank as far, nothing scrolled.
+            // the card all the way up. Following, the page keeps to its end itself (scrollGeometryChanged), and so it
+            // does from here when it was at the end without following.
             let atEnd = foot.below < 2 || following
-            let follow = grew && atEnd
             foot.height = height
-            // Following, the page slides to its new end itself (scrollGeometryChanged); held (just sent, the page kept
-            // for the answer), it's taken there, on the card's curve.
-            if follow && !following { DispatchQueue.main.async { withAnimation(Self.rise) { position.scrollTo(edge: .bottom) } } }
+            if grown > 0, atEnd, !following, !lifted { following = true; foot.gap = 0 }
             // Shrunk (the queue's strip gone, a step to a shorter card) while at the end: still at it. Left where it
             // was, the page sat that far short of its end, and the card, reading it as scrolled up, sank as far.
             // In the same frame: a frame later, the page showed shifted for one (68 px as a turn ended).
-            if !grew, atEnd { position.scrollTo(edge: .bottom) }
+            if grown < 0, atEnd, !following { position.scrollTo(edge: .bottom) }
         }
     }
 
@@ -624,7 +760,12 @@ struct ConversationView: View {
                 // Jumped back through it: the latest page again first.
                 if live.later > 0 { await workspace.loadLatest(conversation.id); try? await Task.sleep(for: .milliseconds(50)) }
                 following = true; lifted = false
-                withAnimation { proxy.scrollTo("end", anchor: .bottom) }
+                ScrollMemory.keepLift(nil, in: conversation.id)
+                // Glided down, from at most a page above the end.
+                guard let g = tracker.geometry else { return }
+                foot.gap = min(max(0, Self.end(of: g) - g.contentOffset.y), g.containerSize.height)
+                startTicking()
+                keepToEnd(g)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -657,6 +798,17 @@ struct ConversationView: View {
     }
 
     private func restoreScroll() async {
+        // A message just sent held at the top, its room under it: so again, at once (reopened without its room, the
+        // page sat that much lower).
+        if let lift = ScrollMemory.lift(in: conversation.id), lift == lastSent {
+            var waited = 0
+            while pageHeight == 0 || tracker.geometry == nil, waited < 30 {
+                try? await Task.sleep(for: .milliseconds(16)); waited += 1
+            }
+            lifted = true; liftPlaced = false; liftScrolled = false; following = false
+            placeLift(lift, animated: false)
+            return
+        }
         guard let kept = ScrollMemory.place(in: conversation.id) else { return }
         following = false
         if !conversation.items.contains(where: { $0.id == kept.turn }) { await workspace.jump(conversation.id, to: kept.turn) }
@@ -719,6 +871,10 @@ struct ConversationView: View {
 
     private var composer: some View {
         let busy = conversation.status == .working || conversation.status == .waiting
+        // What the page shows: the last turn still reading out, the next (a queued message zerod sent on) not on the
+        // page yet, the composer says what the heading says (Reply, no stop) until that message moves in. Return still
+        // queues meanwhile, as zerod is at it.
+        let shownBusy = busy && playback.working(true)
         // Typing to a task whose agent has stopped starts it now, so the message goes the moment it's sent.
         return Composer(
             draft: Binding(
@@ -727,7 +883,7 @@ struct ConversationView: View {
                     box.text = $0; if !$0.isEmpty { workspace.warm(conversation.id) }
                 }), placeholder: placeholder, canSend: conversation.status != .starting, folder: conversation.cwd, workspace: workspace,
             images: $images, active: active,
-            stop: busy && conversation.terminal == nil ? { Task { await workspace.interrupt(conversation.id) } } : nil,
+            stop: shownBusy && conversation.terminal == nil ? { Task { await workspace.interrupt(conversation.id) } } : nil,
             queue: busy && conversation.terminal == nil
                 ? {
                     // Return while it works: the message waits for after this turn, in the strip above.
@@ -736,10 +892,11 @@ struct ConversationView: View {
                     images = []
                     // In the strip at once, in the same frame the composer empties: waiting for zerod's word, the
                     // composer shrank one frame and the strip came the next, the page dropping and jumping back.
-                    let pending = Queued(id: "pending-" + UUID().uuidString, text: text, images: attached)
+                    // One id from here on: zerod's queue entry takes it, and its item for the message once sent on.
+                    let pending = Queued(id: "queuing-" + UUID().uuidString, text: text, images: attached)
                     queuing.append(pending)
                     Task {
-                        await workspace.queue(conversation.id, text: text, images: attached)
+                        await workspace.queue(conversation.id, text: text, images: attached, id: pending.id)
                         try? await Task.sleep(for: .seconds(5))
                         queuing.removeAll { $0.id == pending.id }
                     }
@@ -882,7 +1039,11 @@ struct ConversationView: View {
     private var placeholder: String {
         switch conversation.status {
         case .offline: "Message to resume it"
-        case .working, .waiting: conversation.provider == .opencode ? "OpenCode answers one message at a time" : "Steer it while it works"
+        // Its next turn not on the page yet (the last still reading out): as the page reads.
+        case .working, .waiting:
+            !playback.working(true)
+                ? "Reply"
+                : conversation.provider == .opencode ? "OpenCode answers one message at a time" : "Steer it while it works"
         default: "Reply"
         }
     }
@@ -896,6 +1057,10 @@ final class TimelineShape {
     private var made: (items: [ConversationItem], shown: Int, working: Bool)?
     private(set) var blocks: [TimelineBlock] = []
     private(set) var turns: [String: String] = [:]
+    /// Turns' work with their answer under it (on screen, so being read out or read), and with a message after it:
+    /// what folds them (WorkBlock).
+    private(set) var answered: Set<String> = []
+    private(set) var followed: Set<String> = []
     private var folded: (head: [TimelineBlock], rows: [TimelineRow])?
 
     /// The conversation's items and what's just been sent, which shows at once, before its agent has it (Sending).
@@ -906,12 +1071,39 @@ final class TimelineShape {
         return all
     }
 
+    /// Answers whose words began under their turn's heading, in its live work (a reply known as the answer only once
+    /// the turn ends): seen here, so they keep that heading.
+    private var spoken: Set<String> = []
+
     /// The blocks of the first `shown` items: those playback has reached.
     func update(items: [ConversationItem], shown: Int, working: Bool) {
         if let made, made.working == working, made.shown == shown, made.items == items { return }
         made = (items, shown, working)
-        blocks = TimelineBlock.of(shown >= items.count ? items : Array(items.prefix(shown)), working: working)
+        var blocks = TimelineBlock.of(shown >= items.count ? items : Array(items.prefix(shown)), working: working)
+        for case let .work(_, work, _, _, true) in blocks where work.count == 1 {
+            if case .agent = work[0].kind { spoken.insert(work[0].id) }
+        }
+        // An answer that had nothing else in its turn's work: its heading ("Thought for…") stays as the turn ends, the
+        // same block it was (gone, the answer moved up by its height in a frame).
+        for index in blocks.indices.reversed() where index > 0 {
+            guard case let .answer(answer) = blocks[index], spoken.contains(answer.id), case let .user(asked) = blocks[index - 1]
+            else { continue }
+            blocks.insert(.work(id: "work-" + answer.id, items: [], start: asked.date, end: answer.date, live: false), at: index)
+        }
+        self.blocks = blocks
         turns = TimelineBlock.turns(blocks)
+        answered = []
+        followed = []
+        var work: [String] = []
+        for (index, block) in blocks.enumerated() {
+            switch block {
+            case let .work(id, _, _, _, _):
+                work.append(id)
+                if index + 1 < blocks.count, case .answer = blocks[index + 1] { answered.insert(id) }
+            case .user: followed.formUnion(work); work = []
+            default: break
+            }
+        }
     }
 
     func rows(_ head: [TimelineBlock]) -> [TimelineRow] {
@@ -943,9 +1135,28 @@ private struct CaughtUp<Content: View>: View {
 
 /// The room at the timeline's foot for the composer and the fade above it: its own view, so the composer's height
 /// changing sizes this alone, not the conversation.
+/// A question card rising, the room grows with it (Foot.rise).
 private struct EndRoom: View {
     let foot: ConversationView.Foot
-    var body: some View { Color.clear.frame(height: foot.height + 32) }
+    var body: some View { Color.clear.frame(height: foot.height + 32 - (foot.riseRoom ? min(foot.rise, foot.height) : 0)) }
+}
+
+/// Where the queue's strip was, given back on the card's curve as it goes (Foot.stripGone). Outside the stack's spacing:
+/// at nothing, it takes no room.
+private struct StripRoom: View {
+    let foot: ConversationView.Foot
+    var body: some View { Color.clear.frame(height: foot.stripGone).padding(.bottom, -8).allowsHitTesting(false) }
+}
+
+/// The frame clock for what eases at the conversation's foot and the page's glide to its end: runs only meanwhile.
+private struct FootClock: View {
+    let foot: ConversationView.Foot
+    let tick: (Date) -> Void
+    var body: some View {
+        TimelineView(.animation(minimumInterval: nil, paused: !foot.ticking)) { context in
+            Color.clear.onChange(of: context.date) { _, now in tick(now) }
+        }
+    }
 }
 
 /// The conversation's soft edges as a mask, the foot's under the composer: a view of its own, so the composer's height
@@ -1003,10 +1214,19 @@ private struct DockSlot: View {
             asks: asks, inbox: inbox, page: page, foot: foot, answer: answer, decide: decide
         )
         .equatable()
-        .padding(.horizontal, behindQueue ? 26 : 13)
+        // Behind the queue's strip one inset further in; as the strip goes, eased out with it.
+        .animation(ConversationView.rise) { $0.padding(.horizontal, behindQueue ? 26 : 13) }
         .frame(maxWidth: 680)
         .padding(.bottom, ids.isEmpty ? 0 : -(AskDock.tuck + 8))
         .onChange(of: ids, initial: true) { old, new in
+            // One come while it's open (one there as it opened shows in place): it rises as its room comes in
+            // (Foot.rise), out of sight until then. Its room not seen to come, it shows in place.
+            if old.isEmpty, !new.isEmpty, Date().timeIntervalSince(foot.opened) > 0.5 {
+                foot.arriving = true; foot.riseEase = nil; foot.riseRoom = false; foot.rise = .infinity
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [foot] in
+                    if foot.arriving, foot.riseEase == nil { foot.arriving = false; foot.rise = 0 }
+                }
+            }
             shown.formUnion(new)
             if !Set(old).subtracting(new).isEmpty { left() }
         }
@@ -1034,11 +1254,7 @@ struct Sinking: ViewModifier {
 private struct Sinker<Card: View>: View {
     let foot: ConversationView.Foot
     let content: Card
-    /// Come up from behind the composer: its whole height down at first (clipped at its foot, out of sight), sliding
-    /// up on the curve the conversation slides up on as the room at its end grows for the card (EndRoom), the two
-    /// starting together.
-    @State private var risen = false
-
+    @State private var id = UUID()
     var body: some View {
         content
             .environment(\.dockFocus) { [foot] on in if foot.typing != on { foot.typing = on } }
@@ -1046,22 +1262,20 @@ private struct Sinker<Card: View>: View {
             .background { Ring() }
             .onHover { inside in if foot.overCard != inside { foot.overCard = inside } }
             .offset(y: foot.sunk)
-            .visualEffect { [risen] card, proxy in card.offset(y: risen ? 0 : proxy.size.height) }
+            // Come up from behind the composer: its whole height down at first (clipped at its foot, out of sight),
+            // then as far as its room at the conversation's end has still to grow (Foot.rise), frame by frame.
+            .visualEffect { [rise = foot.rise] card, proxy in card.offset(y: min(rise, proxy.size.height)) }
             .animation(.smooth(duration: 0.25), value: foot.hovering)
             // What has sunk is gone below its place (behind the composer), not shown under it; the ring above and at
             // its sides kept.
             .mask { Rectangle().padding(.horizontal, -Ring.width).padding(.top, -Ring.width) }
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] in if foot.card != $0 { foot.card = $0 } }
+            .onAppear { [foot] in foot.shownCard = id }
             .onDisappear { [foot] in
+                guard foot.shownCard == id else { return }
+                foot.shownCard = nil
                 foot.card = 0; foot.overCard = false; foot.typing = false
-            }
-            .onAppear {
-                // There as the conversation opened (waiting already): in place at once. Only one that comes while
-                // it's open comes in.
-                if Date().timeIntervalSince(foot.opened) < 0.5 { risen = true; return }
-                foot.arriving = true
-                DispatchQueue.main.async { withAnimation(ConversationView.rise) { risen = true } }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [foot] in foot.arriving = false }
+                foot.arriving = false; foot.riseEase = nil; foot.riseRoom = false; foot.rise = 0
             }
     }
 }

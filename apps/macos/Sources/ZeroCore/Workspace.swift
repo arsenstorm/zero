@@ -721,7 +721,9 @@ public final class Workspace {
         // Shown at once, while its agent starts (a parked one takes seconds): the conversation's own takes its place.
         let echo = Sending(text: text, images: images)
         sending[session, default: []].append(echo)
-        let sent = await attempt { try await $0.send(session: session, text: text, images: images, model: model, effort: effort) } != nil
+        let sent =
+            await attempt { try await $0.send(session: session, text: text, images: images, model: model, effort: effort, id: echo.id) }
+            != nil
         settle(echo, in: session, sent: sent)
         return sent
     }
@@ -739,8 +741,9 @@ public final class Workspace {
             return false
         }
         let sent =
-            await attempt { try await $0.send(session: session, text: item.text, images: item.images ?? [], model: nil, effort: nil) }
-            != nil
+            await attempt {
+                try await $0.send(session: session, text: item.text, images: item.images ?? [], model: nil, effort: nil, id: echo.id)
+            } != nil
         settle(echo, in: session, sent: sent)
         // Out of the queue once zerod's board has had a moment to drop it too.
         Task { [weak self] in
@@ -770,20 +773,21 @@ public final class Workspace {
     /// the board's next round.
     public private(set) var queuing: [String: [Queued]] = [:]
 
-    /// A task's queue as the strip shows it: zerod's, then what was queued here since.
+    /// A task's queue as the strip shows it: zerod's, then what was queued here since (zerod's entry takes its id).
     public func queued(_ session: String, board: [Queued]) -> [Queued] {
-        let echoes = (queuing[session] ?? []).filter { echo in !board.contains { $0.text == echo.text } }
+        let echoes = (queuing[session] ?? []).filter { echo in !board.contains { $0.id == echo.id } }
         return (board + echoes).filter { !steering.contains($0.id) }
     }
 
-    public func queue(_ session: String, text: String, images: [String] = []) async {
-        let echo = Queued(id: "queuing-\(UUID().uuidString)", text: text, images: images.isEmpty ? nil : images)
+    /// `id`: the one the strip already shows it by; zerod's queue entry, and its item once sent on, take it.
+    public func queue(_ session: String, text: String, images: [String] = [], id: String = "queuing-\(UUID().uuidString)") async {
+        let echo = Queued(id: id, text: text, images: images.isEmpty ? nil : images)
         queuing[session, default: []].append(echo)
         // While Zero restarts for an update it can't take it: kept (its echo stays in the queue) and sent once Zero is
         // back, for up to five minutes. Refused for a reason of its own, it says why and goes.
         for _ in 0..<300 {
             if let link = await linked() {
-                do { _ = try await link.queue(session: session, text: text, images: images); break } catch {
+                do { _ = try await link.queue(session: session, text: text, images: images, id: id); break } catch {
                     if updating == nil { lastError = error.localizedDescription; break }
                 }
             }
@@ -795,8 +799,11 @@ public final class Workspace {
             self?.queuing[session]?.removeAll { $0.id == echo.id }
         }
     }
+    /// Takes a queued message back; false, quietly, when zerod has sent it on already (as a turn ended while its last
+    /// words still played): the strip shows it as on its way a moment later, which says it.
     public func unqueue(_ session: String, item: String) async -> Bool {
-        await attempt { try await $0.unqueue(session: session, item: item) } != nil
+        guard let link = await linked() else { return false }
+        return (try? await link.unqueue(session: session, item: item)) != nil
     }
     public func release(_ session: String) async { _ = await attempt { try await $0.release(session: session) } }
     public func introduce(_ session: String, to other: String) async {

@@ -397,7 +397,7 @@ struct AskDock: View, Equatable {
     static let tuck: CGFloat = 14
 
     var body: some View {
-        // Rising out from behind the composer (drawn over it), and sinking back once answered.
+        // Rising out from behind the composer (drawn over it), and fading where it is once answered.
         // One piece: its contents placed by it as it moves (the body's text, an AppKit view, went straight to where it
         // ends while the card was still rising). Its sinking (ring, clip) inside the transition: outside, the ring
         // showed before the card, and the clip, sized to an emptied dock, left a scrap of the card leaving. (Not
@@ -433,12 +433,12 @@ struct AskDock: View, Equatable {
                 )
                 .modifier(SinkingIn(foot: foot))
                 .geometryGroup()
-                // In, it rises from behind the composer (Sinker), with the conversation's scroll; out, it fades.
-                // In, it slides up from behind the composer (Sinker); out, it slides back down as it fades.
+                // In, it rises from behind the composer (Sinker), with the conversation's scroll. Out, answered, it
+                // fades where it is: sliding down as it faded read as something moving that the user didn't move.
                 .transition(
                     .asymmetric(
                         insertion: foot == nil ? .offset(y: 36).combined(with: .opacity) : .identity,
-                        removal: .offset(y: 48).combined(with: .opacity)))
+                        removal: .opacity))
         }
     }
 

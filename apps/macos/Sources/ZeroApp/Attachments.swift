@@ -127,8 +127,19 @@ struct Thumbnail: View {
         return small
     }
 
+    /// Its size fitted: `height` tall and up to 1.6 times as wide, kept to its proportions, no larger than its pixels
+    /// at 2x (the decoded copy's are its own up to four times the box).
+    static func fitted(_ pixels: CGSize?, height: CGFloat) -> CGSize {
+        guard let pixels, pixels.width > 0, pixels.height > 0 else { return CGSize(width: height, height: height) }
+        let scale = min(height * 1.6 / pixels.width, height / pixels.height, 0.5)
+        return CGSize(width: round(pixels.width * scale), height: round(pixels.height * scale))
+    }
+
     let path: String
     var side: CGFloat = 72
+    /// To its own proportions, `side` tall and up to 1.6 times as wide at most (never larger than it is), rather than
+    /// a square crop: a message's image, read in place.
+    var fit = false
     /// The images it's one of (a message's), to move between once opened.
     var among: [String] = []
     /// What a click does instead of opening the image.
@@ -137,18 +148,20 @@ struct Thumbnail: View {
     @State private var hovered = false
 
     var body: some View {
+        let image = Thumbnail.image(path, side: fit ? side * 1.6 : side)
+        let size = fit ? Self.fitted(image?.size, height: side) : CGSize(width: side, height: side)
         Button {
             if let tap { tap() } else { ImageViewer.shared.show(path, among: among) }
         } label: {
             Group {
-                if let image = Thumbnail.image(path, side: side) {
+                if let image {
                     Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
                 } else {
                     NucleoIcon("file", size: 18).foregroundStyle(.tertiary).frame(maxWidth: .infinity, maxHeight: .infinity).background(
                         Theme.chip)
                 }
             }
-            .frame(width: side, height: side).clipShape(RoundedRectangle(cornerRadius: 10))
+            .frame(width: size.width, height: size.height).clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
             .contentShape(RoundedRectangle(cornerRadius: 10))
         }
@@ -169,8 +182,8 @@ struct Thumbnail: View {
 }
 
 /// "[Image #n]" in a message: what attaching an image leaves in the words at the caret, so the agent knows which image
-/// a sentence is about (the token goes to it as written; zerod puts the image right after it). Drawn as a pill, "🖼️
-/// Image n", in the composer and in the sent message; a click opens the image.
+/// a sentence is about (the token goes to it as written; zerod puts the image right after it). Drawn as a pill, Nucleo's
+/// image and "Image n", in the composer and in the sent message; a click opens the image.
 enum ImageToken {
     private static let pattern = try! NSRegularExpression(pattern: "\\[(Image|Video) #(\\d+)\\]")
     private static let label = try! NSRegularExpression(pattern: "^(Image|Video) #(\\d+)$")
@@ -320,17 +333,24 @@ enum ImageToken {
         }
         required init(coder: NSCoder) { fatalError("not kept") }
 
+        private static let icon: CGFloat = 12
+        private static let gap: CGFloat = 4
+        /// Neutral, as the chips are: an image isn't a warning or a find (the skills' yellow read as one).
+        private static let fill = NSColor(name: nil) {
+            NSColor.labelColor.withAlphaComponent($0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? 0.12 : 0.07)
+        }
+
         /// The text's size, a step heavier than the words around it.
         private var words: NSAttributedString {
             NSAttributedString(
-                string: video ? "\u{1F3A5} Video \(number)" : "\u{1F5BC}\u{FE0F} Image \(number)",
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: textFont.pointSize, weight: .medium), .foregroundColor: TokenTextView.tokenText,
-                ])
+                string: video ? "Video \(number)" : "Image \(number)",
+                attributes: [.font: NSFont.systemFont(ofSize: textFont.pointSize, weight: .medium), .foregroundColor: NSColor.labelColor])
         }
 
         override func cellSize() -> NSSize {
-            NSSize(width: Self.inset * 2 + ceil(words.size().width) + 1, height: ceil(textFont.ascender - textFont.descender) + 1)
+            NSSize(
+                width: Self.inset * 2 + Self.icon + Self.gap + ceil(words.size().width) + 1,
+                height: ceil(textFont.ascender - textFont.descender) + 1)
         }
 
         /// Its bottom half a point under the line's descent, as the composer's pills sit.
@@ -340,10 +360,22 @@ enum ImageToken {
         override func wantsToTrackMouse() -> Bool { false }
 
         override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
-            TokenTextView.tokenFill.setFill()
+            Self.fill.setFill()
             NSBezierPath(roundedRect: cellFrame, xRadius: 4, yRadius: 4).fill()
+            // Nucleo's image (a video's play mark), in the words' quieter colour: a template, tinted here.
+            if let mark = Nucleo.image(video ? "media-play" : "image", fill: video ? "glyph" : "outline", size: Self.icon) {
+                let tinted = NSImage(size: mark.size, flipped: false) { rect in
+                    mark.draw(in: rect)
+                    NSColor.secondaryLabelColor.set()
+                    rect.fill(using: .sourceAtop)
+                    return true
+                }
+                tinted.draw(
+                    in: NSRect(x: cellFrame.minX + Self.inset, y: cellFrame.midY - Self.icon / 2, width: Self.icon, height: Self.icon),
+                    from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            }
             let words = self.words
-            words.draw(at: NSPoint(x: cellFrame.minX + Self.inset, y: cellFrame.midY - words.size().height / 2))
+            words.draw(at: NSPoint(x: cellFrame.minX + Self.inset + Self.icon + Self.gap, y: cellFrame.midY - words.size().height / 2))
         }
     }
 }

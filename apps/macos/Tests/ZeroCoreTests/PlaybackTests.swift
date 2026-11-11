@@ -5,7 +5,10 @@ import Testing
 private func item(_ id: String, _ kind: ConversationItem.Kind) -> ConversationItem {
     ConversationItem(id: id, turn: nil, kind: kind, status: .done, at: 0)
 }
-private func yours(_ id: String) -> ConversationItem { item(id, .user(text: "do it", images: [])) }
+/// Yours, all with the same words: what tells them apart is what they are, never what they say.
+private func yours(_ id: String, sent: String? = nil) -> ConversationItem {
+    ConversationItem(id: id, turn: nil, kind: .user(text: "do it", images: []), status: .done, at: 0, sent: sent)
+}
 private func zero(_ id: String) -> ConversationItem { item(id, .user(text: "<!-- from: zero -->\nThe user answered your ask", images: [])) }
 private func words(_ id: String, _ count: Int, final: Bool = true) -> ConversationItem {
     item(id, .agent(text: String(repeating: "word ", count: count / 5), finalAnswer: final))
@@ -140,9 +143,9 @@ private func step(_ id: String) -> ConversationItem { item(id, .tool(name: "Read
     #expect(player.read("a1") == 2000, "the answer above it finished")
     player.play(0.8)
     #expect(player.playback.caughtUp && !player.playback.playing, "its last words faded in within the fade")
-    // zerod's copy in its place: shown as it was, not played again.
+    // zerod's copy in its place (it keeps the copy's id): shown as it was, not played again.
     player.items.removeLast()
-    player.give([yours("u2")])
+    player.give([yours("u2", sent: "sending-1")])
     #expect(player.shown == ["u1", "a1", "s1", "u2"])
 }
 
@@ -215,4 +218,41 @@ private func step(_ id: String) -> ConversationItem { item(id, .tool(name: "Read
     // Opened with it already there: at once.
     let opened = Player([yours("u1"), step("s1")])
     #expect(opened.playback.admits(opened.start))
+}
+
+@MainActor @Test func aQueuedMessageWithTheWordsOfOneJustSentStillWaits() {
+    // Sent from the composer, then the same words queued while it answers: zerod's copy of the first shows at once, the
+    // queued one waits for the answer like any other.
+    let player = Player([yours("u0")])
+    player.give([yours("sending-1")])
+    player.items.removeLast()
+    player.give([yours("u1", sent: "sending-1")])
+    #expect(player.shown == ["u0", "u1"])
+    player.give([words("a1", 2000)])
+    player.play(0.3)
+    player.give([yours("u2", sent: "queue-1"), step("s2")])
+    #expect(player.shown == ["u0", "u1", "a1"], "the same words, but not the message just sent: it waits")
+    #expect(player.read("a1") < 2000, "and the answer reads on, not finished at once")
+    player.play(10)
+    #expect(player.shown == ["u0", "u1", "a1", "u2", "s2"])
+}
+
+@MainActor @Test func aMessageFromElsewhereWithTheSameWordsWaitsToo() {
+    // Your words from another device (or zerod's copy of something not sent here) aren't the one just sent here.
+    let player = Player([yours("u0")])
+    player.give([yours("sending-1")])
+    player.give([words("a1", 2000)])
+    player.play(0.3)
+    player.give([yours("u2")])
+    #expect(!player.shown.contains("u2"))
+}
+
+@MainActor @Test func aQueuedMessageComesOnceTheLastWordsHaveFadedIn() {
+    let player = Player([yours("u1")])
+    player.give([words("a1", 100), yours("u2", sent: "queue-1")])
+    player.play(0.6)
+    #expect(player.read("a1") == 100, "read out")
+    #expect(player.shown == ["u1", "a1"], "its last words still fading in: the message waits")
+    player.play(0.8)
+    #expect(player.shown == ["u1", "a1", "u2"])
 }

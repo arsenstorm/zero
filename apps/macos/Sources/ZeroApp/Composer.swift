@@ -43,7 +43,6 @@ struct Composer<Controls: View>: View {
     @State private var focus = FocusBox()
     @State private var dropping = false
     @State private var monitor: Any?
-    @State private var fieldHeight = ComposeField.lineHeight * 2
     /// The "/" or "@" suggestions open over the composer, and where the caret goes after one is taken.
     @State private var mention: InboxController.MentionState?
     @State private var mentionTask: Task<Void, Never>?
@@ -179,9 +178,8 @@ struct Composer<Controls: View>: View {
                         images[number - 1].path, among: images.map(\.path).filter { !Attachments.isVideo(URL(fileURLWithPath: $0)) })
                 },
                 onAttach: { attach($0) },
-                handle: handle, onEdges: { fades = (top: $0, bottom: $1) }, height: $fieldHeight
+                handle: handle, onEdges: { fades = (top: $0, bottom: $1) }
             )
-            .frame(height: fieldHeight)
             .padding(.horizontal, -TokenTextView.inset.width) // the text still starts on the card's 14 pt
             // Scrolled inside: the text fades at an edge with more beyond it, so that more is seen to be there.
             .mask {
