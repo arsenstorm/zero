@@ -352,9 +352,23 @@ extension EnvironmentValues {
                         detail: model.detail, context: model.context, levels: model.levels, defaultLevel: model.defaultLevel,
                         modelID: provider.rawValue + "/" + model.id, selected: selected(provider, model.id)
                     ) { pick(provider, model) }
-                }
+                } + (provider == .claude ? [otherClaudeModel(pick: pick)] : [])
             return SelectorSection(id: provider.rawValue, title: provider.title, icon: provider.mark, rows: rows)
         }
+    }
+
+    /// Any Claude model by its full name ("claude-opus-5"), typed in place, given to Claude Code as `--model` and
+    /// remembered: it's a row of its own from then on.
+    private static func otherClaudeModel(pick: @escaping (Provider, SpawnChoice) -> Void) -> SelectorRow {
+        SelectorRow(
+            id: "claude/other", title: "Other model…", provider: "Anthropic", providerIcon: Provider.claude.mark,
+            detail: "Any Claude model by its full name, such as claude-opus-5. It's listed here from then on.", context: nil,
+            levels: [], defaultLevel: nil, modelID: nil, selected: false, pick: {},
+            entry: { name in
+                ClaudeModels.remember(name, typed: true)
+                kept[.claude] = nil
+                pick(.claude, catalogue(.claude).first { $0.id == name } ?? SpawnChoice(id: name, name: ModelNames.readable(name)))
+            })
     }
 
     /// A task's choices: its own provider's models, then each provider that can take it over (ConversationView.takeOver).

@@ -26,6 +26,8 @@ struct SelectorRow: Identifiable {
     var tint: Color? = nil
     /// A menu row's own menu, opened beside it as the pointer comes onto it.
     var children: [SelectorRow] = []
+    /// A row that takes words: picked, it becomes a field in its place ("Other model…"), and Return gives them here.
+    var entry: ((String) -> Void)? = nil
 }
 
 /// A provider (Anthropic, OpenAI): one tab of the selector.
@@ -52,6 +54,8 @@ final class SelectorState {
     @ObservationIgnored var submenuFrame: CGRect?
     /// The menu row whose own menu is open beside it.
     var submenu: String?
+    /// The row taking words (SelectorRow.entry), shown as a field.
+    var entering: String?
     /// What the selector asks of whoever opened it (the inbox, or a workspace composer): to close it, a model's
     /// effort level and a new one for it, and its rows again after a level changes.
     @ObservationIgnored var close: () -> Void = {}
@@ -274,14 +278,29 @@ struct SelectorView: View {
         }
     }
 
-    /// A row; `siblings` given, one of a row's own menu.
-    private func rowView(_ row: SelectorRow, in siblings: [SelectorRow]? = nil) -> some View {
+    /// A row; `siblings` given, one of a row's own menu. One taking words, picked, is a field in its place.
+    @ViewBuilder private func rowView(_ row: SelectorRow, in siblings: [SelectorRow]? = nil) -> some View {
+        if let entry = row.entry, state.entering == row.id {
+            EntryRow(title: row.title, height: rowHeight, radius: highlightRadius) { words in
+                entry(words)
+                state.close()
+            } cancel: {
+                state.entering = nil
+            }
+        } else {
+            buttonRow(row, in: siblings)
+        }
+    }
+
+    private func buttonRow(_ row: SelectorRow, in siblings: [SelectorRow]? = nil) -> some View {
         // The row whose menu is open stays lit while the pointer is in that menu.
         let current = state.highlighted == row.id || state.submenu == row.id
         let parent = !row.children.isEmpty
         return Button {
-            // A row with its own menu opens it; the rest act and close.
-            if parent {
+            // A row with its own menu opens it; one taking words becomes a field; the rest act and close.
+            if row.entry != nil {
+                state.entering = row.id
+            } else if parent {
                 state.submenu = row.id
             } else {
                 row.pick()
@@ -408,8 +427,36 @@ struct SelectorView: View {
 
     private func pickHighlighted() {
         guard let row = highlightedRow else { return }
+        if row.entry != nil { state.entering = row.id; return }
         row.pick()
         state.close()
+    }
+}
+
+/// A row's place as a field for words (SelectorRow.entry), the row's height and highlight: Return gives the words,
+/// Esc goes back to the row.
+private struct EntryRow: View {
+    let title: String
+    let height: CGFloat
+    let radius: CGFloat
+    let submit: (String) -> Void
+    let cancel: () -> Void
+    @State private var words = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField(title, text: $words)
+            .textFieldStyle(.plain).font(.system(size: 13, weight: .medium))
+            .focused($focused)
+            .onSubmit {
+                let typed = words.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !typed.isEmpty { submit(typed) }
+            }
+            .onExitCommand(perform: cancel)
+            .padding(.horizontal, 10)
+            .frame(height: height)
+            .background(Theme.row, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .onAppear { focused = true }
     }
 }
 

@@ -126,6 +126,8 @@ public final class Workspace {
             return
         }
         if !order.contains(id) { order = mirror.order.filter { mirror.conversations[$0] != nil } }
+        // The version Claude Code ran it on ("claude-opus-5-5", from its first event): the picker's names and choices.
+        if full.provider == .claude, let model = full.model, model.hasPrefix("claude-") { ClaudeModels.remember(model) }
         // Its first message of yours (its name) and its latest answer (how its last turn ended: its state).
         var light = full
         let first =

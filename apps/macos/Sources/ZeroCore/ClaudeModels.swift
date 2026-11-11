@@ -11,14 +11,69 @@ public enum ClaudeModels {
     /// Claude Code's aliases, most capable first.
     static let aliases = ["fable", "opus", "sonnet", "haiku"]
 
-    public static func cached() -> [SpawnChoice] {
-        var choices = aliases.map {
-            SpawnChoice(
-                id: $0, name: $0.capitalized, detail: describe($0), icon: "claude", provider: "Anthropic", levels: levels,
+    public static func cached() -> [SpawnChoice] { choices(used: used(), typed: used(in: .standard, typed: true), extras: localExtras()) }
+
+    /// Each family's alias, named by the newest version of it a task has run ("Opus 5.5"; the family alone until one
+    /// has); Claude Code's cached extras; then every version run or typed, newest first, each staying on that version
+    /// (the one an alias runs now not listed twice, unless typed). Only what tasks ran names a family: a typed name
+    /// says nothing of what the alias runs.
+    static func choices(used: [String], typed: [String] = [], extras: [SpawnChoice]) -> [SpawnChoice] {
+        let full = { (id: String) in id.hasSuffix("[1m]") ? String(id.dropLast(4)) : id }
+        var current: [String: String] = [:]
+        var choices = aliases.map { family -> SpawnChoice in
+            let newest = used.map(full).filter { $0.contains(family) }.min { rank(ModelNames.readable($0)) < rank(ModelNames.readable($1)) }
+            if let newest { current[family] = newest }
+            let follows = "Follows the latest \(family.capitalized)."
+            return SpawnChoice(
+                id: family, name: newest.map(ModelNames.readable) ?? family.capitalized,
+                detail: describe(family).map { $0 + " " + follows } ?? follows, icon: "claude", provider: "Anthropic", levels: levels,
                 defaultLevel: "high")
         }
-        for extra in localExtras() where !choices.contains(where: { $0.id == extra.id }) { choices.append(extra) }
+        for extra in extras where !choices.contains(where: { $0.id == extra.id }) { choices.append(extra) }
+        let ran = used.filter { !current.values.contains($0) }
+        let pinned = (ran + typed.filter { !ran.contains($0) }).filter { id in !choices.contains { $0.id == id } }
+            .sorted { rank(ModelNames.readable($0)) < rank(ModelNames.readable($1)) }
+        for id in pinned {
+            let long = id.hasSuffix("[1m]")
+            choices.append(
+                SpawnChoice(
+                    id: id, name: ModelNames.readable(id), detail: "Stays on this version · \(id)", icon: "claude", provider: "Anthropic",
+                    context: long ? "1M tokens" : nil, levels: levels, defaultLevel: "high"))
+        }
         return choices
+    }
+
+    /// The row a task running `id` is on: the one with that id (a version picked or typed), else an alias named by that
+    /// version ("Opus 5.5" for claude-opus-5-5: started on the alias, it runs what the alias runs now).
+    public static func row(for id: String, in choices: [SpawnChoice]) -> String {
+        if choices.contains(where: { $0.id == id }) { return id }
+        let name = ModelNames.readable(id)
+        return choices.first { !$0.id.hasPrefix("claude-") && $0.name == name }?.id ?? id
+    }
+
+    /// Full model ids Claude Code has run (zerod's `model` for a task, once Claude reports it) or the user typed in the
+    /// picker: kept on this Mac, so a version stays pickable after its tasks are gone.
+    private static let usedKey = "claudeModelsUsed"
+    private static let usedLock = NSLock()
+    nonisolated(unsafe) private static var known: Set<String>?
+
+    public static func used(in defaults: UserDefaults = .standard, typed: Bool = false) -> [String] {
+        defaults.stringArray(forKey: typed ? typedKey : usedKey) ?? []
+    }
+    private static let typedKey = "claudeModelsTyped"
+
+    /// A model to list from now on: a task's resolved model, or (`typed`) one typed in the picker. Claude Code's aliases
+    /// are already rows of their own.
+    public static func remember(_ id: String, typed: Bool = false, in defaults: UserDefaults = .standard) {
+        let id = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty, !aliases.contains(id.lowercased()) else { return }
+        usedLock.lock(); defer { usedLock.unlock() }
+        // Asked of every task's every change: an id already known costs a set lookup, no read or write.
+        let cached = defaults == .standard && !typed
+        if cached, known?.contains(id) == true { return }
+        var list = used(in: defaults, typed: typed)
+        if !list.contains(id) { list.append(id); defaults.set(list, forKey: typed ? typedKey : usedKey) }
+        if cached { known = Set(list) }
     }
 
     /// Claude Code's `--effort` levels; it defaults to high.
