@@ -56,6 +56,8 @@
   --orange-cap: #ff9500;
   --blueprint: #e5e5e5;
   --on-blueprint: #0a0a0a;
+  /* The one curve for what arrives or moves up a place: a steep start and a soft landing (iOS sheets'). */
+  --settle: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -238,20 +240,117 @@
    it, as that's your finger. */
 @media (prefers-reduced-motion: reduce) {
   [data-vaul-drawer][data-state="open"] {
-    animation: sheet-fade-in 200ms ease-out !important;
+    animation: fade-in 200ms ease-out !important;
   }
   [data-vaul-drawer][data-state="closed"] {
-    animation: sheet-fade-out 150ms ease-out !important;
+    animation: fade-out 150ms ease-out !important;
   }
 }
-@keyframes sheet-fade-in {
+@keyframes fade-in {
   from {
     opacity: 0;
   }
 }
-@keyframes sheet-fade-out {
+@keyframes fade-out {
   to {
     opacity: 0;
+  }
+}
+
+/* Motion. Only transform and opacity move; each plays once; under Reduce Motion each becomes a fade or nothing. */
+
+/* From page to page the browser fades one into the next (a view transition): the rail, the header and whatever the two
+   pages share stay as they are, and only what differs changes. Browsers without it change pages as before. */
+@media (prefers-reduced-motion: no-preference) {
+  @view-transition {
+    navigation: auto;
+  }
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 180ms;
+}
+
+/* A page's opening lines arrive in order, once, as it loads: `rise` on each, `--i` its place in the order. `backwards`:
+   hidden until its turn, and once landed the element is as if it had never moved (no layer, no stacking context left). */
+.rise {
+  animation: rise 500ms var(--settle) calc(var(--i, 0) * 60ms) backwards;
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+/* A tick in place of a copy icon grows in from a little smaller, so the swap reads as the press's answer. */
+.pop-in {
+  animation: pop-in 150ms ease-out;
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .pop-in {
+    animation: fade-in 200ms ease-out backwards;
+  }
+}
+
+/* Scroll moments (index.astro's script marks a stage `data-waiting` as the page loads and takes it off when the stage
+   comes into view; under Reduce Motion it never marks it, and the stage is simply drawn). */
+/* The states arrive in the order a task goes through them. */
+[data-states]:not([data-waiting]) > li {
+  transition:
+    opacity 300ms ease-out calc(var(--i) * 50ms),
+    transform 450ms var(--settle) calc(var(--i) * 50ms);
+}
+[data-states][data-waiting] > li {
+  opacity: 0;
+  transform: translateY(8px) scale(0.94);
+}
+/* The agents' marks come up one after another, then their lines; an ask then runs along each line into the pile. */
+[data-agents]:not([data-waiting]) li,
+[data-agents]:not([data-waiting]) svg {
+  transition:
+    opacity 300ms ease-out calc(var(--i, 3) * 70ms),
+    transform 450ms var(--settle) calc(var(--i, 3) * 70ms);
+}
+[data-agents][data-waiting] li {
+  opacity: 0;
+  transform: scale(0.85);
+}
+[data-agents][data-waiting] svg {
+  opacity: 0;
+}
+/* The footer's large name rises into place as the page's end comes into view: tied to the scroll itself (a view
+   timeline), so it never plays on its own, and at the page's end it's at rest. The range ends early: the name's line
+   box runs past the page's foot, so it never counts as wholly in view. */
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    .footer-name {
+      animation: footer-name linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 70%;
+    }
+  }
+}
+@keyframes footer-name {
+  from {
+    opacity: 0;
+    transform: translateY(40px);
+  }
+}
+/* The docs' On this page: one mark on the hairline, which slides to the section you're reading (the script gives it
+   its place and height as a transform). Shown only once placed, so it never slides in from the top. */
+.toc-mark {
+  transition: transform 250ms var(--settle);
+}
+@media (prefers-reduced-motion: reduce) {
+  .toc-mark {
+    transition: none;
   }
 }
 
@@ -369,8 +468,16 @@
   );
 }
 /* A folded turn's chevron turns down while it's open. */
+.worked-chevron {
+  transition: transform 150ms ease-out;
+}
 [aria-expanded="true"] > .worked-chevron {
   transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .worked-chevron {
+    transition: none;
+  }
 }
 /* The window's sidebar rows: the open task in the hover grey. */
 .task-row {

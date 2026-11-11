@@ -170,7 +170,9 @@ const row = (current: boolean) => [
             class="h-9 sm:h-7 px-2 flex items-center gap-1.5 rounded-[8px] text-[13px] text-muted hover:bg-hover hover:text-ink transition-colors duration-150"
           >
             <span data-icon-copy><Icon name="copy" size={13} /></span>
-            <span data-icon-done hidden><Icon name="check" size={13} /></span>
+            <span data-icon-done hidden class="pop-in"
+              ><Icon name="check" size={13} /></span
+            >
             <span data-label>Copy as Markdown</span>
             <span data-copied class="sr-only" aria-live="polite"></span>
           </button>
@@ -227,12 +229,17 @@ const row = (current: boolean) => [
         <p class="h-8 flex items-center text-[13px] text-muted mb-1">
           On this page
         </p>
-        <div class="border-l border-stroke">
+        <div class="relative border-l border-stroke">
+          <span
+            data-toc-mark
+            hidden
+            class="toc-mark absolute -left-px top-0 w-px h-px origin-top bg-ink"
+          ></span>
           {sections.map((h) => (
             <a
               href={`#${h.slug}`}
               data-toc={h.slug}
-              class="block -ml-px pl-3 py-1.5 border-l border-transparent text-[13px] leading-[1.35] text-muted hover:text-ink transition-colors duration-150 aria-[current=true]:text-ink aria-[current=true]:border-ink"
+              class="block pl-3 py-1.5 text-[13px] leading-[1.35] text-muted hover:text-ink transition-colors duration-150 aria-[current=true]:text-ink"
             >
               {h.text}
             </a>
@@ -244,8 +251,16 @@ const row = (current: boolean) => [
 </Base>
 
 <style>
+  .docs-menu summary span {
+    transition: transform 150ms ease-out;
+  }
   .docs-menu[open] summary span {
     transform: rotate(180deg);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .docs-menu summary span {
+      transition: none;
+    }
   }
   .docs-menu summary::-webkit-details-marker {
     display: none;
@@ -307,6 +322,7 @@ const row = (current: boolean) => [
     // It says it worked, a tick for a moment in place of the icon, or that it couldn't.
     const show = (icon: string, label: string) => {
       button.innerHTML = svg(icon);
+      if (icon === checkIcon) button.firstElementChild!.classList.add("pop-in");
       button.setAttribute("aria-label", label);
       setTimeout(() => {
         button.innerHTML = svg(copyIcon);
@@ -334,6 +350,7 @@ const row = (current: boolean) => [
     .filter((h): h is HTMLElement => h !== null);
   // Only when the section changes are the links touched, not on every scroll frame.
   let marked: HTMLElement | undefined;
+  const tocMark = document.querySelector<HTMLElement>("[data-toc-mark]")!;
   function mark() {
     const line = innerHeight / 3;
     const current =
@@ -344,6 +361,11 @@ const row = (current: boolean) => [
     links.forEach((a) =>
       a.setAttribute("aria-current", String(a.dataset.toc === current?.id))
     );
+    // The mark slides to it: a 1 px square moved and stretched to the link's place and height.
+    const link = links.find((a) => a.dataset.toc === current?.id);
+    if (!link) return;
+    tocMark.style.transform = `translateY(${link.offsetTop}px) scaleY(${link.offsetHeight})`;
+    tocMark.hidden = false;
   }
   if (links.length) {
     addEventListener("scroll", mark, { passive: true });

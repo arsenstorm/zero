@@ -166,7 +166,7 @@ const wideOrder = ["sm:order-1", "sm:order-2", "sm:order-3"];
             href={item.href}
             aria-current={path.startsWith(item.href) ? "page" : undefined}
             class:list={[
-              "relative before:absolute before:inset-x-0 before:-inset-y-1 sm:before:hidden h-9 sm:h-7 px-3 flex items-center rounded-[8px] font-medium hover:bg-hover transition-colors duration-150",
+              "relative before:absolute before:inset-x-0 before:-inset-y-1 sm:before:hidden h-9 sm:h-7 px-3 flex items-center rounded-[8px] font-medium hover:bg-hover transition-[color,background-color,scale] duration-150 active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100",
               path.startsWith(item.href)
                 ? "text-ink"
                 : "text-muted hover:text-ink",
@@ -251,7 +251,7 @@ const wideOrder = ["sm:order-1", "sm:order-2", "sm:order-3"];
       >
         <div
           data-fit
-          class="flex items-baseline gap-[0.1em] text-[38.4cqw] leading-none font-semibold tracking-[-0.05em] text-ink/[0.08] -mb-[0.1227em]"
+          class="footer-name flex items-baseline gap-[0.1em] text-[38.4cqw] leading-none font-semibold tracking-[-0.05em] text-ink/[0.08] -mb-[0.1227em]"
         >
           <Mark size={200} class="w-auto h-[0.727em] shrink-0" />
           <span>{site.name}</span>

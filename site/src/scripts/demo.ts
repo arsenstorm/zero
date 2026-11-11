@@ -12,6 +12,18 @@ const check = checkIcon
   .replace('width="18" height="18"', 'width="13" height="13"')
   .replace("<svg ", '<svg aria-hidden="true" ');
 
+// What arrives in a conversation comes up into place; under Reduce Motion it fades in where it is. Played by the
+// script, once, so a conversation opened again later doesn't play its messages again.
+const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const arrive = (el: Element, rise = 6) =>
+  el.animate(
+    {
+      opacity: [0, 1],
+      transform: [`translateY(${still ? 0 : rise}px)`, "none"],
+    },
+    { duration: 240, easing: "cubic-bezier(0.32, 0.72, 0, 1)" }
+  );
+
 // Asks
 
 type Ask = {
@@ -231,6 +243,7 @@ if (win) {
     const items = conversation(id).querySelector<HTMLElement>("[data-items]")!;
     items.insertAdjacentHTML("beforeend", html);
     items.scrollTop = items.scrollHeight;
+    arrive(items.lastElementChild!);
   }
   const escape = (s: string) =>
     s.replace(
@@ -250,9 +263,11 @@ if (win) {
     toggle.addEventListener("click", () => {
       const open = toggle.getAttribute("aria-expanded") !== "true";
       toggle.setAttribute("aria-expanded", String(open));
-      group.querySelector<HTMLElement>(
+      const steps = group.querySelector<HTMLElement>(
         "div[hidden], div:not([data-worked])"
-      )!.hidden = !open;
+      )!;
+      steps.hidden = !open;
+      if (open) arrive(steps, 0);
     });
   }
   input.placeholder = placeholder(open);

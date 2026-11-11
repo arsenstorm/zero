@@ -104,18 +104,20 @@ const h2 = "text-[28px] leading-[1.15] font-semibold tracking-[-0.02em]";
   <section class="px-4 sm:px-8 pt-20 sm:pt-28 pb-16">
     <div class="mx-auto max-w-[1240px] px-2 sm:px-0">
       {/* What Zero is, as the headline; its tagline a quiet line above. */}
-      <p class="text-[15px] font-medium text-muted">Engineer with care.</p>
+      <p class="rise text-[15px] font-medium text-muted">Engineer with care.</p>
       <h1
-        class="mt-3 max-w-[16ch] sm:max-w-none text-[44px] sm:text-[60px] leading-[1.02] font-semibold tracking-[-0.035em] text-balance"
+        style="--i: 1"
+        class="rise mt-3 max-w-[16ch] sm:max-w-none text-[44px] sm:text-[60px] leading-[1.02] font-semibold tracking-[-0.035em] text-balance"
       >
         A Mac workspace for coding agents
       </h1>
       <p
-        class="mt-5 max-w-[34rem] text-[17px] leading-[1.5] text-muted text-pretty"
+        style="--i: 2"
+        class="rise mt-5 max-w-[34rem] text-[17px] leading-[1.5] text-muted text-pretty"
       >
         {intro}
       </p>
-      <div class="mt-8 flex flex-wrap items-center gap-3">
+      <div style="--i: 3" class="rise mt-8 flex flex-wrap items-center gap-3">
         <a href="/download" class={`${primary} gap-2 pl-4 pr-5`}
           ><Icon name="download" fill="glyph" size={16} />Download for Mac</a
         >
@@ -125,7 +127,10 @@ const h2 = "text-[28px] leading-[1.15] font-semibold tracking-[-0.02em]";
       </div>
     </div>
   </section>
-  <section class="px-4 sm:px-8 pb-24"><WindowMock /></section>
+  {/* The window comes up last, after the words above it. */}
+  <section style="--i: 5" class="rise px-4 sm:px-8 pb-24">
+    <WindowMock />
+  </section>
 
   {/* Each part gets the page's width: its words above, left-aligned, and its picture on a grey stage below. */}
   <section class="px-4 sm:px-8 py-16">
@@ -145,7 +150,10 @@ const h2 = "text-[28px] leading-[1.15] font-semibold tracking-[-0.02em]";
       <div
         class="mt-8 rounded-[28px] bg-rail p-6 sm:p-10 flex items-center justify-center"
       >
-        <div class="hidden md:block relative shrink-0 w-[280px] h-[260px]">
+        <div
+          data-agents
+          class="hidden md:block relative shrink-0 w-[280px] h-[260px]"
+        >
           <svg
             aria-hidden="true"
             viewBox="0 0 280 260"
@@ -157,6 +165,7 @@ const h2 = "text-[28px] leading-[1.15] font-semibold tracking-[-0.02em]";
                 run = 280 - sx;
               return (
                 <path
+                  data-agent-line={agent.name}
                   d={`M${sx} ${sy} C ${sx + run * 0.55} ${sy}, ${280 - run * 0.55} 130, 280 130`}
                   fill="none"
                   stroke="currentColor"
@@ -167,10 +176,10 @@ const h2 = "text-[28px] leading-[1.15] font-semibold tracking-[-0.02em]";
             })}
           </svg>
           <ul aria-label="Agents">
-            {agents.map((agent) => (
+            {agents.map((agent, i) => (
               <li
                 title={agent.name}
-                style={`left: ${agent.at[0] - 20}px; top: ${agent.at[1] - 20}px`}
+                style={`left: ${agent.at[0] - 20}px; top: ${agent.at[1] - 20}px; --i: ${i}`}
                 class:list={[
                   "absolute size-10 rounded-full grid place-items-center",
                   agent.ground,
@@ -185,6 +194,12 @@ const h2 = "text-[28px] leading-[1.15] font-semibold tracking-[-0.02em]";
               </li>
             ))}
           </ul>
+          {/* An ask on its way to the inbox: a dot the script runs along an agent's line. */}
+          <span
+            data-agent-dot
+            aria-hidden="true"
+            class="absolute left-0 top-0 -ml-[3px] -mt-[3px] size-1.5 rounded-full bg-muted opacity-0 pointer-events-none"
+          ></span>
         </div>
         <InboxDeck class="w-full max-w-[420px]" />
       </div>
@@ -224,10 +239,14 @@ const h2 = "text-[28px] leading-[1.15] font-semibold tracking-[-0.02em]";
       {/* The sidebar's icons, large, on the composer's grey: the colour is the state's alone. */}
       <ul
         aria-label="The states a task can be in"
+        data-states
         class="mt-8 rounded-[28px] bg-rail px-6 py-10 sm:px-10 grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-x-4 gap-y-8 text-center"
       >
-        {states.map((st) => (
-          <li class="flex flex-col items-center last:col-span-2 sm:last:col-span-1">
+        {states.map((st, i) => (
+          <li
+            style={`--i: ${i}`}
+            class="flex flex-col items-center last:col-span-2 sm:last:col-span-1"
+          >
             <span class="size-14 rounded-full grid place-items-center bg-composer [&_svg]:size-6 [&>span]:size-6">
               <TaskState state={st.state} />
             </span>
@@ -315,4 +334,66 @@ const h2 = "text-[28px] leading-[1.15] font-semibold tracking-[-0.02em]";
 
 <script>
   import "../scripts/demo";
+  import { inboxAsks } from "../lib/demo";
+
+  // Scroll moments: each plays once, when its stage is well in view (the CSS is in global.css). Under Reduce Motion
+  // nothing is marked as waiting, so the stages are simply drawn.
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function onceInView(stage: HTMLElement, play: () => void) {
+    stage.toggleAttribute("data-waiting", true);
+    new IntersectionObserver(
+      (entries, observer) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        observer.disconnect();
+        stage.removeAttribute("data-waiting");
+        play();
+      },
+      { threshold: 0.5 }
+    ).observe(stage);
+  }
+
+  const states = document.querySelector<HTMLElement>("[data-states]");
+  if (states && !still) onceInView(states, () => {});
+
+  // The inbox's agents: an ask runs from its agent along the line into the pile, as a dot moved by transform alone
+  // (the line's points as keyframes). Once from each as the section comes into view; from then on, whenever you
+  // answer an ask, its agent sends the next one, as that agent's next ask comes into the pile at the back.
+  const agents = document.querySelector<HTMLElement>("[data-agents]");
+  if (agents && !still) {
+    const dot = agents.querySelector<HTMLElement>("[data-agent-dot]")!;
+    function send(agent: string) {
+      const line = agents!.querySelector<SVGPathElement>(
+        `[data-agent-line="${agent}"]`
+      );
+      // Not on phones, where the marks aren't shown.
+      if (!line || !agents!.offsetParent) return;
+      const length = line.getTotalLength();
+      const ask = dot.cloneNode() as HTMLElement;
+      agents!.append(ask);
+      const timing = {
+        duration: 650,
+        easing: "cubic-bezier(0.645, 0.045, 0.355, 1)",
+      };
+      ask.animate(
+        Array.from({ length: 25 }, (_, n) => {
+          const at = line.getPointAtLength((length * n) / 24);
+          return { transform: `translate(${at.x}px, ${at.y}px)` };
+        }),
+        timing
+      );
+      ask.animate(
+        { opacity: [0, 1, 1, 0], offset: [0, 0.2, 0.8, 1] },
+        timing
+      ).onfinish = () => ask.remove();
+    }
+    const names = [...new Set(inboxAsks.map((ask) => ask.agent))];
+    onceInView(agents, () =>
+      names.forEach((name, i) => setTimeout(() => send(name), 450 + i * 160))
+    );
+    document.addEventListener("zero:answered", (event) => {
+      const { headline } = (event as CustomEvent).detail;
+      const agent = inboxAsks.find((ask) => ask.headline === headline)?.agent;
+      if (agent) setTimeout(() => send(agent), 250);
+    });
+  }
 </script>

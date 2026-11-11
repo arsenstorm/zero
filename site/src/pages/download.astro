@@ -43,14 +43,17 @@ const intro = `${site.name} for Mac is free and open source, under the GNU GPL v
   <section class="px-6 sm:px-8 pt-20 sm:pt-28 pb-16">
     <div class="mx-auto max-w-5xl">
       <h1
-        class="text-[44px] sm:text-[60px] leading-[1.02] font-semibold tracking-[-0.035em]"
+        class="rise text-[44px] sm:text-[60px] leading-[1.02] font-semibold tracking-[-0.035em]"
       >
         Download {site.name}
       </h1>
-      <p class="mt-5 max-w-[32rem] text-[17px] leading-[1.5] text-muted">
+      <p
+        style="--i: 1"
+        class="rise mt-5 max-w-[32rem] text-[17px] leading-[1.5] text-muted"
+      >
         {intro}
       </p>
-      <div class="mt-8 flex flex-wrap items-center gap-3">
+      <div style="--i: 2" class="rise mt-8 flex flex-wrap items-center gap-3">
         <a href={site.download} class={primary}
           ><Icon name="download" fill="glyph" size={16} />Download for Mac</a
         >
@@ -116,7 +119,7 @@ const intro = `${site.name} for Mac is free and open source, under the GNU GPL v
                 class="absolute top-1.5 right-1.5 size-7 grid place-items-center rounded-[4px] text-muted hover:text-ink transition-colors duration-150 before:absolute before:-inset-2"
               >
                 <span data-copy-icon><Icon name="copy" size={14} /></span>
-                <span data-done-icon hidden class="text-green"
+                <span data-done-icon hidden class="pop-in text-green"
                   ><Icon name="check" size={14} /></span
                 >
               </button>

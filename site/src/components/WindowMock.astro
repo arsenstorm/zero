@@ -476,7 +476,7 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
               type="button"
               data-stop
               aria-label="Stop"
-              class="size-7 shrink-0 grid place-items-center rounded-full bg-knob text-on-knob"
+              class="size-7 shrink-0 grid place-items-center rounded-full bg-knob text-on-knob transition-[scale,background-color] duration-150 active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
             >
               <Icon name="media-stop" fill="glyph" size={12} />
             </button>
@@ -485,7 +485,7 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
               data-send
               aria-label="Send"
               hidden
-              class="size-7 shrink-0 grid place-items-center rounded-full bg-send-idle text-white data-[ready]:bg-knob data-[ready]:text-on-knob"
+              class="size-7 shrink-0 grid place-items-center rounded-full bg-send-idle text-white data-[ready]:bg-knob data-[ready]:text-on-knob transition-[scale,background-color] duration-150 active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
             >
               <span class="-translate-x-[0.5px] translate-y-[0.5px]"
                 ><Icon name="paper-plane" fill="glyph" size={13} /></span
