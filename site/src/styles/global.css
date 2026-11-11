@@ -726,23 +726,24 @@
   }
 }
 
-/* The window demo's docked ask: the conversation just around it, above and at its sides, blurred and faded out to a
-   soft edge, as the app's Ring is (thin material with the card's colour at 0.45 over it). The two masks, across and
-   down, meet as one soft-cornered edge. */
+/* The window demo's docked ask: the conversation fades out into the panel over the 72 px above the ask, about three
+   lines, on a smoothstep curve, so each line dims a little more than the one above; over one line it read as a cut.
+   Hidden beside the ask. No blur: under the ask's sides a blur showed as smeared letters. */
 .dock-ring {
-  border-radius: 40px 40px 0 0;
-  background: color-mix(in srgb, var(--card) 45%, transparent);
-  -webkit-backdrop-filter: blur(10px) saturate(1.4);
-  backdrop-filter: blur(10px) saturate(1.4);
-  mask:
-    linear-gradient(to bottom, transparent, #000 18px),
-    linear-gradient(
-      to right,
-      transparent,
-      #000 18px,
-      #000 calc(100% - 18px),
-      transparent
-    );
-  mask-composite: intersect;
-  -webkit-mask-composite: source-in;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--card) 0.0%, transparent) 0px,
+    color-mix(in srgb, var(--card) 2.0%, transparent) 6px,
+    color-mix(in srgb, var(--card) 7.4%, transparent) 12px,
+    color-mix(in srgb, var(--card) 15.6%, transparent) 18px,
+    color-mix(in srgb, var(--card) 25.9%, transparent) 24px,
+    color-mix(in srgb, var(--card) 37.6%, transparent) 30px,
+    color-mix(in srgb, var(--card) 50.0%, transparent) 36px,
+    color-mix(in srgb, var(--card) 62.4%, transparent) 42px,
+    color-mix(in srgb, var(--card) 74.1%, transparent) 48px,
+    color-mix(in srgb, var(--card) 84.4%, transparent) 54px,
+    color-mix(in srgb, var(--card) 92.6%, transparent) 60px,
+    color-mix(in srgb, var(--card) 98.0%, transparent) 66px,
+    color-mix(in srgb, var(--card) 100.0%, transparent) 72px
+  );
 }

@@ -343,7 +343,7 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
           data-state={task.state}
           data-title={leadTitle(task)}
           hidden={task.id !== selected}
-          class="contents"
+          class="relative flex-1 min-h-0 flex flex-col"
         >
           <div
             data-items
@@ -405,15 +405,17 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
           {task.ask && (
             // Docked as the app docks it (ArticlePanel): a tab in the composer's grey with a strip naming it, and the
             // inbox's card laid flat on the composer's well, its foot running 14 px under the composer (22 here: the form's 8 px above it too). 16 + 2 = 18.
+            // Over the conversation's foot, as the app's dock is: the conversation runs on under it, into the ring's blur
+            // and fade, not cut off above it. Its height pads the conversation's end (the script below), so the last
+            // line can still scroll clear of it.
             <div
               data-docked
-              class="relative px-4 sm:px-10 pt-2 -mb-[22px] [--dock-inset:29px] sm:[--dock-inset:53px]"
+              class="absolute z-10 inset-x-0 -bottom-[22px] px-4 sm:px-10"
             >
-              {/* What's just around the ask, above and at its sides, blurred and faded out to a soft edge
-                  (ConversationView's Ring: 22 pt of thin material, the card's colour at 0.45 over it). */}
+              {/* The conversation fading out into the panel just above the ask, and hidden beside it. */}
               <div
                 aria-hidden="true"
-                class="dock-ring absolute inset-x-[calc(var(--dock-inset)-22px)] top-[-14px] bottom-0 pointer-events-none"
+                class="dock-ring absolute inset-x-0 top-[-72px] bottom-0 pointer-events-none"
               ></div>
               {/* 13 pt in from the composer's sides, as ConversationView docks it. */}
               <div class="relative mx-[13px] rounded-t-[18px] bg-field-tab px-0.5">
@@ -440,7 +442,7 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
       {/* The composer, as the app's (Composer.swift): a card on a hairline with two soft shadows, its words above, and
           below them +, the agent's chip (its mark, model and effort), the permissions chip, then Stop while the task
           works or Send, grey until there's something to send. */}
-      <form data-composer class="px-4 sm:px-10 pt-2 pb-4 sm:pb-6">
+      <form data-composer class="relative z-20 px-4 sm:px-10 pt-2 pb-4 sm:pb-6">
         <div
           class="relative rounded-[26px] border border-field-edge bg-field p-[14px] shadow-[0_5px_14px_rgb(0_0_0/0.06),0_1px_1.5px_rgb(0_0_0/0.03)]"
         >
@@ -506,3 +508,17 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
     </div>
   </div>
 </div>
+
+<script>
+  // Each conversation's end padded by its docked ask's height (less the 22 px tucked under the composer), so the
+  // last line scrolls clear of the ask and its 72 px fade; answered and gone, the padding goes with it.
+  for (const dock of document.querySelectorAll<HTMLElement>(
+    "[data-window] [data-docked]"
+  )) {
+    const items =
+      dock.parentElement!.querySelector<HTMLElement>("[data-items]")!;
+    new ResizeObserver(() => {
+      items.style.paddingBottom = `${Math.max(8, dock.offsetHeight - 22 + 72)}px`;
+    }).observe(dock);
+  }
+</script>
