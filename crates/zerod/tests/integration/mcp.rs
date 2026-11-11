@@ -116,3 +116,27 @@ async fn an_agent_asks_runs_and_notes_through_zeros_tools() {
     let noted = call("zero_note", json!({"text": "Blocked on CI", "state": "blocked"})).await;
     assert!(!noted["result"]["content"][0]["text"].as_str().unwrap().contains("asked"), "a note waits on nothing");
 }
+
+/// zerod down and the socket not the app's own: the call fails at once, and no zerod is started as this server's
+/// child (it would inherit its caller's process tree, Chrome's quarantine with it: every file its agents made blocked).
+#[tokio::test]
+async fn a_server_whose_zerod_is_down_doesnt_start_one_itself() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let dir = temp_dir("mcp-down");
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_zerod"))
+        .args(["mcp", "--home", &dir.join("zerod").to_string_lossy(), "--socket", &dir.join("none.sock").to_string_lossy()])
+        .env("HOME", &dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let call = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "scratchpad_list", "arguments": {}}});
+    child.stdin.as_mut().unwrap().write_all(format!("{call}\n").as_bytes()).await.unwrap();
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    let line =
+        tokio::time::timeout(std::time::Duration::from_secs(2), lines.next_line()).await.expect("an answer at once").unwrap().unwrap();
+    let answer: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(answer["result"]["isError"], true, "{answer}");
+    assert!(!dir.join(".zero").exists(), "a zerod was started in the server's home");
+}

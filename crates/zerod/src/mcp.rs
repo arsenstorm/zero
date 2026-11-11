@@ -218,19 +218,31 @@ pub async fn serve(socket: &Path) {
     }
 }
 
-/// zerod's socket; zerod is started (this same program) if nothing answers.
+/// zerod's socket. Nothing answering on the app's own, the Zero.app this program is in is opened through Launch
+/// Services, which starts zerod as it always does: started here, zerod would be the caller's child and inherit its
+/// quarantine (Chrome's, for its native host), and every file its agents made would be blocked. Any other socket (a
+/// test's) isn't started.
 pub async fn connect(socket: &Path) -> Result<tokio::net::UnixStream, String> {
     if let Ok(stream) = tokio::net::UnixStream::connect(socket).await {
         return Ok(stream);
     }
+    let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    std::process::Command::new(exe)
+    let app = exe.ancestors().find(|dir| dir.extension().is_some_and(|e| e == "app"));
+    let (true, Some(app)) = (socket == home.join(".zero/zerod.sock"), app) else { return Err("Zero isn't running".into()) };
+    let opened = tokio::process::Command::new("/usr/bin/open")
+        .args(["-g", "-j"])
+        .arg(app)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| format!("Zero isn't running and didn't start: {e}"))?;
-    for _ in 0..50 {
+        .status()
+        .await;
+    if !opened.is_ok_and(|status| status.success()) {
+        return Err("Zero isn't running and didn't open".into());
+    }
+    // The app's launch, then zerod's.
+    for _ in 0..100 {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         if let Ok(stream) = tokio::net::UnixStream::connect(socket).await {
             return Ok(stream);

@@ -15,6 +15,29 @@ unsafe extern "C" {
     safe fn setsid() -> i32;
     fn getrlimit(resource: i32, limits: *mut [u64; 2]) -> i32;
     fn setrlimit(resource: i32, limits: *const [u64; 2]) -> i32;
+    fn getxattr(
+        path: *const std::ffi::c_char, name: *const std::ffi::c_char, value: *mut u8, size: usize, position: u32, options: i32,
+    ) -> isize;
+}
+
+/// Started under a process that quarantines the files it makes (Chrome, for its native host), zerod and every agent
+/// under it do too, and macOS blocks every program they build. macOS has no way for a process to drop it: said loudly,
+/// as the way out is starting zerod again from Zero.
+fn warn_if_quarantined(home: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    let probe = home.join("quarantine-probe");
+    let Ok(()) = std::fs::write(&probe, b"") else { return };
+    let path = std::ffi::CString::new(probe.as_os_str().as_bytes()).unwrap_or_default();
+    // Safety: two NUL-terminated strings and no buffer: the size of the attribute, or -1 when the file has none.
+    let quarantined = unsafe { getxattr(path.as_ptr(), c"com.apple.quarantine".as_ptr(), std::ptr::null_mut(), 0, 0, 0) } >= 0;
+    let _ = std::fs::remove_file(&probe);
+    if quarantined {
+        eprintln!(
+            "zerod: QUARANTINED: started under a quarantining process (parent pid {}), so every file agents make is \
+             quarantined and programs they build are blocked. Quit zerod and let Zero start it again.",
+            std::os::unix::process::parent_id()
+        );
+    }
 }
 
 /// Descriptors up to the hard limit (macOS takes no more than OPEN_MAX): started by the app, zerod has its 256, and
@@ -66,6 +89,7 @@ async fn main() {
         eprintln!("zerod: another zerod has {}", args.home.display());
         return;
     };
+    warn_if_quarantined(&args.home);
     let daemon = open_daemon(&args.home);
     let (inbox, drops) = open_inbox(&daemon, &args);
     keep_liveness(&inbox);
