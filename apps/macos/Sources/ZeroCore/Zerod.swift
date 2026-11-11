@@ -1490,6 +1490,11 @@ public final class ZerodLink: @unchecked Sendable {
         return try decode(McpServer.self, from: await call("saveMcpServer", ["server": try JSONSerialization.jsonObject(with: data)]))
     }
     public func deleteMcpServer(_ id: String) async throws { _ = try await call("deleteMcpServer", ["server": id]) }
+    /// Claude Code's own sign-in to one of its servers (zerod's mcp_auth.rs): its page to open.
+    public func mcpSignIn(_ server: String, cwd: String?) async throws -> URL? {
+        let result = try await call("mcpSignIn", ["args": ["server": server, "cwd": cwd as Any]]) as? [String: Any]
+        return (result?["page"] as? String).flatMap(URL.init(string:))
+    }
 
     public func saveWorkspace(_ workspace: Workspace) async throws -> Workspace {
         let fields = try JSONSerialization.jsonObject(with: JSONEncoder().encode(workspace))

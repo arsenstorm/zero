@@ -112,6 +112,8 @@ run (their machine, credentials or production access) with `zero run 'command' -
 report, a wake-up) with `zero ask \"…\" --option … --async` (with `--block` when you can't go on without the answer: Zero then \
 holds your other events until it's answered); where the `zero` command can't reach Zero (a sandbox), \
 Zero's zero_ask, zero_run, zero_note and zero_issue tools do the same. Never print a command for them to paste. \
+An MCP server that needs signing in (its tools fail asking for authentication): Zero has already asked the user to sign \
+in to it, so don't ask them again; go on without it, and its tools work once they have. \
 Leading several issues at once (a worker each), keep a row per issue, which the user reads coming back instead of \
 asking you where everything is: `zero issue TICKET you|over|working|waiting|parked|done \"…\"` whenever one's state \
 changes (you: what you need them to decide or give; over: done on your side, their step to take, such as a review or \

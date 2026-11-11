@@ -74,11 +74,6 @@ impl Adapter for Codex {
 
 impl Codex {
     fn response(&mut self, conversation: &Conversation, id: &Value, message: &Value, effects: &mut Effects) {
-        if let Some(name) = id.as_str().and_then(|id| id.strip_prefix(crate::mcp_servers::SIGN_IN)) {
-            let error = message.get("error").map(|e| e["message"].as_str().unwrap_or("Codex refused"));
-            crate::mcp_servers::signing_in(conversation, name, message["result"]["authorizationUrl"].as_str(), error, effects);
-            return;
-        }
         let Some(method) = self.pending.remove(&key(id)) else { return };
         if let Some(error) = message.get("error") {
             effects.fail(conversation, &format!("{method} failed: {}", error["message"].as_str().unwrap_or("no reason given")));
@@ -180,28 +175,10 @@ impl Codex {
 fn notification(conversation: &Conversation, method: &str, params: &Value, effects: &mut Effects) {
     let turn = params["turnId"].as_str();
     match method {
-        // A server of Zero's that wants signing in: Codex's own sign-in for it, its link for the user.
+        // A server that wants signing in, Zero's or the user's own: Zero signs in to it (mcp_auth.rs), once.
         "mcpServer/startupStatus/updated" if params["failureReason"] == "reauthenticationRequired" => {
-            if let Some(name) = params["name"].as_str()
-                && crate::mcp_servers::signs_in(conversation, name).is_some()
-            {
-                effects.replies.push(json!({"id": format!("{}{name}", crate::mcp_servers::SIGN_IN), "method": "mcpServer/oauth/login",
-                                            "params": {"name": name, "threadId": params["threadId"]}}));
-            }
-        }
-        "mcpServer/oauthLogin/completed" => {
-            if let Some(name) = params["name"].as_str()
-                && let Some(server) = crate::mcp_servers::signs_in(conversation, name)
-            {
-                if params["success"] == true {
-                    effects.notice(conversation, &format!("Signed in to {}", server.name), false)
-                } else {
-                    effects.notice(
-                        conversation,
-                        &format!("Couldn't sign in to {}: {}", server.name, params["error"].as_str().unwrap_or("no reason given")),
-                        true,
-                    )
-                }
+            if let Some(name) = params["name"].as_str() {
+                effects.changes.push(Change::McpSignIn { server: name.into() })
             }
         }
         "thread/started" => {

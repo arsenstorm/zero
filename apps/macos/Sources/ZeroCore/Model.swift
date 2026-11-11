@@ -88,6 +88,8 @@ public struct Ask: Codable, Identifiable, Equatable, Sendable {
     public var needs: String?
     /// For a run: where it runs (zerod's runs.rs). "host:<terminal>" is a terminal of zero-host's the user can watch.
     public var run: String?
+    /// A page its first option opens, the ask staying open (an MCP server's sign-in, which zerod closes once done).
+    public var link: String? = nil
 
     /// A run Zero lost track of while it ran: it may or may not have finished.
     public var lost: Bool { kind == .run && status == "lost" }

@@ -452,6 +452,11 @@ public final class Workspace {
         } catch { return error.localizedDescription }
     }
 
+    /// Claude Code's sign-in page for one of its own servers (`cwd`: a project's), or nil with lastError said.
+    public func mcpSignIn(_ server: String, cwd: String?) async -> URL? {
+        await attempt { try await $0.mcpSignIn(server, cwd: cwd) } ?? nil
+    }
+
     /// Gone, with the values it kept in the Keychain.
     public func deleteMcpServer(_ server: ZerodLink.McpServer) async {
         _ = await attempt { try await $0.deleteMcpServer(server.id) }

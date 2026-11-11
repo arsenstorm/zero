@@ -365,32 +365,24 @@ fn with_remote_server(provider: Provider) -> Conversation {
 }
 
 #[test]
-fn a_server_of_zeros_that_needs_signing_in_gives_the_user_claudes_own_sign_in_link() {
+fn any_server_that_needs_signing_in_is_zeros_to_sign_in_to_once_per_process() {
     let mut core = Core::new(with_remote_server(Provider::Claude));
     let effects = core.receive(&json!({"type": "system", "subtype": "init", "session_id": "t1", "mcp_servers": [
-        {"name": "cve-lookup", "status": "needs-auth"}, {"name": "theirs", "status": "needs-auth"}, {"name": "docs", "status": "connected"}]}));
-    assert_eq!(
-        effects.replies,
-        [
-            json!({"type": "control_request", "request_id": "mcp-auth-cve-lookup", "request": {"subtype": "mcp_authenticate", "serverName": "cve-lookup"}})
-        ],
-        "Zero's server only: the user's own are theirs to sign in to"
+        {"name": "cve-lookup", "status": "needs-auth"}, {"name": "betterstack", "status": "needs-auth"}, {"name": "docs", "status": "connected"}]}));
+    assert!(effects.replies.is_empty(), "signed in by a Claude of Zero's own, which hears the callback: not this task's");
+    let wanted: Vec<&str> = effects
+        .changes
+        .iter()
+        .filter_map(|c| match c {
+            Change::McpSignIn { server } => Some(server.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(wanted, ["cve-lookup", "betterstack"], "Zero's server and the user's own alike");
+    let again = core.receive(
+        &json!({"type": "system", "subtype": "init", "session_id": "t1", "mcp_servers": [{"name": "betterstack", "status": "needs-auth"}]}),
     );
-    assert!(core.receive(&json!({"type": "system", "subtype": "init", "session_id": "t1", "mcp_servers": [{"name": "cve-lookup", "status": "needs-auth"}]})).replies.is_empty(),
-            "asked once: the next turn's init doesn't ask again");
-    // Claude listens for the sign-in's callback itself and keeps what it's given; the user only opens the link.
-    core.receive(&json!({"type": "control_response", "response": {"subtype": "success", "request_id": "mcp-auth-cve-lookup",
-                                                                   "response": {"authUrl": "https://cve.example/authorize?x=1", "requiresUserAction": true, "callbackExpected": true}}}));
-    assert!(
-        matches!(&core.conversation().items.last().unwrap().kind,
-                     ItemKind::Notice { text, error: false } if text == "CVE lookup needs you to sign in on your Mac: [open its sign-in page](https://cve.example/authorize?x=1)"),
-        "{:?}",
-        core.conversation().items
-    );
-    core.receive(&json!({"type": "control_response", "response": {"subtype": "error", "request_id": "mcp-auth-cve-lookup", "error": "no OAuth here"}}));
-    assert!(
-        matches!(&core.conversation().items.last().unwrap().kind, ItemKind::Notice { text, error: true } if text == "Couldn't sign in to CVE lookup: no OAuth here")
-    );
+    assert!(!again.changes.iter().any(|c| matches!(c, Change::McpSignIn { .. })), "said once: the next turn's init doesn't say it again");
 }
 
 #[test]

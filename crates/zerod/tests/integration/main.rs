@@ -31,6 +31,7 @@ mod later;
 mod leads;
 mod loops;
 mod mcp;
+mod mcp_auth;
 mod mcp_servers;
 mod mirror;
 mod naming;

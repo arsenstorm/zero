@@ -95,6 +95,7 @@ fn open_inbox(daemon: &Arc<zerod::daemon::Daemon>, args: &Args) -> (Arc<zerod::i
     settings.apply_git(&args.home);
     drops.start();
     zerod::bridge::Bridge::start(daemon.clone(), inbox.clone());
+    zerod::mcp_auth::start(daemon.clone(), inbox.clone());
     zerod::recap::start(daemon.clone(), inbox.clone());
     zerod::server::hold_while_blocked(daemon, &inbox);
     zerod::server::know_workers(daemon, &inbox);

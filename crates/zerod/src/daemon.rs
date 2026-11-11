@@ -125,6 +125,8 @@ pub struct Daemon {
     pub workspaces: crate::workspaces::Workspaces,
     /// The MCP servers set up in Zero, each task's CLI given its workspace's as it starts.
     pub mcp_servers: crate::mcp_servers::McpServers,
+    /// Sign-ins to MCP servers tasks' CLIs say need one (mcp_auth.rs).
+    pub mcp_auth: Arc<crate::mcp_auth::McpAuth>,
     /// The CLIs' sign-ins, handed to each as a task starts.
     pub signins: crate::signins::SignIns,
     /// A lock per session held while its agent starts (resume).
@@ -325,6 +327,7 @@ impl Daemon {
             endings: Default::default(),
             workspaces: crate::workspaces::Workspaces::open(home),
             mcp_servers: crate::mcp_servers::McpServers::open(home),
+            mcp_auth: crate::mcp_auth::McpAuth::new(crate::mcp_auth::runner()),
             signins: crate::signins::SignIns::open(home),
             resuming: Mutex::new(HashMap::new()),
             watches: Mutex::new(crate::watches::load(home).into_iter().map(|w| (w.id.clone(), w)).collect()),

@@ -517,6 +517,11 @@ final class InboxController {
     /// Picks an option; a text option opens its input on the card instead of answering straight away.
     func choose(_ index: Int, on id: String? = nil) {
         guard let id = id ?? selected, let ask = store.ask(id), index < ask.options.count else { return }
+        // Its page opens, the ask staying until zerod closes it (a sign-in, once it's done).
+        if index == 0, let link = ask.link.flatMap(URL.init(string:)) {
+            NSWorkspace.shared.open(link)
+            return
+        }
         if Ask.expectsText(ask.options[index]) {
             textOption[id] = index
             focusedReply = id

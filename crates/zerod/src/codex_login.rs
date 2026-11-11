@@ -119,3 +119,29 @@ async fn answer<R: AsyncRead + Unpin>(lines: &mut tokio::io::Lines<BufReader<R>>
         return Ok(message["result"].clone());
     }
 }
+
+/// Signs in to MCP server `server` through Codex's own OAuth (`mcpServer/oauth/login`), over an app-server's stdio: `page`
+/// is given Codex's link for the user; Codex hears the callback, keeps the token and says when it's done.
+pub async fn mcp_sign_in<R, W>(reader: R, mut writer: W, server: &str, page: tokio::sync::oneshot::Sender<String>) -> Result<(), String>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut lines = BufReader::new(reader).lines();
+    greet(&mut lines, &mut writer).await?;
+    write(&mut writer, json!({"id": 5, "method": "mcpServer/oauth/login", "params": {"name": server}})).await?;
+    let started = answer(&mut lines, 5).await?;
+    if let Some(url) = started["authorizationUrl"].as_str() {
+        let _ = page.send(url.into());
+    }
+    loop {
+        let message = next(&mut lines).await?;
+        if message["method"] != "mcpServer/oauthLogin/completed" || message["params"]["name"] != server {
+            continue;
+        }
+        if message["params"]["success"] != true {
+            return Err(message["params"]["error"].as_str().unwrap_or("no reason given").into());
+        }
+        return Ok(());
+    }
+}

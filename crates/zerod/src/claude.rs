@@ -37,7 +37,7 @@ pub struct Claude {
     interrupting: bool,
     /// Claude's background tasks still running (a subagent, a shell), by task id: what Stop stops besides the turn.
     tasks: std::collections::HashSet<String>,
-    /// Servers this process was asked to sign in to, so a later turn's init doesn't ask again.
+    /// Servers this process said need signing in, so a later turn's init doesn't say it again.
     signing_in: std::collections::HashSet<String>,
     /// The row saying Claude is compacting the conversation, while it does: a turn can go quiet for minutes then.
     compacting: Option<String>,
@@ -231,27 +231,14 @@ impl Adapter for Claude {
                         effort: None,
                     });
                 }
-                // A server of Zero's that wants signing in: Claude's own sign-in for it, its link for the user.
+                // A server that wants signing in, Zero's or the user's own: Zero signs in to it (mcp_auth.rs), once.
                 for server in message["mcp_servers"].as_array().into_iter().flatten().filter(|s| s["status"] == "needs-auth") {
                     if let Some(name) = server["name"].as_str()
-                        && crate::mcp_servers::signs_in(conversation, name).is_some()
                         && self.signing_in.insert(name.into())
                     {
-                        effects
-                            .replies
-                            .push(json!({"type": "control_request", "request_id": format!("{}{name}", crate::mcp_servers::SIGN_IN),
-                                                    "request": {"subtype": "mcp_authenticate", "serverName": name}}));
+                        effects.changes.push(Change::McpSignIn { server: name.into() });
                     }
                 }
-            }
-            Some("control_response")
-                if let Some(name) =
-                    message["response"]["request_id"].as_str().and_then(|id| id.strip_prefix(crate::mcp_servers::SIGN_IN)) =>
-            {
-                let response = &message["response"];
-                let url = response["response"]["authUrl"].as_str();
-                let error = (response["subtype"] != "success").then(|| response["error"].as_str().unwrap_or("Claude refused"));
-                crate::mcp_servers::signing_in(conversation, name, url, error, &mut effects);
             }
             Some("system") if message["subtype"] == "status" && message["status"] == "compacting" => {
                 if self.compacting.is_none() {
@@ -388,7 +375,6 @@ impl Adapter for Claude {
         self.said = None;
         self.background.clear();
         self.tasks.clear();
-        // A new process listens afresh: its sign-in is a new link.
         self.signing_in.clear();
     }
 }

@@ -139,3 +139,65 @@ fn link(line: &str) -> Option<String> {
     let url: String = line[start..].chars().take_while(|c| !c.is_whitespace() && !c.is_control()).collect();
     (url.len() > "https://".len()).then_some(url)
 }
+
+/// `claude -p` waiting on stream-json with the user's own settings, plugins and MCP servers (and Zero's, as `mcp`
+/// gives them), keeping no session: what signs in to an MCP server.
+pub fn mcp_command(mcp: Option<&str>) -> Vec<String> {
+    let mut args =
+        vec!["claude", "-p", "--no-session-persistence", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"];
+    if let Some(config) = mcp {
+        args.extend(["--mcp-config", config])
+    }
+    crate::adapter::login_shell(&args)
+}
+
+/// Signs in to MCP server `server` through Claude Code's own OAuth (`mcp_authenticate`), in a Claude of its own run in
+/// `cwd` with `env` (the task's account and MCP values): `page` is given Claude's link for the user, and Claude, which
+/// hears the callback and keeps the token, is asked every `every` whether the server has connected. No turn, nothing
+/// spent; Zero never calls the server itself.
+pub async fn mcp_sign_in(
+    command: &[String], env: &[(String, String)], cwd: &str, server: &str, page: tokio::sync::oneshot::Sender<String>,
+    every: std::time::Duration,
+) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt;
+    let mut claude = tokio::process::Command::new(&command[0]);
+    claude
+        .args(&command[1..])
+        .envs(env.iter().cloned())
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let mut child = claude.spawn().map_err(|e| format!("Couldn't start Claude Code: {e}"))?;
+    let mut input = child.stdin.take().ok_or("Claude Code has no input")?;
+    let mut lines = tokio::io::BufReader::new(child.stdout.take().ok_or("Claude Code has no output")?).lines();
+    let mut ask = async |id: &str, request: serde_json::Value| -> Result<serde_json::Value, String> {
+        let line = serde_json::json!({"type": "control_request", "request_id": id, "request": request});
+        input.write_all(format!("{line}\n").as_bytes()).await.map_err(|e| format!("Claude Code closed: {e}"))?;
+        while let Some(line) = lines.next_line().await.map_err(|e| e.to_string())? {
+            let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+            let response = &message["response"];
+            if message["type"] != "control_response" || response["request_id"] != id {
+                continue;
+            }
+            if response["subtype"] != "success" {
+                return Err(response["error"].as_str().unwrap_or("Claude Code refused").into());
+            }
+            return Ok(response["response"].clone());
+        }
+        Err("Claude Code stopped before it had signed in".into())
+    };
+    let started = ask("auth", serde_json::json!({"subtype": "mcp_authenticate", "serverName": server})).await?;
+    let Some(url) = started["authUrl"].as_str() else { return Ok(()) };
+    let _ = page.send(url.into());
+    for n in 1.. {
+        tokio::time::sleep(every).await;
+        let status = ask(&format!("status-{n}"), serde_json::json!({"subtype": "mcp_status"})).await?;
+        let servers = status["mcpServers"].as_array().cloned().unwrap_or_default();
+        if servers.iter().any(|s| s["name"] == server && s["status"] == "connected") {
+            break;
+        }
+    }
+    Ok(())
+}

@@ -589,6 +589,11 @@ pub enum Change {
     Rewound {
         before: String,
     },
+    /// Its CLI says this MCP server needs signing in (its own OAuth): Zero has the CLI sign in to it once (mcp_auth.rs).
+    /// Nothing changes in the conversation.
+    McpSignIn {
+        server: String,
+    },
 }
 
 /// A change as clients receive it: which session, and its place in that session's sequence.
@@ -767,7 +772,7 @@ impl Conversation {
             Change::Stalled { reason } => self.stalled = reason,
             Change::Diff { diff } => self.diff = diff,
             Change::Terminal { terminal } => self.terminal = terminal,
-            Change::Archived => {}
+            Change::Archived | Change::McpSignIn { .. } => {}
             Change::Place { place } => self.place = place,
             Change::Parent { parent } => self.parent = parent,
             Change::Snapshot { item, commit } => {

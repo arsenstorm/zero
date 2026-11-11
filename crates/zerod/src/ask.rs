@@ -142,6 +142,9 @@ pub struct Ask {
     /// For a note: what the agent hands to the user, without waiting for it ("mark the PR ready and merge it").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub needs: Option<String>,
+    /// A page its first option opens, the ask staying open (an MCP server's sign-in, which closes it once done).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
 }
 
 impl Ask {
@@ -177,6 +180,7 @@ impl Ask {
             confirmed: false,
             done_check: false,
             allow: None,
+            link: None,
         }
     }
 

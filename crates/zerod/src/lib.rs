@@ -26,6 +26,7 @@ pub mod integrations;
 pub mod later;
 pub mod loops;
 pub mod mcp;
+pub mod mcp_auth;
 pub mod mcp_servers;
 pub mod model;
 pub mod naming;

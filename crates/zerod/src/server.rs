@@ -407,6 +407,7 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "agentAsk" | "create" | "asks" | "choose" | "answerAsk" | "reply" | "takeBack" | "withdraw" | "dismiss" | "cancelRun"
         | "deliver" | "message" | "close" | "screen" | "press" | "switchModel" => inbox::handle(zerod, request).await,
         "gitAccount" | "gitCheck" => git(zerod, request).await,
+        "mcpSignIn" => mcp_sign_in(zerod, request).await,
         "mcpServers" | "saveMcpServer" | "deleteMcpServer" | "workspaces" | "saveWorkspace" | "deleteWorkspace" | "settings"
         | "configure" | "gitKey" => setup(zerod, request),
         other => unknown(other),
@@ -424,6 +425,22 @@ async fn git(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "gitCheck" => Ok(json!({"title": crate::git::on_github(&login, zerod.daemon.home()).await})),
         other => unknown(other),
     }
+}
+
+/// Settings › MCP servers' Sign in, for a server of Claude Code's own: Claude's sign-in link (mcp_auth.rs), run as the
+/// user's default Claude account, in the server's project for one of a project's.
+async fn mcp_sign_in(zerod: &Zerod, request: Request) -> Result<Value, String> {
+    let args = request.args.unwrap_or_default();
+    let server = args["server"].as_str().filter(|s| !s.is_empty()).ok_or("Which server?")?.to_string();
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
+    let cwd = args["cwd"].as_str().filter(|c| !c.is_empty()).unwrap_or(&home).to_string();
+    let signins = &zerod.daemon.signins;
+    let env = match signins.default_for(Provider::Claude) {
+        Some(signin) => signins.environment(&signin)?,
+        None => vec![],
+    };
+    let job = crate::mcp_auth::Job { server, provider: Provider::Claude, cwd, env, mcp: vec![] };
+    Ok(json!({"page": zerod.daemon.mcp_auth.sign_in(job).await?}))
 }
 
 fn unknown(op: &str) -> Result<Value, String> {

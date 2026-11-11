@@ -199,26 +199,3 @@ impl McpServers {
         Ok(())
     }
 }
-
-/// The id a sign-in request to a CLI carries, before the server's id.
-pub const SIGN_IN: &str = "mcp-auth-";
-
-/// A server of Zero's this conversation was given, at a URL: one that may sign in (with the CLI's own OAuth).
-pub fn signs_in<'a>(conversation: &'a crate::model::Conversation, id: &str) -> Option<&'a Resolved> {
-    conversation.mcp.iter().find(|s| s.id == id && s.url.is_some())
-}
-
-/// What the CLI said to a sign-in: its link for the user to open (the CLI hears the callback and keeps what it's
-/// given), or why not.
-pub fn signing_in(
-    conversation: &crate::model::Conversation, id: &str, url: Option<&str>, error: Option<&str>, effects: &mut crate::adapter::Effects,
-) {
-    let name = signs_in(conversation, id).map_or(id, |s| s.name.as_str());
-    match (url, error) {
-        (_, Some(error)) => effects.notice(conversation, &format!("Couldn't sign in to {name}: {error}"), true),
-        (Some(url), None) => {
-            effects.notice(conversation, &format!("{name} needs you to sign in on your Mac: [open its sign-in page]({url})"), false)
-        }
-        (None, None) => {}
-    }
-}

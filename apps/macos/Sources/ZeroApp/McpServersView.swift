@@ -3,11 +3,15 @@ import ZeroCore
 
 // Settings › MCP servers: servers set up once in Zero and given to every task's CLI (Claude Code, Codex, OpenCode) as
 // it starts, on top of the CLI's own; each for every workspace or only those it's put in. A value (an API key, a
-// header) is kept in the Keychain unless said otherwise.
+// header) is kept in the Keychain unless said otherwise. Below them, Claude Code's own (read from its config), with a
+// Sign in for one that needs it: Claude Code's own sign-in, run by zerod.
 
 struct McpServersPage: View {
     let workspace: Workspace?
     @State private var editing: ZerodLink.McpServer?
+    @State private var claudes: [ClaudeMcpServers.Server] = []
+    /// Servers whose sign-in page was opened: waiting for Claude Code to say they're signed in.
+    @State private var signingIn: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
@@ -38,8 +42,54 @@ struct McpServersPage: View {
                     await workspace.loadMcpServers(); await workspace.loadWorkspaces()
                 }
                 .zeroDialog(item: $editing) { server in McpServerForm(server: server, workspace: workspace) }
+                if !claudes.isEmpty {
+                    SettingsSection(title: "Claude Code's servers") {
+                        VStack(spacing: 0) {
+                            ForEach(Array(claudes.enumerated()), id: \.element.id) { index, server in
+                                if index > 0 { Divider().padding(.leading, 18) }
+                                claudeRow(server, in: workspace)
+                            }
+                        }
+                        .bleedingCard()
+                    }
+                }
             }
         }
+        .task { claudes = ClaudeMcpServers.list() }
+        // While a sign-in's page is open, Claude Code's word on it is read again every two seconds.
+        .task(id: signingIn) {
+            while !signingIn.isEmpty, !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                claudes = ClaudeMcpServers.list()
+                signingIn = signingIn.filter { id in claudes.contains { $0.id == id && $0.needsSignIn } }
+            }
+        }
+    }
+
+    /// One of Claude Code's own: read-only (`claude mcp` changes it), with its sign-in state.
+    private func claudeRow(_ server: ClaudeMcpServers.Server, in workspace: Workspace) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(server.name).font(.system(size: 13, weight: .medium))
+                Text(server.detail).font(.system(size: 11.5, design: .monospaced))
+                    .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            }
+            Spacer(minLength: 8)
+            pill(server.project.map { ($0 as NSString).lastPathComponent } ?? "Every project")
+            if signingIn.contains(server.id) {
+                pill("Waiting for sign-in…")
+            } else if server.needsSignIn {
+                pill("Needs sign-in")
+                Button("Sign in") {
+                    Task {
+                        guard let page = await workspace.mcpSignIn(server.name, cwd: server.project) else { return }
+                        NSWorkspace.shared.open(page)
+                        signingIn.insert(server.id)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 18).padding(.vertical, 10)
     }
 
     private func row(_ server: ZerodLink.McpServer, in workspace: Workspace) -> some View {
@@ -96,7 +146,7 @@ private struct McpServerForm: View {
             DialogChoice(options: [("Runs a command", false), ("At a URL", true)], selection: $remote)
             if remote {
                 TextField("https://…/mcp", text: Binding(get: { server.url ?? "" }, set: { server.url = $0 })).textFieldStyle(.dialog)
-                Text("One that signs in with OAuth needs no headers: its first task shows a sign-in link.")
+                Text("One that signs in with OAuth needs no headers: Zero asks you to sign in when a task first needs it.")
                     .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             } else {
                 TextField("Command (npx, uvx, a path)", text: Binding(get: { server.command ?? "" }, set: { server.command = $0 }))
