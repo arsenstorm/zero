@@ -350,8 +350,10 @@ impl Daemon {
         seen.is_some() && crate::board::read(seen.as_ref().map(|(a, at)| (a.as_str(), *at)), self.latest_answer(id).as_deref(), now())
     }
 
+    /// From its summary, which keeps the latest answer: the board asks for every task, and a whole conversation copied
+    /// (or a parked one replayed into memory) each time cost most of zerod's time.
     fn latest_answer(&self, id: &str) -> Option<String> {
-        self.get(id)?.items.iter().rev().find(|i| matches!(i.kind, ItemKind::Agent { final_answer: true, .. })).map(|i| i.id.clone())
+        self.summary(id)?.items.iter().rev().find(|i| matches!(i.kind, ItemKind::Agent { final_answer: true, .. })).map(|i| i.id.clone())
     }
 }
 

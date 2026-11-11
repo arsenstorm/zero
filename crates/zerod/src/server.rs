@@ -335,7 +335,8 @@ pub async fn archive_completed(zerod: Zerod) {
         let asks = zerod.inbox.asks();
         // Its last answer, or its last note (`zero note --done`), whichever came later: when it said it was done.
         let said = |id: &str| -> Option<i64> {
-            let answered = zerod.daemon.get(id).and_then(|c| {
+            // The summary keeps the latest answer: the whole conversation needn't be copied, or a parked one loaded.
+            let answered = zerod.daemon.summary(id).and_then(|c| {
                 c.items.iter().rev().find(|i| matches!(i.kind, crate::model::ItemKind::Agent { final_answer: true, .. })).and_then(|i| i.at)
             });
             let noted = asks

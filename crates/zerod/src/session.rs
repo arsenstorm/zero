@@ -143,7 +143,7 @@ impl Session {
                 lines,
                 touched: Instant::now(),
                 events,
-                transcript: Some(append(dir)?),
+                transcript: None,
                 unwritten: false,
                 out: None,
                 child: None,
@@ -162,7 +162,7 @@ impl Session {
             return Ok(session);
         }
         let (core, lines) = replay(dir, false)?;
-        let session = Session::with(core, Some(append(dir)?), events, lines + 1);
+        let session = Session::with(core, None, events, lines + 1);
         {
             let mut inner = session.lock();
             inner.dir = Some(dir.into());
@@ -216,6 +216,8 @@ impl Session {
         }
         inner.core = None;
         inner.parked = Some(parked);
+        // Opened again by its next line: zerod keeps every task it lists, and a descriptor each ran it out.
+        inner.transcript = None;
         true
     }
 
@@ -472,6 +474,9 @@ impl Inner {
 
     fn record(&mut self, entry: Value) {
         self.lines += 1;
+        if self.transcript.is_none() {
+            self.transcript = self.dir.as_deref().and_then(|dir| append(dir).ok());
+        }
         if let Some(file) = self.transcript.as_mut() {
             let mut line = serde_json::to_vec(&entry).unwrap_or_default();
             line.push(b'\n');

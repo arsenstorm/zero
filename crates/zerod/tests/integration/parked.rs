@@ -60,3 +60,33 @@ fn reading_its_summary_doesnt_keep_it_in_memory() {
     session.summary();
     assert!(session.unwanted_for().unwrap() >= std::time::Duration::from_millis(30));
 }
+
+unsafe extern "C" {
+    fn fcntl(fd: i32, cmd: i32, ...) -> i32;
+}
+
+/// Whether this process has `path` open: by each descriptor's path (F_GETPATH), as `lsof` would say.
+fn open_here(path: &std::path::Path) -> bool {
+    const F_GETPATH: i32 = 50;
+    let want = std::fs::canonicalize(path).unwrap();
+    std::fs::read_dir("/dev/fd").unwrap().filter_map(|e| e.ok()?.file_name().to_str()?.parse::<i32>().ok()).any(|fd| {
+        let mut buf = [0u8; 1024];
+        // Safety: F_GETPATH writes at most MAXPATHLEN (1024) bytes into buf.
+        (unsafe { fcntl(fd, F_GETPATH, buf.as_mut_ptr()) } == 0)
+            && std::path::Path::new(std::str::from_utf8(&buf[..buf.iter().position(|b| *b == 0).unwrap_or(0)]).unwrap_or("")) == want
+    })
+}
+
+#[test]
+fn a_parked_session_holds_no_file_open() {
+    let dir = kept("parked-closed", 2);
+    let transcript = dir.join("transcript.jsonl");
+    let (events, _) = broadcast::channel(16);
+    // zerod keeps every task it lists: a descriptor each ran it out of its 256.
+    let session = Session::load(&dir, events.clone()).unwrap();
+    assert!(!open_here(&transcript), "parked from the start");
+    session.change(Change::Title { title: Some("Renamed".into()) });
+    session.unload();
+    assert!(!open_here(&transcript), "parked again");
+    assert_eq!(Session::load(&dir, events).unwrap().summary().title.as_deref(), Some("Renamed"), "what it wrote meanwhile is kept");
+}

@@ -67,3 +67,21 @@ async fn seeing_a_reply_shows_on_the_board_at_once() {
     // The board is worked out again now, not when something else next changes.
     assert!(tokio::time::timeout(Duration::from_secs(1), board_moves.recv()).await.is_ok(), "the board hears it");
 }
+
+#[tokio::test]
+async fn whether_a_parked_tasks_reply_was_read_leaves_it_out_of_memory() {
+    let home = temp_dir("replies-parked");
+    let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
+    let id = daemon
+        .start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() })
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let session = daemon.session(&id).unwrap();
+    turn(&session, 1, "Is the PR merged?").await;
+    daemon.mark_seen(&id, None, None).unwrap();
+    session.stop();
+    assert!(session.unload(), "offline, it parks");
+    // The board asks this of every task, up to four times a second.
+    assert!(daemon.has_read(&id));
+    assert!(!session.is_loaded(), "the board's read doesn't bring its whole conversation back");
+}
