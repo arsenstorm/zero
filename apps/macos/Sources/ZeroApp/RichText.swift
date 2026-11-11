@@ -268,11 +268,11 @@ enum RichMarkdown {
                 attributes[.font] = NSFont.monospacedSystemFont(ofSize: font.pointSize * 0.88, weight: .regular)
                 attributes[.zeroCode] = true
             }
-            if let link = run.link, link.scheme == "zero", link.host == "loop" || link.host == "skill" {
+            if let link = run.link, link.scheme == "zero", link.host == "loop" || link.host == "skill" || link.host == "pad" {
                 attributes[.font] = NSFont.systemFont(ofSize: font.pointSize, weight: .medium)
                 attributes[.foregroundColor] = TokenTextView.tokenText
                 attributes[.zeroToken] = true
-                if link.host == "loop" { attributes[.zeroOpens] = link; attributes[.cursor] = NSCursor.pointingHand }
+                if link.host == "loop" || link.host == "pad" { attributes[.zeroOpens] = link; attributes[.cursor] = NSCursor.pointingHand }
                 let added = NSMutableAttributedString(string: piece, attributes: attributes)
                 if out.length > 0 { out.addAttribute(.kern, value: 6, range: NSRange(location: out.length - 1, length: 1)) }
                 if added.length > 0 { added.addAttribute(.kern, value: 6, range: NSRange(location: added.length - 1, length: 1)) }

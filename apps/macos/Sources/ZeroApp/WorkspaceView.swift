@@ -23,6 +23,9 @@ struct WorkspaceView: View {
         .task { await workspace.loadLoops() }
         .task { await workspace.loadLater() }
         .onChange(of: workspace.loops.map(\.name), initial: true) { _, names in LoopNames.known = names }
+        .onChange(of: workspace.pads, initial: true) { _, pads in
+            PadNames.known = Dictionary(pads.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
+        }
         // Each workspace opens on the task last open in it: kept as tasks are opened, and gone back to on a switch.
         .onChange(of: [navigation.place.key, navigation.worker ?? ""]) {
             guard case .task(let id) = navigation.place, let lead = workspace.conversation(id) else { return }
@@ -60,6 +63,7 @@ struct WorkspaceView: View {
             await workspace.loadIntegrations()
             await workspace.refreshBoard()
             await workspace.loadLoops()
+            await workspace.loadPads()
             await until(inbox.store.connected)
             if case .task(let lead) = navigation.place {
                 let id = navigation.worker ?? lead

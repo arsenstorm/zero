@@ -9,6 +9,11 @@ import ZeroCore
     static var known: [String] = []
 }
 
+/// The scratchpads' titles by id, for the renderer: a zero://pad link in a message reads as its pad's title.
+@MainActor enum PadNames {
+    static var known: [String: String] = [:]
+}
+
 struct LoopsPage: View {
     let workspace: Workspace
     @Bindable var navigation: Navigation

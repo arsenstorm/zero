@@ -150,7 +150,7 @@ struct NewTaskView: View {
     private var agentLabel: String {
         [
             models.first { $0.id == model }?.name
-                ?? (model.isEmpty ? (chosen == .opencode ? nil : models.first?.name) ?? chosen.title : model),
+                ?? (model.isEmpty ? (chosen == .opencode ? nil : models.first?.name) ?? chosen.title : ModelNames.readable(model)),
             effort.isEmpty ? nil : effortLabel(effort, short: true),
         ]
         .compactMap { $0 }.joined(separator: " · ")

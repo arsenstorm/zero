@@ -345,6 +345,6 @@ struct TaskDetails: View {
     /// The model as its provider's catalogue names it; nil leaves the provider's name (its default model).
     private var modelName: String? {
         guard let model = conversation.model else { return nil }
-        return ComposerRows.catalogue(conversation.provider).first { $0.id == model }?.name ?? model
+        return ComposerRows.catalogue(conversation.provider).first { $0.id == model }?.name ?? ModelNames.readable(model)
     }
 }

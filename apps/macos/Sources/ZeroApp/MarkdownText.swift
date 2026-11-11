@@ -151,7 +151,7 @@ struct MarkdownText: View {
         Links(
             repo: repo, owner: owner, github: GitHubLinks.enabled, slack: SlackLinks.teams,
             teams: LinearLinks.enabled ? Linear.shared.teams : [:],
-            app: LinearLinks.inApp, loops: LoopNames.known, skills: yours)
+            app: LinearLinks.inApp, loops: LoopNames.known, skills: yours, pads: PadNames.known)
     }
 
     /// Styles a conversation's messages ahead of their first drawing (the window opening on it), off the main thread,
@@ -185,6 +185,8 @@ struct MarkdownText: View {
         var loops: [String] = []
         /// Words of yours: "/name" is a skill or command, a pill as the composer drew it (an agent's "/path" is a path).
         var skills = false
+        /// The pads' titles by id: a bare zero://pad/<id> link reads as its pad's title (and section), not its address.
+        var pads: [String: String] = [:]
     }
 
     private struct Rendered: @unchecked Sendable { let text: NSAttributedString; init(_ text: NSAttributedString) { self.text = text } }
@@ -233,6 +235,26 @@ struct MarkdownText: View {
                     let url = URL(string: "zero://loop/" + name)
                 else { continue }
                 result[span].link = url
+            }
+        }
+        // A pad's address written out (zero://pad/<id>, a #section after it): its title in its place, the address its
+        // link, so it reads as what it is and opens it. Last to first, as each title changes the text's length.
+        if let regex = try? NSRegularExpression(pattern: "zero://pad/([A-Za-z0-9]+)(?:#([A-Za-z0-9_-]+))?") {
+            let string = String(result.characters)
+            for match in regex.matches(in: string, range: NSRange(location: 0, length: (string as NSString).length)).reversed() {
+                let id = (string as NSString).substring(with: match.range(at: 1))
+                guard let range = Range(match.range, in: string), let span = Range(range, in: result),
+                    result[span].runs.allSatisfy({ !($0.inlinePresentationIntent?.contains(.code) ?? false) }),
+                    let url = URL(string: (string as NSString).substring(with: match.range))
+                else { continue }
+                let section =
+                    match.range(at: 2).location == NSNotFound
+                    ? nil : (string as NSString).substring(with: match.range(at: 2)).replacingOccurrences(of: "-", with: " ")
+                let title = links.pads[id].map { $0.isEmpty ? "Untitled pad" : $0 } ?? "Scratchpad"
+                var named = AttributedString(section.map { "\(title) › \($0.prefix(1).uppercased() + $0.dropFirst())" } ?? title)
+                if let first = result[span].runs.first { named.mergeAttributes(first.attributes) }
+                named.link = url
+                result.replaceSubrange(span, with: named)
             }
         }
         if links.skills, let regex = try? NSRegularExpression(pattern: "(?<![^\\s])/[^\\s]+") {

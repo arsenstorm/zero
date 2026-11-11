@@ -281,16 +281,14 @@ struct ConversationView: View {
         Task { await workspace.createPad(title: title.isEmpty ? "Saved" : title, folder: "Saved", content: text) }
     }
 
-    /// The blocks before the lifted message, and from it on (none when nothing's lifted). Lifted as Zero's own copy
-    /// (Sending), it's zerod's in its place, which keeps that copy's id.
-    private func split(_ blocks: [TimelineBlock]) -> (head: [TimelineBlock], tail: [TimelineBlock]) {
-        guard lifted,
-            let at = blocks.firstIndex(where: { block in
-                if case let .user(item) = block, item.sent == liftId { return true }
-                return block.id == liftId
-            })
-        else { return (blocks, []) }
-        return (Array(blocks[..<at]), Array(blocks[at...]))
+    /// The lifted message's block (none when nothing's lifted). Lifted as Zero's own copy (Sending), it's zerod's in
+    /// its place, which keeps that copy's id.
+    private func liftStart(_ blocks: [TimelineBlock]) -> String? {
+        guard lifted else { return nil }
+        return blocks.first { block in
+            if case let .user(item) = block, item.sent == liftId { return true }
+            return block.id == liftId
+        }?.id
     }
 
     /// Your last message, by the id it went with: Zero's own copy (shown the moment it's sent) and zerod's in its
@@ -382,30 +380,14 @@ struct ConversationView: View {
             items: items, shown: playback.count,
             working: playback.working(conversation.status == .working || conversation.status == .waiting))
         let (blocks, turns) = (shape.blocks, shape.turns)
-        let (head, tail) = split(blocks)
+        let start = liftStart(blocks)
         let newest = blocks.last { if case .user = $0 { true } else { false } }?.id
         return VStack(alignment: .leading, spacing: 18) {
             olderRows
-            ForEach(shape.rows(head)) { line in
-                switch line {
-                case let .block(block): row(block, turns: turns, newest: newest)
-                case let .quiet(id, blocks, count):
-                    QuietTurns(
-                        turns: count,
-                        senders: blocks.compactMap { block in
-                            guard case let .user(item) = block, case let .user(text, _) = item.kind else { return nil }
-                            return ConversationItem.from(text)?.from
-                        },
-                        open: Binding(
-                            get: { openQuiet.contains(id) }, set: { if $0 { openQuiet.insert(id) } else { openQuiet.remove(id) } })
-                    ) {
-                        ForEach(blocks) { block in row(block, turns: turns) }
-                    }
-                    .id(id)
+            LiftStack(room: start == nil ? 0 : liftMin) {
+                ForEach(shape.rows(blocks)) { line in
+                    timelineRow(line, turns: turns, newest: newest).layoutValue(key: LiftStack.Start.self, value: line.id == start)
                 }
-            }
-            if !tail.isEmpty {
-                liftedTail(tail, turns: turns)
             }
             // Its provider still getting ready (signing in, say): say so, rather than an empty page.
             // Or woken by a message just sent: its agent is starting, the message waiting for it above.
@@ -453,13 +435,22 @@ struct ConversationView: View {
         }
     }
 
-    /// Lifted: from the message just sent down, at least a page tall, so what the agent adds
-    /// under it fills room that is already there and the page's size doesn't change.
-    private func liftedTail(_ tail: [TimelineBlock], turns: [String: String]) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ForEach(tail) { block in row(block, turns: turns) }
+    @ViewBuilder private func timelineRow(_ line: TimelineRow, turns: [String: String], newest: String?) -> some View {
+        switch line {
+        case let .block(block): row(block, turns: turns, newest: newest)
+        case let .quiet(id, blocks, count):
+            QuietTurns(
+                turns: count,
+                senders: blocks.compactMap { block in
+                    guard case let .user(item) = block, case let .user(text, _) = item.kind else { return nil }
+                    return ConversationItem.from(text)?.from
+                },
+                open: Binding(get: { openQuiet.contains(id) }, set: { if $0 { openQuiet.insert(id) } else { openQuiet.remove(id) } })
+            ) {
+                ForEach(blocks) { block in row(block, turns: turns) }
+            }
+            .id(id)
         }
-        .frame(minHeight: liftMin, alignment: .top)
     }
 
     private var startingUp: Bool {
@@ -585,6 +576,9 @@ struct ConversationView: View {
             foot.gap = min(foot.gap + grew - pinned, now.containerSize.height)
             startTicking()
         }
+        // Shorter at its end (what was under the composer gone): the way left is as much shorter and the page holds
+        // still. Kept as long, the page was pulled down by what had gone.
+        if following, !lifted, grew < -0.5 { foot.gap = max(0, foot.gap + grew) }
         // The lift's own slide under way.
         let sliding = Date() < tracker.slideEnds
         // How far up from the end: the question card on the composer sinks as far, behind it.
@@ -623,7 +617,7 @@ struct ConversationView: View {
         // Past the end is never a place to be (a page left blank until scrolled): back to the end, whether
         // following it or restoring where you were.
         else if end > 0, now.contentOffset.y > end + 2 {
-            position.scrollTo(edge: .bottom)
+            position.scrollTo(y: end)
         }
     }
 
@@ -631,8 +625,11 @@ struct ConversationView: View {
     private func keepToEnd(_ g: ScrollGeometry) {
         guard following, !lifted, !loadingAbove, !userScrolling, Self.end(of: g) > 0 else { return }
         let y = max(-g.contentInsets.top, Self.end(of: g) - foot.gap)
-        guard abs(g.contentOffset.y - y) > 0.25 else { return }
-        if foot.gap == 0 { position.scrollTo(edge: .bottom) } else { position.scrollTo(y: y) }
+        // Where it is already, and held there (not to a view or the edge, which the scroll view would keep it to).
+        guard abs(g.contentOffset.y - y) > 0.25 || position.point?.y != y else { return }
+        // A point, never the edge: sent to its bottom edge, the scroll view kept to it, jumped to each new end as words
+        // came in, and the glide pulled it back down and slid it up again.
+        position.scrollTo(y: y)
     }
 
     private func startTicking() { if !foot.ticking { foot.ticking = true } }
@@ -747,10 +744,17 @@ struct ConversationView: View {
             let atEnd = foot.below < 2 || following
             foot.height = height
             if grown > 0, atEnd, !following, !lifted { following = true; foot.gap = 0 }
+            // Taller (a line typed in the composer, the queue's strip come): the page keeps to its end through it, as
+            // one movement with it, not gliding after it a line at a time. A question card's room comes in as it rises.
+            if grown > 0, following, !foot.arriving { foot.pinned += grown }
             // Shrunk (the queue's strip gone, a step to a shorter card) while at the end: still at it. Left where it
             // was, the page sat that far short of its end, and the card, reading it as scrolled up, sank as far.
             // In the same frame: a frame later, the page showed shifted for one (68 px as a turn ended).
-            if grown < 0, atEnd, !following { position.scrollTo(edge: .bottom) }
+            // Not as a message is sent (the composer emptied): its room holds the page and the lift slides it up, one
+            // movement; brought down to the end first, the page dropped by the composer's height, then rose.
+            if grown < 0, atEnd, !following, !lifted, let g = tracker.geometry {
+                position.scrollTo(y: max(-g.contentInsets.top, Self.end(of: g) + grown))
+            }
         }
     }
 
@@ -937,7 +941,8 @@ struct ConversationView: View {
             // The model is the subject, its provider the icon: "Opus 5.5 · High". No model picked, the provider's first;
             // a provider with no catalogue (OpenCode) by its name.
             let catalogue = ComposerRows.catalogue(current)
-            let name = catalogue.first { $0.id == chosen }?.name ?? chosen ?? catalogue.first?.name ?? current.title
+            let name =
+                catalogue.first { $0.id == chosen }?.name ?? chosen.map(ModelNames.readable) ?? catalogue.first?.name ?? current.title
             ComposerChip(
                 id: "task.\(conversation.id).agent",
                 label: [name, level.map { effortLabel($0, short: true) }].compactMap { $0 }.joined(separator: " · "),
@@ -1061,7 +1066,7 @@ final class TimelineShape {
     /// what folds them (WorkBlock).
     private(set) var answered: Set<String> = []
     private(set) var followed: Set<String> = []
-    private var folded: (head: [TimelineBlock], rows: [TimelineRow])?
+    private var folded: (blocks: [TimelineBlock], rows: [TimelineRow])?
 
     /// The conversation's items and what's just been sent, which shows at once, before its agent has it (Sending).
     func merge(_ items: [ConversationItem], sending: [Sending]) -> [ConversationItem] {
@@ -1106,10 +1111,10 @@ final class TimelineShape {
         }
     }
 
-    func rows(_ head: [TimelineBlock]) -> [TimelineRow] {
-        if let folded, folded.head == head { return folded.rows }
-        let rows = TimelineRow.of(head)
-        folded = (head, rows)
+    func rows(_ blocks: [TimelineBlock]) -> [TimelineRow] {
+        if let folded, folded.blocks == blocks { return folded.rows }
+        let rows = TimelineRow.of(blocks)
+        folded = (blocks, rows)
         return rows
     }
 }
@@ -1131,6 +1136,41 @@ private struct CaughtUp<Content: View>: View {
     let playback: Playback
     @ViewBuilder let content: () -> Content
     var body: some View { if playback.caughtUp { content() } }
+}
+
+/// The conversation's rows, one stack whatever is lifted: lifted, from the message just sent down it's at least `room`
+/// tall, so what the agent adds under it fills room that is already there and the page's size doesn't change. In a
+/// stack of their own, the lift's rows were made again as it let go: the message faded in again, the answer read out
+/// again, the page thrown up by its room.
+private struct LiftStack: Layout {
+    /// The row the lift's room is measured from.
+    struct Start: LayoutValueKey { static let defaultValue = false }
+    let room: CGFloat
+    private static let spacing: CGFloat = 18
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        var height: CGFloat = 0
+        var widest: CGFloat = 0
+        var start: CGFloat?
+        for (index, subview) in subviews.enumerated() {
+            if index > 0 { height += Self.spacing }
+            if start == nil, subview[Start.self] { start = height }
+            let size = subview.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+            widest = max(widest, size.width)
+            height += size.height
+        }
+        if let start { height = max(height, start + room) }
+        return CGSize(width: proposal.width ?? widest, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for subview in subviews {
+            let size = subview.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+            subview.place(at: CGPoint(x: bounds.minX, y: y), proposal: ProposedViewSize(width: bounds.width, height: size.height))
+            y += size.height + Self.spacing
+        }
+    }
 }
 
 /// The room at the timeline's foot for the composer and the fade above it: its own view, so the composer's height
