@@ -83,12 +83,13 @@ struct AgentAskCard: View {
             NucleoIcon(ask.kind == .run ? "terminal" : "circle-question", fill: ask.kind == .run ? "outline" : "glyph", size: 14)
                 .foregroundStyle(.secondary).frame(width: 14, height: 16)
             Text(ask.kind == .run ? "Asked to run" : "Asked").fontWeight(.medium)
+            // Its whole title on hover, by the words cut short (on the full-width row, it showed at the row's middle).
             Text(ask.kind == .run ? (ask.command ?? ask.title) : ask.title).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                .tip(ask.title)
             Spacer(minLength: 8)
             Text(answered).foregroundStyle(.secondary).lineLimit(1)
         }
         .font(.callout)
-        .tip(ask.title)
     }
 
     private var card: some View {

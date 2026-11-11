@@ -77,15 +77,14 @@ struct WorkBlock: View {
     /// A message has come after it: yours sent, or one queued that zerod sent on, moved in from the queue's strip.
     var followed = false
     let cwd: String
-    /// Your choice against the default (open while live, folded after); forgotten when the turn ends.
-    @State private var toggled = false
-    /// You opened or shut it yourself: left as you set it.
-    @State private var chosen = false
-    /// Its turn ended while on screen: its answer sits where its words were read out (see the bottom padding), until
-    /// your next message, when the page moves anyway.
-    @State private var notesKept = false
+    /// Opened by you: every step and note listed. Only your click opens it (a turn going live again as Zero restarts
+    /// opened it by itself, when its openness followed its state); your next message folds it.
+    @State private var expanded = false
+    /// Its words have been the last thing long enough to be its answer, not a note between steps: its notes fold away
+    /// and the answer reads on from the heading (WorkBlock's task).
+    @State private var answering = false
     @Environment(\.playback) private var playback
-    private var open: Bool { live != toggled }
+    private var open: Bool { expanded }
     /// Steps of substance: reading, running, editing. Thought alone isn't work, nor its words.
     private var worked: Bool {
         items.contains { if case .reasoning = $0.kind { false } else if case .agent = $0.kind { false } else { true } }
@@ -100,67 +99,55 @@ struct WorkBlock: View {
         }
         return text
     }
-    /// What it said between its steps this turn, the words still being written (shown on their own below) left out.
-    private var notes: [(item: ConversationItem, text: String)] {
-        let said = live && streamingWords != nil ? Array(items.dropLast()) : items
-        return said.compactMap { item in
-            guard case let .agent(text, _) = item.kind, case let words = ZeroEnding.split(text).0, !words.isEmpty else { return nil }
-            return (item, words)
-        }
-    }
+    /// Folded, what it has said shows (and a failure, as said), not its steps: while it works, until its answer comes;
+    /// over, when it ended with no answer to stand in for them.
+    private var showsNotes: Bool { live ? !answering : !answered }
 
-    /// Folded, what it said, in order, and the runs of steps between (a failure shows as said, not folded).
-    private enum Piece {
-        case note(ConversationItem, String)
-        case run([ConversationItem])
-        var id: String {
-            switch self {
-            case let .note(item, _): item.id
-            case let .run(steps): "run-" + (steps.first?.id ?? "")
-            }
-        }
-    }
-
-    private var pieces: [Piece] {
-        let said = live && streamingWords != nil ? Array(items.dropLast()) : items
-        var pieces: [Piece] = [], run: [ConversationItem] = []
-        func note(_ piece: Piece) {
-            if !run.isEmpty { pieces.append(.run(run)); run = [] }
-            pieces.append(piece)
-        }
-        for item in said {
+    /// What it said, in order, the words still being written left out, and any failure as said.
+    private var said: [(item: ConversationItem, text: String)] {
+        let done = live && streamingWords != nil ? Array(items.dropLast()) : items
+        return done.compactMap { item in
             switch item.kind {
             case let .agent(text, _):
                 let words = ZeroEnding.split(text).0
-                if !words.isEmpty { note(.note(item, words)) }
-            case .notice(_, error: true): note(.note(item, ""))
-            default: run.append(item)
+                return words.isEmpty ? nil : (item, words)
+            case .notice(_, error: true): return (item, "")
+            default: return nil
             }
         }
-        if !run.isEmpty { pieces.append(.run(run)) }
-        return pieces
-    }
-
-    /// Anything that folds: a step of any kind, a thought included.
-    private var hasSteps: Bool {
-        items.contains { if case .agent = $0.kind { false } else if case .notice(_, true) = $0.kind { false } else { true } }
     }
 
     /// How far below what's above them its words sit beyond the block's spacing: as far as they'll be once they're a
     /// step (the steps' wider spacing, or their gap under the heading) or a note (none).
     private func lead(steps: [ConversationItem]) -> CGFloat {
-        if open, !steps.isEmpty { return 2 }
-        if !open, !notes.isEmpty { return 0 }
-        return steps.isEmpty ? Self.first : 0
+        if open { return steps.isEmpty ? Self.first : 2 }
+        return showsNotes && !said.isEmpty ? 0 : Self.first
     }
 
-    /// Your next message going (or come): the page moves for it anyway, so the turn folds (its notes staying). Sent from
-    /// the composer, at once, as the page lifts the message; come from the queue's strip, eased, as the page glides.
+    /// Where the line under the turn's grey lines goes: above the first thing it said (or its words, or its answer
+    /// below it), so "Working for…" and the steps before any message read as one group, apart from what it says.
+    private enum Rule: Equatable { case none, above(String), words, bottom }
+
+    /// None while you have it open: the steps listed are the detail you asked for, and a line among them read oddly.
+    private func rule(steps: [ConversationItem]) -> Rule {
+        guard worked, !open else { return .none }
+        if showsNotes, let first = said.first { return .above(first.item.id) }
+        if live, streamingWords != nil { return .words }
+        if !live, answered { return .bottom }
+        return .none
+    }
+
+    /// The line, drawn in the gap above what it's on (`above`: how far up from its top): it takes no room, so it
+    /// coming or going moves nothing.
+    private func line(_ above: CGFloat) -> some View {
+        Rectangle().fill(Theme.stroke).frame(height: 1).offset(y: -above).allowsHitTesting(false)
+    }
+
+    /// Your next message going (or come): the page moves for it anyway, so the turn folds. Sent from the composer, at
+    /// once, as the page lifts the message; come from the queue's strip, eased, as the page glides.
     private func foldForNextMessage(animated: Bool) {
-        withAnimation(animated ? .easeOut(duration: 0.2) : nil) {
-            notesKept = false
-            if !live, open { toggled.toggle() }
-        }
+        guard !live, expanded else { return }
+        withAnimation(animated ? .easeOut(duration: 0.2) : nil) { expanded = false }
     }
 
     /// Between its heading, steps and notes, and above its answer (LiftStack.Headed).
@@ -168,6 +155,8 @@ struct WorkBlock: View {
     /// The first thing under the heading, note or step, this far further down: a step's line has room above its words
     /// and a note's text has none, so a first note touched the rule.
     static let first: CGFloat = 4
+    /// The line's place above the first thing it said: this far up from that thing's frame (into the gap above it).
+    static let ruleAbove: CGFloat = 3
 
     var body: some View {
         VStack(alignment: .leading, spacing: Self.spacing) {
@@ -175,7 +164,7 @@ struct WorkBlock: View {
             // start, "Working for…" from its first step): taken away as words started and put back with the first step,
             // it pushed the words down.
             Button {
-                chosen = true; withAnimation(.easeOut(duration: 0.15)) { toggled.toggle() }
+                withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
             } label: {
                 HStack(spacing: 6) {
                     if speaking {
@@ -196,16 +185,16 @@ struct WorkBlock: View {
                 // Figures of one width: the count ticks without the chevron after it shifting.
                 .font(.system(size: 13).monospacedDigit()).foregroundStyle(.secondary)
                 .contentShape(Rectangle())
+                // On its words and chevron, by the pointer: on the full-width row, it showed at the row's middle.
+                .tip(open ? "Hide the steps" : "Show every step")
             }
             .buttonStyle(.plain)
             .disabled(items.isEmpty)
             .frame(maxWidth: .infinity, alignment: .leading)
-            // Halfway, to the eye, between the heading's baseline and the top of the line under it.
-            .overlay(alignment: .bottom) { if worked { Rectangle().fill(Theme.stroke).frame(height: 1).offset(y: 7) } }
-            .tip(open ? "Hide the steps" : "Show every step")
             // The words streaming in aren't a step: they're read out below, fading in, open or folded.
             let steps = live && streamingWords != nil ? Array(items.dropLast()) : items
             let lead = lead(steps: steps)
+            let rule = rule(steps: steps)
             if open, !steps.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     // Each step knows when the next began (a thought's length); the last, when the turn ended.
@@ -216,29 +205,23 @@ struct WorkBlock: View {
                 .padding(.top, 4)
                 .transition(.opacity)
             }
-            // Folded, only its steps fold: everything it has said this turn stays where it was, in order, and each run of
-            // steps between two notes is one quiet line, opened in place. Live, the run still going is its latest
-            // step's line below instead. Its turn over, and after, still.
-            if !open {
-                let pieces = pieces
-                ForEach(Array(pieces.enumerated()), id: \.element.id) { index, piece in
-                    switch piece {
-                    case let .note(item, text):
-                        Group {
-                            if text.isEmpty {
-                                ItemView(item: item, cwd: cwd)
-                            } else if let readout = playback?.readout(item.id) {
-                                StreamingText(readout: readout, text: text, cwd: cwd)
-                            } else {
-                                MarkdownText(text, cwd: cwd, size: 14.5)
-                            }
-                        }
-                        .padding(.top, index == 0 ? Self.first : 0)
-                    case let .run(steps):
-                        if !(live && streamingWords == nil && index == pieces.count - 1) {
-                            StepRun(steps: steps, items: items, end: live ? nil : end, cwd: cwd)
+            // Folded, what it has said, each staying where it was; its steps aren't listed, only the one running now
+            // (below). Its answer come, the notes fold away and the answer stands in their place.
+            if !open, showsNotes {
+                ForEach(Array(said.enumerated()), id: \.element.item.id) { index, note in
+                    Group {
+                        if note.text.isEmpty {
+                            ItemView(item: note.item, cwd: cwd)
+                        } else if let readout = playback?.readout(note.item.id) {
+                            StreamingText(readout: readout, text: note.text, cwd: cwd)
+                        } else {
+                            MarkdownText(note.text, cwd: cwd, size: 14.5)
                         }
                     }
+                    .padding(.top, index == 0 ? Self.first : 0)
+                    // Halfway, to the eye, between the line above's baseline and these words' tops.
+                    .overlay(alignment: .top) { if rule == .above(note.item.id) { line(Self.ruleAbove) } }
+                    .transition(.opacity)
                 }
             }
             if live {
@@ -255,6 +238,9 @@ struct WorkBlock: View {
                         }
                     }
                     .padding(.top, lead)
+                    .overlay(alignment: .top) { if rule == .words { line(Self.ruleAbove) } }
+                    // The answer's row's room (MessageBlock), there already: it was in a frame as the turn ended.
+                    .padding(.bottom, MessageBlock<EmptyView>.room)
                 } else {
                     // Where it is: its latest step, quietly, on one line of fixed height whatever kind of step it is;
                     // under it "Thinking…", always holding its place and shown only between steps (or before the
@@ -275,75 +261,26 @@ struct WorkBlock: View {
                 }
             }
         }
-        // Ended, its answer under it where its words were read out while it was live (the timeline's gap is wider).
-        // Not for a turn read back later, nor once your next message has gone (the page moves anyway then).
-        // (Its words were `spacing` under what's above, plus the lead; its answer is `spacing` under it: LiftStack.Headed.)
-        .padding(.bottom, !live && (notesKept || items.isEmpty) ? lead(steps: items) : 0)
-        // Its turn over, it stays as it was, open or folded, its notes with it (folding it then, or its notes going,
-        // moved the answer up by their height in a frame), until its answer starts to read out.
-        .onChange(of: [live, answered]) { old, now in
-            if old[0] != now[0] {
-                toggled.toggle()
-                if !now[0] { notesKept = true }
-            }
-            // Its answer starting to read out: the steps fold under the heading in the frame its first words come (they
-            // fade in from nothing as the steps fade out), so nothing already read moves and the answer reads on from
-            // one quiet line, as Codex's and ChatGPT's do. Its notes stay under the heading. Not if you opened or shut
-            // it yourself.
-            if now[1], !old[1], !chosen, hasSteps, open { withAnimation(.easeOut(duration: 0.2)) { toggled.toggle() } }
-        }
+        // Ended, its answer under it where its words were read out while it was live: they were `spacing` under what's
+        // above plus the lead, and the answer is `spacing` under this block (LiftStack.Headed).
+        .padding(.bottom, live ? 0 : lead(steps: items))
+        // Over, its answer below: the line where it was above the words they became.
+        .overlay(alignment: .bottom) { if rule(steps: items) == .bottom { line(-(Self.spacing - Self.ruleAbove - lead(steps: items))) } }
         // A message after it (one queued, sent on by zerod as the turn ended, moving in): as for one you send.
         .onChange(of: followed) { _, now in if now { foldForNextMessage(animated: true) } }
-        // Its words starting: the steps fold under "Working for…", as ChatGPT's do once it answers, so the answer
-        // reads on from the heading and nothing folds as the turn ends. (Unless you've opened or shut it yourself.)
-        // Its words still the last thing a moment and a half after they started (an answer, not a note between
-        // steps, which a step follows at once): the steps fold under "Working for…", as ChatGPT's do once it answers.
-        // A note between steps folds nothing: one with a step already waiting to show after it (Playback) never does.
+        // Its words still the last thing a moment and a half after they started (an answer, not a note between steps,
+        // which a step follows at once): its notes fold away and the answer reads on from the heading. A step coming
+        // after all (it was a note), they're back.
         .task(id: streamingWords == nil ? nil : items.last?.id) {
-            guard live, streamingWords != nil else { return }
+            guard live, streamingWords != nil else {
+                if live, answering { withAnimation(.easeOut(duration: 0.2)) { answering = false } }
+                return
+            }
             try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled, live, streamingWords != nil, playback?.held != true else { return }
-            if !chosen, !toggled, worked { withAnimation(.easeOut(duration: 0.2)) { toggled = true } }
+            if !answering { withAnimation(.easeOut(duration: 0.2)) { answering = true } }
         }
         .onReceive(NotificationCenter.default.publisher(for: WorkBlock.fold)) { _ in foldForNextMessage(animated: false) }
-    }
-}
-
-/// A run of steps between two of the agent's notes, folded: one quiet line saying what they were ("Ran 3 commands,
-/// edited a file"), of the latest step's line's height; a click opens them in place.
-private struct StepRun: View {
-    let steps: [ConversationItem]
-    /// The turn's: when each step's next began (a thought's length).
-    let items: [ConversationItem]
-    let end: Date?
-    let cwd: String
-    @State private var open = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Button {
-                withAnimation(.easeOut(duration: 0.15)) { open.toggle() }
-            } label: {
-                HStack(spacing: 6) {
-                    Text(StepSummary.text(steps))
-                    let failed = steps.count { $0.status == .failed }
-                    if failed > 0 { Text("· \(failed) failed").foregroundStyle(.red) }
-                    NucleoIcon("chevron-down", size: 9).rotationEffect(.degrees(open ? 0 : -90))
-                }
-                .font(.system(size: 12.5)).foregroundStyle(.secondary).lineLimit(1)
-                .frame(height: 22)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            if open {
-                ForEach(steps, id: \.id) { step in
-                    let next = items.firstIndex { $0.id == step.id }.map { $0 + 1 }
-                    StepOrAsk(item: step, cwd: cwd, until: next.flatMap { $0 < items.count ? items[$0].date : nil } ?? end)
-                }
-                .transition(.opacity)
-            }
-        }
     }
 }
 
@@ -479,10 +416,10 @@ struct QuietTurns<Content: View>: View {
                 .font(.system(size: 13)).foregroundStyle(.secondary)
                 .frame(height: 20)
                 .contentShape(Rectangle())
+                .tip(open ? "Hide them" : "Show what they said")
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .tip(open ? "Hide them" : "Show what they said")
             if open { content() }
         }
     }
@@ -629,36 +566,57 @@ struct MessageBlock<Content: View>: View {
     var later: ((String) -> Void)? = nil
     @ViewBuilder let content: () -> Content
     @State private var hovered = false
-    /// The row under it (copy, menu, time): drawn in the timeline's gap below (ConversationView.gap), a margin above and
-    /// below it, taking no room of its own, so every block is the same gap from the next (it took 26 points after each
-    /// message, the widest gap on the page).
+    /// The row under it (copy, menu, time): its own room, kept whether shown or not, well clear of the words above
+    /// (drawn in the gap below, 6 points under them, it read as part of the message), the timeline's gap under it.
     static var row: CGFloat { 16 }
-    static var margin: CGFloat { (ConversationView.gap - row) / 2 }
+    static var margin: CGFloat { 11 }
+    /// What the row takes under the words: live words keep it too (WorkBlock), so they become an answer without moving.
+    static var room: CGFloat { margin + row }
+    /// Each action's tile, and the room between its icon (13) and the tile's edge.
+    static var tile: CGFloat { 20 }
+    static var inset: CGFloat { (tile - 13) / 2 }
+    /// Its menu (copy, quote, save, rewind) in Zero's own look, hung from the dots.
+    @State private var menuID = "message-" + UUID().uuidString
+    @State private var menuAnchor = CGRect.zero
+    private var menuSections: [SelectorSection] {
+        var groups = [
+            [MenuItem("Copy") { copy() }, MenuItem("Quote in reply") { quote(text) }, MenuItem("Save to a scratchpad") { save(text) }]
+        ]
+        if let later { groups[0].append(MenuItem("Save for later") { later(text) }) }
+        if let rewind { groups.append([MenuItem("Rewind…", action: rewind)]) }
+        return groups.enumerated().map { index, items in
+            SelectorSection(
+                id: "group-\(index)", title: "", icon: nil, rows: items.enumerated().map { n, item in item.row("\(index)-\(n)") })
+        }
+    }
 
     var body: some View {
         VStack(alignment: mine ? .trailing : .leading, spacing: 0) {
             content()
-            HStack(spacing: 4) {
-                CopyButton(text: text)
-                Menu {
-                    Button("Copy") { copy() }
-                    Button("Quote in reply") { quote(text) }
-                    Button("Save to a scratchpad") { save(text) }
-                    if let later { Button("Save for later") { later(text) } }
-                    if let rewind {
-                        Divider()
-                        Button("Rewind…", action: rewind)
-                    }
+            // Copy and more, a tile each with nothing between, so the icons sit evenly apart, and the time as far after;
+            // the first icon in line with the words above (its tile's inset taken back).
+            HStack(spacing: 0) {
+                CopyButton(text: text, size: Self.tile)
+                Button {
+                    WorkspaceSelector.shared.toggle(menuID, kind: .menu, anchor: menuAnchor, rows: { menuSections })
                 } label: {
-                    NucleoIcon("dots", size: 13).foregroundStyle(.secondary).frame(width: 22, height: 22)
+                    NucleoIcon("dots", size: 13).foregroundStyle(.secondary).frame(width: Self.tile, height: Self.tile)
                 }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().frame(width: 22, height: 22)
-                if let date { Text(Self.stamp(date)).font(.system(size: 11.5)).foregroundStyle(.tertiary).padding(.leading, 4) }
+                .buttonStyle(Hovering(radius: 6)).tip("More")
+                .onGeometryChange(for: CGRect.self) {
+                    $0.frame(in: .global)
+                } action: {
+                    menuAnchor = $0
+                }
+                if let date {
+                    Text(Self.stamp(date)).font(.system(size: 11.5)).foregroundStyle(.tertiary).padding(.leading, Self.inset)
+                }
             }
+            .padding(mine ? .trailing : .leading, mine ? 0 : -Self.inset)
             .frame(height: Self.row)
             .padding(.top, Self.margin)
-            // Always there, shown on hover: nothing moves as the pointer passes.
-            .opacity(hovered ? 1 : 0)
+            // Always there, shown on hover (and while its menu is open): nothing moves as the pointer passes.
+            .opacity(hovered || WorkspaceSelector.shared.open == menuID ? 1 : 0)
         }
         .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
         .contentShape(Rectangle())
@@ -669,8 +627,6 @@ struct MessageBlock<Content: View>: View {
             case .ended: hovered = false
             }
         }
-        // Its row in the gap under it: hovered and clicked there, laid out without it.
-        .padding(.bottom, -(Self.margin + Self.row))
     }
 
     private func copy() {
@@ -835,6 +791,33 @@ struct MessageRail: View, Equatable {
     /// Until when the page slides to its end (or a message just sent to the top): an instant scroll meanwhile cut the
     /// slide short, the page jumping instead.
     @ObservationIgnored var slideEnds = Date.distantPast
+    /// The scroll view the conversation is in (ScrollHandle), which the glide to the end moves directly: through the
+    /// conversation's ScrollPosition, each of its frames (60 a second while words stream in) re-ran the conversation's
+    /// whole body. Unobserved: nothing draws from it.
+    @ObservationIgnored weak var scroller: NSScrollView?
+    /// Its clip view's origin was the offset SwiftUI read, when SwiftUI last read it: only then is it moved directly.
+    @ObservationIgnored var scrollerAgrees = false
+}
+
+/// Finds the scroll view around the view it's in, for ScrollTracker.scroller.
+struct ScrollHandle: NSViewRepresentable {
+    let tracker: ScrollTracker
+
+    final class Handle: NSView {
+        weak var tracker: ScrollTracker?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            tracker?.scroller = window == nil ? nil : enclosingScrollView
+        }
+    }
+
+    func makeNSView(context: Context) -> Handle {
+        let handle = Handle()
+        handle.tracker = tracker
+        return handle
+    }
+
+    func updateNSView(_ handle: Handle, context: Context) { handle.tracker = tracker }
 }
 
 /// Back to the latest, once it's well below what's on screen.

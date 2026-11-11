@@ -414,6 +414,7 @@ struct ConversationView: View {
         } action: { [tracker] in
             tracker.columnHeight = $0
         }
+        .background { ScrollHandle(tracker: tracker) }
         .frame(minHeight: room, alignment: .top)
         .padding(.top, 20)
         .centredColumn(760)
@@ -569,6 +570,7 @@ struct ConversationView: View {
 
     private func scrollGeometryChanged(from before: ScrollGeometry, to now: ScrollGeometry) {
         tracker.geometry = now
+        tracker.scrollerAgrees = tracker.scroller.map { abs($0.contentView.bounds.origin.y - now.contentOffset.y) < 0.5 } ?? false
         let grew = now.contentSize.height - before.contentSize.height
         // The room a question card's rise added: the page keeps to the end through it, moving with the card.
         let pinned = min(max(grew, 0), foot.pinned)
@@ -632,6 +634,15 @@ struct ConversationView: View {
     private func keepToEnd(_ g: ScrollGeometry) {
         guard following, !lifted, !loadingAbove, !userScrolling, Self.end(of: g) > 0 else { return }
         let y = max(-g.contentInsets.top, Self.end(of: g) - foot.gap)
+        // Moved directly, as the scroll view's own: through ScrollPosition, each of the glide's frames re-ran this
+        // view's whole body (every row, the composer). Only while its clip view's origin is the offset SwiftUI reads.
+        if let scroll = tracker.scroller, tracker.scrollerAgrees {
+            let clip = scroll.contentView
+            guard abs(clip.bounds.origin.y - y) > 0.25 else { return }
+            clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
+            scroll.reflectScrolledClipView(clip)
+            return
+        }
         // Where it is already, and held there (not to a view or the edge, which the scroll view would keep it to).
         guard abs(g.contentOffset.y - y) > 0.25 || position.point?.y != y else { return }
         // A point, never the edge: sent to its bottom edge, the scroll view kept to it, jumped to each new end as words
@@ -1079,6 +1090,7 @@ final class TimelineShape {
     /// Answers right under their turn's work: as near it as its steps and notes are to each other (LiftStack.Headed).
     private(set) var headed: Set<String> = []
     private var folded: (blocks: [TimelineBlock], rows: [TimelineRow])?
+    private let folds = TimelineRow.Folds()
 
     /// The conversation's items and what's just been sent, which shows at once, before its agent has it (Sending).
     func merge(_ items: [ConversationItem], sending: [Sending]) -> [ConversationItem] {
@@ -1126,7 +1138,7 @@ final class TimelineShape {
 
     func rows(_ blocks: [TimelineBlock]) -> [TimelineRow] {
         if let folded, folded.blocks == blocks { return folded.rows }
-        let rows = TimelineRow.of(blocks)
+        let rows = TimelineRow.of(blocks, folds: folds)
         folded = (blocks, rows)
         return rows
     }

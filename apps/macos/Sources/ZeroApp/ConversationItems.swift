@@ -85,6 +85,8 @@ struct ItemView: View {
 /// Copies an answer; a tick for a moment says it did.
 struct CopyButton: View {
     let text: String
+    /// Its tile's side: a message's row has smaller ones (MessageBlock).
+    var size: CGFloat = 22
     @State private var copied = false
 
     var body: some View {
@@ -96,7 +98,7 @@ struct CopyButton: View {
                 try? await Task.sleep(for: .seconds(1.5)); copied = false
             }
         } label: {
-            NucleoIcon(copied ? "circle-check" : "copy", size: 13).foregroundStyle(.secondary).frame(width: 22, height: 22)
+            NucleoIcon(copied ? "circle-check" : "copy", size: 13).foregroundStyle(.secondary).frame(width: size, height: size)
         }
         .buttonStyle(Hovering(radius: 6)).tip("Copy")
     }

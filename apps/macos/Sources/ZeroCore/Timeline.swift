@@ -94,7 +94,24 @@ public enum TimelineRow: Identifiable, Equatable, Sendable {
 
     /// Turns a worker's report or an event started that asked the user nothing and set no issue row: folded,
     /// consecutive ones together, so what changed for the user stands out. The last turn, being read, never folds.
-    public static func of(_ blocks: [TimelineBlock]) -> [TimelineRow] {
+    /// Which turns fold, kept by turn from one pass to the next: as an answer streams, only its own turn changes, and
+    /// each word it grew by ran the pattern below over every turn on the page.
+    public final class Folds {
+        private var kept: [String: (turn: [TimelineBlock], quiet: Bool)] = [:]
+        public init() {}
+
+        fileprivate func quiet(_ turn: [TimelineBlock], into next: inout [String: (turn: [TimelineBlock], quiet: Bool)]) -> Bool {
+            guard let id = turn.first?.id else { return false }
+            let quiet = kept[id].flatMap { $0.turn == turn ? $0.quiet : nil } ?? TimelineRow.quiet(turn)
+            next[id] = (turn, quiet)
+            return quiet
+        }
+
+        /// Only the turns of the latest pass: a conversation trimmed or switched leaves none behind.
+        fileprivate func keep(_ next: [String: (turn: [TimelineBlock], quiet: Bool)]) { kept = next }
+    }
+
+    public static func of(_ blocks: [TimelineBlock], folds: Folds? = nil) -> [TimelineRow] {
         var turns: [[TimelineBlock]] = [[]]
         for block in blocks {
             if case .user = block, !turns[turns.count - 1].isEmpty { turns.append([]) }
@@ -109,12 +126,14 @@ public enum TimelineRow: Identifiable, Equatable, Sendable {
             }
             folded = []
         }
+        var next: [String: (turn: [TimelineBlock], quiet: Bool)] = [:]
         for (index, turn) in turns.enumerated() {
-            if index < turns.count - 1, quiet(turn) { folded.append(turn); continue }
+            if index < turns.count - 1, folds.map({ $0.quiet(turn, into: &next) }) ?? quiet(turn) { folded.append(turn); continue }
             fold()
             rows += turn.map(TimelineRow.block)
         }
         fold()
+        folds?.keep(next)
         return rows
     }
 

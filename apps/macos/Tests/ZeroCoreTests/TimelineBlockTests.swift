@@ -93,3 +93,23 @@ private func item(_ id: String, _ kind: ConversationItem.Kind) -> ConversationIt
     #expect(StepSummary.text(steps) == "Thought, ran 2 commands, edited a file")
     #expect(StepSummary.text([item("t", .tool(name: "Read", detail: "a.rs"))]) == "Used a tool")
 }
+
+/// Folds remembered by turn: as an answer streams, only its own turn changes, and each word ran the fold's pattern over
+/// every turn on the page. Remembered or not, the rows are the same; a turn that changes is looked at again.
+@Test func foldsRememberedByTurnGiveTheSameRows() {
+    let report = { (id: String) in item(id, .user(text: "<!-- from: w1 -->\nWorker ENG-1 is waiting: CI still running.")) }
+    var items = [
+        item("u", .user(text: "drive ENG-1")),
+        report("r1"), item("a1", .agent(text: "Nothing new on ENG-1.\n\n[zero: waiting]", finalAnswer: true)),
+        report("r2"), item("a2", .agent(text: "Nothing new.", finalAnswer: true)),
+        item("u2", .user(text: "and now?")), item("a3", .agent(text: "Still", finalAnswer: false)),
+    ]
+    let folds = TimelineRow.Folds()
+    let rows = { TimelineRow.of(TimelineBlock.of(items, working: true), folds: folds).map(\.id) }
+    #expect(rows() == TimelineRow.of(TimelineBlock.of(items, working: true)).map(\.id))
+    #expect(rows() == ["u", "quiet-r2", "u2", "work-a3"], "\(rows())")
+    // A folded turn that turns out to have asked the user: no longer folded.
+    items[4] = item("a2", .agent(text: "Asked.\n\n[zero: asked k3x9qa]", finalAnswer: true))
+    #expect(rows() == TimelineRow.of(TimelineBlock.of(items, working: true)).map(\.id))
+    #expect(rows() == ["u", "quiet-r1", "r2", "a2", "u2", "work-a3"], "\(rows())")
+}
