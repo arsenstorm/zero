@@ -91,6 +91,14 @@ struct WorkBlock: View {
         return text
     }
     private var thought: Bool { items.contains { if case .reasoning = $0.kind { true } else { false } } }
+    /// What it said between its steps this turn, the words still being written (shown on their own below) left out.
+    private var notes: [(item: ConversationItem, text: String)] {
+        let said = streamingWords == nil ? items : Array(items.dropLast())
+        return said.compactMap { item in
+            guard case let .agent(text, _) = item.kind, case let words = ZeroEnding.split(text).0, !words.isEmpty else { return nil }
+            return (item, words)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -139,6 +147,16 @@ struct WorkBlock: View {
                 .transition(.opacity)
             }
             if live {
+                // Folded, what it has said so far this turn stays, in order: only its steps give way to the latest.
+                if !open {
+                    ForEach(notes, id: \.item.id) { note in
+                        if let readout = playback?.readout(note.item.id) {
+                            StreamingText(readout: readout, text: note.text, cwd: cwd)
+                        } else {
+                            MarkdownText(note.text, cwd: cwd, size: 14.5)
+                        }
+                    }
+                }
                 // Open, every step is above, the words being written among them; this is what's still to say.
                 if let last = items.last, let text = streamingWords {
                     // What it's saying, as the words stream in, at Zero's own steady pace.
