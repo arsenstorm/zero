@@ -1,12 +1,21 @@
 import { render } from "astro:content";
 import { docPages, docHref } from "../../lib/docs";
 
+// Tags taken out until none is left: one pass over "<<b>script>" leaves "<script>".
+const untagged = (text: string) => {
+  let out = text;
+  let before: string;
+  do {
+    before = out;
+    out = out.replace(/<[^>]*>/g, "");
+  } while (out !== before);
+  return out;
+};
+
 // The search index: one entry per section (a page's opening, then each ## heading), as plain text.
 const plain = (md: string) =>
-  md
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/<[^>]+>/g, "")
-    // Any angle bracket a stripped tag left behind ("<<b>script>"), so none survives into the index.
+  untagged(md.replace(/```[\s\S]*?```/g, " "))
+    // Any angle bracket left (a "<" with no ">"), so none survives into the index.
     .replace(/[<>]/g, " ")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
     .replace(/^[\s|:-]+$/gm, " ")
