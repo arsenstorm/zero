@@ -406,7 +406,8 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
             // Docked as the app docks it (ArticlePanel): a tab in the composer's grey with a strip naming it, and the
             // inbox's card laid flat on the composer's well, its foot running 14 px under the composer (22 here: the form's 8 px above it too). 16 + 2 = 18.
             <div data-docked class="relative px-4 sm:px-10 pt-2 -mb-[22px]">
-              <div class="rounded-t-[18px] bg-field-tab px-0.5">
+              {/* 13 pt in from the composer's sides, as ConversationView docks it. */}
+              <div class="mx-[13px] rounded-t-[18px] bg-field-tab px-0.5">
                 <div class="flex items-center gap-1.5 px-3.5 py-[7px] text-[12px] font-medium tracking-[-0.2px] text-muted">
                   {task.ask.kind === "run" ? (
                     <Icon name="terminal" size={13} />
@@ -420,13 +421,7 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
                       : "Question"}
                 </div>
                 <div class="rounded-t-[16px] bg-composer pt-0.5 pb-[14px]">
-                  <AskCard
-                    interactive
-                    docked
-                    task={task.id}
-                    {...task.ask}
-                    supporting={undefined}
-                  />
+                  <AskCard interactive docked task={task.id} {...task.ask} />
                 </div>
               </div>
             </div>
@@ -445,7 +440,7 @@ const rail = ["house-4", "inbox", "bookmark", "note-3", "animation-repeat"];
             aria-label="Message to the task"
             placeholder="Steer it while it works"
             autocomplete="off"
-            class="w-full h-5 bg-transparent text-[16px] sm:text-[13px] outline-none placeholder:text-faint"
+            class="w-full h-5 bg-transparent text-[16px] sm:text-[14.5px] outline-none placeholder:text-ink/60"
           >
           <div class="mt-3 flex items-center gap-1.5">
             <span
