@@ -13,6 +13,23 @@ use zerod::inbox::Runtime;
 
 unsafe extern "C" {
     safe fn setsid() -> i32;
+    fn getrlimit(resource: i32, limits: *mut [u64; 2]) -> i32;
+    fn setrlimit(resource: i32, limits: *const [u64; 2]) -> i32;
+}
+
+/// Descriptors up to the hard limit (macOS takes no more than OPEN_MAX): started by the app, zerod has its 256, and
+/// two pipes an agent, their transcripts and every client's connection ran it out, failing accepts and spawns.
+fn more_descriptors() {
+    const RLIMIT_NOFILE: i32 = 8;
+    const OPEN_MAX: u64 = 10240;
+    let mut limits = [0u64; 2];
+    // Safety: both read or write the two u64s of an rlimit, which `limits` is.
+    unsafe {
+        if getrlimit(RLIMIT_NOFILE, &mut limits) == 0 {
+            limits[0] = limits[0].max(limits[1].min(OPEN_MAX));
+            setrlimit(RLIMIT_NOFILE, &limits);
+        }
+    }
 }
 
 #[tokio::main]
@@ -20,6 +37,7 @@ async fn main() {
     // A session of its own, so the app that started it quitting (or the terminal it ran in closing) doesn't end it.
     // From a shell it is already a group leader and this fails, harmlessly.
     setsid();
+    more_descriptors();
     let zero = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(".zero");
     let mut args = std::env::args().skip(1).peekable();
     // `zerod mcp`: the MCP server on stdio, for an agent, talking to the running zerod.

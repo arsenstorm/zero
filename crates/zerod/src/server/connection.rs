@@ -26,8 +26,22 @@ pub async fn serve(zerod: Zerod, socket: PathBuf) -> std::io::Result<()> {
     let listener = UnixListener::bind(&socket)?;
     std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
     loop {
-        let (stream, _) = listener.accept().await?;
+        let stream = next_connection(&listener).await;
         tokio::spawn(connection(zerod.clone(), stream));
+    }
+}
+
+/// The next connection, however long that takes. A failed accept (out of descriptors, a client gone before it was
+/// taken) passes: a listener that gave up on one left its socket on disk with nothing answering, until a restart.
+pub(crate) async fn next_connection(listener: &UnixListener) -> UnixStream {
+    loop {
+        match listener.accept().await {
+            Ok((stream, _)) => return stream,
+            Err(error) => {
+                eprintln!("zerod: couldn't accept a connection: {error}");
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        }
     }
 }
 

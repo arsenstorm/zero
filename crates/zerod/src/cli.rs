@@ -47,7 +47,7 @@ pub async fn serve(inbox: Arc<Inbox>, socket: PathBuf) -> std::io::Result<()> {
     let listener = UnixListener::bind(&socket)?;
     std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
     loop {
-        let (stream, _) = listener.accept().await?;
+        let stream = crate::server::next_connection(&listener).await;
         tokio::spawn(connection(inbox.clone(), stream));
     }
 }

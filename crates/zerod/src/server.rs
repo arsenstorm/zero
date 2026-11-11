@@ -25,6 +25,7 @@ use crate::drops::Drops;
 use crate::inbox::Inbox;
 use crate::model::{Permissions, Provider};
 
+pub(crate) use connection::next_connection;
 pub use connection::serve;
 pub use signins::name_codex_accounts;
 
