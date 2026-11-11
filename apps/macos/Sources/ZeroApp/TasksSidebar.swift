@@ -326,7 +326,7 @@ struct TasksSidebar: View {
     private func workerMenu(_ worker: Conversation) -> [[MenuItem]] {
         [
             [MenuItem("Rename…", "pen") { renaming = Renaming(id: worker.id, name: Workspace.label(of: worker), ticket: worker.ticket) }],
-            [
+            statusItems(worker.id) + [
                 workspace.isPaused(worker.id)
                     ? MenuItem("Resume", "media-play") { Task { await workspace.unpause([worker.id]) } }
                     : MenuItem("Pause", "circle-pause") { Task { await workspace.pause([worker.id]) } }
@@ -335,6 +335,24 @@ struct TasksSidebar: View {
                     ? [MenuItem("Stop", "circle-xmark") { Task { await workspace.stop(worker.id) } }] : []),
             [MenuItem("Archive…", "archive") { workspace.archiving = worker.id }],
         ]
+    }
+
+    /// Where a task stands, by the user's word when its agent can't know (the last of it was the user's own work): a
+    /// "Change status" row whose own menu has the states the user may set, each as the sidebar draws it, the one it's
+    /// in checked.
+    private func statusItems(_ id: String) -> [MenuItem] {
+        // A lead's row, or a worker in one.
+        let now =
+            workspace.board.first { $0.session == id }?.state
+            ?? workspace.board.lazy.compactMap { $0.team?.first { $0.session == id }?.state }.first
+        let states: [(BoardRow.State, String)] = [(.done, "done"), (.waiting, "waiting"), (.blocked, "blocked")]
+        let choices = states.map { state, word in
+            let look = TaskStateIcon.look(state)
+            return MenuItem(look.name, glyph: look.symbol, tint: look.color, selected: now == state) {
+                Task { await workspace.setStatus(id, word) }
+            }
+        }
+        return [MenuItem("Change status", "circle-check", children: choices)]
     }
 
     /// ⌘1 to ⌘9: the first nine tasks as the sidebar shows them (this workspace's, leads only), as a browser's tabs.
@@ -364,21 +382,18 @@ struct TasksSidebar: View {
 
     private func menu(_ id: String, name: String, ticket: String?) -> [[MenuItem]] {
         // Move to: a group of its own (Zero's menus have no submenus), the workspace it's in left out.
-        var moves =
+        let moves =
             workspace.workspaces.count > 1
             ? workspace.workspaces.filter { $0.id != workspace.current }.map { w in
                 MenuItem("Move to \(w.name)", "layers") { Task { await workspace.place(id, in: w.id) } }
             } : []
-        if workspace.workspaces.count > 1, workspace.roster[id]?.workspace != nil {
-            moves.append(MenuItem("Move to its folder's workspace", "folder") { Task { await workspace.place(id, in: nil) } })
-        }
         return [
             [
                 MenuItem("Rename…", "pen") { renaming = Renaming(id: id, name: name, ticket: ticket) },
                 MenuItem("Work with another task…", "link") { pairing = Renaming(id: id, name: name, ticket: ticket) },
             ],
             moves,
-            [
+            statusItems(id) + [
                 workspace.isPaused(id)
                     ? MenuItem("Resume", "media-play") { Task { await workspace.unpause([id]) } }
                     : MenuItem("Pause", "circle-pause") { Task { await workspace.pause([id]) } },

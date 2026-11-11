@@ -1474,9 +1474,14 @@ public final class ZerodLink: @unchecked Sendable {
 
     public func deleteWorkspace(_ id: String) async throws { _ = try await call("deleteWorkspace", ["workspace": id]) }
 
-    /// Puts a session in a workspace; nil puts it back in its folder's.
+    /// Puts a session in a workspace; nil puts it back in Zero.
     public func placeInWorkspace(session: String, workspace: String?) async throws {
         _ = try await call("placeInWorkspace", ["session": session, "workspace": workspace])
+    }
+
+    /// The user's word on where a task stands: "done", "waiting" or "blocked", as its agent's confirmed note says it.
+    public func setStatus(session: String, state: String) async throws {
+        _ = try await call("setStatus", ["session": session, "state": state])
     }
 
     // Following: what sessions hear of between their turns.

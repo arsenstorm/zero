@@ -498,9 +498,14 @@ public final class Workspace {
         await loadWorkspaces()
     }
 
-    /// Puts a task in a workspace (nil: its folder's).
+    /// Puts a task in a workspace (nil: Zero).
     public func place(_ session: String, in workspace: String?) async {
         _ = await attempt { try await $0.placeInWorkspace(session: session, workspace: workspace) }
+    }
+
+    /// Marks a task done, waiting or blocked: the user's word, where its agent can't know (the last of it was theirs).
+    public func setStatus(_ session: String, _ state: String) async {
+        _ = await attempt { try await $0.setStatus(session: session, state: state) }
     }
 
     /// Which workspace a conversation is in, as zerod works it out: put somewhere, that; else Zero.

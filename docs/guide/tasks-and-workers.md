@@ -95,6 +95,8 @@ The sidebar and the control bar show each task's state as an icon. The board and
 | Grey moon | Idle | The agent is between turns with nothing to report. |
 | Grey power button | Offline | The agent isn't running. |
 
+When a task is done, waiting or blocked and its agent can't know, such as when you did the last of it yourself, right-click it in the sidebar and choose **Mark as done**, **Mark as waiting** or **Mark as blocked**. Zero takes your word as it would the agent's confirmation. A question or approval still open keeps the task at **Needs you**. When you next write to the task, it's the agent's to settle again.
+
 Zero archives done tasks after a while. Choose when in **Settings › Agents › Tasks › Archive done tasks**: **Once you've read it**, **After an hour**, **After a day**, **After a week** or **Never**. **After a day** is the default. An archived done task comes back when something it follows changes.
 
 ## Read the conversation
