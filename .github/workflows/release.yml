@@ -1,7 +1,7 @@
 # Zero's releases (docs/releasing.md). A pushed tag vX.Y.Z builds what `make bundle` builds, signs it as a Developer ID
-# with the hardened runtime, notarises and staples it, then publishes the GitHub release Zero's updater offers: Zero.zip,
-# its SHA-256, a Sigstore signature and SLSA build provenance. Run by hand, it rehearses everything up to publishing and
-# leaves the notarised zip as the run's artifact.
+# with the hardened runtime, notarises and staples it, then publishes the GitHub release: Zero.zip (what Zero's updater
+# installs) and Zero.dmg (what people download), each with its SHA-256 and a Sigstore signature, and SLSA build
+# provenance for both. Run by hand, it rehearses everything up to publishing and leaves them as the run's artifact.
 name: Release
 
 on:
@@ -111,20 +111,8 @@ jobs:
           API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
         run: |
-          key="$RUNNER_TEMP/AuthKey.p8"
-          base64 --decode <<<"$API_KEY" > "$key"
-          auth=(--key "$key" --key-id "$API_KEY_ID" --issuer "$API_ISSUER_ID")
           ditto -c -k --keepParent build/Zero.app "$RUNNER_TEMP/notarise.zip"
-          result=$(xcrun notarytool submit "$RUNNER_TEMP/notarise.zip" "${auth[@]}" --wait --timeout 1h --output-format json || true)
-          status=$(jq -r '.status // empty' <<<"$result" 2>/dev/null || true)
-          if [ "$status" != Accepted ]; then
-            echo "::error::Notarisation ended as '${status:-no result}'"
-            id=$(jq -r '.id // empty' <<<"$result" 2>/dev/null || true)
-            [ -z "$id" ] || xcrun notarytool log "$id" "${auth[@]}"
-            exit 1
-          fi
-          xcrun stapler staple build/Zero.app
-          xcrun stapler validate build/Zero.app
+          bash .github/notarise.sh "$RUNNER_TEMP/notarise.zip" build/Zero.app
           spctl --assess --type execute -vv build/Zero.app
 
       - name: Zip
@@ -134,13 +122,29 @@ jobs:
           shasum -a 256 Zero.zip > Zero.zip.sha256
           cat Zero.zip.sha256
 
-      - name: Upload the zip
+      # For people: the same stapled app in a disk image with an Applications link (make dmg), which is signed,
+      # notarised and stapled in turn.
+      - name: Disk image
+        env:
+          API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+        run: |
+          make dmg
+          codesign --sign "$SIGN" --timestamp build/Zero.dmg
+          bash .github/notarise.sh build/Zero.dmg build/Zero.dmg
+          spctl --assess --type open --context context:primary-signature -vv build/Zero.dmg
+          cd build && shasum -a 256 Zero.dmg > Zero.dmg.sha256 && cat Zero.dmg.sha256
+
+      - name: Upload the zip and the disk image
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Zero
           path: |
             build/Zero.zip
             build/Zero.zip.sha256
+            build/Zero.dmg
+            build/Zero.dmg.sha256
           if-no-files-found: error
           retention-days: 7
 
@@ -169,7 +173,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Download the zip
+      - name: Download the zip and the disk image
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: Zero
@@ -178,21 +182,26 @@ jobs:
       - name: Set up cosign
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
-      - name: Sign the zip
+      - name: Sign the zip and the disk image
         working-directory: ${{ runner.temp }}/release
-        run: cosign sign-blob --yes --bundle Zero.zip.sigstore.json Zero.zip
+        run: |
+          cosign sign-blob --yes --bundle Zero.zip.sigstore.json Zero.zip
+          cosign sign-blob --yes --bundle Zero.dmg.sigstore.json Zero.dmg
 
       - name: Attest build provenance
         id: provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: ${{ runner.temp }}/release/Zero.zip
+          subject-path: |
+            ${{ runner.temp }}/release/Zero.zip
+            ${{ runner.temp }}/release/Zero.dmg
 
-      # Attached too: Scorecard's Signed-Releases check looks for a release asset ending in .intoto.jsonl.
+      # Attached too: Scorecard's Signed-Releases check looks for a release asset ending in .intoto.jsonl. One
+      # attestation, with the zip and the disk image as its subjects.
       - name: Keep the provenance with the release
         env:
           BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
-        run: jq -c . "$BUNDLE" > "$RUNNER_TEMP/release/Zero.zip.intoto.jsonl"
+        run: jq -c . "$BUNDLE" > "$RUNNER_TEMP/release/Zero.intoto.jsonl"
 
       - name: Publish the release
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0

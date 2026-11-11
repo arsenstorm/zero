@@ -38,9 +38,12 @@ import ZeroCore
     /// The app in front when the inbox last took the keyboard.
     var keyboardFront: NSRunningApplication?
     private var hotKeyHandlerInstalled = false
+    /// Shown instead of everything else while Zero runs from outside Applications (MoveToApplications).
+    private var moveWindow: NSWindow?
 
     /// A zero://pad link, clicked anywhere: the pad, at its section. A zero://loop link: the loop.
     func application(_ application: NSApplication, open urls: [URL]) {
+        guard moveWindow == nil else { return }
         if let other = urls.first(where: { $0.scheme == "zero" && ["loop", "later"].contains($0.host) }) { openZeroURL(other); return }
         guard let (id, section) = urls.lazy.compactMap(PadLinks.parse).first else { return }
         navigation.place = .pad(id)
@@ -61,13 +64,21 @@ import ZeroCore
 
     // Opening Zero again, from the Dock or Finder, opens the workspace.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if let moveWindow { moveWindow.makeKeyAndOrderFront(nil); return false }
         openWorkspace()
         return false
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
         NSApp.mainMenu = Self.editMenu()
+        if let app = MoveToApplications.needed() {
+            moveWindow = MoveToApplications(source: app).window()
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate()
+            moveWindow?.makeKeyAndOrderFront(nil)
+            return
+        }
+        NSApp.setActivationPolicy(.accessory)
         Task { await Linear.shared.refresh() }
         Task { await CustomModels.shared.load() }
         connectStore()
@@ -103,7 +114,9 @@ import ZeroCore
         // The control bar names Zero's own tasks as the window does: their names, and what they run on.
         store.zeroTask = { [weak workspace] agent in
             guard agent.hasPrefix("zerod-"), let task = workspace?.roster[String(agent.dropFirst("zerod-".count))] else { return nil }
-            let model = ComposerRows.catalogue(task.provider).first { $0.id == task.model }?.name ?? task.model ?? task.provider.title
+            let model =
+                ComposerRows.catalogue(task.provider).first { $0.id == task.model }?.name ?? task.model.map(ModelNames.readable)
+                ?? task.provider.title
             return (Workspace.label(of: task), model)
         }
         let notifier = makeNotifier()

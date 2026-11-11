@@ -4,19 +4,33 @@ Releases are made by CI from a pushed tag (`.github/workflows/release.yml`). A t
 
 1. The **build** job runs on macOS in the `signing` environment. It builds what `make bundle` builds. It signs every
    binary and the app with the Developer ID certificate, the hardened runtime and a secure timestamp. Then it notarises
-   the app with `notarytool`, staples the ticket and zips the app with `ditto -c -k --keepParent`.
-2. The **publish** job runs on Linux in the `release` environment. It signs the zip with Sigstore (cosign, keyless,
-   through GitHub's OIDC) and attests its SLSA build provenance. Then GoReleaser publishes the GitHub release, with
+   the app with `notarytool`, staples the ticket and zips the app with `ditto -c -k --keepParent`. Then `make dmg`
+   puts the stapled app in a disk image, which is signed, notarised and stapled too.
+2. The **publish** job runs on Linux in the `release` environment. It signs the zip and the disk image with Sigstore
+   (cosign, keyless, through GitHub's OIDC) and attests their SLSA build provenance. Then GoReleaser publishes the GitHub release, with
    notes that GitHub generates.
 
 The release has these files:
 
 | File | What it is |
 |---|---|
-| `Zero.zip` | The notarised app. Zero's updater installs the release's only `.zip`. |
-| `Zero.zip.sha256` | Its SHA-256, as `shasum -a 256` writes it. |
-| `Zero.zip.sigstore.json` | The cosign signature bundle. |
-| `Zero.zip.intoto.jsonl` | The SLSA build provenance: the same attestation that `gh attestation verify` reads. |
+| `Zero.dmg` | The download for people: the notarised app beside a link to Applications. The website links it. |
+| `Zero.zip` | The same app, zipped. Zero's updater installs the release's only `.zip`, so keep it the only one. |
+| `Zero.dmg.sha256`, `Zero.zip.sha256` | Their SHA-256, as `shasum -a 256` writes it. |
+| `Zero.dmg.sigstore.json`, `Zero.zip.sigstore.json` | Their cosign signature bundles. |
+| `Zero.intoto.jsonl` | The SLSA build provenance of both: the same attestation that `gh attestation verify` reads. |
+
+## The disk image
+
+`apps/macos/dmg` holds its layout. `settings.py` sets the window, the icon positions and the Applications link for
+[dmgbuild](https://github.com/dmgbuild/dmgbuild), which writes Finder's layout file itself, so CI's headless Macs need
+no Finder to script. `make dmg` installs dmgbuild in `build/dmgbuild`, pinned with hashes by `requirements.txt`, and
+makes `build/Zero.dmg` from `build/Zero.app` (run `make bundle` first). Locally the disk image is unsigned. To sign
+one, run `codesign --sign "Developer ID Application: …" --timestamp build/Zero.dmg`.
+
+The background is Zero's mark and name, very large and faint, as the website's footer draws them. To change it, edit
+`background.swift` and run `swift apps/macos/dmg/background.swift`. It writes `background.png` and
+`background@2x.png`, and dmgbuild makes them one Retina TIFF.
 
 ## Set up once
 
@@ -87,7 +101,7 @@ environment has no secrets: the publish job uses the workflow's own token and OI
 
 The updater installs a release only when it's signed as the running Zero is. A Zero signed as Apple Development (by
 `make install` without a Developer ID in your keychain) doesn't accept the CI's Developer ID releases. Install the first
-CI release by hand: download `Zero.zip`, unzip it and replace `/Applications/Zero.app`. Then keep the Developer ID
+CI release by hand: download `Zero.dmg`, open it and drag Zero to Applications, replacing the one there. Then keep the Developer ID
 certificate in your login keychain, so that `make install` signs with it too.
 
 ## Cut a release
@@ -96,11 +110,11 @@ certificate in your login keychain, so that `make install` signs with it too.
    numbers, because GoReleaser reads the tag as semver. Also increment `CFBundleVersion` by one. Commit and push to
    `main`.
 2. Optional: rehearse. In Actions › Release › Run workflow, choose `main`. The run builds, signs and notarises the app,
-   and keeps `Zero.zip` as the run's artifact for 7 days. It publishes nothing.
+   and keeps `Zero.zip` and `Zero.dmg` as the run's artifact for 7 days. It publishes nothing.
 3. Run `make release`. It makes a signed tag `vX.Y.Z` on HEAD (HEAD must already be on `origin/main`) and pushes the
    tag. If the tag isn't the version in Info.plist, the build job stops.
-4. In the run, approve the `release` deployment if you set required reviewers. The release then appears with its four
-   files.
+4. In the run, approve the `release` deployment if you set required reviewers. The release then appears with its
+   seven files.
 
 If a run fails before the publish job, nothing was published. Delete the tag (`git push --delete origin vX.Y.Z` and
 `git tag -d vX.Y.Z`), fix the problem and tag again.
@@ -108,13 +122,16 @@ If a run fails before the publish job, nothing was published. Delete the tag (`g
 ## Verify a release
 
 ```sh
-shasum -a 256 -c Zero.zip.sha256
-cosign verify-blob Zero.zip --bundle Zero.zip.sigstore.json \
+shasum -a 256 -c Zero.dmg.sha256
+cosign verify-blob Zero.dmg --bundle Zero.dmg.sigstore.json \
   --certificate-identity https://github.com/arsenstorm/zero/.github/workflows/release.yml@refs/tags/vX.Y.Z \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
-gh attestation verify Zero.zip -R arsenstorm/zero
-ditto -x -k Zero.zip . && spctl -a -vv Zero.app   # "accepted, source=Notarized Developer ID"
+gh attestation verify Zero.dmg -R arsenstorm/zero
+spctl -a -t open --context context:primary-signature -vv Zero.dmg   # "accepted, source=Notarized Developer ID"
 ```
+
+The zip verifies the same way, with `Zero.zip` in place of `Zero.dmg`. Its app is checked with
+`ditto -x -k Zero.zip . && spctl -a -vv Zero.app`.
 
 ## Scorecard
 

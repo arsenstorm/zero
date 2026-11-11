@@ -15,6 +15,8 @@ final class UpdatesTests: XCTestCase {
         let json = """
             {"tag_name": "v0.2", "body": "Fixes", "assets": [
               {"name": "notes.txt", "browser_download_url": "https://example.com/notes.txt"},
+              {"name": "Zero.dmg", "browser_download_url": "https://example.com/Zero.dmg"},
+              {"name": "Zero.dmg.sha256", "browser_download_url": "https://example.com/Zero.dmg.sha256"},
               {"name": "Zero.zip", "browser_download_url": "https://example.com/Zero.zip"}]}
             """
         let release = try JSONDecoder().decode(Release.self, from: Data(json.utf8))

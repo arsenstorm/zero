@@ -1,4 +1,5 @@
-# GoReleaser only publishes the GitHub release: release.yml has built, signed, notarised and attested Zero.zip on macOS.
+# GoReleaser only publishes the GitHub release: release.yml has built, signed, notarised and attested Zero.zip and
+# Zero.dmg on macOS.
 version: 2
 project_name: zero
 
@@ -16,4 +17,4 @@ changelog:
 release:
   name_template: "Zero {{ .Version }}"
   extra_files:
-    - glob: "{{ .Env.ASSETS }}/Zero.zip*"
+    - glob: "{{ .Env.ASSETS }}/Zero.*"

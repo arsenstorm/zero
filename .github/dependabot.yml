@@ -22,6 +22,17 @@ updates:
       cargo:
         patterns: ["*"]
 
+  # dmgbuild, which makes the disk image (apps/macos/dmg/requirements.txt, pinned with hashes).
+  - package-ecosystem: pip
+    directory: /apps/macos/dmg
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      dmgbuild:
+        patterns: ["*"]
+
   # No swift ecosystem: Package.swift names Ghostty's engine as a local binary target built on the Mac (Vendor/, not
   # in the repo), and Dependabot fails on any package it can't resolve. Swift packages are updated by hand.
 

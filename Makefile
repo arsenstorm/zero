@@ -82,6 +82,20 @@ install: bundle
 	@sh $(MACOS)/Resources/install.sh $(APP) $$(cmp -s target/release/zerod build/zerod.installed && echo keep || echo restart)
 	@cp target/release/zerod build/zerod.installed
 
+# The disk image people download, from build/Zero.app as it is (apps/macos/dmg: the layout, its background and how
+# it's drawn). dmgbuild, pinned with hashes in a virtual environment of its own, writes Finder's layout without
+# AppleScript, so CI's headless Macs make the same one. Unsigned here; CI signs, notarises and staples it
+# (`codesign --sign "$(SIGN)" --timestamp build/Zero.dmg` signs one by hand).
+DMGBUILD = build/dmgbuild/bin/dmgbuild
+$(DMGBUILD): $(MACOS)/dmg/requirements.txt
+	rm -rf build/dmgbuild
+	python3 -m venv build/dmgbuild
+	build/dmgbuild/bin/pip install -q --require-hashes -r $<
+dmg: $(DMGBUILD)
+	@[ -d $(APP) ] || { echo "No $(APP): run make bundle first"; exit 1; }
+	rm -f build/Zero.dmg
+	$(DMGBUILD) -s $(MACOS)/dmg/settings.py -D app=$(APP) Zero build/Zero.dmg
+
 # Releases are built, signed, notarised and published by CI (.github/workflows/release.yml, docs/releasing.md) from a
 # pushed tag: raise the version in Info.plist (X.Y.Z), commit and push, then `make release` tags HEAD and pushes the tag.
 release:
@@ -115,4 +129,4 @@ lint:
 	swift format lint --strict --recursive --parallel $(SWIFT_SOURCES)
 	bun run format:check
 
-.PHONY: build zerod ghostty drop bundle install release run test setup format lint
+.PHONY: build zerod ghostty drop bundle dmg install release run test setup format lint
