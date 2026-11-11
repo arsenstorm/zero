@@ -199,7 +199,7 @@ private struct ArchiveDialog: View {
                 text: workers == 0 ? "Archive \(name)?" : "Archive \(name) and its \(workers == 1 ? "worker" : "\(workers) workers")?"
             )
             .fixedSize(horizontal: false, vertical: true)
-            Text("Bring \(workers == 0 ? "it" : "them") back from Archived tasks, in the tasks list's ⋯ menu.")
+            Text("Bring \(workers == 0 ? "it" : "them") back from Archived tasks.")
                 .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 Spacer()
