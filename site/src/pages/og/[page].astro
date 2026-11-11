@@ -1,0 +1,49 @@
+---
+// A docs page's share image, 1200×630: the site's (og.astro) with the page's title and description in place of the
+// tagline. `bun run og` renders each to public/og/<page>.png with the dev server running; a docs page uses its own
+// once it exists. Not linked anywhere, and kept out of search results.
+import "../../styles/global.css";
+import Mark from "../../components/Mark.astro";
+import Dither from "../../components/Dither.astro";
+import { docPages } from "../../lib/docs";
+import { site } from "../../lib/site";
+
+export async function getStaticPaths() {
+  return (await docPages()).map((page) => ({
+    params: { page: page.id },
+    props: { page },
+  }));
+}
+const { page } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en" style="color-scheme: dark">
+  <head>
+    <meta charset="utf-8">
+    <meta name="robots" content="noindex">
+    <title>{page.data.title}: share image</title>
+  </head>
+  <body
+    class="m-0 w-[1200px] h-[630px] overflow-hidden bg-black font-sans text-white"
+  >
+    <div class="relative size-full px-20 pt-24">
+      <Dither mode="dark" planet={[0.5, 3.15, 2.5]} fade={0} />
+      <p
+        class="relative flex items-center gap-3 text-[30px] font-semibold tracking-[-0.01em]"
+      >
+        <Mark size={32} />{`${site.name} docs`}
+      </p>
+      <h1
+        class="relative mt-10 max-w-[1000px] text-[76px] leading-[1.02] font-semibold tracking-[-0.035em]"
+      >
+        {page.data.title}
+      </h1>
+      <p
+        class="relative mt-6 max-w-[880px] text-[28px] leading-[1.35] text-white/70"
+      >
+        {page.data.description}
+      </p>
+    </div>
+  </body>
+</html>

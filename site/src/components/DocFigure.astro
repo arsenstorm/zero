@@ -1,0 +1,142 @@
+---
+// Pictures for the docs, drawn from the site's own pieces of the app (no screenshots): a docs page asks for one with
+// an HTML comment, `<!-- figure: states -->`, which the docs page swaps for this (docs/[...slug].astro). Still, with
+// no scripts: a reader looks at them, the demos on the home page are for trying. The Markdown keeps only the comment,
+// so the help agent reading it isn't sent words it can't see.
+//   bar: the control bar on the screen's edge, a task's ask open beside it.
+//   ask: an ask as the inbox shows it.
+//   states: the seven states a task can be in.
+//   workers: a task in the sidebar with its workers under it.
+import AskCard from "./AskCard.astro";
+import Icon from "./Icon.astro";
+import TaskState from "./TaskState.astro";
+
+interface Props {
+  name: string;
+}
+const { name } = Astro.props;
+
+const states = [
+  { state: "working", name: "Working" },
+  { state: "needsYou", name: "Needs you" },
+  { state: "waiting", name: "Waiting" },
+  { state: "blocked", name: "Blocked" },
+  { state: "answered", name: "Replied" },
+  { state: "handed", name: "Over to you" },
+  { state: "done", name: "Done" },
+] as const;
+const marks = [
+  "needsYou",
+  "working",
+  "needsYou",
+  "waiting",
+  "handed",
+  "answered",
+  "done",
+] as const;
+const tree = [
+  { title: "Upgrade the payments SDK", state: "working" },
+  { title: "Update the API calls", state: "done", worker: true },
+  { title: "Fix the failing tests", state: "needsYou", worker: true },
+  {
+    title: "Check the webhooks on staging",
+    state: "waiting",
+    worker: true,
+    last: true,
+  },
+] as const;
+const captions: Record<string, string> = {
+  bar: "The control bar on the edge of the screen, with a task's ask open beside it.",
+  ask: "An ask in the inbox. Click an answer or press its number.",
+  states: "The seven states, as the sidebar and the control bar show them.",
+  workers:
+    "A task in the sidebar, its workers under it, each with its own state.",
+};
+const yesNo = ["Yes", "No", "Suggest something else…"];
+---
+
+<figure class="doc-figure not-prose my-8">
+  <div
+    aria-hidden="true"
+    class="rounded-[18px] bg-rail p-5 sm:p-8 overflow-hidden"
+  >
+    {name === "bar" && (
+      <div class="flex items-center justify-end gap-3 -mr-5 sm:-mr-8">
+        <div class="w-full max-w-[300px] rounded-[28px] bg-hover p-2.5">
+          <AskCard
+            headline="Ship the release notes as they are?"
+            byline="Release notes for 2.4"
+            options={yesNo}
+          />
+        </div>
+        <div class="relative flex flex-col items-center gap-0.5 py-2 px-1.5 rounded-l-[22px] bg-pill border border-r-0 border-stroke">
+          <span class="bar-fillet-top absolute -right-px -top-[11px] size-[11px]"></span>
+          <span class="bar-fillet-bottom absolute -right-px -bottom-[11px] size-[11px]"></span>
+          <span class="size-8 grid place-items-center relative">
+            <Icon name="inbox" size={15} />
+            <span class="absolute top-[6px] right-[6px] size-[7px] rounded-full bg-red"></span>
+          </span>
+          <span class="w-[18px] h-px bg-hairline my-1"></span>
+          {marks.map((state) => (
+            <span class="w-8 h-7 grid place-items-center">
+              <TaskState state={state} />
+            </span>
+          ))}
+        </div>
+      </div>
+    )}
+    {name === "ask" && (
+      <div class="mx-auto max-w-[360px] rounded-[28px] bg-hover p-2.5">
+        <AskCard
+          headline="Allow this command?"
+          byline="Fix the flaky login test · Reproduce it on CI"
+          supporting="To run the login test against the CI image, 50 times."
+          command="docker run --rm ci-image npm test -- login.spec.ts --repeat 50"
+          options={["Run", "Reject", "Suggest something else…"]}
+        />
+      </div>
+    )}
+    {name === "states" && (
+      <ul class="grid grid-cols-4 sm:grid-cols-7 gap-x-2 gap-y-5 text-center">
+        {states.map((s) => (
+          <li class="flex flex-col items-center">
+            <span class="size-11 rounded-full grid place-items-center bg-composer [&_svg]:size-5 [&>span]:size-5">
+              <TaskState state={s.state} />
+            </span>
+            <span class="mt-2 text-[12.5px] font-medium">{s.name}</span>
+          </li>
+        ))}
+      </ul>
+    )}
+    {name === "workers" && (
+      <div class="mx-auto max-w-[320px] rounded-[14px] bg-composer border border-stroke p-1.5">
+        {tree.map((row, i) => (
+          <div
+            class:list={[
+              "h-[30px] flex items-center gap-1.5 pr-2.5 rounded-[8px] text-[13px]",
+              "worker" in row ? "pl-0" : "pl-2.5",
+              i === 0 && "bg-chip",
+            ]}
+          >
+            {"worker" in row && (
+              <span class="w-[34px] h-full relative shrink-0">
+                <span
+                  class:list={[
+                    "absolute left-[11.5px] top-0 w-px bg-faint",
+                    "last" in row ? "h-1/2" : "h-full",
+                  ]}
+                ></span>
+                <span class="absolute left-[12.5px] top-1/2 h-px w-[18px] bg-faint"></span>
+              </span>
+            )}
+            <span class="flex-1 truncate">{row.title}</span>
+            <TaskState state={row.state} />
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+  <figcaption class="mt-2.5 text-[13px] text-muted">
+    {captions[name]}
+  </figcaption>
+</figure>
