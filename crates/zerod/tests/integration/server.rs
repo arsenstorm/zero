@@ -21,6 +21,7 @@ struct Harness {
     project: PathBuf,
     seen: Arc<Mutex<Vec<Seen>>>,
     commands: Arc<Mutex<Vec<Vec<String>>>>,
+    daemon: Arc<Daemon>,
 }
 
 fn runtime(seen: Arc<Mutex<Vec<Seen>>>, commands: Arc<Mutex<Vec<Vec<String>>>>) -> Runtime {
@@ -56,7 +57,7 @@ async fn harness(name: &str) -> Harness {
     let daemon = Daemon::open(&home, runtime(seen.clone(), commands.clone())).unwrap();
     tokio::spawn(zerod::server::serve(
         zerod::server::Zerod {
-            daemon,
+            daemon: daemon.clone(),
             inbox: zerod::inbox::Inbox::open(None, vec![]),
             drops: None,
             integrations: zerod::integrations::Integrations::open(&home, Arc::new(zerod::integrations::Commands::default())),
@@ -80,7 +81,7 @@ async fn harness(name: &str) -> Harness {
         }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    Harness { home, socket, project, seen, commands }
+    Harness { home, socket, project, seen, commands, daemon }
 }
 
 struct Client {
@@ -847,4 +848,51 @@ async fn the_user_sets_a_tasks_status_done_waiting_or_blocked_as_a_confirmed_not
     }
     let refused = client.call(json!({"op": "setStatus", "session": session, "state": "working"})).await;
     assert_eq!(refused["ok"], false, "{refused}");
+}
+
+#[tokio::test]
+async fn a_subscriber_that_falls_behind_gets_snapshots_of_what_changed_since_not_of_everything() {
+    // A burst (thousands of changes at once) leaves a subscriber behind: every session sent again in full, each
+    // carrying its whole latest turn, while the burst went on put it behind again, and gigabytes waited for the app.
+    let h = harness("server-behind").await;
+    let mut control = Client::connect(&h.socket).await;
+    let mut ids = vec![];
+    for _ in 0..2 {
+        let started = control.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "uname"})).await;
+        ids.push(started["result"]["session"].as_str().unwrap().to_string());
+    }
+    let mut watcher = Client::connect(&h.socket).await;
+    watcher.call(json!({"op": "subscribe"})).await;
+    let mut mirror = vec![];
+    for id in &ids {
+        watcher.follow(&mut mirror, id, |c| c.status == Status::Idle && c.turn.is_none()).await;
+    }
+    let (quiet, busy) = (&ids[0], &ids[1]);
+    let session = h.daemon.session(busy).unwrap();
+    for n in 0..5000 {
+        session.change(zerod::model::Change::Title { title: Some(format!("t{n}")) });
+    }
+    let mut sent = std::collections::HashMap::<String, usize>::new();
+    loop {
+        if mirror.iter().any(|c| &c.id == busy && c.title.as_deref() == Some("t4999")) {
+            break;
+        }
+        let event = watcher.event().await;
+        match event["event"].as_str().unwrap() {
+            "session" => {
+                let conversation: Conversation = serde_json::from_value(event["conversation"].clone()).unwrap();
+                *sent.entry(conversation.id.clone()).or_default() += 1;
+                mirror.retain(|c| c.id != conversation.id);
+                mirror.push(conversation);
+            }
+            "change" => {
+                let target = mirror.iter_mut().find(|c| c.id == event["session"]).unwrap();
+                assert_eq!(event["seq"], json!(target.seq + 1), "no gaps, no repeats");
+                target.apply(serde_json::from_value(event["change"].clone()).unwrap());
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(sent.get(busy), Some(&1), "what changed, once");
+    assert_eq!(sent.get(quiet), None, "not what didn't");
 }

@@ -34,11 +34,16 @@ struct State {
     origin: HashMap<String, PathBuf>,
     /// The drops last found, and when: patterns over a thousand folders aren't walked every second.
     found: Option<(std::time::Instant, Vec<PathBuf>)>,
+    /// When an ask last came from each drop: one in use is looked at every second, the rest (most, quiet) less.
+    asked: HashMap<PathBuf, std::time::Instant>,
 }
 
 /// How often the patterns are walked again (thousands of folders), and each drop's folders, client and old answers
 /// seen to: a new drop is a new bench, rare.
 const LOOK_AGAIN: Duration = Duration::from_secs(120);
+/// A drop asked from this lately is looked at every second; the others every `QUIET_EVERY` seconds.
+const LIVELY: Duration = Duration::from_secs(600);
+const QUIET_EVERY: u64 = 5;
 
 impl Drops {
     pub fn new(inbox: Arc<Inbox>, resources: PathBuf) -> Arc<Drops> {
@@ -57,14 +62,14 @@ impl Drops {
         drops
     }
 
-    /// Looks every second.
+    /// Looks every second at the drops asked from lately, every few at the rest.
     pub fn start(self: &Arc<Self>) {
         let weak = Arc::downgrade(self);
         tokio::spawn(async move {
-            loop {
+            for round in 1u64.. {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 match weak.upgrade() {
-                    Some(drops) => drops.scan(),
+                    Some(drops) => drops.look(round % QUIET_EVERY == 0),
                     None => return,
                 }
             }
@@ -83,7 +88,12 @@ impl Drops {
         patterns.iter().flat_map(|p| expand(p)).collect()
     }
 
+    /// Every drop, quiet or not.
     pub fn scan(&self) {
+        self.look(true)
+    }
+
+    fn look(&self, quiet_too: bool) {
         let found = self.state.lock().unwrap().found.clone().filter(|(at, _)| at.elapsed() < LOOK_AGAIN);
         let (drops, fresh) = match found {
             Some((_, drops)) => (drops, false),
@@ -96,6 +106,10 @@ impl Drops {
             if fresh {
                 self.prepare(&drop);
                 sweep(&drop.join("answers"));
+            }
+            let lively = || self.state.lock().unwrap().asked.get(&drop).is_some_and(|at| at.elapsed() < LIVELY);
+            if !fresh && !quiet_too && !lively() {
+                continue;
             }
             let asks = drop.join("asks");
             // Unchanged since it was read (a file added, removed or renamed in it changes it): nothing new.
@@ -124,7 +138,11 @@ impl Drops {
                     unfinished = true;
                     continue;
                 };
-                self.state.lock().unwrap().ingested.insert(key);
+                {
+                    let mut state = self.state.lock().unwrap();
+                    state.ingested.insert(key);
+                    state.asked.insert(drop.clone(), std::time::Instant::now());
+                }
                 let ask = self.inbox.create(incoming, true);
                 if ask.kind == AskKind::Note {
                     let _ = std::fs::remove_file(file);

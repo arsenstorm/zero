@@ -31,7 +31,7 @@ impl crate::inbox::Runtime for Sessions {
     }
     fn display_name<'a>(&'a self, agent: &'a crate::ask::AgentIdentity) -> crate::inbox::Fut<'a, Option<String>> {
         Box::pin(async move {
-            let conversation = self.0.upgrade()?.get(Sessions::session(agent)?)?;
+            let conversation = self.0.upgrade()?.summary(Sessions::session(agent)?)?;
             conversation.label.or(conversation.title)
         })
     }
@@ -40,7 +40,7 @@ impl crate::inbox::Runtime for Sessions {
             let Some(daemon) = self.0.upgrade() else { return Default::default() };
             agents
                 .iter()
-                .filter(|a| Sessions::session(a).and_then(|id| daemon.get(id)).is_some_and(|c| c.status == Status::Offline))
+                .filter(|a| Sessions::session(a).and_then(|id| daemon.summary(id)).is_some_and(|c| c.status == Status::Offline))
                 .map(|a| a.name.clone())
                 .collect()
         })
@@ -48,7 +48,7 @@ impl crate::inbox::Runtime for Sessions {
     fn gone<'a>(&'a self, agents: &'a [crate::ask::AgentIdentity]) -> crate::inbox::Fut<'a, std::collections::HashSet<String>> {
         Box::pin(async move {
             let Some(daemon) = self.0.upgrade() else { return Default::default() };
-            agents.iter().filter(|a| Sessions::session(a).is_some_and(|id| daemon.get(id).is_none())).map(|a| a.name.clone()).collect()
+            agents.iter().filter(|a| Sessions::session(a).is_some_and(|id| daemon.session(id).is_err())).map(|a| a.name.clone()).collect()
         })
     }
     fn stop<'a>(&'a self, agent: &'a crate::ask::AgentIdentity) -> crate::inbox::Fut<'a, ()> {

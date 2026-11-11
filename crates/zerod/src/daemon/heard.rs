@@ -119,8 +119,10 @@ impl Daemon {
     /// from the one heard, so a worker can seem to go straight from waiting on the user to done: anything still under
     /// way counts as before, anything ended as now.
     pub(super) fn heard(&self, id: &str) {
-        let Some(conversation) = self.get(id) else { return };
-        let now = conversation.attention();
+        let Ok(session) = self.session(id) else { return };
+        // Every piece of a streaming turn is heard here: its conversation without its items, unless its turn ended.
+        let mut conversation = session.summary();
+        let now = session.attention();
         let before = self.attention.lock().unwrap().insert(id.into(), now);
         let under_way = |a: Attention| matches!(a, Attention::Starting | Attention::Working | Attention::NeedsYou | Attention::Stuck);
         // Or between turns on a question in its reply (needs the user, with nothing of the provider's open).
@@ -140,6 +142,10 @@ impl Daemon {
                     | Attention::Idle
             );
         let came_to_an_end = before.is_some_and(under_way) && ended;
+        let got_stuck = now == Attention::Stuck && before != Some(Attention::Stuck);
+        if came_to_an_end || got_stuck {
+            conversation = session.snapshot()
+        }
         // Before its lead hears of it: a lead on the same account holds the report rather than failing on it.
         self.sign_in_heard(&conversation, came_to_an_end && conversation.failure.is_none());
         if came_to_an_end {
@@ -165,7 +171,6 @@ impl Daemon {
         {
             self.signins.record_turn(&account, crate::now());
         }
-        let got_stuck = now == Attention::Stuck && before != Some(Attention::Stuck);
         // While zerod restarts, a turn ending is the pause for it: the new zerod carries it on, so its lead hears nothing.
         let restarting = self.restarting.load(Ordering::Relaxed);
         // Nor while it's paused by the user: its turn ending is the pause.
@@ -176,10 +181,14 @@ impl Daemon {
             now,
             Attention::Done | Attention::Failed | Attention::Stuck | Attention::Limited | Attention::Blocked | Attention::Offline
         );
-        let waiting_on_workers = unanswered
-            && self.workers(id).iter().any(|w| {
-                matches!(w.attention(), Attention::Starting | Attention::Working | Attention::NeedsYou) || self.background(&w.id).is_some()
-            });
+        // Asked only once its turn has come to an end: it reads every session.
+        let waiting_on_workers = || {
+            unanswered
+                && self.workers(id).iter().any(|w| {
+                    matches!(w.attention(), Attention::Starting | Attention::Working | Attention::NeedsYou)
+                        || self.background(&w.id).is_some()
+                })
+        };
         // Nor the turn it was just sent back from (no Zero ending): its lead hears the turn as it ends properly, once.
         let sent_back = self.sent_back.lock().unwrap().contains(id);
         if let Some(lead) = &conversation.parent
@@ -187,7 +196,7 @@ impl Daemon {
             && !restarting
             && !self.is_paused(id)
             && !archiving
-            && !waiting_on_workers
+            && !waiting_on_workers()
             && !sent_back
         {
             // Its turn ended (finished or not) with a run of its own still going in the background, which its CLI

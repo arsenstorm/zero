@@ -175,9 +175,19 @@ async fn subscribe(daemon: Arc<Daemon>, out: mpsc::UnboundedSender<Value>, lazy:
                     Err(_) => true,
                 },
             },
-            // Behind: fresh snapshots of what it has (a lazy subscriber has only some).
+            // Behind: what's left of the backlog skipped (the snapshots have it), and fresh snapshots of only what
+            // changed since it was sent (a lazy subscriber has only some). Every session again, each with its whole
+            // latest turn, took long enough during a burst to fall behind again, over and over.
             Err(broadcast::error::RecvError::Lagged(_)) => {
-                let behind: Vec<_> = daemon.sessions().into_iter().filter(|s| !lazy || known.contains_key(&s.id())).collect();
+                events = events.resubscribe();
+                let behind: Vec<_> = daemon
+                    .sessions()
+                    .into_iter()
+                    .filter(|s| match known.get(&s.id()) {
+                        Some(&seq) => s.seq() != seq,
+                        None => !lazy,
+                    })
+                    .collect();
                 behind.iter().all(|s| snapshot(&mut known, s))
             }
             Err(broadcast::error::RecvError::Closed) => return,
@@ -203,6 +213,7 @@ async fn follow_inbox(inbox: Arc<Inbox>, out: mpsc::UnboundedSender<Value>) {
             Ok(InboxEvent::Ask(ask)) => out.send(json!({"event": "ask", "ask": ask})).is_ok(),
             Ok(InboxEvent::Output { id, chunk }) => out.send(json!({"event": "output", "ask": id, "chunk": chunk})).is_ok(),
             Ok(InboxEvent::Removed(id)) => out.send(json!({"event": "removed", "ask": id})).is_ok(),
+            Ok(InboxEvent::Trimmed) => snapshot(&inbox),
             Ok(InboxEvent::Agents { offline, reachable }) => {
                 out.send(json!({"event": "agents", "offline": offline, "reachable": reachable})).is_ok()
             }

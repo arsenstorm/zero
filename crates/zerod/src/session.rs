@@ -290,6 +290,22 @@ impl Session {
         }
     }
 
+    /// How it's doing, worked out where it is: nothing copied.
+    pub fn attention(&self) -> crate::model::Attention {
+        if let Some(core) = &self.lock().core {
+            return core.conversation().attention();
+        }
+        self.summary().attention()
+    }
+
+    /// How many changes it has had, without loading it.
+    pub fn seq(&self) -> u64 {
+        if let Some(core) = &self.lock().core {
+            return core.conversation().seq;
+        }
+        self.summary().seq
+    }
+
     /// Its id, without loading it.
     pub fn id(&self) -> String {
         let inner = self.lock();

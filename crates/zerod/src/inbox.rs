@@ -71,11 +71,17 @@ pub enum InboxEvent {
     Ask(Box<Ask>),
     /// More of a run's output.
     Output { id: String, chunk: String },
-    /// Dismissed from the inbox.
+    /// Dismissed from the inbox, or out of its window.
     Removed(String),
+    /// Many out of its window at once (`TRIMMED_AT_ONCE` or more): the asks again, rather than one event each, each a
+    /// redraw in every app.
+    Trimmed,
     /// Which agents' sessions aren't running, and which Zero can type into, when either changes.
     Agents { offline: Vec<String>, reachable: Vec<String> },
 }
+
+/// How many asks leaving the window at once are sent as the asks again instead (`InboxEvent::Trimmed`).
+pub const TRIMMED_AT_ONCE: usize = 10;
 
 /// What's kept of a run's output: the end, since that's where results and errors are.
 const OUTPUT_KEPT: usize = 256 * 1024;
@@ -1007,6 +1013,7 @@ impl Inbox {
         if tick % 12 != 1 {
             return;
         }
+        self.trim(Time::now());
         for identity in all.iter().filter(|i| !stopped.contains(&i.name) && !self.is_closed(&i.name)) {
             let Some(runtime) = self.runtime_for(identity) else { continue };
             let Some(trouble) = runtime.screen(identity).await.as_deref().and_then(Inbox::trouble) else { continue };
@@ -1018,6 +1025,30 @@ impl Inbox {
             note.body = format!("Claude Code stopped: {trouble}");
             note.status = Some("blocked".into());
             self.create(note, false);
+        }
+    }
+
+    /// Lets go of what has left the window (`window`), telling clients (`Removed`) so they let go of it too.
+    pub fn trim(&self, now: Time) {
+        let removed: Vec<String> = {
+            let mut state = self.lock();
+            let mut keep = window(&state.asks, now).into_iter();
+            let mut removed = vec![];
+            state.asks.retain(|a| {
+                let kept = keep.next().unwrap_or(true);
+                if !kept {
+                    removed.push(a.id.clone())
+                }
+                kept
+            });
+            removed
+        };
+        if removed.len() >= TRIMMED_AT_ONCE {
+            let _ = self.events.send(InboxEvent::Trimmed);
+            return;
+        }
+        for id in removed {
+            let _ = self.events.send(InboxEvent::Removed(id));
         }
     }
 
@@ -1074,8 +1105,7 @@ impl Inbox {
         }
     }
 
-    /// Replays the log: the latest line per id wins. The last day is kept, plus each agent's latest item so its dot comes
-    /// back. An answer still being staged waits again; a run that was running died with whatever ran it.
+    /// Replays the log: the latest line per id wins, and what's kept of it is `window`'s. An answer still being staged waits again; a run that was running died with whatever ran it.
     fn load(&self) {
         let Some(path) = &self.log else { return };
         let Ok(text) = std::fs::read_to_string(path) else { return };
@@ -1088,9 +1118,7 @@ impl Inbox {
             }
             by_id.insert(ask.id.clone(), ask);
         }
-        let cutoff = Time::now().0 - 86400;
         let all: Vec<Ask> = order.iter().filter_map(|id| by_id.remove(id)).collect();
-        let latest: HashMap<String, String> = all.iter().map(|a| (a.agent.name.clone(), a.id.clone())).collect();
         let mut kept = vec![];
         let mut died = vec![];
         let mut running = vec![];
@@ -1117,11 +1145,11 @@ impl Inbox {
                     }
                 }
             }
-            let recent = ask.answered_at.unwrap_or(ask.created_at).0 > cutoff;
-            if ask.state == AskState::Waiting || recent || latest.get(&ask.agent.name) == Some(&ask.id) {
-                kept.push(ask)
-            }
+            kept.push(ask)
         }
+        let window = window(&kept, Time::now());
+        let mut keep = window.into_iter();
+        kept.retain(|_| keep.next().unwrap_or(true));
         let waiting: Vec<(String, i64)> =
             kept.iter().filter(|a| a.state == AskState::Waiting).map(|a| (a.id.clone(), a.expires_at.0 - Time::now().0)).collect();
         self.lock().asks = kept;
@@ -1244,4 +1272,19 @@ fn read_from(path: &Path, offset: &mut u64) -> Vec<u8> {
     let _ = file.read_to_end(&mut bytes);
     *offset += bytes.len() as u64;
     bytes
+}
+
+/// Which asks the inbox keeps, at start and every minute after: what isn't final, the last day, and each agent's latest
+/// (its dot) unless that's its "Closed" (every archived task's last word). The log keeps everything; neither zerod nor
+/// the apps following it hold days of notes.
+fn window(asks: &[Ask], now: Time) -> Vec<bool> {
+    let cutoff = now.0 - 86400;
+    let latest: HashMap<&str, &str> = asks.iter().map(|a| (a.agent.name.as_str(), a.id.as_str())).collect();
+    asks.iter()
+        .map(|ask| {
+            let recent = ask.answered_at.unwrap_or(ask.created_at).0 > cutoff;
+            let its_latest = latest.get(ask.agent.name.as_str()) == Some(&ask.id.as_str()) && ask.status.as_deref() != Some("closed");
+            !ask.state.is_final() || recent || its_latest
+        })
+        .collect()
 }

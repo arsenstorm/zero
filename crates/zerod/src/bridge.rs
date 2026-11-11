@@ -52,9 +52,22 @@ impl Bridge {
         let (me, weak) = (bridge.clone(), Arc::downgrade(&daemon));
         tokio::spawn(async move {
             loop {
+                use crate::model::Change;
+                // Only what changes a session's approvals and questions (a streaming turn's words and items don't):
+                // every session is read again for each.
                 match sessions.recv().await {
-                    Ok(event) if matches!(event.change, crate::model::Change::Delta { .. }) => continue,
-                    Ok(_) | Err(RecvError::Lagged(_)) => {}
+                    Ok(event)
+                        if matches!(
+                            event.change,
+                            Change::Approval { .. }
+                                | Change::Resolved { .. }
+                                | Change::Question { .. }
+                                | Change::Answered { .. }
+                                | Change::Rewound { .. }
+                                | Change::Archived
+                        ) => {}
+                    Err(RecvError::Lagged(_)) => {}
+                    Ok(_) => continue,
                     Err(RecvError::Closed) => return,
                 }
                 let Some(daemon) = weak.upgrade() else { return };

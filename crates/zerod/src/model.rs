@@ -817,7 +817,8 @@ impl Conversation {
 
     /// The item in place of the one with its id, where that one was; else last.
     fn put_item(&mut self, item: Item) {
-        match self.items.iter_mut().find(|existing| existing.id == item.id) {
+        // From the end: what changes is nearly always what came last.
+        match self.items.iter_mut().rev().find(|existing| existing.id == item.id) {
             Some(existing) => *existing = item,
             None => self.items.push(item),
         }
@@ -825,7 +826,7 @@ impl Conversation {
 
     /// Streamed text added to the item's: its words, or a command's output.
     fn append_to(&mut self, id: &str, text: &str) {
-        let Some(item) = self.items.iter_mut().find(|existing| existing.id == id) else { return };
+        let Some(item) = self.items.iter_mut().rev().find(|existing| existing.id == id) else { return };
         match &mut item.kind {
             ItemKind::User { text: body, .. }
             | ItemKind::Agent { text: body, .. }

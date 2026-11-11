@@ -370,6 +370,11 @@ impl Daemon {
         self.session(id).ok().map(|s| s.snapshot())
     }
 
+    /// A session without its conversation's items but its latest few (Session::summary): read without loading it.
+    pub fn summary(&self, id: &str) -> Option<Conversation> {
+        self.session(id).ok().map(|s| s.summary())
+    }
+
     /// Every session without its items: enough for a list.
     pub fn list(&self) -> Vec<Conversation> {
         self.sessions().iter().map(|s| s.summary().with_items(vec![])).collect()

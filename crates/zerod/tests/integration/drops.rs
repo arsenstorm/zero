@@ -115,3 +115,25 @@ async fn a_drop_holds_the_client_and_its_shim() {
     use std::os::unix::fs::PermissionsExt;
     assert_eq!(std::fs::metadata(drop.join("zero")).unwrap().permissions().mode() & 0o777, 0o755);
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_drop_asks_came_from_lately_is_looked_at_every_second_the_quiet_ones_less() {
+    // Hundreds of benches, each a drop, nearly all quiet: each looked at every second kept zerod waking for nothing.
+    let (inbox, drops, root) = setup("tiers");
+    let (lively, quiet) = (root.join("a").join(".zero"), root.join("b").join(".zero"));
+    for drop in [&lively, &quiet] {
+        std::fs::create_dir_all(drop).unwrap();
+    }
+    drops.set_patterns(vec![root.join("*").join(".zero").to_str().unwrap().into()]);
+    write_ask(&lively, &remote(AskKind::Note, "first1"));
+    drops.scan();
+    assert!(inbox.ask("first1").is_some());
+    drops.start();
+    write_ask(&lively, &remote(AskKind::Choice, "again1"));
+    write_ask(&quiet, &remote(AskKind::Choice, "quiet1"));
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert!(inbox.ask("again1").is_some(), "a drop just asked from: within a second");
+    assert!(inbox.ask("quiet1").is_none(), "a quiet one: not every second");
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    assert!(inbox.ask("quiet1").is_some(), "within five seconds");
+}

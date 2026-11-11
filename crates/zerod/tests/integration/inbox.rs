@@ -545,3 +545,80 @@ async fn a_workers_done_is_for_its_lead_not_the_user() {
     assert!(s.is_worker(&worker) && !s.is_worker(&agent("lead")));
     assert!(s.done(&agent("lead"), "Merged", None).is_err(), "a lead's done still takes its token");
 }
+
+#[tokio::test]
+async fn a_closed_agent_from_days_ago_is_not_kept_but_another_agents_latest_is() {
+    // An archived task's "Closed" note is the latest it ever said, so it was kept for good: hundreds of them, a third
+    // of what every client is sent. Closed long ago, there's no dot to bring back.
+    let log = std::env::temp_dir().join(format!("zerod-inbox-closed-{}.jsonl", std::process::id()));
+    let days_ago = Time(Time::now().0 - 3 * 86400);
+    let old = |name: &str, title: &str, status: Option<&str>| {
+        let mut note = Ask::new(AskKind::Note, title, agent(name), 3600);
+        (note.state, note.created_at, note.answered_at, note.status) =
+            (AskState::Answered, days_ago, Some(days_ago), status.map(String::from));
+        serde_json::to_string(&note).unwrap()
+    };
+    let lines = [old("archived", "Done", None), old("archived", "Closed", Some("closed")), old("quiet", "Waiting on CI", None)];
+    std::fs::write(&log, lines.join("\n") + "\n").unwrap();
+    let inbox = Inbox::open(Some(log), vec![]);
+    let kept: Vec<String> = inbox.asks().into_iter().map(|a| a.agent.name).collect();
+    assert_eq!(kept, ["quiet"]);
+}
+
+#[tokio::test]
+async fn while_zerod_runs_the_inbox_keeps_the_window_it_starts_with_and_clients_drop_the_rest() {
+    // Kept as loaded only at start: an inbox up for days held every note since, and so did every app following it.
+    let inbox = Inbox::open(None, vec![]);
+    inbox.configure(Duration::from_millis(10), 3600);
+    let note = |name: &str, title: &str| {
+        let mut note = Ask::new(AskKind::Note, title, agent(name), 3600);
+        if title == "Closed" {
+            note.status = Some("closed".into())
+        }
+        inbox.create(note, false).id
+    };
+    let mut question = Ask::new(AskKind::Choice, "Which branch?", agent("worker"), 3600);
+    question.options = vec!["main".into(), "next".into()];
+    let older = inbox.create(question, false).id;
+    inbox.choose(&older, 0);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let latest = note("worker", "Done");
+    let closed = (note("archived", "Shipped"), note("archived", "Closed"));
+    let waiting = inbox.create(ask(AskKind::Choice, "Deploy?", &["Yes", "No"]), false).id;
+    let mut events = inbox.subscribe();
+    inbox.trim(Time(Time::now().0 + 2 * 86400));
+    let kept: HashSet<String> = inbox.asks().into_iter().map(|a| a.id).collect();
+    assert_eq!(kept, HashSet::from([latest, waiting]), "what's waiting, and each open agent's latest for its dot");
+    let mut removed = HashSet::new();
+    while let Ok(event) = events.try_recv() {
+        if let InboxEvent::Removed(id) = event {
+            removed.insert(id);
+        }
+    }
+    assert_eq!(removed, HashSet::from([older, closed.0, closed.1]), "clients told, so they drop them too");
+    inbox.trim(Time::now());
+    assert_eq!(inbox.asks().len(), 2, "within the day nothing goes");
+}
+
+#[tokio::test]
+async fn many_asks_leaving_the_window_at_once_are_one_event_not_one_each() {
+    // The first trim after an upgrade lets go of hundreds: one event each was a redraw each in every app.
+    let inbox = Inbox::open(None, vec![]);
+    for n in 0..30 {
+        let mut closed = Ask::new(AskKind::Note, "Closed", agent(&format!("agent-{n}")), 3600);
+        closed.status = Some("closed".into());
+        inbox.create(closed, false);
+    }
+    let mut events = inbox.subscribe();
+    inbox.trim(Time(Time::now().0 + 2 * 86400));
+    let (mut removed, mut trimmed) = (0, 0);
+    while let Ok(event) = events.try_recv() {
+        match event {
+            InboxEvent::Removed(_) => removed += 1,
+            InboxEvent::Trimmed => trimmed += 1,
+            _ => {}
+        }
+    }
+    assert_eq!((removed, trimmed), (0, 1));
+    assert!(inbox.asks().is_empty());
+}
