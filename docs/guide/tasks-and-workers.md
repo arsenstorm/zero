@@ -70,24 +70,29 @@ Right-click a task in the sidebar:
 | Item | What it does |
 |---|---|
 | **Rename…** | Gives the task a new name. |
-| **Move to** | Moves the task to another workspace. Shown only when you have more than one. |
+| **Move to** and a workspace's name | Moves the task to that workspace. Shown only when you have more than one. |
+| **Change status** | Sets the task to **Done**, **Waiting** or **Blocked**. See "What a task's state means" below. |
 | **Pause** / **Resume** | Puts the task and its workers on hold, or takes them off hold. |
 | **Work with another task…** | Pick another task, then click **Work together**. Each of the two hears about the other and how to reach it, so they can settle things between them. |
 | **Save for later** | Asks the agent to save what it has to Later, after its current turn. The task stays where it is. See [Later, scratchpads and loops](/docs/later-scratchpads-loops). |
 | **Move to Later** | Puts the whole task in Later. It leaves the sidebar and is paused with its workers, but isn't archived. Also in the **⋯** menu in the window's title bar. See [Later, scratchpads and loops](/docs/later-scratchpads-loops). |
 | **Archive…** | Archives the task. See "Archive a task" below. |
 
+A worker's menu has **Rename…**, **Change status**, **Pause** or **Resume**, and **Archive…**. While the worker is working or waiting, it also has **Stop**.
+
 ## What a task's state means
 
 The sidebar and the control bar show each task's state as an icon. The board and the details pane show it as a pill. A task's state includes its workers': when a worker needs you or is in trouble, so does its task.
+
+<!-- figure: states -->
 
 | Icon | State | What it means |
 |---|---|---|
 | Blue hand | Needs you | The task, or one of its workers, asked you something and is waiting for your answer. |
 | Orange triangle | In trouble | The task failed, got stuck or ran out of usage. |
-| Red minus | Blocked | The task can't go on until something outside you and the agent changes, such as an outage or another team's access. The agent has to confirm it, so it's rare. Zero tells you the same way as for In trouble. |
+| Red minus | Blocked | The task can't go on until something outside you and the agent changes, such as an outage or another team's access. The agent has to confirm it, so it's rare. A worker is also blocked when it needs a decision only its task or you can make. Zero tells you the same way as for In trouble. |
 | Blue spinner | Working | The agent is working. |
-| Teal box | Over to you | The task is finished, and there's a step only you can take, such as a merge or a check. |
+| Teal box | Over to you | The task is finished, and there's a step only you can take, such as a merge or a check. It stays until you write to the task. |
 | Indigo speech bubble | Replied | The task answered you and isn't waiting on anything. It turns grey once you've read it. |
 | Grey hourglass | Waiting | The task is waiting on someone or something other than you, such as a review or a build, or a command it started in the background. |
 | Grey pause | Paused | You put the task on hold. |
@@ -95,7 +100,7 @@ The sidebar and the control bar show each task's state as an icon. The board and
 | Grey moon | Idle | The agent is between turns with nothing to report. |
 | Grey power button | Offline | The agent isn't running. |
 
-When a task is done, waiting or blocked and its agent can't know, such as when you did the last of it yourself, right-click it in the sidebar and choose **Mark as done**, **Mark as waiting** or **Mark as blocked**. Zero takes your word as it would the agent's confirmation. A question or approval still open keeps the task at **Needs you**. When you next write to the task, it's the agent's to settle again.
+When a task is done, waiting or blocked and its agent can't know, such as when you did the last of it yourself, right-click it in the sidebar and choose **Change status**, then **Done**, **Waiting** or **Blocked**. A tick marks the state it's in now. Zero takes your word as it would the agent's confirmation. A question or approval still open keeps the task at **Needs you**. When you next write to the task, it's the agent's to settle again.
 
 Zero archives done tasks after a while. Choose when in **Settings › Agents › Tasks › Archive done tasks**: **Once you've read it**, **After an hour**, **After a day**, **After a week** or **Never**. **After a day** is the default. An archived done task comes back when something it follows changes.
 
@@ -103,11 +108,15 @@ Zero archives done tasks after a while. Choose when in **Settings › Agents ›
 
 A task's page shows its conversation: your messages, the agent's answers, and the work in between.
 
-- **Steps.** Each turn's work folds under one line. It reads **Working for 12s** while the agent works, then **Worked for 2m 37s** or **Thought for 8s**. Click the line to see every step: the commands, such as `$ make test`, the files edited and the tools used. A command that fails shows its exit code. Point at a command's output for **Copy the output**.
-- **Quiet updates.** Turns that Zero started and that needed nothing from you fold into one row, such as **2 updates that needed nothing from you**. Click the row to read them.
+- **Steps.** Each turn has a heading. It reads **Working for 12s** while the agent works, then **Worked for 2m 37s** or **Thought for 8s**. While the agent works, its latest step shows under the heading. Once its answer starts, the steps fold away.
+- **Folded steps.** What the agent said between steps stays in place. Each run of steps between two of its messages becomes one line, such as "Ran 3 commands, edited 2 files". A failed step adds a red count, such as "· 1 failed". Click the line to open those steps, or click the heading to see every step of the turn.
+- **Commands.** Each command shows what it does, in the agent's words when it gives them, then the command. A running command shows how long it has run, and after a few seconds the last line it printed. A command that fails shows its exit code. Click a command to see it whole with its output, and **Copy the output** or **Copy the command**.
+- **Quiet updates.** Turns that Zero started and that needed nothing from you fold into one row. The row says who sent them, such as "Reviewer reported back · nothing needed" or "3 updates · nothing needed". Click the row to read them.
 - **Messages from others.** A worker's report, a message from another task, or a note from Zero shows as one line. Click it to read the whole message. Click the sender's name to open that task.
 - **Everything the last turn changed.** Shows below the last answer while the agent is idle. Open it to see the turn's changes as a diff.
 - **Trouble.** A task that's stuck, or that hit its provider's usage limit, shows a callout at the end. When it's out of usage, click **Continue with Claude Code** or **Continue with Codex** to hand the task, conversation and all, to the other provider.
+
+Zero plays the conversation back in order, the agent's words at a steady pace. An ask's card shows once the conversation reaches the step that asked it.
 
 To move around a long conversation, use the ticks down the left edge, one for each of your messages. Point at one to preview it, and click to go there. The down arrow, **Go to the latest**, takes you to the end.
 
@@ -145,12 +154,14 @@ Queued messages wait above the composer under **Queued**. For each one:
 - Click its bin to drop it. Its tip is **Delete**.
 - Click **Steer** to send it now. Its tip is **Send it now, mid-turn**.
 
+When the agent's turn ends, Zero sends it the next queued message. Until that message shows in the conversation, it stays in the queue with **Next** in place of its buttons.
+
 Stopping the agent holds the queue. The heading says **Held**, and nothing goes out until you click **Send** beside it or send something new.
 
 ### Attach files, folders and scratchpads
 
 - **Images and videos**: paste them, drop them on the composer, or use the **+** button. Each shows as a pill in your words, such as **Image 1** or **Video 1**, and as a thumbnail above. Click a pill to open the image. A video goes to the agent as up to six stills.
-- **Other files and folders**: click **+** › **Files and folders**. Zero puts each one's path in your message, and the agent reads it from there.
+- **Other files and folders**: click **+** › **Files and folders**. Images you pick go with the message. For anything else, Zero puts its path in your message, and the agent reads it from there.
 - **A scratchpad**: click **+** › **Scratchpad**, then find and pick one. Zero puts a link to it in your message.
 
 ### Use / and @
@@ -185,11 +196,14 @@ The details pane floats at the top right of the task's page. Show or hide it wit
 | **Branch** | The Git branch it's on, when there is one. |
 | **Ticket** | The issue the task is on, as a link, when it has one. |
 | Others | Anything else the agent recorded about the task, such as its pull request, as links. |
+| **Issues** | For a task that works through several issues: each issue's state, its ticket as a link, and where it stands. An issue waiting on you shows for how long. **Open**, beside an issue with a worker of its own, opens that worker. |
 | **Workers** | The task's workers, the most urgent first. Click one to open it. **All N** shows every worker, **Fewer** goes back. |
 
 ## Follow a task's workers
 
 A task can hand parts of its job to workers: other agents it starts, each with a conversation of its own. Ask a task for one, such as "Have a worker review the change".
+
+<!-- figure: workers -->
 
 By default, agents use Zero's workers rather than their CLI's own subagents, so you can see, steer and stop every one of them. To let Claude Code and Codex also use their own subagents, turn on **Settings › Agents › Tasks › Agents' own subagents**. It applies from each task's next start.
 
@@ -226,7 +240,7 @@ When an agent has been idle for three minutes with nothing open, Zero stops it t
 Archive a task to take it out of the sidebar and the board.
 
 1. Choose **Archive…** from the task's menu in the sidebar, the **⋯** in the title bar, or the **⋯** on the board.
-2. A card asks you to confirm, and says whether the task's workers go with it. Click **Archive**, or press <kbd>↩</kbd>. <kbd>Esc</kbd> cancels.
+2. A dialog asks you to confirm, such as **Archive "Fix the flaky login test" and its 2 workers?**. Click **Archive**, or press <kbd>↩</kbd>. **Cancel** or <kbd>Esc</kbd> keeps the task.
 
 Archiving stops the task and its workers. To bring one back, click the sliders button beside **Tasks** › **Archived tasks…**. Find it with **Search** and click **Unarchive**. Its workers come back with it.
 

@@ -1,6 +1,6 @@
 ---
 title: "The iPhone app"
-description: "Your inbox and tasks away from the Mac."
+description: "Answer your agents and follow your tasks from your phone, while they run on your Mac."
 order: 12
 ---
 
@@ -10,43 +10,46 @@ The iPhone app, coming soon, puts Zero's inbox and tasks on your phone. You answ
 
 Your phone reaches your Mac through a relay: a server on the internet that passes messages between the two. Zero's own relay works out of the box, with nothing to set up.
 
-To run your own relay, deploy `apps/relay` from Zero's source code. Its README shows how. Then type its address in **Settings › Phone › Relay › Address** on your Mac and press <kbd>Return</kbd>. To go back to Zero's relay, click **Use Zero's**.
+To run your own relay, deploy `apps/relay` from Zero's source code. Its README shows how. Then, on your Mac:
 
-Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> or the gear at the foot of the window's left rail. **Status**, in **Settings › Phone › Relay**, shows the state of the connection:
+1. Go to **Settings › Phone › Relay**.
+2. Click the **Relay** chip and choose **Your own relay…**.
+3. Type the relay's `wss://` address and click **Use it**.
+
+Phones you paired before must pair again. To go back, choose **Zero's relay** in the same chip.
+
+Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> or the gear at the foot of the window's left rail. The **Relay** row shows the state of the connection under its name:
 
 | Status | What it means |
 |---|---|
-| Not set up | There's no relay address. |
+| Off: no relay set | There's no relay address. |
 | Off | There's an address, but Zero isn't connected to it. |
 | Connecting… | Zero is connecting to the relay. |
 | Connected: your phones can reach this Mac | The relay works. |
 | Can't reach it: … | Zero couldn't connect. The reason follows. |
-| Today's 2 GB through the relay are used: … | Your phones and this Mac passed more through Zero's relay today than it allows. Your phones reach the Mac again after midnight UTC. To have no limit, run your own relay. |
-| Zero's relay has closed: … | Zero's relay no longer runs. The message says what to do instead, such as where to run your own. Zero stops connecting to it. |
+| Today's 2 GB through the relay are used: … | Your phones and this Mac passed more through the relay today than it allows. Your phones reach the Mac again after midnight UTC. To have no limit, run your own relay. |
+| It has closed: … | The relay no longer runs. The message says what to do instead, such as where to run your own. Zero stops connecting to it. |
 
 ## Pair your iPhone
 
 You pair once. After that, the phone finds your Mac by itself.
 
-On your Mac:
+1. On your iPhone, open Zero. It shows the **Pair with your Mac** screen.
+2. On your Mac, go to **Settings › Phone** and click **Pair phone**, beside the **Phones** heading.
+3. Click **Next**. The Mac shows a QR code.
+4. On the phone, tap **Scan the code** and point the camera at the QR code.
 
-1. Go to **Settings › Phone › Phones**.
-2. Next to **Add a phone**, click **Show code**. A QR code appears.
+The code lasts five minutes, and the Mac counts down the time left. When it expires, click **New code**. **Copy link** copies the same code as a link, for a phone that can't scan it. Copy the link to your phone and tap **Paste a pairing link**. A wrong link shows **That isn't a Zero pairing link.**
 
-The code lasts five minutes. When it expires, click **New code**. **Copy link** copies the same code as a link, for a phone that can't scan it.
-
-On your iPhone, open Zero. The **Pair with your Mac** screen points you to **Settings › Phone › Add a phone** on your Mac. Then:
-
-- Tap **Scan the code** and point the camera at the QR code.
-- Or copy the link to your phone and tap **Paste a pairing link**. A wrong link shows **That isn't a Zero pairing link.**
-
-After you pair, the phone shows in **Settings › Phone › Phones** on the Mac, with the date you paired it.
+When the phone has paired, the Mac says so with the phone's name. Click **Done**. The phone then shows in **Settings › Phone › Phones**, with the date you paired it.
 
 ## How your messages stay private
 
 Messages between your phone and your Mac are encrypted end to end. The relay passes them on but can't read them. When you pair, the phone gets your Mac's key from the QR code, and the Mac keeps the phone's key. Each side uses these keys to check that it's talking to the other.
 
-Notifications are encrypted too. Apple's push service carries only "Zero: A task has news". When the notification arrives, your phone decrypts the real text.
+Notifications are encrypted too. Your Mac sends each one through the relay to Apple's push service. Both carry only "Zero: A task has news". When the notification arrives, your phone decrypts the real text.
+
+A relay of your own sends notifications only when it has an Apple push key. Its README shows how to add one.
 
 ## When the phone can't reach your Mac
 
@@ -76,6 +79,8 @@ The inbox lists what needs you, in this order:
 3. Tasks with a reply you haven't read.
 
 When the inbox is empty, it says **Nothing for you**.
+
+Each ask shows under its task's name, with how long ago it came. Long details show three lines: tap them to read all of it. The option the agent recommends has a blue **Recommended** tag.
 
 To answer an ask, tap one of its options. An option ending in "…" opens a box for your own words. An ask without options has **Reply…**.
 
@@ -111,9 +116,9 @@ Tap a task to open its conversation. It shows your messages, the agent's answers
 
 ### Answer what the task is waiting on
 
-The task's questions, approvals and asks are in its own inbox, not in the conversation. Tap the inbox button at the top right, beside the **…** menu. A blue count on it shows how many are waiting.
+The task's questions, approvals and asks are in its own inbox, not in the conversation. Tap the inbox button at the top right, beside the **…** menu. A blue dot on it means something is waiting.
 
-The button opens a sheet titled **Waiting on you**, where you answer each ask. An approval from the agent itself reads **Allow this command?** or **Allow this change?**, with the agent's own choices as buttons. When nothing is left, the sheet closes by itself. To close it before that, tap **Done**.
+The button opens a sheet titled **Waiting on you**, where you answer each ask. An approval from the agent itself reads **Allow this command?** or **Allow this change?**, with the agent's own choices as buttons. When nothing is left, the sheet closes by itself. To close it before that, tap **Done**. Opened with nothing waiting, it says **Nothing waiting on you**.
 
 In the conversation, a step with an ask that is still open shows as one line with **Answer**. Tap **Answer** to open the same sheet.
 

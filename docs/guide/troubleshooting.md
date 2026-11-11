@@ -1,6 +1,6 @@
 ---
 title: "Troubleshooting"
-description: "Where to look when something doesn't work."
+description: "What to check when Zero, an agent, the control bar or the iPhone app doesn't work."
 order: 14
 ---
 
@@ -39,7 +39,7 @@ Accounts are in **Settings › Accounts**. To open Settings, press <kbd>⌘</kbd
 | "Couldn't start Claude Code's sign-in." | Zero couldn't run Claude Code. Make sure that Zero finds it. See [An agent isn't found](#an-agent-isnt-found). |
 | "Claude Code's sign-in ended without a token. Try again." | Click **Try again** and finish signing in. Zero waits ten minutes for a sign-in. |
 | A ChatGPT account stays on **Signing in… finish in your browser**, then goes away | The sign-in was refused, or it didn't finish within 15 minutes. Click **Add account** › **Sign in with ChatGPT** again. |
-| A task says an account "isn't in the Keychain any more: sign in again" | The account's token or key is no longer in your Keychain. Click the account's row, choose **Remove…** and click **Remove**. Then add the account again. |
+| A task says an account "isn't in the Keychain any more: sign in again" | The account's token or key is no longer in your Keychain. Click the account's **⋯**, choose **Remove…**, then click **Remove** in its row. Then add the account again. |
 | A task fails with a sign-in error, and Zero has no accounts for that agent | Without accounts in Zero, tasks use the agent's own sign-in. Sign the agent in again in Terminal, or add an account in **Settings › Accounts**. |
 
 See [Accounts and models](/docs/accounts-and-models).
@@ -54,7 +54,7 @@ When no other account can take over, the task shows **Usage limit** at the end o
 - **Hand it to another agent.** Click **Continue with Codex** or **Continue with Claude Code** in the same place. The other agent takes over the task and its conversation.
 - **Add an account.** Add another account for the agent in **Settings › Accounts**. New tasks use it.
 
-To see how close each account is to its limits, look at the **5h** and **Week** columns in **Settings › Accounts**. A bar turns orange at 90% and red at 100%.
+To see how close an account is to its limits, click its row in **Settings › Accounts**. The row opens in place with **Last 5 hours** and **This week**: how much of each is used, and when it resets. A bar turns orange at 90% and red at 100%. An account at its limit says **At its limit** in red on its row.
 
 When a task says your account "can't use" a model, Zero moves the task to an account that can, if you have one. Otherwise, pick another model in the task's composer.
 
@@ -95,26 +95,27 @@ mkdir -p ~/.local/bin && ln -sf /Applications/Zero.app/Contents/MacOS/zero-cli ~
 
 ## Your iPhone doesn't connect
 
-The iPhone app, coming soon, reaches your Mac through a relay: Zero's own by default, or yours, at the address in **Settings › Phone › Relay**. The relay is a server that passes your phone's encrypted messages without being able to read them.
+The iPhone app, coming soon, reaches your Mac through a relay. The relay is a server that passes your phone's encrypted messages without being able to read them. Notifications on your iPhone come through the relay too.
 
-On the Mac, open **Settings › Phone**:
+On the Mac, open **Settings › Phone**. The **Relay** row shows which relay Zero uses on its right: **Zero's relay** by default. Under the word **Relay**, the row says how the connection is:
 
-| **Status** reads | What it means |
+| The **Relay** row reads | What it means |
 |---|---|
-| **Not set up** | There's no relay **Address**. |
 | **Connecting…** | Zero is connecting to the relay. |
 | **Connected: your phones can reach this Mac** | The Mac side works. |
-| **Can't reach it:** and a reason | Make sure that the address is correct and that the Mac is online. |
-| **Today's 2 GB through the relay are used** | Your phones reach this Mac again after midnight UTC. To have no limit, run your own relay from `apps/relay`. |
-| **Zero's relay has closed:** and a message | Zero's relay no longer runs. Follow the message, such as running your own relay from `apps/relay`, then type its address. |
+| **Can't reach it:** and a reason | Make sure that the relay's address is correct and that the Mac is online. |
+| **Today's 2 GB through the relay are used** | Your phones reach this Mac again after 00:00 UTC. To have no limit, run your own relay from `apps/relay`. |
+| **It has closed:** and a message | The relay no longer runs. Follow the message, such as running your own relay from `apps/relay`. |
 
-While there's no relay address, **Add a phone › Show code** stays greyed out. The code lasts five minutes. To get another code, click **New code**.
+To use your own relay, click the relay's name on the **Relay** row and choose **Your own relay…**. Type its address, which starts with `wss://`, and click **Use it**. Phones paired before then must pair again with a new code.
+
+To pair a phone, click **Pair phone** under **Phones**. On the **Scan the code** step, the code expires after five minutes. Click **New code** to get another. For a phone without a camera, **Copy link** copies the same code as a link.
 
 On the iPhone, **Can't reach** and your Mac's name means that the phone can't get through. Zero must be open on your Mac, and the Mac must be online. Tap **Try again**. The iPhone's own Settings page shows the same status under **Your Mac › Connection**, with **Reconnect**.
 
-To start again, remove the phone on the Mac: in **Settings › Phone › Phones**, click **Remove**. Or tap **Unpair this phone** on the iPhone. Then pair again.
+To start again, remove the phone on the Mac: in **Settings › Phone › Phones**, click **Remove**. Or tap **Unpair this phone** in the iPhone's Settings, then **Unpair**. Then pair again.
 
-Zero logs each phone that connects or is refused in `~/.zero/zero.log`. These lines start with `phone:` and `phones:`.
+Zero logs each phone that connects or is refused in `~/.zero/zero.log`. These lines start with `phone:` and `phones:`. Lines about notifications sent to your iPhone start with `push:`.
 
 ## Read the logs
 
@@ -124,7 +125,7 @@ Zero keeps its logs in the `.zero` folder in your home folder. To open this fold
 |---|---|---|
 | `~/.zero/zero.log` | What the app did and when: phone connections, notification permission, and problems it found. The previous log is beside it as `zero.log.1`. | **Settings › General › Advanced › Log › View log** |
 | `~/.zero/zerod.log` | Messages from Zero's background service, which runs your tasks. For example, failed sign-ins and usage that it couldn't read. | Open it from Finder. |
-| `~/.zero/asks.jsonl` | Every ask and every answer, one per line. | Right-click the control bar and choose **Open Log**. |
+| `~/.zero/asks.jsonl` | Every ask and every answer, one per line. | Right-click the control bar away from the tasks' dots, and choose **Open Log**. |
 | `~/.zero/zerod/sessions/` | A folder for each task. `transcript.jsonl` holds everything that the task and its agent said to each other. `stderr.log` holds the agent's own errors. | Open it from Finder. The folder with the most recent change belongs to the task that worked last. |
 
 The logs can hold your code and conversations. Read them before you share them.

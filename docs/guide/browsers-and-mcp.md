@@ -101,7 +101,22 @@ For each value in Environment or Headers, choose where Zero keeps it:
 - **Zero's file**: in Zero's own settings file on this Mac.
 - **Its command**: Zero keeps nothing, and the server gets the value itself.
 
-When a server that signs in with OAuth first starts in a task, the task's conversation shows a link to its sign-in page. Open the link on your Mac and sign in.
+## Sign in to a server
+
+Some servers at a URL sign in with OAuth. This applies to the servers you add in Zero and to the servers in Claude Code's or Codex's own configuration, such as one added with `claude mcp add`. You don't need to open the agent in a terminal to sign in.
+
+When a task's agent says that a server needs a sign-in, Zero asks the agent's own CLI for the server's sign-in page:
+
+- Your inbox shows **Sign in to <server>?**. Click **Open the sign-in page** and sign in, on this Mac. The ask goes away when the server is signed in. **Not now** closes the ask.
+- Each task that wants the server shows the same link in its conversation. When the sign-in is done, the task shows **Signed in to <server>**. A Claude Code task connects the server then. A Codex task connects it the next time it starts.
+
+Zero asks once for each server, however many tasks want it. If you don't sign in within 15 minutes, Zero lets the sign-in go and doesn't ask again until Zero restarts. You can still sign in from Settings.
+
+The agent's CLI keeps the sign-in, as it does when you sign in from a terminal. Zero never connects to the server itself. Zero tells agents that it has asked you, so they don't ask again.
+
+**Settings › MCP servers** also lists **Claude Code's servers**, from Claude Code's configuration. You can't change them there. A server that needs a sign-in shows **Needs sign-in** and a **Sign in** button. Click **Sign in** to open its sign-in page in your browser. The row shows **Waiting for sign-in…** until the sign-in is done.
+
+OpenCode signs in to a server only in a terminal, with `opencode mcp auth <server>`.
 
 ## Choose which workspaces get a server
 

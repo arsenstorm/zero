@@ -21,9 +21,13 @@ Zero runs coding agents on your Mac: Claude Code, Codex and OpenCode. You give a
 
 Download Zero from [withzero.dev/download](/download). It needs macOS 26 or later.
 
-1. Open **Zero.zip**. Safari opens it for you after the download.
-2. Drag **Zero.app** to your **Applications** folder. The tools Zero gives your agents look for it there.
-3. Open Zero from your **Applications** folder.
+1. Open **Zero.dmg**. A window opens with Zero on the left and your **Applications** folder on the right.
+2. Drag **Zero** onto **Applications**. Zero updates itself there, and the tools it gives your agents look for it there.
+3. Open Zero from your **Applications** folder. Then eject the **Zero** disk in Finder's sidebar.
+
+If you open Zero from somewhere else, such as the disk image or your **Downloads** folder, Zero asks to move itself first. Click **Move to Applications**. Zero copies itself to **Applications**, opens from there and puts the copy you opened in the Trash, or ejects the disk image. If a Zero is already in **Applications**, it goes to the Trash. If your account can't add apps to **Applications**, Zero goes in the **Applications** folder in your home folder instead.
+
+Each release also has **Zero.zip**, the same app zipped. Zero's updater uses it.
 
 Zero is a menu bar app. It shows in the Dock only while one of its windows is open.
 

@@ -38,19 +38,26 @@ Under each account's name, its row says what it is:
 
 ## Rename or remove an account
 
-Click the account's row to open its menu:
+Click **⋯** at the end of the account's row to open its menu:
 
 - **Rename**: type a new name and press <kbd>Return</kbd>. <kbd>Esc</kbd> cancels.
+- **Switch to a token**: shows for a Claude account whose row says **its own folder: your MCP sign-ins aren't shared**. It opens Claude's sign-in again. With the token it gets, the account shares your MCP sign-ins.
 - **Remove…**: the row asks again. Click **Remove** to confirm, or **Cancel**. The tasks of a removed account can't restart with it. To get the account back, sign in again.
 
 ## See how much usage is left
 
-Each subscription account shows two columns on the right of its row:
+Click an account's row to open it in place. It shows a tile for each allowance its plan has:
 
-- **5h**: how much of the five-hour allowance is used.
-- **Week**: how much of the weekly allowance is used.
+- **Last 5 hours**: how much of the five-hour allowance is used.
+- **This week**: how much of the weekly allowance is used.
 
-The bar turns orange at 90% and red at 100%. Point at a column to see when it resets. While the page is open, Zero asks each agent for its accounts' usage every two minutes. API keys have no allowance, so they show no columns.
+Each tile shows the share used, a bar and when the allowance resets. The bar turns orange at 90% and red at 100%. An account at a limit shows **At its limit** on its row. Click the row again to close it.
+
+Under the tiles, **Activity** has a square for each day, darker the more turns the account's tasks finished that day. The count starts on the day Zero began to keep it.
+
+While the page is open, Zero asks each agent for its accounts' usage every two minutes. API keys have no allowance, so they show no tiles.
+
+The foot of the tasks sidebar also shows the accounts your tasks used in the last day, with a **5h** and a **Week** bar each. Point at a bar to see when it resets. Click the card to open **Settings › Accounts**.
 
 ## Which account a task uses
 
@@ -108,5 +115,6 @@ When an account turns out not to have the model, its tasks on that model run on 
 
 ## Where the lists come from
 
-- **Claude Code and Codex**: the models that the agent offers your account, as the agent lists them, plus the models you added.
+- **Claude Code**: **Fable**, **Opus**, **Sonnet** and **Haiku**, which Claude Code resolves to the latest model of each. Then the models that Claude Code has offered your account, such as the 1M-context versions, and the models you added. Zero reads these from Claude Code's own files and never calls Anthropic.
+- **Codex**: the models that Codex offers your account, as Codex lists them, plus the models you added.
 - **OpenCode**: its own list, which Zero reads when you open the chip. The rows fill in after Zero reads the list.

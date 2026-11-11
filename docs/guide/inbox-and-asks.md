@@ -6,6 +6,8 @@ order: 3
 
 When an agent needs something from you, it sends an ask: a question, a choice, an approval or a command to run on your Mac. Every ask lands in the inbox, from tasks in Zero and from agents outside Zero, such as Claude Code in a terminal. You answer it once, wherever you see it first.
 
+<!-- figure: ask -->
+
 ## Open the inbox
 
 Your asks show in two places:
@@ -28,6 +30,8 @@ Each card has:
 - **Why**, in the agent's words. Zero folds long text to three lines. Click it to read it all, and click again to fold it.
 - **A command box**, when the ask is about a command. **Copy** copies the command. A long command shows **Show all** and **Show less**. When the command runs a script, the script shows under the command, with **Show the whole script** for a long one. When the command runs in a folder other than the agent's own, that folder shows under it.
 - **The answers** as numbered rows, or a box for your reply.
+
+Pull requests, commits, issues and Slack channels named in the question or the why are links, as they are in a conversation. See [Following and integrations](/docs/following-and-integrations).
 
 Point at a card or click it to select it. When more than one ask is waiting, Zero dims the cards you haven't selected, so you can see which one your keys answer.
 
@@ -182,6 +186,7 @@ Point at an agent's mark on the control bar, or click it, to see just that agent
 
 - **Earlier**: a short list of what came before, newest at the bottom. It shows six rows at a time and scrolls. Each row has how long ago it was, an icon for its kind, and one line. The line is **You:** and your message, the agent's name and its note, or an ask with what became of it: **· rejected**, **· ran, exit 0**, or the answer. **Closed** marks where the agent was removed or went offline.
 - **The latest exchange**: your last message, and what the agent has said since. While it works on your message, a row reads the agent's name and **is working…**.
+- **The latest answer**, for a task in Zero, when it's newer than the task's last ask or note. The card shows the task's name, how long ago it answered, and the first part of the answer. **Open task** opens it in Zero's window.
 - **The asks still waiting** from this agent.
 - **A message box**, **Message** and the agent's name, when Zero can reach the agent.
 
@@ -210,7 +215,7 @@ How you hear about a new ask depends on where you are:
 - **In Zero**, with Zero in front and you at the Mac: a sound plays and the control bar shows the ask.
 - **Away from Zero**, in another app, away from the Mac or with the screen locked: a macOS notification. For an agent outside Zero, it's titled with the agent's name and shows the question, **Wants to run:** and the command, or **Wants your approval:** and what it wants.
 
-An ask from a task in Zero counts as the task's notification. The task's state turns to **Needs you**, and you hear the sound for that state. Clicking a task's notification opens the task in Zero's window. While you're at the Mac and in Zero, a task that still needs you five minutes after its sound played sends the notification too.
+An ask from a task in Zero counts as the task's notification. The task's state turns to **Needs you**, and you hear the sound for that state. Clicking a task's notification opens the task in Zero's window. While you're in Zero, a task that needs you plays its sound. When it still needs you five minutes later and you haven't used the Mac since the sound, the notification goes too.
 
 A notification goes away by itself when you answer or the ask expires or is withdrawn. It also goes when you look at the task, the inbox or the agent.
 

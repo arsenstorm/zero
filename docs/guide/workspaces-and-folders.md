@@ -43,7 +43,7 @@ A new workspace gets the first icon in the grid until you pick another.
 
 ## Switch workspace
 
-- **In the window**: click the workspace's name at the top of the tasks sidebar, then click another workspace. A tick marks the one you're looking at.
+- **In the window**: click the workspace's name at the top of the tasks sidebar, then click another workspace. A tick marks the one you're looking at. **Workspace settings…**, in the same menu, opens **Settings › Workspaces**.
 - **In the control bar**: click the workspace's icon, below the inbox. The icon shows only when you have more than one workspace.
 
 Each workspace reopens the task you last had open in it. When you open a task from another workspace, for example from the inbox or a notification, the window goes to that task's workspace.

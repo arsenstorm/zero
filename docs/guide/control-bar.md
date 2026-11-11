@@ -6,6 +6,8 @@ order: 4
 
 The control bar is a small bar on the right edge of your screen, halfway down. It stays on top of other apps, so your agents stay in view while you work in another app. Point at the bar and the inbox opens beside it.
 
+<!-- figure: bar -->
+
 ## What the bar shows
 
 From the top:
@@ -30,7 +32,7 @@ The task states:
 
 ## Open the inbox from the bar
 
-- **Point** at the inbox icon or at a task's mark. The inbox opens beside the bar and shows the asks, or that task.
+- **Point** at the inbox icon or at a task's mark. The inbox opens beside the bar and shows the asks, or that task. A task's view shows its latest answer, with **Open task** to open it in Zero's window.
 - **Click** to keep the inbox open. To close it, click the same icon or mark again, or press <kbd>Esc</kbd>.
 - **Click a task's mark.** When the task has asked you something, its asks open in the inbox. Otherwise the task opens in Zero's window.
 
@@ -40,12 +42,22 @@ While the inbox is open, <kbd>1</kbd>, <kbd>2</kbd> and <kbd>3</kbd> pick an ans
 
 Drag a mark up or down the bar. The window's sidebar takes the same order.
 
-## Remove a mark
+## Use a mark's menu
 
-Right-click a task's mark:
+Right-click a task's mark for its menu, beside the bar:
 
-- **Remove**, followed by the task's name, closes the task in the inbox. Its open asks expire, and a **Closed** note stays in its history.
-- **Remove and stop**, followed by the task's name, does the same and also stops the task.
+| Item | What it does |
+|---|---|
+| **Open** | Opens the task in Zero's window. |
+| **Pause** / **Resume** | Puts the task and its workers on hold, or takes them off hold. |
+| **Move to Later** | Puts the whole task in Later. See [Later, scratchpads and loops](/docs/later-scratchpads-loops). |
+| **Archive…** | Opens the task and asks you to confirm archiving it. See [Tasks and workers](/docs/tasks-and-workers). |
+
+Right-click the mark of an agent outside Zero:
+
+- **Open in Terminal** shows the terminal the agent runs in, when Zero started that terminal.
+- **Remove** closes the agent in the inbox. Its open asks expire, and a **Closed** note stays in its history.
+- **Remove and stop** does the same and also stops the agent. It shows in place of **Remove** when Zero can stop the agent.
 
 ## Use the bar's menu
 

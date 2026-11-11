@@ -1,6 +1,6 @@
 ---
 title: Introduction
-description: What Zero is, and where to start.
+description: "What Zero is, the words its docs use, and which page to read first."
 order: 0
 ---
 

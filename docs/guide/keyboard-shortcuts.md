@@ -1,6 +1,6 @@
 ---
 title: "Keyboard shortcuts"
-description: "Every key Zero answers to."
+description: "Every key Zero answers to: in the window, the inbox, the control bar and the composer."
 order: 11
 ---
 
@@ -131,6 +131,18 @@ These lists open from the chips in the composer, such as the model chip.
 | <kbd>←</kbd> <kbd>→</kbd> | Switches between the provider tabs in the model list. |
 | <kbd>Return</kbd> | Picks the highlighted row. |
 | <kbd>Esc</kbd> | Closes the list. A second click on its chip also closes it. |
+
+## In a menu
+
+Zero's menus, such as a task's right-click menu, take these keys:
+
+| Keys | What it does |
+|---|---|
+| <kbd>↑</kbd> <kbd>↓</kbd> | Moves through the menu. |
+| <kbd>Return</kbd> | Picks the highlighted item. |
+| <kbd>Esc</kbd> | Closes the menu. |
+
+An item with an arrow, such as **Change status**, has its own menu. Point at the item to open it beside the menu.
 
 ## In a scratchpad
 

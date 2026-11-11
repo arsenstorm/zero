@@ -33,7 +33,7 @@ Items come to Later in four ways.
 
 The agent saves the item after its current turn.
 
-**Move a whole task there.** Right-click a task in the tasks sidebar, or open the **⋯** menu in the window's title bar. Then choose **Move to Later**. The task leaves the sidebar, and it and its workers pause. Zero doesn't archive the task. In Later, it shows with a **Task** pill.
+**Move a whole task there.** Right-click a task in the tasks sidebar or its dot in the control bar, or open the **⋯** menu in the window's title bar. Then choose **Move to Later**. The task leaves the sidebar, and it and its workers pause. Zero doesn't archive the task. In Later, it shows with a **Task** pill.
 
 **Agents suggest them.** An agent can save an item unasked when it expects you'll want to come back to it. These items go under **Suggested by agents** at the foot of the Later list. The heading shows how many there are. Click the heading to show them. Zero deletes a suggestion a week after it was saved, unless you click **Keep**.
 
@@ -87,7 +87,7 @@ Right-click a pad for:
 | **Copy link** | Copies the pad's link. |
 | **Copy Markdown link** | Copies the link as Markdown, with the pad's title. |
 | **Rename…** | Renames the pad. |
-| **Move to** | Moves the pad to another folder, or to **Scratchpads (top)**. |
+| **Move to** and a folder's name | Moves the pad to that folder. Each folder has its own item. **Move to Scratchpads (top)** moves it out of its folder. |
 | **Show in Finder** | Shows the pad's file. |
 | **Move to Trash** | Deletes the pad. |
 

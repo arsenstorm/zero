@@ -1,6 +1,6 @@
 ---
 title: "Settings"
-description: "Every setting: what it does and where it is."
+description: "Every setting in Zero: what it does, where it is and what it's set to by default."
 order: 10
 ---
 
@@ -20,6 +20,7 @@ Settings opens on **General**. Each change takes effect at once, so the pages ha
 | Setting | Where | What it does |
 |---|---|---|
 | Zero and its version | Settings › General › Zero | Shows the version you have and whether it's up to date. **Check now** looks for an update. When an update is out, the row reads **Zero**, the new version's number and **is available**. Click **Update and restart** to install it. Zero quits and opens again as the new version. Running agents pause for a few seconds, then continue. Zero never updates without your click. |
+| Icons | Settings › General › Zero | Which icons this copy of Zero draws. **Icons: Nucleo** in official builds. **Icons: Lucide** in a build from source, which differs in nothing else. |
 | Launch Zero at login | Settings › General › Zero | Opens Zero when you log in to your Mac, so agents can always reach you. |
 | Talk hotkey | Settings › General › Zero | The keys that open the inbox and start dictation, from any app. Click the button, then press a combination that includes <kbd>⌘</kbd>, <kbd>⌥</kbd>, <kbd>⌃</kbd> or <kbd>⇧</kbd>. <kbd>Esc</kbd> cancels. Default: <kbd>⌥</kbd> <kbd>Space</kbd>. |
 | Needs you | Settings › General › Notifications | A notification when a task, one of its workers, or an agent outside Zero asks you something. On by default. |
@@ -59,10 +60,9 @@ See [The inbox and asks](/docs/inbox-and-asks) for answering asks, and [Tasks an
 
 | Setting | Where | What it does |
 |---|---|---|
-| Address | Settings › Phone › Relay | The address of the relay that passes messages between your phone and this Mac. The messages are encrypted, and the relay can't read them. Zero's own relay by default. To use your own, type its address and press <kbd>Return</kbd>. **Use Zero's** goes back to Zero's relay. |
-| Status | Settings › Phone › Relay | Whether the Mac reaches the relay: **Not set up**, **Off**, **Connecting…**, **Connected: your phones can reach this Mac**, **Can't reach it:** and the reason, or **Zero's relay has closed:** and its message. |
-| Each paired phone | Settings › Phone › Phones | The phone's name and when it was paired. **Remove** unpairs it. |
-| Add a phone | Settings › Phone › Phones | **Show code** shows a QR code to scan with Zero on your phone. The code lasts five minutes. **New code** makes another. **Copy link** copies the same code as a link. It needs a relay address first. |
+| Relay | Settings › Phone › Relay | The relay that passes messages between your phone and this Mac. The messages are encrypted, and the relay can't read them. Default: **Zero's relay**. To use your own, choose **Your own relay…**, type its `wss://` address and click **Use it**. **Change address…** changes it later. Phones paired before must pair again. The row shows the status under its name: **Off**, **Connecting…**, **Connected: your phones can reach this Mac**, **Can't reach it:** and the reason, or **It has closed:** and the relay's message. When the day's 2 GB through the relay are used, it says so. |
+| Pair phone | Settings › Phone › Phones | Opens the steps to pair a phone and shows a QR code to scan with Zero on your phone. The code lasts five minutes. **New code** makes another. **Copy link** copies the same code as a link. |
+| Each paired phone | Settings › Phone › Phones | The phone's name and when it was paired. **Remove** unpairs it. **None yet** until you pair one. |
 
 The iPhone app, coming soon, calls this Mac **Your Mac** and unpairs with **Unpair this phone**. See [The iPhone app](/docs/iphone).
 
@@ -84,7 +84,7 @@ The page has a section for each agent, **Claude Code**, **Codex** and **OpenCode
 - **Add account**: sign in with Claude or ChatGPT in your browser, or add an API key. For OpenCode, pick the provider of the key: OpenCode Go, Anthropic, OpenAI or OpenRouter.
 - **Add model**: add a model that the agent doesn't list yet, by its id and the name to show in the model picker.
 
-Each account shows how much it has used of its two usage windows, **5h** and **Week**. Point at one to see when it resets. Click an account for **Rename** and **Remove…**. Some Claude accounts also have **Switch to a token**. [Accounts and models](/docs/accounts-and-models) covers all of this in detail.
+Click an account to open it in place: how much it has used of each usage window, when each resets, and its activity by day. Its **⋯** menu has **Rename** and **Remove…**. Some Claude accounts also have **Switch to a token**. [Accounts and models](/docs/accounts-and-models) covers all of this in detail.
 
 ## MCP servers
 
