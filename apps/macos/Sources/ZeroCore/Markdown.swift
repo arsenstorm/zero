@@ -22,6 +22,30 @@ public indirect enum MarkdownBlock: Equatable, Sendable {
 
     public static func parse(_ text: String) -> [MarkdownBlock] { parse(lines: text.components(separatedBy: "\n")) }
 
+    /// Where a text still being written can be cut so that what's before is settled: the start of its last line after a
+    /// blank one, outside a code fence, that starts a block of its own (not indented, not a list's item, which a list
+    /// before it could take in). Parsed apart, the two parts give the whole's blocks; nil when there's no such place.
+    public static func settled(_ text: String) -> String.Index? {
+        var cut: String.Index?
+        var fenced = false
+        var blank = false
+        var start = text.startIndex
+        while start < text.endIndex {
+            let end = text[start...].firstIndex(of: "\n") ?? text.endIndex
+            let line = String(text[start..<end])
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if fence(trimmed) {
+                if !fenced, blank { cut = start }
+                fenced.toggle()
+            } else if !fenced, blank, !trimmed.isEmpty, line.first?.isWhitespace == false, marker(line) == nil {
+                cut = start
+            }
+            blank = trimmed.isEmpty
+            start = end < text.endIndex ? text.index(after: end) : end
+        }
+        return cut
+    }
+
     static func parse(lines: [String]) -> [MarkdownBlock] {
         var blocks: [MarkdownBlock] = []
         var i = 0

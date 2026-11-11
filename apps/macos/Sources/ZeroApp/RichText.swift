@@ -81,7 +81,8 @@ enum RichMarkdown {
     /// `growing`: the text is still arriving, and its last block isn't kept (it's different next frame; kept, every
     /// frame's would push out blocks the page needs).
     static func render(
-        _ blocks: [MarkdownBlock], size: CGFloat, inline: (String) -> AttributedString, key: String? = nil, growing: Bool = false
+        _ blocks: [MarkdownBlock], size: CGFloat, inline: (String) -> AttributedString, key: String? = nil, growing: Bool = false,
+        trimmed: Bool = true
     ) -> NSAttributedString {
         let out = NSMutableAttributedString()
         if let key {
@@ -103,7 +104,7 @@ enum RichMarkdown {
             append(blocks, depth: 0, into: out, size: size, inline: inline)
         }
         // No space after the last paragraph: the view ends where the text does.
-        if out.length > 0, out.string.hasSuffix("\n") { out.deleteCharacters(in: NSRange(location: out.length - 1, length: 1)) }
+        if trimmed, out.length > 0, out.string.hasSuffix("\n") { out.deleteCharacters(in: NSRange(location: out.length - 1, length: 1)) }
         return out
     }
 
@@ -1064,7 +1065,7 @@ private struct RichTextBox: NSViewRepresentable {
     func updateNSView(_ view: RichTextView, context: Context) {
         view.show(text)
         view.onClick = onClick
-        view.onReply = context.environment.replyToSelection
+        view.onReply = context.environment.replyToSelection.map { box in { box.quote($0) } }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: RichTextView, context: Context) -> CGSize? {
@@ -1100,7 +1101,7 @@ private struct ReplyChip: View {
 
 extension EnvironmentValues {
     /// In a conversation: what's selected in its words, quoted into its composer.
-    @Entry var replyToSelection: ((String) -> Void)? = nil
+    @Entry var replyToSelection: DraftBox? = nil
 }
 
 /// An image an agent shows, drawn at `alpha`: as an answer reads out, it fades in with the words around it

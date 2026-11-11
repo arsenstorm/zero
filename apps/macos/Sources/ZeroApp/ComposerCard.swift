@@ -78,10 +78,10 @@ struct ReplyBox: View {
         }
         .onDisappear {
             if let pasting { NSEvent.removeMonitor(pasting) }
-            if told { dockFocus?(false); told = false }
+            if told { dockFocus?.setTyping(false); told = false }
         }
         .onChange(of: focus.wrappedValue == key) { _, on in
-            told = on; dockFocus?(on)
+            told = on; dockFocus?.setTyping(on)
         }
         // A moment after appearing: in the same update, the field can't take focus yet and it's dropped.
         .task { if autofocus { try? await Task.sleep(for: .milliseconds(50)); focus.wrappedValue = key } }

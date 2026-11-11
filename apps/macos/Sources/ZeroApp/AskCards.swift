@@ -311,7 +311,7 @@ extension EnvironmentValues {
     /// The most a docked card may be: its share of the page.
     @Entry var askDockMax: CGFloat? = nil
     /// Told when a text box in a docked card gains or loses focus.
-    @Entry var dockFocus: ((Bool) -> Void)? = nil
+    @Entry var dockFocus: ConversationView.Foot? = nil
     /// A docked card held at a height (a step between cards easing it), not its own; nil, its own.
     @Entry var askDockHeight: CGFloat? = nil
     /// Told a docked card's own height as it's laid out, while a step eases to it.

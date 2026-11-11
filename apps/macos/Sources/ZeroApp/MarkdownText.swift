@@ -193,9 +193,28 @@ struct MarkdownText: View {
 
     /// A text still arriving, styled but not kept: its finished blocks come from the block cache, its last styled anew.
     nonisolated static func renderGrowing(_ text: String, size: CGFloat, links: Links) -> NSAttributedString {
-        RichMarkdown.render(
-            MarkdownBlock.parse(ZeroEnding.split(text).0), size: size, inline: { inline($0, links: links) },
-            key: "\(links.repo ?? "")|\(links.owner ?? "")|\(links.skills)|false", growing: true)
+        let source = ZeroEnding.split(text).0
+        let key = "\(links.repo ?? "")|\(links.owner ?? "")|\(links.skills)|false"
+        let render = { (part: String, growing: Bool, trimmed: Bool) in
+            RichMarkdown.render(
+                MarkdownBlock.parse(part), size: size, inline: { inline($0, links: links) }, key: key, growing: growing, trimmed: trimmed)
+        }
+        // What's settled (MarkdownBlock.settled) is rendered once and kept; each frame parses and styles only what
+        // follows it. Parsed whole, each frame's work grew with the answer.
+        guard let cut = MarkdownBlock.settled(source) else { return render(source, true, true) }
+        let head = String(source[..<cut])
+        let kept = Settled.lock.withLock { Settled.last.flatMap { $0.key == key && $0.size == size && $0.head == head ? $0.text : nil } }
+        let settled = kept ?? render(head, false, false)
+        if kept == nil { Settled.lock.withLock { Settled.last = (key, size, head, settled) } }
+        let out = NSMutableAttributedString(attributedString: settled)
+        out.append(render(String(source[cut...]), true, true))
+        return out
+    }
+
+    /// The settled start of the answer being read out, as last rendered.
+    private enum Settled {
+        static let lock = NSLock()
+        nonisolated(unsafe) static var last: (key: String, size: CGFloat, head: String, text: NSAttributedString)?
     }
 
     /// Parsed, styled and kept. Zero's own ending ("[zero: done]") is for its hook, not for reading.

@@ -250,6 +250,9 @@ final class SpinnerView: NSView {
         turn.duration = 1
         turn.repeatCount = .infinity
         turn.isRemovedOnCompletion = false
+        // At most 60 frames a second: forever on, at a ProMotion display's 120 it kept the window server compositing
+        // twice as often, for a turn that reads the same.
+        turn.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
         arc.add(turn, forKey: "spin")
     }
 }

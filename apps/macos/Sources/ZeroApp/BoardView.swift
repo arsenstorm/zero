@@ -185,11 +185,10 @@ struct ArticlePanel<Strip: View, Content: View>: View {
             strip()
             Group {
                 // Docked above the composer: sized by DockFit, its body filling it, and scrolling only once it's at
-                // its most. Nothing folds.
+                // its most (a scroll view measured unbounded is its content's height). Nothing folds. Not
+                // ViewThatFits: measured inside DockFit it tripped a SwiftUI precondition (crashes 2026-11-11).
                 if docked, dockMax != nil {
-                    ViewThatFits(in: .vertical) {
-                        content(); scrolling
-                    }.frame(maxHeight: .infinity, alignment: .top)
+                    scrolling
                 } else {
                     content()
                 }

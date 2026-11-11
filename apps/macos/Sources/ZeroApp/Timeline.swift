@@ -194,7 +194,8 @@ struct WorkBlock: View {
             .buttonStyle(.plain)
             .disabled(items.isEmpty)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(alignment: .bottom) { if worked { Rectangle().fill(Theme.stroke).frame(height: 1).offset(y: 6) } }
+            // Halfway, to the eye, between the heading's baseline and the top of the line under it.
+            .overlay(alignment: .bottom) { if worked { Rectangle().fill(Theme.stroke).frame(height: 1).offset(y: 7) } }
             .tip(open ? "Hide the steps" : "Show every step")
             // The words streaming in aren't a step: they're read out below, fading in, open or folded.
             let steps = live && streamingWords != nil ? Array(items.dropLast()) : items
@@ -236,14 +237,13 @@ struct WorkBlock: View {
                 if let last = items.last, let text = streamingWords {
                     // What it's saying, as the words stream in, at Zero's own steady pace. Where they'll be once they
                     // are a step (a note, a step after it) or the answer (the turn over): nothing moves either way.
-                    VStack(alignment: .leading, spacing: 4) {
+                    // As tall as the answer they become (its row takes no room: MessageBlock).
+                    Group {
                         if let readout = playback?.readout(last.id) {
                             StreamingText(readout: readout, text: text, cwd: cwd)
                         } else {
                             MarkdownText(text, cwd: cwd, size: 14.5)
                         }
-                        // The answer's row (copy, menu, time) laid out already: it was there in a frame as it ended.
-                        Color.clear.frame(height: MessageBlock<EmptyView>.row)
                     }
                     .padding(.top, lead)
                 } else {
@@ -266,10 +266,10 @@ struct WorkBlock: View {
                 }
             }
         }
-        .padding(.top, 4)
         // Ended, its answer under it where its words were read out while it was live (the timeline's gap is wider).
         // Not for a turn read back later, nor once your next message has gone (the page moves anyway then).
-        .padding(.bottom, !live && (notesKept || items.isEmpty) ? lead(steps: items) - 8 : 0)
+        // (Its words were 10 under what's above, plus the lead; the timeline's gap is wider, so this is negative.)
+        .padding(.bottom, !live && (notesKept || items.isEmpty) ? lead(steps: items) + 10 - ConversationView.gap : 0)
         // Its turn over, it stays as it was, open or folded, its notes with it (folding it then, or its notes going,
         // moved the answer up by their height in a frame), until its answer starts to read out.
         .onChange(of: [live, answered]) { old, now in
@@ -416,6 +416,8 @@ final class PulseView: NSView {
         pulse.repeatCount = .infinity
         pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         pulse.isRemovedOnCompletion = false
+        // A slow fade needs no more than 30 frames a second (the display's 120 composited the window four times as often).
+        pulse.preferredFrameRateRange = CAFrameRateRange(minimum: 20, maximum: 30, preferred: 30)
         layer.opacity = 0
         layer.add(pulse, forKey: "pulse")
     }
@@ -456,7 +458,7 @@ struct QuietTurns<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: ConversationView.gap) {
             // A turn's heading, as WorkBlock's: what happened, and a chevron to open it.
             Button {
                 open.toggle()
@@ -618,11 +620,14 @@ struct MessageBlock<Content: View>: View {
     var later: ((String) -> Void)? = nil
     @ViewBuilder let content: () -> Content
     @State private var hovered = false
-    /// The row under it: what live words keep room for (WorkBlock), so they become an answer without moving.
-    static var row: CGFloat { 22 }
+    /// The row under it (copy, menu, time): drawn in the timeline's gap below (ConversationView.gap), a margin above and
+    /// below it, taking no room of its own, so every block is the same gap from the next (it took 26 points after each
+    /// message, the widest gap on the page).
+    static var row: CGFloat { 16 }
+    static var margin: CGFloat { (ConversationView.gap - row) / 2 }
 
     var body: some View {
-        VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
+        VStack(alignment: mine ? .trailing : .leading, spacing: 0) {
             content()
             HStack(spacing: 4) {
                 CopyButton(text: text)
@@ -642,7 +647,8 @@ struct MessageBlock<Content: View>: View {
                 if let date { Text(Self.stamp(date)).font(.system(size: 11.5)).foregroundStyle(.tertiary).padding(.leading, 4) }
             }
             .frame(height: Self.row)
-            // Always laid out, shown on hover: nothing moves as the pointer passes.
+            .padding(.top, Self.margin)
+            // Always there, shown on hover: nothing moves as the pointer passes.
             .opacity(hovered ? 1 : 0)
         }
         .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
@@ -654,6 +660,8 @@ struct MessageBlock<Content: View>: View {
             case .ended: hovered = false
             }
         }
+        // Its row in the gap under it: hovered and clicked there, laid out without it.
+        .padding(.bottom, -(Self.margin + Self.row))
     }
 
     private func copy() {

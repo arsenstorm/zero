@@ -88,3 +88,30 @@ import Testing
             .paragraph("![On the web](https://example.com/x.png)"),
         ])
 }
+
+/// A streaming answer is cut where what's before can't change: parsed apart, the two halves are the whole's blocks.
+@Test func aGrowingAnswerSplitsWhereItsStartIsSettled() {
+    let samples = [
+        "# Title\n\nFirst paragraph.\n\nSecond one, still being wri",
+        "Intro.\n\n```swift\nlet a = 1\n\nlet b = 2\n```\n\nAfter the code, and mo",
+        "Steps:\n\n1. one\n\n2. two\n\n   more of two\n\nThen a paragraph.\n\n- a list\n- going on",
+        "> quoted\n> more\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nText after\n\n  indented line",
+        "```\nopen fence\n\nstill in it",
+        "No blank lines at all yet",
+        "1. one\n\nlazy line after a list\n\n* star\n\n  - nested\n\n---\n\n![image](a.png)\n\nEnd",
+        "Para\n\n~~~\ncode\n~~~\n\n## Heading\n\ntext",
+    ]
+    // As it streams: every prefix of each.
+    for whole in samples {
+        for length in 0...whole.count {
+            let text = String(whole.prefix(length))
+            guard let cut = MarkdownBlock.settled(text) else { continue }
+            #expect(
+                MarkdownBlock.parse(String(text[..<cut])) + MarkdownBlock.parse(String(text[cut...])) == MarkdownBlock.parse(text),
+                "\(text)")
+        }
+    }
+    #expect(MarkdownBlock.settled("# Title\n\nFirst paragraph.\n\nSecond") != nil)
+    #expect(MarkdownBlock.settled("```\nopen fence\n\nstill in it") == nil)
+    #expect(MarkdownBlock.settled("No blank lines at all yet") == nil)
+}

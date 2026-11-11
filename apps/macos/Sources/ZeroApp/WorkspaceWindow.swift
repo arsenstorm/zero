@@ -79,6 +79,19 @@ extension AppDelegate {
                 NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification, NSWindow.didChangeScreenNotification,
                 NSWindow.willCloseNotification,
             ]
+            // On screen or not (closed, minimised, covered): conversations behind it stop being redrawn meanwhile.
+            for name in [
+                NSWindow.didChangeOcclusionStateNotification, NSWindow.willCloseNotification, NSWindow.didMiniaturizeNotification,
+                NSWindow.didDeminiaturizeNotification,
+            ] {
+                NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [navigation, weak window] note in
+                    MainActor.assumeIsolated {
+                        guard let window else { return }
+                        let shown = note.name != NSWindow.willCloseNotification && window.occlusionState.contains(.visible)
+                        if navigation.windowShown != shown { navigation.windowShown = shown }
+                    }
+                }
+            }
             // Closed by you, it stays closed next launch; open when Zero quits (an update, a crash), it opens again.
             NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
                 UserDefaults.standard.set(false, forKey: "workspaceOpen")

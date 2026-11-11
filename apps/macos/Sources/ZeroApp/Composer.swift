@@ -6,6 +6,11 @@ import ZeroCore
 @Observable final class DraftBox {
     var text = "" { didSet { if text != oldValue { saved(text) } } }
     @ObservationIgnored var saved: (String) -> Void = { _ in }
+    /// The text as a quote at the end of what's being written (a selection replied to).
+    func quote(_ quoted: String) {
+        let lines = quoted.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n")
+        text = (text.isEmpty ? "" : text + "\n\n") + lines + "\n\n"
+    }
 }
 
 /// The message box, as the control bar's: its field ("/" for commands, "@" for the folder's files), the images going

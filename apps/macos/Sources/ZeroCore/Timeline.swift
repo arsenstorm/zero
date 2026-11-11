@@ -133,11 +133,14 @@ public enum TimelineRow: Identifiable, Equatable, Sendable {
             }
         }
         if turn.contains(where: { if case let .work(_, _, _, _, live) = $0 { live } else { false } }) { return false }
+        // Every match has "zero" in it: looked for first, as the pattern is slow and this runs over the whole page each
+        // time a word streams in.
+        let changed = { (text: String) in text.contains("zero") && text.contains(changes) }
         return !items.contains { item in
             switch item.kind {
-            case let .command(command, _, _, _, _, _): command.contains(changes)
-            case let .tool(name, _): name.contains(changes)
-            case let .agent(text, _): text.contains(changes)
+            case let .command(command, _, _, _, _, _): changed(command)
+            case let .tool(name, _): changed(name)
+            case let .agent(text, _): changed(text)
             case .table: true
             default: false
             }

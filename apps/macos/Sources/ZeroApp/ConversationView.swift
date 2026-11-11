@@ -8,6 +8,9 @@ struct ConversationView: View {
     /// Shown, as against kept behind the page shown: only the shown page answers Esc and holds the keyboard.
     var active = true
     @State private var isActive = true
+    /// On screen: the page shown, in a window that's open and not covered. Off it, the conversation isn't redrawn as the
+    /// agent works (Workspace.watch) and nothing plays; shown again, what came meanwhile is there at once, as on opening.
+    var shown = true
     /// Your messages waiting for after the agent's turn, and whether they're held since you stopped it.
     var queued: [Queued] = []
     var held = false
@@ -66,6 +69,9 @@ struct ConversationView: View {
         MainActor.assumeIsolated { clicked = Date() }
         return event
     }
+    /// The one gap between any two blocks of the conversation: room for a message's row (copy, menu, time) under it with
+    /// a margin either side (MessageBlock), the same under everything else, so the page has one rhythm.
+    static let gap: CGFloat = 28
     static let slide = Animation.smooth(duration: slideDuration)
     /// The card's rise: ease-out cubic, the curve the room at the end grows on, step for step.
     static let rise = Animation.timingCurve(0.33, 1, 0.68, 1, duration: slideDuration)
@@ -130,6 +136,8 @@ struct ConversationView: View {
         /// Something here eases (or the page glides): the frame clock (FootClock) runs.
         var ticking = false
         @ObservationIgnored var lastTick: Date?
+        /// A text box in the card focused or not (dockFocus).
+        func setTyping(_ on: Bool) { if typing != on { typing = on } }
         /// As far as it sinks: all but its strip.
         var deepest: CGFloat { max(0, card - AskDock.tuck - 24) }
     }
@@ -236,21 +244,12 @@ struct ConversationView: View {
     /// A block. The asks its turn made are among its steps, folded as thinking is; the card to answer one is above
     /// the composer.
     private func row(_ block: TimelineBlock, turns: [String: String], newest: String? = nil) -> some View {
-        blockRow(block, turns: turns).transition(block.id == newest && !lifted ? Self.enter : .identity)
-    }
-
-    private func blockRow(_ block: TimelineBlock, turns: [String: String]) -> some View {
-        BlockRow(
+        RowSlot(
             block: block, cwd: conversation.cwd, answered: shape.answered.contains(block.id), followed: shape.followed.contains(block.id),
+            turn: turns[block.id], entering: block.id == newest && !lifted, tracker: tracker,
             quote: quote, save: save, rewind: { rewinding = $0 },
             later: { [workspace, id = conversation.id] text in Task { await workspace.askToSaveForLater(id, answer: text) } }
         ).equatable()
-            .id(block.id)
-            .onScrollVisibilityChange(threshold: 0.05) { shown in
-                guard let turn = turns[block.id] else { return }
-                if shown { tracker.seen[block.id] = turn } else { tracker.seen[block.id] = nil }
-            }
-            .onDisappear { tracker.seen[block.id] = nil }
     }
 
     /// Where you are in the conversation: at its end (nothing kept), or the block at the top of the screen.
@@ -268,10 +267,7 @@ struct ConversationView: View {
     }
 
     /// The message as a quote at the end of what's being written.
-    private func quote(_ text: String) {
-        let quoted = text.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n")
-        draft = (draft.isEmpty ? "" : draft + "\n\n") + quoted + "\n\n"
-    }
+    private func quote(_ text: String) { box.quote(text) }
 
     /// The message kept as a scratchpad in Saved, named by its first line.
     private func save(_ text: String) {
@@ -324,6 +320,7 @@ struct ConversationView: View {
                     // Left, it goes back to its latest items: memory doesn't grow with every long task opened.
                     .onDisappear {
                         rememberScroll(); workspace.trim(conversation.id); lifted = false
+                        workspace.watch(conversation.id, false)
                     }
                     // Back where you were: the block that was at the top of the screen, its older page loaded first if
                     // it isn't any more. At the end, it opens at the end, as ever.
@@ -333,6 +330,13 @@ struct ConversationView: View {
                         if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }; escapeMonitor = nil
                     }
                     .onChange(of: active, initial: true) { isActive = active }
+                    .onChange(of: shown, initial: true) { _, on in
+                        workspace.watch(conversation.id, on)
+                        if on {
+                            let items = shape.merge(conversation.items, sending: workspace.sending[conversation.id] ?? [])
+                            playback.update(items, conversation: conversation.id, live: false, now: Date())
+                        }
+                    }
                     // An answer that lands while you're here is seen once you do something in the task (click, scroll,
                     // type): just having it open isn't reading it.
                     .simultaneousGesture(TapGesture().onEnded { workspace.markSeen(conversation.id) })
@@ -365,7 +369,7 @@ struct ConversationView: View {
             // Where you were in it, kept when scrolling stops and when you leave.
             .onScrollPhaseChange { _, phase in scrollPhaseChanged(phase) }
             .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { before, now in scrollGeometryChanged(from: before, to: now) }
-            .background { PlaybackClock(playback: playback) }
+            .background { PlaybackClock(playback: playback, shown: shown) }
             .background { FootClock(foot: foot) { tick($0) } }
     }
 
@@ -382,7 +386,7 @@ struct ConversationView: View {
         let (blocks, turns) = (shape.blocks, shape.turns)
         let start = liftStart(blocks)
         let newest = blocks.last { if case .user = $0 { true } else { false } }?.id
-        return VStack(alignment: .leading, spacing: 18) {
+        return VStack(alignment: .leading, spacing: Self.gap) {
             olderRows
             LiftStack(room: start == nil ? 0 : liftMin) {
                 ForEach(shape.rows(blocks)) { line in
@@ -415,7 +419,9 @@ struct ConversationView: View {
         .environment(\.askInbox, inbox)
         .environment(\.playback, playback)
         .environment(\.askSession, conversation.id)
-        .environment(\.replyToSelection) { quote($0) }
+        // The box, not a closure: a closure in the environment reads as changed on every redraw, and each view reading it
+        // (every message's text) was updated with every word streamed.
+        .environment(\.replyToSelection, box)
     }
 
     /// More above: rows standing in for it, the next page fetched as they come into view, the view
@@ -908,7 +914,7 @@ struct ConversationView: View {
             // ponytail: the first agent ask waiting, not the dock's page shown; follow the pager if several wait.
             pick: { [inbox, conversation] digit in
                 guard conversation.questions.isEmpty, conversation.approvals.isEmpty,
-                    let ask = inbox.store.asks.first(where: { $0.isAgents(in: conversation.id) && !$0.state.isFinal }),
+                    let ask = inbox.store.asks.first(where: { !$0.state.isFinal && $0.isAgents(in: conversation.id) }),
                     digit <= ask.options.count
                 else { return false }
                 inbox.choose(digit - 1, on: ask.id)
@@ -1119,13 +1125,51 @@ final class TimelineShape {
     }
 }
 
+/// One block as a row with what goes around it (its id, its transition, whether it's on screen, for the rail),
+/// compared as a whole before it's drawn: each change to the conversation makes every row anew, and with the closures
+/// around it changed each time, every row's modifiers were updated and the stack laid out again for one word.
+private struct RowSlot: View, Equatable {
+    let block: TimelineBlock
+    let cwd: String
+    let answered: Bool
+    let followed: Bool
+    /// Its turn, for the rail's ticks.
+    let turn: String?
+    /// Your message just come in: it fades in (ConversationView.enter).
+    let entering: Bool
+    let tracker: ScrollTracker
+    let quote: (String) -> Void
+    let save: (String) -> Void
+    let rewind: (ConversationItem) -> Void
+    let later: (String) -> Void
+
+    static func == (a: RowSlot, b: RowSlot) -> Bool {
+        a.block == b.block && a.cwd == b.cwd && a.answered == b.answered && a.followed == b.followed && a.turn == b.turn
+            && a.entering == b.entering && a.tracker === b.tracker
+    }
+
+    var body: some View {
+        BlockRow(
+            block: block, cwd: cwd, answered: answered, followed: followed, quote: quote, save: save, rewind: rewind, later: later
+        ).equatable()
+            .id(block.id)
+            .onScrollVisibilityChange(threshold: 0.05) { [tracker, turn, id = block.id] shown in
+                guard let turn else { return }
+                if shown { tracker.seen[id] = turn } else { tracker.seen[id] = nil }
+            }
+            .onDisappear { [tracker, id = block.id] in tracker.seen[id] = nil }
+            .transition(entering ? ConversationView.enter : .identity)
+    }
+}
+
 /// Playback's clock: ticks at most 30 times a second while something is shown, read out or fading, and not at all
 /// otherwise. Its own view, so a tick redraws nothing else: what changed (an item shown, words read) redraws what
 /// reads it.
 private struct PlaybackClock: View {
     let playback: Playback
+    let shown: Bool
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: !playback.playing)) { context in
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !playback.playing || !shown)) { context in
             Color.clear.onChange(of: context.date) { _, now in playback.advance(to: now) }
         }
     }
@@ -1146,29 +1190,37 @@ private struct LiftStack: Layout {
     /// The row the lift's room is measured from.
     struct Start: LayoutValueKey { static let defaultValue = false }
     let room: CGFloat
-    private static let spacing: CGFloat = 18
+    /// Each row's place: what has no height (an answer that was only Zero's ending) takes no gap either, or it left a
+    /// second gap under its turn.
+    private func places(_ subviews: Subviews, width: CGFloat?) -> (y: [CGFloat], heights: [CGFloat], end: CGFloat, start: CGFloat?) {
+        var y: [CGFloat] = [], heights: [CGFloat] = []
+        var end: CGFloat = 0
+        var start: CGFloat?
+        var any = false
+        for subview in subviews {
+            let height = subview.sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+            if height > 0, any { end += ConversationView.gap }
+            if height > 0 { any = true }
+            if start == nil, subview[Start.self] { start = end }
+            y.append(end); heights.append(height)
+            end += height
+        }
+        return (y, heights, end, start)
+    }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        var height: CGFloat = 0
-        var widest: CGFloat = 0
-        var start: CGFloat?
-        for (index, subview) in subviews.enumerated() {
-            if index > 0 { height += Self.spacing }
-            if start == nil, subview[Start.self] { start = height }
-            let size = subview.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
-            widest = max(widest, size.width)
-            height += size.height
-        }
-        if let start { height = max(height, start + room) }
-        return CGSize(width: proposal.width ?? widest, height: height)
+        let laid = places(subviews, width: proposal.width)
+        let height = laid.start.map { max(laid.end, $0 + room) } ?? laid.end
+        let width = proposal.width ?? subviews.map { $0.sizeThatFits(.unspecified).width }.max() ?? 0
+        return CGSize(width: width, height: height)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var y = bounds.minY
-        for subview in subviews {
-            let size = subview.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
-            subview.place(at: CGPoint(x: bounds.minX, y: y), proposal: ProposedViewSize(width: bounds.width, height: size.height))
-            y += size.height + Self.spacing
+        let laid = places(subviews, width: bounds.width)
+        for (index, subview) in subviews.enumerated() {
+            subview.place(
+                at: CGPoint(x: bounds.minX, y: bounds.minY + laid.y[index]),
+                proposal: ProposedViewSize(width: bounds.width, height: laid.heights[index]))
         }
     }
 }
@@ -1189,11 +1241,13 @@ private struct StripRoom: View {
 }
 
 /// The frame clock for what eases at the conversation's foot and the page's glide to its end: runs only meanwhile.
+/// At most 60 frames a second: each moves the page, which lays the window out again, and at a ProMotion display's 120
+/// that was twice the work for a glide that reads the same (tick eases by the time gone, whatever the rate).
 private struct FootClock: View {
     let foot: ConversationView.Foot
     let tick: (Date) -> Void
     var body: some View {
-        TimelineView(.animation(minimumInterval: nil, paused: !foot.ticking)) { context in
+        TimelineView(.animation(minimumInterval: 1 / 60, paused: !foot.ticking)) { context in
             Color.clear.onChange(of: context.date) { _, now in tick(now) }
         }
     }
@@ -1245,7 +1299,7 @@ private struct DockSlot: View {
         // what came after it, which plays on above it.
         let now = Date()
         let admit = { (id: String) in shown.contains(id) || playback.admits(playback.cardSeen(id, now: now)) }
-        let asks = inbox.store.asks.filter { $0.isAgents(in: conversation.id) && !$0.state.isFinal && admit($0.id) }
+        let asks = inbox.store.asks.filter { !$0.state.isFinal && $0.isAgents(in: conversation.id) && admit($0.id) }
         let questions = conversation.questions.filter { admit($0.id) }
         let approvals = conversation.approvals.filter { admit($0.id) }
         let ids = questions.map(\.id) + asks.map(\.id) + approvals.map(\.id)
@@ -1278,7 +1332,7 @@ private struct DockSlot: View {
 /// what it observes still redraw it.
 extension ConversationView: Equatable {
     static func == (a: ConversationView, b: ConversationView) -> Bool {
-        a.live === b.live && a.workspace === b.workspace && a.inbox === b.inbox && a.active == b.active
+        a.live === b.live && a.workspace === b.workspace && a.inbox === b.inbox && a.active == b.active && a.shown == b.shown
             && a.queued == b.queued && a.held == b.held && a.next == b.next
     }
 }
@@ -1297,7 +1351,7 @@ private struct Sinker<Card: View>: View {
     @State private var id = UUID()
     var body: some View {
         content
-            .environment(\.dockFocus) { [foot] on in if foot.typing != on { foot.typing = on } }
+            .environment(\.dockFocus, foot)
             // Over the conversation, which runs on behind it: a ring of blur and fade at its edges sets it apart.
             .background { Ring() }
             .onHover { inside in if foot.overCard != inside { foot.overCard = inside } }

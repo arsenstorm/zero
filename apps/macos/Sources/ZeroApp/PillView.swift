@@ -308,7 +308,7 @@ struct PillView: View {
     /// A click: a task's asks in the inbox when it has some, else the task itself in the window, as the sidebar opens
     /// it; an agent outside Zero, its asks.
     private func open(_ name: String) {
-        let asking = controller.store.asks.contains { $0.agent.name == name && !$0.state.isFinal }
+        let asking = controller.store.asks.contains { !$0.state.isFinal && $0.agent.name == name }
         if name.hasPrefix("zerod-"), !asking, let url = URL(string: "zero://task/" + name.dropFirst("zerod-".count)) {
             (NSApp.delegate as? AppDelegate)?.openZeroURL(url)
         } else {

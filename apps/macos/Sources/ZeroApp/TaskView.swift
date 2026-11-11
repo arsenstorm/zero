@@ -21,12 +21,15 @@ struct TaskPages: View {
         ZStack {
             ForEach(shown, id: \.self) { id in
                 let active = id == current
-                TaskView(workspace: workspace, inbox: inbox, lead: id, navigation: navigation, active: active)
-                    .opacity(active ? 1 : 0)
-                    .allowsHitTesting(active)
-                    .disabled(!active)
-                    .accessibilityHidden(!active)
-                    .zIndex(active ? 1 : 0)
+                TaskView(
+                    workspace: workspace, inbox: inbox, lead: id, navigation: navigation, active: active,
+                    shown: active && navigation.windowShown
+                )
+                .opacity(active ? 1 : 0)
+                .allowsHitTesting(active)
+                .disabled(!active)
+                .accessibilityHidden(!active)
+                .zIndex(active ? 1 : 0)
             }
         }
         .onChange(of: current, initial: true) {
@@ -47,7 +50,7 @@ private struct TaskView: View {
     /// Other tasks by id, for a message from one: its name, and opening it (a worker on its lead's page).
     private var taskLink: TaskLink {
         TaskLink(
-            name: { [workspace] id in workspace.roster[id].map(Workspace.label(of:)) },
+            name: { [workspace] id in workspace.names[id] },
             open: { [workspace, navigation] id in
                 let lead = workspace.roster[id]?.parent
                 navigation.place = .task(lead ?? id)
@@ -56,6 +59,8 @@ private struct TaskView: View {
     }
     /// The page shown, as against one kept behind it.
     var active = true
+    /// And on screen: the window open and not covered.
+    var shown = true
 
     private var team: [Conversation] {
         let all = workspace.conversations
@@ -88,7 +93,7 @@ private struct TaskView: View {
             HStack(spacing: 0) {
                 if let live = workspace.live(conversation.id) {
                     ConversationView(
-                        workspace: workspace, inbox: inbox, active: active,
+                        workspace: workspace, inbox: inbox, active: active, shown: shown,
                         queued: workspace.queued(conversation.id, board: row?.queued ?? []), held: row?.held ?? false, next: row?.next,
                         live: live, open: open
                     ).equatable().id(conversation.id).environment(\.taskLink, taskLink)
@@ -103,7 +108,7 @@ private struct TaskView: View {
             ZStack(alignment: .topTrailing) {
                 if let conversation, let live = workspace.live(conversation.id) {
                     ConversationView(
-                        workspace: workspace, inbox: inbox, active: active,
+                        workspace: workspace, inbox: inbox, active: active, shown: shown,
                         queued: workspace.queued(conversation.id, board: row?.queued ?? []), held: row?.held ?? false, next: row?.next,
                         live: live, open: open
                     ).equatable().id(conversation.id).environment(\.taskLink, taskLink)

@@ -41,6 +41,8 @@ public final class Navigation {
 
     /// The control bar works with this window: what it opens opens here, not in its own panel.
     public var barDocked = false
+    /// The window on screen: open, not minimised, not wholly covered. Off it, conversations aren't redrawn as agents work.
+    public var windowShown = true
     /// On a scratchpad: the section a link pointed at, to scroll to once.
     public var padSection: String?
     /// Past the splash: the window shows its places, and the toolbar its arrows.

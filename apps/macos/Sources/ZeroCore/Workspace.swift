@@ -12,6 +12,9 @@ public final class LiveConversation {
     public fileprivate(set) var earlier: Int
     /// And after them: jumped back through it (the rail), what's newer comes as it's scrolled down to.
     public fileprivate(set) var later = 0
+    /// Not on screen (Workspace.watch): left as it is until it shows again. Made hidden: only a conversation on screen
+    /// is kept up to date (one made to warm the text cache isn't).
+    @ObservationIgnored fileprivate var hidden = true
     init(_ conversation: Conversation, earlier: Int) { self.conversation = conversation; self.earlier = earlier }
 }
 
@@ -24,6 +27,9 @@ public final class Workspace {
     /// the title bar need. It changes when a task's name, state or usage does, not with every word streamed.
     public private(set) var roster: [String: Conversation] = [:]
     public private(set) var order: [String] = []
+    /// Each task's name (Workspace.label), on its own: what shows another task by name (a worker's report in a
+    /// conversation) redraws when a name changes, not with every change to the roster.
+    public private(set) var names: [String: String] = [:]
     @ObservationIgnored private var lives: [String: LiveConversation] = [:]
     public private(set) var connected = false
     /// Why the last request failed, for the window to show.
@@ -112,8 +118,10 @@ public final class Workspace {
     /// The roster entry and the live object brought up to the mirror for one task.
     private func sync(_ id: String) {
         guard let full = mirror.conversations[id] else {
-            roster[id] = nil
-            order.removeAll { $0 == id }
+            // Only a real change: an assignment, even of what's there, redraws every view reading it.
+            if roster[id] != nil { roster[id] = nil }
+            if names[id] != nil { names[id] = nil }
+            if order.contains(id) { order.removeAll { $0 == id } }
             lives[id] = nil
             return
         }
@@ -132,6 +140,8 @@ public final class Workspace {
         light.diff = nil
         light.seq = 0
         if roster[id] != light { roster[id] = light }
+        let name = Self.label(of: light)
+        if names[id] != name { names[id] = name }
         if let live = lives[id] {
             // Only a real change: an assignment redraws the conversation, the same session sent again included.
             show(id, in: live)
@@ -145,14 +155,23 @@ public final class Workspace {
     @ObservationIgnored private var showing: Set<String> = []
     static let redrawEvery: TimeInterval = 0.1
 
+    /// A task's conversation on screen or not: a page kept behind the one shown, or in a closed or covered window, isn't
+    /// redrawn as its agent works (each change laid out the whole conversation again, unseen); it catches up as it shows.
+    public func watch(_ id: String, _ on: Bool) {
+        guard let live = lives[id], live.hidden == on else { return }
+        live.hidden = !on
+        if on { bringUp(id, live) }
+    }
+
     private func show(_ id: String, in live: LiveConversation) {
+        guard !live.hidden else { return }
         let since = Date().timeIntervalSince(shownAt[id] ?? .distantPast)
         guard since < Self.redrawEvery else { bringUp(id, live); return }
         guard showing.insert(id).inserted else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.redrawEvery - since) { [weak self] in
             guard let self else { return }
             showing.remove(id)
-            if let live = lives[id] { bringUp(id, live) }
+            if let live = lives[id], !live.hidden { bringUp(id, live) }
         }
     }
 
