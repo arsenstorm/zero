@@ -79,54 +79,7 @@ struct Composer<Controls: View>: View {
                 Attachments.fromDrop(providers) { attach($0) }
                 return true
             }
-            // ⌘V with an image on the clipboard attaches it; anything else pastes into the text as usual. With nothing that
-            // takes typing focused (a click into the conversation, say), typing or pasting goes to the composer, focused.
-            .onAppear {
-                guard monitor == nil else { return }
-                let (focus, draft, focused, caret) = (focus, $draft, $focused, $caret)
-                let attach = { (urls: [URL]) in attach(urls) }
-                let shown = shown, picker = picker, images = $images
-                monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                    guard shown.on else { return event }
-                    let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-                    if flags.isDisjoint(with: [.command, .control, .option]), draft.wrappedValue.isEmpty, images.wrappedValue.isEmpty,
-                        let digit = event.charactersIgnoringModifiers.flatMap(Int.init), (1...9).contains(digit),
-                        (focus.on || !Self.takesTyping(event.window?.firstResponder)), picker.pick?(digit) == true
-                    {
-                        return nil
-                    }
-                    let paste = flags == .command && event.charactersIgnoringModifiers == "v"
-                    if focus.on {
-                        guard paste, let urls = Attachments.fromPasteboard(), !urls.isEmpty else { return event }
-                        attach(urls)
-                        return nil
-                    }
-                    // Only in the workspace's window (not a panel), and only when nothing there takes typing already: a
-                    // field, the inbox card's reply, a terminal. An answer's text (selectable, not editable) doesn't.
-                    guard let window = event.window, !(window is NSPanel), !Self.takesTyping(window.firstResponder) else { return event }
-                    let land = { (text: String) in
-                        draft.wrappedValue += text
-                        caret.wrappedValue = (draft.wrappedValue as NSString).length
-                        focused.wrappedValue = true
-                    }
-                    if paste {
-                        if let urls = Attachments.fromPasteboard(), !urls.isEmpty {
-                            attach(urls)
-                        } else if let text = NSPasteboard.general.string(forType: .string) {
-                            land(text)
-                        } else {
-                            return event
-                        }
-                        return nil
-                    }
-                    // Words, not shortcuts (⌘, ⌃) or keys that move about (Return, Tab, Esc, arrows, Space).
-                    guard flags.isDisjoint(with: [.command, .control]), let typed = event.characters, Self.isWords(typed) else {
-                        return event
-                    }
-                    land(typed)
-                    return nil
-                }
-            }
+            .onAppear { watchKeys() }
             .onDisappear {
                 if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil; stopWatchingAdd()
             }
@@ -135,6 +88,56 @@ struct Composer<Controls: View>: View {
             }
             .onAppear { picker.pick = pick }
             .onChange(of: pick == nil) { picker.pick = pick }
+    }
+
+    /// ⌘V with an image on the clipboard attaches it; anything else pastes into the text as usual. With nothing that
+    /// takes typing focused (a click into the conversation, say), typing or pasting goes to the composer, focused. Its
+    /// own function, not inline in `body`: there, CI's Swift (6.3) failed to type-check the chain.
+    private func watchKeys() {
+        guard monitor == nil else { return }
+        let (focus, draft, focused, caret) = (focus, $draft, $focused, $caret)
+        let attach = { (urls: [URL]) in attach(urls) }
+        let shown = shown, picker = picker, images = $images
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard shown.on else { return event }
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if flags.isDisjoint(with: [.command, .control, .option]), draft.wrappedValue.isEmpty, images.wrappedValue.isEmpty,
+                let digit = event.charactersIgnoringModifiers.flatMap(Int.init), (1...9).contains(digit),
+                (focus.on || !Self.takesTyping(event.window?.firstResponder)), picker.pick?(digit) == true
+            {
+                return nil
+            }
+            let paste = flags == .command && event.charactersIgnoringModifiers == "v"
+            if focus.on {
+                guard paste, let urls = Attachments.fromPasteboard(), !urls.isEmpty else { return event }
+                attach(urls)
+                return nil
+            }
+            // Only in the workspace's window (not a panel), and only when nothing there takes typing already: a
+            // field, the inbox card's reply, a terminal. An answer's text (selectable, not editable) doesn't.
+            guard let window = event.window, !(window is NSPanel), !Self.takesTyping(window.firstResponder) else { return event }
+            let land = { (text: String) in
+                draft.wrappedValue += text
+                caret.wrappedValue = (draft.wrappedValue as NSString).length
+                focused.wrappedValue = true
+            }
+            if paste {
+                if let urls = Attachments.fromPasteboard(), !urls.isEmpty {
+                    attach(urls)
+                } else if let text = NSPasteboard.general.string(forType: .string) {
+                    land(text)
+                } else {
+                    return event
+                }
+                return nil
+            }
+            // Words, not shortcuts (⌘, ⌃) or keys that move about (Return, Tab, Esc, arrows, Space).
+            guard flags.isDisjoint(with: [.command, .control]), let typed = event.characters, Self.isWords(typed) else {
+                return event
+            }
+            land(typed)
+            return nil
+        }
     }
 
     @ViewBuilder private var card: some View {
