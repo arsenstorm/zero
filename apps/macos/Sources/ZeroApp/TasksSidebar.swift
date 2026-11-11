@@ -291,14 +291,7 @@ struct TasksSidebar: View {
         }
         .offset(y: drag?.lead == row.session ? drag!.y : shift(of: row.session, in: ids))
         .animation(drag?.lead == row.session || reduceMotion ? nil : .snappy(duration: 0.2), value: dropIndex(in: ids))
-        // Asked to archive it: the question under its row, over the rows below.
-        .overlay(alignment: .topLeading) {
-            if workspace.archiving == row.session {
-                ArchiveCard(workspace: workspace, id: row.session) { if place == .task(row.session) { place = .home } }
-                    .offset(y: (heights[row.session] ?? 30) + 4)
-            }
-        }
-        .zIndex(drag?.lead == row.session ? 1 : workspace.archiving == row.session ? 2 : 0)
+        .zIndex(drag?.lead == row.session ? 1 : 0)
         // A task arriving slides in under the heading as the rest move down; one leaving fades.
         .transition(.asymmetric(insertion: .move(edge: .top).combined(with: .opacity), removal: .opacity))
     }

@@ -135,12 +135,10 @@ struct WorkspaceView: View {
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke))
             .padding(.top, 38).padding([.trailing, .bottom], 4) // under the window's buttons, as ChatGPT's
         }
-        .overlay {
-            // In the middle only for a task the sidebar doesn't show; there, it opens under its row.
-            if let id = workspace.archiving, !workspace.board.contains(where: { $0.session == id && $0.workspace == workspace.current }) {
-                ArchiveConfirm(workspace: workspace, id: id) {
-                    if navigation.place == .task(id) { navigation.place = .home }
-                }
+        // Archiving asks first, in Zero's dialog over the window (as Linear asks before deleting), wherever it was asked.
+        .zeroDialog(item: Binding(get: { workspace.archiving.map(Archiving.init) }, set: { workspace.archiving = $0?.id })) { asked in
+            ArchiveDialog(workspace: workspace, id: asked.id) {
+                if navigation.place == .task(asked.id) { navigation.place = .home }
             }
         }
         .overlay(alignment: .top) {
@@ -166,69 +164,39 @@ struct WorkspaceView: View {
     }
 }
 
-/// Archiving puts a task away with every worker under it: asked first, over the window, Return to archive and Escape
-/// not to.
-private struct ArchiveConfirm: View {
+/// The task being asked about, as the dialog's item.
+private struct Archiving: Identifiable { let id: String }
+
+/// Archiving puts a task away with every worker under it: the task named, what goes with it, and where it comes back
+/// from. Return archives, Escape cancels.
+private struct ArchiveDialog: View {
     let workspace: Workspace
     let id: String
     let leaving: () -> Void
-
-    var body: some View {
-        ZStack {
-            Color.black.opacity(0.12).contentShape(Rectangle()).onTapGesture { workspace.archiving = nil }
-            ArchiveCard(workspace: workspace, id: id, named: true, leaving: leaving).frame(width: 340)
-        }
-    }
-}
-
-/// The question itself: under the task's row in the sidebar (where you asked, so you don't lose your place), or in
-/// the middle of the window when the task isn't in the sidebar. Return archives, Escape cancels.
-struct ArchiveCard: View {
-    let workspace: Workspace
-    let id: String
-    /// In the middle of the window, away from its row: the question names the task.
-    var named = false
-    let leaving: () -> Void
+    @Environment(\.closeDialog) private var close
 
     var body: some View {
         let workers = workspace.team(of: id).count
-        VStack(alignment: .leading, spacing: 4) {
-            // Under its row, no name is needed; away from it, the task is named.
-            Text(named ? "Archive \(workspace.conversation(id).map { Workspace.label(of: $0) } ?? "this task")?" : "Archive this task?")
-                .font(.system(size: 13, weight: .semibold)).lineLimit(2)
-            Text(
-                workers == 0
-                    ? "Bring it back from Archived tasks."
-                    : "Its \(workers == 1 ? "worker goes" : "\(workers) workers go") with it; bring them back from Archived tasks."
+        let name = workspace.conversation(id).map { "\u{201C}\(Workspace.label(of: $0))\u{201D}" } ?? "this task"
+        VStack(alignment: .leading, spacing: 6) {
+            DialogTitle(
+                text: workers == 0 ? "Archive \(name)?" : "Archive \(name) and its \(workers == 1 ? "worker" : "\(workers) workers")?"
             )
-            .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 6) {
+            .fixedSize(horizontal: false, vertical: true)
+            Text("Bring \(workers == 0 ? "it" : "them") back from Archived tasks, in the tasks list's ⋯ menu.")
+                .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
                 Spacer()
-                Button {
-                    workspace.archiving = nil
-                } label: {
-                    Text("Cancel").font(.system(size: 12, weight: .medium)).padding(.horizontal, 10).frame(height: 26)
-                }
-                .buttonStyle(Hovering(selected: true, radius: 6, fill: Theme.row)).keyboardShortcut(.cancelAction)
-                Button {
-                    workspace.archiving = nil
+                DialogButton(title: "Cancel") { close() }
+                DialogButton(title: "Archive", kind: .primary) {
+                    close()
                     leaving()
                     Task { await workspace.archive(id) }
-                } label: {
-                    Text("Archive").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.onKnob)
-                        .padding(.horizontal, 12).frame(height: 26).background(Theme.knob, in: RoundedRectangle(cornerRadius: 6))
                 }
-                .buttonStyle(.plain).keyboardShortcut(.defaultAction)
             }
-            .padding(.top, 6)
+            .padding(.top, 12)
         }
-        // Concentric: the buttons' 6 pt corners inset 10 pt in the card's 16.
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.composer, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.stroke))
-        .compositingGroup()
-        .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+        .frame(width: 380, alignment: .leading)
     }
 }
 

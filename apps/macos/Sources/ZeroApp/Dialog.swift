@@ -1,6 +1,6 @@
 import SwiftUI
 
-// Zero's own dialog, in place of a sheet: drawn over the workspace window at once (no slide, no native chrome), a
+// Zero's own dialog, in place of a sheet: drawn over the workspace window in a short fade (no slide, no native chrome), a
 // card on a dimmed backdrop, closed with Escape, a click outside or its own buttons. Its controls are Zero's too:
 // fields on the row grey, a choice track, checkboxes and capsule buttons.
 
@@ -37,11 +37,17 @@ import SwiftUI
 }
 
 /// Where dialogs are drawn: over the whole window, the workspace view's root.
+/// It comes in as Linear's do: the backdrop fades while the card grows from just smaller and fades in, quickly and
+/// easing out (a little faster going); with Reduce Motion, only the fades.
 struct DialogHost: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
-        if let content = Dialogs.shared.content {
-            ZStack {
+        let open = Dialogs.shared.content != nil
+        ZStack {
+            if let content = Dialogs.shared.content {
                 Color.black.opacity(0.18).contentShape(Rectangle()).onTapGesture { Dialogs.shared.close() }
+                    .transition(.opacity)
                 content
                     .padding(22)
                     .background(Theme.card, in: RoundedRectangle(cornerRadius: 18))
@@ -54,9 +60,11 @@ struct DialogHost: View {
                         Dialogs.shared.card = $0
                     }
                     .environment(\.closeDialog, CloseDialog { Dialogs.shared.close() })
+                    .transition(reduceMotion ? .opacity : .scale(scale: 0.96).combined(with: .opacity))
             }
-            .ignoresSafeArea()
         }
+        .ignoresSafeArea()
+        .animation(open ? .easeOut(duration: 0.15) : .easeOut(duration: 0.1), value: open)
     }
 }
 
