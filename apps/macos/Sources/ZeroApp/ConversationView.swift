@@ -495,7 +495,9 @@ struct ConversationView: View {
         // How far up from the end: the question card on the composer sinks as far, behind it.
         // From where the scroll stops (the toolbar's inset at the top taken off: left in, the end read 38 pt off and the
         // card sat sunk that much at the very bottom).
-        let below = lifted && !liftScrolled ? 0 : max(0, Self.end(of: now) - now.contentOffset.y)
+        // Only your own scrolling sinks it: following the end as words stream in, the page slides to each new end, and
+        // read mid-slide that distance sank the card and raised it again, many times a second.
+        let below = (lifted && !liftScrolled) || (following && !userScrolling) ? 0 : max(0, Self.end(of: now) - now.contentOffset.y)
         if abs(foot.below - below) > 0.5 { foot.below = below }
         // The room an answered card left goes back as you scroll up, no faster: kept down to the window's foot, so the
         // page never moves on its own. Taken back all at once, at a scroll's start, the conversation's end jumped up to
