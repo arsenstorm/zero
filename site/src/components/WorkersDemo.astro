@@ -99,14 +99,18 @@ const middles = workers.map((_, i) => i * (CARD + GAP) + CARD / 2);
     ))}
   </svg>
 
-  <div
-    class="flex flex-col pl-6 sm:pl-0 border-l border-dashed border-faint sm:border-0"
-    style={`gap: ${GAP}px`}
-  >
+  <div class="relative flex flex-col pl-6 sm:pl-0" style={`gap: ${GAP}px`}>
+    {/* Phones, where the lines can't fan out sideways: a tree as the sidebar draws one, a dashed stem down from the
+        lead to the last worker's middle and a branch into each card, dashed 4 on 4 as the fan's lines are. */}
+    <span
+      aria-hidden="true"
+      class="tree-stem sm:hidden absolute left-3 -top-3 w-[1.5px]"
+      style={`bottom: ${CARD / 2}px`}
+    ></span>
     {workers.map((w) => (
       <div
         data-w={w.id}
-        class="worker-card rounded-[16px] bg-card border border-stroke px-4 flex flex-col justify-center"
+        class="worker-card tree-branch relative rounded-[16px] bg-card border border-stroke px-4 flex flex-col justify-center"
         style={`height: ${CARD}px`}
       >
         <div class="flex items-center gap-2">
@@ -146,6 +150,28 @@ const middles = workers.map((_, i) => i * (CARD + GAP) + CARD / 2);
 </div>
 
 <style>
+  .tree-stem {
+    background: repeating-linear-gradient(
+      to bottom,
+      var(--faint) 0 4px,
+      transparent 4px 8px
+    );
+  }
+  @media (max-width: 639px) {
+    .tree-branch::before {
+      content: "";
+      position: absolute;
+      left: -13px;
+      top: 50%;
+      width: 12px;
+      height: 1.5px;
+      background: repeating-linear-gradient(
+        to right,
+        var(--faint) 0 4px,
+        transparent 4px 8px
+      );
+    }
+  }
   /* A line draws out from the lead to its worker, then the card settles in at its end. */
   .worker-line {
     clip-path: inset(0 0 0 0);
