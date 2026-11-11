@@ -4,7 +4,7 @@
 // pill's (src/lib/search.ts). Anywhere on the page can open it with the "zero:search-sheet" event (⌘K, the 404).
 import { useEffect, useRef, useState } from "react";
 import { Drawer } from "vaul";
-import magnifier from "../../../apps/macos/Resources/nucleo/magnifier-outline.svg?raw";
+import magnifier from "../icons/magnifier-outline.svg?raw";
 import {
   emptyText,
   highlight,

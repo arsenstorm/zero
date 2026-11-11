@@ -40,17 +40,46 @@ Nucleo icons (https://nucleoapp.com)
   one (builds from source draw Lucide's instead, the only difference between the two).
   Licensed to Zero's maintainer under Nucleo's licence (https://nucleoapp.com/license); not free software and not
   covered by the GPL. That licence doesn't extend to you.
-  The licence allows at most 100 distinct icons in a public repository. This one holds the site's 10:
+  The licence allows at most 100 distinct icons in a public repository. This one holds the site's 39:
+    animation-repeat
+    arrow-left
+    arrow-right
+    badge-check
+    bookmark
+    check
+    chevron-down
+    chevron-right
+    circle-check
+    circle-minus
+    circle-question
     circle-user
     command
+    compose
+    copy
     eye
+    file-content
+    gear
+    github
     globe
+    hand-3
+    hand-holding-box
+    hourglass
+    house-4
+    inbox
     layout-top
     list-checkbox
+    magnifier
+    media-stop
+    message-check
     mobile
+    note-3
+    paper-plane
+    plus
     rocket
+    sliders
     suitcase
     terminal
+    wand-sparkle
 
 Provider marks
   The Claude, OpenAI and OpenCode marks in the apps and the site belong to their owners and are used to name the

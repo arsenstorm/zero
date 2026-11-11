@@ -2,7 +2,7 @@
 // take the answer back, then green; an ask shown in several places is one ask, answered everywhere at once. Answering
 // sets its task working, in the window's sidebar and on the control bar. The window opens a task's conversation from
 // the sidebar and takes messages; the control bar's marks open their task in the inbox beside it.
-import checkIcon from "../../../apps/macos/Resources/nucleo/check-outline.svg?raw";
+import checkIcon from "../icons/check-outline.svg?raw";
 
 // Shorter than the app's 2 s default (Settings › Composer and inbox), so the demo doesn't keep you waiting.
 const TAKE_BACK_MS = 1000;
@@ -202,7 +202,7 @@ if (win) {
     conversation(open).dataset.state = "stopped";
     append(
       open,
-      `<div class="flex items-center gap-[7px] text-[12.5px] text-muted"><span>Stopped</span></div>`
+      `<div class="flex items-center gap-[7px] text-[13px] text-muted"><span>Stopped</span></div>`
     );
     input.placeholder = placeholder(open);
     buttons();
@@ -240,7 +240,7 @@ if (win) {
   const bubble = (text: string) =>
     `<div class="self-end max-w-[78%] rounded-[18px] bg-knob text-on-knob px-3.5 py-3 text-pretty">${escape(text)}</div>`;
   const step = (text: string) =>
-    `<div class="flex items-center gap-[7px] text-[12.5px] text-muted"><span class="text-blue">${spinner(11)}</span><span class="truncate">${escape(text)}</span></div>`;
+    `<div class="flex items-center gap-[7px] text-[13px] text-muted"><span class="text-blue">${spinner(11)}</span><span class="truncate">${escape(text)}</span></div>`;
 
   for (const row of win.querySelectorAll<HTMLElement>("[data-open-task]"))
     row.addEventListener("click", () => show(row.dataset.openTask!));
