@@ -3,13 +3,17 @@ import ZeroCore
 
 // Settings › MCP servers: servers set up once in Zero and given to every task's CLI (Claude Code, Codex, OpenCode) as
 // it starts, on top of the CLI's own; each for every workspace or only those it's put in. A value (an API key, a
-// header) is kept in the Keychain unless said otherwise. Below them, Claude Code's own (read from its config), with a
-// Sign in for one that needs it: Claude Code's own sign-in, run by zerod.
+// header) is kept in the Keychain unless said otherwise. Below them, Claude Code's and Codex's own (read from their
+// config), with a Sign in for one of Claude Code's that needs it (its own sign-in, run by zerod), and "Manage in Zero"
+// for a local one: moved into Zero's list, started when first used (McpHandOver), and given back from its Edit.
 
 struct McpServersPage: View {
     let workspace: Workspace?
     @State private var editing: ZerodLink.McpServer?
     @State private var claudes: [ClaudeMcpServers.Server] = []
+    @State private var codexes: [ClaudeMcpServers.Server] = []
+    /// The CLI server whose "Manage in Zero" is being confirmed.
+    @State private var moving: ClaudeMcpServers.Server?
     /// Servers whose sign-in page was opened: waiting for Claude Code to say they're signed in.
     @State private var signingIn: Set<String> = []
 
@@ -42,20 +46,25 @@ struct McpServersPage: View {
                     await workspace.loadMcpServers(); await workspace.loadWorkspaces()
                 }
                 .zeroDialog(item: $editing) { server in McpServerForm(server: server, workspace: workspace) }
-                if !claudes.isEmpty {
-                    SettingsSection(title: "Claude Code's servers") {
-                        VStack(spacing: 0) {
-                            ForEach(Array(claudes.enumerated()), id: \.element.id) { index, server in
-                                if index > 0 { Divider().padding(.leading, 18) }
-                                claudeRow(server, in: workspace)
+                .zeroDialog(item: $moving) { server in HandOverForm(server: server, workspace: workspace) }
+                // Back from a dialog that may have moved one either way: the CLIs' lists read again.
+                .onChange(of: editing == nil && moving == nil) { _, closed in if closed { Task { await readClis() } } }
+                ForEach([("Claude Code's servers", claudes), ("Codex's servers", codexes)], id: \.0) { title, servers in
+                    if !servers.isEmpty {
+                        SettingsSection(title: title) {
+                            VStack(spacing: 0) {
+                                ForEach(Array(servers.enumerated()), id: \.element.id) { index, server in
+                                    if index > 0 { Divider().padding(.leading, 18) }
+                                    claudeRow(server, in: workspace)
+                                }
                             }
+                            .bleedingCard()
                         }
-                        .bleedingCard()
                     }
                 }
             }
         }
-        .task { claudes = ClaudeMcpServers.list() }
+        .task { await readClis() }
         // While a sign-in's page is open, Claude Code's word on it is read again every two seconds.
         .task(id: signingIn) {
             while !signingIn.isEmpty, !Task.isCancelled {
@@ -66,7 +75,13 @@ struct McpServersPage: View {
         }
     }
 
-    /// One of Claude Code's own: read-only (`claude mcp` changes it), with its sign-in state.
+    private func readClis() async {
+        claudes = ClaudeMcpServers.list()
+        codexes = await CodexMcpServers.list()
+    }
+
+    /// One of a CLI's own: read-only (`claude mcp`, `codex mcp` change it), with its sign-in state, and Manage in Zero
+    /// for a local one.
     private func claudeRow(_ server: ClaudeMcpServers.Server, in workspace: Workspace) -> some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
@@ -88,6 +103,7 @@ struct McpServersPage: View {
                     }
                 }
             }
+            if server.movable { Button("Manage in Zero") { moving = server } }
         }
         .padding(.horizontal, 18).padding(.vertical, 10)
     }
@@ -138,6 +154,8 @@ private struct McpServerForm: View {
     @State private var secrets: [String: String] = [:]
     @State private var problem: String?
     @State private var everywhere = true
+    /// The CLI it was moved from by Manage in Zero, to give it back to.
+    private var origin: McpHandOver.Origin? { server.id.isEmpty ? nil : McpHandOver.origin(of: server.id) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -183,6 +201,13 @@ private struct McpServerForm: View {
                             await workspace.deleteMcpServer(server); dismiss()
                         }
                     }
+                }
+                if let origin {
+                    DialogButton(title: "Give back to \(origin.cli.title)") {
+                        let saved = workspace.mcpServers.first { $0.id == server.id } ?? server
+                        Task { if let error = await workspace.giveBack(saved) { problem = error } else { dismiss() } }
+                    }
+                    .tip("Back in \(origin.cli.title)'s own config, out of Zero's list")
                 }
                 Spacer()
                 DialogButton(title: "Cancel") { dismiss() }
@@ -255,5 +280,52 @@ private struct McpServerForm: View {
         Task {
             if let error = await workspace.saveMcpServer(server, secrets: typed) { problem = error } else { dismiss() }
         }
+    }
+}
+
+/// "Manage in Zero" confirmed: what changes (the CLI in a plain terminal loses it), where its values go, then the move.
+private struct HandOverForm: View {
+    let server: ClaudeMcpServers.Server
+    let workspace: Workspace
+    @Environment(\.closeDialog) private var dismiss
+    @State private var inFile = false
+    @State private var problem: String?
+    @State private var moving = false
+
+    var body: some View {
+        let cli = server.cli.title
+        VStack(alignment: .leading, spacing: 14) {
+            DialogTitle(text: "Manage \(server.name) in Zero")
+            note(
+                "Zero gives it to every task's CLI and starts it when a task first calls it, not as each task starts. "
+                    + "It's taken out of \(cli)'s own config, so \(cli) in a plain terminal won't have it any more. "
+                    + "Its Edit in Zero's list gives it back.")
+            if let project = server.project {
+                note("It was only in \((project as NSString).lastPathComponent); in Zero it's for every workspace until you choose some.")
+            }
+            if !server.env.isEmpty {
+                DialogPart(title: "Its environment: " + server.env.keys.sorted().joined(separator: ", ")) {
+                    DialogChoice(options: [("Keychain", false), ("Zero's file", true)], selection: $inFile)
+                }
+            }
+            if let problem { Text(problem).font(.system(size: 12)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
+            HStack {
+                Spacer()
+                DialogButton(title: "Cancel") { dismiss() }
+                DialogButton(title: moving ? "Moving…" : "Manage in Zero", kind: .primary, enabled: !moving) {
+                    moving = true
+                    Task {
+                        problem = await workspace.manageInZero(server, inFile: inFile)
+                        moving = false
+                        if problem == nil { dismiss() }
+                    }
+                }
+            }
+        }
+        .frame(width: 460)
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text).font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
 }

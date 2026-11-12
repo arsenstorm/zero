@@ -16,7 +16,7 @@ struct SettingsView: View {
     var showOnboarding: () -> Void = {}
 
     enum Page: String, CaseIterable, Identifiable {
-        case general = "General", controlBar = "Control bar", composer = "Composer and inbox", devices = "Phone"
+        case general = "General", controlBar = "Control bar", composer = "Composer and inbox", devices = "Phone", health = "Health"
         case agents = "Agents", signins = "Accounts", mcp = "MCP servers", chrome = "Browsers"
         case workspaces = "Workspaces", projects = "Folders", git = "Git", links = "Links", events = "Following"
         var id: String { rawValue }
@@ -27,6 +27,7 @@ struct SettingsView: View {
             case .controlBar: "layout-top"
             case .composer: "inbox"
             case .devices: "mobile"
+            case .health: "shield"
             case .agents: "robot"
             case .signins: "circle-user"
             case .mcp: "plug"
@@ -41,7 +42,7 @@ struct SettingsView: View {
         /// General leads on its own, where Home's New task is, so switching between the two moves no row. Then the
         /// app itself, what agents run with, and how the work is laid out.
         static let groups: [(String, [Page])] = [
-            ("App", [.controlBar, .composer, .devices]), ("Agents", [.agents, .signins, .mcp, .chrome]),
+            ("App", [.controlBar, .composer, .devices, .health]), ("Agents", [.agents, .signins, .mcp, .chrome]),
             ("Work", [.workspaces, .projects, .git, .links, .events]),
         ]
     }
@@ -87,6 +88,7 @@ struct SettingsView: View {
         case .controlBar: ControlBarPage(settings: settings, store: store, inbox: inbox, workspace: workspace)
         case .composer: ComposerPage(settings: settings)
         case .devices: DevicesPage()
+        case .health: HealthPage()
         case .agents: AgentsPage()
         case .projects: FoldersPage(settings: settings, inbox: inbox)
         case .git: GitPage()
@@ -555,6 +557,7 @@ private struct GeneralPage: View {
                     SettingRow(title: "Launch Zero at login", detail: "So agents can always reach you.") {
                         Switch(isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
                     }
+                    ZerodAgentRow()
                     SettingRow(title: "Talk hotkey", detail: "Opens the inbox and starts dictation.") {
                         HotKeyRecorder(settings: settings, minWidth: nil)
                     }
@@ -772,6 +775,7 @@ private struct AgentsPage: View {
                     ) {
                         SubagentsSwitch()
                     }
+                    BuildCacheRow()
                     SettingRow(
                         title: "Compact context at",
                         detail:
@@ -830,6 +834,38 @@ private struct SubagentsSwitch: View {
                 })
         )
         .task { if let kept = try? await link?.subagents() { on = kept } }
+    }
+}
+
+/// Whether agents' builds share a compile cache, with what this Mac has for it: Zero passes the tools, never installs
+/// them. zerod's setting, read as each agent starts.
+private struct BuildCacheRow: View {
+    @State private var on = false
+    @State private var tools: [(tool: String, use: String, found: Bool)] = []
+    @State private var link = try? ZerodLink()
+
+    var body: some View {
+        SettingRow(title: "Shared build cache", detail: detail) {
+            Switch(
+                isOn: Binding(
+                    get: { on },
+                    set: { chosen in
+                        on = chosen
+                        Task { try? await link?.setBuildCache(chosen) }
+                    })
+            )
+        }
+        .task {
+            guard let kept = try? await link?.buildCache() else { return }
+            on = kept.on
+            tools = kept.tools
+        }
+    }
+
+    private var detail: String {
+        let found = tools.map { $0.found ? "\($0.use) through \($0.tool)." : "\($0.use) needs \($0.tool): brew install \($0.tool)." }
+        return (["Agents' copies of a project reuse each other's compiled dependencies. From each task's next start."] + found)
+            .joined(separator: " ")
     }
 }
 

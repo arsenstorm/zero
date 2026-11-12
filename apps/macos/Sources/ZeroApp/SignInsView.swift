@@ -327,6 +327,9 @@ struct UsageMeter: View {
 /// height, whatever runs.
 struct TasksUseCard: View {
     let workspace: Workspace
+    /// Opens a task by its session (MemoryNotice's links).
+    var open: (String) -> Void = { _ in }
+    @State private var showingLeft = false
 
     var body: some View {
         let uses = workspace.uses
@@ -335,18 +338,41 @@ struct TasksUseCard: View {
         let heaviest = uses.sorted { $0.value.memory > $1.value.memory }.prefix(3).map { id, use in
             "\(workspace.conversation(id).map(Workspace.label(of:)) ?? id) \(TaskDetails.bytes(use.memory))"
         }
-        HStack(spacing: 6) {
-            NucleoIcon("server", size: 12).frame(width: 12, height: 12)
-            Text("Tasks").font(.system(size: 12, weight: .medium))
-            Spacer(minLength: 4)
-            Text(uses.isEmpty ? "None running" : "\(TaskDetails.bytes(memory)) · \(Int(cpu.rounded()))% CPU")
-                .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit().lineLimit(1).fixedSize()
+        VStack(alignment: .leading, spacing: 8) {
+            // While memory is short, in this card rather than one of its own: one card for what tasks use.
+            if let shortage = MemoryWatch.shared.shortage {
+                MemoryNotice(shortage: shortage, workspace: workspace, open: open) { showingLeft = true }
+                Rectangle().fill(Theme.hairline).frame(height: 1)
+            }
+            HStack(spacing: 6) {
+                NucleoIcon("server", size: 12).frame(width: 12, height: 12)
+                Text("Tasks").font(.system(size: 12, weight: .medium))
+                Spacer(minLength: 4)
+                Text(uses.isEmpty ? "None running" : "\(TaskDetails.bytes(memory)) · \(Int(cpu.rounded()))% CPU")
+                    .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit().lineLimit(1).fixedSize()
+            }
+            .tip(heaviest.isEmpty ? "" : "Most memory: " + heaviest.joined(separator: " · "))
+            // What tasks that are done, archived or quiet left running (zerod's left.rs): a quiet line that opens it.
+            let settled = workspace.left.values.filter(\.settled)
+            if !settled.isEmpty {
+                Button {
+                    showingLeft = true
+                } label: {
+                    HStack(spacing: 6) {
+                        NucleoIcon("power-off", size: 12).frame(width: 12, height: 12)
+                        Text(LeftRunningLook.summary(Array(settled))).font(.system(size: 11)).monospacedDigit().lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(.secondary).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).tip("Left running by tasks that are done, archived or quiet")
+            }
         }
+        .zeroDialog(isPresented: $showingLeft) { LeftRunningDialog(workspace: workspace) }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.card, in: RoundedRectangle(cornerRadius: UsageFooter.radius))
         .overlay(RoundedRectangle(cornerRadius: UsageFooter.radius).strokeBorder(Theme.stroke))
-        .tip(heaviest.isEmpty ? "" : "Most memory: " + heaviest.joined(separator: " · "))
     }
 }
 

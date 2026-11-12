@@ -69,6 +69,9 @@ public final class Workspace {
     /// What each running task's processes use (zerod's uses.rs), by session; a parked task isn't in it.
     public private(set) var uses: [String: TaskUses] = [:]
 
+    /// What tasks left running (zerod's left.rs), by session, archived tasks' too; one with nothing left isn't in it.
+    public private(set) var left: [String: LeftRunning] = [:]
+
     /// Every task at once (crates/zerod/src/board.rs), while the window shows it.
     public private(set) var board: [BoardRow] = []
     private var rawBoard: [BoardRow] = []
@@ -240,6 +243,7 @@ public final class Workspace {
                         case .restarting: self?.followUpdate()
                         case .clear: break
                         case let .uses(tasks): if self?.uses != tasks { self?.uses = tasks }
+                        case let .left(tasks): if self?.left != tasks { self?.left = tasks }
                         }
                     }
                 }
@@ -335,6 +339,16 @@ public final class Workspace {
         putAway.insert(id)
         _ = await attempt { try await $0.archive(session: id) }
         await refreshBoard()
+    }
+
+    /// Stops what a task left running: the things named, else all of it. They leave the list at once.
+    public func stopLeft(_ id: String, things: [String]? = nil) async {
+        if var task = left[id] {
+            let kept = task.things.filter { thing in things.map { !$0.contains(thing.id) } ?? false }
+            task = LeftRunning(task: task.task, archived: task.archived, settled: task.settled, things: kept)
+            left[id] = kept.isEmpty ? nil : task
+        }
+        _ = await attempt { try await $0.stopLeft(session: id, things: things) }
     }
 
     /// The tasks archived, newest first, each with how many workers went with it.

@@ -81,6 +81,9 @@ import ZeroCore
         NSApp.setActivationPolicy(.accessory)
         Task { await Linear.shared.refresh() }
         Task { await CustomModels.shared.load() }
+        HealthMonitor.shared.start()
+        // Before connecting: launchd starts zerod, rather than the app (ZerodLink.ensureRunning).
+        ZerodAgent.register()
         connectStore()
         connectWorkspace()
         connectInbox()

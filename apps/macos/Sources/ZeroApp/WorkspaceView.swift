@@ -190,9 +190,12 @@ private struct ArchiveDialog: View {
     let id: String
     let leaving: () -> Void
     @Environment(\.closeDialog) private var close
+    /// What it and its workers left running is stopped as it's archived, unless unticked.
+    @State private var stopLeft = true
 
     var body: some View {
         let workers = workspace.team(of: id).count
+        let left = ([id] + workspace.team(of: id).map(\.id)).compactMap { session in workspace.left[session].map { (session, $0) } }
         let name = workspace.conversation(id).map { "\u{201C}\(Workspace.label(of: $0))\u{201D}" } ?? "this task"
         VStack(alignment: .leading, spacing: 6) {
             DialogTitle(
@@ -201,18 +204,46 @@ private struct ArchiveDialog: View {
             .fixedSize(horizontal: false, vertical: true)
             Text("Bring \(workers == 0 ? "it" : "them") back from Archived tasks.")
                 .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if !left.isEmpty {
+                leftRunning(left)
+            }
             HStack(spacing: 8) {
                 Spacer()
                 DialogButton(title: "Cancel") { close() }
                 DialogButton(title: "Archive", kind: .primary) {
                     close()
                     leaving()
-                    Task { await workspace.archive(id) }
+                    let stopping = stopLeft ? left.map(\.0) : []
+                    Task {
+                        for session in stopping { await workspace.stopLeft(session) }
+                        await workspace.archive(id)
+                    }
                 }
             }
             .padding(.top, 12)
         }
         .frame(width: 380, alignment: .leading)
+    }
+
+    /// What it left running (zerod's left.rs), and whether to stop it too.
+    private func leftRunning(_ left: [(String, LeftRunning)]) -> some View {
+        let things = left.flatMap(\.1.things)
+        return VStack(alignment: .leading, spacing: 6) {
+            Toggle("Stop what \(left.count > 1 ? "they" : "it") left running too", isOn: $stopLeft).toggleStyle(.dialogCheckbox)
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(things) { thing in
+                    HStack(spacing: 7) {
+                        NucleoIcon(LeftRunningLook.icon(thing.kind), size: 13).frame(width: 14, height: 14)
+                        Text(thing.name).lineLimit(1).truncationMode(.middle)
+                        Spacer(minLength: 4)
+                        if thing.memory > 0 { Text(TaskDetails.bytes(thing.memory)).monospacedDigit() }
+                    }
+                }
+            }
+            .font(.system(size: 12)).foregroundStyle(.secondary)
+            .padding(.leading, 24)
+        }
+        .padding(.top, 8)
     }
 }
 
@@ -305,8 +336,17 @@ private struct Rail: View {
             }
             Spacer()
             item("puzzle-piece", selected: place == .integrations, help: "Integrations") { place = .integrations }
-            item("gear", selected: place == .settings, help: "Settings", shortcut: "⌘,") { place = .settings }
-                .keyboardShortcut(",", modifiers: .command)
+            // Zero's own trouble (HealthMonitor), said quietly: a dot on Settings, which then opens on Health.
+            let trouble = HealthMonitor.shared.trouble
+            let help = trouble ? "Settings · Health has something to look at" : "Settings"
+            item("gear", selected: place == .settings, help: help, shortcut: "⌘,") {
+                if trouble { SettingsView.requested = .health }
+                place = .settings
+            }
+            .overlay(alignment: .topTrailing) {
+                Circle().fill(.orange).frame(width: 6, height: 6).padding(6).opacity(trouble ? 1 : 0).allowsHitTesting(false)
+            }
+            .keyboardShortcut(",", modifiers: .command)
         }
         .padding(.top, 50).padding(.bottom, 12)
         .frame(width: 48)

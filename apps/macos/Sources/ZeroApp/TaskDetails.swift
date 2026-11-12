@@ -30,7 +30,7 @@ struct TaskDetails: View {
     var body: some View {
         // Its properties, then its issues and its workers.
         VStack(alignment: .leading, spacing: 0) {
-            properties; issues; workers
+            properties; issues; workers; leftRunning
         }.padding(16)
             .frame(width: 280, alignment: .leading)
             .frame(maxHeight: docked ? .infinity : nil, alignment: .top)
@@ -233,6 +233,25 @@ struct TaskDetails: View {
                 .thinScrollbar()
                 .frame(maxHeight: allWorkers ? 360 : .infinity)
                 .fixedSize(horizontal: false, vertical: !allWorkers)
+            }
+            .font(.system(size: 12.5))
+        }
+    }
+
+    /// What its commands left running (zerod's left.rs): a dev server, a simulator, containers; each with Stop.
+    @ViewBuilder private var leftRunning: some View {
+        if let left = workspace.left[conversation.id] {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Left running").foregroundStyle(.secondary)
+                    Spacer()
+                    if left.things.count > 1 {
+                        Button("Stop all") { Task { await workspace.stopLeft(conversation.id) } }.buttonStyle(.plain).foregroundStyle(
+                            .secondary)
+                    }
+                }
+                .padding(.top, 14).padding(.bottom, 2)
+                LeftRunningRows(workspace: workspace, session: conversation.id, things: left.things)
             }
             .font(.system(size: 12.5))
         }

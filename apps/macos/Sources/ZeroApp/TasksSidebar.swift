@@ -419,7 +419,14 @@ struct TasksSidebar: View {
         } else {
             // In from the sidebar's edges by its inset (the column pads its content 10 at the sides, none below).
             VStack(spacing: UsageFooter.inset) {
-                TasksUseCard(workspace: workspace)
+                TasksUseCard(workspace: workspace) { id in
+                    // A worker opens under its lead, as its row does.
+                    if let lead = workspace.conversation(id)?.parent {
+                        place = .task(lead); navigation.worker = id
+                    } else {
+                        place = .task(id)
+                    }
+                }
                 UsageFooter(workspace: workspace) {
                     SettingsView.requested = .signins; place = .settings
                 }

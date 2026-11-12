@@ -58,6 +58,8 @@ bundle: build
 	cp target/release/zerod $(APP)/Contents/MacOS/zerod
 	cp $(MACOS)/Resources/Info.plist $(APP)/Contents/Info.plist
 	cp $(MACOS)/Resources/install.sh $(APP)/Contents/Resources/install.sh
+	mkdir -p $(APP)/Contents/Library/LaunchAgents
+	cp $(MACOS)/Resources/com.arsen.zero.zerod.plist $(APP)/Contents/Library/LaunchAgents/
 	cp $(MACOS)/Resources/icons/*.png $(APP)/Contents/Resources/
 	cd $(MACOS)/Resources && cp AppIcon.icns logo/menubar.png logo/menubar@2x.png logo/mark.svg logo/mark-small.svg $(CURDIR)/$(APP)/Contents/Resources/
 	@echo "Icons: $(ICONS), from $(ICONS_DIR)"

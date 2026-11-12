@@ -356,6 +356,28 @@ public struct IntegrationTag: Codable, Equatable, Sendable, Hashable {
 /// One row of the board (crates/zerod/src/board.rs): a lead session with its workers folded in.
 /// What a running task's processes use (zerod's uses.rs): its CLI, the MCP servers it started with, and the commands
 /// it runs, each with what they started.
+/// What a task left running (zerod's left.rs): processes its commands started that outlived them, a simulator it
+/// booted, containers it brought up. `settled`: the task is done, archived, or has been quiet half an hour, when what
+/// it left is worth pointing out.
+public struct LeftRunning: Decodable, Equatable, Sendable {
+    public struct Thing: Decodable, Equatable, Sendable, Identifiable {
+        public enum Kind: String, Decodable, Sendable { case process, simulator, container }
+        public let id: String
+        public let kind: Kind
+        public let name: String
+        /// Milliseconds since 1970.
+        public let since: Int64
+        /// Bytes.
+        public let memory: UInt64
+        public let cpu: Double
+    }
+    public let task: String
+    public let archived: Bool
+    public let settled: Bool
+    public let things: [Thing]
+    public var memory: UInt64 { things.reduce(0) { $0 + $1.memory } }
+}
+
 public struct TaskUses: Decodable, Equatable, Sendable {
     public struct Part: Decodable, Equatable, Sendable {
         /// Bytes of physical footprint.
@@ -952,6 +974,8 @@ public final class ZerodLink: @unchecked Sendable {
         case clear([String])
         /// What each running task's processes use, whenever it changes enough to show.
         case uses([String: TaskUses])
+        /// What tasks left running, whenever it changes enough to show.
+        case left([String: LeftRunning])
     }
 
     /// The board and notices, on the link's reading thread.
@@ -1057,6 +1081,10 @@ public final class ZerodLink: @unchecked Sendable {
     }
     /// Puts the task away: out of the list, its files kept in zerod's archive/.
     public func archive(session: String) async throws { _ = try await call("archive", ["session": session]) }
+    /// Stops what a task left running: the things named, else all of it. Only what zerod recorded as the task's.
+    public func stopLeft(session: String, things: [String]?) async throws {
+        _ = try await call("stopLeft", ["session": session, "args": things.map { ["things": $0] }])
+    }
 
     /// A task put away itself (not with its lead), as the archive lists it.
     public struct Archived: Decodable, Equatable, Sendable, Identifiable {
@@ -1229,6 +1257,15 @@ public final class ZerodLink: @unchecked Sendable {
         ((try await call("settings")) as? [String: Any])?["subagents"] as? Bool ?? false
     }
     public func setSubagents(_ on: Bool) async throws { _ = try await call("configure", ["subagents": on]) }
+    /// Whether agents' builds share a compile cache, and each supported tool with whether it's installed.
+    public func buildCache() async throws -> (on: Bool, tools: [(tool: String, use: String, found: Bool)]) {
+        let settings = (try await call("settings")) as? [String: Any]
+        let tools = (settings?["buildCacheTools"] as? [[String: Any]] ?? []).map {
+            (tool: $0["tool"] as? String ?? "", use: $0["for"] as? String ?? "", found: $0["found"] as? Bool ?? false)
+        }
+        return (settings?["buildCache"] as? Bool ?? false, tools)
+    }
+    public func setBuildCache(_ on: Bool) async throws { _ = try await call("configure", ["buildCache": on]) }
     /// The context size, in tokens, agents compact at; nil, the CLIs' own.
     public func compactWindow() async throws -> Int? {
         (((try await call("settings")) as? [String: Any])?["compactWindow"] as? Int).flatMap { $0 > 0 ? $0 : nil }
@@ -1782,6 +1819,7 @@ public final class ZerodLink: @unchecked Sendable {
     private struct Snapshot: Decodable { let conversation: Conversation; let earlier: Int? }
     private struct BoardFeed: Decodable { let rows: [BoardRow] }
     private struct UsesFeed: Decodable { let tasks: [String: TaskUses] }
+    private struct LeftFeed: Decodable { let tasks: [String: LeftRunning] }
     private struct Asks: Decodable { let asks: [Ask]; let offline: Set<String>; let reachable: Set<String> }
     private struct OneAsk: Decodable { let ask: Ask }
     private struct Output: Decodable { let ask: String; let chunk: String }
@@ -1821,6 +1859,10 @@ public final class ZerodLink: @unchecked Sendable {
                 if event == "restarting" { onFeed?(.restarting); continue }
                 if event == "uses" {
                     if let tasks = try? JSONDecoder().decode(UsesFeed.self, from: data).tasks { onFeed?(.uses(tasks)) }
+                    continue
+                }
+                if event == "left" {
+                    if let tasks = try? JSONDecoder().decode(LeftFeed.self, from: data).tasks { onFeed?(.left(tasks)) }
                     continue
                 }
                 if event == "clear" { onFeed?(.clear((try? JSONDecoder().decode(Cleared.self, from: data))?.ids ?? [])); continue }
@@ -1865,8 +1907,19 @@ public final class ZerodLink: @unchecked Sendable {
         return FileManager.default.isExecutableFile(atPath: sibling) ? sibling : "/Applications/Zero.app/Contents/MacOS/zerod"
     }
 
-    /// The installed daemon, started if it isn't running.
-    public static func ensureRunning() async -> Bool { await launch(binary: executable, home: home, socket: socket) }
+    /// The installed daemon, started if it isn't running: by launchd when it's Zero's LaunchAgent (ZerodAgent), else here.
+    public static func ensureRunning() async -> Bool {
+        if answers(socket) { return true }
+        #if os(macOS)
+            if ZerodAgent.state == .on, ZerodAgent.kickstart() {
+                for _ in 0..<30 {
+                    try? await Task.sleep(for: .milliseconds(100))
+                    if answers(socket) { return true }
+                }
+            }
+        #endif
+        return await launch(binary: executable, home: home, socket: socket)
+    }
 
     /// Starts `binary` on `socket` unless a daemon already answers there, and waits up to three seconds for it.
     /// zerod leaves the app's session at start (setsid), so it keeps running when the app quits.

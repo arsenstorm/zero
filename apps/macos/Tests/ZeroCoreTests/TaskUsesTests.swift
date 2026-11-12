@@ -9,3 +9,13 @@ import Testing
     #expect(uses.memory == 1_250_000_000)
     #expect(uses.cpu == 14)
 }
+
+/// What a task left running as zerod sends it (left.rs): its things, and what they hold together.
+@Test func leftRunningReadsAsZerodSendsIt() throws {
+    let json =
+        #"{"task":"Site","archived":true,"settled":true,"things":[{"id":"p1-2","kind":"process","name":"node astro dev","since":1000,"memory":300000000,"cpu":0.5},{"id":"simulator-A","kind":"simulator","name":"iPhone 18 Pro","since":2000,"memory":2000000000,"cpu":0.0}]}"#
+    let left = try JSONDecoder().decode(LeftRunning.self, from: Data(json.utf8))
+    #expect(left.things.map(\.kind) == [.process, .simulator])
+    #expect(left.memory == 2_300_000_000)
+    #expect(left.settled && left.archived)
+}
