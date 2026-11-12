@@ -352,7 +352,19 @@ final class RevealView: NSView {
         guard NSMaxRange(visible) > start else { return }
         let characters = layout.characterRange(
             forGlyphRange: NSRange(location: start, length: NSMaxRange(visible) - start), actualGlyphRange: nil)
-        covers(pieces(characters) + cells(after: shown, through: NSMaxRange(characters))).forEach(rest.addSublayer)
+        // And all below the text being read, to the view's foot: the room after it, where the next block (a code
+        // block's panel) can start, stays hidden until that block is read.
+        let depth = depth()
+        let origin = text.textContainerOrigin
+        let reading = layout.lineFragmentUsedRect(forGlyphAt: start, effectiveRange: nil)
+        let before = layout.lineFragmentUsedRect(forGlyphAt: max(0, start - 1), effectiveRange: nil)
+        let foot = (reading.minY + origin.y < depth ? reading.maxY : before.maxY) + origin.y
+        // Not in a table: the cells beside the one being read can run below it, read already (cells(after:through:)).
+        let inTable =
+            !((storage.attribute(.paragraphStyle, at: shown, effectiveRange: nil) as? NSParagraphStyle)?.textBlocks.isEmpty ?? true)
+        let below = inTable ? CGRect.zero : CGRect(x: 0, y: foot, width: max(bounds.width, width), height: max(0, depth - foot))
+        covers(pieces(characters) + cells(after: shown, through: NSMaxRange(characters)) + [(below, panel(at: shown))])
+            .forEach(rest.addSublayer)
     }
 
     /// A table's cells not yet read, by their own rectangles (side by side, one cell's lines run below the line being
@@ -399,7 +411,7 @@ final class RevealView: NSView {
         let origin = text.textContainerOrigin
         let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
         let right = max(bounds.width, width)
-        layout.enumerateLineFragments(forGlyphRange: glyphs) { line, _, _, lineGlyphs, _ in
+        layout.enumerateLineFragments(forGlyphRange: glyphs) { line, used, _, lineGlyphs, _ in
             let first = max(glyphs.location, lineGlyphs.location)
             let last = min(NSMaxRange(glyphs), NSMaxRange(lineGlyphs))
             guard last > first else { return }
@@ -411,7 +423,9 @@ final class RevealView: NSView {
                 ? (line.maxX >= container.size.width - 1 ? right - origin.x : line.maxX)
                 : line.minX + layout.location(forGlyphAt: last).x
             let top = line.minY == 0 ? 0 : line.minY + origin.y
-            let rect = CGRect(x: from + origin.x, y: top, width: max(0, to - from), height: line.maxY + origin.y - top)
+            // Down to its text's foot, not the room after the line: a code block's panel starts in that room, above its
+            // first line, and words read on the line before showed a strip of the panel under them.
+            let rect = CGRect(x: from + origin.x, y: top, width: max(0, to - from), height: used.maxY + origin.y - top)
             pieces.append((rect, self.panel(at: layout.characterIndexForGlyph(at: first))))
         }
         return pieces

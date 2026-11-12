@@ -941,7 +941,10 @@ struct ConversationView: View {
     }
 
     private var composer: some View {
-        let busy = conversation.status == .working || conversation.status == .waiting
+        // Working as the page shows it: its turn may have ended at zerod while its answer is still being read out here
+        // (a couple of seconds behind), and the composer offered Reply and Send over an answer still coming in.
+        let working = conversation.status == .working || conversation.status == .waiting
+        let busy = working || !playback.caughtUp
         // What the page shows: the last turn still reading out, the next (a queued message zerod sent on) not on the
         // page yet, the composer says what the heading says (Reply, no stop) until that message moves in. Return still
         // queues meanwhile, as zerod is at it.
@@ -955,7 +958,8 @@ struct ConversationView: View {
                 }), placeholder: placeholder, canSend: conversation.status != .starting, folder: conversation.cwd, workspace: workspace,
             images: $images, active: active,
             stop: shownBusy && conversation.terminal == nil ? { Task { await workspace.interrupt(conversation.id) } } : nil,
-            queue: busy && conversation.terminal == nil
+            // Queued only while the agent is at it: a message sent as the last words read out goes straight to it.
+            queue: working && conversation.terminal == nil
                 ? {
                     // Return while it works: the message waits for after this turn, in the strip above.
                     let (text, attached) = ImageToken.outgoing(draft, images: images.map(\.path))
@@ -1112,7 +1116,11 @@ struct ConversationView: View {
     }
 
     private var placeholder: String {
-        switch conversation.status {
+        // Its answer still being read out here, though zerod's turn has ended: as the page reads, still at it.
+        if !playback.caughtUp, conversation.status == .idle {
+            return conversation.provider == .opencode ? "OpenCode answers one message at a time" : "Steer it while it works"
+        }
+        return switch conversation.status {
         case .offline: "Message to resume it"
         // Its next turn not on the page yet (the last still reading out): as the page reads.
         case .working, .waiting:
