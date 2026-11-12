@@ -174,10 +174,21 @@ struct TaskStateIcon: View {
     var top: CGFloat = 0
     @ObservationIgnored private var pending: Task<Void, Never>?
     @ObservationIgnored var overCard = false
+    /// The task whose page is built hidden (TaskPages) after a shorter rest than the card's: a page takes ~50 ms to
+    /// build, done while the pointer rests rather than after the click. Gone as the pointer leaves or the card closes.
+    var next: String?
+    @ObservationIgnored private var building: Task<Void, Never>?
 
     func hover(_ session: String, top: CGFloat, inside: Bool) {
         pending?.cancel()
+        building?.cancel()
+        if !inside, next != nil { next = nil }
         if inside {
+            building = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(120))
+                guard !Task.isCancelled, let self, self.next != session else { return }
+                self.next = session
+            }
             // Open already: on to this row at once. Else after a rest, so passing over the list shows nothing.
             if self.session != nil { self.session = session; self.top = top; return }
             pending = Task { [weak self] in
@@ -195,7 +206,11 @@ struct TaskStateIcon: View {
         }
     }
 
-    func close() { pending?.cancel(); overCard = false; session = nil }
+    /// A click on a row closes it in the same update as the page opens: the page built for it stays, as the one shown.
+    func close() {
+        pending?.cancel(); building?.cancel(); overCard = false; session = nil
+        if next != nil { next = nil }
+    }
 }
 
 /// A task's details where the pointer rests on its row: its name, its own state, what it's doing, what it needs from

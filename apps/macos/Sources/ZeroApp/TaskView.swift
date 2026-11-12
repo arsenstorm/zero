@@ -15,11 +15,18 @@ struct TaskPages: View {
     let current: String
     @State private var recent: [String] = []
     /// Each in a hosting view of its own (PageHost), so kept pages cost a streamed update nothing: in one view graph,
-    /// every update of the window went through all of them (twice the cost at 8 pages).
-    private static let kept = 8
+    /// every update of the window went through all of them (twice the cost at 8 pages). 16, at 3–8 MB each: a switch
+    /// back to one is ~30 ms, a page built again ~120.
+    private static let kept = 16
 
     var body: some View {
-        let shown = recent.contains(current) ? recent : recent + [current]
+        let kept = recent.contains(current) ? recent : recent + [current]
+        // The task the pointer rests on in the sidebar, built hidden before its click (TaskPeek.next), so the click only
+        // shows it. A lead's only: a worker shows on its lead's page. Never in `recent` until clicked: unclicked, it goes.
+        let ahead = TaskPeek.shared.next.flatMap { id in
+            kept.contains(id) || workspace.conversation(id) == nil || workspace.conversation(id)?.parent != nil ? nil : id
+        }
+        let shown = kept + (ahead.map { [$0] } ?? [])
         ZStack {
             ForEach(shown, id: \.self) { id in
                 let active = id == current

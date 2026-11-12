@@ -31,7 +31,9 @@ enum RichMarkdown {
     }
 
     private static let rendered: NSCache<NSString, NSAttributedString> = {
-        let cache = NSCache<NSString, NSAttributedString>(); cache.countLimit = 500; return cache
+        // Every task's latest messages, styled ahead at launch (WorkspaceView): at 500, tasks past 20 or so evicted
+        // each other.
+        let cache = NSCache<NSString, NSAttributedString>(); cache.countLimit = 2000; return cache
     }()
 
     /// The text as rendered before, or rendered now and kept: a message that hasn't changed isn't parsed and styled

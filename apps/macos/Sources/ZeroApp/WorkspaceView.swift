@@ -72,10 +72,11 @@ struct WorkspaceView: View {
                 if let live = workspace.live(id) { await MarkdownText.warm(live.conversation) }
             }
             show()
-            // Then every other lead, behind the window: its rail and its styled words, so the first switch to it is as
-            // quick as the next.
-            for row in workspace.board.prefix(5) {
-                await workspace.outline(row.session)
+            // Then the other leads, behind the window: the first few's rails, and every one's styled words (off the
+            // main thread), so a first visit doesn't style them in its build, nor show a long answer plain and then
+            // restyle it taller once the page is up.
+            for (index, row) in workspace.board.enumerated() {
+                if index < 5 { await workspace.outline(row.session) }
                 if let live = workspace.live(row.session) { await MarkdownText.warm(live.conversation) }
             }
         }
