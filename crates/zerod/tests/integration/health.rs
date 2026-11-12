@@ -148,38 +148,6 @@ async fn waiting_on_arsen_is_not_stuck() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_command_running_for_half_an_hour_is_stuck_until_it_ends() {
-    let session = session(Provider::Codex);
-    let started = json!({"in": {"method": "item/started", "params": {"turnId": "u", "item": {"type": "commandExecution", "id": "c1",
-        "command": "bin/rails test", "cwd": "/w", "status": "inProgress", "commandActions": []}}}});
-    let (zero_side, runtime_side) = tokio::io::duplex(1 << 16);
-    let (read, write) = tokio::io::split(zero_side);
-    let (_runtime_read, mut runtime_write) = tokio::io::split(runtime_side);
-    use tokio::io::AsyncWriteExt;
-    let line = |v: &serde_json::Value| format!("{}\n", v);
-    runtime_write.write_all(line(&json!({"method": "turn/started", "params": {"turn": {"id": "u"}}})).as_bytes()).await.unwrap();
-    runtime_write.write_all(line(&started["in"]).as_bytes()).await.unwrap();
-    session.attach(zerod::session::Transport::new(read, write));
-    // Output keeps coming, so the agent isn't silent, but the command never ends.
-    for _ in 0..31 {
-        runtime_write
-            .write_all(
-                line(&json!({"method": "item/commandExecution/outputDelta", "params": {"turnId": "u", "itemId": "c1", "delta": "."}}))
-                    .as_bytes(),
-            )
-            .await
-            .unwrap();
-        wait_minutes(1).await;
-    }
-    assert_eq!(session.snapshot().stalled.as_deref(), Some("bin/rails test has been running for 30 minutes"));
-    let done = json!({"method": "item/completed", "params": {"turnId": "u", "item": {"type": "commandExecution", "id": "c1", "command": "bin/rails test",
-        "cwd": "/w", "status": "completed", "exitCode": 0, "commandActions": []}}});
-    runtime_write.write_all(line(&done).as_bytes()).await.unwrap();
-    wait_minutes(1).await;
-    assert_eq!(session.snapshot().stalled, None);
-}
-
-#[tokio::test(start_paused = true)]
 async fn the_same_command_five_times_in_a_row_is_stuck() {
     let session = session(Provider::Codex);
     let mut script = vec![json!({"in": {"method": "turn/started", "params": {"turn": {"id": "u"}}}})];

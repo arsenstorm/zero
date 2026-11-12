@@ -336,6 +336,33 @@ impl Daemon {
         self.crossed.lock().unwrap().retain(|(a, b), _| a != id && b != id);
     }
 
+    /// Stops a task's running command (the user's Stop it, or Zero's own per Settings › Stuck commands) and tells its
+    /// agent why: mid-turn at once, as the user's steering goes (Codex steers, Claude reads it after the failed call),
+    /// else between turns.
+    pub fn stop_command(&self, id: &str, item: &str) -> Result<(), String> {
+        let session = self.session(id)?;
+        let (command, note) = session.stop_command(item)?;
+        let note = note.unwrap_or_else(|| {
+            format!(
+                "The user stopped `{}` from Zero. Try another way, and run long commands in the background.",
+                crate::stuck::key(&command)
+            )
+        });
+        let words = crate::model::from_line("zero", &note);
+        let summary = session.summary();
+        if summary.status == Status::Working && summary.provider != Provider::Opencode {
+            tokio::spawn(async move {
+                let message = Message { text: &words, images: &[], context: None, sent: None };
+                if let Err(error) = session.send(message, ModelChoice::default()).await {
+                    session.report(&format!("Couldn't tell it why: {error}"))
+                }
+            });
+        } else {
+            self.tell(id, words)
+        }
+        Ok(())
+    }
+
     /// Zero's word for a session, between its turns (a parked one resumed for it), shown as Zero's, not the user's.
     pub fn tell_from_zero(&self, id: &str, words: &str) {
         if self.session(id).is_ok() {

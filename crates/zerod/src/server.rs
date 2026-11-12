@@ -198,6 +198,9 @@ pub struct Settings {
     /// Agents' builds share a compile cache (build_cache.rs); unset, they don't.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_cache: Option<bool>,
+    /// What Zero does about commands that look stuck (stuck.rs); unset, it tells the user.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stuck: Option<crate::stuck::Settings>,
 }
 
 /// A model the user added: for which CLI, the id it's started with (`--model`), and the name the picker shows.
@@ -251,6 +254,7 @@ impl Settings {
         crate::adapter::allow_subagents(self.allows_subagents());
         crate::adapter::set_compact_window(self.compact_window());
         crate::build_cache::set(self.shares_build_cache());
+        crate::stuck::set(self.stuck.clone().unwrap_or_default());
         if let (Some(drops), Some(patterns)) = (drops, &self.patterns) {
             drops.set_patterns(patterns.clone())
         }
@@ -325,6 +329,23 @@ pub fn know_workers(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
     }));
 }
 
+/// Asks linked to their task's conversation (about.rs): what each is about read from it, and the agent's answer to the
+/// user's words on one kept with it as its turn ends.
+pub fn link_asks(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
+    let weak = Arc::downgrade(daemon);
+    inbox.know_conversations(Box::new(move |session, all| {
+        let session = weak.upgrade()?.session(session).ok()?;
+        // ponytail: an anchor copies the whole conversation to search it; index headings if that shows.
+        Some(if all { session.items(None, None, usize::MAX) } else { session.recent(1).0.items })
+    }));
+    let inbox = Arc::downgrade(inbox);
+    daemon.when_ended(Box::new(move |conversation| {
+        if let Some(inbox) = inbox.upgrade() {
+            inbox.keep_reply(&conversation.items)
+        }
+    }));
+}
+
 /// A task with a blocking ask open (`zero ask --block`) hears nothing else until it's answered: the inbox tells the
 /// daemon which tasks those are.
 pub fn hold_while_blocked(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
@@ -337,6 +358,13 @@ pub fn hold_while_blocked(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
                 .any(|a| a.blocks && (a.agent.reference.as_deref() == Some(session) || a.agent.name == format!("zerod-{session}")))
         })
     }));
+}
+
+/// A turn ending waiting with a note saying on whom (`zero note --waiting`, `--needs`) isn't told nothing wakes it:
+/// the inbox tells the daemon which tasks those are.
+pub fn know_waiting_notes(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
+    let inbox = Arc::downgrade(inbox);
+    daemon.know_who(Box::new(move |conversation| inbox.upgrade().is_some_and(|inbox| crate::board::says_who(conversation, &inbox.asks()))));
 }
 
 /// How long a finished worker stays after its answer before it's put away, in seconds.
@@ -406,11 +434,10 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "release" | "resume" | "openTerminal" | "closeTerminal" | "rewindPreview" | "rewind" | "branch" | "switch" | "interrupt"
         | "stop" | "pause" | "unpause" => sessions::control(zerod, request).await,
         "send" | "queue" | "unqueue" | "notify" | "decide" | "answer" | "seen" | "introduce" => sessions::messages(zerod, request).await,
-        "label" | "setPermissions" | "placeInWorkspace" | "setStatus" | "attr" | "issue" | "table" | "place" => {
-            sessions::properties(zerod, request).await
-        }
+        "label" | "setPermissions" | "placeInWorkspace" | "setStatus" | "attr" | "issue" | "table" | "place" | "expect" | "stopCommand"
+        | "keepCommands" => sessions::properties(zerod, request).await,
         "hello" | "selfCheck" | "list" | "get" | "workers" | "result" | "wait" | "usage" | "board" | "recent" | "items" | "window"
-        | "outline" => sessions::reads(zerod, request).await,
+        | "outline" | "anchor" => sessions::reads(zerod, request).await,
         "browserCall"
         | "browsers"
         | "browserState"
@@ -529,6 +556,7 @@ fn configure(zerod: &Zerod, given: Settings) -> Result<Value, String> {
     settings.models = given.models.or(settings.models);
     settings.compact_window = given.compact_window.or(settings.compact_window);
     settings.build_cache = given.build_cache.or(settings.build_cache);
+    settings.stuck = given.stuck.or(settings.stuck);
     settings.apply_git(daemon.home());
     settings.apply(&zerod.inbox, zerod.drops.as_deref());
     let _ = std::fs::write(daemon.home().join("settings.json"), serde_json::to_vec_pretty(&settings).unwrap_or_default());

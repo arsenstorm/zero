@@ -171,13 +171,19 @@ impl Session {
         inner.core().at(at);
         inner.heard = Instant::now();
         let effects = inner.core().receive(&message);
+        inner.commands.timeouts(&message);
         for change in &effects.changes {
-            if let Change::Item { item } = change {
-                if item.status == ItemStatus::Running && matches!(item.kind, ItemKind::Command { .. }) {
+            match change {
+                Change::Item { item } if item.status == ItemStatus::Running && matches!(item.kind, ItemKind::Command { .. }) => {
                     inner.running.entry(item.id.clone()).or_insert_with(Instant::now);
-                } else {
-                    inner.running.remove(&item.id);
                 }
+                Change::Item { item } => {
+                    if let Some(started) = inner.running.remove(&item.id) {
+                        inner.commands.finished(item, started)
+                    }
+                }
+                Change::Delta { item, .. } if inner.running.contains_key(item) => inner.commands.printed(item),
+                _ => {}
             }
         }
         for change in &effects.changes {
@@ -250,21 +256,13 @@ impl Session {
         }
         let Some(core) = inner.core.as_ref() else { return true };
         let conversation = core.conversation();
-        let reason = if conversation.status != crate::model::Status::Working {
+        let working = conversation.status == crate::model::Status::Working;
+        let stuck = if working { Self::stuck_command(&mut inner) } else { None };
+        let Some(core) = inner.core.as_ref() else { return true };
+        let conversation = core.conversation();
+        let reason = if !working {
             None
         } else {
-            let longest = inner
-                .running
-                .iter()
-                .filter_map(|(id, started)| {
-                    let elapsed = started.elapsed();
-                    let command = match conversation.item(id).map(|i| &i.kind) {
-                        Some(ItemKind::Command { command, .. }) => command.clone(),
-                        _ => return None,
-                    };
-                    (elapsed >= LONG_COMMAND).then(|| format!("{command} has been running for {} minutes", elapsed.as_secs() / 60))
-                })
-                .next();
             // The same command again and again with nothing else between: counted in full, so the number grows as it goes
             // on. Another step between (a different tool, a file changed) is work, not a loop.
             let steps = conversation
@@ -282,15 +280,80 @@ impl Session {
                 }
             }
             let repeated = run.filter(|(_, n)| *n >= REPEATS).map(|(command, n)| format!("Ran {command} {n} times in a row"));
-            let silent = (inner.heard.elapsed() >= SILENT)
+            // While a command runs, the agent waits on it: the command is what's judged, not the agent's silence.
+            let silent = (inner.heard.elapsed() >= SILENT && inner.running.is_empty())
                 .then(|| format!("No word from {} for {} minutes", conversation.provider.title(), SILENT.as_secs() / 60));
-            longest.or(repeated).or(silent)
+            stuck.as_ref().map(|(_, s)| s.reason.clone()).or(repeated).or(silent)
         };
-        if reason != conversation.stalled {
-            let change = inner.core().change(Change::Stalled { reason });
+        let command = stuck.map(|(id, _)| id).filter(|_| reason.is_some());
+        if reason != conversation.stalled || command != conversation.stuck {
+            let change = inner.core().change(Change::Stalled { reason, command });
             inner.broadcast(vec![change]);
         }
         true
+    }
+
+    /// Each running command looked at: the first that looks stuck, by its item.
+    fn stuck_command(inner: &mut Inner) -> Option<(String, crate::stuck::Stuck)> {
+        let settings = crate::stuck::settings();
+        let conversation = inner.core.as_ref()?.conversation();
+        let turn = conversation.turn.clone();
+        let mut found = None;
+        let ids: Vec<(String, Instant)> = inner.running.iter().map(|(id, at)| (id.clone(), *at)).collect();
+        for (id, started) in ids {
+            let Some(ItemKind::Command { command, cwd, .. }) = inner.core.as_ref()?.conversation().item(&id).map(|i| i.kind.clone()) else {
+                continue;
+            };
+            let sampled = inner.pid.and_then(|pid| crate::stuck::sample(pid, &command));
+            let watch = inner.commands.seen.entry(id.clone()).or_insert_with(|| Watch { output: started, busy: started, cpu: None });
+            if let Some((cpu, _)) = sampled {
+                // More than a sliver of CPU since the last look: it's working.
+                if watch.cpu.is_some_and(|before| cpu > before + BUSY_NANOS) {
+                    watch.busy = Instant::now();
+                }
+                watch.cpu = Some(cpu);
+            }
+            let seen = crate::stuck::Seen {
+                elapsed: started.elapsed(),
+                idle: watch.output.max(watch.busy).elapsed(),
+                input: sampled.and_then(|(_, asking)| asking),
+            };
+            let said = inner.commands.said.clone().filter(|(at, _)| *at == turn).map(|(_, e)| e);
+            let expected = crate::stuck::expected(Path::new(&cwd), &command, said, inner.commands.timeouts.get(&id).copied());
+            if found.is_none()
+                && let Some(stuck) = crate::stuck::judge(&command, &seen, &expected, &settings)
+            {
+                found = Some((id, stuck));
+            }
+        }
+        inner.commands.stuck = found.clone();
+        found
+    }
+
+    /// Stops a running command of its own (stuck.rs terminate), so the tool call returns failed and the turn carries
+    /// on: its text, and what to tell the agent (why, when it looked stuck). Nothing else is ever stopped.
+    pub fn stop_command(&self, item: &str) -> Result<(String, Option<String>), String> {
+        let mut inner = self.lock();
+        if !inner.running.contains_key(item) || inner.commands.stopped.contains(item) {
+            return Err("That command isn't running".into());
+        }
+        let Some(ItemKind::Command { command, .. }) = inner.core().conversation().item(item).map(|i| i.kind.clone()) else {
+            return Err("That isn't a command".into());
+        };
+        let pid = inner.pid.ok_or("Its process isn't Zero's to stop")?;
+        if !crate::stuck::terminate(pid, &command) {
+            return Err("Its process isn't there to stop".into());
+        }
+        inner.commands.stopped.insert(item.to_string());
+        let note = inner.commands.stuck.as_ref().filter(|(id, _)| id == item).map(|(_, s)| s.note.clone());
+        Ok((command, note))
+    }
+
+    /// The agent's word on how long the step under way takes (`zero expect`): for the commands of its turn.
+    pub fn expect(&self, seconds: u64, what: &str) {
+        let mut inner = self.lock();
+        let turn = inner.core.as_ref().and_then(|c| c.conversation().turn.clone());
+        inner.commands.said = Some((turn, crate::stuck::Expected::Said { seconds, what: what.to_string() }));
     }
 
     // What the providers' flows use to talk to their runtime.
@@ -339,11 +402,69 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(60);
 /// ponytail: fixed; a setting per project if a suite legitimately runs longer.
 const SILENT: Duration = Duration::from_secs(10 * 60);
 
-const LONG_COMMAND: Duration = Duration::from_secs(30 * 60);
-
 const REPEATS: usize = 5;
 
 const WATCH_EVERY: Duration = Duration::from_secs(15);
+
+/// CPU between two looks (15 s apart) that counts as working: a third of a percent of a core.
+const BUSY_NANOS: u64 = 50_000_000;
+
+/// What's watched of a session's running commands, to tell one stuck (stuck.rs).
+#[derive(Default)]
+pub(super) struct Commands {
+    /// Each running command's last output, last CPU used and CPU time so far.
+    seen: HashMap<String, Watch>,
+    /// Their own timeouts, in seconds, where the CLI gives one (Claude's Bash `timeout`).
+    timeouts: HashMap<String, u64>,
+    /// The agent's word on what its turn's commands take (`zero expect`), with the turn it was said in.
+    said: Option<(Option<String>, crate::stuck::Expected)>,
+    /// Stopped by Zero: how long they ran says nothing of how long they take.
+    stopped: HashSet<String>,
+    /// The one that looks stuck, as last judged.
+    stuck: Option<(String, crate::stuck::Stuck)>,
+}
+
+struct Watch {
+    output: Instant,
+    busy: Instant,
+    cpu: Option<u64>,
+}
+
+impl Commands {
+    fn printed(&mut self, item: &str) {
+        if let Some(watch) = self.seen.get_mut(item) {
+            watch.output = Instant::now()
+        }
+    }
+
+    /// Claude's Bash calls with a timeout of their own.
+    fn timeouts(&mut self, message: &Value) {
+        if message["type"] != "assistant" {
+            return;
+        }
+        for block in message["message"]["content"].as_array().into_iter().flatten() {
+            if block["type"] == "tool_use"
+                && block["name"] == "Bash"
+                && let (Some(id), Some(ms)) = (block["id"].as_str(), block["input"]["timeout"].as_u64())
+            {
+                self.timeouts.insert(id.into(), ms.div_ceil(1000));
+            }
+        }
+    }
+
+    /// A command ended: how long it took kept for next time, unless Zero stopped it.
+    fn finished(&mut self, item: &Item, started: Instant) {
+        self.seen.remove(&item.id);
+        self.timeouts.remove(&item.id);
+        if self.stopped.remove(&item.id) {
+            return;
+        }
+        if let ItemKind::Command { command, cwd, duration_ms, .. } = &item.kind {
+            let took = duration_ms.and_then(|ms| u64::try_from(ms).ok()).map(Duration::from_millis).unwrap_or_else(|| started.elapsed());
+            crate::stuck::record(Path::new(cwd), command, took);
+        }
+    }
+}
 
 /// The two ends of a runtime's stdio, and its process when there is one: its handle, or (taken over from the zerod
 /// before) its pid; with the pipes' descriptors, so it can be handed to the next zerod in turn.

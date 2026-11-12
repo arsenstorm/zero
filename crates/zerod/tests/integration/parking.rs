@@ -97,6 +97,48 @@ async fn an_agent_waiting_on_someone_is_parked_too_unless_work_runs_in_its_backg
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_agent_that_asked_the_user_is_parked_too_unless_its_process_holds_the_question() {
+    // The answer comes as a message, which resumes it: no need to keep its process while the user is away. Not an
+    // approval its CLI holds open, which would die with the process.
+    let home = temp_dir("parking-asked");
+    let started = Arc::new(Mutex::new(vec![]));
+    let daemon = Daemon::open(&home.join("zerod"), silent(started.clone())).unwrap();
+    let cwd = home.to_str().unwrap();
+    let start = || daemon.start(Provider::Claude, "ask", Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
+    let (asked, approving) = (start(), start());
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    for id in [&asked, &approving] {
+        let session = daemon.session(id).unwrap();
+        session.change(Change::Item {
+            item: Item {
+                at: None,
+                id: "a1".into(),
+                turn: None,
+                kind: ItemKind::Agent { text: "Which one?\n\n[zero: asked k1]".into(), final_answer: true },
+                status: ItemStatus::Done,
+            },
+        });
+        session.change(Change::Status { status: Status::Idle, turn: None, error: None });
+    }
+    daemon.session(&approving).unwrap().change(Change::Approval {
+        approval: Approval {
+            id: "p1".into(),
+            item: None,
+            kind: ApprovalKind::Command,
+            title: "Run ls".into(),
+            command: Some("ls".into()),
+            cwd: None,
+            reason: None,
+            changes: vec![],
+            choices: vec![],
+        },
+    });
+    minutes(PARK_AFTER.as_secs() / 60 + 1).await;
+    assert!(!daemon.session(&asked).unwrap().is_attached(), "waiting on the user's answer, idle: parked");
+    assert!(daemon.session(&approving).unwrap().is_attached(), "its CLI holds the approval open");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_resumes_at_once_start_one_agent() {
     let home = temp_dir("parking-race");
     let user = home.join("user");

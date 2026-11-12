@@ -19,7 +19,7 @@ use crate::inbox::{Inbox, InboxEvent};
 pub async fn serve(zerod: Zerod, socket: PathBuf) -> std::io::Result<()> {
     let inbox = Arc::downgrade(&zerod.inbox);
     zerod.daemon.note_with(Box::new(move |id, text| match inbox.upgrade() {
-        Some(inbox) => super::sessions::with_open_asks(&inbox, id, text),
+        Some(inbox) => inbox.with_open_asks(id, text),
         None => text,
     }));
     let _ = std::fs::remove_file(&socket);

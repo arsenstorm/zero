@@ -158,7 +158,7 @@ impl Core {
         changes.extend(self.conversation.questions.iter().map(|q| Change::Answered { question: q.id.clone() }));
         changes.push(Change::Status { status: Status::Offline, turn: None, error: self.conversation.error.clone() });
         if self.conversation.stalled.is_some() {
-            changes.push(Change::Stalled { reason: None })
+            changes.push(Change::Stalled { reason: None, command: None })
         }
         self.apply(changes)
     }

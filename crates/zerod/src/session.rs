@@ -71,6 +71,8 @@ struct Inner {
     /// When the runtime last said anything, and when each command still running started.
     heard: Instant,
     running: HashMap<String, Instant>,
+    /// What's watched of those commands, to tell a stuck one (stuck.rs).
+    commands: process::Commands,
     /// Claude's last init recorded (its hash), without what changes every time: the same again isn't recorded.
     init: Option<u64>,
 }
@@ -157,6 +159,7 @@ impl Session {
                 generation: 0,
                 heard: Instant::now(),
                 running: HashMap::new(),
+                commands: Default::default(),
                 init: None,
             })));
             return Ok(session);
@@ -251,6 +254,7 @@ impl Session {
             generation: 0,
             heard: Instant::now(),
             running: HashMap::new(),
+            commands: Default::default(),
             init: None,
         })))
     }
@@ -380,16 +384,17 @@ impl Session {
         let inner = self.lock();
         // Parked, it has no process.
         let conversation = inner.core.as_ref()?.conversation();
-        // Idle, done, or waiting on someone (what it follows wakes it), not limited: a limited one is waiting to carry on
-        // its turn once the limit resets. Nothing of its own running in the background either, which stopping it ends.
+        // Idle, done, waiting on someone (what it follows wakes it) or on the user's answer (it comes as a message), not
+        // limited: a limited one is waiting to carry on its turn once the limit resets. Not an approval or question its
+        // CLI holds open either, which would die with it, nor anything of its own running in the background.
+        use crate::model::Attention;
+        let held = !conversation.approvals.is_empty() || !conversation.questions.is_empty();
         let idle = inner.out.is_some()
-            && matches!(
-                conversation.attention(),
-                crate::model::Attention::Idle
-                    | crate::model::Attention::Answered
-                    | crate::model::Attention::Done
-                    | crate::model::Attention::Blocked
-            )
+            && match conversation.attention() {
+                Attention::Idle | Attention::Answered | Attention::Done | Attention::Blocked => true,
+                Attention::NeedsYou => !held,
+                _ => false,
+            }
             && conversation.turn.is_none()
             && inner.running.is_empty()
             && inner.core.as_ref().is_some_and(|core| core.stops().is_empty());

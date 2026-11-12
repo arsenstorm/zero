@@ -176,6 +176,52 @@ async fn waiting_with_nothing_to_wake_it_is_told_once() {
     assert_eq!(warned(&sent), 1, "it follows r#7");
 }
 
+/// A note of the task's own, as `zero note` posts it.
+fn note(id: &str, status: Option<&str>, needs: Option<&str>) -> zerod::ask::Ask {
+    let agent = zerod::ask::AgentIdentity { name: format!("zerod-{id}"), reference: Some(id.into()), ..Default::default() };
+    let mut note = zerod::ask::Ask::new(zerod::ask::AskKind::Note, "Update", agent, 0);
+    note.body = "Waiting on Dana's review".into();
+    note.status = status.map(String::from);
+    note.needs = needs.map(String::from);
+    note
+}
+
+#[tokio::test]
+async fn a_waiting_note_says_who_it_waits_on() {
+    let (daemon, _, id, sent) = task("auto-follow-noted").await;
+    let inbox = zerod::inbox::Inbox::open(None, vec![]);
+    zerod::server::know_waiting_notes(&daemon, &inbox);
+    let session = daemon.session(&id).unwrap();
+    inbox.create(note(&id, Some("waiting"), None), false);
+    turn(&session, 1, "ship it", "Over to Dana.\n\n[zero: waiting]").await;
+    assert_eq!(warned(&sent), 0, "a --waiting note names who it waits on");
+    inbox.create(note(&id, None, Some("Merge r#7")), false);
+    turn(&session, 2, "ship it", "Over to you.\n\n[zero: waiting]").await;
+    assert_eq!(warned(&sent), 0, "so does --needs");
+    inbox.create(note(&id, None, None), false);
+    turn(&session, 3, "ship it", "Still waiting.\n\n[zero: waiting]").await;
+    assert_eq!(warned(&sent), 1, "a note that names no one doesn't");
+}
+
+#[tokio::test]
+async fn told_once_until_something_could_wake_it() {
+    let (daemon, following, id, sent) = task("auto-follow-once").await;
+    let session = daemon.session(&id).unwrap();
+    turn(&session, 1, "ship it", "CI runs.\n\n[zero: waiting]").await;
+    assert_eq!(warned(&sent), 1);
+    // Other turns ending waiting the same way (an event, the user's word): not told again.
+    turn(&session, 2, &zerod::model::from_line("zero", "1 new event"), "Still CI.\n\n[zero: waiting]").await;
+    turn(&session, 3, "and now?", "Still CI.\n\n[zero: waiting]").await;
+    assert_eq!(warned(&sent), 1, "{}", sent.lock().unwrap());
+    // Once it followed something, the count starts again.
+    step(&session, "c1", command("gh pr create --fill", "https://github.com/o/r/pull/7"));
+    settle().await;
+    turn(&session, 4, "ship it", "Opened r#7.\n\n[zero: waiting]").await;
+    following.unfollow(&id, None);
+    turn(&session, 5, "ship it", "Merged; deploy runs.\n\n[zero: waiting]").await;
+    assert_eq!(warned(&sent), 2);
+}
+
 #[tokio::test]
 async fn waiting_on_a_worker_or_said_otherwise_isnt_told() {
     let (daemon, _, id, sent) = task("auto-follow-on-a-worker").await;

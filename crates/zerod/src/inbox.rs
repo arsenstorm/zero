@@ -98,6 +98,8 @@ struct State {
     ticks: u64,
     take_back: Duration,
     default_ttl: i64,
+    /// The user's words to a task while one of its asks was open, by that ask: what the agent answers them is the ask's.
+    said_on: Vec<(String, String)>,
     /// `zero done`'s and `zero blocked`'s tokens, by "<status> <agent>": the second word that confirms one, good once, for DONE_WINDOW.
     done_tokens: HashMap<String, (String, std::time::Instant)>,
 }
@@ -115,10 +117,14 @@ pub struct Inbox {
     me: Weak<Inbox>,
     /// Which agents are workers (a task under a lead), as the daemon knows it: their done is their lead's to judge.
     workers: std::sync::OnceLock<WorkerTest>,
+    /// A zerod task's conversation, for what its asks are about (about.rs).
+    conversations: std::sync::OnceLock<Conversations>,
 }
 
 /// Whether an agent is a worker, given once by whoever holds the daemon (server.rs).
 pub type WorkerTest = Box<dyn Fn(&AgentIdentity) -> bool + Send + Sync>;
+/// A task's conversation by its session's id: its current turn's items, or with `all` every item. Given once (server.rs).
+pub type Conversations = Box<dyn Fn(&str, bool) -> Option<Vec<crate::model::Item>> + Send + Sync>;
 
 impl Inbox {
     pub fn open(log: Option<PathBuf>, runtimes: Vec<Arc<dyn Runtime>>) -> Arc<Inbox> {
@@ -141,6 +147,7 @@ impl Inbox {
                 take_back: Duration::from_secs(2),
                 default_ttl: 3600,
                 done_tokens: HashMap::new(),
+                said_on: vec![],
             }),
             runs: Arc::new(crate::runs::Runs::new(runs_dir(log.as_deref()), host)),
             events,
@@ -148,6 +155,7 @@ impl Inbox {
             runtimes,
             me: me.clone(),
             workers: std::sync::OnceLock::new(),
+            conversations: std::sync::OnceLock::new(),
         });
         inbox.load();
         inbox
@@ -167,6 +175,76 @@ impl Inbox {
     /// How to tell a worker, given once.
     pub fn know_workers(&self, test: WorkerTest) {
         let _ = self.workers.set(test);
+    }
+
+    /// How to read a task's conversation, given once.
+    pub fn know_conversations(&self, read: Conversations) {
+        let _ = self.conversations.set(read);
+    }
+
+    /// What an ask from a zerod task is about (about.rs): the heading or item it names, else its agent's words just
+    /// before it. Err when what it names isn't there, for the agent to fix; `create` then takes the words before it.
+    pub fn about(&self, ask: &mut Ask) -> Result<(), String> {
+        let session = (ask.agent.runtime.as_deref() == Some("zerod")).then_some(ask.agent.reference.as_deref()).flatten();
+        let (Some(session), Some(read), true) = (session, self.conversations.get(), crate::about::asks(ask)) else {
+            ask.about = None;
+            return Ok(());
+        };
+        // Already worked out (checked before it's made, then made).
+        if ask.about.as_ref().is_some_and(|a| !a.item.is_empty()) {
+            return Ok(());
+        }
+        let anchor = ask.about.take().and_then(|a| a.anchor).filter(|a| !a.trim().trim_start_matches('#').is_empty());
+        let items = read(session, anchor.is_some()).unwrap_or_default();
+        ask.about = match anchor {
+            Some(anchor) => Some(crate::about::linked(&items, &anchor)?),
+            None => crate::about::automatic(&items),
+        };
+        Ok(())
+    }
+
+    /// The user writing to a task may answer one of its open asks there, or write about something else and leave it
+    /// open on purpose (a step they're still running): Zero can't tell which, so it withdraws none and tells the agent,
+    /// under the user's words, what's still open, to withdraw what the words answered. The provider's own questions are
+    /// its adapter's (declined as the words go). Sent, as they're sent; queued, as they're given from the queue (Daemon's
+    /// note_with), the queue keeping the user's own words. With one ask open, the words are taken as about it: the
+    /// agent's answer to them is kept with it (keep_reply).
+    pub fn with_open_asks(&self, id: &str, text: String) -> String {
+        let open: Vec<_> = self
+            .asks()
+            .into_iter()
+            .filter(|a| {
+                !a.state.is_final()
+                    && a.request.is_none()
+                    && !matches!(a.kind, AskKind::Note | AskKind::Message)
+                    && a.agent.runtime.as_deref() == Some("zerod")
+                    && a.agent.reference.as_deref() == Some(id)
+            })
+            .collect();
+        if open.is_empty() {
+            return text;
+        }
+        if let [ask] = open.as_slice() {
+            let said = &mut self.lock().said_on;
+            said.push((ask.id.clone(), text.trim().to_string()));
+            let keep = said.len().saturating_sub(20);
+            said.drain(..keep);
+        }
+        let which = open.iter().map(|a| format!("{} (\"{}\")", a.id, a.title)).collect::<Vec<_>>().join(", ");
+        format!(
+            "{text}\n\n{} {which}. If the user's words answer one, withdraw it with `zero withdraw <id>`; leave the rest for them.)",
+            crate::daemon::OPEN_ASKS_MARK
+        )
+    }
+
+    /// The agent's answer to the user's words on one of its asks, kept with that ask (about.rs reply), as a turn ends.
+    pub fn keep_reply(&self, items: &[crate::model::Item]) {
+        let said = self.lock().said_on.clone();
+        let Some((id, reply)) = crate::about::reply(items, &self.asks(), &said) else { return };
+        self.update(&id, |a| {
+            a.replies.push(reply);
+            true
+        });
     }
 
     /// A worker (a task under a lead): its done goes to its lead with its report, never asked of the user.
@@ -205,8 +283,12 @@ impl Inbox {
 
     /// `keep_id` keeps the caller's id (a drop client names its files by it) unless it is taken.
     pub fn create(&self, incoming: Ask, keep_id: bool) -> Ask {
-        let mut state = self.lock();
         let mut ask = incoming.clone();
+        if self.about(&mut ask).is_err() {
+            ask.about = None;
+            let _ = self.about(&mut ask);
+        }
+        let mut state = self.lock();
         // Done is confirmed through `done` alone (its token, or the user's word): never taken as a client sent it.
         ask.confirmed = false;
         ask.done_check = false;

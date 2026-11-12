@@ -747,7 +747,7 @@ async fn a_task_asks_runs_and_notes_through_zeros_tools_whatever_sandbox_its_age
 async fn every_op_is_routed_to_its_handler() {
     let h = harness("server-routes").await;
     let mut client = Client::connect(&h.socket).await;
-    let ops = "adopt agentAsk answer answerAsk archive archived asks attr board branch browserCall browserSettings browserState browsers \
+    let ops = "adopt agentAsk anchor answer answerAsk archive archived asks attr board branch browserCall browserSettings browserState browsers \
         cancelRun choose close closeTerminal configure connectSlack create decide defaultSignIn deleteLoop deleteMcpServer deleteSignIn \
         deleteView deleteWorkspace deliver detach dismiss firefox follow following get hello interrupt items label later list loop loops \
         mcpServers message migrate notify openTerminal orderViews outline pad place placeInWorkspace press queue recent release remind \

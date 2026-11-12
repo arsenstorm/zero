@@ -142,6 +142,7 @@ impl Daemon {
                     | Attention::Idle
             );
         let came_to_an_end = before.is_some_and(under_way) && ended;
+        self.stop_if_stuck(&conversation);
         let got_stuck = now == Attention::Stuck && before != Some(Attention::Stuck);
         if came_to_an_end || got_stuck {
             conversation = session.snapshot()
@@ -153,7 +154,10 @@ impl Daemon {
             self.check_ending(&conversation);
             self.check_waiting(&conversation);
             self.check_issue_row(&conversation);
-            self.carry_on_after_error(&conversation)
+            self.carry_on_after_error(&conversation);
+            if let Some(ended) = self.ended.get() {
+                ended(&conversation)
+            }
         }
         // A turn finished counts for the account it ran as (its own, else its CLI's default): that account's activity.
         // Once per answer, by its item: the session's state passing through an end more than once a turn (it counted
@@ -257,6 +261,20 @@ impl Daemon {
 
     /// The user saw a task's reply: its latest answer unless one is named, now unless a time is given (a client
     /// passing on what it recorded before zerod kept this).
+    /// A command that looks stuck, stopped when the user's settings say so: not one they said never to stop, nor in a
+    /// task whose commands they keep. Once: a command stopped can't be stopped again.
+    fn stop_if_stuck(&self, conversation: &Conversation) {
+        let Some(item) = conversation.stuck.as_deref().filter(|_| !conversation.keep_commands) else { return };
+        if crate::stuck::settings().when != crate::stuck::When::Stop {
+            return;
+        }
+        let Ok(session) = self.session(&conversation.id) else { return };
+        let Some(crate::model::ItemKind::Command { command, .. }) = session.snapshot().item(item).map(|i| i.kind.clone()) else { return };
+        if crate::stuck::settings().may_stop(&command) {
+            let _ = self.stop_command(&conversation.id, item);
+        }
+    }
+
     pub fn mark_seen(&self, id: &str, answer: Option<&str>, at: Option<i64>) -> Result<(), String> {
         self.session(id)?;
         let Some(answer) = answer.map(String::from).or_else(|| self.latest_answer(id)) else { return Ok(()) };
@@ -325,8 +343,9 @@ impl Daemon {
     }
 
     /// A task's turn ended waiting (`[zero: waiting]`) with nothing to wake it: it follows nothing, has nothing
-    /// running in the background, no worker of its own working, nothing watched or due. It's told so, once: its reply
-    /// is taken as it is. A worker isn't: its lead hears how it ended, and acts.
+    /// running in the background, no worker of its own working, nothing watched or due, and no note of its own saying
+    /// who it waits on (`--waiting`, `--needs`). It's told so once, not again until something could wake it: its reply,
+    /// and turns after, are taken as they are. A worker isn't: its lead hears how it ended, and acts.
     fn check_waiting(&self, conversation: &Conversation) {
         let id = conversation.id.as_str();
         let Some(following) = self.following.get() else { return };
@@ -353,11 +372,16 @@ impl Daemon {
             matches!(w.attention(), Attention::Starting | Attention::Working | Attention::NeedsYou) || self.background(&w.id).is_some()
         };
         if !following.list(Some(id)).is_empty()
+            || self.says_who.get().is_some_and(|says| says(conversation))
             || self.background(id).is_some()
             || self.workers(id).iter().any(working)
             || !self.watches(Some(id)).is_empty()
             || self.next_wake(id).is_some()
         {
+            self.told_nothing_wakes.lock().unwrap().remove(id);
+            return;
+        }
+        if !self.told_nothing_wakes.lock().unwrap().insert(id.to_string()) {
             return;
         }
         self.tell(id, crate::model::from_line("zero", NOTHING_WAKES));

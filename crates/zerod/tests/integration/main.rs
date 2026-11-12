@@ -4,6 +4,7 @@
 //! another, so 46 of them spent minutes before any test ran.
 
 mod adopt;
+mod ask_links;
 mod attributes;
 mod auto_follow;
 mod board;
@@ -59,6 +60,7 @@ mod server;
 mod session;
 mod signins;
 mod snapshots;
+mod stuck;
 mod switching;
 mod tables;
 mod terminals;

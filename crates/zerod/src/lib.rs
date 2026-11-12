@@ -1,6 +1,7 @@
 //! zerod: runs agent sessions (Codex first) and serves them to Zero's apps over a Unix socket.
 //! docs/workspace.md has the layers; this crate is the runtime, adapter, core and host parts of them.
 
+pub mod about;
 pub mod acp;
 pub mod adapter;
 pub mod ask;
@@ -45,6 +46,7 @@ pub mod server;
 pub mod session;
 pub mod signins;
 pub mod snapshots;
+pub mod stuck;
 pub mod terminal;
 pub mod uses;
 pub mod watches;

@@ -113,7 +113,7 @@ pub(super) async fn messages(zerod: &Zerod, request: Request) -> Result<Value, S
     match request.op.as_str() {
         "send" => {
             let (id, text, images) = message(zerod, &request, "Send needs text")?;
-            let text = with_open_asks(&zerod.inbox, &id, text);
+            let text = zerod.inbox.with_open_asks(&id, text);
             // `item`: the app's id for it, which zerod's item for the message keeps.
             let sent = request.item.as_ref().and_then(Value::as_str);
             daemon.send(&id, Message { text: &text, images: &images, context: None, sent }, request.choice()).await.map(|_| Value::Null)
@@ -202,6 +202,22 @@ pub(super) async fn properties(zerod: &Zerod, request: Request) -> Result<Value,
             )
             .map(|_| Value::Null),
         "place" => daemon.set_place(&request.session()?, request.place.as_deref()).map(|_| Value::Null),
+        // `zero expect 20m "the full suite"`: how long the agent's step under way takes.
+        "expect" => {
+            let span = request.value.as_deref().unwrap_or("");
+            let seconds = crate::stuck::parse_span(span).ok_or_else(|| format!("{span:?} isn't a duration: 90s, 20m, 1h30m"))?;
+            daemon.session(&request.session()?)?.expect(seconds, request.text.as_deref().unwrap_or(""));
+            Ok(Value::Null)
+        }
+        "stopCommand" => {
+            let item = request.item.as_ref().and_then(|i| i.as_str()).ok_or("Which command?")?;
+            daemon.stop_command(&request.session()?, item).map(|_| Value::Null)
+        }
+        "keepCommands" => {
+            let keep = request.keep.unwrap_or(true);
+            daemon.session(&request.session()?)?.change(crate::model::Change::KeepCommands { keep });
+            Ok(Value::Null)
+        }
         other => unknown(other),
     }
 }
@@ -252,6 +268,12 @@ pub(super) async fn reads(zerod: &Zerod, request: Request) -> Result<Value, Stri
             Ok(json!({"items": items, "earlier": earlier, "later": later}))
         }
         "outline" => Ok(daemon.session(&request.session()?)?.outline()),
+        // A link into the conversation ("#bench-plan", an item's id): the passage it names, wherever it is.
+        "anchor" => {
+            let session = daemon.session(&request.session()?)?;
+            let anchor = request.text.as_deref().ok_or("Which anchor? text")?;
+            Ok(json!(crate::about::linked(&session.items(None, None, usize::MAX), anchor)?))
+        }
         other => unknown(other),
     }
 }
@@ -315,34 +337,6 @@ fn message(zerod: &Zerod, request: &Request, needs: &'static str) -> Result<(Str
         zerod.loops.record(name, &id, role)
     }
     Ok((id, text, images))
-}
-
-/// The user writing to a task may answer one of its open asks there, or write about something else and leave it open
-/// on purpose (a step they're still running): Zero can't tell which, so it withdraws none and tells the agent, under
-/// the user's words, what's still open, to withdraw what the words answered. The provider's own questions are its
-/// adapter's (declined as the words go). Sent, as they're sent; queued, as they're given from the queue (Daemon's
-/// note_with), the queue keeping the user's own words.
-pub(super) fn with_open_asks(inbox: &crate::inbox::Inbox, id: &str, text: String) -> String {
-    use crate::ask::AskKind;
-    let open: Vec<_> = inbox
-        .asks()
-        .into_iter()
-        .filter(|a| {
-            !a.state.is_final()
-                && a.request.is_none()
-                && !matches!(a.kind, AskKind::Note | AskKind::Message)
-                && a.agent.runtime.as_deref() == Some("zerod")
-                && a.agent.reference.as_deref() == Some(id)
-        })
-        .collect();
-    if open.is_empty() {
-        return text;
-    }
-    let which = open.iter().map(|a| format!("{} (\"{}\")", a.id, a.title)).collect::<Vec<_>>().join(", ");
-    format!(
-        "{text}\n\n{} {which}. If the user's words answer one, withdraw it with `zero withdraw <id>`; leave the rest for them.)",
-        crate::daemon::OPEN_ASKS_MARK
-    )
 }
 
 /// A new build is on disk: turns under way pause between steps, then zerod becomes the new one, which carries them on.

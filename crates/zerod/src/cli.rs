@@ -79,6 +79,11 @@ async fn connection(inbox: Arc<Inbox>, stream: UnixStream) {
                 send(&mut out, error("create needs an ask".into())).await;
                 return;
             };
+            // An anchor that isn't there (`--about "#plan"`) is the agent's to fix: told, and nothing asked.
+            if let Err(message) = inbox.about(&mut incoming) {
+                send(&mut out, error(message)).await;
+                return;
+            }
             let waits = request.wait.unwrap_or(true);
             if !waits {
                 incoming.waits = Some(false)

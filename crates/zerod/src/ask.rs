@@ -145,6 +145,41 @@ pub struct Ask {
     /// A page its first option opens, the ask staying open (an MCP server's sign-in, which closes it once done).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<String>,
+    /// The message of its task's conversation it's about (about.rs): a client sends only an anchor, zerod the rest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub about: Option<About>,
+    /// What the agent answered when the user asked about it (about.rs reply): kept with it, not lost up the conversation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replies: Vec<Reply>,
+}
+
+/// A message an ask is about: the agent's words just before it, or a heading it named (`zero ask --about "#plan"`).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct About {
+    /// The conversation's item; empty in what a client sends.
+    #[serde(default)]
+    pub item: String,
+    /// The heading's anchor (GitHub's, as pads have them), when it links to one; what a client sends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<String>,
+    /// Its heading, or the message's first heading, or its first words.
+    #[serde(default)]
+    pub title: String,
+    /// The passage itself, to read without going to it.
+    #[serde(default)]
+    pub text: String,
+    /// When it was said, in milliseconds since 1970.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<i64>,
+}
+
+/// The agent's answer to the user's words on an ask.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Reply {
+    pub item: String,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<i64>,
 }
 
 impl Ask {
@@ -181,6 +216,8 @@ impl Ask {
             done_check: false,
             allow: None,
             link: None,
+            about: None,
+            replies: vec![],
         }
     }
 

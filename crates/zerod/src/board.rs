@@ -563,6 +563,12 @@ fn is(ask: &Ask, conversation: &Conversation) -> bool {
     ask.agent.reference.as_deref() == Some(&conversation.id) || ask.agent.name.strip_prefix("zerod-") == Some(&conversation.id)
 }
 
+/// Its own note this turn says who or what it waits on: `zero note --waiting` (or `--blocked`), or a step over to the
+/// user (`--needs`).
+pub fn says_who(conversation: &Conversation, asks: &[Ask]) -> bool {
+    note(conversation, asks).is_some_and(|n| matches!(n.status.as_deref(), Some("waiting" | "blocked")) || n.needs.is_some())
+}
+
 /// The agent's latest own note, unless a turn started after it (zerod notes each new turn, and what the note said was
 /// about the last one) or it was closed since.
 fn note<'a>(conversation: &Conversation, asks: &'a [Ask]) -> Option<&'a Ask> {

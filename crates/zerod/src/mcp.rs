@@ -32,6 +32,7 @@ fn zero_tools() -> Vec<Value> {
                    "options": {"type": "array", "items": {"type": "string"}, "description": "The choices, if it's one of a few."},
                    "body": string("What the user needs to answer it: context, a recommendation."),
                    "code": string("A command or snippet the question is about, shown as code."),
+                   "about": string("The heading of yours it's about, as \"#bench-plan\" (GitHub's anchor); left out, your words just before it."),
                    "block": {"type": "boolean", "description": "You can't go on without the answer: Zero holds your other events until it's answered."}}}}),
         json!({"name": "zero_run", "description": "Asks the user to run a command on their Mac (their credentials, their access); its output comes back to you as a message. End your turn with [zero: asked <id>].",
                "inputSchema": {"type": "object", "required": ["command", "why"], "properties": {

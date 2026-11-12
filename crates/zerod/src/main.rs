@@ -103,6 +103,7 @@ async fn main() {
 
 /// The sessions in `home`, the turns a restart paused carrying on; zerod ends if they can't be read.
 fn open_daemon(home: &Path) -> Arc<zerod::daemon::Daemon> {
+    zerod::stuck::open(home);
     let daemon = match zerod::daemon::Daemon::open(home, zerod::daemon::real_runtime()) {
         Ok(daemon) => daemon,
         Err(error) => {
@@ -132,7 +133,9 @@ fn open_inbox(daemon: &Arc<zerod::daemon::Daemon>, args: &Args) -> (Arc<zerod::i
     zerod::mcp_auth::start(daemon.clone(), inbox.clone());
     zerod::recap::start(daemon.clone(), inbox.clone());
     zerod::server::hold_while_blocked(daemon, &inbox);
+    zerod::server::know_waiting_notes(daemon, &inbox);
     zerod::server::know_workers(daemon, &inbox);
+    zerod::server::link_asks(daemon, &inbox);
     (inbox, drops)
 }
 

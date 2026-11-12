@@ -48,6 +48,10 @@ const SAVED: &str = "saved-for-later.json";
 /// Whether a task has a blocking ask open (the inbox knows).
 pub type Blocked = Box<dyn Fn(&str) -> bool + Send + Sync>;
 /// A user's queued words as they go to the agent: the note on its open asks added then (the inbox's to say).
+/// Whether a task's own note says who it waits on (board::says_who), from the inbox.
+pub type SaysWho = Box<dyn Fn(&Conversation) -> bool + Send + Sync>;
+/// What else hears a task's turn end (the inbox, keeping the agent's answer with the ask it answers).
+pub type Ended = Box<dyn Fn(&Conversation) + Send + Sync>;
 pub type Noted = Box<dyn Fn(&str, String) -> String + Send + Sync>;
 
 /// Messages two tasks may send each other without the user before Zero holds them for the user's word.
@@ -101,6 +105,11 @@ pub struct Daemon {
     noted: std::sync::OnceLock<Noted>,
     /// What tasks follow (following.rs): the pull requests they open are followed, and a turn waiting on nothing told.
     following: std::sync::OnceLock<Arc<crate::following::Following>>,
+    says_who: std::sync::OnceLock<SaysWho>,
+    ended: std::sync::OnceLock<Ended>,
+    /// Tasks told nothing wakes them: not again until something could (a follow, a background run, a note saying who).
+    /// ponytail: in memory; a restart may tell one once more.
+    told_nothing_wakes: Mutex<HashSet<String>>,
     /// Tasks whose messages from other tasks wait for the user: too many between them without the user.
     crossing: Mutex<HashSet<String>>,
     /// Workers that ended done: each leaves its lead's tree (archived) once its report has been handed to the lead.
@@ -339,6 +348,9 @@ impl Daemon {
             blocked: Default::default(),
             noted: Default::default(),
             following: Default::default(),
+            says_who: Default::default(),
+            ended: Default::default(),
+            told_nothing_wakes: Mutex::default(),
             crossed: Mutex::default(),
             crossing: Mutex::default(),
             naming: Default::default(),
@@ -569,6 +581,16 @@ impl Daemon {
     /// What tasks follow, given once (main.rs).
     pub fn set_following(&self, following: Arc<crate::following::Following>) {
         let _ = self.following.set(following);
+    }
+
+    /// How to tell a task's note says who it waits on, given once (server::know_waiting_notes).
+    pub fn know_who(&self, says_who: SaysWho) {
+        let _ = self.says_who.set(says_who);
+    }
+
+    /// What else hears a turn end, given once (server::link_asks).
+    pub fn when_ended(&self, ended: Ended) {
+        let _ = self.ended.set(ended);
     }
 
     /// What's added to a user's queued words as they go to the agent.
