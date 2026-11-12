@@ -150,10 +150,12 @@ final class RevealView: NSView {
         marks = RevealMarks(source: ZeroEnding.split(source).0, styled: styled.string)
         // Made anew (the turn ended and its words moved into their own row, a task opened): as far as reading has got,
         // at once. Left to the next tick, it showed nothing for two frames and the page fell in and jumped.
-        if read < 0 { read = readout.readSoFar }
+        let made = read < 0
+        if made { read = readout.readSoFar }
         // Where reading is in the text as styled now: styled again, what was read can come out shorter (a table or a
         // link taking shape), and the place kept from before was ahead of reading, the words after it shown early.
         shown = min(styled.length, marks.styled(through: max(read, 0)))
+        if made { carryOn(styled.length) }
         // Not `read` reset: whether the next words fade is told by where reading was (a reset read as nothing fading,
         // and the words after each styling showed at once, bright among those still fading in).
         restyled = true
@@ -245,7 +247,9 @@ final class RevealView: NSView {
                     ),
                 ]
             }
-            return parts.filter { $0.0.width > 0 }.map { rect, onPanel in
+            // size.width: CGRect.width is never negative, and parts that came out negative (a piece not reaching past a
+            // panel's edge) passed, covering the panel beside the words in the page's colour: lighter strips.
+            return parts.filter { $0.0.size.width > 0 }.map { rect, onPanel in
                 let layer = CALayer()
                 layer.frame = rect
                 layer.name = onPanel ? Self.onPanel : nil
@@ -285,20 +289,8 @@ final class RevealView: NSView {
         if to > shown, !fades {
             shown = to
         } else if to > shown {
-            let range = NSRange(location: shown, length: to - shown)
+            fade(NSRange(location: shown, length: to - shown), gone: 0)
             shown = to
-            let layers = covers(pieces(range))
-            for layer in layers {
-                layer.opacity = 0
-                let fade = CABasicAnimation(keyPath: "opacity")
-                fade.fromValue = 1
-                fade.toValue = 0
-                fade.duration = Playback.fade
-                fade.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
-                layer.add(fade, forKey: "fade")
-                covers.addSublayer(layer)
-            }
-            fading.append((range, layers, CACurrentMediaTime() + Playback.fade))
         }
         cover()
         settle()
@@ -310,6 +302,39 @@ final class RevealView: NSView {
             reported = height
             DispatchQueue.main.async { [grew] in MainActor.assumeIsolated { grew.count += 1 } }
         }
+    }
+
+    /// Made with words still fading in (the turn ended and they moved into their own row, or the answer began a tick
+    /// before this view did): their fades carried on from where they are, not dropped, which showed them at once.
+    private func carryOn(_ length: Int) {
+        let now = Date()
+        let runs = readout.fadingSoFar.filter { now.timeIntervalSince($0.since) < Playback.fade }
+        guard let first = runs.first else { return }
+        shown = min(length, marks.styled(through: first.at))
+        for (index, run) in runs.enumerated() {
+            let end = index + 1 < runs.count ? runs[index + 1].at : read
+            let from = min(length, marks.styled(through: run.at)), to = min(length, marks.styled(through: end))
+            if to > from { fade(NSRange(location: from, length: to - from), gone: now.timeIntervalSince(run.since)) }
+            shown = max(shown, to)
+        }
+    }
+
+    /// A run of words fading in, `gone` seconds into its fade already: its covers fade out on the render server.
+    private func fade(_ range: NSRange, gone: CFTimeInterval) {
+        let layers = covers(pieces(range))
+        let now = CACurrentMediaTime()
+        for layer in layers {
+            layer.opacity = 0
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 1
+            fade.toValue = 0
+            fade.duration = Playback.fade
+            fade.beginTime = now - gone
+            fade.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+            layer.add(fade, forKey: "fade")
+            covers.addSublayer(layer)
+        }
+        fading.append((range, layers, now + Playback.fade - gone))
     }
 
     /// Covers done fading go.
@@ -363,7 +388,11 @@ final class RevealView: NSView {
         let inTable =
             !((storage.attribute(.paragraphStyle, at: shown, effectiveRange: nil) as? NSParagraphStyle)?.textBlocks.isEmpty ?? true)
         let below = inTable ? CGRect.zero : CGRect(x: 0, y: foot, width: max(bounds.width, width), height: max(0, depth - foot))
-        covers(pieces(characters) + cells(after: shown, through: NSMaxRange(characters)) + [(below, panel(at: shown))])
+        // The panel below is the one the reading line is on (by its first character, as in pieces(_:)).
+        var readingLine = NSRange()
+        _ = layout.lineFragmentRect(forGlyphAt: start, effectiveRange: &readingLine)
+        let belowPanel = panel(at: layout.characterIndexForGlyph(at: readingLine.location))
+        covers(pieces(characters) + cells(after: shown, through: NSMaxRange(characters)) + [(below, belowPanel)])
             .forEach(rest.addSublayer)
     }
 
@@ -426,7 +455,23 @@ final class RevealView: NSView {
             // Down to its text's foot, not the room after the line: a code block's panel starts in that room, above its
             // first line, and words read on the line before showed a strip of the panel under them.
             let rect = CGRect(x: from + origin.x, y: top, width: max(0, to - from), height: used.maxY + origin.y - top)
-            pieces.append((rect, self.panel(at: layout.characterIndexForGlyph(at: first))))
+            // The panel the line is on, by the line's first character: a run starting at the newline that ends a code
+            // block is on the block's last line, and the newline isn't code.
+            pieces.append((rect, self.panel(at: layout.characterIndexForGlyph(at: lineGlyphs.location))))
+            // An inline code pill starts 2 pt above its line (RichLayoutManager): the strip above its words covered too,
+            // or the pill's top edge showed before they were read.
+            if let storage = self.text.textStorage {
+                let characters = layout.characterRange(forGlyphRange: NSRange(location: first, length: last - first), actualGlyphRange: nil)
+                storage.enumerateAttribute(.zeroCode, in: characters) { value, run, _ in
+                    guard value != nil else { return }
+                    let glyphs = layout.glyphRange(forCharacterRange: run, actualCharacterRange: nil)
+                    let a = line.minX + layout.location(forGlyphAt: glyphs.location).x - 5
+                    let b =
+                        NSMaxRange(glyphs) < NSMaxRange(lineGlyphs)
+                        ? line.minX + layout.location(forGlyphAt: NSMaxRange(glyphs)).x : line.maxX
+                    pieces.append((CGRect(x: a + origin.x, y: top - 3, width: max(0, b - a), height: 3), nil))
+                }
+            }
         }
         return pieces
     }

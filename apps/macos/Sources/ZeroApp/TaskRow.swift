@@ -12,6 +12,9 @@ struct TaskRow: View {
     let state: BoardRow.State
     let selected: Bool
     @State private var hovering = false
+    /// Where the press that opened it began: a task opens as the button goes down (on its release, the switch waited
+    /// out the click, about 100 ms), once a press, however long a drag follows.
+    @State private var pressedAt: CGPoint?
     /// A lead with workers: whether they show. Nil for a lead without any.
     var fold: Bool? = nil
     /// A worker: its place on its lead's branch.
@@ -49,9 +52,13 @@ struct TaskRow: View {
         // own click. Global space: the row moves with the drag, so a local translation would cancel itself out.
         .highPriorityGesture(
             DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                .onChanged { reorder?.changed($0.translation.height) }
-                .onEnded { _ in if reorder?.ended() == false { action() } },
-            including: reorder == nil ? .subviews : .all
+                .onChanged {
+                    if pressedAt != $0.startLocation { pressedAt = $0.startLocation; action() }
+                    reorder?.changed($0.translation.height)
+                }
+                .onEnded { _ in
+                    pressedAt = nil; _ = reorder?.ended()
+                }
         )
         // Just left of the state icon, outside the row's own button so its click is its own.
         .overlay(alignment: .trailing) {

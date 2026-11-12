@@ -308,20 +308,42 @@ enum RichMarkdown {
         let columns = rows.map(\.count).max() ?? 0
         let table = NSTextTable()
         table.numberOfColumns = columns
-        table.layoutAlgorithm = .automaticLayoutAlgorithm
+        // Columns as wide as their content asks (TableColumns), as shares of the table, so it fits any width.
+        table.layoutAlgorithm = .fixedLayoutAlgorithm
+        table.setValue(100, type: .percentageValueType, for: .width)
         table.collapsesBorders = true
         table.setWidth(indent, type: .absoluteValueType, for: .margin, edge: .minX)
-        for (r, row) in rows.enumerated() {
+        let font = { (r: Int) in NSFont.systemFont(ofSize: size, weight: r == 0 ? .semibold : .regular) }
+        let cells = rows.enumerated().map { r, row in (0..<columns).map { c in styled(inline(c < row.count ? row[c] : ""), font: font(r)) }
+        }
+        let padding = { (c: Int) -> CGFloat in (c == 0 ? 0 : 6) + (c == columns - 1 ? 0 : 14) }
+        var natural = [CGFloat](repeating: 0, count: columns), least = natural
+        for (r, row) in cells.enumerated() {
+            for (c, cell) in row.enumerated() {
+                natural[c] = max(natural[c], ceil(cell.size().width) + padding(c))
+                let word =
+                    cell.string.split(whereSeparator: \.isWhitespace).map {
+                        NSAttributedString(string: String($0), attributes: [.font: font(r)]).size().width
+                    }.max() ?? 0
+                least[c] = max(least[c], ceil(word) + padding(c))
+            }
+        }
+        // ponytail: shares worked out for a 700 pt table, about a conversation's column; a much narrower one keeps them.
+        let widths = TableColumns.widths(natural: natural, least: least, total: 700)
+        for r in rows.indices {
             for c in 0..<columns {
                 let block = NSTextTableBlock(table: table, startingRow: r, rowSpan: 1, startingColumn: c, columnSpan: 1)
                 block.setWidth(6, type: .absoluteValueType, for: .padding)
-                block.setWidth(14, type: .absoluteValueType, for: .padding, edge: .maxX)
+                // Room between columns, none at the table's outer edges: the first column's words start where the
+                // paragraphs around the table do (6 pt in, they read as out of line).
+                block.setWidth(c == 0 ? 0 : 6, type: .absoluteValueType, for: .padding, edge: .minX)
+                block.setWidth(c == columns - 1 ? 0 : 14, type: .absoluteValueType, for: .padding, edge: .maxX)
                 block.setWidth(r == 0 ? 1 : 0, type: .absoluteValueType, for: .border, edge: .maxY)
                 block.setBorderColor(.separatorColor)
+                block.setValue(widths[c] / 700 * 100, type: .percentageValueType, for: .width)
                 let paragraph = style(size: size, after: 0)
                 paragraph.textBlocks = [block]
-                let font = NSFont.systemFont(ofSize: size, weight: r == 0 ? .semibold : .regular)
-                let cell = styled(inline(c < row.count ? row[c] : ""), font: font)
+                let cell = NSMutableAttributedString(attributedString: cells[r][c])
                 cell.append(NSAttributedString(string: "\n"))
                 cell.addAttributes([.paragraphStyle: paragraph], range: NSRange(location: 0, length: cell.length))
                 out.append(cell)
@@ -485,6 +507,23 @@ final class RichLayoutManager: NSLayoutManager {
 final class RichTextView: NSTextView {
     /// Its layout manager's delegate, kept here (a layout manager doesn't keep its delegate).
     private var breaks: TokenBreaks?
+    /// Drawn as far up as the page's glide shows: a text view draws only its visible rect, letting go of what it had
+    /// drawn above as the clip view scrolls, and the glide (ConversationView.slide) shows the clip view from above its
+    /// bounds, so the lines just above came out blank until it caught up. Nothing extra while no glide runs.
+    override var preparedContentRect: NSRect {
+        get {
+            let shown = super.preparedContentRect.isEmpty ? visibleRect : super.preparedContentRect
+            guard let clip = enclosingScrollView?.contentView else { return shown }
+            let reach = ConversationView.glideReach(clip)
+            guard reach > 0 else { return shown }
+            var above = clip.bounds
+            above.origin.y = clip.isFlipped ? above.minY - reach : above.maxY
+            above.size.height = reach
+            let strip = convert(above, from: clip).intersection(bounds)
+            return strip.isEmpty ? shown : shown.isEmpty ? strip : shown.union(strip)
+        }
+        set { super.preparedContentRect = newValue }
+    }
     convenience init() {
         let storage = NSTextStorage()
         let layout = RichLayoutManager()

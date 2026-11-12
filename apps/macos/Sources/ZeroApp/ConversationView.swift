@@ -687,6 +687,18 @@ struct ConversationView: View {
     /// The page's glide to its new end, run by the render server: the scroll view is at the end already, and its clip
     /// layer is shown from where it was, sliding the rest of the way. Glided frame by frame instead, each frame was a
     /// scroll SwiftUI took in, updating the window's whole view graph (60 a second while an answer streams).
+    /// How far above its bounds the glides still under way can show the clip view: the sum of their distances (each
+    /// is added to the rest), an overestimate as they settle, for at most a glide's length.
+    static func glideReach(_ clip: NSClipView) -> CGFloat {
+        guard let layer = clip.layer, let keys = layer.animationKeys() else { return 0 }
+        return keys.reduce(0) { sum, key in
+            guard key.hasPrefix("glide-"), let glide = layer.animation(forKey: key) as? CABasicAnimation,
+                let from = glide.fromValue as? CGFloat
+            else { return sum }
+            return sum + abs(from)
+        }
+    }
+
     private func slide(_ clip: NSClipView, by moved: CGFloat) {
         guard moved > 0.5, let layer = clip.layer else { return }
         let slide = CABasicAnimation(keyPath: "bounds.origin.y")
@@ -694,9 +706,11 @@ struct ConversationView: View {
         slide.toValue = 0
         // Added to whatever slide is still under way: a line that comes mid-slide carries on from where the page is.
         slide.isAdditive = true
-        slide.duration = Self.glide * 5
+        // About as long as lines come apart, on a gentle start: shorter, each line's slide ended before the next began, and
+        // the page moved in pulses, lurching at the start of a bigger one.
+        slide.duration = 0.45
         // Fast, then settling, as the frame-by-frame glide eases (its gap shrinks by e every `glide`).
-        slide.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.3, 1)
+        slide.timingFunction = CAMediaTimingFunction(controlPoints: 0.3, 0.3, 0.3, 1)
         slide.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
         layer.add(slide, forKey: "glide-\(CACurrentMediaTime())")
     }
@@ -944,7 +958,8 @@ struct ConversationView: View {
         // Working as the page shows it: its turn may have ended at zerod while its answer is still being read out here
         // (a couple of seconds behind), and the composer offered Reply and Send over an answer still coming in.
         let working = conversation.status == .working || conversation.status == .waiting
-        let busy = working || !playback.caughtUp
+        // Playing, not only caught up: the last words still fade in after the last is read (half a second of Reply).
+        let busy = working || playback.playing
         // What the page shows: the last turn still reading out, the next (a queued message zerod sent on) not on the
         // page yet, the composer says what the heading says (Reply, no stop) until that message moves in. Return still
         // queues meanwhile, as zerod is at it.
@@ -1117,7 +1132,7 @@ struct ConversationView: View {
 
     private var placeholder: String {
         // Its answer still being read out here, though zerod's turn has ended: as the page reads, still at it.
-        if !playback.caughtUp, conversation.status == .idle {
+        if playback.playing, conversation.status == .idle {
             return conversation.provider == .opencode ? "OpenCode answers one message at a time" : "Steer it while it works"
         }
         return switch conversation.status {

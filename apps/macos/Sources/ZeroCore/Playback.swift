@@ -294,6 +294,10 @@ import Observation
     /// in SwiftUI's update (RevealText), which would otherwise be updated on every tick.
     public var readSoFar: Int { read }
 
+    /// The runs still fading in (where each starts, in characters, and when it began), read as `readSoFar` is: for a
+    /// view made mid-read-out, which carries their fades on rather than showing them at once.
+    public var fadingSoFar: [(at: Int, since: Date)] { runs }
+
     /// How far character `i` has faded in.
     public func alpha(_ i: Int) -> Double {
         guard let run = runs.last(where: { $0.at <= i }) else { return 1 }

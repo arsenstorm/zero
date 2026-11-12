@@ -539,3 +539,41 @@ public struct RevealMarks {
         return words
     }
 }
+
+/// How wide a table's columns are, from their content: `natural` each column's widest cell on one line, `least` its
+/// longest word (each with its padding), `total` the table's width. A column that fits in an even share keeps its
+/// natural width; the rest share what's left by their length, none narrower than its longest word. Equal shares
+/// left a one-word column half the table while a long one wrapped line after line.
+public enum TableColumns {
+    public static func widths(natural: [CGFloat], least: [CGFloat], total: CGFloat) -> [CGFloat] {
+        let count = natural.count
+        guard count > 0 else { return [] }
+        let sum = natural.reduce(0, +)
+        // All fit on one line: the room over goes to each by its length.
+        if sum <= total { return natural.map { $0 / max(sum, 1) * total } }
+        var widths = natural
+        var fixed = Set<Int>()
+        // Short columns first: one that fits in an even share of what's left keeps its natural width.
+        while true {
+            let free = (0..<count).filter { !fixed.contains($0) }
+            let room = total - fixed.reduce(0) { $0 + widths[$1] }
+            let fits = free.filter { natural[$0] <= room / CGFloat(max(free.count, 1)) }
+            if fits.isEmpty { break }
+            for i in fits { fixed.insert(i); widths[i] = natural[i] }
+        }
+        // The long ones by their length, a column too narrow for its longest word held at that.
+        while true {
+            let free = (0..<count).filter { !fixed.contains($0) }
+            guard !free.isEmpty else { break }
+            let room = total - fixed.reduce(0) { $0 + widths[$1] }
+            let length = free.reduce(0) { $0 + natural[$1] }
+            for i in free { widths[i] = room * natural[i] / max(length, 1) }
+            let tight = free.filter { widths[$0] < least[$0] }
+            if tight.isEmpty { break }
+            for i in tight { fixed.insert(i); widths[i] = least[i] }
+        }
+        // Words wider than the table, together: all of them shrunk alike.
+        let all = widths.reduce(0, +)
+        return all > total ? widths.map { $0 / all * total } : widths
+    }
+}

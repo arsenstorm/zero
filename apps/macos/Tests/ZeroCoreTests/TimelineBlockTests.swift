@@ -145,3 +145,20 @@ private func item(_ id: String, _ kind: ConversationItem.Kind) -> ConversationIt
     // Through the fence line only: nothing of the code yet.
     #expect(fence.styled(through: "Code:\n```swift".count) <= "Code:".utf16.count)
 }
+
+/// A table's columns sized to their content: short ones keep their width, long ones share the rest by their length,
+/// never narrower than their longest word; all of them fill the table.
+@Test func tableColumnsSizeToTheirContent() {
+    // A short first column and a long second: the short one keeps its width, the long one takes the rest.
+    let short = TableColumns.widths(natural: [80, 2000], least: [70, 120], total: 700)
+    #expect(short == [80, 620], "\(short)")
+    // All fit: the room left over goes to each by its length.
+    let fits = TableColumns.widths(natural: [100, 300], least: [50, 50], total: 800)
+    #expect(fits == [200, 600], "\(fits)")
+    // Two long, one short: the long ones split what's left by length, the short one keeps its own.
+    let mixed = TableColumns.widths(natural: [90, 1200, 600], least: [60, 100, 100], total: 690)
+    #expect(mixed[0] == 90 && abs(mixed[1] - 400) < 0.5 && abs(mixed[2] - 200) < 0.5, "\(mixed)")
+    // Never under its longest word.
+    let words = TableColumns.widths(natural: [1000, 5000], least: [300, 100], total: 700)
+    #expect(words[0] >= 300 - 0.5, "\(words)")
+}
