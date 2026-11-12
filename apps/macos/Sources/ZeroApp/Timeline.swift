@@ -455,8 +455,13 @@ struct GivenMessage: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
                 NucleoIcon(from == "zero" ? "circle-info" : "robot", size: 14).foregroundStyle(.secondary).frame(width: 14, height: 16)
+                // Another task's: its name, then what it says, on one line whatever their lengths, each cut short as
+                // needed (the name at its full width squeezed the words beside it into a column of lines). Opened, the
+                // whole report is below, first line and all, and the line holds just the name: no height changes.
                 if let sender, let link {
-                    Button(sender) { link.open(from) }.buttonStyle(.plain).fontWeight(.medium).lineLimit(1).fixedSize()
+                    Button(sender) { link.open(from) }.buttonStyle(.plain).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
+                        .frame(maxWidth: 360, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
                         .tip("Open \(sender)")
                 }
                 Button {
@@ -464,9 +469,11 @@ struct GivenMessage: View {
                     open.toggle()
                 } label: {
                     HStack(alignment: .top, spacing: 8) {
-                        Text(first).foregroundStyle(.secondary).lineLimit(open ? nil : 1).truncationMode(.tail)
+                        if !(open && sender != nil) {
+                            Text(first).foregroundStyle(.secondary).lineLimit(open ? nil : 1).truncationMode(.tail)
+                        }
                         Spacer(minLength: 0)
-                        if !rest.isEmpty {
+                        if !rest.isEmpty || sender != nil {
                             NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary)
                         }
                     }
@@ -476,11 +483,11 @@ struct GivenMessage: View {
             }
             // Opened, what follows its heading: the heading itself is the row above, said once. Events on what's
             // followed as cards of their own (their text is written for the agent).
-            if open, !rest.isEmpty {
+            if open, !rest.isEmpty || sender != nil {
                 let followed = from == "zero" ? FollowEvents.parse(report) : []
                 Group {
                     if followed.isEmpty {
-                        MarkdownText(rest, cwd: cwd, size: 13.5, compact: true)
+                        MarkdownText(sender != nil ? report : rest, cwd: cwd, size: 13.5, compact: true)
                     } else {
                         FollowedEvents(groups: followed)
                     }

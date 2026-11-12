@@ -52,6 +52,9 @@ struct ConversationView: View {
     @State private var pickingRewind = false
     @State private var lastEscape: Date?
     @State private var escapeMonitor: Any?
+    /// Anything done in the window while this page is shown: its reply is seen.
+    @State private var activityMonitor: Any?
+    @State private var activityAt = Date.distantPast
     /// Images going with the next message.
     @State private var images: [URL] = []
     /// Where the conversation is scrolled to, and how much of it there is: for the scrollbar drawn over it.
@@ -416,9 +419,15 @@ struct ConversationView: View {
                             playback.update(items, conversation: conversation.id, live: false, now: Date())
                         }
                     }
-                    // An answer that lands while you're here is seen once you do something in the task (click, scroll,
-                    // type): just having it open isn't reading it.
-                    .simultaneousGesture(TapGesture().onEnded { workspace.markSeen(conversation.id) })
+                    // Its latest answer is seen when you're plainly reading it: the page shown in Zero's window, Zero in
+                    // front, the end in view, the answer read out (opening it too, once it has loaded: one try 600 ms
+                    // in missed a page still loading); or as you do anything in that window while it's shown (move the
+                    // pointer, click, scroll, type): a click in the words never reached a tap gesture.
+                    .onChange(of: "\(latestAnswerID ?? "")|\(playback.caughtUp)|\(shown)", initial: true) { seenIfAtEnd() }
+                    .onAppear { watchActivity() }
+                    .onDisappear {
+                        if let activityMonitor { NSEvent.removeMonitor(activityMonitor) }; activityMonitor = nil
+                    }
                     .onChange(of: images) { Drafts.save("task:" + conversation.id, text: box.text, images: images) }
                     .overlay { rewindOverlay }
             }
@@ -987,7 +996,7 @@ struct ConversationView: View {
         }
         if let waiting = workspace.pendingDrafts.removeValue(forKey: conversation.id) { draft = waiting }
         Task {
-            try? await Task.sleep(for: .milliseconds(600)); workspace.markSeen(id)
+            try? await Task.sleep(for: .milliseconds(600)); seenIfAtEnd()
         }
         watchEscape()
     }
@@ -1007,6 +1016,34 @@ struct ConversationView: View {
             } branched: {
                 open($0)
             }
+        }
+    }
+
+    /// The answer the task's last turn ended with, as zerod has it.
+    private var latestAnswerID: String? {
+        conversation.items.last { if case .agent(_, true) = $0.kind { true } else { false } }?.id
+    }
+
+    /// Seen without a hand on it: shown, in front, at its end, and read out.
+    private func seenIfAtEnd() {
+        guard shown, NSApp.isActive, playback.caughtUp, latestAnswerID != nil else { return }
+        let atEnd = following || tracker.geometry.map { Self.end(of: $0) - $0.contentOffset.y < 40 } ?? true
+        if atEnd { workspace.markSeen(conversation.id) }
+    }
+
+    /// The pointer moving, a click, a scroll or a key in Zero's window while this page is shown there: you're in the task,
+    /// and its reply is seen (at most once a second: telling zerod is once per answer anyway).
+    private func watchActivity() {
+        guard activityMonitor == nil else { return }
+        let id = conversation.id
+        activityMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown, .scrollWheel, .keyDown]) {
+            [workspace] event in
+            guard watched, event.window != nil, event.window === (NSApp.delegate as? AppDelegate)?.workspaceWindow,
+                Date().timeIntervalSince(activityAt) > 1
+            else { return event }
+            activityAt = Date()
+            workspace.markSeen(id)
+            return event
         }
     }
 
