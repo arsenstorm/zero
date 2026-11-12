@@ -527,6 +527,11 @@ impl Claude {
     /// The end of a turn: its last words become its answer, and the session is idle. Messages sent during the turn
     /// went into it (Claude Code hands them to the running turn), so none is still to come.
     fn result(&mut self, conversation: &Conversation, message: &Value, effects: &mut Effects) {
+        // No turn run, only a background task's end noted (a resumed session's command its pause or restart stopped):
+        // the turn sent to it, if any, hasn't started yet.
+        if message["origin"]["kind"] == "task-notification" && message["num_turns"] == 0 && message["subtype"] == "success" {
+            return;
+        }
         self.queued = 0;
         let mut error = None;
         if std::mem::take(&mut self.interrupting) && message["subtype"] == "error_during_execution" {

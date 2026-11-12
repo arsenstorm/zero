@@ -151,6 +151,22 @@ fn the_restarts_carry_on_is_a_turn_but_not_a_message_of_yours() {
 }
 
 #[test]
+fn a_resumed_sessions_empty_result_for_a_stopped_background_command_doesnt_end_the_turn_sent() {
+    // Resumed after a pause or a restart that stopped a command it ran in the background, Claude Code first reports
+    // the command stopped, in a result of its own with no turn run, before it takes the message it was resumed with:
+    // that turn hasn't ended (its lead was told the worker "stopped without an answer" as it carried on).
+    let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+    core.sent(&json!({"type": "user", "message": {"role": "user", "content": "carry on"}}));
+    core.receive(&json!({"type": "system", "subtype": "task_notification", "task_id": "b1", "status": "stopped",
+        "summary": "Background shell command didn't finish before the previous session ended"}));
+    core.receive(&json!({"type": "result", "subtype": "success", "is_error": false, "result": "", "num_turns": 0,
+        "origin": {"kind": "task-notification"}}));
+    assert_eq!(core.conversation().status, Status::Working, "the turn sent runs on");
+    core.receive(&json!({"type": "result", "subtype": "success", "is_error": false, "result": "Carried on", "num_turns": 3}));
+    assert_eq!(core.conversation().status, Status::Idle);
+}
+
+#[test]
 fn a_subagent_in_the_background_runs_until_it_reports_back() {
     // The Agent tool's own result comes at once, saying the subagent started: the step keeps running until Claude
     // Code's task notification says it ended, so the subagent reads as at work for as long as it is.
