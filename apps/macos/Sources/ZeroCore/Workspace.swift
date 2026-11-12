@@ -12,9 +12,6 @@ public final class LiveConversation {
     public fileprivate(set) var earlier: Int
     /// And after them: jumped back through it (the rail), what's newer comes as it's scrolled down to.
     public fileprivate(set) var later = 0
-    /// Not on screen (Workspace.watch): left as it is until it shows again. Made hidden: only a conversation on screen
-    /// is kept up to date (one made to warm the text cache isn't).
-    @ObservationIgnored fileprivate var hidden = true
     init(_ conversation: Conversation, earlier: Int) { self.conversation = conversation; self.earlier = earlier }
 }
 
@@ -159,21 +156,27 @@ public final class Workspace {
 
     /// A task's conversation on screen or not: a page kept behind the one shown, or in a closed or covered window, isn't
     /// redrawn as its agent works (each change laid out the whole conversation again, unseen); it catches up as it shows.
+    /// Counted by task, not kept on its live object: that object is made again when it's dropped (the mirror without
+    /// the task a moment, as zerod reconnects), and one made hidden under a page still showing was never shown again
+    /// (an answer sent while it stayed "Starting…"). Each view showing it counts once, so one going (a page made
+    /// again) doesn't hide it from another.
     public func watch(_ id: String, _ on: Bool) {
-        guard let live = lives[id], live.hidden == on else { return }
-        live.hidden = !on
-        if on { bringUp(id, live) }
+        watchers[id] = max(0, watchers[id, default: 0] + (on ? 1 : -1))
+        if watchers[id] == 0 { watchers[id] = nil }
+        if on, let live = lives[id] { bringUp(id, live) }
     }
+    @ObservationIgnored private var watchers: [String: Int] = [:]
+    private func watched(_ id: String) -> Bool { watchers[id] != nil }
 
     private func show(_ id: String, in live: LiveConversation) {
-        guard !live.hidden else { return }
+        guard watched(id) else { return }
         let since = Date().timeIntervalSince(shownAt[id] ?? .distantPast)
         guard since < Self.redrawEvery else { bringUp(id, live); return }
         guard showing.insert(id).inserted else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.redrawEvery - since) { [weak self] in
             guard let self else { return }
             showing.remove(id)
-            if let live = lives[id], !live.hidden { bringUp(id, live) }
+            if let live = lives[id], watched(id) { bringUp(id, live) }
         }
     }
 

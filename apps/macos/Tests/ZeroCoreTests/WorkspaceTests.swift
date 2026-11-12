@@ -75,3 +75,29 @@ private func session(_ id: String, _ provider: Provider = .claude) -> Conversati
             }()))
     #expect(changed)
 }
+
+/// What's on screen is the task, not the object showing it: one made again (the live copy dropped as zerod reconnects)
+/// or watched before it was made is kept up to date; two views of it count apart, the first going doesn't hide it.
+@MainActor @Test func aWatchedTaskStaysUpToDateWhateverObjectShowsIt() async throws {
+    let w = Workspace()
+    let id = "01a1aaaa00000001"
+    w.receive(.session(session(id)))
+    w.watch(id, true)
+    let live = w.live(id)!
+    w.receive(
+        .session(
+            {
+                var c = session(id); c.title = "Renamed"; c.seq = 8; return c
+            }()))
+    #expect(live.conversation.title == "Renamed", "watched before its live object was made")
+    w.watch(id, true)
+    w.watch(id, false)
+    w.receive(
+        .session(
+            {
+                var c = session(id); c.title = "Again"; c.seq = 9; return c
+            }()))
+    // Within a redraw's interval of the last: it comes once the interval is up (Workspace.redrawEvery).
+    try await Task.sleep(for: .seconds(Workspace.redrawEvery * 2))
+    #expect(live.conversation.title == "Again", "another view still shows it")
+}

@@ -11,6 +11,8 @@ struct ConversationView: View {
     /// On screen: the page shown, in a window that's open and not covered. Off it, the conversation isn't redrawn as the
     /// agent works (Workspace.watch) and nothing plays; shown again, what came meanwhile is there at once, as on opening.
     var shown = true
+    /// Counted in Workspace.watch as showing the task.
+    @State private var watched = false
     /// Your messages waiting for after the agent's turn, and whether they're held since you stopped it.
     var queued: [Queued] = []
     var held = false
@@ -272,6 +274,13 @@ struct ConversationView: View {
     /// The message as a quote at the end of what's being written.
     private func quote(_ text: String) { box.quote(text) }
 
+    /// This view's own count in what's on screen (Workspace.watch): given once, taken back once.
+    private func watching(_ on: Bool) {
+        guard on != watched else { return }
+        watched = on
+        workspace.watch(conversation.id, on)
+    }
+
     /// The message kept as a scratchpad in Saved, named by its first line.
     private func save(_ text: String) {
         let first = text.split(separator: "\n").first.map { String($0.prefix(60)) } ?? "Saved"
@@ -323,7 +332,7 @@ struct ConversationView: View {
                     // Left, it goes back to its latest items: memory doesn't grow with every long task opened.
                     .onDisappear {
                         rememberScroll(); workspace.trim(conversation.id); lifted = false
-                        workspace.watch(conversation.id, false)
+                        watching(false)
                     }
                     // Back where you were: the block that was at the top of the screen, its older page loaded first if
                     // it isn't any more. At the end, it opens at the end, as ever.
@@ -334,7 +343,7 @@ struct ConversationView: View {
                     }
                     .onChange(of: active, initial: true) { isActive = active }
                     .onChange(of: shown, initial: true) { _, on in
-                        workspace.watch(conversation.id, on)
+                        watching(on)
                         if on {
                             let items = shape.merge(conversation.items, sending: workspace.sending[conversation.id] ?? [])
                             playback.update(items, conversation: conversation.id, live: false, now: Date())

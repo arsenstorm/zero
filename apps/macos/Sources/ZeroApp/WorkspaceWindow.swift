@@ -82,12 +82,16 @@ extension AppDelegate {
             // On screen or not (closed, minimised, covered): conversations behind it stop being redrawn meanwhile.
             for name in [
                 NSWindow.didChangeOcclusionStateNotification, NSWindow.willCloseNotification, NSWindow.didMiniaturizeNotification,
-                NSWindow.didDeminiaturizeNotification,
+                NSWindow.didDeminiaturizeNotification, NSWindow.didBecomeKeyNotification,
             ] {
                 NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [navigation, weak window] note in
                     MainActor.assumeIsolated {
                         guard let window else { return }
-                        let shown = note.name != NSWindow.willCloseNotification && window.occlusionState.contains(.visible)
+                        // The window you're in is on screen, whatever the last occlusion notice said (one missed, waking
+                        // from a locked screen, left it off screen with every conversation in it unchanged).
+                        let shown =
+                            note.name != NSWindow.willCloseNotification && window.isVisible && !window.isMiniaturized
+                            && (window.occlusionState.contains(.visible) || window.isKeyWindow)
                         if navigation.windowShown != shown { navigation.windowShown = shown }
                     }
                 }
