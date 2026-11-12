@@ -169,7 +169,7 @@ private struct EarlierRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
+            TimelineView(.periodic(from: .zeroBeat, by: 1)) { context in
                 Text(shortAge(ask.answeredAt ?? ask.createdAt, now: context.date))
                     .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).frame(width: 30, alignment: .trailing)
             }

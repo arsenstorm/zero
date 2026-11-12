@@ -26,3 +26,48 @@ import Testing
     store.receive(.removed(ask.id))
     #expect(store.asks.isEmpty)
 }
+
+/// Views read what's live, not the history: a run's output redraws only what shows it, and an ask changing in one
+/// session doesn't redraw another session's.
+@MainActor @Test func theStoreKeepsWhatsLiveApart() {
+    let store = Store(adapters: [])
+    var one = AgentIdentity(name: "zerod-one", host: "mac"), two = AgentIdentity(name: "zerod-two", host: "mac")
+    (one.ref, two.ref) = ("one", "two")
+    var run = Ask(kind: .run, title: "Tests", options: ["Run", "Reject"], command: "make test", agent: one)
+    var twin = Ask(kind: .run, title: "Tests", options: ["Run", "Reject"], command: "make test", agent: two)
+    twin.sameAs = run.id
+    var old = Ask(kind: .note, title: "Note", agent: two)
+    old.state = .answered
+    store.receive(.asks([old, run, twin], offline: [], reachable: []))
+    #expect(store.open.map(\.id) == [run.id, twin.id] && store.twins == [run.id: 1])
+    #expect(store.agentOrder == ["zerod-two", "zerod-one"] && store.byAgent["zerod-two"]?.count == 2)
+    #expect(store.asks(of: "one").map(\.id) == [run.id] && store.identity(of: "zerod-one") == one)
+
+    func fires(_ read: @escaping () -> Void, after change: () -> Void) -> Bool {
+        nonisolated(unsafe) var fired = false
+        withObservationTracking(read) { fired = true }
+        change()
+        return fired
+    }
+    #expect(
+        !fires(
+            {
+                _ = store.asks; _ = store.open; _ = store.asks(of: "one")
+            }, after: { store.receive(.output(id: run.id, chunk: "ok\n")) }))
+    #expect(fires({ _ = store.output(of: run.id) }, after: { store.receive(.output(id: run.id, chunk: "done\n")) }))
+    #expect(store.output(of: run.id) == "ok\ndone\n" && store.ask(run.id)?.output == "ok\ndone\n")
+    #expect(
+        !fires(
+            { _ = store.asks(of: "one") },
+            after: {
+                twin.state = .answered; store.receive(.ask(twin))
+            }))
+    #expect(store.twins.isEmpty && store.open.map(\.id) == [run.id])
+    #expect(
+        fires(
+            { _ = store.asks(of: "one") },
+            after: {
+                run.state = .answered; store.receive(.ask(run))
+            }))
+    #expect(store.open.isEmpty && store.asks(of: "one").first?.state == .answered)
+}

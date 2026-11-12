@@ -174,6 +174,13 @@ struct ComposerCard: View {
     private var placeholder: String {
         agentName.map { "Message \(controller.store.displayName(of: $0))…" } ?? "What should a new agent work on?"
     }
+    /// What one of Zero's own tasks ("zerod-<id>") runs on ("Opus 5.5"), read from its own entry.
+    private func zeroRuns(_ agent: String) -> String? {
+        guard agent.hasPrefix("zerod-"), let task = controller.workspace?.entry(String(agent.dropFirst("zerod-".count))).conversation
+        else { return nil }
+        return ComposerRows.catalogue(task.provider).first { $0.id == task.model }?.name ?? task.model.map(ModelNames.readable)
+            ?? task.provider.title
+    }
     /// Busy: the agent being started, or the message on its way to the agent.
     private var starting: Bool { agentName.map { controller.delivering.contains($0) } ?? controller.spawning }
     private var error: String? { agentName.map { controller.deliveryError[$0] } ?? controller.spawnError }
@@ -254,7 +261,7 @@ struct ComposerCard: View {
                             ? (runtime?.name ?? "Default")
                             : $0.name + (effort.map { " · " + $0 } ?? "") + (account.map { " · " + $0 } ?? "")
                     }
-                        ?? agentName.map { controller.store.zeroTask?($0)?.runs ?? speaker($0) } ?? runtime?.name ?? "Runtime",
+                        ?? agentName.map { zeroRuns($0) ?? speaker($0) } ?? runtime?.name ?? "Runtime",
                     open: controller.selector?.kind == .runtime
                 ) {
                     controller.selectorAgent = agentName; controller.openSelector(.runtime, anchor: runtimeAnchor)

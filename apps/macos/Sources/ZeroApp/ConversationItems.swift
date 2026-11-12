@@ -320,7 +320,7 @@ private struct ReasoningRow: View {
                 NucleoIcon("brain", size: 14).frame(width: 14, height: 16)
                 Group {
                     if let date, until == nil {
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                        TimelineView(.periodic(from: .zeroBeat, by: 1)) { context in
                             Text(Took.text("Thought", context.date.timeIntervalSince(date)))
                         }
                     } else {
@@ -368,14 +368,14 @@ private struct CommandCard: View {
             StepRow(open: $open, opens: opens) {
                 StatusIcon(status: status)
                 if status == .running, let started {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in title(running: context.date.timeIntervalSince(started)) }
+                    TimelineView(.periodic(from: .zeroBeat, by: 1)) { context in title(running: context.date.timeIntervalSince(started)) }
                 } else {
                     title(running: nil)
                 }
             } trailing: {
                 if let exitCode, exitCode != 0 { Text("exit \(exitCode)").font(.caption).foregroundStyle(.red) }
                 if status == .running, let started {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                    TimelineView(.periodic(from: .zeroBeat, by: 1)) { context in
                         Text(Took.length(context.date.timeIntervalSince(started))).font(.caption.monospacedDigit()).foregroundStyle(
                             .tertiary)
                     }

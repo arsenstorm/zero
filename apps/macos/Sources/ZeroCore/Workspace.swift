@@ -15,6 +15,18 @@ public final class LiveConversation {
     init(_ conversation: Conversation, earlier: Int) { self.conversation = conversation; self.earlier = earlier }
 }
 
+/// One task as its page needs it, observed on its own: its roster entry and its board row, set only when they change,
+/// so another task changing doesn't redraw this one's page (each page read the whole roster and board, and redrew with
+/// any change to either).
+@MainActor @Observable
+public final class TaskEntry {
+    /// As the roster has it (without its conversation).
+    public fileprivate(set) var conversation: Conversation?
+    /// Its row on the board: a lead's, its workers in it.
+    public fileprivate(set) var row: BoardRow?
+    init(_ conversation: Conversation?, row: BoardRow?) { self.conversation = conversation; self.row = row }
+}
+
 @MainActor @Observable
 public final class Workspace {
     /// zerod's sessions as its protocol keeps them (snapshots, then changes in order). Views read the roster and each
@@ -28,6 +40,7 @@ public final class Workspace {
     /// conversation) redraws when a name changes, not with every change to the roster.
     public private(set) var names: [String: String] = [:]
     @ObservationIgnored private var lives: [String: LiveConversation] = [:]
+    @ObservationIgnored private var entries: [String: TaskEntry] = [:]
     public private(set) var connected = false
     /// Why the last request failed, for the window to show.
     public var lastError: String?
@@ -74,7 +87,7 @@ public final class Workspace {
 
     /// Every task at once (crates/zerod/src/board.rs), while the window shows it.
     public private(set) var board: [BoardRow] = []
-    private var rawBoard: [BoardRow] = []
+    var rawBoard: [BoardRow] = []
 
     /// Told each board as it changes, for the app's notifications.
     @ObservationIgnored public var onBoard: (([BoardRow]) -> Void)?
@@ -97,6 +110,10 @@ public final class Workspace {
                 Log.write("task \(row.session) \(row.state.rawValue): \(row.task)")
             }
             board = rows
+            for (id, entry) in entries {
+                let row = rows.first { $0.session == id }
+                if entry.row != row { entry.row = row }
+            }
             onBoard?(rows)
         }
     }
@@ -108,6 +125,14 @@ public final class Workspace {
     public var conversations: [Conversation] { order.compactMap { roster[$0] } }
     /// A task as the roster has it: everything but its conversation.
     public func conversation(_ id: String) -> Conversation? { roster[id] }
+
+    /// A task's roster entry and board row, observed on their own; made on demand, kept up to date from then on.
+    public func entry(_ id: String) -> TaskEntry {
+        if let kept = entries[id] { return kept }
+        let entry = TaskEntry(roster[id], row: board.first { $0.session == id })
+        entries[id] = entry
+        return entry
+    }
 
     /// A task's whole conversation, observed on its own.
     public func live(_ id: String) -> LiveConversation? {
@@ -123,6 +148,7 @@ public final class Workspace {
         guard let full = mirror.conversations[id] else {
             // Only a real change: an assignment, even of what's there, redraws every view reading it.
             if roster[id] != nil { roster[id] = nil }
+            if let entry = entries[id], entry.conversation != nil { entry.conversation = nil }
             if names[id] != nil { names[id] = nil }
             if order.contains(id) { order.removeAll { $0 == id } }
             lives[id] = nil
@@ -145,6 +171,7 @@ public final class Workspace {
         light.diff = nil
         light.seq = 0
         if roster[id] != light { roster[id] = light }
+        if let entry = entries[id], entry.conversation != light { entry.conversation = light }
         let name = Self.label(of: light)
         if names[id] != name { names[id] = name }
         if let live = lives[id] {
@@ -250,6 +277,7 @@ public final class Workspace {
                 fresh.onClose = { [weak self] in
                     Task { @MainActor in
                         self?.link = nil; self?.connected = false; Log.write("zerod connection closed")
+                        self?.closed?.resume(); self?.closed = nil
                     }
                 }
                 link = fresh
@@ -261,10 +289,18 @@ public final class Workspace {
                     await loadWorkspaces(); await loadIntegrations()
                 }
             }
-            // Without one, looked for again soon: zerod back from a restart is picked up within a moment.
-            try? await Task.sleep(for: link == nil ? .milliseconds(300) : .seconds(2))
+            // Without one, looked for again soon: zerod back from a restart is picked up within a moment. With one,
+            // nothing to do until it closes (a 2 s poll woke the app forever).
+            if link == nil {
+                try? await Task.sleep(for: .milliseconds(300))
+            } else {
+                await withCheckedContinuation { continuation in
+                    if link == nil { continuation.resume() } else { closed = continuation }
+                }
+            }
         }
     }
+    @ObservationIgnored private var closed: CheckedContinuation<Void, Never>?
 
     func receive(_ message: ZerodMirror.Message) {
         if !mirror.receive(message) { onBehind() }

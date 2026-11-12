@@ -1,12 +1,48 @@
 import Foundation
 import Observation
 
+/// The asks of one zerod session, observed on their own: an ask changing in one task redraws the steps and cards of
+/// that task's pages, not every page's.
+@MainActor @Observable
+public final class SessionAsks {
+    public fileprivate(set) var asks: [Ask] = []
+}
+
+/// A run's output as it streams, observed on its own: a chunk redraws the terminal showing it, not every view that
+/// reads the asks.
+@MainActor @Observable
+final class AskOutput {
+    var text: String
+    init(_ text: String) { self.text = text }
+}
+
 /// The app's copy of zerod's inbox (crates/zerod/src/inbox.rs): every ask, oldest first, kept current from zerod's
 /// events, and what the inbox window does to them sent back as requests. The state machine, the log, runs and delivery
 /// are zerod's; what the user picks shows at once and zerod's own account of it follows.
+///
+/// The history (every ask ever, nearly all answered) isn't observed by itself: views read the indexes of what's live
+/// (`open`, `twins`, `byAgent`, a session's asks), each set only when it changes, and a run's output by its own.
 @MainActor @Observable
 public final class Store {
-    public private(set) var asks: [Ask] = []
+    @ObservationIgnored private var history: [Ask] = []
+    /// Bumped when an ask comes, changes or goes (not as a run's output streams): what reading `asks` observes.
+    private var revision = 0
+    /// Every ask, oldest first. Reading it redraws on any ask's change: views drawn often read the indexes instead.
+    public var asks: [Ask] {
+        _ = revision
+        return history
+    }
+    /// The asks not yet answered, declined or expired.
+    public private(set) var open: [Ask] = []
+    /// How many open asks wait on each ask for the same run (`sameAs`).
+    public private(set) var twins: [String: Int] = [:]
+    /// Each agent's asks but the expired, oldest first, and the agents in the order they first asked.
+    public private(set) var byAgent: [String: [Ask]] = [:]
+    public private(set) var agentOrder: [String] = []
+    /// Each agent as its latest ask names it.
+    private var identities: [String: AgentIdentity] = [:]
+    @ObservationIgnored private var sessions: [String: SessionAsks] = [:]
+    @ObservationIgnored private var outputs: [String: AskOutput] = [:]
     /// Agents whose session is not running, by zerod's last look.
     public private(set) var offline: Set<String> = []
     /// Agents zerod can type into.
@@ -28,25 +64,31 @@ public final class Store {
 
     /// `asks` to start from, for previews; a connected store gets zerod's.
     public init(asks: [Ask] = [], adapters: [AgentAdapter] = [ZerodSpawner(), HostAdapter()]) {
-        self.asks = asks
         self.adapters = adapters
+        history = asks
+        reindex()
     }
 
     // The connection.
 
-    /// Starts zerod if it isn't running, follows its inbox, and connects again whenever the connection drops.
+    /// Starts zerod if it isn't running, follows its inbox, and connects again whenever the connection drops: it waits
+    /// on the connection closing, not on a timer.
     public func connect() async {
         while true {
-            if link == nil, await ZerodLink.ensureRunning(), let fresh = try? ZerodLink() {
+            if await ZerodLink.ensureRunning(), let fresh = try? ZerodLink() {
+                let (closed, close) = AsyncStream.makeStream(of: Void.self)
+                fresh.onClose = { close.finish() }
                 fresh.onInbox = { [weak self] message in Task { @MainActor in self?.receive(message) } }
-                fresh.onClose = { [weak self] in
-                    Task { @MainActor in
-                        self?.link = nil; self?.connected = false
-                    }
-                }
                 link = fresh
                 if let settings { try? await fresh.configure(takeBack: settings.takeBack, ttl: settings.ttl, patterns: settings.patterns) }
-                if (try? await fresh.followInbox()) != nil { connected = true }
+                if (try? await fresh.followInbox()) != nil {
+                    connected = true
+                    for await _ in closed {}
+                } else {
+                    // Closed before its handler was set, or zerod refused: let it go and try again.
+                    fresh.close()
+                }
+                link = nil; connected = false
             }
             try? await Task.sleep(for: .seconds(2))
         }
@@ -55,27 +97,101 @@ public final class Store {
     func receive(_ message: ZerodLink.InboxMessage) {
         switch message {
         case let .asks(all, offline, reachable):
-            asks = all
+            history = all
+            for ask in all { refreshOutput(ask) }
+            changed()
             (self.offline, self.reachable) = (offline, reachable)
         case let .ask(ask):
-            if let i = asks.firstIndex(where: { $0.id == ask.id }) {
-                asks[i] = ask
+            if let i = history.firstIndex(where: { $0.id == ask.id }) {
+                history[i] = ask
+                refreshOutput(ask)
+                changed()
             } else {
-                asks.append(ask)
+                history.append(ask)
+                refreshOutput(ask)
+                changed()
                 onCreate?(ask)
             }
             onChange?(ask)
         case let .output(id, chunk):
-            guard let i = asks.firstIndex(where: { $0.id == id }) else { return }
-            asks[i].output += chunk
-            onOutput?(asks[i], chunk)
+            guard let i = history.lastIndex(where: { $0.id == id }) else { return }
+            history[i].output += chunk
+            outputs[id]?.text += chunk
+            onOutput?(history[i], chunk)
         case let .removed(id):
-            asks.removeAll { $0.id == id }
+            history.removeAll { $0.id == id }
+            outputs[id] = nil
+            changed()
             onRemove?(id)
         case let .agents(offline, reachable):
             if offline != self.offline { self.offline = offline }
             if reachable != self.reachable { self.reachable = reachable }
         }
+    }
+
+    /// An ask came, changed or went: what reads the history redraws, and each index is set again where it differs.
+    private func changed() {
+        revision &+= 1
+        reindex()
+    }
+
+    // ponytail: rebuilt from the whole history on each change (a few thousand asks, well under a millisecond); make it
+    // incremental if the history grows by orders of magnitude.
+    private func reindex() {
+        var open: [Ask] = [], twins: [String: Int] = [:], byAgent: [String: [Ask]] = [:], order: [String] = []
+        var identities: [String: AgentIdentity] = [:], bySession: [String: [Ask]] = [:]
+        for ask in history {
+            identities[ask.agent.name] = ask.agent
+            if let session = ask.session, sessions[session] != nil { bySession[session, default: []].append(ask) }
+            guard ask.state != .expired else { continue }
+            if byAgent[ask.agent.name] == nil { order.append(ask.agent.name) }
+            byAgent[ask.agent.name, default: []].append(ask)
+            guard !ask.state.isFinal else { continue }
+            open.append(ask)
+            if let original = ask.sameAs { twins[original, default: 0] += 1 }
+        }
+        if !Self.same(open, self.open) { self.open = open }
+        if twins != self.twins { self.twins = twins }
+        if byAgent.count != self.byAgent.count || byAgent.contains(where: { !Self.same($0.value, self.byAgent[$0.key] ?? []) }) {
+            self.byAgent = byAgent
+        }
+        if order != agentOrder { agentOrder = order }
+        if identities != self.identities { self.identities = identities }
+        for (session, box) in sessions where !Self.same(box.asks, bySession[session, default: []]) {
+            box.asks = bySession[session, default: []]
+        }
+    }
+
+    /// Equal but for their output, which streams on its own (`output(of:)`): an index isn't set again for it.
+    private static func same(_ a: [Ask], _ b: [Ask]) -> Bool {
+        a.count == b.count
+            && zip(a, b).allSatisfy { x, y in
+                var x = x
+                x.output = y.output
+                return x == y
+            }
+    }
+
+    /// A session's asks (every state), oldest first: reading them redraws only when one of this session's changes.
+    public func asks(of session: String) -> [Ask] {
+        if let box = sessions[session] { return box.asks }
+        let box = SessionAsks()
+        box.asks = history.filter { $0.session == session }
+        sessions[session] = box
+        return box.asks
+    }
+
+    /// A run's output so far: reading it redraws as it streams, and nothing else does.
+    public func output(of id: String) -> String {
+        if let box = outputs[id] { return box.text }
+        let box = AskOutput(history.last { $0.id == id }?.output ?? "")
+        outputs[id] = box
+        return box.text
+    }
+
+    /// zerod's whole account of an ask carries its output so far.
+    private func refreshOutput(_ ask: Ask) {
+        if let box = outputs[ask.id], box.text != ask.output { box.text = ask.output }
     }
 
     /// The take-back window and default expiry (seconds), and the drop folders' patterns; sent again on every connect.
@@ -99,7 +215,7 @@ public final class Store {
 
     // Agents.
 
-    public func identity(of agent: String) -> AgentIdentity? { asks.last { $0.agent.name == agent }?.agent }
+    public func identity(of agent: String) -> AgentIdentity? { identities[agent] }
 
     /// Zero's own tasks as the workspace knows them now, by their agent name ("zerod-<id>"): the task's name, and what
     /// it runs on ("Opus 5.5"). The inbox's own record of them is only the label they asked under.
@@ -205,7 +321,6 @@ public final class Store {
     // Asks.
 
     public func ask(_ id: String) -> Ask? { asks.first { $0.id == id } }
-    public var open: [Ask] { asks.filter { !$0.state.isFinal } }
 
     /// `keepID` keeps the caller's id unless it is already taken.
     public func create(_ ask: Ask, keepID: Bool = false) {
@@ -250,7 +365,9 @@ public final class Store {
 
     public func dismiss(_ id: String) {
         guard let ask = ask(id), ask.state.isFinal else { return }
-        asks.removeAll { $0.id == id }
+        history.removeAll { $0.id == id }
+        outputs[id] = nil
+        changed()
         request { try await $0.dismiss(id) }
     }
 
@@ -270,9 +387,10 @@ public final class Store {
     }
 
     private func update(_ id: String, _ change: (inout Ask) -> Void) {
-        guard let i = asks.firstIndex(where: { $0.id == id }) else { return }
-        change(&asks[i])
-        onChange?(asks[i])
+        guard let i = history.firstIndex(where: { $0.id == id }) else { return }
+        change(&history[i])
+        changed()
+        onChange?(history[i])
     }
 }
 

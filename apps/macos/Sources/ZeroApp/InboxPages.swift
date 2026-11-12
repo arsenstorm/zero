@@ -295,7 +295,7 @@ struct UpdatingBar: View {
     let updating: Workspace.Updating
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
+        TimelineView(.periodic(from: .zeroBeat, by: 1)) { context in
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 9) {
                     Spinner().frame(width: 12, height: 12)

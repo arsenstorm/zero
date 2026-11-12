@@ -1439,7 +1439,7 @@ private struct DockSlot: View {
         // what came after it, which plays on above it.
         let now = Date()
         let admit = { (id: String) in shown.contains(id) || playback.admits(playback.cardSeen(id, now: now)) }
-        let asks = inbox.store.asks.filter { !$0.state.isFinal && $0.isAgents(in: conversation.id) && admit($0.id) }
+        let asks = inbox.store.asks(of: conversation.id).filter { !$0.state.isFinal && $0.isAgents(in: conversation.id) && admit($0.id) }
         let questions = conversation.questions.filter { admit($0.id) }
         let approvals = conversation.approvals.filter { admit($0.id) }
         let ids = questions.map(\.id) + asks.map(\.id) + approvals.map(\.id)

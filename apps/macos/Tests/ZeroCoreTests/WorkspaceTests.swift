@@ -101,3 +101,34 @@ private func session(_ id: String, _ provider: Provider = .claude) -> Conversati
     try await Task.sleep(for: .seconds(Workspace.redrawEvery * 2))
     #expect(live.conversation.title == "Again", "another view still shows it")
 }
+
+/// A task's page reads its own entry: another task changing (its state, its board row) doesn't redraw it; its own
+/// change does, and an entry made before its task arrived fills in when it does.
+@MainActor @Test func aTaskEntryChangesOnlyWithItsOwnTask() {
+    let w = Workspace()
+    let (a, b) = ("01a1aaaa00000001", "01a1aaaa00000002")
+    let early = w.entry(b)
+    w.receive(.session(session(a)))
+    w.receive(.session(session(b)))
+    #expect(early.conversation?.id == b)
+    let entry = w.entry(a)
+    var changed = false
+    withObservationTracking {
+        _ = entry.conversation; _ = entry.row
+    } onChange: {
+        changed = true
+    }
+    w.receive(
+        .session(
+            {
+                var c = session(b); c.status = .working; c.seq = 8; return c
+            }()))
+    w.rawBoard = [BoardRow.starting(session: b, task: "Other", workspace: "zero")!]
+    w.resettle()
+    #expect(!changed)
+    #expect(early.row?.task == "Other")
+    w.rawBoard.append(BoardRow.starting(session: a, task: "This", workspace: "zero")!)
+    w.resettle()
+    #expect(changed)
+    #expect(entry.row?.task == "This")
+}

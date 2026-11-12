@@ -56,9 +56,12 @@ private struct PageHost<Content: View>: NSViewRepresentable {
         return host
     }
 
+    /// The page shown, and one just hidden (told it's hidden): a page staying hidden isn't given the window's environment
+    /// again on every update of the window (25k updates a minute across kept pages); it catches up as it's shown.
     func updateNSView(_ host: NSHostingView<AnyView>, context: Context) {
-        host.rootView = AnyView(content().environment(\.self, context.environment))
+        let wasHidden = host.isHidden
         host.isHidden = !active
+        if active || !wasHidden { host.rootView = AnyView(content().environment(\.self, context.environment)) }
     }
 }
 
@@ -68,27 +71,39 @@ private struct TaskView: View {
     let lead: String
     @Bindable var navigation: Navigation
 
-    /// Other tasks by id, for a message from one: its name, and opening it (a worker on its lead's page).
-    private var taskLink: TaskLink {
-        TaskLink(
-            name: { [workspace] id in workspace.names[id] },
-            open: { [workspace, navigation] id in
-                let lead = workspace.roster[id]?.parent
-                navigation.place = .task(lead ?? id)
-                navigation.worker = lead == nil ? nil : id
-            })
-    }
     /// The page shown, as against one kept behind it.
     var active = true
     /// And on screen: the window open and not covered.
     var shown = true
+    /// Other tasks by id, for a message from one: its name, and opening it (a worker on its lead's page). Made with the
+    /// page, not in its body: a new one each body run went down through the whole conversation.
+    private let taskLink: TaskLink
 
-    private var team: [Conversation] {
-        let all = workspace.conversations
-        var team = all.filter { $0.id == lead }
-        var i = 0
-        while i < team.count { let id = team[i].id; team += all.filter { $0.parent == id }; i += 1 }
-        return team
+    init(workspace: Workspace, inbox: InboxController, lead: String, navigation: Navigation, active: Bool, shown: Bool) {
+        self.workspace = workspace
+        self.inbox = inbox
+        self.lead = lead
+        self.navigation = navigation
+        self.active = active
+        self.shown = shown
+        taskLink = TaskLink(
+            name: { [workspace] id in workspace.names[id] },
+            open: { [workspace, navigation] id in
+                let lead = workspace.conversation(id)?.parent
+                navigation.place = .task(lead ?? id)
+                navigation.worker = lead == nil ? nil : id
+            })
+    }
+
+    /// Whether a task is this lead's or under it, however deep: up its parents, each read on its own (TaskEntry), so
+    /// the page doesn't redraw with every task's change.
+    private func inTeam(_ id: String) -> Bool {
+        var id: String? = id, seen: Set<String> = []
+        while let current = id, seen.insert(current).inserted {
+            if current == lead { return true }
+            id = workspace.entry(current).conversation?.parent
+        }
+        return false
     }
 
     /// Another task, from this one (a branch): a worker of the same lead shows under it.
@@ -102,12 +117,12 @@ private struct TaskView: View {
     }
 
     var body: some View {
-        let team = team
+        let entry = workspace.entry(lead)
         // The worker shown, when it is one of this lead's: another page's worker is not this page's business.
-        let worker = navigation.worker.flatMap { id in team.contains { $0.id == id } ? id : nil }
-        let conversation = workspace.conversation(worker ?? lead)
+        let worker = navigation.worker.flatMap { id in entry.conversation != nil && inTeam(id) ? id : nil }
+        let conversation = workspace.entry(worker ?? lead).conversation
         // The lead's row, or the worker's own when a worker is shown: its status, place and asks are its own.
-        let leadRow = workspace.board.first { $0.session == lead }
+        let leadRow = entry.row
         let row = worker.flatMap { leadRow?.member($0) } ?? leadRow
         if let conversation, conversation.terminal != nil {
             // A terminal runs edge to edge; the pane sits beside it as a column of its own.

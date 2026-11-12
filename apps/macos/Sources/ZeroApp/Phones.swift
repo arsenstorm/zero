@@ -771,7 +771,7 @@ private struct PairPhone: View {
                     DialogTitle(text: "Scan the code")
                     Text("In Zero on your iPhone, tap Scan the code and point the camera here.")
                         .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                    TimelineView(.periodic(from: .zeroBeat, by: 1)) { context in
                         let left = max(0, 300 - Int(context.date.timeIntervalSince(codeAt)))
                         Text(left == 0 ? "This code has expired" : String(format: "Expires in %d:%02d", left / 60, left % 60))
                             .font(.system(size: 12)).monospacedDigit().foregroundStyle(left == 0 ? .red : .secondary)

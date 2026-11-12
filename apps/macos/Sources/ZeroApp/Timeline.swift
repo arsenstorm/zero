@@ -178,7 +178,7 @@ struct WorkBlock: View {
                     } else if live, !worked {
                         Thinking()
                     } else if live {
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                        TimelineView(.periodic(from: .zeroBeat, by: 1)) { context in
                             Text(start.map { "Working for " + workedFor(context.date.timeIntervalSince($0)) } ?? "Working")
                         }
                     } else {
@@ -301,7 +301,7 @@ struct StepOrAsk: View {
     @Environment(\.askSession) private var session
 
     var body: some View {
-        if let inbox, let session, let ask = AgentAskCard.made(by: item, in: inbox.store.asks, session: session) {
+        if let inbox, let session, let ask = AgentAskCard.made(by: item, in: inbox.store.asks(of: session), session: session) {
             // A line: its card, to answer it by, is above the composer.
             AgentAskCard(ask: ask, inbox: inbox, compact: true)
         } else {
@@ -1149,4 +1149,10 @@ struct StreamingText: View {
                 .fading(shown: shown, alpha: { [readout] in readout.alpha($0) })
         }
     }
+}
+
+extension Date {
+    /// One beat for every once-a-second clock (Working for 12s, a command's time): started each from its own now, they
+    /// ticked out of step, a separate update of the window each.
+    static let zeroBeat = Date(timeIntervalSinceReferenceDate: 0)
 }

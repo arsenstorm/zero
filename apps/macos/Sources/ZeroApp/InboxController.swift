@@ -255,7 +255,6 @@ final class InboxController {
     /// The bar's dots: one per agent with live asks, workers folded into their lead (the board's team or the sessions'
     /// parent links), each in its team's most urgent state, in the user's order.
     func barAgents(settings: Settings, workspace: Workspace?) -> [(String, AgentStatus)] {
-        let live = store.asks.filter { $0.state != .expired }
         let rows = workspace?.board ?? []
         // A worker: a session with a lead, by the sessions' own parent links (the board's rows don't always carry
         // their team).
@@ -263,14 +262,9 @@ final class InboxController {
             (workspace?.conversations ?? []).filter { $0.parent != nil }.map(\.id)
                 + rows.flatMap { row in (row.team ?? []).map(\.session).filter { $0 != row.session } })
         let session = { (ask: Ask) -> String? in ask.session }
-        // Each agent's asks, gathered once (not every ask filtered again for every dot).
-        var byAgent: [String: [Ask]] = [:]
-        var seen: [String] = [], shown = Set<String>()
-        for ask in live {
-            let name = ask.agent.name
-            byAgent[name, default: []].append(ask)
-            if !shown.contains(name), !(session(ask).map(workers.contains) ?? false) { shown.insert(name); seen.append(name) }
-        }
+        // Each agent's asks as the store keeps them (not the whole history gathered again on every redraw).
+        let byAgent = store.byAgent
+        let seen = store.agentOrder.filter { name in byAgent[name]?.contains { !(session($0).map(workers.contains) ?? false) } ?? false }
         return settings.sorted(seen)
             .map { name -> (String, AgentStatus) in
                 let own = byAgent[name] ?? []
@@ -309,7 +303,7 @@ final class InboxController {
 
     /// True while the last thing in an agent's timeline is a message of the user's still awaiting its answer.
     func waitingOn(_ agent: String) -> Bool {
-        let items = store.asks.filter { $0.agent.name == agent && $0.state != .expired }
+        let items = store.byAgent[agent] ?? []
         guard !items.contains(where: { !$0.state.isFinal }), let last = items.last, store.screens[agent] == nil else { return false }
         return last.kind == .message && ["sent", "sending", "starting", "resuming"].contains(last.status ?? "")
     }
@@ -459,22 +453,21 @@ final class InboxController {
 
     init(store: Store) { self.store = store }
 
+    /// How many of the cards wait on the user: from the open asks, so a card asking doesn't read the whole history.
+    var waitingCards: Int { store.open.filter { $0.state == .waiting && shows($0) }.count }
+
+    private func shows(_ ask: Ask) -> Bool {
+        guard let agentFilter else { return ask.isForYou && (!ask.state.isFinal || (ask.answeredAt ?? .distantPast) >= inboxOpenedAt) }
+        // Messages that never arrived (from before delivery confirmed first) are not part of the conversation.
+        // Nor zerod's own marks of a task's state ("Working", "Offline"): the agent said none of them, and they were
+        // most of what a task's pane showed.
+        return ask.agent.name == agentFilter && ask.state != .expired && ask.request != "attention"
+            && !((ask.status ?? "").hasPrefix("failed") && ask.kind == .message)
+    }
+
     /// Chat order, oldest at the top. Inbox: open asks, plus what was answered since the inbox opened.
     /// Agent view: that agent's timeline. Expired asks never show.
-    var cards: [Ask] {
-        if let agentFilter {
-            // Messages that never arrived (from before delivery confirmed first) are not part of the conversation.
-            // Nor zerod's own marks of a task's state ("Working", "Offline"): the agent said none of them, and they were
-            // most of what a task's pane showed.
-            return store.asks.filter {
-                $0.agent.name == agentFilter && $0.state != .expired && $0.request != "attention"
-                    && !(($0.status ?? "").hasPrefix("failed") && $0.kind == .message)
-            }
-        }
-        return store.asks.filter {
-            $0.isForYou && (!$0.state.isFinal || ($0.answeredAt ?? .distantPast) >= inboxOpenedAt)
-        }
-    }
+    var cards: [Ask] { store.asks.filter(shows) }
 
     /// One line on where an agent is, from its latest ask or note.
     func summary(of agent: String) -> String {

@@ -40,7 +40,7 @@ struct CardView: View {
     private var dictating: Bool { controller.dictatingFor == ask.id }
     /// With several questions open, the waiting ones your keys won't answer step back; finished cards never dim.
     /// Flat (on the inbox page, in a task's status), it's the one being looked at: never dimmed.
-    private var dimmed: Bool { !flat && ask.state == .waiting && !selected && controller.cards.filter { $0.state == .waiting }.count > 1 }
+    private var dimmed: Bool { !flat && ask.state == .waiting && !selected && controller.waitingCards > 1 }
 
     @State private var commandExpanded = false
     @State private var scriptExpanded = false
@@ -81,7 +81,7 @@ struct CardView: View {
     private var byline: String? {
         let who = controller.agentFilter == nil ? controller.store.displayName(of: ask.agent.name) : nil
         // Other agents asking for this same run wait on this card.
-        let twins = controller.store.asks.filter { $0.sameAs == ask.id && !$0.state.isFinal }.count
+        let twins = controller.store.twins[ask.id] ?? 0
         let also = twins > 0 ? "and \(twins) other agent\(twins == 1 ? "" : "s")" : nil
         let parts = [[who, also].compactMap { $0 }.joined(separator: " "), context].compactMap { $0?.isEmpty == false ? $0 : nil }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
@@ -434,7 +434,7 @@ struct CardView: View {
     }
 
     private var output: some View {
-        TerminalView(command: ask.command ?? "", output: ask.output)
+        TerminalView(command: ask.command ?? "", output: controller.store.output(of: ask.id))
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .frame(height: commandHeight + 12 + optionsHeight)

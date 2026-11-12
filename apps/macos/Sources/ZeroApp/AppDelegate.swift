@@ -114,13 +114,11 @@ import ZeroCore
     private func connectWorkspace() {
         workspace = Workspace()
         inbox.workspace = workspace
-        // The control bar names Zero's own tasks as the window does: their names, and what they run on.
+        // The control bar names Zero's own tasks as the window does. Their names only, read on their own (not the
+        // roster, which changes with every task's state); what they run on is the composer's (ComposerCard.zeroRuns).
         store.zeroTask = { [weak workspace] agent in
-            guard agent.hasPrefix("zerod-"), let task = workspace?.roster[String(agent.dropFirst("zerod-".count))] else { return nil }
-            let model =
-                ComposerRows.catalogue(task.provider).first { $0.id == task.model }?.name ?? task.model.map(ModelNames.readable)
-                ?? task.provider.title
-            return (Workspace.label(of: task), model)
+            guard agent.hasPrefix("zerod-"), let name = workspace?.names[String(agent.dropFirst("zerod-".count))] else { return nil }
+            return (name, "")
         }
         let notifier = makeNotifier()
         self.notifier = notifier

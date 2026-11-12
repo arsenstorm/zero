@@ -16,7 +16,7 @@ struct QuestionCard: View {
 
     private var asks: [Ask] {
         let order = question.fields.map { question.id + "#" + $0.id }
-        return inbox.store.asks
+        return inbox.store.asks(of: session)
             .filter { ask in
                 ask.state != .expired && order.contains(ask.request ?? "")
                     && (ask.agent.ref == session || ask.agent.name == "zerod-" + session)
