@@ -507,22 +507,20 @@ final class RichLayoutManager: NSLayoutManager {
 final class RichTextView: NSTextView {
     /// Its layout manager's delegate, kept here (a layout manager doesn't keep its delegate).
     private var breaks: TokenBreaks?
-    /// Drawn as far up as the page's glide shows: a text view draws only its visible rect, letting go of what it had
-    /// drawn above as the clip view scrolls, and the glide (ConversationView.slide) shows the clip view from above its
-    /// bounds, so the lines just above came out blank until it caught up. Nothing extra while no glide runs.
-    override var preparedContentRect: NSRect {
-        get {
-            let shown = super.preparedContentRect.isEmpty ? visibleRect : super.preparedContentRect
-            guard let clip = enclosingScrollView?.contentView else { return shown }
-            let reach = ConversationView.glideReach(clip)
-            guard reach > 0 else { return shown }
-            var above = clip.bounds
-            above.origin.y = clip.isFlipped ? above.minY - reach : above.maxY
-            above.size.height = reach
-            let strip = convert(above, from: clip).intersection(bounds)
-            return strip.isEmpty ? shown : shown.isEmpty ? strip : shown.union(strip)
-        }
-        set { super.preparedContentRect = newValue }
+    /// Seen as far up as the page's glide shows it: a text view's drawing (its content layer) covers only its visible
+    /// rect, and the glide (ConversationView.slide) shows the clip view from above its bounds, so the lines just above
+    /// came out blank until it caught up. preparedContentRect doesn't move that layer (TextKit 1); this does. Nothing
+    /// extra while no glide runs.
+    override var visibleRect: NSRect {
+        let shown = super.visibleRect
+        guard let clip = enclosingScrollView?.contentView else { return shown }
+        let reach = ConversationView.glideReach(clip)
+        guard reach > 0 else { return shown }
+        var above = clip.bounds
+        above.origin.y = clip.isFlipped ? above.minY - reach : above.maxY
+        above.size.height = reach
+        let strip = convert(above, from: clip).intersection(bounds)
+        return strip.isEmpty ? shown : shown.isEmpty ? strip : shown.union(strip)
     }
     convenience init() {
         let storage = NSTextStorage()

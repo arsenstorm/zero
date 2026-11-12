@@ -14,21 +14,23 @@ struct TaskPages: View {
     @Bindable var navigation: Navigation
     let current: String
     @State private var recent: [String] = []
-    private static let kept = 3
+    /// Each in a hosting view of its own (PageHost), so kept pages cost a streamed update nothing: in one view graph,
+    /// every update of the window went through all of them (twice the cost at 8 pages).
+    private static let kept = 8
 
     var body: some View {
         let shown = recent.contains(current) ? recent : recent + [current]
         ZStack {
             ForEach(shown, id: \.self) { id in
                 let active = id == current
-                TaskView(
-                    workspace: workspace, inbox: inbox, lead: id, navigation: navigation, active: active,
-                    shown: active && navigation.windowShown
-                )
-                .opacity(active ? 1 : 0)
-                .allowsHitTesting(active)
-                .disabled(!active)
-                .accessibilityHidden(!active)
+                PageHost(active: active) {
+                    TaskView(
+                        workspace: workspace, inbox: inbox, lead: id, navigation: navigation, active: active,
+                        shown: active && navigation.windowShown
+                    )
+                    .disabled(!active)
+                    .accessibilityHidden(!active)
+                }
                 .zIndex(active ? 1 : 0)
             }
         }
@@ -38,6 +40,25 @@ struct TaskPages: View {
             if list.count > Self.kept { list.removeFirst(list.count - Self.kept) }
             recent = list
         }
+    }
+}
+
+/// A page in a view graph of its own, hidden (no clicks, keys or drawing) while another is shown.
+private struct PageHost<Content: View>: NSViewRepresentable {
+    let active: Bool
+    @ViewBuilder let content: () -> Content
+
+    func makeNSView(context: Context) -> NSHostingView<AnyView> {
+        let host = NSHostingView(rootView: AnyView(content().environment(\.self, context.environment)))
+        // Sized by the page's frame, never the other way round.
+        host.sizingOptions = []
+        host.isHidden = !active
+        return host
+    }
+
+    func updateNSView(_ host: NSHostingView<AnyView>, context: Context) {
+        host.rootView = AnyView(content().environment(\.self, context.environment))
+        host.isHidden = !active
     }
 }
 

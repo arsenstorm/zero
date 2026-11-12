@@ -7,7 +7,7 @@ import ZeroCore
 /// out as it arrives (a few times a second), hidden by a mask, and each tick of playback only adds the newly read
 /// words' shapes to the mask with a fade the render server runs. Drawn the old way (StreamingText), every tick restyled
 /// the answer's end, laid it out again, and had SwiftUI measure the page: half a core while an answer streamed.
-/// Behind `defaults write com.arsen.zero gpuReveal -bool true` while it's compared with the old way.
+/// The default; `defaults write com.arsen.zero gpuReveal -bool false` goes back to the old way.
 struct RevealText: View {
     let readout: Readout
     let text: String
@@ -15,7 +15,7 @@ struct RevealText: View {
     /// Bumped as the shown part gets taller (a new line): only then is SwiftUI asked to measure it again.
     @State private var grew = RevealGrowth()
 
-    static var on: Bool { UserDefaults.standard.bool(forKey: "gpuReveal") }
+    static var on: Bool { UserDefaults.standard.object(forKey: "gpuReveal") as? Bool ?? true }
 
     var body: some View {
         RevealBox(

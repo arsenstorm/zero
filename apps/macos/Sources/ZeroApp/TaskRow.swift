@@ -53,7 +53,12 @@ struct TaskRow: View {
         .highPriorityGesture(
             DragGesture(minimumDistance: 0, coordinateSpace: .global)
                 .onChanged {
-                    if pressedAt != $0.startLocation { pressedAt = $0.startLocation; action() }
+                    if pressedAt != $0.startLocation {
+                        pressedAt = $0.startLocation
+                        // Its peek card would open over the page just opened.
+                        TaskPeek.shared.close()
+                        action()
+                    }
                     reorder?.changed($0.translation.height)
                 }
                 .onEnded { _ in
