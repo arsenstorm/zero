@@ -128,13 +128,27 @@ public enum TimelineRow: Identifiable, Equatable, Sendable {
         }
         var next: [String: (turn: [TimelineBlock], quiet: Bool)] = [:]
         for (index, turn) in turns.enumerated() {
-            if index < turns.count - 1, folds.map({ $0.quiet(turn, into: &next) }) ?? quiet(turn) { folded.append(turn); continue }
+            if index < turns.count - 1, folds.map({ $0.quiet(turn, into: &next) }) ?? quiet(turn) {
+                // Only the event and its turn's steps fold: what the agent said to the user stays out, where it was, and
+                // the group ends before it (folded in, the lead's answers to the user went unseen in one quiet line).
+                guard let words = turn.firstIndex(where: saysSomething) else { folded.append(turn); continue }
+                folded.append(Array(turn[..<words]))
+                fold()
+                rows += turn[words...].map(TimelineRow.block)
+                continue
+            }
             fold()
             rows += turn.map(TimelineRow.block)
         }
         fold()
         folds?.keep(next)
         return rows
+    }
+
+    /// An answer with words to read (not only Zero's ending, which shows nothing).
+    private static func saysSomething(_ block: TimelineBlock) -> Bool {
+        guard case let .answer(item) = block, case let .agent(text, _) = item.kind else { return false }
+        return !ZeroEnding.split(text).0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     nonisolated(unsafe) private static let changes = #/\bzero (run|ask|approve|issue)\b|\bzero_(run|ask|approve|issue)\b|\[zero: asked/#

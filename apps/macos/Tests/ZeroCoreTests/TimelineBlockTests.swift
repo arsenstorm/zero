@@ -51,9 +51,34 @@ private func item(_ id: String, _ kind: ConversationItem.Kind) -> ConversationIt
         report("r4"), item("a4", .agent(text: "Nothing new.\n\n[zero: waiting]", finalAnswer: true)),
     ]
     let rows = TimelineRow.of(TimelineBlock.of(items, working: false))
-    #expect(rows.map(\.id) == ["u", "a0", "quiet-r2", "r3", "work-c3", "a3", "r4", "a4"], "\(rows.map(\.id))")
+    // The agent's words to the user stay out of the fold, each where it was: a group holds the events between them.
+    #expect(rows.map(\.id) == ["u", "a0", "quiet-r1", "a1", "quiet-r2", "a2", "r3", "work-c3", "a3", "r4", "a4"], "\(rows.map(\.id))")
     if case let .quiet(_, blocks, turns) = rows[2] {
-        #expect(turns == 2 && blocks.map(\.id) == ["r1", "a1", "r2", "a2"])
+        #expect(turns == 1 && blocks.map(\.id) == ["r1"])
+    } else {
+        Issue.record("not folded")
+    }
+}
+
+/// Only events fold, and the steps of the turns they started: what the agent said to the user stays in the
+/// conversation, in order, the group split around it. Turns that ended with nothing to read fold together.
+@Test func theAgentsWordsNeverFoldIntoAGroupOfEvents() {
+    let report = { (id: String) in item(id, .user(text: "<!-- from: w1 -->\nWorker ENG-1 is waiting: CI still running.")) }
+    let items = [
+        item("u", .user(text: "drive ENG-1")),
+        item("a0", .agent(text: "On it.\n\n[zero: working]", finalAnswer: true)),
+        report("r1"), item("c1", .command(command: "git log", cwd: "/", output: "", exitCode: 0, durationMs: 1)),
+        item("a1", .agent(text: "[zero: waiting]", finalAnswer: true)),
+        report("r2"), item("a2", .agent(text: "[zero: waiting]", finalAnswer: true)),
+        report("r3"), item("c3", .command(command: "ls", cwd: "/", output: "", exitCode: 0, durationMs: 1)),
+        item("a3", .agent(text: "CI passed; nothing for you yet.\n\n[zero: waiting]", finalAnswer: true)),
+        report("r4"), item("a4", .agent(text: "Nothing new.\n\n[zero: waiting]", finalAnswer: true)),
+    ]
+    let rows = TimelineRow.of(TimelineBlock.of(items, working: false))
+    #expect(rows.map(\.id) == ["u", "a0", "quiet-r3", "a3", "r4", "a4"], "\(rows.map(\.id))")
+    if case let .quiet(_, blocks, turns) = rows[2] {
+        #expect(turns == 3, "the events up to the words, the steps of their turns with them")
+        #expect(!blocks.map(\.id).contains("a3"))
     } else {
         Issue.record("not folded")
     }
@@ -107,11 +132,11 @@ private func item(_ id: String, _ kind: ConversationItem.Kind) -> ConversationIt
     let folds = TimelineRow.Folds()
     let rows = { TimelineRow.of(TimelineBlock.of(items, working: true), folds: folds).map(\.id) }
     #expect(rows() == TimelineRow.of(TimelineBlock.of(items, working: true)).map(\.id))
-    #expect(rows() == ["u", "quiet-r2", "u2", "work-a3"], "\(rows())")
+    #expect(rows() == ["u", "quiet-r1", "a1", "quiet-r2", "a2", "u2", "work-a3"], "\(rows())")
     // A folded turn that turns out to have asked the user: no longer folded.
     items[4] = item("a2", .agent(text: "Asked.\n\n[zero: asked k3x9qa]", finalAnswer: true))
     #expect(rows() == TimelineRow.of(TimelineBlock.of(items, working: true)).map(\.id))
-    #expect(rows() == ["u", "quiet-r1", "r2", "a2", "u2", "work-a3"], "\(rows())")
+    #expect(rows() == ["u", "quiet-r1", "a1", "r2", "a2", "u2", "work-a3"], "\(rows())")
 }
 
 /// Where reading has got to in an answer's source, found in its styled text by its words: Markdown's marks aren't in
