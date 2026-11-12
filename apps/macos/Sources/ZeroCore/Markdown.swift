@@ -22,6 +22,20 @@ public indirect enum MarkdownBlock: Equatable, Sendable {
 
     public static func parse(_ text: String) -> [MarkdownBlock] { parse(lines: text.components(separatedBy: "\n")) }
 
+    /// A text still being written, without the line its open code block's closing fence is arriving on (blank, or a
+    /// backtick or two so far): styled with it, the block grew a line of panel that went again as the fence came in.
+    public static func growing(_ text: String) -> String {
+        var open = false
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) where fence(line.trimmingCharacters(in: .whitespaces)) {
+            open.toggle()
+        }
+        guard open else { return text }
+        let start = text.lastIndex(of: "\n").map { text.index(after: $0) } ?? text.startIndex
+        let last = text[start...].trimmingCharacters(in: .whitespaces)
+        guard last.isEmpty || last.allSatisfy({ $0 == "`" || $0 == "~" }) else { return text }
+        return start == text.startIndex ? text : String(text[..<text.index(before: start)])
+    }
+
     /// Where a text still being written can be cut so that what's before is settled: the start of its last line after a
     /// blank one, outside a code fence, that starts a block of its own (not indented, not a list's item, which a list
     /// before it could take in). Parsed apart, the two parts give the whole's blocks; nil when there's no such place.

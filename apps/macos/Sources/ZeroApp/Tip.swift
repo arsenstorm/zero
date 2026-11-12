@@ -10,31 +10,32 @@ extension View {
 }
 
 /// The pointer on the view as SwiftUI sees it (its hover goes to what's on top, not to what's under a card or panel
-/// drawn over it), and the view's frame in AppKit's terms, for where the tip goes.
+/// drawn over it), and the view's frame in AppKit's terms, for where the tip goes. The frame's NSView is there only
+/// while the pointer is: a view of its own under every tipped view, all the time, cost layout passes (hundreds alive).
 private struct Tipped: ViewModifier {
     let text: String
     let shortcut: String?
-    @State private var anchor = Anchor()
-    final class Anchor { weak var view: TipView? }
+    @State private var over = false
 
     func body(content: Content) -> some View {
         content
-            .background(TipAnchor(text: text, shortcut: shortcut, anchor: anchor))
-            .onHover { [anchor] inside in if inside { anchor.view?.enter() } else { anchor.view?.leave() } }
+            .background { if over { TipAnchor(text: text, shortcut: shortcut) } }
+            .onHover { over = $0 }
     }
 }
 
+/// Put in place as the pointer comes onto the view, which is its `enter`; taken away as it leaves, its `leave`.
 private struct TipAnchor: NSViewRepresentable {
     let text: String
     let shortcut: String?
-    let anchor: Tipped.Anchor
-    func makeNSView(context: Context) -> TipView { let view = TipView(); anchor.view = view; return view }
-    func updateNSView(_ view: TipView, context: Context) { anchor.view = view; view.shortcut = shortcut; view.text = text }
+    func makeNSView(context: Context) -> TipView { let view = TipView(); view.shortcut = shortcut; view.text = text; return view }
+    func updateNSView(_ view: TipView, context: Context) { view.shortcut = shortcut; view.text = text }
     static func dismantleNSView(_ view: TipView, coordinator: ()) { view.leave() }
 }
 
-/// The view's frame, where the tip goes; told of the pointer by SwiftUI's hover. A tracking area saw the pointer
-/// whatever was drawn over the view, and showed its tip under a card or panel that has none of its own. Takes no clicks.
+/// The view's frame, where the tip goes; there while SwiftUI's hover has the pointer on the view. A tracking area saw
+/// the pointer whatever was drawn over the view, and showed its tip under a card or panel that has none of its own.
+/// Takes no clicks.
 final class TipView: NSView {
     var text = "" {
         didSet {
@@ -63,7 +64,7 @@ final class TipView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window == nil { leave() }
+        if window == nil { leave() } else { enter() }
     }
 
     func leave() {

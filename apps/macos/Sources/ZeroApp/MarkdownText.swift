@@ -193,7 +193,7 @@ struct MarkdownText: View {
 
     /// A text still arriving, styled but not kept: its finished blocks come from the block cache, its last styled anew.
     nonisolated static func renderGrowing(_ text: String, size: CGFloat, links: Links) -> NSAttributedString {
-        let source = ZeroEnding.split(text).0
+        let source = MarkdownBlock.growing(ZeroEnding.split(text).0)
         let key = "\(links.repo ?? "")|\(links.owner ?? "")|\(links.skills)|false"
         let render = { (part: String, growing: Bool, trimmed: Bool) in
             RichMarkdown.render(

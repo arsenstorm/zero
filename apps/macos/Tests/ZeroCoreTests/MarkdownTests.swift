@@ -115,3 +115,12 @@ import Testing
     #expect(MarkdownBlock.settled("```\nopen fence\n\nstill in it") == nil)
     #expect(MarkdownBlock.settled("No blank lines at all yet") == nil)
 }
+
+@Test func aCodeBlockStillArrivingHasNoLineItsFenceWillTakeBack() {
+    // Its closing fence on its way: the line it starts on (blank, or a backtick or two so far) isn't code.
+    #expect(MarkdownBlock.parse(MarkdownBlock.growing("Run:\n\n```\nls\ncd x\n")) == MarkdownBlock.parse("Run:\n\n```\nls\ncd x\n```"))
+    #expect(MarkdownBlock.parse(MarkdownBlock.growing("```\nls\n``")) == MarkdownBlock.parse("```\nls\n```"))
+    // A line of code under way stays, and a text with its fences closed is left as it is.
+    #expect(MarkdownBlock.growing("```\nls\nc") == "```\nls\nc")
+    #expect(MarkdownBlock.growing("```\nls\n```\n\nNext\n") == "```\nls\n```\n\nNext\n")
+}

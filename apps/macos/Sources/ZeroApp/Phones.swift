@@ -33,11 +33,12 @@ import ZeroCore
 
     func useHostedRelay() { UserDefaults.standard.removeObject(forKey: "relay"); reconnect() }
 
-    @ObservationIgnored private let host: Tunnel.Host
+    @ObservationIgnored private let wire: Wire
     @ObservationIgnored private let mac: String
     @ObservationIgnored private let token: String
-    @ObservationIgnored private var socket: URLSessionWebSocketTask?
-    @ObservationIgnored private var bridges: [String: Bridge] = [:]
+    @ObservationIgnored private var socket: URLSessionWebSocketTask? {
+        didSet { let task = socket; wire.queue.async { [wire] in wire.socket = task } }
+    }
     @ObservationIgnored private var retry = 1.0
     /// When the relay last answered: a socket gone dead (the Mac slept, its network changed) says nothing, and the relay
     /// keeps handing it phones it never hears.
@@ -77,9 +78,9 @@ import ZeroCore
             }()
         let paired =
             UserDefaults.standard.data(forKey: "tunnel.devices").flatMap { try? JSONDecoder().decode([Tunnel.Device].self, from: $0) } ?? []
-        host = Tunnel.Host(key: key, devices: paired)
+        wire = Wire(host: Tunnel.Host(key: key, devices: paired))
         devices = paired
-        host.onChange = { [weak self] devices in
+        wire.host.onChange = { [weak self] devices in
             UserDefaults.standard.set(try? JSONEncoder().encode(devices), forKey: "tunnel.devices")
             Task { @MainActor in
                 self?.devices = devices
@@ -127,7 +128,13 @@ import ZeroCore
         }
     }
 
-    func addPhone() { invite = host.invite(relay: relay, mac: mac) }
+    func addPhone() {
+        let (relay, mac) = (relay, mac)
+        wire.queue.async { [wire] in
+            let invite = wire.host.invite(relay: relay, mac: mac)
+            DispatchQueue.main.async { MainActor.assumeIsolated { Phones.shared.invite = invite } }
+        }
+    }
 
     /// The MCP servers, for a phone to list: each one's name, how it runs and where, never its values.
     var mcpServers: (() async -> [[String: Any]])?
@@ -148,7 +155,8 @@ import ZeroCore
     func push(_ alert: TaskAlert, sound: String) {
         for device in devices {
             guard let token = device.push, let note = try? JSONEncoder().encode(["title": alert.title, "body": alert.body]),
-                let sealed = try? host.seal(note, for: device)
+                // Off the wire's queue: sealing reads only the Mac's key, which never changes.
+                let sealed = try? wire.host.seal(note, for: device)
             else { continue }
             var aps: [String: Any] = ["alert": ["title": "Zero", "body": "A task has news"], "mutable-content": 1]
             if !sound.isEmpty { aps["sound"] = sound + ".aiff" }
@@ -160,7 +168,12 @@ import ZeroCore
     /// Takes tasks' notifications off the phones (seen, or moved on): told now to a phone that's connected, and a quiet
     /// push for the rest, which iOS delivers when it chooses (it rations them, and drops them for an app closed).
     func clear(_ ids: [String]) {
-        for bridge in bridges.values { bridge.event("clear", ["ids": ids]) }
+        wire.queue.async { [wire] in wire.event("clear", ["ids": ids]) }
+        unpush(ids)
+    }
+
+    /// The quiet push half of `clear`: the bridges already told, on the wire's queue.
+    fileprivate func unpush(_ ids: [String]) {
         let ids = ids.filter { pushed.contains($0) }
         guard !ids.isEmpty else { return }
         pushed.subtract(ids)
@@ -170,16 +183,21 @@ import ZeroCore
     }
 
     func remove(_ device: Tunnel.Device) {
-        host.remove(device.id)
-        // Its connections end with it.
-        for (conn, bridge) in bridges where bridge.device?.id == device.id { close(conn) }
+        let id = device.id
+        wire.queue.async { [wire] in
+            wire.host.remove(id)
+            // Its connections end with it.
+            for (conn, bridge) in wire.bridges where bridge.device?.id == id { wire.close(conn) }
+        }
     }
+
+    /// The relay's word, heard on the wire's queue: what Settings shows.
+    fileprivate func relaySaid(_ status: Status) { self.status = status }
 
     private func reconnect() {
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
-        for conn in bridges.keys { bridges[conn]?.end() }
-        bridges = [:]
+        wire.queue.async { [wire] in wire.endAll() }
         status = .off
         start()
     }
@@ -253,29 +271,11 @@ import ZeroCore
     }
 
     private func receive(on task: URLSessionWebSocketTask) {
-        task.receive { [weak self] result in
-            Task { @MainActor in
-                guard let self, task === self.socket else { return }
-                switch result {
-                case .success(.string(let text)):
-                    self.heardAt = .now
-                    // Not over the relay's limit: only a phone getting through again says that's past (heard).
-                    if self.status == .connecting { self.status = .connected; self.retry = 1 }
-                    self.heard(text)
-                    self.receive(on: task)
-                case .success: self.receive(on: task)
-                case .failure(let error):
-                    Log.write("phones: relay connection failed, \(error.localizedDescription)")
-                    self.status = .failed(error.localizedDescription)
-                    for conn in self.bridges.keys { self.bridges[conn]?.end() }
-                    self.bridges = [:]
-                    // Again, a little later each time, up to a minute (connect asks first whether it has closed).
-                    let wait = self.retry
-                    self.retry = min(self.retry * 2, 60)
-                    try? await Task.sleep(for: .seconds(wait))
-                    if task === self.socket { self.connect() }
-                }
-            }
+        task.receive { [weak self, wire] result in
+            // The main thread first, then the wire: what the frame tells Settings comes after the connection's own news.
+            // The next frame is asked for on the main thread, so the wire gets them in order.
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.received(result, on: task) } }
+            if case .success(.string(let text)) = result { wire.queue.async { wire.heard(text, from: task) } }
         }
         // The relay says nothing until a phone connects: a ping says the socket is up. Up, the wait before the next
         // try starts over: it grew with each drop and was only reset by a phone's frame, so after a few (sleep, a
@@ -290,14 +290,53 @@ import ZeroCore
         }
     }
 
+    /// A frame from the relay, as the main thread sees it: the socket's health and the next frame asked for. The frame's
+    /// own contents are the wire's (`Wire.heard`).
+    private func received(_ result: Result<URLSessionWebSocketTask.Message, any Error>, on task: URLSessionWebSocketTask) {
+        guard task === socket else { return }
+        switch result {
+        case .success(.string):
+            heardAt = .now
+            // Not over the relay's limit: only a phone getting through again says that's past (heard).
+            if status == .connecting { status = .connected; retry = 1 }
+            receive(on: task)
+        case .success: receive(on: task)
+        case .failure(let error):
+            Log.write("phones: relay connection failed, \(error.localizedDescription)")
+            status = .failed(error.localizedDescription)
+            wire.queue.async { [wire] in wire.endAll() }
+            // Again, a little later each time, up to a minute (connect asks first whether it has closed).
+            let wait = retry
+            retry = min(retry * 2, 60)
+            Task {
+                try? await Task.sleep(for: .seconds(wait))
+                if task === self.socket { self.connect() }
+            }
+        }
+    }
+}
+
+/// The phones' traffic, off the main thread: the relay's frames read, each phone's handshake, Noise and base64, on one
+/// serial queue, so in order. The host, the bridges and `socket` (the main thread's, copied in as it changes) are the
+/// queue's alone; the main thread hears only what Settings shows (`Phones.relaySaid`). Never waited on from the main
+/// thread: a phone's request for the main thread's models waits on it (`DispatchQueue.main.sync`).
+private final class Wire: @unchecked Sendable {
+    let queue = DispatchQueue(label: "zero.phones")
+    let host: Tunnel.Host
+    var socket: URLSessionWebSocketTask?
+    var bridges: [String: Bridge] = [:]
+
+    init(host: Tunnel.Host) { self.host = host }
+
     private struct Frame: Codable { var conn: String; var open: Bool?; var data: String?; var close: Bool? }
     /// The relay's {"limit": why}: said until a phone reaches this Mac again.
     private struct Limit: Decodable { var limit: String }
 
-    private func heard(_ text: String) {
+    func heard(_ text: String, from task: URLSessionWebSocketTask) {
+        guard task === socket else { return }
         if let said = try? JSONDecoder().decode(Limit.self, from: Data(text.utf8)) {
             Log.write("phones: the relay's limit, \(said.limit)")
-            status = .limited(said.limit)
+            Self.say(.limited(said.limit))
             return
         }
         guard let frame = try? JSONDecoder().decode(Frame.self, from: Data(text.utf8)) else {
@@ -305,11 +344,8 @@ import ZeroCore
         }
         if frame.open == true {
             Log.write("phones: a phone opened \(frame.conn.prefix(8))")
-            status = .connected
-            bridges[frame.conn] = Bridge(
-                link: host.link(), send: { [weak self] data in self?.send(data, to: frame.conn) },
-                close: { [weak self] in self?.close(frame.conn) },
-                pushToken: { [weak self] token, device in self?.host.setPush(token, for: device) })
+            Self.say(.connected)
+            bridges[frame.conn] = Bridge(link: host.link(), conn: frame.conn, wire: self)
         } else if frame.close == true {
             bridges.removeValue(forKey: frame.conn)?.end()
         } else if let data = frame.data.flatMap({ Data(base64Encoded: $0) }) {
@@ -317,36 +353,48 @@ import ZeroCore
         }
     }
 
-    private func send(_ data: Data, to conn: String) {
+    private static func say(_ status: Phones.Status) {
+        DispatchQueue.main.async { MainActor.assumeIsolated { Phones.shared.relaySaid(status) } }
+    }
+
+    func send(_ data: Data, to conn: String) {
         guard let text = try? String(data: JSONEncoder().encode(Frame(conn: conn, data: data.base64EncodedString())), encoding: .utf8)
         else { return }
         socket?.send(.string(text)) { error in if let error { Log.write("phones: couldn't send, \(error)") } }
     }
 
-    private func close(_ conn: String) {
+    func close(_ conn: String) {
         bridges.removeValue(forKey: conn)?.end()
         if let text = try? String(data: JSONEncoder().encode(Frame(conn: conn, close: true)), encoding: .utf8) {
             socket?.send(.string(text)) { _ in }
         }
     }
+
+    func event(_ name: String, _ fields: [String: Any]) { for bridge in bridges.values { bridge.event(name, fields) } }
+
+    func endAll() {
+        for bridge in bridges.values { bridge.end() }
+        bridges = [:]
+    }
 }
 
-/// One phone's connection: its handshake, then its lines to zerod on a socket of their own, and zerod's back.
-@MainActor private final class Bridge {
+/// One phone's connection: its handshake, then its lines to zerod on a socket of their own, and zerod's back. Lives on
+/// its wire's queue.
+private final class Bridge {
     private var link: Tunnel.Link
-    private let send: (Data) -> Void
-    private let close: () -> Void
+    private let conn: String
+    private let wire: Wire
     private var zerod: UnixSocket?
     var device: Tunnel.Device? { link.device }
 
-    private let pushToken: (String, String) -> Void
-
-    init(link: Tunnel.Link, send: @escaping (Data) -> Void, close: @escaping () -> Void, pushToken: @escaping (String, String) -> Void) {
+    init(link: Tunnel.Link, conn: String, wire: Wire) {
         self.link = link
-        self.send = send
-        self.close = close
-        self.pushToken = pushToken
+        self.conn = conn
+        self.wire = wire
     }
+
+    private func send(_ frame: Data) { wire.send(frame, to: conn) }
+    private func close() { wire.close(conn) }
 
     /// The phone's own requests, answered here rather than by zerod: where its pushes go, an image it sends (kept
     /// where zerod can read it, its path given back), and the projects a new task can start in.
@@ -358,7 +406,7 @@ import ZeroCore
         switch op {
         case "pushToken":
             guard let token = request["token"] as? String, let device = device?.id else { return nil }
-            pushToken(token, device)
+            wire.host.setPush(token, for: device)
             result = NSNull()
         case "upload":
             guard let data = (request["data"] as? String).flatMap({ Data(base64Encoded: $0) }) else { return nil }
@@ -392,7 +440,8 @@ import ZeroCore
             // A task opened on the phone: its notification goes from the Mac (and the other phones) too.
             guard let session = request["session"] as? String else { return nil }
             UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [session])
-            Phones.shared.clear([session])
+            wire.event("clear", ["ids": [session]])
+            DispatchQueue.main.async { MainActor.assumeIsolated { Phones.shared.unpush([session]) } }
             result = NSNull()
         case "sidebar":
             // How the Mac's sidebar orders tasks, for the phone to order them the same way. Which workspace each shows
@@ -405,7 +454,9 @@ import ZeroCore
         case "models":
             // A provider's models as the Mac's selector offers them, from its CLI's own cache.
             guard let provider = (request["provider"] as? String).flatMap(Provider.init(rawValue:)) else { return nil }
-            result = ComposerRows.catalogue(provider).map { model in
+            // The selector's lists are the main thread's; waited for here, so the answer keeps its place in line.
+            let catalogue = DispatchQueue.main.sync { MainActor.assumeIsolated { ComposerRows.catalogue(provider) } }
+            result = catalogue.map { model in
                 [
                     "id": model.id, "name": model.name, "defaultLevel": model.defaultLevel ?? "",
                     "detail": model.detail ?? "", "context": model.context ?? "", "provider": model.provider ?? "",
@@ -424,10 +475,11 @@ import ZeroCore
         guard let request = try? JSONSerialization.jsonObject(with: line) as? [String: Any], request["op"] as? String == "mcpServers" else {
             return false
         }
-        Task {
+        let id = request["id"] ?? NSNull()
+        Task { @MainActor [weak self, wire] in
             let servers = await Phones.shared.mcpServers?() ?? []
-            if let reply = try? JSONSerialization.data(withJSONObject: ["id": request["id"] ?? NSNull(), "ok": true, "result": servers]) {
-                toPhone(reply)
+            if let reply = try? JSONSerialization.data(withJSONObject: ["id": id, "ok": true, "result": servers]) {
+                wire.queue.async { self?.toPhone(reply) }
             }
         }
         return true
@@ -462,12 +514,12 @@ import ZeroCore
     private func open() {
         guard let socket = try? UnixSocket.connect(path: ZerodLink.socket) else { close(); return }
         zerod = socket
-        // zerod's lines, read off the main thread, sealed and sent on it.
-        Thread.detachNewThread { [weak self] in
+        // zerod's lines, read on a thread of their own, sealed and sent on the wire's queue.
+        Thread.detachNewThread { [weak self, wire] in
             while let line = socket.readLine() {
-                Task { @MainActor in self?.toPhone(Data(line.utf8)) }
+                wire.queue.async { self?.toPhone(Data(line.utf8)) }
             }
-            Task { @MainActor in self?.close() }
+            wire.queue.async { self?.close() }
         }
     }
 
