@@ -103,6 +103,7 @@ async fn main() {
     eprintln!("zerod: {} sessions, listening on {}", daemon.list().len(), args.socket.display());
     let zerod = zerod_for(&args, &daemon, inbox, drops);
     tokio::spawn(zerod::server::archive_completed(zerod.clone()));
+    tokio::spawn(zerod::uses::follow(daemon.clone()));
     let (named, notices) = (daemon.clone(), zerod.notices.clone());
     tokio::spawn(async move { zerod::server::name_codex_accounts(&named, &notices).await });
     // Codex processes end with the daemon: their input closes when it exits.

@@ -354,6 +354,22 @@ public struct IntegrationTag: Codable, Equatable, Sendable, Hashable {
 }
 
 /// One row of the board (crates/zerod/src/board.rs): a lead session with its workers folded in.
+/// What a running task's processes use (zerod's uses.rs): its CLI, the MCP servers it started with, and the commands
+/// it runs, each with what they started.
+public struct TaskUses: Decodable, Equatable, Sendable {
+    public struct Part: Decodable, Equatable, Sendable {
+        /// Bytes of physical footprint.
+        public let memory: UInt64
+        /// Percent of one core.
+        public let cpu: Double
+    }
+    public let cli: Part
+    public let mcp: Part
+    public let commands: Part
+    public var memory: UInt64 { cli.memory + mcp.memory + commands.memory }
+    public var cpu: Double { cli.cpu + mcp.cpu + commands.cpu }
+}
+
 public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     /// As zerod's board has them (board.rs), most urgent first. Handed is "Over to you": a step only the user can take.
     /// Waiting is on someone or something that isn't the user.
@@ -934,6 +950,8 @@ public final class ZerodLink: @unchecked Sendable {
         case restarting
         /// Notifications to take off a phone, by id: seen on the Mac (from the Mac's bridge, not zerod).
         case clear([String])
+        /// What each running task's processes use, whenever it changes enough to show.
+        case uses([String: TaskUses])
     }
 
     /// The board and notices, on the link's reading thread.
@@ -1763,6 +1781,7 @@ public final class ZerodLink: @unchecked Sendable {
 
     private struct Snapshot: Decodable { let conversation: Conversation; let earlier: Int? }
     private struct BoardFeed: Decodable { let rows: [BoardRow] }
+    private struct UsesFeed: Decodable { let tasks: [String: TaskUses] }
     private struct Asks: Decodable { let asks: [Ask]; let offline: Set<String>; let reachable: Set<String> }
     private struct OneAsk: Decodable { let ask: Ask }
     private struct Output: Decodable { let ask: String; let chunk: String }
@@ -1800,6 +1819,10 @@ public final class ZerodLink: @unchecked Sendable {
                 if event == "workspaces" { onFeed?(.workspaces); continue }
                 if event == "signins" { onFeed?(.signins); continue }
                 if event == "restarting" { onFeed?(.restarting); continue }
+                if event == "uses" {
+                    if let tasks = try? JSONDecoder().decode(UsesFeed.self, from: data).tasks { onFeed?(.uses(tasks)) }
+                    continue
+                }
                 if event == "clear" { onFeed?(.clear((try? JSONDecoder().decode(Cleared.self, from: data))?.ids ?? [])); continue }
                 let decoded: ZerodMirror.Message? =
                     switch event {

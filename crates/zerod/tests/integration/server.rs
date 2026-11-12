@@ -159,8 +159,8 @@ impl Client {
                     assert_eq!(event["seq"], json!(target.seq + 1), "no gaps, no repeats");
                     target.apply(serde_json::from_value(event["change"].clone()).unwrap());
                 }
-                // The board and pad notices come on the same subscription.
-                "board" | "pads" => {}
+                // The board, pad notices and what tasks use come on the same subscription.
+                "board" | "pads" | "uses" => {}
                 other => panic!("unknown event {other}"),
             }
         }
@@ -480,6 +480,29 @@ async fn a_subscriber_is_sent_the_board_and_told_when_pads_change() {
     // Reading isn't a change.
     let quiet = tokio::time::timeout(std::time::Duration::from_millis(300), watcher.event()).await;
     assert!(quiet.map(|e| e["event"] != "pads").unwrap_or(true));
+}
+
+async fn uses(watcher: &mut Client) -> serde_json::Value {
+    loop {
+        let event = watcher.event().await;
+        if event["event"] == "uses" {
+            return event["tasks"].clone();
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_subscriber_is_sent_what_tasks_use_at_once_and_again_when_it_changes() {
+    let h = harness("server-uses").await;
+    let mut watcher = Client::connect(&h.socket).await;
+    watcher.call(json!({"op": "subscribe"})).await;
+    assert_eq!(uses(&mut watcher).await, json!({}), "pushed at once: nothing runs yet");
+    let mut sampler = zerod::uses::Sampler::default();
+    let tasks = sampler.sample(&[("s1".into(), std::process::id() as i32)]).unwrap();
+    h.daemon.publish_uses(tasks);
+    let tasks = uses(&mut watcher).await;
+    assert!(tasks["s1"]["cli"]["memory"].as_u64().unwrap() > 0, "{tasks}");
+    assert!(tasks["s1"]["commands"]["cpu"].is_number(), "{tasks}");
 }
 
 #[tokio::test]

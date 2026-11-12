@@ -309,6 +309,11 @@ impl Session {
     }
 
     /// Its id, without loading it.
+    /// Its CLI's process, while it runs.
+    pub fn pid(&self) -> Option<i32> {
+        self.lock().pid
+    }
+
     pub fn id(&self) -> String {
         let inner = self.lock();
         match (&inner.core, &inner.parked) {

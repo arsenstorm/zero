@@ -418,8 +418,11 @@ struct TasksSidebar: View {
                 .padding(.horizontal, -10)
         } else {
             // In from the sidebar's edges by its inset (the column pads its content 10 at the sides, none below).
-            UsageFooter(workspace: workspace) {
-                SettingsView.requested = .signins; place = .settings
+            VStack(spacing: UsageFooter.inset) {
+                TasksUseCard(workspace: workspace)
+                UsageFooter(workspace: workspace) {
+                    SettingsView.requested = .signins; place = .settings
+                }
             }
             .padding(.horizontal, UsageFooter.inset - 10).padding(.vertical, UsageFooter.inset)
         }

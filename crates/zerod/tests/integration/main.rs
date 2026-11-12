@@ -58,6 +58,7 @@ mod switching;
 mod tables;
 mod terminals;
 mod timing;
+mod uses;
 mod watches;
 mod wire;
 mod workspaces;

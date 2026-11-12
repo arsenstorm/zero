@@ -322,6 +322,34 @@ struct UsageMeter: View {
     }
 }
 
+/// At the sidebar's foot, beside the accounts' usage and drawn as it is: what every running task's processes use
+/// together (zerod's uses.rs: its CLI, MCP servers and commands), the heaviest few on hover. One line at a fixed
+/// height, whatever runs.
+struct TasksUseCard: View {
+    let workspace: Workspace
+
+    var body: some View {
+        let uses = workspace.uses
+        let memory = uses.values.reduce(0) { $0 + $1.memory }
+        let cpu = uses.values.reduce(0) { $0 + $1.cpu }
+        let heaviest = uses.sorted { $0.value.memory > $1.value.memory }.prefix(3).map { id, use in
+            "\(workspace.conversation(id).map(Workspace.label(of:)) ?? id) \(TaskDetails.bytes(use.memory))"
+        }
+        HStack(spacing: 6) {
+            NucleoIcon("server", size: 12).frame(width: 12, height: 12)
+            Text("Tasks").font(.system(size: 12, weight: .medium))
+            Spacer(minLength: 4)
+            Text(uses.isEmpty ? "None running" : "\(TaskDetails.bytes(memory)) · \(Int(cpu.rounded()))% CPU")
+                .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit().lineLimit(1).fixedSize()
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: UsageFooter.radius))
+        .overlay(RoundedRectangle(cornerRadius: UsageFooter.radius).strokeBorder(Theme.stroke))
+        .tip(heaviest.isEmpty ? "" : "Most memory: " + heaviest.joined(separator: " · "))
+    }
+}
+
 /// At the sidebar's foot: the accounts tasks used in the last day, each with how much of its 5 hours and its week it
 /// has used, and when a full one resets. A click opens Settings › Accounts.
 struct UsageFooter: View {

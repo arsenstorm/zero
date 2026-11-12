@@ -144,6 +144,7 @@ struct TaskDetails: View {
                         }
                 }
             }
+            property("Uses") { uses }
             if let branch = conversation.branch {
                 property("Branch") { Text(branch).lineLimit(1).truncationMode(.middle).tip(branch) }
             }
@@ -155,6 +156,23 @@ struct TaskDetails: View {
             }
         }
         .font(.system(size: 12.5))
+    }
+
+    /// What its processes use now, the split on hover; a dash while nothing runs (parked), keeping the row's place.
+    @ViewBuilder private var uses: some View {
+        if let uses = workspace.uses[conversation.id] {
+            let parts = [
+                (conversation.provider.title, uses.cli), ("MCP servers", uses.mcp), ("commands", uses.commands),
+            ].filter { $0.1.memory > 0 }.map { "\($0.0) \(Self.bytes($0.1.memory))" }
+            Text("\(Self.bytes(uses.memory)) · \(Int(uses.cpu.rounded()))% CPU").monospacedDigit().lineLimit(1)
+                .tip(parts.joined(separator: " · "))
+        } else {
+            Text("–").foregroundStyle(.secondary).tip("Nothing running: its agent is parked until there's work")
+        }
+    }
+
+    static func bytes(_ count: UInt64) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(clamping: count), countStyle: .memory)
     }
 
     /// The issues a lead keeps a row for (`zero issue`): each one's state, ticket and where it stands. One with a

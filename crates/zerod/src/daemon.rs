@@ -135,6 +135,8 @@ pub struct Daemon {
     watches: Mutex<HashMap<String, crate::watches::Watch>>,
     /// Each task's scheduled wakes (schedules.rs).
     schedules: Mutex<Vec<crate::schedules::Schedule>>,
+    /// What each running task's processes use (uses.rs), as last sent to clients.
+    uses: tokio::sync::watch::Sender<crate::uses::Tasks>,
     me: Weak<Daemon>,
 }
 
@@ -332,6 +334,7 @@ impl Daemon {
             resuming: Mutex::new(HashMap::new()),
             watches: Mutex::new(crate::watches::load(home).into_iter().map(|w| (w.id.clone(), w)).collect()),
             schedules: Mutex::new(crate::schedules::load(home)),
+            uses: tokio::sync::watch::channel(Default::default()).0,
             paused: Mutex::new(
                 std::fs::read(home.join(PAUSED)).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default(),
             ),
@@ -356,6 +359,15 @@ impl Daemon {
     /// Pinged whenever a session's queue changes.
     pub fn subscribe_queues(&self) -> broadcast::Receiver<()> {
         self.queues.subscribe()
+    }
+
+    /// What each running task's processes use, now and whenever it changes enough to show.
+    pub fn uses(&self) -> tokio::sync::watch::Receiver<crate::uses::Tasks> {
+        self.uses.subscribe()
+    }
+
+    pub fn publish_uses(&self, tasks: crate::uses::Tasks) {
+        self.uses.send_replace(tasks);
     }
 
     pub fn sessions(&self) -> Vec<Session> {

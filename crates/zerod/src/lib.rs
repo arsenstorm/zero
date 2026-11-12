@@ -42,6 +42,7 @@ pub mod session;
 pub mod signins;
 pub mod snapshots;
 pub mod terminal;
+pub mod uses;
 pub mod watches;
 pub mod websocket;
 pub mod workspaces;

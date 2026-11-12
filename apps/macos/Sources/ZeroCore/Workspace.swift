@@ -66,6 +66,9 @@ public final class Workspace {
     /// Views being fetched again, while what they last showed stays up.
     public private(set) var refreshing: Set<String> = []
 
+    /// What each running task's processes use (zerod's uses.rs), by session; a parked task isn't in it.
+    public private(set) var uses: [String: TaskUses] = [:]
+
     /// Every task at once (crates/zerod/src/board.rs), while the window shows it.
     public private(set) var board: [BoardRow] = []
     private var rawBoard: [BoardRow] = []
@@ -236,6 +239,7 @@ public final class Workspace {
                         case .signins: Task { await self?.loadSignIns() }
                         case .restarting: self?.followUpdate()
                         case .clear: break
+                        case let .uses(tasks): if self?.uses != tasks { self?.uses = tasks }
                         }
                     }
                 }
@@ -262,7 +266,8 @@ public final class Workspace {
         if !mirror.receive(message) { onBehind() }
         switch message {
         case let .session(conversation): sync(conversation.id)
-        case let .change(event): soon(event.session)
+        case let .change(event):
+            if case .delta = event.change { soon(event.session, words: true) } else { soon(event.session) }
         case let .earlier(session, _): sync(session)
         }
     }
@@ -270,17 +275,28 @@ public final class Workspace {
     /// Tasks changed since the views last caught up.
     @ObservationIgnored private var stale: Set<String> = []
     @ObservationIgnored private var catchingUp = false
+    /// Something other than more words came since: caught up with at the shorter wait.
+    @ObservationIgnored private var urgent = false
 
     /// The views catch up with a task at most about 30 times a second: an answer streams in at 80 words a second,
     /// and drawing each one fell behind, so the text showed up halfway through. The mirror has every change at once.
-    private func soon(_ id: String) {
+    private func soon(_ id: String, words: Bool = false) {
         stale.insert(id)
+        if !words { urgent = true }
         guard !catchingUp else { return }
         catchingUp = true
         Task { @MainActor in
             // A tenth of a second: an answer arriving word by word is read out a couple of seconds behind (Playback),
             // and each sync redraws its conversation; at 33 ms that was up to 30 times a second.
             try? await Task.sleep(for: .milliseconds(100))
+            // Only more words since (an answer, a command's output): up to 300 ms, three syncs a second instead of
+            // ten, as reading runs seconds behind them. Anything else (a step, a status, an ask) cuts the wait short.
+            var waited = 100
+            while !urgent, waited < 300 {
+                try? await Task.sleep(for: .milliseconds(50))
+                waited += 50
+            }
+            urgent = false
             catchingUp = false
             let ids = stale
             stale = []
