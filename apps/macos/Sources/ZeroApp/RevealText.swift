@@ -59,8 +59,12 @@ final class RevealView: NSView {
     /// below. A mask over the whole answer instead cost the window server a pass over all of it each frame: the taller
     /// the answer, the fewer frames.
     private let covers = CALayer()
-    /// The rest of the line being read, from its next word on.
-    private let rest = CALayer()
+    /// The rest of the line being read, from its next word on (cover()).
+    private var rest: [CALayer] = []
+    /// Covers done with, kept in `covers` hidden for the next ones: each tick then changes layers' frames, not the
+    /// tree. Removed and made anew (five or six a tick), the render server re-linked its copy of the tree 30 times a
+    /// second.
+    private var spare: [CALayer] = []
     /// Runs of words fading in: their characters (in the styled text), their covers, when their fade ends.
     private var fading: [(range: NSRange, layers: [CALayer], ends: CFTimeInterval)] = []
     private var source = ""
@@ -93,10 +97,13 @@ final class RevealView: NSView {
         wantsLayer = true
         clipsToBounds = true
         addSubview(text)
+        // Grown a line at a time: only the new line drawn (layout()). AppKit's default drew the whole answer shown again
+        // at every new line, and the window server took it whole.
+        text.layerContentsRedrawPolicy = .onSetNeedsDisplay
+        text.layerContentsPlacement = .topLeft
         over.layer = covers
         over.wantsLayer = true
         addSubview(over)
-        covers.addSublayer(rest)
         paint()
         follow()
     }
@@ -146,7 +153,7 @@ final class RevealView: NSView {
         sourceCount = source.count
         self.links = links
         let styled = MarkdownText.renderGrowing(source, size: 14.5, links: links)
-        text.show(styled)
+        text.show(styled, fading: false)
         marks = RevealMarks(source: ZeroEnding.split(source).0, styled: styled.string)
         // Made anew (the turn ended and its words moved into their own row, a task opened): as far as reading has got,
         // at once. Left to the next tick, it showed nothing for two frames and the page fell in and jumped.
@@ -188,13 +195,24 @@ final class RevealView: NSView {
 
     override func layout() {
         super.layout()
+        let old = text.frame
         text.frame = bounds
         over.frame = bounds
+        // Taller: the strip below what was there. Another width (laid out anew) or shorter: all of it.
+        if bounds.width == old.width, bounds.height >= old.height {
+            if bounds.height > old.height {
+                text.setNeedsDisplay(NSRect(x: 0, y: old.height, width: bounds.width, height: bounds.height - old.height))
+            }
+        } else {
+            text.needsDisplay = true
+        }
     }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         paint()
+        // Its colours are the appearance's: drawn again (only what it's told to redraw is, see init).
+        text.needsDisplay = true
     }
 
     /// In a window, its appearance is the window's (dark or light) from here.
@@ -217,7 +235,7 @@ final class RevealView: NSView {
         }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for layer in (rest.sublayers ?? []) + fading.flatMap(\.layers) {
+        for layer in rest + spare + fading.flatMap(\.layers) {
             layer.backgroundColor = page
             layer.sublayers?.forEach { $0.backgroundColor = panelFill }
         }
@@ -229,7 +247,12 @@ final class RevealView: NSView {
 
     /// Covers over these pieces: in the panel's colour where they're over a code block's panel, else the page's.
     private func covers(_ pieces: [(rect: CGRect, panel: ClosedRange<CGFloat>?)]) -> [CALayer] {
-        pieces.flatMap { piece -> [CALayer] in
+        // One kept from before, or a new one in the tree: never animated from where it was (a cover sliding into
+        // place would show words early).
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        return pieces.flatMap { piece -> [CALayer] in
             var parts: [(CGRect, Bool)] = [(piece.rect, false)]
             if let panel = piece.panel {
                 let rect = piece.rect
@@ -250,21 +273,41 @@ final class RevealView: NSView {
             // size.width: CGRect.width is never negative, and parts that came out negative (a piece not reaching past a
             // panel's edge) passed, covering the panel beside the words in the page's colour: lighter strips.
             return parts.filter { $0.0.size.width > 0 }.map { rect, onPanel in
-                let layer = CALayer()
+                let layer =
+                    spare.popLast()
+                    ?? {
+                        let made = CALayer(); covers.addSublayer(made); return made
+                    }()
+                layer.isHidden = false
+                layer.opacity = 1
                 layer.frame = rect
                 layer.name = onPanel ? Self.onPanel : nil
                 layer.backgroundColor = onPanel ? panel : page
                 // Over a panel, as the panel is drawn: the page, its see-through fill over it (one colour worked out to
-                // match came out a shade off).
+                // match came out a shade off). Off a panel, a kept cover's fill is hidden, not removed.
+                let fill = layer.sublayers?.first
                 if onPanel {
-                    let fill = CALayer()
+                    let fill =
+                        fill
+                        ?? {
+                            let made = CALayer(); layer.addSublayer(made); return made
+                        }()
+                    fill.isHidden = false
                     fill.frame = layer.bounds
                     fill.backgroundColor = panelFill
-                    layer.addSublayer(fill)
+                } else {
+                    fill?.isHidden = true
                 }
                 return layer
             }
         }
+    }
+
+    /// A cover done with: hidden, kept for the next.
+    private func park(_ layer: CALayer) {
+        layer.isHidden = true
+        layer.removeAllAnimations()
+        spare.append(layer)
     }
 
     /// The words playback has read since: their covers fade out on the render server.
@@ -332,7 +375,6 @@ final class RevealView: NSView {
             fade.beginTime = now - gone
             fade.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
             layer.add(fade, forKey: "fade")
-            covers.addSublayer(layer)
         }
         fading.append((range, layers, now + Playback.fade - gone))
     }
@@ -340,7 +382,7 @@ final class RevealView: NSView {
     /// Covers done fading go.
     private func settle() {
         let now = CACurrentMediaTime()
-        for run in fading where run.ends <= now { run.layers.forEach { $0.removeFromSuperlayer() } }
+        for run in fading where run.ends <= now { run.layers.forEach(park) }
         fading.removeAll { $0.ends <= now }
     }
 
@@ -354,9 +396,8 @@ final class RevealView: NSView {
             for layer in layers {
                 layer.opacity = 0
                 if let fade = old.first?.animation(forKey: "fade") { layer.add(fade, forKey: "fade") }
-                covers.addSublayer(layer)
             }
-            old.forEach { $0.removeFromSuperlayer() }
+            old.forEach(park)
             fading[index].layers = layers
         }
         cover()
@@ -367,7 +408,8 @@ final class RevealView: NSView {
     /// and in a table the cells after it in the row (side by side, a cell's lines can run below the line being read).
     /// The view ends at the line being read, hiding what's below.
     private func cover() {
-        rest.sublayers?.forEach { $0.removeFromSuperlayer() }
+        rest.forEach(park)
+        rest = []
         guard let layout = text.layoutManager, let container = text.textContainer, let storage = text.textStorage, shown > 0,
             shown < storage.length
         else { return }
@@ -392,8 +434,7 @@ final class RevealView: NSView {
         var readingLine = NSRange()
         _ = layout.lineFragmentRect(forGlyphAt: start, effectiveRange: &readingLine)
         let belowPanel = panel(at: layout.characterIndexForGlyph(at: readingLine.location))
-        covers(pieces(characters) + cells(after: shown, through: NSMaxRange(characters)) + [(below, belowPanel)])
-            .forEach(rest.addSublayer)
+        rest = covers(pieces(characters) + cells(after: shown, through: NSMaxRange(characters)) + [(below, belowPanel)])
     }
 
     /// A table's cells not yet read, by their own rectangles (side by side, one cell's lines run below the line being

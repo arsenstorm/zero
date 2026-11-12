@@ -799,12 +799,16 @@ final class RichTextView: NSTextView {
     var shown: NSAttributedString?
     private var measured: (width: CGFloat, height: CGFloat, used: CGFloat)?
 
-    func show(_ text: NSAttributedString) {
+    /// `fading`: the text's last stretch may be recoloured as it fades in (MarkdownText.faded); a reveal's never is
+    /// (RevealText), so only what changed is set again, not that whole stretch, which redrew most of the answer shown.
+    func show(_ text: NSAttributedString, fading: Bool = true) {
         guard text !== shown else { return }
         let before = shown
         shown = text
         measured = nil
-        if let storage = textStorage, let before, storage.length == before.length, let from = Self.changedFrom(before, text) {
+        if let storage = textStorage, let before, storage.length == before.length,
+            let from = Self.changedFrom(before, text, reach: fading ? MarkdownText.fadeReach : 0)
+        {
             // Only what changed, from the start of its paragraph: a reply fading in grows at its end and changes its
             // last few hundred letters' colour, and setting it whole laid all of it out again, 30 times a second.
             storage.beginEditing()
@@ -851,9 +855,9 @@ final class RichTextView: NSTextView {
     }
 
     /// Where `after` stops being `before` with more on its end: the start of the paragraph of the first letter that
-    /// differs, or of the last stretch a fade can recolour (MarkdownText.faded), whichever is earlier. Nil when
-    /// it's barely shorter to change part than all.
-    static func changedFrom(_ before: NSAttributedString, _ after: NSAttributedString) -> Int? {
+    /// differs, or of the last stretch a fade can recolour (`reach` from the end, MarkdownText.faded), whichever is
+    /// earlier. Nil when it's barely shorter to change part than all.
+    static func changedFrom(_ before: NSAttributedString, _ after: NSAttributedString, reach: Int = MarkdownText.fadeReach) -> Int? {
         let (old, new) = (before.string as NSString, after.string as NSString)
         let shared = min(old.length, new.length)
         guard shared > 1000 else { return nil }
@@ -863,7 +867,7 @@ final class RichTextView: NSTextView {
             old.substring(with: NSRange(location: same, length: 256)) == new.substring(with: NSRange(location: same, length: 256))
         { same += 256 }
         while same < shared, old.character(at: same) == new.character(at: same) { same += 1 }
-        let from = min(same, max(0, new.length - MarkdownText.fadeReach))
+        let from = min(same, max(0, new.length - reach))
         let paragraph = min(new.paragraphRange(for: NSRange(location: min(from, max(0, new.length - 1)), length: 0)).location, old.length)
         guard paragraph > 200 else { return nil }
         // The stretch before it styled as it was too (a block still being written, a list or code, can be styled anew
