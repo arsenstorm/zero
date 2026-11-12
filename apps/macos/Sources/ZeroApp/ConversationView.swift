@@ -47,6 +47,7 @@ struct ConversationView: View {
     @State private var backTo: String?
     /// Going to one: where the page was isn't restored over it.
     @State private var revealing = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Esc twice in quick succession: pick a message to rewind to, then how (RewindCard).
     @State private var pickingRewind = false
     @State private var lastEscape: Date?
@@ -260,10 +261,11 @@ struct ConversationView: View {
             quote: quote, save: save, rewind: { rewinding = $0 },
             later: { [workspace, id = conversation.id] text in Task { await workspace.askToSaveForLater(id, answer: text) } }
         ).equatable()
-            // Gone to from a link or an ask: lit behind it a moment, taking no room.
+            // Gone to from a link or an ask: a grey wash behind it a moment, Zero's own (not the system's blue), taking no
+            // room and no clicks.
             .background {
-                RoundedRectangle(cornerRadius: 10).fill(Color.accentColor.opacity(revealed == block.id ? 0.1 : 0)).padding(-8)
-                    .allowsHitTesting(false)
+                RoundedRectangle(cornerRadius: 10).fill(Theme.choice).padding(.horizontal, -10).padding(.vertical, -6)
+                    .opacity(revealed == block.id ? 1 : 0).allowsHitTesting(false)
             }
     }
 
@@ -277,38 +279,36 @@ struct ConversationView: View {
         guard let (row, block) = TimelineRow.holding(item, in: shape.rows(shape.blocks)) else { return }
         if row != block { openQuiet.insert(row) }
         NotificationCenter.default.post(name: WorkBlock.unfold, object: item)
-        following = false; lifted = false
-        try? await Task.sleep(for: .milliseconds(30))
-        withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(block, anchor: .top) }
-        backTo = reveal.ask
-        revealed = block
-        try? await Task.sleep(for: .seconds(1.6))
-        withAnimation(.easeOut(duration: 0.4)) { revealed = nil }
+        // On screen already: lit where it is, nothing moved. Else brought to the top, eased (at once under Reduce Motion).
+        if tracker.seen[block] == nil {
+            following = false; lifted = false
+            try? await Task.sleep(for: .milliseconds(30))
+            withAnimation(reduceMotion ? nil : .smooth(duration: 0.35)) { proxy.scrollTo(block, anchor: .top) }
+            try? await Task.sleep(for: .milliseconds(reduceMotion ? 0 : 300))
+        }
+        // A way back only to an ask out of sight: one docked on this page is in view already.
+        backTo = reveal.ask.flatMap { id in
+            let ask = inbox.store.asks(of: conversation.id).first { $0.id == id }
+            return ask.map { AgentAskCard.open($0, in: conversation) } == true ? nil : id
+        }
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { revealed = block }
+        try? await Task.sleep(for: .seconds(1.4))
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.6)) { if revealed == block { revealed = nil } }
     }
 
-    /// Back to the ask a passage was gone to from: its card at the page's end while it's open here, else in the inbox.
+    /// Back to the ask a passage was gone to from, in the inbox (one docked on this page is in view, and needs none).
     @ViewBuilder private var backToAsk: some View {
         if let backTo {
             Button {
                 self.backTo = nil
-                if let ask = inbox.store.asks(of: conversation.id).first(where: { $0.id == backTo }),
-                    AgentAskCard.open(ask, in: conversation)
-                {
-                    Task {
-                        if live.later > 0 { await workspace.loadLatest(conversation.id); try? await Task.sleep(for: .milliseconds(50)) }
-                        following = true
-                        position.scrollTo(edge: .bottom)
-                    }
-                } else {
-                    NSApp.sendAction(#selector(AppDelegate.backToAsk(_:)), to: nil, from: backTo as NSString)
-                }
+                NSApp.sendAction(#selector(AppDelegate.backToAsk(_:)), to: nil, from: backTo as NSString)
             } label: {
                 HStack(spacing: 6) {
                     NucleoIcon("arrow-left", size: 12)
                     Text("Back to the ask").font(.system(size: 12, weight: .medium))
                 }
                 .padding(.horizontal, 12).frame(height: 28)
-                .background(.regularMaterial, in: Capsule())
+                .background(Theme.pill, in: Capsule())
                 .overlay(Capsule().strokeBorder(Theme.stroke))
             }
             .buttonStyle(.plain)

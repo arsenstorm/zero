@@ -233,11 +233,12 @@ struct CardView: View {
     private var task: String? { ask.agent.runtime == "zerod" ? ask.agent.ref : nil }
 
     /// What it's about, quietly under the question: the agent's words just before it, or the heading it named. Its
-    /// title goes to them in the conversation (and back); the chevron reads them here, as a quote.
+    /// title, a link as the pane draws them, goes to them in the conversation; the chevron beside it reads them here.
+    /// Opened and folded at once: an eased change of a docked card's height moved the page under it a frame apart.
     @ViewBuilder private var aboutLine: some View {
         if let about = ask.about, let task {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 5) {
                     Text("About").foregroundStyle(.tertiary)
                     Button {
                         var link = URLComponents(string: TaskLinks.link(task))
@@ -245,59 +246,52 @@ struct CardView: View {
                         link?.fragment = about.item
                         if let url = link?.url { NSApp.sendAction(#selector(AppDelegate.openZeroURL(_:)), to: nil, from: url) }
                     } label: {
-                        HStack(spacing: 3) {
-                            Text(about.title).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
-                            NucleoIcon("arrow-up-right", size: 10)
-                        }
-                        .contentShape(Rectangle())
+                        TaskDetails.linked(about.title).truncationMode(.tail).contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).pointerStyle(.link).tip("Show it in the conversation")
-                    if let date = about.date { Text("· " + Self.when(date)).foregroundStyle(.tertiary).fixedSize() }
-                    Spacer(minLength: 8)
+                    .buttonStyle(.plain).foregroundStyle(.secondary).pointerStyle(.link)
                     Button {
                         controller.holdTop = true
-                        withAnimation(.easeOut(duration: 0.2)) { aboutOpen.toggle() }
+                        aboutOpen.toggle()
                     } label: {
-                        NucleoIcon("chevron-down", size: 10).rotationEffect(.degrees(aboutOpen ? 180 : 0))
-                            .frame(width: 20, height: 16).contentShape(Rectangle())
+                        NucleoIcon("chevron-down", size: 10).rotationEffect(.degrees(aboutOpen ? 0 : -90))
+                            .frame(width: 20, height: 18).contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).tip(aboutOpen ? "Fold" : "Read it here")
+                    .buttonStyle(.plain).foregroundStyle(.tertiary)
+                    .accessibilityLabel(aboutOpen ? "Fold the passage" : "Read the passage here")
                 }
                 .font(.system(size: 12))
-                if aboutOpen { Passage(text: TaskLinks.absolute(about.text, task: task), cwd: ask.agent.cwd ?? ask.cwd) }
+                if aboutOpen { quoted(about.text) }
             }
         }
     }
 
-    /// What the agent answered to your words on it: folded to a count, opened in place.
+    /// What the agent answered to your words on it: folded to a count, opened in place, at once.
     @ViewBuilder private var repliesLine: some View {
         if let replies = ask.replies, !replies.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 Button {
                     controller.holdTop = true
-                    withAnimation(.easeOut(duration: 0.2)) { repliesOpen.toggle() }
+                    repliesOpen.toggle()
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 5) {
                         Text(replies.count == 1 ? "1 reply" : "\(replies.count) replies").fontWeight(.medium)
-                        NucleoIcon("chevron-down", size: 10).rotationEffect(.degrees(repliesOpen ? 0 : -90))
+                        NucleoIcon("chevron-down", size: 10).rotationEffect(.degrees(repliesOpen ? 0 : -90)).frame(width: 12)
                     }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.secondary)
-                if repliesOpen {
-                    ForEach(replies, id: \.item) { reply in
-                        Passage(text: task.map { TaskLinks.absolute(reply.text, task: $0) } ?? reply.text, cwd: ask.agent.cwd ?? ask.cwd)
-                    }
-                }
+                if repliesOpen { ForEach(replies, id: \.item) { quoted($0.text) } }
             }
         }
     }
 
-    /// "11:26" today, with its day before.
-    static func when(_ date: Date) -> String {
-        Calendar.current.isDateInToday(date)
-            ? date.formatted(date: .omitted, time: .shortened)
-            : date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+    /// A passage as a quote: a rule beside its words, as the question's details are set, a dozen lines at most (the
+    /// rest is a click on its title away).
+    private func quoted(_ text: String) -> some View {
+        Text(linked(text)).font(.system(size: 12.5)).foregroundStyle(.secondary).lineLimit(12).textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.leading, 10)
+            .overlay(alignment: .leading) { RoundedRectangle(cornerRadius: 1).fill(Theme.stroke).frame(width: 2) }
     }
 
     /// Three lines; a longer one fades out on its last line instead of being cut mid-word, and a
@@ -581,24 +575,4 @@ struct CardView: View {
             .padding(.horizontal, 10)
     }
 
-}
-
-/// A passage of the conversation shown in a card, as a quote: a rule beside it, as tall as it is up to a point, then
-/// scrolled.
-private struct Passage: View {
-    let text: String
-    let cwd: String?
-    @State private var height: CGFloat = 0
-
-    var body: some View {
-        ScrollView {
-            MarkdownText(text, cwd: cwd, size: 12.5, compact: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height = $0 }
-        }
-        .thinScrollbar()
-        .frame(height: min(max(height, 16), 240))
-        .padding(.leading, 12)
-        .overlay(alignment: .leading) { RoundedRectangle(cornerRadius: 1).fill(Theme.stroke).frame(width: 2) }
-    }
 }
