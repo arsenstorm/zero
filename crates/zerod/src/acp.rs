@@ -357,7 +357,7 @@ fn tool(conversation: &Conversation, call: &Value) -> ItemKind {
                 .as_str()
                 .map(String::from)
                 .unwrap_or_else(|| if input.is_null() { String::new() } else { input.to_string() });
-            ItemKind::Tool { name: call["title"].as_str().unwrap_or("tool").into(), detail }
+            ItemKind::Tool { name: call["title"].as_str().unwrap_or("tool").into(), detail, output: crate::model::tool_output(&texts()) }
         }
     }
 }

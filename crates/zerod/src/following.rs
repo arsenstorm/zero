@@ -19,6 +19,7 @@ use serde_json::Value;
 use tokio::sync::broadcast;
 
 use crate::integrations::{Fetcher, Integrations};
+use crate::model::ItemKind;
 
 pub mod github;
 pub mod linear;
@@ -263,6 +264,45 @@ impl Following {
         })
     }
 
+    /// `session` follows a pull request it opened (`opened`, or set as its PR): no read first, as `follow` does, since
+    /// it was just made: its first poll is the reading events are told against. The topic when it's new to the session.
+    pub fn adopt(&self, session: &str, given: &str) -> Option<String> {
+        let topic = topic(given).ok()?;
+        let mut kept = self.kept.lock().unwrap();
+        if kept.follows.iter().any(|f| f.session == session && f.topic == topic) {
+            return None;
+        }
+        kept.follows.push(Follow { session: session.into(), topic: topic.clone(), mine: false, about: vec![], at: now() });
+        kept.targets.entry(poll_key(&topic)).or_default();
+        self.keep(&kept);
+        Some(topic)
+    }
+
+    /// A worker's pull requests, followed by its lead too (the lead acts on the merge): the topics new to the lead.
+    pub fn pass(&self, worker: &str, lead: &str) -> Vec<String> {
+        let prs: Vec<String> = self.list(Some(worker)).into_iter().map(|f| f.follow.topic).filter(|t| is_pr(t)).collect();
+        prs.iter().filter_map(|t| self.adopt(lead, t)).collect()
+    }
+
+    /// How many of `session`'s follows `other` doesn't share.
+    pub fn unshared(&self, session: &str, other: &str) -> usize {
+        let kept = self.kept.lock().unwrap();
+        let theirs: HashSet<&str> = kept.follows.iter().filter(|f| f.session == other).map(|f| f.topic.as_str()).collect();
+        kept.follows.iter().filter(|f| f.session == session && !theirs.contains(f.topic.as_str())).count()
+    }
+
+    /// `session` stops following what `other` follows too: a worker put away, its lead carrying on with them.
+    pub fn drop_shared(&self, session: &str, other: &str) {
+        let shared: Vec<String> = {
+            let kept = self.kept.lock().unwrap();
+            let theirs: HashSet<&str> = kept.follows.iter().filter(|f| f.session == other).map(|f| f.topic.as_str()).collect();
+            kept.follows.iter().filter(|f| f.session == session && theirs.contains(f.topic.as_str())).map(|f| f.topic.clone()).collect()
+        };
+        if !shared.is_empty() {
+            self.unfollow(session, Some(&shared));
+        }
+    }
+
     /// Takes back a session's follows: the topics named (as given, or as canonical), or all of them. How many went.
     pub fn unfollow(&self, session: &str, topics: Option<&[String]>) -> usize {
         let wanted: Option<Vec<String>> =
@@ -452,6 +492,67 @@ impl Following {
         }
         self.keep(&kept);
     }
+}
+
+fn is_pr(topic: &str) -> bool {
+    topic.starts_with("github/") && topic.split('/').count() == 4
+}
+
+/// A topic as the conversation names it: `repo#N` for a pull request.
+pub fn short(topic: &str) -> String {
+    match topic.split('/').collect::<Vec<_>>()[..] {
+        ["github", _, repo, number] => format!("{repo}#{number}"),
+        _ => topic.to_string(),
+    }
+}
+
+/// The pull request a finished step opened, if it opened one: `gh pr create` (the link it prints), a POST to a
+/// repository's pulls API (`gh api repos/O/R/pulls`: its html_url), or an MCP tool creating one. A link a step only
+/// mentions, or git push's offer to open one, isn't one. GitHub's, the forge `follow` reads pull requests from.
+pub fn opened(kind: &ItemKind) -> Option<String> {
+    let output = match kind {
+        ItemKind::Command { command, output, exit_code, .. } if exit_code.is_none_or(|c| c == 0) && creates_pr(command) => output,
+        ItemKind::Tool { name, output, .. } if name.to_lowercase().replace(['_', '-', '.'], "").contains("createpullrequest") => output,
+        _ => return None,
+    };
+    // The API's answer names the pull request in html_url, before its body's links; gh pr create prints it last.
+    match output.find("\"html_url\"") {
+        Some(at) => pr_links(&output[at..]).into_iter().next(),
+        None => pr_links(output).pop(),
+    }
+}
+
+fn creates_pr(command: &str) -> bool {
+    let words: Vec<&str> = command.split_whitespace().map(|w| w.trim_matches(['\'', '"'])).collect();
+    words.windows(3).any(|w| w == ["gh", "pr", "create"])
+        || command.split(['&', ';', '|', '\n']).any(|part| {
+            let words: Vec<&str> = part.split_whitespace().map(|w| w.trim_matches(['\'', '"'])).collect();
+            let Some(at) = words.windows(2).position(|w| w == ["gh", "api"]) else { return false };
+            let words = &words[at + 2..];
+            let pulls = words.iter().any(|w| {
+                let path: Vec<&str> = w.split('?').next().unwrap_or("").trim_matches('/').split('/').collect();
+                path.len() == 4 && path[0] == "repos" && path[3] == "pulls"
+            });
+            let method = words.iter().enumerate().find_map(|(i, w)| match *w {
+                "-X" | "--method" => words.get(i + 1).map(|m| m.to_uppercase()),
+                w => w.strip_prefix("-X").or_else(|| w.strip_prefix("--method=")).filter(|m| !m.is_empty()).map(str::to_uppercase),
+            });
+            let fields = words.iter().any(|w| ["-f", "-F", "--field", "--raw-field", "--input"].contains(w));
+            pulls && method.map_or(fields, |m| m == "POST")
+        })
+}
+
+/// The links to GitHub pull requests in a text, in order: `https://github.com/O/R/pull/N`.
+fn pr_links(text: &str) -> Vec<String> {
+    text.match_indices("https://github.com/")
+        .filter_map(|(at, _)| {
+            let parts: Vec<&str> = text[at + 19..].splitn(4, '/').collect();
+            let number: String = parts.get(3)?.chars().take_while(char::is_ascii_digit).collect();
+            let name = |p: &str| !p.is_empty() && p.chars().all(|c| c.is_alphanumeric() || "-_.".contains(c));
+            (parts[2] == "pull" && name(parts[0]) && name(parts[1]) && !number.is_empty())
+                .then(|| format!("https://github.com/{}/{}/pull/{number}", parts[0], parts[1]))
+        })
+        .collect()
 }
 
 /// What a message about one of the pull requests followed says: `repo#123`, `pull/123`, `#123`.

@@ -125,12 +125,15 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
 
 /// What isn't a session's change, pushed rather than polled for: the board whenever it changes (worked out at most
 /// four times a second while sessions change, and every half minute for what changes on its own, places and clocks),
-/// each notice ("pads"), and what tasks' processes use, at once and whenever it changes enough to show (uses.rs).
+/// each notice ("pads"), and what tasks' processes use and what they left running, at once and whenever it changes
+/// enough to show (uses.rs, left.rs).
 async fn feed(zerod: Zerod, out: mpsc::UnboundedSender<Value>) {
     let (mut sessions, mut asks, mut notices, mut queues) =
         (zerod.daemon.subscribe(), zerod.inbox.subscribe(), zerod.notices.subscribe(), zerod.daemon.subscribe_queues());
-    let mut uses = zerod.daemon.uses();
-    if out.send(json!({"event": "uses", "tasks": *uses.borrow_and_update()})).is_err() {
+    let (mut uses, mut left) = (zerod.daemon.uses(), zerod.daemon.left());
+    if out.send(json!({"event": "uses", "tasks": *uses.borrow_and_update()})).is_err()
+        || out.send(json!({"event": "left", "tasks": *left.borrow_and_update()})).is_err()
+    {
         return;
     }
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
@@ -155,6 +158,10 @@ async fn feed(zerod: Zerod, out: mpsc::UnboundedSender<Value>) {
             },
             changed = uses.changed() => {
                 if changed.is_err() || out.send(json!({"event": "uses", "tasks": *uses.borrow_and_update()})).is_err() { return }
+                continue
+            }
+            changed = left.changed() => {
+                if changed.is_err() || out.send(json!({"event": "left", "tasks": *left.borrow_and_update()})).is_err() { return }
                 continue
             }
             _ = tick.tick() => {}

@@ -580,6 +580,7 @@ fn results(conversation: &Conversation, message: &Value, effects: &mut Effects, 
                     None => text(&block["content"]),
                 };
             }
+            ItemKind::Tool { output, .. } => *output = crate::model::tool_output(&text(&block["content"])),
             ItemKind::FileChange { changes } => {
                 if let (Some(kind), Some(first)) = (outcome["type"].as_str(), changes.first_mut()) {
                     first.kind = if kind == "create" { "add".into() } else { "update".into() };
@@ -630,7 +631,7 @@ fn tool(conversation: &Conversation, name: &Value, input: &Value) -> ItemKind {
                 .find_map(|key| input[key].as_str())
                 .map(String::from)
                 .unwrap_or_else(|| input.to_string());
-            ItemKind::Tool { name: other.into(), detail }
+            ItemKind::Tool { name: other.into(), detail, output: String::new() }
         }
     }
 }

@@ -239,7 +239,7 @@ fn an_opencode_export_reads_as_the_tasks_history() {
             ItemKind::User { text, .. } => format!("user {text}"),
             ItemKind::Agent { text, final_answer } => format!("agent{} {text}", if *final_answer { " (answer)" } else { "" }),
             ItemKind::Command { command, output, .. } => format!("$ {command} {output}"),
-            ItemKind::Tool { name, detail } => format!("tool {name} {detail}"),
+            ItemKind::Tool { name, detail, .. } => format!("tool {name} {detail}"),
             other => format!("{other:?}"),
         })
         .collect();

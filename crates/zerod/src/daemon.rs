@@ -99,6 +99,8 @@ pub struct Daemon {
     /// Whether a task has a blocking ask open (Ask::blocks), as the inbox says: its events and reports wait then.
     blocked: std::sync::OnceLock<Blocked>,
     noted: std::sync::OnceLock<Noted>,
+    /// What tasks follow (following.rs): the pull requests they open are followed, and a turn waiting on nothing told.
+    following: std::sync::OnceLock<Arc<crate::following::Following>>,
     /// Tasks whose messages from other tasks wait for the user: too many between them without the user.
     crossing: Mutex<HashSet<String>>,
     /// Workers that ended done: each leaves its lead's tree (archived) once its report has been handed to the lead.
@@ -137,6 +139,8 @@ pub struct Daemon {
     schedules: Mutex<Vec<crate::schedules::Schedule>>,
     /// What each running task's processes use (uses.rs), as last sent to clients.
     uses: tokio::sync::watch::Sender<crate::uses::Tasks>,
+    /// What tasks left running (left.rs), as last sent to clients.
+    left: tokio::sync::watch::Sender<crate::left::Tasks>,
     me: Weak<Daemon>,
 }
 
@@ -162,6 +166,10 @@ token, and say exactly what would unblock you; your lead takes it to the user), 
 Don't repeat your answer; do what's missing and end.";
 /// What a turn paused for a restart is told once the new zerod is up. Zero's own words, not the user's: never shown as
 /// a message (core.rs leaves its item out).
+/// What a task is told when its turn ends waiting with nothing to wake it: once, its reply taken as it is.
+pub const NOTHING_WAKES_MARK: &str = "Nothing will wake you";
+pub const NOTHING_WAKES: &str = "Nothing will wake you: you follow nothing and have nothing running. Follow what you wait on \
+(`zero follow <url>`), or say who you're waiting on.";
 /// What a lead is told when a worker's report reached it and the issue's row wasn't set in that turn (`zero issue`).
 pub const ISSUE_ROW_MARK: &str = "The issue's row wasn't set";
 /// Under the user's words when the task has asks open: for the agent, never shown as the user's.
@@ -236,7 +244,15 @@ fn hear_sessions(daemon: &Arc<Daemon>) {
         loop {
             match heard.recv().await {
                 Ok(event) => match weak.upgrade() {
-                    Some(daemon) => daemon.heard(&event.session),
+                    Some(daemon) => {
+                        if let Change::Item { item } = &event.change
+                            && item.status == crate::model::ItemStatus::Done
+                            && let Some(url) = crate::following::opened(&item.kind)
+                        {
+                            daemon.follow_opened(&event.session, &url)
+                        }
+                        daemon.heard(&event.session)
+                    }
                     None => return,
                 },
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
@@ -322,6 +338,7 @@ impl Daemon {
             archive_index: Mutex::default(),
             blocked: Default::default(),
             noted: Default::default(),
+            following: Default::default(),
             crossed: Mutex::default(),
             crossing: Mutex::default(),
             naming: Default::default(),
@@ -335,6 +352,7 @@ impl Daemon {
             watches: Mutex::new(crate::watches::load(home).into_iter().map(|w| (w.id.clone(), w)).collect()),
             schedules: Mutex::new(crate::schedules::load(home)),
             uses: tokio::sync::watch::channel(Default::default()).0,
+            left: tokio::sync::watch::channel(Default::default()).0,
             paused: Mutex::new(
                 std::fs::read(home.join(PAUSED)).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default(),
             ),
@@ -368,6 +386,70 @@ impl Daemon {
 
     pub fn publish_uses(&self, tasks: crate::uses::Tasks) {
         self.uses.send_replace(tasks);
+    }
+
+    /// What tasks left running, now and whenever it changes enough to show.
+    pub fn left(&self) -> tokio::sync::watch::Receiver<crate::left::Tasks> {
+        self.left.subscribe()
+    }
+
+    pub fn publish_left(&self, tasks: crate::left::Tasks) {
+        self.left.send_replace(tasks);
+    }
+
+    /// Every task, archived ones too, as left.rs looks for what each left running.
+    pub fn left_roots(&self) -> Vec<crate::left::Task> {
+        let mut tasks: Vec<crate::left::Task> = self
+            .sessions()
+            .iter()
+            .map(|session| {
+                let summary = session.summary();
+                crate::left::Task {
+                    label: crate::bridge::label(&summary),
+                    pid: session.pid(),
+                    idle: !matches!(summary.status, Status::Working | Status::Waiting | Status::Starting),
+                    done: session.attention() == crate::model::Attention::Done,
+                    last: summary.items.iter().filter_map(|i| i.at).max(),
+                    archived: false,
+                    id: summary.id,
+                }
+            })
+            .collect();
+        tasks.extend(self.archived_tasks().into_iter().map(|(id, label)| crate::left::Task {
+            id,
+            label,
+            pid: None,
+            idle: true,
+            done: false,
+            archived: true,
+            last: None,
+        }));
+        tasks
+    }
+
+    /// Stops what `session` left running: the things named (all of them, with none), as last found. Nothing else.
+    pub async fn stop_left(&self, session: &str, things: Option<&[String]>) -> Result<usize, String> {
+        let left = self.left.borrow().get(session).map(|l| l.things.clone()).unwrap_or_default();
+        let chosen: Vec<_> = left.into_iter().filter(|t| things.is_none_or(|ids| ids.contains(&t.id))).collect();
+        if chosen.is_empty() {
+            return Err("Nothing like that is left running for this task".into());
+        }
+        let mut failed = vec![];
+        for thing in &chosen {
+            if let Err(error) = crate::left::stop(thing).await {
+                failed.push(error)
+            }
+        }
+        // Gone from the list at once, not at the next look: anything that survived is found again then.
+        self.left.send_modify(|tasks| {
+            if let Some(left) = tasks.get_mut(session) {
+                left.things.retain(|t| !chosen.iter().any(|c| c.id == t.id));
+                if left.things.is_empty() {
+                    tasks.remove(session);
+                }
+            }
+        });
+        if failed.is_empty() { Ok(chosen.len()) } else { Err(failed.join("; ")) }
     }
 
     pub fn sessions(&self) -> Vec<Session> {
@@ -438,7 +520,13 @@ impl Daemon {
             return Err("An attribute needs a name".into());
         }
         let value = value.map(str::trim).filter(|v| !v.is_empty()).map(String::from);
-        self.session(id)?.change(Change::Attribute { name: name.into(), value });
+        self.session(id)?.change(Change::Attribute { name: name.into(), value: value.clone() });
+        if name.eq_ignore_ascii_case("PR")
+            && let Some(url) = value
+            && let Some(topic) = self.following.get().and_then(|f| f.adopt(id, &url))
+        {
+            self.say_following(id, &topic)
+        }
         Ok(())
     }
 
@@ -476,6 +564,11 @@ impl Daemon {
     /// How to tell a task has a blocking ask open: the inbox's, given once (server::hold_while_blocked).
     pub fn hold_while(&self, blocked: Blocked) {
         let _ = self.blocked.set(blocked);
+    }
+
+    /// What tasks follow, given once (main.rs).
+    pub fn set_following(&self, following: Arc<crate::following::Following>) {
+        let _ = self.following.set(following);
     }
 
     /// What's added to a user's queued words as they go to the agent.

@@ -159,8 +159,8 @@ impl Client {
                     assert_eq!(event["seq"], json!(target.seq + 1), "no gaps, no repeats");
                     target.apply(serde_json::from_value(event["change"].clone()).unwrap());
                 }
-                // The board, pad notices and what tasks use come on the same subscription.
-                "board" | "pads" | "uses" => {}
+                // The board, pad notices, what tasks use and what they left running come on the same subscription.
+                "board" | "pads" | "uses" | "left" => {}
                 other => panic!("unknown event {other}"),
             }
         }
@@ -503,6 +503,23 @@ async fn a_subscriber_is_sent_what_tasks_use_at_once_and_again_when_it_changes()
     let tasks = uses(&mut watcher).await;
     assert!(tasks["s1"]["cli"]["memory"].as_u64().unwrap() > 0, "{tasks}");
     assert!(tasks["s1"]["commands"]["cpu"].is_number(), "{tasks}");
+}
+
+#[tokio::test]
+async fn a_subscriber_is_sent_what_tasks_left_running_and_only_that_is_stopped() {
+    let h = harness("server-left").await;
+    let mut watcher = Client::connect(&h.socket).await;
+    watcher.call(json!({"op": "subscribe"})).await;
+    let left = loop {
+        let event = watcher.event().await;
+        if event["event"] == "left" {
+            break event["tasks"].clone();
+        }
+    };
+    assert_eq!(left, json!({}), "pushed at once: nothing's left running");
+    let mut client = Client::connect(&h.socket).await;
+    let refused = client.call(json!({"op": "stopLeft", "session": "s1", "args": {"things": ["p1-0"]}})).await;
+    assert!(refused["error"].as_str().is_some_and(|e| e.contains("Nothing like that")), "nothing not recorded as the task's: {refused}");
 }
 
 #[tokio::test]

@@ -151,6 +151,7 @@ impl Daemon {
         if came_to_an_end {
             self.carry_read(&conversation);
             self.check_ending(&conversation);
+            self.check_waiting(&conversation);
             self.check_issue_row(&conversation);
             self.carry_on_after_error(&conversation)
         }
@@ -214,6 +215,10 @@ impl Daemon {
                 Some(runs) => waiting_on_background(&conversation, &runs),
                 None => report(&conversation, now),
             };
+            // Its pull requests are the lead's to act on too (a merge): followed by it, said so before the report.
+            for topic in self.following.get().map(|f| f.pass(id, lead)).unwrap_or_default() {
+                self.say_following(lead, &topic)
+            }
             self.tell(lead, crate::model::from_line(&conversation.id, &said));
         }
         // What its CLI says of its account's usage is the account's, for choosing accounts by.
@@ -283,13 +288,7 @@ impl Daemon {
         if self.sent_back.lock().unwrap().remove(&conversation.id) {
             return;
         }
-        // This turn's own answer (since the last message to it): a turn stopped before it answered (by the user, by
-        // a restart) didn't end, and an earlier turn's answer isn't this one's.
-        let turn = conversation
-            .items
-            .iter()
-            .rposition(|i| matches!(i.kind, ItemKind::User { .. }))
-            .map_or(&conversation.items[..], |at| &conversation.items[at..]);
+        let turn = this_turn(conversation);
         // Stopped (its "Interrupted", or a restart pausing it): what it said so far isn't how it ended.
         if self.restarting.load(Ordering::Relaxed) || turn.last().is_some_and(|i| matches!(i.kind, ItemKind::Notice { .. })) {
             return;
@@ -323,6 +322,70 @@ impl Daemon {
         if between_turns(conversation) {
             self.deliver(&conversation.id)
         }
+    }
+
+    /// A task's turn ended waiting (`[zero: waiting]`) with nothing to wake it: it follows nothing, has nothing
+    /// running in the background, no worker of its own working, nothing watched or due. It's told so, once: its reply
+    /// is taken as it is. A worker isn't: its lead hears how it ended, and acts.
+    fn check_waiting(&self, conversation: &Conversation) {
+        let id = conversation.id.as_str();
+        let Some(following) = self.following.get() else { return };
+        if !self.endings.load(Ordering::Relaxed)
+            || self.restarting.load(Ordering::Relaxed)
+            || conversation.parent.is_some()
+            || self.sent_back.lock().unwrap().contains(id)
+        {
+            return;
+        }
+        let turn = this_turn(conversation);
+        let told = |i: &crate::model::Item| matches!(&i.kind, ItemKind::User { text, .. } if text.contains(NOTHING_WAKES_MARK));
+        if turn.first().is_some_and(told) || turn.last().is_some_and(|i| matches!(i.kind, ItemKind::Notice { .. })) {
+            return;
+        }
+        let waiting = turn.iter().rev().find_map(|i| match &i.kind {
+            ItemKind::Agent { text, final_answer: true } => text.trim_end().lines().last().map(|l| l.trim().starts_with("[zero: waiting")),
+            _ => None,
+        });
+        if waiting != Some(true) {
+            return;
+        }
+        let working = |w: &Conversation| {
+            matches!(w.attention(), Attention::Starting | Attention::Working | Attention::NeedsYou) || self.background(&w.id).is_some()
+        };
+        if !following.list(Some(id)).is_empty()
+            || self.background(id).is_some()
+            || self.workers(id).iter().any(working)
+            || !self.watches(Some(id)).is_empty()
+            || self.next_wake(id).is_some()
+        {
+            return;
+        }
+        self.tell(id, crate::model::from_line("zero", NOTHING_WAKES));
+    }
+
+    /// A step of `id`'s opened the pull request at `url`: followed, said so in its conversation, and its PR unless it
+    /// has one.
+    pub(super) fn follow_opened(&self, id: &str, url: &str) {
+        let Some(topic) = self.following.get().and_then(|f| f.adopt(id, url)) else { return };
+        self.say_following(id, &topic);
+        if self.get(id).is_some_and(|c| !c.attributes.keys().any(|k| k.eq_ignore_ascii_case("PR"))) {
+            let _ = self.set_attribute(id, "PR", Some(url));
+        }
+    }
+
+    /// A quiet line in `id`'s conversation: Zero follows `topic` for it.
+    pub(super) fn say_following(&self, id: &str, topic: &str) {
+        let Ok(session) = self.session(id) else { return };
+        let conversation = session.summary();
+        session.change(Change::Item {
+            item: crate::model::Item {
+                at: None,
+                id: format!("following-{}", conversation.seq + 1),
+                turn: conversation.turn.clone(),
+                kind: ItemKind::Notice { text: format!("Following {}", crate::following::short(topic)), error: false },
+                status: crate::model::ItemStatus::Done,
+            },
+        });
     }
 
     /// A turn Zero started (an event it follows, a worker's report, a wake-up) has come to an end: its reply is nothing
@@ -465,6 +528,13 @@ impl Daemon {
             ),
         );
     }
+}
+
+/// This turn's own items (since the last message to it): a turn stopped before it answered (by the user, by a restart)
+/// didn't end, and an earlier turn's answer isn't this one's.
+fn this_turn(conversation: &Conversation) -> &[crate::model::Item] {
+    let at = conversation.items.iter().rposition(|i| matches!(i.kind, ItemKind::User { .. }));
+    at.map_or(&conversation.items[..], |at| &conversation.items[at..])
 }
 
 /// Words the user wrote themselves, not ones Zero gave the task (an event, a report, a send-back, a carry-on).

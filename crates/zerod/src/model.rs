@@ -238,6 +238,9 @@ pub enum ItemKind {
     Tool {
         name: String,
         detail: String,
+        /// The start of what it returned, where the provider gives it: what a step opened is read from it (following.rs).
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        output: String,
     },
     /// Something to read that isn't the agent speaking: an error, an interruption, or a provider item Zero
     /// doesn't show yet (named by its provider type, so nothing silently disappears).
@@ -251,6 +254,12 @@ pub enum ItemKind {
         columns: Vec<String>,
         rows: Vec<Vec<String>>,
     },
+}
+
+/// What a tool returned, as its item keeps it: the start, where what a step opened is read from.
+/// ponytail: its first 2,000 characters; keep it whole if the app comes to show it.
+pub fn tool_output(text: &str) -> String {
+    text.chars().take(2000).collect()
 }
 
 /// Words given to a session by Zero rather than typed by the user (a worker's report to its lead, a watched command's

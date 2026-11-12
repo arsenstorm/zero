@@ -394,12 +394,26 @@ fn item(value: &Value, turn: Option<&str>) -> Option<Item> {
             (ItemKind::FileChange { changes }, status("status"))
         }
         "mcpToolCall" => (
-            ItemKind::Tool { name: format!("{}.{}", text("server"), text("tool")), detail: value["arguments"].to_string() },
+            ItemKind::Tool {
+                name: format!("{}.{}", text("server"), text("tool")),
+                detail: value["arguments"].to_string(),
+                output: crate::model::tool_output(
+                    &value["result"]["content"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|c| c["text"].as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ),
+            },
             status("status"),
         ),
-        "dynamicToolCall" => (ItemKind::Tool { name: text("tool"), detail: value["arguments"].to_string() }, status("status")),
-        "webSearch" => (ItemKind::Tool { name: "Web search".into(), detail: text("query") }, ItemStatus::Done),
-        "imageView" => (ItemKind::Tool { name: "View image".into(), detail: text("path") }, ItemStatus::Done),
+        "dynamicToolCall" => {
+            (ItemKind::Tool { name: text("tool"), detail: value["arguments"].to_string(), output: String::new() }, status("status"))
+        }
+        "webSearch" => (ItemKind::Tool { name: "Web search".into(), detail: text("query"), output: String::new() }, ItemStatus::Done),
+        "imageView" => (ItemKind::Tool { name: "View image".into(), detail: text("path"), output: String::new() }, ItemStatus::Done),
         "contextCompaction" => {
             let kind = ItemKind::Notice { text: "Conversation compacted".into(), error: false };
             return Some(Item {

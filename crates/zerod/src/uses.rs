@@ -16,7 +16,7 @@ const EVERY: Duration = Duration::from_secs(5);
 /// A child the CLI started this soon after itself, not a shell, is one of its MCP servers: CLIs start them all as they
 /// start, and run commands (later, through a shell) only once the model asks.
 const STARTING: u64 = 20;
-const SHELLS: [&str; 5] = ["sh", "bash", "zsh", "fish", "dash"];
+pub(crate) const SHELLS: [&str; 5] = ["sh", "bash", "zsh", "fish", "dash"];
 /// Smaller changes aren't sent: memory moves by kilobytes and CPU by a point or two between any two samples.
 const MEMORY_CHANGE: u64 = 10 << 20;
 const CPU_CHANGE: f32 = 5.0;
@@ -57,7 +57,7 @@ impl Uses {
 pub type Tasks = BTreeMap<String, Uses>;
 
 #[derive(Clone, Copy, PartialEq)]
-enum Kind {
+pub(crate) enum Kind {
     Cli,
     Mcp,
     Command,
@@ -128,7 +128,7 @@ fn part(uses: &mut Uses, kind: Kind) -> &mut Part {
 
 /// Zero's own stand-ins (`zerod mcp`, `zerod mcp lazy`) are MCP servers whenever they start; a shell runs a command;
 /// anything else is a server if it started with the CLI.
-fn kind_of(child: i32, cli_started: u64) -> Kind {
+pub(crate) fn kind_of(child: i32, cli_started: u64) -> Kind {
     let Some(info) = info(child) else { return Kind::Command };
     let name = info.name();
     if name == "zerod" {
@@ -159,28 +159,28 @@ const PROC_PIDTBSDINFO: i32 = 3;
 const RUSAGE_INFO_V2: i32 = 2;
 
 #[repr(C)]
-struct BsdInfo {
+pub(crate) struct BsdInfo {
     flags: u32,
-    status: u32,
+    pub(crate) status: u32,
     xstatus: u32,
     pid: u32,
-    ppid: u32,
+    pub(crate) ppid: u32,
     ids: [u32; 6],
     rfu: u32,
     comm: [u8; 16],
     name: [u8; 32],
     nfiles: u32,
-    pgid: u32,
+    pub(crate) pgid: u32,
     pjobc: u32,
     tdev: u32,
     tpgid: u32,
     nice: i32,
-    start_sec: u64,
+    pub(crate) start_sec: u64,
     start_usec: u64,
 }
 
 impl BsdInfo {
-    fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &str {
         let name = if self.name[0] != 0 { &self.name[..] } else { &self.comm[..] };
         let end = name.iter().position(|b| *b == 0).unwrap_or(name.len());
         std::str::from_utf8(&name[..end]).unwrap_or("")
@@ -209,19 +209,21 @@ struct Timebase {
 
 unsafe extern "C" {
     fn proc_listchildpids(ppid: i32, buffer: *mut i32, size: i32) -> i32;
+    fn proc_listallpids(buffer: *mut i32, size: i32) -> i32;
+    fn sysctl(name: *mut i32, namelen: u32, old: *mut u8, oldlen: *mut usize, new: *mut u8, newlen: usize) -> i32;
     fn proc_pidinfo(pid: i32, flavor: i32, arg: u64, buffer: *mut BsdInfo, size: i32) -> i32;
     fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut RusageV2) -> i32;
     fn mach_timebase_info(info: *mut Timebase) -> i32;
 }
 
-fn children(pid: i32) -> Vec<i32> {
+pub(crate) fn children(pid: i32) -> Vec<i32> {
     let mut pids = [0i32; 512];
     // Safety: the buffer is as long as said; the count returned is of pids written.
     let count = unsafe { proc_listchildpids(pid, pids.as_mut_ptr(), size_of_val(&pids) as i32) };
     pids[..count.clamp(0, pids.len() as i32) as usize].iter().copied().filter(|p| *p > 0).collect()
 }
 
-fn info(pid: i32) -> Option<BsdInfo> {
+pub(crate) fn info(pid: i32) -> Option<BsdInfo> {
     let mut info = std::mem::MaybeUninit::<BsdInfo>::zeroed();
     let size = size_of::<BsdInfo>() as i32;
     // Safety: the buffer is a BsdInfo, laid out as proc_bsdinfo, and filled whole when the size comes back.
@@ -229,7 +231,7 @@ fn info(pid: i32) -> Option<BsdInfo> {
 }
 
 /// Its CPU time so far in nanoseconds, and its physical footprint in bytes.
-fn rusage(pid: i32) -> Option<(u64, u64)> {
+pub(crate) fn rusage(pid: i32) -> Option<(u64, u64)> {
     let mut usage = std::mem::MaybeUninit::<RusageV2>::zeroed();
     // Safety: the buffer is a RusageV2, laid out as rusage_info_v2.
     if unsafe { proc_pid_rusage(pid, RUSAGE_INFO_V2, usage.as_mut_ptr()) } != 0 {
@@ -245,4 +247,33 @@ fn rusage(pid: i32) -> Option<(u64, u64)> {
     });
     let ticks = (usage.user_time + usage.system_time) as u128;
     Some(((ticks * numer as u128 / denom as u128) as u64, usage.phys_footprint))
+}
+
+/// Every process's pid.
+pub(crate) fn all_pids() -> Vec<i32> {
+    let mut pids = vec![0i32; 8192];
+    // Safety: the buffer is as long as said; the count returned is of pids written.
+    let count = unsafe { proc_listallpids(pids.as_mut_ptr(), (pids.len() * size_of::<i32>()) as i32) };
+    pids.truncate(count.clamp(0, pids.len() as i32) as usize);
+    pids.retain(|p| *p > 0);
+    pids
+}
+
+/// A process's arguments and environment, as the kernel keeps them (KERN_PROCARGS2). Another user's, or the
+/// environment of one of Apple's own programs, isn't given: an empty environment.
+pub(crate) fn arguments(pid: i32) -> Option<(Vec<String>, Vec<String>)> {
+    const CTL_KERN: i32 = 1;
+    const KERN_PROCARGS2: i32 = 49;
+    let mut buffer = vec![0u8; 256 << 10];
+    let mut size = buffer.len();
+    let mut name = [CTL_KERN, KERN_PROCARGS2, pid];
+    // Safety: the name is three ints; the buffer is as long as said, and size comes back as what was written.
+    if unsafe { sysctl(name.as_mut_ptr(), 3, buffer.as_mut_ptr(), &mut size, std::ptr::null_mut(), 0) } != 0 || size < 4 {
+        return None;
+    }
+    let argc = i32::from_ne_bytes(buffer[..4].try_into().ok()?).max(0) as usize;
+    // The executable's path, then padding, then argc arguments, then the environment, each ending in a nul.
+    let mut strings = buffer[4..size].split(|b| *b == 0).filter(|s| !s.is_empty()).skip(1).map(|s| String::from_utf8_lossy(s).into_owned());
+    let args: Vec<String> = strings.by_ref().take(argc).collect();
+    Some((args, strings.filter(|s| s.contains('=')).collect()))
 }

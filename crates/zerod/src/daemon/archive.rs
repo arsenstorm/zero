@@ -41,6 +41,10 @@ impl Daemon {
         if session.summary().terminal.is_some() {
             self.close_terminal(id).await?
         }
+        // A worker's pull requests passed to its lead with its report: the lead carries on with them.
+        if let (Some(following), Some(lead)) = (self.following.get(), session.summary().parent) {
+            following.drop_shared(id, &lead)
+        }
         self.archiving.lock().unwrap().insert(id.into());
         self.take_offline(&session).await;
         self.archiving.lock().unwrap().remove(id);
@@ -119,6 +123,11 @@ impl Daemon {
                 })
                 .collect()
         })
+    }
+
+    /// Every archived task, workers put away with their lead too: its id and name.
+    pub(crate) fn archived_tasks(&self) -> Vec<(String, String)> {
+        self.archive_index(|index| index.iter().map(|a| (a.id.clone(), a.task.clone())).collect())
     }
 
     /// The archived tasks called `name` (whatever the case).

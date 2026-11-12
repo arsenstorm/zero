@@ -60,9 +60,16 @@ pub(super) async fn lifecycle(zerod: &Zerod, request: Request) -> Result<Value, 
             Ok(json!({"session": session}))
         }
         "archived" => Ok(json!(daemon.archived(request.limit.unwrap_or(1000)))),
+        // What a task left running, stopped: the things named in args.things, else all of it.
+        "stopLeft" => {
+            let things: Option<Vec<String>> = request.args.as_ref().and_then(|a| serde_json::from_value(a["things"].clone()).ok());
+            daemon.stop_left(&request.session()?, things.as_deref()).await.map(|stopped| json!({"stopped": stopped}))
+        }
         // While a restart waits for turns to pause: what it's waiting for.
         "restartStatus" => Ok(daemon.restart_status()),
-        "restart" => Ok(restart(zerod)),
+        // `fresh`: out instead of becoming the new build, for whoever starts zerod (launchd or the app) to start a new one:
+        // the way out of a zerod started under a browser, as a process can't drop the quarantine it was started with.
+        "restart" => Ok(restart(zerod, request.args.as_ref().is_some_and(|a| a["fresh"] == true))),
         other => unknown(other),
     }
 }
@@ -204,6 +211,7 @@ pub(super) async fn reads(zerod: &Zerod, request: Request) -> Result<Value, Stri
     let daemon = &zerod.daemon;
     match request.op.as_str() {
         "hello" => Ok(json!({"version": VERSION, "pid": std::process::id()})),
+        "selfCheck" => Ok(crate::self_check::report(daemon.home())),
         "list" => Ok(json!(daemon.sessions().iter().map(|s| summary(&s.summary())).collect::<Vec<_>>())),
         "get" => {
             daemon.get(&request.session()?).map(|c| json!(c)).ok_or_else(|| format!("No session {}", request.session.unwrap_or_default()))
@@ -339,7 +347,7 @@ pub(super) fn with_open_asks(inbox: &crate::inbox::Inbox, id: &str, text: String
 
 /// A new build is on disk: turns under way pause between steps, then zerod becomes the new one, which carries them on.
 /// Answered at once; the restart happens when the last turn has paused.
-fn restart(zerod: &Zerod) -> Value {
+fn restart(zerod: &Zerod, fresh: bool) -> Value {
     let daemon = zerod.daemon.clone();
     // The app hears a restart is under way, and asks what it waits for.
     let _ = zerod.notices.send("restarting");
@@ -351,6 +359,10 @@ fn restart(zerod: &Zerod) -> Value {
             handed.len(),
             paused.len()
         );
+        // A zerod launchd didn't start leaves for the LaunchAgent's: the one-time move to it.
+        if fresh || crate::launchd::should_hand_over(daemon.home()) {
+            crate::launchd::leave_for_fresh(daemon.home());
+        }
         crate::process::replace_self();
     });
     json!({"restarting": true})

@@ -101,8 +101,15 @@ fn the_record_becomes_a_claude_code_session_with_every_message_and_command() {
             },
         ),
         // A tool call goes as one (any tool, MCP's too), never as words: words would be copied as a way to call it.
-        item("7", ItemKind::Tool { name: "mcp__zero__zero_issue".into(), detail: r#"{"ticket":"ENG-7","state":"working"}"#.into() }),
-        item("8", ItemKind::Tool { name: "Read".into(), detail: "/work/project/a.txt".into() }),
+        item(
+            "7",
+            ItemKind::Tool {
+                name: "mcp__zero__zero_issue".into(),
+                detail: r#"{"ticket":"ENG-7","state":"working"}"#.into(),
+                output: String::new(),
+            },
+        ),
+        item("8", ItemKind::Tool { name: "Read".into(), detail: "/work/project/a.txt".into(), output: String::new() }),
         item("9", ItemKind::Agent { text: "Done: PERIWINKLE-42, frostbite-7.".into(), final_answer: true }),
     ];
     let file = handoff::claude_session(&conversation, "11111111-2222-4333-8444-555555555555");

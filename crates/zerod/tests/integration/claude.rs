@@ -175,7 +175,7 @@ fn a_subagent_in_the_background_runs_until_it_reports_back() {
     core.receive(&json!({"type": "assistant", "message": {"id": "m1", "content": [{"type": "tool_use", "id": "toolu_1", "name": "Agent",
         "input": {"description": "Rebase the branch", "prompt": "Rebase onto main…", "subagent_type": "claude", "run_in_background": true}}]}}));
     assert!(
-        matches!(&core.conversation().items[1].kind, ItemKind::Tool { name, detail } if name == "Agent" && detail == "Rebase the branch")
+        matches!(&core.conversation().items[1].kind, ItemKind::Tool { name, detail, .. } if name == "Agent" && detail == "Rebase the branch")
     );
     core.receive(&json!({"type": "system", "subtype": "task_started", "task_type": "local_agent", "is_backgrounded": true, "tool_use_id": "toolu_1", "description": "Rebase the branch"}));
     core.receive(&json!({"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "Agent started in background with ID a1"}]}}));

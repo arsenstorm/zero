@@ -466,10 +466,14 @@ impl Inner {
     fn core(&mut self) -> &mut Core {
         self.touched = Instant::now();
         if self.core.is_none() {
+            let parked = self.parked.as_ref().map_or(0, |p| p.summary.seq);
             let loaded = self.dir.as_deref().and_then(|dir| replay(dir, false).ok()).map(|(core, _)| core);
             let mut core = loaded.unwrap_or_else(|| {
                 Core::new(self.parked.as_ref().map(|p| p.summary.clone()).unwrap_or_else(|| Conversation::new("", Provider::Claude, "")))
             });
+            // Numbered on from where clients saw it parked: its streamed pieces aren't in the transcript, so the replay
+            // counts fewer changes, and clients dropped what came next as already seen (a page froze until it caught up).
+            core.number_from(parked);
             core.set_mcp(self.mcp.clone());
             self.core = Some(core);
             self.parked = None;

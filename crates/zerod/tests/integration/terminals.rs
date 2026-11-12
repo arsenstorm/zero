@@ -108,7 +108,7 @@ fn claude_codes_session_file_comes_back_as_the_tasks_items() {
                 duration_ms: None,
                 description: String::new()
             },
-            ItemKind::Tool { name: "Read".into(), detail: "/w/a.txt".into() },
+            ItemKind::Tool { name: "Read".into(), detail: "/w/a.txt".into(), output: String::new() },
             ItemKind::Agent { text: "There is one file, a.txt.".into(), final_answer: true },
         ],
         "what was said and done, in order; Claude's own bookkeeping and thinking left out, the turn's last words its answer"

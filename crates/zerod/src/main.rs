@@ -13,31 +13,9 @@ use zerod::inbox::Runtime;
 
 unsafe extern "C" {
     safe fn setsid() -> i32;
+    fn dup2(from: i32, to: i32) -> i32;
     fn getrlimit(resource: i32, limits: *mut [u64; 2]) -> i32;
     fn setrlimit(resource: i32, limits: *const [u64; 2]) -> i32;
-    fn getxattr(
-        path: *const std::ffi::c_char, name: *const std::ffi::c_char, value: *mut u8, size: usize, position: u32, options: i32,
-    ) -> isize;
-}
-
-/// Started under a process that quarantines the files it makes (Chrome, for its native host), zerod and every agent
-/// under it do too, and macOS blocks every program they build. macOS has no way for a process to drop it: said loudly,
-/// as the way out is starting zerod again from Zero.
-fn warn_if_quarantined(home: &Path) {
-    use std::os::unix::ffi::OsStrExt;
-    let probe = home.join("quarantine-probe");
-    let Ok(()) = std::fs::write(&probe, b"") else { return };
-    let path = std::ffi::CString::new(probe.as_os_str().as_bytes()).unwrap_or_default();
-    // Safety: two NUL-terminated strings and no buffer: the size of the attribute, or -1 when the file has none.
-    let quarantined = unsafe { getxattr(path.as_ptr(), c"com.apple.quarantine".as_ptr(), std::ptr::null_mut(), 0, 0, 0) } >= 0;
-    let _ = std::fs::remove_file(&probe);
-    if quarantined {
-        eprintln!(
-            "zerod: QUARANTINED: started under a quarantining process (parent pid {}), so every file agents make is \
-             quarantined and programs they build are blocked. Quit zerod and let Zero start it again.",
-            std::os::unix::process::parent_id()
-        );
-    }
 }
 
 /// Descriptors up to the hard limit (macOS takes no more than OPEN_MAX): started by the app, zerod has its 256, and
@@ -77,19 +55,26 @@ async fn main() {
         let Some(command) = args.next() else { return eprintln!("usage: zerod mcp lazy <command> [args…]") };
         return zerod::mcp_lazy::serve(command, args.collect()).await;
     }
+    // Started by launchd as the LaunchAgent (launchd.rs): no one reads its output, so it goes to the log.
+    let launchd = args.next_if_eq("--launchd").is_some();
     let args = Args::parse(args, &zero);
     if mcp {
         return zerod::mcp::serve(&args.socket).await;
     }
+    if launchd {
+        log_to(&args.beside.join("zerod.log"));
+    }
+    // launchd's is started as the one before leaves for it, and waits for its home; any other leaves at once.
+    let waited = if launchd { lock_within(&args.home, Duration::from_secs(10)).await } else { None };
     if UnixStream::connect(&args.socket).await.is_ok() {
         eprintln!("zerod: already running on {}", args.socket.display());
         return;
     }
-    let Some(_lock) = lock(&args.home) else {
+    let Some(_lock) = waited.or_else(|| lock(&args.home)) else {
         eprintln!("zerod: another zerod has {}", args.home.display());
         return;
     };
-    warn_if_quarantined(&args.home);
+    zerod::self_check::at_start(&args.home);
     let daemon = open_daemon(&args.home);
     let (inbox, drops) = open_inbox(&daemon, &args);
     keep_liveness(&inbox);
@@ -104,6 +89,7 @@ async fn main() {
     let zerod = zerod_for(&args, &daemon, inbox, drops);
     tokio::spawn(zerod::server::archive_completed(zerod.clone()));
     tokio::spawn(zerod::uses::follow(daemon.clone()));
+    tokio::spawn(zerod::left::follow(daemon.clone()));
     let (named, notices) = (daemon.clone(), zerod.notices.clone());
     tokio::spawn(async move { zerod::server::name_codex_accounts(&named, &notices).await });
     // Codex processes end with the daemon: their input closes when it exits.
@@ -160,6 +146,7 @@ fn zerod_for(
     let later = Arc::new(zerod::later::Later::open(&beside.join("later")));
     let loops = Arc::new(zerod::loops::Loops::open(&beside.join("loops")));
     let following = zerod::following::Following::open(home, Arc::new(zerod::integrations::Commands::default()), integrations.clone());
+    daemon.set_following(following.clone());
     poll_following(following.clone(), daemon.clone());
     let browsers = open_browsers(home);
     browsers.follow(daemon.clone(), inbox.clone());
@@ -232,6 +219,32 @@ impl Args {
 fn lock(home: &Path) -> Option<std::fs::File> {
     let file = std::fs::create_dir_all(home).and_then(|_| std::fs::File::create(home.join("zerod.lock"))).ok()?;
     file.try_lock().is_ok().then_some(file)
+}
+
+/// The home's lock once whoever holds it lets go, within `wait`.
+async fn lock_within(home: &Path, wait: Duration) -> Option<std::fs::File> {
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        if let Some(file) = lock(home) {
+            return Some(file);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// stdout and stderr appended to `log`, as the app has them when it starts zerod.
+fn log_to(log: &Path) {
+    use std::os::fd::AsRawFd;
+    let _ = std::fs::create_dir_all(log.parent().unwrap_or(log));
+    let Ok(file) = std::fs::OpenOptions::new().create(true).append(true).open(log) else { return };
+    // Safety: both descriptors are open; the file's own closes when it drops, the duplicates stay.
+    unsafe {
+        dup2(file.as_raw_fd(), 1);
+        dup2(file.as_raw_fd(), 2);
+    }
 }
 
 /// Which agents still run, for the bar's dots and for resuming one before a message: looked at every 5 seconds.

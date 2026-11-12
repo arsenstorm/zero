@@ -179,7 +179,7 @@ The user's blocked sites are refused. In auto mode, opening a site new to the ta
 
 ## Following
 
-Follow what you take ownership of, the moment you take it: the pull request you open or are asked to babysit, the ticket you pick up (or just the comment thread you were pointed at), the Slack thread whose link you were given. Zero reads it every minute and tells you what changed between your turns (a review, a comment, a failed check, a merge, a status change, a reply), waking you if you were parked. So end your turn instead of polling or sleeping; you'll be told.
+Follow what you take ownership of, the moment you take it: the pull request you are asked to babysit, the ticket you pick up (or just the comment thread you were pointed at), the Slack thread whose link you were given. Zero reads it every minute and tells you what changed between your turns (a review, a comment, a failed check, a merge, a status change, a reply), waking you if you were parked. So end your turn instead of polling or sleeping; you'll be told. The pull requests you open (`gh pr create`, the pulls API, an MCP tool) Zero follows for you, and makes the task's PR if it has none; a worker's pass to its lead with its report. A turn that ends `[zero: waiting]` with nothing followed and nothing running is told so: follow what you wait on, or say who you're waiting on.
 
 ```bash
 zero follow https://github.com/org/repo/pull/42          # or github/org/repo/42

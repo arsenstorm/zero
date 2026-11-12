@@ -218,18 +218,30 @@ pub async fn serve(socket: &Path) {
     }
 }
 
-/// zerod's socket. Nothing answering on the app's own, the Zero.app this program is in is opened through Launch
-/// Services, which starts zerod as it always does: started here, zerod would be the caller's child and inherit its
-/// quarantine (Chrome's, for its native host), and every file its agents made would be blocked. Any other socket (a
-/// test's) isn't started.
+/// zerod's socket. Nothing answering on the app's own, launchd starts the LaunchAgent's zerod, or without one the
+/// Zero.app this program is in is opened through Launch Services, which starts zerod as it always does: started here,
+/// zerod would be the caller's child and inherit its quarantine (Chrome's, for its native host), and every file its
+/// agents made would be blocked. Any other socket (a test's) isn't started.
 pub async fn connect(socket: &Path) -> Result<tokio::net::UnixStream, String> {
     if let Ok(stream) = tokio::net::UnixStream::connect(socket).await {
         return Ok(stream);
     }
     let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+    if socket != home.join(".zero/zerod.sock") {
+        return Err("Zero isn't running".into());
+    }
+    if tokio::task::spawn_blocking(crate::launchd::kickstart).await.unwrap_or(false) {
+        for _ in 0..50 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if let Ok(stream) = tokio::net::UnixStream::connect(socket).await {
+                return Ok(stream);
+            }
+        }
+    }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let app = exe.ancestors().find(|dir| dir.extension().is_some_and(|e| e == "app"));
-    let (true, Some(app)) = (socket == home.join(".zero/zerod.sock"), app) else { return Err("Zero isn't running".into()) };
+    let Some(app) = exe.ancestors().find(|dir| dir.extension().is_some_and(|e| e == "app")) else {
+        return Err("Zero isn't running".into());
+    };
     let opened = tokio::process::Command::new("/usr/bin/open")
         .args(["-g", "-j"])
         .arg(app)

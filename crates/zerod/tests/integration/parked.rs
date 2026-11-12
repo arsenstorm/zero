@@ -90,3 +90,44 @@ fn a_parked_session_holds_no_file_open() {
     assert!(!open_here(&transcript), "parked again");
     assert_eq!(Session::load(&dir, events).unwrap().summary().title.as_deref(), Some("Renamed"), "what it wrote meanwhile is kept");
 }
+
+/// Woken after it was parked, a session numbers its changes on from where it was: its streamed pieces were never
+/// written down, so a replay counts fewer changes than clients have seen, and they dropped what came next as known
+/// (a page froze until the count passed where it had been).
+#[tokio::test]
+async fn a_woken_session_numbers_on_from_where_it_was_parked() {
+    use std::sync::{Arc, Mutex};
+    use tokio::io::AsyncWriteExt;
+    let home = crate::common::temp_dir("parked-seq");
+    let started: Arc<Mutex<Vec<tokio::io::DuplexStream>>> = Arc::default();
+    let runtime: zerod::daemon::Runtime = {
+        let started = started.clone();
+        Arc::new(move |_, _, _| {
+            let (ours, theirs) = tokio::io::duplex(1 << 16);
+            started.lock().unwrap().push(theirs);
+            let (read, write) = tokio::io::split(ours);
+            Ok(zerod::session::Transport::new(read, write))
+        })
+    };
+    let daemon = zerod::daemon::Daemon::open(&home.join("zerod"), runtime).unwrap();
+    let id = daemon
+        .start(Provider::Claude, "go", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() })
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let session = daemon.session(&id).unwrap();
+    let event = |e: serde_json::Value| serde_json::json!({"type": "stream_event", "api_message_id": "m1", "event": e}).to_string() + "\n";
+    let mut lines = event(serde_json::json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}));
+    for _ in 0..20 {
+        lines += &event(serde_json::json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "w "}}));
+    }
+    let mut runtime_side = started.lock().unwrap().remove(0);
+    runtime_side.write_all(lines.as_bytes()).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    session.stop();
+    assert!(session.unload(), "offline, it parks");
+    let parked_at = session.seq();
+    let mut heard = daemon.subscribe();
+    session.change(Change::Title { title: Some("Woken".into()) });
+    let next = heard.recv().await.unwrap();
+    assert_eq!(next.seq, parked_at + 1, "numbered on from where clients last saw it");
+}

@@ -71,6 +71,12 @@ impl Core {
         }
     }
 
+    /// Numbered on from at least `seq`: a replay counts fewer changes than the live session made (streamed pieces aren't
+    /// kept), and clients holding the higher number would drop what follows as already seen.
+    pub fn number_from(&mut self, seq: u64) {
+        self.conversation.seq = self.conversation.seq.max(seq);
+    }
+
     /// The MCP servers its CLI was given: what the adapter may sign in to.
     pub fn set_mcp(&mut self, servers: Vec<crate::mcp_servers::Resolved>) {
         self.conversation.mcp = servers;

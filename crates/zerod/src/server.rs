@@ -195,6 +195,9 @@ pub struct Settings {
     /// The context size, in tokens, agents compact at; 0 or unset, the CLIs' own (adapter::compact_window).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compact_window: Option<u64>,
+    /// Agents' builds share a compile cache (build_cache.rs); unset, they don't.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build_cache: Option<bool>,
 }
 
 /// A model the user added: for which CLI, the id it's started with (`--model`), and the name the picker shows.
@@ -221,6 +224,10 @@ impl Settings {
         self.compact_window.filter(|&tokens| tokens > 0).map(|tokens| tokens.clamp(100_000, 1_000_000))
     }
 
+    pub fn shares_build_cache(&self) -> bool {
+        self.build_cache.unwrap_or(false)
+    }
+
     pub fn allows_subagents(&self) -> bool {
         self.subagents.unwrap_or(false)
     }
@@ -243,6 +250,7 @@ impl Settings {
         inbox.configure(std::time::Duration::from_secs_f64(self.take_back.unwrap_or(2.0).max(0.0)), self.ttl.unwrap_or(3600));
         crate::adapter::allow_subagents(self.allows_subagents());
         crate::adapter::set_compact_window(self.compact_window());
+        crate::build_cache::set(self.shares_build_cache());
         if let (Some(drops), Some(patterns)) = (drops, &self.patterns) {
             drops.set_patterns(patterns.clone())
         }
@@ -370,8 +378,9 @@ pub async fn archive_completed(zerod: Zerod) {
         }
         let daemon = &zerod.daemon;
         for id in crate::board::finished_workers(&board, now, FINISHED_WORKER_AFTER, &said) {
-            let open =
-                !zerod.following.list(Some(&id)).is_empty() || !daemon.watches(Some(&id)).is_empty() || daemon.next_wake(&id).is_some();
+            // Follows its lead shares (its pull requests, passed with its report) are the lead's to carry on with.
+            let lead = daemon.get(&id).and_then(|w| w.parent).unwrap_or_default();
+            let open = zerod.following.unshared(&id, &lead) > 0 || !daemon.watches(Some(&id)).is_empty() || daemon.next_wake(&id).is_some();
             if !open
                 && daemon.finished(&id)
                 && let Err(error) = daemon.archive(&id).await
@@ -393,16 +402,15 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "watch" | "watchFile" | "watches" | "unwatch" | "remind" | "schedule" | "schedules" | "unschedule" | "follow" | "unfollow"
         | "following" => watches::handle(zerod, request).await,
         "start" | "spawn" | "adopt" | "detach" | "migrate" | "archive" | "unarchive" | "archived" | "saveForLater" | "resumeLater"
-        | "restartStatus" | "restart" => sessions::lifecycle(zerod, request).await,
+        | "restartStatus" | "restart" | "stopLeft" => sessions::lifecycle(zerod, request).await,
         "release" | "resume" | "openTerminal" | "closeTerminal" | "rewindPreview" | "rewind" | "branch" | "switch" | "interrupt"
         | "stop" | "pause" | "unpause" => sessions::control(zerod, request).await,
         "send" | "queue" | "unqueue" | "notify" | "decide" | "answer" | "seen" | "introduce" => sessions::messages(zerod, request).await,
         "label" | "setPermissions" | "placeInWorkspace" | "setStatus" | "attr" | "issue" | "table" | "place" => {
             sessions::properties(zerod, request).await
         }
-        "hello" | "list" | "get" | "workers" | "result" | "wait" | "usage" | "board" | "recent" | "items" | "window" | "outline" => {
-            sessions::reads(zerod, request).await
-        }
+        "hello" | "selfCheck" | "list" | "get" | "workers" | "result" | "wait" | "usage" | "board" | "recent" | "items" | "window"
+        | "outline" => sessions::reads(zerod, request).await,
         "browserCall"
         | "browsers"
         | "browserState"
@@ -494,6 +502,7 @@ fn setup(zerod: &Zerod, request: Request) -> Result<Value, String> {
             if let Some(key) = crate::git::public_key(daemon.home()) {
                 settings["gitPublicKey"] = json!(key)
             }
+            settings["buildCacheTools"] = crate::build_cache::tools(crate::build_cache::installed);
             Ok(settings)
         }
         // The agents' signing key, taken from a file the user chose: its public half back, for GitHub.
@@ -519,6 +528,7 @@ fn configure(zerod: &Zerod, given: Settings) -> Result<Value, String> {
     settings.subagents = given.subagents.or(settings.subagents);
     settings.models = given.models.or(settings.models);
     settings.compact_window = given.compact_window.or(settings.compact_window);
+    settings.build_cache = given.build_cache.or(settings.build_cache);
     settings.apply_git(daemon.home());
     settings.apply(&zerod.inbox, zerod.drops.as_deref());
     let _ = std::fs::write(daemon.home().join("settings.json"), serde_json::to_vec_pretty(&settings).unwrap_or_default());

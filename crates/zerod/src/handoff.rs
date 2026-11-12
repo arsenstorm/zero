@@ -41,7 +41,7 @@ pub fn claude_session(conversation: &Conversation, session: &str) -> String {
             }
             // As a call, never as words: an agent reading "Used zero_ask: {…}" in its own past replies writes its
             // next calls that way too, and nothing runs. Zero keeps a call's input, not its result.
-            ItemKind::Tool { name, detail } => {
+            ItemKind::Tool { name, detail, .. } => {
                 chain.calls += 1;
                 let call = format!("toolu_zero_{}", chain.calls);
                 let input =
@@ -139,7 +139,11 @@ pub fn from_claude_session(records: &[Value]) -> Vec<Item> {
                                         description: input["description"].as_str().unwrap_or("").into(),
                                     }
                                 } else {
-                                    ItemKind::Tool { name: block["name"].as_str().unwrap_or("tool").into(), detail: detail(input) }
+                                    ItemKind::Tool {
+                                        name: block["name"].as_str().unwrap_or("tool").into(),
+                                        detail: detail(input),
+                                        output: String::new(),
+                                    }
                                 },
                             );
                             used.id = format!("claude-call-{}", block["id"].as_str().unwrap_or(uuid));
@@ -205,6 +209,7 @@ pub fn from_codex_rollout(records: &[Value]) -> Option<(String, Vec<Item>)> {
             Some("McpToolCall") => ItemKind::Tool {
                 name: format!("{}.{}", it["server"].as_str().unwrap_or("mcp"), it["tool"].as_str().unwrap_or("tool")),
                 detail: detail(&it["arguments"]),
+                output: String::new(),
             },
             _ => continue,
         };
@@ -253,9 +258,10 @@ pub fn from_opencode_export(export: &Value) -> Option<(String, Vec<Item>)> {
                                 description: state["input"]["description"].as_str().unwrap_or("").into(),
                             },
                         ),
-                        (Some("tool"), name) => {
-                            push(n, ItemKind::Tool { name: name.unwrap_or("tool").into(), detail: detail(&state["input"]) })
-                        }
+                        (Some("tool"), name) => push(
+                            n,
+                            ItemKind::Tool { name: name.unwrap_or("tool").into(), detail: detail(&state["input"]), output: String::new() },
+                        ),
                         _ => {}
                     }
                 }

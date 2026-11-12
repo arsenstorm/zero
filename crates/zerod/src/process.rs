@@ -41,6 +41,8 @@ pub fn environment(login: impl Iterator<Item = (String, String)>, id: &str) -> V
     );
     // Settings › Compact context at, for Claude Code (which reads it over its own settings); other CLIs ignore it.
     env.extend(crate::adapter::claude_compact());
+    // Settings › Shared build cache: builds through the compiler caches the user has.
+    env.extend(crate::build_cache::environment());
     env.extend(SESSION_ENV.lock().unwrap().get(id).cloned().unwrap_or_default());
     env
 }

@@ -120,7 +120,8 @@ changes (you: what you need them to decide or give; over: done on your side, the
 merge; waiting: on whom; parked: why). Other tasks in Zero may \
 work on what yours touches (`zero tasks` lists them, with their folders): coordinate with one directly by \
 `zero send <its id or name> \"…\"`, its replies coming to you as messages from it, and keep the user out of what you \
-can settle between you. Work for another agent goes to a Zero worker: \
+can settle between you. Zero follows the pull requests you open (their reviews, checks and merge wake you); \
+`zero follow <url>` the ones you take over. Work for another agent goes to a Zero worker: \
 `zero spawn \"task\" --label NAME` starts one under you, which the user sees in Zero and can watch, steer or stop, and \
 which reports back to you when it finishes, fails or gets stuck (a turn it ended with a command of its own still \
 running in the background, it's waiting on that, not stopped). A finished worker is put away an hour after you have its \
@@ -196,6 +197,11 @@ pub fn login_shell(args: &[&str]) -> Vec<String> {
 /// (gh for every pull request followed, every minute), where a login shell each time cost ~94 ms of CPU and half a
 /// second. Agents' CLIs still start through `login_shell`, for the rest of the user's environment.
 pub fn on_login_path(args: &[&str]) -> Vec<String> {
+    ["/usr/bin/env".to_string(), format!("PATH={}", login_path())].into_iter().chain(args.iter().map(|s| s.to_string())).collect()
+}
+
+/// The PATH the user's login shell gives, read once.
+pub fn login_path() -> &'static str {
     static PATH: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         std::process::Command::new("/bin/zsh")
             .args(["-lic", "printf %s \"$PATH\""])
@@ -205,7 +211,7 @@ pub fn on_login_path(args: &[&str]) -> Vec<String> {
             .filter(|p| !p.trim().is_empty())
             .unwrap_or_else(|| std::env::var("PATH").unwrap_or_default())
     });
-    ["/usr/bin/env".to_string(), format!("PATH={}", *PATH)].into_iter().chain(args.iter().map(|s| s.to_string())).collect()
+    &PATH
 }
 
 impl Provider {
