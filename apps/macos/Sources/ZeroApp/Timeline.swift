@@ -72,6 +72,8 @@ func workedFor(_ seconds: TimeInterval) -> String { Took.length(seconds) }
 struct WorkBlock: View {
     /// Posted as you send a message: the turns before it fold.
     static let fold = Notification.Name("zero.foldWork")
+    /// Posted with an item's id as a link or an ask goes to it: the work holding it opens.
+    static let unfold = Notification.Name("zero.unfoldWork")
     let items: [ConversationItem]
     let start: Date?
     let end: Date?
@@ -288,6 +290,9 @@ struct WorkBlock: View {
             if !answering { withAnimation(.easeOut(duration: 0.2)) { answering = true } }
         }
         .onReceive(NotificationCenter.default.publisher(for: WorkBlock.fold)) { _ in foldForNextMessage(animated: false) }
+        .onReceive(NotificationCenter.default.publisher(for: WorkBlock.unfold)) { note in
+            if let item = note.object as? String, items.contains(where: { $0.id == item }) { expanded = true }
+        }
     }
 }
 

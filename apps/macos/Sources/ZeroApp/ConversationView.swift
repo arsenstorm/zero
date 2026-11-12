@@ -42,6 +42,11 @@ struct ConversationView: View {
     @State private var playback = Playback()
     /// Folds of quiet turns (TimelineRow) the user opened.
     @State private var openQuiet: Set<String> = []
+    /// A passage gone to (Workspace.reveal): its block, lit a moment; and the ask it was gone to from, to go back to.
+    @State private var revealed: String?
+    @State private var backTo: String?
+    /// Going to one: where the page was isn't restored over it.
+    @State private var revealing = false
     /// Esc twice in quick succession: pick a message to rewind to, then how (RewindCard).
     @State private var pickingRewind = false
     @State private var lastEscape: Date?
@@ -255,6 +260,61 @@ struct ConversationView: View {
             quote: quote, save: save, rewind: { rewinding = $0 },
             later: { [workspace, id = conversation.id] text in Task { await workspace.askToSaveForLater(id, answer: text) } }
         ).equatable()
+            // Gone to from a link or an ask: lit behind it a moment, taking no room.
+            .background {
+                RoundedRectangle(cornerRadius: 10).fill(Color.accentColor.opacity(revealed == block.id ? 0.1 : 0)).padding(-8)
+                    .allowsHitTesting(false)
+            }
+    }
+
+    /// The passage a link or an ask's About names: its page loaded if it isn't, its fold opened, scrolled to and lit.
+    private func show(_ reveal: Reveal, _ proxy: ScrollViewProxy) async {
+        guard let item = await workspace.item(conversation.id, anchor: reveal.anchor) else { return }
+        if !conversation.items.contains(where: { $0.id == item }) {
+            await workspace.jump(conversation.id, to: item)
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        guard let (row, block) = TimelineRow.holding(item, in: shape.rows(shape.blocks)) else { return }
+        if row != block { openQuiet.insert(row) }
+        NotificationCenter.default.post(name: WorkBlock.unfold, object: item)
+        following = false; lifted = false
+        try? await Task.sleep(for: .milliseconds(30))
+        withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(block, anchor: .top) }
+        backTo = reveal.ask
+        revealed = block
+        try? await Task.sleep(for: .seconds(1.6))
+        withAnimation(.easeOut(duration: 0.4)) { revealed = nil }
+    }
+
+    /// Back to the ask a passage was gone to from: its card at the page's end while it's open here, else in the inbox.
+    @ViewBuilder private var backToAsk: some View {
+        if let backTo {
+            Button {
+                self.backTo = nil
+                if let ask = inbox.store.asks(of: conversation.id).first(where: { $0.id == backTo }),
+                    AgentAskCard.open(ask, in: conversation)
+                {
+                    Task {
+                        if live.later > 0 { await workspace.loadLatest(conversation.id); try? await Task.sleep(for: .milliseconds(50)) }
+                        following = true
+                        position.scrollTo(edge: .bottom)
+                    }
+                } else {
+                    NSApp.sendAction(#selector(AppDelegate.backToAsk(_:)), to: nil, from: backTo as NSString)
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    NucleoIcon("arrow-left", size: 12)
+                    Text("Back to the ask").font(.system(size: 12, weight: .medium))
+                }
+                .padding(.horizontal, 12).frame(height: 28)
+                .background(.regularMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(Theme.stroke))
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 12)
+            .transition(.opacity)
+        }
     }
 
     /// Where you are in the conversation: at its end (nothing kept), or the block at the top of the screen.
@@ -325,6 +385,13 @@ struct ConversationView: View {
                         }.padding(.trailing, 2)
                     }
                     .overlay(alignment: .leading) { rail(proxy) }
+                    .overlay(alignment: .top) { backToAsk }
+                    .onChange(of: workspace.reveal, initial: true) { _, reveal in
+                        guard let reveal, reveal.task == conversation.id else { return }
+                        revealing = true
+                        workspace.reveal = nil
+                        Task { await show(reveal, proxy) }
+                    }
                     // Fetched again as your messages come and go, not with every word streamed.
                     .task(id: conversation.items.count(where: { if case .user = $0.kind { true } else { false } }) + live.earlier) {
                         await workspace.outline(conversation.id)
@@ -487,6 +554,10 @@ struct ConversationView: View {
                         Button("Continue with \(other.title)") { carryOn(with: other) }
                     }
                 }
+            }
+            // A command that looks stuck: ended, so its agent carries on (zerod tells it why).
+            if conversation.attention == .stuck, let item = conversation.stuck {
+                Button("Stop it") { Task { await workspace.stopCommand(conversation.id, item: item) } }
             }
         }
         .id("health")
@@ -883,6 +954,8 @@ struct ConversationView: View {
     }
 
     private func restoreScroll() async {
+        // Opened to go to a passage: there, not where it was left.
+        if revealing || workspace.reveal?.task == conversation.id { return }
         // A message just sent held at the top, its room under it: so again, at once (reopened without its room, the
         // page sat that much lower).
         if let lift = ScrollMemory.lift(in: conversation.id), lift == lastSent {
@@ -898,6 +971,7 @@ struct ConversationView: View {
         following = false
         if !conversation.items.contains(where: { $0.id == kept.turn }) { await workspace.jump(conversation.id, to: kept.turn) }
         try? await Task.sleep(for: .milliseconds(80))
+        guard !revealing else { return }
         position.scrollTo(id: kept.block, anchor: .top)
     }
 

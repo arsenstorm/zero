@@ -269,6 +269,16 @@ enum RichMarkdown {
                 attributes[.font] = NSFont.monospacedSystemFont(ofSize: font.pointSize * 0.88, weight: .regular)
                 attributes[.zeroCode] = true
             }
+            // A link into a task's conversation ("#bench-plan" within it, zero://task/<id>#…): opened by Zero, at the passage.
+            if let link = run.link,
+                link.scheme == "zero" && link.host == "task" || link.scheme == nil && link.host == nil && link.fragment != nil,
+                let opens = link.scheme == nil ? URL(string: "zero://task/#" + (link.fragment ?? "")) : link
+            {
+                attributes[.zeroOpens] = opens; attributes[.cursor] = NSCursor.pointingHand
+                attributes[.foregroundColor] = NSColor.linkColor
+                out.append(NSAttributedString(string: piece, attributes: attributes))
+                continue
+            }
             if let link = run.link, link.scheme == "zero", link.host == "loop" || link.host == "skill" || link.host == "pad" {
                 attributes[.font] = NSFont.systemFont(ofSize: font.pointSize, weight: .medium)
                 attributes[.foregroundColor] = TokenTextView.tokenText

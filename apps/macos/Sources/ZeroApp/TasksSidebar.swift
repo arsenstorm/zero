@@ -391,6 +391,10 @@ struct TasksSidebar: View {
                     ? MenuItem("Resume", "media-play") { Task { await workspace.unpause([id]) } }
                     : MenuItem("Pause", "circle-pause") { Task { await workspace.pause([id]) } },
                 MenuItem("Save for later", "bookmark") { Task { await workspace.askToSaveForLater(id) } },
+                // Settings › Stuck commands may have Zero stop a hung command; not this task's, once the user says so.
+                workspace.conversation(id)?.keepCommands == true
+                    ? MenuItem("Let Zero stop its stuck commands", "shield") { Task { await workspace.keepCommands(id, false) } }
+                    : MenuItem("Never stop its commands", "shield") { Task { await workspace.keepCommands(id, true) } },
                 MenuItem("Move to Later", "clock") {
                     Task {
                         if place == .task(id) { place = .home }; await workspace.moveToLater(id)

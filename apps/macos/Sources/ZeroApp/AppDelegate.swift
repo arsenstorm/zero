@@ -44,7 +44,9 @@ import ZeroCore
     /// A zero://pad link, clicked anywhere: the pad, at its section. A zero://loop link: the loop.
     func application(_ application: NSApplication, open urls: [URL]) {
         guard moveWindow == nil else { return }
-        if let other = urls.first(where: { $0.scheme == "zero" && ["loop", "later"].contains($0.host) }) { openZeroURL(other); return }
+        if let other = urls.first(where: { $0.scheme == "zero" && ["loop", "later", "task"].contains($0.host) }) {
+            openZeroURL(other); return
+        }
         guard let (id, section) = urls.lazy.compactMap(PadLinks.parse).first else { return }
         navigation.place = .pad(id)
         navigation.padSection = section
@@ -56,10 +58,28 @@ import ZeroCore
         switch url.host {
         case "loop": navigation.place = name.isEmpty ? .loops : .loop(name)
         case "later": navigation.place = name.isEmpty ? .later : .laterItem(name)
-        case "task" where !name.isEmpty: navigation.place = .task(name)
+        case "task": openTask(url)
         default: return
         }
         openWorkspace()
+    }
+
+    /// zero://task/<id>, at a passage with #<anchor> (a heading's, an item's), from an ask with ?ask=<id>; within the
+    /// task open, "#<anchor>" alone.
+    private func openTask(_ url: URL) {
+        var current: String?
+        if case let .task(id) = navigation.place { current = navigation.worker ?? id }
+        guard let (task, anchor) = TaskLinks.parse(url, current: current) else { return }
+        if task != current { navigation.place = .task(task) }
+        guard let anchor else { return }
+        let ask = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "ask" }?.value
+        workspace?.reveal = Reveal(task: task, anchor: anchor, ask: ask)
+    }
+
+    /// Back from a passage an ask was about to the ask, in the inbox.
+    @objc func backToAsk(_ id: NSString) {
+        inbox.select(id as String)
+        open(byIntent: true)
     }
 
     // Opening Zero again, from the Dock or Finder, opens the workspace.

@@ -792,7 +792,84 @@ private struct AgentsPage: View {
                     }
                 }
             }
+            SettingsSection(title: "Stuck commands") { StuckCommandsRows() }
         }
+    }
+}
+
+/// What Zero does about a command that runs well past its usual time (learned per project, or what its agent said with
+/// `zero expect`) with no output and no CPU: tells the user, stops it (its agent told why, so it carries on), or doesn't
+/// look. zerod's setting, so it holds while the app is closed.
+private struct StuckCommandsRows: View {
+    @State private var settings = StuckCommands()
+    @State private var never = ""
+    @State private var link = try? ZerodLink()
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        Rows {
+            SettingRow(
+                title: "When a command looks stuck",
+                detail:
+                    "Stuck: well past its usual time, with no output and no CPU, or waiting for input no one will type. Stopped, its agent is told why and carries on."
+            ) {
+                SettingChoice(
+                    id: "stuckWhen",
+                    choices: [
+                        [(title: "Tell me", value: StuckCommands.When.tell), (title: "Stop it", value: .stop)],
+                        [(title: "Never check", value: .never)],
+                    ],
+                    selection: binding(\.when))
+            }
+            Group {
+                SettingRow(title: "Hung after", detail: "No output and no CPU for this long.") {
+                    SettingChoice(
+                        id: "stuckHung", choices: [[1.0, 3, 5, 10, 15].map { (title: "\(Int($0)) min", value: $0) }],
+                        selection: binding(\.hungMinutes))
+                }
+                SettingRow(title: "Past its usual time", detail: "How many times its usual time, and never sooner than the least.") {
+                    HStack(spacing: 4) {
+                        SettingChoice(
+                            id: "stuckTimes", choices: [[2.0, 3, 5, 10].map { (title: "\(Int($0))×", value: $0) }],
+                            selection: binding(\.times))
+                        SettingChoice(
+                            id: "stuckFloor", choices: [[1.0, 3, 5, 10, 30].map { (title: "at least \(Int($0)) min", value: $0) }],
+                            selection: binding(\.floorMinutes))
+                    }
+                }
+                SettingRow(
+                    title: "Never stop", detail: "Commands Zero leaves running, by any part of them, comma-separated: migrate, deploy."
+                ) {
+                    TextField("", text: $never, prompt: Text("migrate"))
+                        .textFieldStyle(.dialog).font(.system(size: 12).monospaced()).frame(width: 200)
+                        .focused($focused)
+                        .onSubmit(saveNever)
+                        .onChange(of: focused) { if !focused { saveNever() } }
+                }
+            }
+            .disabled(settings.when == .never).opacity(settings.when == .never ? 0.5 : 1)
+        }
+        .task {
+            guard let kept = try? await link?.stuckCommands() else { return }
+            settings = kept
+            never = kept.never.joined(separator: ", ")
+        }
+    }
+
+    private func binding<Value>(_ key: WritableKeyPath<StuckCommands, Value>) -> Binding<Value> {
+        Binding(
+            get: { settings[keyPath: key] },
+            set: { chosen in
+                settings[keyPath: key] = chosen
+                let settings = settings
+                Task { try? await link?.setStuckCommands(settings) }
+            })
+    }
+
+    private func saveNever() {
+        let patterns = never.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard patterns != settings.never else { return }
+        binding(\.never).wrappedValue = patterns
     }
 }
 

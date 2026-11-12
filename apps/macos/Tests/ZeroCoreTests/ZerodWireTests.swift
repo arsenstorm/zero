@@ -35,7 +35,7 @@ private let recordings = [
     let known = Set(Swift.Mirror(reflecting: Conversation(id: "", provider: .codex, cwd: "")).children.compactMap(\.label))
     #expect(Set(json.keys).subtracting(known).isEmpty, "zerod sends \(Set(json.keys).subtracting(known)) that the app doesn't read")
     // Fields zerod leaves out until they have something in them.
-    let whenSet: Set<String> = ["attributes", "signin"]
+    let whenSet: Set<String> = ["attributes", "signin", "stuck", "keepCommands"]
     #expect(
         known.subtracting(json.keys).isSubset(of: whenSet),
         "the app expects \(known.subtracting(json.keys).subtracting(whenSet)) that zerod no longer sends")

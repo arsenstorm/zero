@@ -616,6 +616,10 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
     public var failure: Failure?
     /// Why it looks stuck, while it does.
     public var stalled: String?
+    /// The running command it's stuck on, by its item, when one is: Stop it ends it (`stopCommand`).
+    public var stuck: String?
+    /// The user said Zero is never to stop this task's commands on its own.
+    public var keepCommands: Bool?
     /// The unified diff of everything the latest turn changed.
     public var diff: String?
     /// While the task is in its provider's own terminal: zero-host's id for it.
@@ -706,7 +710,8 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
         case let .answered(id): questions.removeAll { $0.id == id }
         case let .usage(usage): self.usage = usage
         case let .failed(failure): self.failure = failure
-        case let .stalled(reason): stalled = reason
+        case let .stalled(reason, command): stalled = reason; stuck = command
+        case let .keepCommands(keep): keepCommands = keep
         case let .diff(diff): self.diff = diff
         case let .terminal(terminal): self.terminal = terminal
         case .archived: break
@@ -722,7 +727,7 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
         case let .rewound(before):
             // As zerod does (model.rs): the message and what followed go, and with them the provider's thread.
             if let at = items.firstIndex(where: { $0.id == before }) { items.removeSubrange(at...) }
-            thread = nil; turn = nil; approvals = []; questions = []; diff = nil; error = nil; failure = nil; stalled = nil
+            thread = nil; turn = nil; approvals = []; questions = []; diff = nil; error = nil; failure = nil; stalled = nil; stuck = nil
         case let .switched(provider, model, effort):
             self.provider = provider; self.thread = nil; self.model = model; self.effort = effort
             // As zerod does: where each provider took over, in the conversation itself; stopped for the handover, one line.
@@ -756,7 +761,9 @@ public enum Change: Decodable, Equatable, Sendable {
     case answered(String)
     case usage(Usage)
     case failed(Failure?)
-    case stalled(String?)
+    /// Why it looks stuck, and the command it's stuck on, if one.
+    case stalled(String?, command: String?)
+    case keepCommands(Bool)
     case diff(String?)
     /// The task moved to another provider, which starts a thread of its own from Zero's record.
     case switched(Provider, model: String?, effort: String?)
@@ -780,7 +787,7 @@ public enum Change: Decodable, Equatable, Sendable {
 
     private enum Keys: String, CodingKey {
         case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label,
-            ticket, provider, terminal, place, parent, before, name, value, workspace, permissions, signin
+            ticket, provider, terminal, place, parent, before, name, value, workspace, permissions, signin, command, keep
     }
 
     public init(from decoder: Decoder) throws {
@@ -809,7 +816,10 @@ public enum Change: Decodable, Equatable, Sendable {
         case "answered": self = .answered(try c.decode(String.self, forKey: .question))
         case "usage": self = .usage(try c.decode(Usage.self, forKey: .usage))
         case "failed": self = .failed(try c.decodeIfPresent(Failure.self, forKey: .failure))
-        case "stalled": self = .stalled(try c.decodeIfPresent(String.self, forKey: .reason))
+        case "stalled":
+            self = .stalled(
+                try c.decodeIfPresent(String.self, forKey: .reason), command: try c.decodeIfPresent(String.self, forKey: .command))
+        case "keepCommands": self = .keepCommands(try c.decode(Bool.self, forKey: .keep))
         case "diff": self = .diff(try c.decodeIfPresent(String.self, forKey: .diff))
         case "terminal": self = .terminal(try c.decodeIfPresent(Opened.self, forKey: .terminal))
         case "archived": self = .archived
@@ -1266,6 +1276,38 @@ public final class ZerodLink: @unchecked Sendable {
         return (settings?["buildCache"] as? Bool ?? false, tools)
     }
     public func setBuildCache(_ on: Bool) async throws { _ = try await call("configure", ["buildCache": on]) }
+
+    /// Settings › Stuck commands, as zerod keeps them (its defaults where unset).
+    public func stuckCommands() async throws -> StuckCommands {
+        let kept = ((try await call("settings")) as? [String: Any])?["stuck"] as? [String: Any] ?? [:]
+        var settings = StuckCommands()
+        if let when = (kept["when"] as? String).flatMap(StuckCommands.When.init(rawValue:)) { settings.when = when }
+        if let hung = kept["hungMinutes"] as? Double { settings.hungMinutes = hung }
+        if let times = kept["times"] as? Double { settings.times = times }
+        if let floor = kept["floorMinutes"] as? Double { settings.floorMinutes = floor }
+        if let never = kept["never"] as? [String] { settings.never = never }
+        return settings
+    }
+    public func setStuckCommands(_ settings: StuckCommands) async throws {
+        let stuck: [String: Any] = [
+            "when": settings.when.rawValue, "hungMinutes": settings.hungMinutes, "times": settings.times,
+            "floorMinutes": settings.floorMinutes, "never": settings.never,
+        ]
+        _ = try await call("configure", ["stuck": stuck])
+    }
+
+    /// Ends a task's running command (its item) so its agent carries on; zerod tells the agent why.
+    public func stopCommand(session: String, item: String) async throws {
+        _ = try await call("stopCommand", ["session": session, "item": item])
+    }
+    /// Zero never stops this task's commands on its own (`keep`), or may again.
+    public func keepCommands(session: String, keep: Bool) async throws {
+        _ = try await call("keepCommands", ["session": session, "keep": keep])
+    }
+    /// The agent's word on how long its step under way takes (`zero expect 20m "the full suite"`).
+    public func expect(session: String, span: String, what: String) async throws {
+        _ = try await call("expect", ["session": session, "value": span, "text": what])
+    }
     /// The context size, in tokens, agents compact at; nil, the CLIs' own.
     public func compactWindow() async throws -> Int? {
         (((try await call("settings")) as? [String: Any])?["compactWindow"] as? Int).flatMap { $0 > 0 ? $0 : nil }
@@ -1681,6 +1723,10 @@ public final class ZerodLink: @unchecked Sendable {
     public func outline(session: String) async throws -> [OutlineMark] {
         try decode([OutlineMark].self, from: await call("outline", ["session": session]))
     }
+    /// The passage a link into a session names: a heading's anchor (the latest with it) or an item's id.
+    public func anchor(session: String, anchor: String) async throws -> Ask.About {
+        try decode(Ask.About.self, from: await call("anchor", ["session": session, "text": anchor]))
+    }
 
     // Scratchpads: one op, `pad`, taking the same tools and arguments as the MCP server.
     public func pad<T: Decodable>(_ tool: String, _ args: [String: Any], as type: T.Type) async throws -> T {
@@ -1979,5 +2025,19 @@ public struct AgentGit: Codable, Equatable, Sendable {
     public var https = true
     /// Only agents in these folders; none, every folder.
     public var folders: [String] = []
+    public init() {}
+}
+
+/// Settings › Stuck commands: what Zero does about a command that runs well past its usual time with no output and no CPU.
+public struct StuckCommands: Equatable, Sendable {
+    public enum When: String, CaseIterable, Sendable { case tell, stop, never }
+    public var when: When = .tell
+    /// No output and no CPU this long counts as hung.
+    public var hungMinutes: Double = 3
+    /// Stuck past this many times its usual time, and never before `floorMinutes`.
+    public var times: Double = 3
+    public var floorMinutes: Double = 3
+    /// Commands never stopped on their own, by any part of their text.
+    public var never: [String] = []
     public init() {}
 }

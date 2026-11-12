@@ -112,6 +112,7 @@ func reason(_ ask: Ask) -> String? {
         kind: options.isEmpty ? .question : .choice, title: title, body: title == question ? "" : question, options: options,
         command: flag("code"), agent: agentIdentity(), ttl: ttl)
     ask.detail = flag("body")
+    ask.about = about()
     // --block: it can't go on without the answer; Zero holds its other events until it's answered.
     ask.blocks = flag("block") != nil ? true : nil
     create(ask)
@@ -121,11 +122,15 @@ func reason(_ ask: Ask) -> String? {
     guard let what = positional.first else { usage() }
     shortHeadline(what)
     shortDetail(flag("body"), flag: "body")
-    create(
-        Ask(
-            kind: .approve, title: what, body: flag("body") ?? "", options: ["Yes", "No", "Suggest something else…"],
-            command: flag("code"), agent: agentIdentity(), ttl: ttl))
+    var approval = Ask(
+        kind: .approve, title: what, body: flag("body") ?? "", options: ["Yes", "No", "Suggest something else…"],
+        command: flag("code"), agent: agentIdentity(), ttl: ttl)
+    approval.about = about()
+    create(approval)
 }
+
+/// --about "#bench-plan": the heading of the agent's it's about, which zerod finds; left out, its words just before.
+func about() -> Ask.About? { flag("about").map { Ask.About(anchor: $0) } }
 
 @MainActor func withdrawCommand() {
     guard let id = positional.first else { usage() }
@@ -145,6 +150,7 @@ func reason(_ ask: Ask) -> String? {
         kind: .run, title: flag("title") ?? flag("ticket") ?? "Run a command", body: flag("why") ?? flag("body") ?? "",
         options: ["Run", "Reject", "Suggest something else…"], command: shell, cwd: folder, agent: agentIdentity(), ttl: ttl)
     run.script = Ask.script(of: shell, cwd: folder)
+    run.about = about()
     if let prefix = flag("allow") {
         let rest = shell.hasPrefix(prefix) ? shell.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces) : ""
         guard !rest.isEmpty, rest.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "._/~-+@:,=".contains($0)) }) else {

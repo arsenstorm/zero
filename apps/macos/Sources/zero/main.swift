@@ -6,9 +6,11 @@ func fail(_ message: String, _ code: Int32 = 1) -> Never { stderr(message); exit
 func usage(help: Bool = false) -> Never {
     let text = """
         usage:
-          zero ask     "short question?" [--option A --option B ...] [--body "details"] [--title T] [--code 'command or snippet'] [--block]
+          zero ask     "short question?" [--option A --option B ...] [--body "details"] [--title T] [--code 'command or snippet'] [--block] [--about "#heading"]
                        the question is one line (about 12 words); the details the user may need go in --body
                        --block: you can't go on without the answer; Zero holds your other events until it's answered
+                       --about "#bench-plan": the heading of yours it's about (GitHub's anchor; also approve, run);
+                       left out, the card shows your words just before the ask
                        an option ending with "…" asks the user for text; the answer is then "label: text"
           zero approve "what you want to do" [--body "details"] [--code 'command or snippet']   (Yes / No / Suggest something else…)
           zero run     'command' --why "what you need the output for" [--cwd DIR] [--title T] [--allow PREFIX]
@@ -81,6 +83,8 @@ func usage(help: Bool = false) -> Never {
                        Set it whenever the issue's state changes)
           zero attr    NAME [VALUE] [--session ID]   (something about this task for the user to see on it, such as
                        zero attr PR https://github.com/org/repo/pull/12; a link opens. No value takes it back)
+          zero expect  DURATION ["what"] [--session ID]   (how long the step under way takes, as 90s, 20m or 1h30m: Zero
+                       stops a command that hangs well past it with no output and no CPU, telling you why)
           zero label   "name" [--ticket REF] [--where PLACE] [--session ID]   (names this session, or another; --where says where it runs,
                        a bench or a machine, for the board's Where; --where "" goes back to its folder)
           zero follow  <url | topic>... [--mine] [--about "word,other words"] [--session ID]
@@ -208,6 +212,7 @@ case "label": await labelCommand()
 case "table": await tableCommand()
 case "issue": await issueCommand()
 case "attr": await attrCommand()
+case "expect": await expectCommand()
 case "follow": await followCommand()
 case "unfollow": await unfollowCommand()
 case "later": await laterCommand()

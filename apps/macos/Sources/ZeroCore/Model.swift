@@ -90,6 +90,32 @@ public struct Ask: Codable, Identifiable, Equatable, Sendable {
     public var run: String?
     /// A page its first option opens, the ask staying open (an MCP server's sign-in, which zerod closes once done).
     public var link: String? = nil
+    /// The message of its task's conversation it's about: the agent's words just before it, or a heading it named.
+    public var about: About? = nil
+    /// What the agent answered when the user asked about it in their own words.
+    public var replies: [Reply]? = nil
+
+    /// A passage of a task's conversation: its item, the heading's anchor when it's one heading's part, its title (that
+    /// heading, the message's first, or its first words), the passage itself, and when it was said (ms since 1970).
+    public struct About: Codable, Equatable, Sendable {
+        public var item: String
+        public var anchor: String?
+        public var title: String
+        public var text: String
+        public var at: Int64?
+
+        public init(item: String = "", anchor: String? = nil, title: String = "", text: String = "", at: Int64? = nil) {
+            self.item = item; self.anchor = anchor; self.title = title; self.text = text; self.at = at
+        }
+
+        public var date: Date? { at.map { Date(timeIntervalSince1970: Double($0) / 1000) } }
+    }
+
+    public struct Reply: Codable, Equatable, Sendable {
+        public var item: String
+        public var text: String
+        public var at: Int64?
+    }
 
     /// A run Zero lost track of while it ran: it may or may not have finished.
     public var lost: Bool { kind == .run && status == "lost" }

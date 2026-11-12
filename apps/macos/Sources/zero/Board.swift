@@ -47,6 +47,15 @@ import ZeroCore
     await zerod { try await $0.attribute(session: session, name: name, value: value.isEmpty ? nil : value) }
 }
 
+/// `zero expect 20m "the full suite"`: how long the step under way takes, so Zero doesn't take a slow command for a
+/// stuck one (nor a stuck one for slow).
+@MainActor func expectCommand() async {
+    guard let span = positional.first, let session = targetSession() else {
+        fail("zero: how long, for which session? (zero expect 20m \"what\" [--session ID])")
+    }
+    await zerod { try await $0.expect(session: session, span: span, what: positional.dropFirst().joined(separator: " ")) }
+}
+
 /// The board as zerod has it, as JSON: each task's row (its state, name, issue rows, open asks, workers). With
 /// --watch, the board again as a line of JSON each time it changes, until stopped: for a script that shows it elsewhere.
 @MainActor func boardCommand() async {

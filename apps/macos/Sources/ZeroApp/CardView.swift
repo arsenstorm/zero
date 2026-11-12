@@ -45,6 +45,9 @@ struct CardView: View {
     @State private var commandExpanded = false
     @State private var scriptExpanded = false
     @State private var detailExpanded = false
+    /// What it's about, read here (About's chevron); the agent's replies to your words on it.
+    @State private var aboutOpen = false
+    @State private var repliesOpen = false
     /// A running run's own terminal shown in place of its output (its Terminal button).
     @State private var watching = false
     /// False until the entrance has played; cards already seen start true.
@@ -159,6 +162,7 @@ struct CardView: View {
     private var cardContent: some View {
         VStack(alignment: .leading, spacing: docked ? 10 : 12) {
             if ask.kind == .note { noteText } else { header }
+            aboutLine
             // Why the agent wants it, or what it found, in its own words: six lines, the rest a click away.
             if let supporting, !supporting.isEmpty { supportingText(supporting) }
             if showsTerminal {
@@ -168,6 +172,7 @@ struct CardView: View {
             }
             if showsOptions { options }
             footer
+            repliesLine
         }
         // A reply hugs its text like a chat bubble, up to about 65% of the column, and sits left.
         .modifier(BubbleWidth(hug: ask.kind == .note, max: 220))
@@ -217,11 +222,82 @@ struct CardView: View {
     }
 
     /// Its words with what they name made links, as a message's are: a Linear ticket, a pull request (repo#123, #123 in
-    /// the agent's own repository), a commit, a Slack channel.
+    /// the agent's own repository), a commit, a Slack channel; "#anchor", a passage of its task's conversation.
     private func linked(_ words: String) -> AttributedString {
         let cwd = ask.agent.cwd ?? ask.cwd ?? ""
         let links = MarkdownText.links(repo: References.repo(of: cwd), owner: References.owner(of: cwd), yours: false)
-        return MarkdownText.inline(words, links: links)
+        return MarkdownText.inline(task.map { TaskLinks.absolute(words, task: $0) } ?? words, links: links)
+    }
+
+    /// The zerod task that asked: what its About and "#anchor" links point into.
+    private var task: String? { ask.agent.runtime == "zerod" ? ask.agent.ref : nil }
+
+    /// What it's about, quietly under the question: the agent's words just before it, or the heading it named. Its
+    /// title goes to them in the conversation (and back); the chevron reads them here, as a quote.
+    @ViewBuilder private var aboutLine: some View {
+        if let about = ask.about, let task {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 4) {
+                    Text("About").foregroundStyle(.tertiary)
+                    Button {
+                        var link = URLComponents(string: TaskLinks.link(task))
+                        link?.queryItems = [URLQueryItem(name: "ask", value: ask.id)]
+                        link?.fragment = about.item
+                        if let url = link?.url { NSApp.sendAction(#selector(AppDelegate.openZeroURL(_:)), to: nil, from: url) }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text(about.title).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
+                            NucleoIcon("arrow-up-right", size: 10)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).pointerStyle(.link).tip("Show it in the conversation")
+                    if let date = about.date { Text("· " + Self.when(date)).foregroundStyle(.tertiary).fixedSize() }
+                    Spacer(minLength: 8)
+                    Button {
+                        controller.holdTop = true
+                        withAnimation(.easeOut(duration: 0.2)) { aboutOpen.toggle() }
+                    } label: {
+                        NucleoIcon("chevron-down", size: 10).rotationEffect(.degrees(aboutOpen ? 180 : 0))
+                            .frame(width: 20, height: 16).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).tip(aboutOpen ? "Fold" : "Read it here")
+                }
+                .font(.system(size: 12))
+                if aboutOpen { Passage(text: TaskLinks.absolute(about.text, task: task), cwd: ask.agent.cwd ?? ask.cwd) }
+            }
+        }
+    }
+
+    /// What the agent answered to your words on it: folded to a count, opened in place.
+    @ViewBuilder private var repliesLine: some View {
+        if let replies = ask.replies, !replies.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    controller.holdTop = true
+                    withAnimation(.easeOut(duration: 0.2)) { repliesOpen.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(replies.count == 1 ? "1 reply" : "\(replies.count) replies").fontWeight(.medium)
+                        NucleoIcon("chevron-down", size: 10).rotationEffect(.degrees(repliesOpen ? 0 : -90))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.secondary)
+                if repliesOpen {
+                    ForEach(replies, id: \.item) { reply in
+                        Passage(text: task.map { TaskLinks.absolute(reply.text, task: $0) } ?? reply.text, cwd: ask.agent.cwd ?? ask.cwd)
+                    }
+                }
+            }
+        }
+    }
+
+    /// "11:26" today, with its day before.
+    static func when(_ date: Date) -> String {
+        Calendar.current.isDateInToday(date)
+            ? date.formatted(date: .omitted, time: .shortened)
+            : date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
     }
 
     /// Three lines; a longer one fades out on its last line instead of being cut mid-word, and a
@@ -505,4 +581,24 @@ struct CardView: View {
             .padding(.horizontal, 10)
     }
 
+}
+
+/// A passage of the conversation shown in a card, as a quote: a rule beside it, as tall as it is up to a point, then
+/// scrolled.
+private struct Passage: View {
+    let text: String
+    let cwd: String?
+    @State private var height: CGFloat = 0
+
+    var body: some View {
+        ScrollView {
+            MarkdownText(text, cwd: cwd, size: 12.5, compact: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height = $0 }
+        }
+        .thinScrollbar()
+        .frame(height: min(max(height, 16), 240))
+        .padding(.leading, 12)
+        .overlay(alignment: .leading) { RoundedRectangle(cornerRadius: 1).fill(Theme.stroke).frame(width: 2) }
+    }
 }

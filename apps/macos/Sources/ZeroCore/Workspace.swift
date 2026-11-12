@@ -443,6 +443,15 @@ public final class Workspace {
         sync(session)
     }
 
+    /// A passage to show (an ask's About, a #link, zero://task/<id>#anchor): its task's page goes to it.
+    public var reveal: Reveal?
+
+    /// The item a link names: one loaded by its id, else zerod finds the heading (or an item not loaded).
+    public func item(_ session: String, anchor: String) async -> String? {
+        if mirror.conversations[session]?.items.contains(where: { $0.id == anchor }) == true { return anchor }
+        return try? await link?.anchor(session: session, anchor: anchor).item
+    }
+
     /// The page after what's loaded, when the window stops short of the end.
     public func loadNewer(_ session: String) async {
         guard (mirror.later[session] ?? 0) > 0, let last = mirror.conversations[session]?.items.last?.id,
@@ -923,6 +932,14 @@ public final class Workspace {
     /// On hold with their workers, and off it: a working one wraps up first (zerod gives it five minutes).
     public func pause(_ sessions: [String]) async { _ = await attempt { try await $0.pause(sessions: sessions) } }
     public func unpause(_ sessions: [String]) async { _ = await attempt { try await $0.unpause(sessions: sessions) } }
+    /// Ends a task's command that looks stuck (its item); zerod tells the agent why, and it carries on.
+    public func stopCommand(_ session: String, item: String) async {
+        _ = await attempt { try await $0.stopCommand(session: session, item: item) }
+    }
+    /// Zero never stops this task's commands on its own (`keep`), or may again.
+    public func keepCommands(_ session: String, _ keep: Bool) async {
+        _ = await attempt { try await $0.keepCommands(session: session, keep: keep) }
+    }
     /// A task (a lead, or a worker on its lead's row) the user put on hold.
     public func isPaused(_ session: String) -> Bool {
         board.contains {
