@@ -45,8 +45,7 @@ struct CardView: View {
     @State private var commandExpanded = false
     @State private var scriptExpanded = false
     @State private var detailExpanded = false
-    /// What it's about, read here (About's chevron); the agent's replies to your words on it.
-    @State private var aboutOpen = false
+    /// The agent's replies to your words on it, opened.
     @State private var repliesOpen = false
     /// A running run's own terminal shown in place of its output (its Terminal button).
     @State private var watching = false
@@ -232,36 +231,23 @@ struct CardView: View {
     /// The zerod task that asked: what its About and "#anchor" links point into.
     private var task: String? { ask.agent.runtime == "zerod" ? ask.agent.ref : nil }
 
-    /// What it's about, quietly under the question: the agent's words just before it, or the heading it named. Its
-    /// title, a link as the pane draws them, goes to them in the conversation; the chevron beside it reads them here.
-    /// Opened and folded at once: an eased change of a docked card's height moved the page under it a frame apart.
+    /// What it's about, quietly under the question: the agent's words just before it, or the heading it named. One grey;
+    /// its title is a link as the pane draws them, going to those words in the conversation.
     @ViewBuilder private var aboutLine: some View {
         if let about = ask.about, let task {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 5) {
-                    Text("About").foregroundStyle(.tertiary)
-                    Button {
-                        var link = URLComponents(string: TaskLinks.link(task))
-                        link?.queryItems = [URLQueryItem(name: "ask", value: ask.id)]
-                        link?.fragment = about.item
-                        if let url = link?.url { NSApp.sendAction(#selector(AppDelegate.openZeroURL(_:)), to: nil, from: url) }
-                    } label: {
-                        TaskDetails.linked(about.title).truncationMode(.tail).contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).pointerStyle(.link)
-                    Button {
-                        controller.holdTop = true
-                        aboutOpen.toggle()
-                    } label: {
-                        NucleoIcon("chevron-down", size: 10).rotationEffect(.degrees(aboutOpen ? 0 : -90))
-                            .frame(width: 20, height: 18).contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain).foregroundStyle(.tertiary)
-                    .accessibilityLabel(aboutOpen ? "Fold the passage" : "Read the passage here")
+            HStack(spacing: 5) {
+                Text("About")
+                Button {
+                    var link = URLComponents(string: TaskLinks.link(task))
+                    link?.queryItems = [URLQueryItem(name: "ask", value: ask.id)]
+                    link?.fragment = about.item
+                    if let url = link?.url { NSApp.sendAction(#selector(AppDelegate.openZeroURL(_:)), to: nil, from: url) }
+                } label: {
+                    TaskDetails.linked(about.title).truncationMode(.tail).contentShape(Rectangle())
                 }
-                .font(.system(size: 12))
-                if aboutOpen { quoted(about.text) }
+                .buttonStyle(.plain).pointerStyle(.link)
             }
+            .font(.system(size: 12)).foregroundStyle(.secondary)
         }
     }
 
