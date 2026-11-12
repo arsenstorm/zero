@@ -360,11 +360,22 @@ pub fn hold_while_blocked(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
     }));
 }
 
-/// A turn ending waiting with a note saying on whom (`zero note --waiting`, `--needs`) isn't told nothing wakes it:
-/// the inbox tells the daemon which tasks those are.
-pub fn know_waiting_notes(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
-    let inbox = Arc::downgrade(inbox);
-    daemon.know_who(Box::new(move |conversation| inbox.upgrade().is_some_and(|inbox| crate::board::says_who(conversation, &inbox.asks()))));
+/// What in the inbox wakes a task ending its turn waiting, so it isn't told nothing does: a note saying on whom
+/// (`zero note --waiting`, `--needs`), and its workers' asks open to the user (the answer wakes the worker, whose
+/// report wakes it).
+pub fn know_what_wakes(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
+    let (notes, asks) = (Arc::downgrade(inbox), Arc::downgrade(inbox));
+    daemon.know_who(
+        Box::new(move |conversation| notes.upgrade().is_some_and(|inbox| crate::board::says_who(conversation, &inbox.asks()))),
+        Box::new(move |session| {
+            asks.upgrade().is_some_and(|inbox| {
+                inbox.open_asks().iter().any(|a| {
+                    !matches!(a.kind, crate::ask::AskKind::Note | crate::ask::AskKind::Message)
+                        && (a.agent.reference.as_deref() == Some(session) || a.agent.name == format!("zerod-{session}"))
+                })
+            })
+        }),
+    );
 }
 
 /// How long a finished worker stays after its answer before it's put away, in seconds.

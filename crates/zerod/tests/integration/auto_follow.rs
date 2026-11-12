@@ -190,7 +190,7 @@ fn note(id: &str, status: Option<&str>, needs: Option<&str>) -> zerod::ask::Ask 
 async fn a_waiting_note_says_who_it_waits_on() {
     let (daemon, _, id, sent) = task("auto-follow-noted").await;
     let inbox = zerod::inbox::Inbox::open(None, vec![]);
-    zerod::server::know_waiting_notes(&daemon, &inbox);
+    zerod::server::know_what_wakes(&daemon, &inbox);
     let session = daemon.session(&id).unwrap();
     inbox.create(note(&id, Some("waiting"), None), false);
     turn(&session, 1, "ship it", "Over to Dana.\n\n[zero: waiting]").await;
@@ -232,6 +232,22 @@ async fn waiting_on_a_worker_or_said_otherwise_isnt_told() {
     daemon.session(&worker).unwrap().change(Change::Status { status: Status::Working, turn: Some("w1".into()), error: None });
     tokio::time::sleep(Duration::from_millis(100)).await;
     turn(&session, 3, "fix it", "A worker is on it.\n\n[zero: waiting]").await;
+    assert_eq!(warned(&sent), 0, "{}", sent.lock().unwrap());
+}
+
+#[tokio::test]
+async fn a_worker_waiting_on_the_users_answer_wakes_its_lead() {
+    // Its answer wakes the worker, whose report wakes the lead.
+    let (daemon, _, id, sent) = task("auto-follow-worker-asked").await;
+    let inbox = zerod::inbox::Inbox::open(None, vec![]);
+    zerod::server::know_what_wakes(&daemon, &inbox);
+    let worker = daemon.spawn(&id, Provider::Claude, "fix it", Default::default()).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    turn(&daemon.session(&worker).unwrap(), 1, "fix it", "Asked which branch.\n\n[zero: waiting]").await;
+    let agent = zerod::ask::AgentIdentity { name: format!("zerod-{worker}"), reference: Some(worker.clone()), ..Default::default() };
+    inbox.create(zerod::ask::Ask::new(zerod::ask::AskKind::Choice, "Which branch?", agent, 0), false);
+    let session = daemon.session(&id).unwrap();
+    turn(&session, 1, "fix it", "The worker asked the user.\n\n[zero: waiting]").await;
     assert_eq!(warned(&sent), 0, "{}", sent.lock().unwrap());
 }
 

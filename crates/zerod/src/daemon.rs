@@ -106,6 +106,8 @@ pub struct Daemon {
     /// What tasks follow (following.rs): the pull requests they open are followed, and a turn waiting on nothing told.
     following: std::sync::OnceLock<Arc<crate::following::Following>>,
     says_who: std::sync::OnceLock<SaysWho>,
+    /// Whether a task has an ask open to the user, from the inbox: its answer wakes the task.
+    asking: std::sync::OnceLock<Blocked>,
     ended: std::sync::OnceLock<Ended>,
     /// Tasks told nothing wakes them: not again until something could (a follow, a background run, a note saying who).
     /// ponytail: in memory; a restart may tell one once more.
@@ -349,6 +351,7 @@ impl Daemon {
             noted: Default::default(),
             following: Default::default(),
             says_who: Default::default(),
+            asking: Default::default(),
             ended: Default::default(),
             told_nothing_wakes: Mutex::default(),
             crossed: Mutex::default(),
@@ -583,9 +586,10 @@ impl Daemon {
         let _ = self.following.set(following);
     }
 
-    /// How to tell a task's note says who it waits on, given once (server::know_waiting_notes).
-    pub fn know_who(&self, says_who: SaysWho) {
+    /// How to tell a task's note says who it waits on, given once (server::know_what_wakes).
+    pub fn know_who(&self, says_who: SaysWho, asking: Blocked) {
         let _ = self.says_who.set(says_who);
+        let _ = self.asking.set(asking);
     }
 
     /// What else hears a turn end, given once (server::link_asks).

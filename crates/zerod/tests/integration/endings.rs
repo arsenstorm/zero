@@ -279,3 +279,31 @@ async fn a_done_worker_leaves_once_its_lead_has_its_report() {
     assert!(daemon.session(&done).is_err(), "done: it left the lead's tree");
     assert!(daemon.session(&waiting).is_ok(), "waiting on CI: it stays");
 }
+
+#[tokio::test]
+async fn a_worker_waiting_on_the_users_answer_is_reported_once() {
+    // A worker ending on its ask open to the user waits on the user's answer: said so, once. Turns it ends on the same
+    // ask after (woken by its background commands, by a lead's word, by a restart's resume) aren't news.
+    let home = temp_dir("endings-worker-asked");
+    let (daemon, lead, sent) = task(&home, Provider::Claude).await;
+    let worker = daemon.spawn(&lead, Provider::Claude, "port it", Default::default()).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let session = daemon.session(&worker).unwrap();
+    let told = || {
+        let waiting = std::fs::read_to_string(home.join("zerod/sessions").join(&lead).join("pending.json")).unwrap_or_default();
+        waiting + &sent.lock().unwrap()
+    };
+    let reports = || told().matches(&format!("from: {worker} -->")).count();
+    turn(&session, 1, "port it", "Asked the user to check it.\n\n[zero: asked ea5e5k]").await;
+    assert_eq!(reports(), 1, "{}", told());
+    assert!(told().contains("waiting on the user's answer (ask ea5e5k)"), "{}", told());
+    turn(&session, 2, &zeros("One more bug"), "Fixed that too; still waiting on the check.\n\n[zero: asked ea5e5k]").await;
+    session.change(Change::Status { status: Status::Starting, turn: None, error: None });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    session.change(Change::Status { status: Status::Idle, turn: None, error: None });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(reports(), 1, "nothing changed: {}", told());
+    assert!(!told().contains("stopped without an answer"), "{}", told());
+    turn(&session, 3, &zeros("The user answered"), "Checked on the phone: all good.\n\n[zero: done]").await;
+    assert_eq!(reports(), 2, "its next news is");
+}

@@ -130,6 +130,11 @@ impl Daemon {
             && conversation.status == Status::Idle
             && conversation.questions.is_empty()
             && conversation.approvals.is_empty();
+        // Kept as between turns, not as needing the user under way: every later event of a worker sitting on its ask
+        // (a pending change, a restart's resume) would otherwise end its turn again, and report it again.
+        if asking {
+            self.attention.lock().unwrap().insert(id.into(), Attention::Idle);
+        }
         let ended = asking
             || matches!(
                 now,
@@ -223,7 +228,11 @@ impl Daemon {
             for topic in self.following.get().map(|f| f.pass(id, lead)).unwrap_or_default() {
                 self.say_following(lead, &topic)
             }
-            self.tell(lead, crate::model::from_line(&conversation.id, &said));
+            // Nothing changed since its last report (still on the same ask; woken by its background commands, a
+            // restart's resume): no news for its lead.
+            if !self.last_report(lead, id).is_some_and(|last| same_report(&last, &said)) {
+                self.tell(lead, crate::model::from_line(&conversation.id, &said));
+            }
         }
         // What its CLI says of its account's usage is the account's, for choosing accounts by.
         if let (Some(signin), Some(usage)) = (&conversation.signin, &conversation.usage) {
@@ -343,7 +352,7 @@ impl Daemon {
     }
 
     /// A task's turn ended waiting (`[zero: waiting]`) with nothing to wake it: it follows nothing, has nothing
-    /// running in the background, no worker of its own working, nothing watched or due, and no note of its own saying
+    /// running in the background, no worker of its own working or waiting on the user's answer, nothing watched or due, and no note of its own saying
     /// who it waits on (`--waiting`, `--needs`). It's told so once, not again until something could wake it: its reply,
     /// and turns after, are taken as they are. A worker isn't: its lead hears how it ended, and acts.
     fn check_waiting(&self, conversation: &Conversation) {
@@ -369,7 +378,9 @@ impl Daemon {
             return;
         }
         let working = |w: &Conversation| {
-            matches!(w.attention(), Attention::Starting | Attention::Working | Attention::NeedsYou) || self.background(&w.id).is_some()
+            matches!(w.attention(), Attention::Starting | Attention::Working | Attention::NeedsYou)
+                || self.background(&w.id).is_some()
+                || self.asking.get().is_some_and(|asking| asking(&w.id))
         };
         if !following.list(Some(id)).is_empty()
             || self.says_who.get().is_some_and(|says| says(conversation))
@@ -395,6 +406,22 @@ impl Daemon {
         if self.get(id).is_some_and(|c| !c.attributes.keys().any(|k| k.eq_ignore_ascii_case("PR"))) {
             let _ = self.set_attribute(id, "PR", Some(url));
         }
+    }
+
+    /// The last report `lead` had, or has waiting, from `worker`: kept with the lead, so it holds across restarts.
+    fn last_report(&self, lead: &str, worker: &str) -> Option<String> {
+        let marker = crate::model::from_line(worker, "");
+        let after = |text: &str| {
+            let at = text.rfind(&marker)?;
+            Some(text[at + marker.len()..].split(crate::model::FROM).next().unwrap_or("").trim().to_string())
+        };
+        let waiting = self.pending.lock().unwrap().get(lead).and_then(|queue| queue.iter().rev().find_map(|q| after(&q.text)));
+        waiting.or_else(|| {
+            self.get(lead)?.items.iter().rev().find_map(|i| match &i.kind {
+                ItemKind::User { text, .. } => after(text),
+                _ => None,
+            })
+        })
     }
 
     /// A quiet line in `id`'s conversation: Zero follows `topic` for it.
@@ -472,6 +499,14 @@ fn waiting_on_background(worker: &Conversation, runs: &[String]) -> String {
     )
 }
 
+/// Two reports with the same news: the same words, or both waiting on the user's answer to the same ask.
+fn same_report(last: &str, now: &str) -> bool {
+    let ask = |report: &str| report.split_once(WAITS_ON_ASK).and_then(|(_, rest)| rest.split_once(')')).map(|(id, _)| id.to_string());
+    last == now.trim() || ask(last).is_some_and(|id| ask(now) == Some(id))
+}
+
+const WAITS_ON_ASK: &str = "is waiting on the user's answer (ask ";
+
 /// A worker's answer for its report: without its ending, its first 4,000 characters.
 fn clipped(answer: &str) -> String {
     let answer = crate::board::without_ending(answer).trim();
@@ -482,7 +517,8 @@ fn clipped(answer: &str) -> String {
 pub fn report(worker: &Conversation, attention: Attention) -> String {
     let name = named(worker);
     let what = match attention {
-        Attention::Done => {
+        // Between turns on its ask to the user (`[zero: asked <id>]`): its answer says so, as a done one does.
+        Attention::Done | Attention::NeedsYou => {
             let full = worker.answer().unwrap_or("");
             let answer = clipped(full);
             // How it ended its turn says what its answer is: a worker waiting on the user, or blocked, isn't finished.
@@ -490,7 +526,7 @@ pub fn report(worker: &Conversation, attention: Attention) -> String {
                 Some("asked") => {
                     let id =
                         full.trim_end().lines().last().and_then(|l| l.trim().trim_end_matches(']').split_whitespace().nth(2)).unwrap_or("");
-                    format!("is waiting on the user's answer (ask {id}): {answer}")
+                    format!("{WAITS_ON_ASK}{id}): {answer}")
                 }
                 Some("waiting") => format!("is waiting: {answer}"),
                 _ => format!("finished: {answer}"),
