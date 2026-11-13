@@ -178,64 +178,12 @@ func describe(_ session: [String: Any]) -> String {
     }
 }
 
-/// `zero attach`: one of zero-host's terminals in this one, raw, until ⌃] (or the terminal closes). The agent is
-/// named as Zero names it (claude-<the terminal id's last six>), by its terminal id, or by the start of its label.
-func attach(_ which: String?) -> Never {
-    guard let list = HostLink.call(HostLink.Request(op: "list")), let terminals = list.terminals else {
-        fail("zero: none of Zero's own agents are running")
-    }
-    guard let which else {
-        for terminal in terminals {
-            print("claude-\(terminal.id.suffix(6))  \(terminal.running ? "running" : "exited ")  \(terminal.label)")
-        }
-        exit(0)
-    }
-    let lowered = which.lowercased()
-    guard
-        let terminal = terminals.first(where: { which.hasSuffix(String($0.id.suffix(6))) || $0.id == which })
-            ?? terminals.first(where: { $0.label.lowercased().hasPrefix(lowered) })
-    else { fail("zero: no agent \(which) in Zero's terminals") }
-    var size = winsize()
-    _ = ioctl(STDOUT_FILENO, TIOCGWINSZ, &size)
-    guard let socket = try? UnixSocket.connect(path: HostLink.socket) else { fail("zero: Zero's terminal host isn't running") }
-    try? socket.send(
-        HostLink.Request(
-            op: "attach", id: terminal.id, columns: size.ws_col > 0 ? Int(size.ws_col) : nil, rows: size.ws_row > 0 ? Int(size.ws_row) : nil
-        ))
-    guard let reply = socket.receive(HostLink.Response.self), reply.ok else { fail("zero: couldn't attach to \(which)") }
-    var saved = termios()
-    tcgetattr(STDIN_FILENO, &saved)
-    var raw = saved
-    cfmakeraw(&raw)
-    tcsetattr(STDIN_FILENO, TCSANOW, &raw)
-    // Its own screen, so letting go puts back what this terminal showed before.
-    FileHandle.standardOutput.write(Data("\u{1B}[?1049h".utf8))
-    func finish(_ note: String) -> Never {
-        tcsetattr(STDIN_FILENO, TCSANOW, &saved)
-        FileHandle.standardOutput.write(Data("\u{1B}[?1049l\u{1B}[0m".utf8))
-        print(note)
-        exit(0)
-    }
-    let early = socket.takeBuffered()
-    if !early.isEmpty { FileHandle.standardOutput.write(early) }
-    Thread.detachNewThread {
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        while true {
-            let count = read(STDIN_FILENO, &buffer, buffer.count)
-            guard count > 0 else { break }
-            if let detach = buffer[0..<count].firstIndex(of: 0x1D) {
-                if detach > 0 { _ = Darwin.write(socket.fd, buffer, detach) }
-                finish("zero: let go of \(terminal.label)")
-            }
-            _ = Darwin.write(socket.fd, buffer, count)
-        }
-    }
-    var buffer = [UInt8](repeating: 0, count: 65536)
-    while true {
-        let count = read(socket.fd, &buffer, buffer.count)
-        guard count > 0 else { finish("zero: \(terminal.label)'s terminal closed") }
-        _ = Darwin.write(STDOUT_FILENO, buffer, count)
-    }
+/// `zero open-terminal [task]`: the task in the user's terminal app, on its CLI's own resume; back in Zero once that
+/// CLI exits.
+@MainActor func openTerminalCommand() async {
+    guard let task = positional.first ?? targetSession() else { fail("zero: open which task? (zero open-terminal ID)") }
+    let pid = await zerod { try await $0.openTerminal(session: task) }
+    print("zero: \(task) is open in the terminal (process \(pid)); exit its CLI there to bring it back to Zero")
 }
 
 /// `zero video`: a video as frames an agent can read, at the times asked for.

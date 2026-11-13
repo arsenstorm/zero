@@ -46,8 +46,8 @@ struct PillShape: InsettableShape {
 struct PillView: View {
     let controller: InboxController
     let settings: Settings
-    /// The board, to fold workers into their leads: one dot per lead, in its team's most urgent state, as the sidebar
-    /// lists them.
+    /// The board, to fold workers into their leads: one dot per lead, in the lead's own state, as the sidebar
+    /// lists and draws them.
     var workspace: Workspace? = nil
     let openInbox: () -> Void
     let selectAgent: (String) -> Void
@@ -75,8 +75,7 @@ struct PillView: View {
     }
 
     /// Every agent that has spoken and has not been closed, with its status. Expired asks don't count. A worker's
-    /// agent (its session under a lead, by the board) is no dot of its own: its lead's dot carries the team's most
-    /// urgent state.
+    /// agent (its session under a lead, by the board) is no dot of its own: it shows under its lead in the sidebar.
     private var agents: [(String, AgentStatus)] { controller.barAgents(settings: settings, workspace: workspace) }
 
     /// The sidebar's sort and dragged order, shared: the bar lists the tasks as the sidebar does.
@@ -84,7 +83,7 @@ struct PillView: View {
     @AppStorage("taskOrder") private var taskOrder = ""
 
     /// A dot: one of Zero's tasks, drawn as the sidebar draws it, or an agent outside Zero (a terminal's) with asks.
-    private enum Mark: Equatable { case task(BoardRow.State), agent(AgentStatus) }
+    private enum Mark: Equatable { case task(BoardRow.State, why: String), agent(AgentStatus) }
 
     /// The bar's dots: this workspace's tasks as the sidebar lists them (its order, its icons), then the agents
     /// outside Zero that have asks. Built from the agents with asks alone, it showed other things than the sidebar,
@@ -92,7 +91,8 @@ struct PillView: View {
     private func dots(_ agents: [(String, AgentStatus)]) -> [(String, Mark)] {
         let rows =
             workspace.map { w in BoardRow.sorted(w.board.filter { $0.workspace == w.current }, by: taskSort, order: taskOrder) } ?? []
-        return rows.map { ("zerod-" + $0.session, Mark.task($0.state)) }
+        // The lead's own state, as the sidebar's icon: the team's (a worker's trouble) drew another icon than the sidebar.
+        return rows.map { ("zerod-" + $0.session, Mark.task($0.ownState, why: $0.why)) }
             + agents.filter { !$0.0.hasPrefix("zerod-") }.map { ($0.0, Mark.agent($0.1)) }
     }
 
@@ -210,7 +210,7 @@ struct PillView: View {
         Group {
             switch mark {
             // The sidebar's own icon for the task's state, at its size.
-            case .task(let state): TaskStateIcon(state: state).font(.system(size: 12))
+            case .task(let state, let why): TaskStateIcon(state: state).font(.system(size: 12)).tip(why)
             case .agent(let status):
                 Group { if status == .working { Spinner() } else { Circle().fill(status.color) } }.frame(width: 11, height: 11)
             }
@@ -278,7 +278,7 @@ struct PillView: View {
                 }
                 rows.append([
                     (paused ? "resume" : "pause", paused ? "Resume" : "Pause", paused ? "media-play" : "circle-pause", false, toggle),
-                    ("later", "Move to Later", "bookmark", false, { Task { await workspace.moveToLater(id) } }),
+                    ("later", "Save for later", "bookmark", false, { Task { await workspace.saveForLater(id) } }),
                 ])
                 rows.append([
                     (
@@ -289,9 +289,6 @@ struct PillView: View {
                     )
                 ])
             } else {
-                if let identity = controller.store.identity(of: name), identity.runtime == "zero", let ref = identity.ref {
-                    rows.append([("terminal", "Open in Terminal", "terminal", false, { HostAdapter.reveal(ref) })])
-                }
                 rows.append([
                     (
                         controller.store.canStop(name) ? "stop" : "remove", controller.store.canStop(name) ? "Remove and stop" : "Remove",

@@ -130,7 +130,7 @@ A loop is a named instruction the user keeps in Zero and names as `@name`. When 
 
 ## Saving for later
 
-Zero's Later is the user's list of work they'll come back to. Save one when the user asks ("save this for later", or Zero's message saying they want it saved), with `--asked`. Otherwise save only when you're stopping work the user will want to resume, a plan for another day; that's a suggestion, which the user keeps or dismisses, and goes in a week if they don't. A task has at most three open.
+Zero's Later is the user's list of work they'll come back to. Save one when the user asks ("save this for later"), with `--asked`. Otherwise save only when you're stopping work the user will want to resume, a plan for another day; that's a suggestion, which the user keeps or dismisses, and goes in a week if they don't. A task has at most three open.
 
 Not for Later, as it fills the user's list with things they can't act on:
 - Ticket ideas and bugs you noticed along the way: tell the user in your answer, or put them in one item with the work they belong to.

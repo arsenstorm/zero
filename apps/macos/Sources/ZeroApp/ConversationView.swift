@@ -211,14 +211,7 @@ struct ConversationView: View {
     /// The blocks on screen, by the message of yours each answers to: the rail's bright ticks.
 
     var body: some View {
-        VStack(spacing: 0) {
-            if let terminal = conversation.terminal {
-                // The provider's own terminal has the task, for what only it has: the same thread, typed into there.
-                HostTerminal(id: terminal.id, claudeCode: conversation.provider == .claude).id(terminal.id)
-            } else {
-                conversationPane
-            }
-        }
+        conversationPane
     }
 
     /// The next older page, with what's read kept where it is: the offset moves by exactly what was added above once
@@ -261,8 +254,7 @@ struct ConversationView: View {
         RowSlot(
             block: block, cwd: conversation.cwd, answered: shape.answered.contains(block.id), followed: shape.followed.contains(block.id),
             turn: turns[block.id], entering: block.id == newest && !lifted, tracker: tracker,
-            quote: quote, save: save, rewind: { rewinding = $0 },
-            later: { [workspace, id = conversation.id] text in Task { await workspace.askToSaveForLater(id, answer: text) } }
+            quote: quote, save: save, rewind: { rewinding = $0 }
         ).equatable()
             // Gone to from a link or an ask: a grey wash behind it a moment, Zero's own (not the system's blue), taking no
             // room and no clicks.
@@ -865,9 +857,12 @@ struct ConversationView: View {
             } else {
                 StripRoom(foot: foot)
             }
-            composer
-                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] in if foot.composer != $0 { foot.composer = $0 } }
-                .onHover { [foot] inside in if foot.overComposer != inside { foot.overComposer = inside } }
+            Group {
+                // Open in the user's terminal: typed into there, so no composer here; back once its CLI exits.
+                if conversation.terminal != nil { inTerminal } else { composer }
+            }
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] in if foot.composer != $0 { foot.composer = $0 } }
+            .onHover { [foot] inside in if foot.overComposer != inside { foot.overComposer = inside } }
         }
         // Once zerod has it, the one shown at once goes: left until it went, it came back when the queue emptied.
         .onChange(of: queued) { _, now in queuing.removeAll { pending in now.contains { $0.id == pending.id } } }
@@ -1063,6 +1058,25 @@ struct ConversationView: View {
             lastEscape = now
             return event
         }
+    }
+
+    /// In the composer's place while the task is open in the user's terminal: what's so, and the way back.
+    private var inTerminal: some View {
+        HStack(spacing: 10) {
+            let terminal = TerminalApp.shared
+            if let icon = terminal.icon {
+                icon.resizable().frame(width: 18, height: 18)
+            } else {
+                NucleoIcon("terminal", size: 15).foregroundStyle(.secondary)
+            }
+            Text("\(conversation.provider.title) is open in \(terminal.name). Exit it there to carry on here.")
+                .font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
+            Spacer(minLength: 8)
+            GhostButton(title: "Back to Zero", icon: "arrow-left") { Task { await workspace.closeTerminal(conversation.id) } }
+        }
+        .padding(.horizontal, 16).frame(height: 56)
+        .background(Theme.field, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(Theme.fieldEdge, lineWidth: 1))
     }
 
     private var composer: some View {
@@ -1343,7 +1357,6 @@ private struct RowSlot: View, Equatable {
     let quote: (String) -> Void
     let save: (String) -> Void
     let rewind: (ConversationItem) -> Void
-    let later: (String) -> Void
 
     static func == (a: RowSlot, b: RowSlot) -> Bool {
         a.block == b.block && a.cwd == b.cwd && a.answered == b.answered && a.followed == b.followed && a.turn == b.turn
@@ -1352,7 +1365,7 @@ private struct RowSlot: View, Equatable {
 
     var body: some View {
         BlockRow(
-            block: block, cwd: cwd, answered: answered, followed: followed, quote: quote, save: save, rewind: rewind, later: later
+            block: block, cwd: cwd, answered: answered, followed: followed, quote: quote, save: save, rewind: rewind
         ).equatable()
             .id(block.id)
             .onScrollVisibilityChange(threshold: 0.05) { [tracker, turn, id = block.id] shown in

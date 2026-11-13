@@ -400,6 +400,8 @@ struct SettingChoice<Value: Hashable>: View {
     let id: String
     let choices: [[(title: String, value: Value)]]
     @Binding var selection: Value
+    /// A choice's own mark before its title (a terminal app's icon), where it has one.
+    var icon: (Value) -> Image? = { _ in nil }
     @State private var anchor = CGRect.zero
     @State private var hovered = false
 
@@ -410,6 +412,7 @@ struct SettingChoice<Value: Hashable>: View {
             WorkspaceSelector.shared.toggle(id, kind: .menu, anchor: anchor, rows: { sections })
         } label: {
             HStack(spacing: 5) {
+                if let mark = chosen.flatMap({ icon($0.value) }) { mark.resizable().frame(width: 16, height: 16) }
                 Text(chosen?.title ?? "").font(.system(size: 13)).lineLimit(1)
                 NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0))
             }
@@ -433,8 +436,8 @@ struct SettingChoice<Value: Hashable>: View {
     private func row(_ choice: (title: String, value: Value)) -> SelectorRow {
         SelectorRow(
             id: "\(choice.value)", title: choice.title, provider: nil, providerIcon: nil, detail: nil, context: nil,
-            levels: [], defaultLevel: nil, modelID: nil, selected: choice.value == selection
-        ) { selection = choice.value }
+            levels: [], defaultLevel: nil, modelID: nil, selected: choice.value == selection, pick: { selection = choice.value },
+            image: icon(choice.value))
     }
 }
 

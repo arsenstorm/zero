@@ -21,6 +21,8 @@ struct TaskRow: View {
     var branch: Branch? = nil
     /// Beside the icon, small: how long an issue has been on the user.
     var detail: String? = nil
+    /// The icon's tip: why it's in its state (BoardRow.why).
+    var why = ""
     let action: () -> Void
     var toggle: () -> Void = {}
     /// A lead that can be dragged into place: told how far the pointer moved, and when it let go (false: a click).
@@ -40,7 +42,7 @@ struct TaskRow: View {
                 if fold != nil { Color.clear.frame(width: 16, height: 1) }
                 if let detail { Text(detail).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary).fixedSize() }
                 // The icon keeps its place however long the title: the title gives way, not the state.
-                TaskStateIcon(state: state).font(.system(size: 12)).fixedSize().layoutPriority(1)
+                TaskStateIcon(state: state).font(.system(size: 12)).fixedSize().layoutPriority(1).tip(why)
             }
             .foregroundStyle(.primary)
             // In from the edge as the heading is; a worker's title sits on its branch.
@@ -158,6 +160,8 @@ struct TaskStateIcon: View {
         // Nothing left it can do: purple, as GitHub shows a PR merged or an issue completed.
         case .done: ("badge-check", .purple, "Done")
         case .paused: ("circle-pause", .secondary, "Paused")
+        // The user has it in their own terminal: theirs, under way.
+        case .inTerminal: ("terminal", .blue, "In \(TerminalApp.shared.name)")
         // Replied, and read: greyed, so what still needs reading stands out.
         case .read: ("message-check", .secondary, "Replied")
         case .idle: ("moon", .secondary, "Idle")

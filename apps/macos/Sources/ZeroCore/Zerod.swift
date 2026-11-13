@@ -398,14 +398,15 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     public enum State: String, Decodable, Sendable {
         /// `read`: Replied, and the user has seen the reply (it greys); the chat that's open shows it as Replied still.
         /// `done`: nothing left that the agent can do, last of all and archived after a while.
-        case needsYou, trouble, blocked, working, handed, answered, waiting, paused, read, done, idle, offline
+        /// `inTerminal`: open in the user's terminal app, theirs to work in there until its CLI exits.
+        case needsYou, trouble, blocked, working, inTerminal, handed, answered, waiting, paused, read, done, idle, offline
         /// Most urgent first, as the board sorts its rows.
         public var urgency: Int {
             switch self {
             case .needsYou: 0
             case .trouble: 1
             case .blocked: 1
-            case .working: 2
+            case .working, .inTerminal: 2
             case .handed: 3
             case .answered: 4
             case .waiting: 5
@@ -425,6 +426,7 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
             case .waiting: "Waiting"
             case .done: "Done"
             case .paused: "Paused"
+            case .inTerminal: "In Terminal"
             case .idle: "Idle"
             case .offline: "Offline"
             }
@@ -450,6 +452,27 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     public var own: State?
     /// What the lead itself is doing: its icon in the sidebar, its status in the details pane.
     public var ownState: State { own ?? state }
+
+    /// Why it's in the state its icon shows, for the icon's tip: the ask or issue row that needs the user, or what's
+    /// over to them ("U-1: merge on your go · 3 rows over to you"); else the state's name.
+    public var why: String {
+        let workers = Set((team ?? []).flatMap(\.asks).map(\.id))
+        func rows(_ state: String, _ phrase: String) -> String? {
+            let on = (issues ?? []).filter { $0.state == state }
+            guard let first = on.first else { return nil }
+            return "\(first.ticket): \(first.text)" + (on.count > 1 ? " · \(on.count) rows \(phrase)" : "")
+        }
+        switch ownState {
+        case .needsYou:
+            if let ask = asks.first(where: { !workers.contains($0.id) }) { return "Ask: \(ask.title)" }
+            if let row = rows("you", "on you") { return row }
+            if let ask = asks.first { return "A worker's ask: \(ask.title)" }
+        case .handed:
+            if let row = rows("over", "over to you") ?? needs { return row }
+        default: break
+        }
+        return ownState.title
+    }
 
     /// A task just started, before zerod's board has its row: Working, under its name, so it takes its place among the
     /// tasks at once (rather than showing elsewhere first and jumping when the board catches up).
@@ -549,8 +572,8 @@ public struct Queued: Decodable, Equatable, Sendable, Identifiable {
     public init(id: String, text: String, images: [String]?) { self.id = id; self.text = text; self.images = images }
 }
 
-/// A task's provider terminal (crates/zerod/src/model.rs `Opened`): zero-host's id, and how much of the provider's own
-/// history was in Zero's record when it opened.
+/// A task open in the user's terminal app (crates/zerod/src/model.rs `Opened`): its CLI's process id, and how much of
+/// the provider's own history was in Zero's record when it opened.
 public struct Opened: Decodable, Equatable, Sendable {
     public var id: String
     public var mark: Int
@@ -622,7 +645,7 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
     public var keepCommands: Bool?
     /// The unified diff of everything the latest turn changed.
     public var diff: String?
-    /// While the task is in its provider's own terminal: zero-host's id for it.
+    /// While the task is open in the user's terminal app, on its CLI's own resume.
     public var terminal: Opened?
     /// What its agent says about it beyond its name and ticket, by name ("PR": a link): `zero attr`.
     public var attributes: [String: String]?
@@ -1137,14 +1160,14 @@ public final class ZerodLink: @unchecked Sendable {
     }
     public func resume(session: String) async throws { _ = try await call("resume", ["session": session]) }
     /// Moves the task to another provider between turns; the next message starts it there.
-    /// Hands the task to its provider's own terminal; zero-host's id for it.
+    /// Hands the task to its CLI in the user's terminal app, its turn stopped first; the CLI's process id.
     public func openTerminal(session: String) async throws -> String {
         guard let terminal = (try await call("openTerminal", ["session": session]) as? [String: Any])?["terminal"] as? String else {
             throw ZerodError(message: "zerod opened no terminal")
         }
         return terminal
     }
-    /// Back from the provider's terminal to Zero's UI, with what happened there.
+    /// Back from the terminal to Zero, with what happened there: a CLI still running there is ended.
     public func closeTerminal(session: String) async throws { _ = try await call("closeTerminal", ["session": session]) }
     public func switchProvider(session: String, to provider: Provider, model: String?, effort: String?) async throws {
         _ = try await call("switch", ["session": session, "provider": provider.rawValue, "model": model, "effort": effort])
@@ -1267,6 +1290,13 @@ public final class ZerodLink: @unchecked Sendable {
         ((try await call("settings")) as? [String: Any])?["subagents"] as? Bool ?? false
     }
     public func setSubagents(_ on: Bool) async throws { _ = try await call("configure", ["subagents": on]) }
+    /// The terminal app tasks open in (its name, or an .app's path) as zerod resolves it, and whether that's its default.
+    public func terminal() async throws -> (app: String, isDefault: Bool) {
+        let settings = (try await call("settings")) as? [String: Any] ?? [:]
+        return (settings["terminalApp"] as? String ?? "Terminal", settings["terminal"] == nil)
+    }
+    /// The terminal app tasks open in: its name, or an .app's path.
+    public func setTerminal(_ app: String) async throws { _ = try await call("configure", ["terminal": app]) }
     /// Whether agents' builds share a compile cache, and each supported tool with whether it's installed.
     public func buildCache() async throws -> (on: Bool, tools: [(tool: String, use: String, found: Bool)]) {
         let settings = (try await call("settings")) as? [String: Any]

@@ -1,9 +1,9 @@
 import SwiftUI
 import ZeroCore
 
-// Later: things to come back to, kept by zerod (later.rs). Each is a note in plain words and the artifact behind it,
-// everything an agent worked out, in full. Agents save them (`zero later save`), a task is asked to (Save for later),
-// or the user writes one. An item's link is zero://later/<id>.
+// Later: things to come back to, kept by zerod (later.rs). Tasks saved whole (Save for later: paused, out of the
+// sidebar until resumed), and notes, each in plain words with the artifact behind it: agents save them (`zero later
+// save`), or the user writes one. An item's link is zero://later/<id>.
 
 struct LaterPage: View {
     let workspace: Workspace
@@ -62,7 +62,7 @@ struct LaterPage: View {
                         NucleoLabel(workspace.later.isEmpty ? "Nothing saved for later" : "Nothing open", icon: "bookmark", size: 20)
                     } description: {
                         Text(
-                            "Ask a task to save what it has for later (right-click it in the sidebar), or an agent saves it with zero later. Each keeps a short note of what's to be done and everything behind it, in full."
+                            "Save a task for later (right-click it in the sidebar): it leaves the sidebar, paused, until you resume it here. Agents save notes here too, each with everything behind it, in full."
                         )
                     } actions: {
                         Button("Write one") { writing = true }
@@ -235,7 +235,7 @@ private struct LaterDetail: View {
     private func notes(_ item: ZerodLink.LaterItem) -> some View {
         HStack(spacing: 8) {
             Button {
-                workspace.pendingDrafts["new"] = LaterAsk.pickUp(item)
+                workspace.pendingDrafts["new"] = laterPickUp(item)
                 navigation.place = .home
             } label: {
                 NucleoLabel("Start a task from this", icon: "paper-plane", size: 13)
@@ -245,7 +245,7 @@ private struct LaterDetail: View {
                 ForEach(workspace.board.filter { $0.workspace == workspace.current }) { row in
                     Button(row.task) {
                         Task {
-                            await workspace.send(row.session, text: LaterAsk.pickUp(item)); navigation.place = .task(row.session)
+                            await workspace.send(row.session, text: laterPickUp(item)); navigation.place = .task(row.session)
                         }
                     }
                 }
@@ -312,7 +312,7 @@ private struct LaterWriter: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            DialogTitle(text: "Save for later")
+            DialogTitle(text: "Write one")
             TextField("What's to be done, in a sentence", text: $note, axis: .vertical).textFieldStyle(.dialog).lineLimit(1...3)
             TextEditor(text: $artifact).font(.system(size: 13)).scrollContentBackground(.hidden).padding(6).frame(minHeight: 160)
                 .overlay(alignment: .topLeading) {

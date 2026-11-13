@@ -18,8 +18,6 @@ struct BlockRow: View, Equatable {
     let save: (String) -> Void
     /// Going back to a message of yours (WorkspaceView's RewindCard).
     var rewind: (ConversationItem) -> Void = { _ in }
-    /// Asking the agent to save an answer for later.
-    var later: (String) -> Void = { _ in }
     @Environment(\.playback) private var playback
 
     static func == (a: BlockRow, b: BlockRow) -> Bool {
@@ -44,7 +42,7 @@ struct BlockRow: View, Equatable {
             if case let .agent(said, _) = item.kind, case let text = ZeroEnding.split(said).0, !text.isEmpty {
                 let readout = playback?.readout(item.id)
                 MessageBlock(
-                    text: text, date: item.date, mine: false, quote: quote, save: save, later: later,
+                    text: text, date: item.date, mine: false, quote: quote, save: save,
                     stamped: (readout?.done ?? true) && item.status != .running
                 ) {
                     // Being read out (Playback), or its last words fading: carried on from where the live words were.
@@ -583,8 +581,6 @@ struct MessageBlock<Content: View>: View {
     let save: (String) -> Void
     /// Yours: back to just before it.
     var rewind: (() -> Void)? = nil
-    /// The agent's: it's asked to save this for later.
-    var later: ((String) -> Void)? = nil
     /// Whether its time shows: not while its words are still being read out and fading in (its row keeps its room).
     var stamped = true
     @ViewBuilder let content: () -> Content
@@ -605,7 +601,6 @@ struct MessageBlock<Content: View>: View {
         var groups = [
             [MenuItem("Copy") { copy() }, MenuItem("Quote in reply") { quote(text) }, MenuItem("Save to a scratchpad") { save(text) }]
         ]
-        if let later { groups[0].append(MenuItem("Save for later") { later(text) }) }
         if let rewind { groups.append([MenuItem("Rewind…", action: rewind)]) }
         return groups.enumerated().map { index, items in
             SelectorSection(

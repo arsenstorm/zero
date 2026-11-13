@@ -32,7 +32,6 @@ func usage(help: Bool = false) -> Never {
           zero wait    <id>
           zero status  <id>
           zero list    [--all]   (the asks still open; --all, every ask kept)
-          zero attach  [agent]   (shows one of Zero's own agents' terminal here to watch or type in; ⌃] lets go. No agent: lists them)
           zero say     <agent> "text"   (sends the user's words to the agent through Zero, as the inbox's message box does)
           zero video   <file> [--frames N] [--at T,T…] [--from T --to T --every S] [--out DIR]
                        a video you were given, as frames you can read (your CLI takes images, not video): alone, its length,
@@ -72,6 +71,8 @@ func usage(help: Bool = false) -> Never {
           zero pause   [session...]   (puts tasks on hold with their workers, every task when none is named: each working one
                        is asked to wrap up and end its turn, given five minutes, then stopped; words for them wait)
           zero unpause [session...]   (takes them off hold: those with words waiting resume for them)
+          zero open-terminal [session]   (the task in the user's terminal app, on its CLI's own resume, its turn stopped
+                       first; Zero has it back, with what happened there, once that CLI exits)
           zero close   <session>...   (a worker you've read: it leaves the board; its record is kept in zerod's archive)
           zero table   "Title" --column NAME... --row "cell | cell | …"...   [--session ID]
                        (a table for the user, drawn by Zero in your conversation: a cell that is a state (working, waiting,
@@ -83,8 +84,9 @@ func usage(help: Bool = false) -> Never {
                        Set it whenever the issue's state changes)
           zero attr    NAME [VALUE] [--session ID]   (something about this task for the user to see on it, such as
                        zero attr PR https://github.com/org/repo/pull/12; a link opens. No value takes it back)
-          zero expect  DURATION ["what"] [--session ID]   (how long the step under way takes, as 90s, 20m or 1h30m: Zero
-                       stops a command that hangs well past it with no output and no CPU, telling you why)
+          zero expect  DURATION ["what"] [--session ID]   (before a command that may run long and quiet, such as a migration,
+                       a deploy, a big build or test run: how long it takes, as 90s, 20m or 1h30m, so Zero doesn't take it
+                       for stuck; one that hangs well past it with no output and no CPU it may stop, telling you why)
           zero label   "name" [--ticket REF] [--where PLACE] [--session ID]   (names this session, or another; --where says where it runs,
                        a bench or a machine, for the board's Where; --where "" goes back to its folder)
           zero follow  <url | topic>... [--mine] [--about "word,other words"] [--session ID]
@@ -227,7 +229,7 @@ case "watch" where targetSession() != nil: await watchCommand()
 case "schedule": await scheduleCommand()
 case "remind": await remindCommand()
 case "usage": await usageCommand()
-case "attach": attach(positional.first)
+case "open-terminal": await openTerminalCommand()
 case "list": listCommand()
 case "video": await videoCommand()
 default: usage()

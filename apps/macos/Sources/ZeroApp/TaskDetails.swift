@@ -144,6 +144,18 @@ struct TaskDetails: View {
                         }
                 }
             }
+            // Finder, an editor, the terminal app in its folder: the last one used, or the list.
+            property("Open in") { OpenInButton(workspace: workspace, conversation: conversation) }
+            // The task in the user's own terminal app, on its CLI's own resume; back once that CLI exits.
+            property("Terminal") {
+                let open = conversation.terminal != nil
+                Button {
+                    Task { open ? await workspace.closeTerminal(conversation.id) : await workspace.openTerminal(conversation.id) }
+                } label: {
+                    Self.linked(open ? "Back to Zero" : "Continue in \(TerminalApp.shared.name)")
+                }
+                .buttonStyle(.plain).disabled(!open && conversation.thread == nil)
+            }
             property("Uses") { uses }
             if let branch = conversation.branch {
                 property("Branch") { Text(branch).lineLimit(1).truncationMode(.middle).tip(branch) }

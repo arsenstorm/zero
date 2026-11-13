@@ -131,34 +131,39 @@ struct TasksSidebar: View {
             let workersOf = Dictionary(grouping: all.filter { $0.parent != nil }, by: { $0.parent ?? "" })
             // Not before the first board: until then every lead looks like it isn't on it.
             let earlier = workspace.board.isEmpty ? [] : earlier(all).filter { workspace.workspace(of: $0) == workspace.current }
-            ScrollView { taskList(all: all, workersOf: workersOf, earlier: earlier) }
-                .thinScrollbar(outset: 10, remember: "sidebar.tasks") // in the sidebar's padding: at its edge, clear of the rows
-                .scrollIndicators(.never)
-                .zeroDialog(isPresented: $namingWorkspace) {
-                    NameSheet(title: "New workspace", name: "", action: "Create") { name in
-                        Task {
-                            if let error = await workspace.saveWorkspace(ZerodLink.Workspace(name: name)) {
-                                NSSound.beep(); Log.write("workspace: \(error)")
-                            }
+            ScrollViewReader { proxy in
+                ScrollView { taskList(all: all, workersOf: workersOf, earlier: earlier) }
+                    // The task open, however it was opened (a link, a card, a report): its lead's workers unfolded and
+                    // its row scrolled into view, as when it's opened here.
+                    .onChange(of: place.key + "|" + (navigation.worker ?? ""), initial: true) { reveal(in: proxy) }
+            }
+            .thinScrollbar(outset: 10, remember: "sidebar.tasks") // in the sidebar's padding: at its edge, clear of the rows
+            .scrollIndicators(.never)
+            .zeroDialog(isPresented: $namingWorkspace) {
+                NameSheet(title: "New workspace", name: "", action: "Create") { name in
+                    Task {
+                        if let error = await workspace.saveWorkspace(ZerodLink.Workspace(name: name)) {
+                            NSSound.beep(); Log.write("workspace: \(error)")
                         }
                     }
                 }
-                .zeroDialog(item: $renaming) { task in
-                    NameSheet(title: "Rename", name: task.name, action: "Rename") { name in
-                        Task { await workspace.rename(task.id, to: name, ticket: task.ticket) }
-                    }
+            }
+            .zeroDialog(item: $renaming) { task in
+                NameSheet(title: "Rename", name: task.name, action: "Rename") { name in
+                    Task { await workspace.rename(task.id, to: name, ticket: task.ticket) }
                 }
-                .zeroDialog(item: $pairing) { task in
-                    PairSheet(task: task, others: workspace.board.filter { $0.session != task.id }) { other in
-                        Task { await workspace.introduce(task.id, to: other) }
-                    }
+            }
+            .zeroDialog(item: $pairing) { task in
+                PairSheet(task: task, others: workspace.board.filter { $0.session != task.id }) { other in
+                    Task { await workspace.introduce(task.id, to: other) }
                 }
-                .background { taskShortcuts }
-                // Soft edges, as the conversation has: more above, more below.
-                .softEdges(top: 20, bottom: 28)
-                // The list has the sidebar's whole height: what's said about the daemon lies over its foot, on a fade, and
-                // the last task scrolls clear of it.
-                .safeAreaInset(edge: .bottom, spacing: 0) { footer }
+            }
+            .background { taskShortcuts }
+            // Soft edges, as the conversation has: more above, more below.
+            .softEdges(top: 20, bottom: 28)
+            // The list has the sidebar's whole height: what's said about the daemon lies over its foot, on a fade, and
+            // the last task scrolls clear of it.
+            .safeAreaInset(edge: .bottom, spacing: 0) { footer }
         }
     }
 
@@ -262,7 +267,7 @@ struct TasksSidebar: View {
         return VStack(alignment: .leading, spacing: 0) {
             TaskRow(
                 title: row.task, state: row.ownState, selected: place == .task(row.session) && navigation.worker == nil,
-                fold: workers.isEmpty ? nil : open,
+                fold: workers.isEmpty ? nil : open, why: row.why,
                 action: {
                     // Its worker shown, the same task: back to the lead.
                     place = .task(row.session)
@@ -300,7 +305,11 @@ struct TasksSidebar: View {
         TaskRow(
             title: Workspace.label(of: worker), state: row.member(worker.id)?.state ?? TaskRow.state(of: worker),
             selected: navigation.worker == worker.id,
+            // Its own why: the issue rows a member's row carries are its lead's.
             branch: branch,
+            why: row.member(worker.id).map {
+                var own = $0; own.issues = nil; return own.why
+            } ?? "",
             action: {
                 place = .task(row.session)
                 navigation.worker = worker.id
@@ -318,7 +327,11 @@ struct TasksSidebar: View {
 
     private func workerMenu(_ worker: Conversation) -> [[MenuItem]] {
         [
-            [MenuItem("Rename…", "pen") { renaming = Renaming(id: worker.id, name: Workspace.label(of: worker), ticket: worker.ticket) }],
+            [
+                MenuItem("Rename task", "pen") {
+                    renaming = Renaming(id: worker.id, name: Workspace.label(of: worker), ticket: worker.ticket)
+                }
+            ],
             statusItems(worker.id) + [
                 workspace.isPaused(worker.id)
                     ? MenuItem("Resume", "media-play") { Task { await workspace.unpause([worker.id]) } }
@@ -331,7 +344,7 @@ struct TasksSidebar: View {
     }
 
     /// Where a task stands, by the user's word when its agent can't know (the last of it was the user's own work): a
-    /// "Change status" row whose own menu has the states the user may set, each as the sidebar draws it, the one it's
+    /// "Status" row whose own menu has the states the user may set, each as the sidebar draws it, the one it's
     /// in checked.
     private func statusItems(_ id: String) -> [MenuItem] {
         // A lead's row, or a worker in one.
@@ -345,7 +358,7 @@ struct TasksSidebar: View {
                 Task { await workspace.setStatus(id, word) }
             }
         }
-        return [MenuItem("Change status", "circle-check", children: choices)]
+        return [MenuItem("Status", "circle-check", children: choices)]
     }
 
     /// ⌘1 to ⌘9: the first nine tasks as the sidebar shows them (this workspace's, leads only), as a browser's tabs.
@@ -358,6 +371,17 @@ struct TasksSidebar: View {
             .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
         }
         .hidden()
+    }
+
+    /// The open task's row shown: its lead unfolded if it's a worker, then scrolled to, no further than needed.
+    private func reveal(in proxy: ScrollViewProxy) {
+        guard case let .task(lead) = place else { return }
+        if navigation.worker != nil {
+            var set = Set(folded.split(separator: "\n").map(String.init))
+            if set.remove(lead) != nil { folded = set.sorted().joined(separator: "\n") }
+        }
+        let row = navigation.worker ?? lead
+        DispatchQueue.main.async { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(row) } }
     }
 
     private func toggle(_ lead: String) {
@@ -374,30 +398,34 @@ struct TasksSidebar: View {
     @State private var pairing: Renaming?
 
     private func menu(_ id: String, name: String, ticket: String?) -> [[MenuItem]] {
-        // Move to: a group of its own (Zero's menus have no submenus), the workspace it's in left out.
+        // Workspace: every one in its own menu, the one it's in (the sidebar's) ticked; another moves it there.
         let moves =
             workspace.workspaces.count > 1
-            ? workspace.workspaces.filter { $0.id != workspace.current }.map { w in
-                MenuItem("Move to \(w.name)", "layers") { Task { await workspace.place(id, in: w.id) } }
-            } : []
+            ? [
+                MenuItem(
+                    "Workspace", "layers",
+                    children: workspace.workspaces.map { w in
+                        var item = MenuItem(w.name, w.glyph) {
+                            if w.id != workspace.current { Task { await workspace.place(id, in: w.id) } }
+                        }
+                        item.selected = w.id == workspace.current
+                        return item
+                    })
+            ] : []
         return [
-            [
-                MenuItem("Rename…", "pen") { renaming = Renaming(id: id, name: name, ticket: ticket) },
-                MenuItem("Work with another task…", "link") { pairing = Renaming(id: id, name: name, ticket: ticket) },
+            workspace.conversation(id).map {
+                [OpenTarget.menuItem($0, in: workspace), OpenTarget.continueItem($0, in: workspace)].compactMap { $0 }
+            } ?? [],
+            [MenuItem("Rename task", "pen") { renaming = Renaming(id: id, name: name, ticket: ticket) }] + statusItems(id) + moves + [
+                MenuItem("Work with…", "link") { pairing = Renaming(id: id, name: name, ticket: ticket) }
             ],
-            moves,
-            statusItems(id) + [
+            [
                 workspace.isPaused(id)
                     ? MenuItem("Resume", "media-play") { Task { await workspace.unpause([id]) } }
                     : MenuItem("Pause", "circle-pause") { Task { await workspace.pause([id]) } },
-                MenuItem("Save for later", "bookmark") { Task { await workspace.askToSaveForLater(id) } },
-                // Settings › Stuck commands may have Zero stop a hung command; not this task's, once the user says so.
-                workspace.conversation(id)?.keepCommands == true
-                    ? MenuItem("Let Zero stop its stuck commands", "shield") { Task { await workspace.keepCommands(id, false) } }
-                    : MenuItem("Never stop its commands", "shield") { Task { await workspace.keepCommands(id, true) } },
-                MenuItem("Move to Later", "clock") {
+                MenuItem("Save for later", "bookmark") {
                     Task {
-                        if place == .task(id) { place = .home }; await workspace.moveToLater(id)
+                        if place == .task(id) { place = .home }; await workspace.saveForLater(id)
                     }
                 },
             ],

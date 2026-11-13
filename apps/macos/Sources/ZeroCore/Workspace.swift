@@ -400,7 +400,7 @@ public final class Workspace {
     /// Tasks saved for later, whole: in Later, not in the sidebar, until resumed.
     public var savedForLater: Set<String> { Set(later.filter { !$0.done }.compactMap(\.resume)) }
 
-    public func moveToLater(_ id: String) async {
+    public func saveForLater(_ id: String) async {
         putAway.insert(id)
         _ = await attempt { try await $0.saveForLater(session: id) }
         await loadLater()
@@ -525,12 +525,6 @@ public final class Workspace {
     public func deleteLater(_ id: String) async {
         _ = await attempt { try await $0.later("delete", ["item": id]) }
         await loadLater()
-    }
-
-    /// Asks a task's agent to save for later what it has (or what one answer says): it writes the note and the
-    /// artifact, as Zero writes nothing itself. Between turns, like a queued message.
-    public func askToSaveForLater(_ session: String, answer: String? = nil) async {
-        _ = await attempt { try await $0.notify(session: session, text: LaterAsk.text(answer: answer), from: "zero") }
     }
 
     /// MCP servers set up in Zero, as zerod last listed them.

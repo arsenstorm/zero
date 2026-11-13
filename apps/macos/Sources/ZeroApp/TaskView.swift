@@ -166,7 +166,7 @@ private struct TaskView: View {
 }
 
 /// The window's title bar beside the back and forward arrows, from where the page starts: on a task's page its name,
-/// and what can be done with it (stop a turn, its provider's terminal, the rest in a menu), and the pane's toggle.
+/// and what can be done with it (stop a turn, the rest in a menu), and the pane's toggle.
 struct TitleBar: View {
     let workspace: Workspace
     @Bindable var navigation: Navigation
@@ -231,60 +231,58 @@ struct TitleBar: View {
     }
 
     @ViewBuilder private func actions(_ conversation: Conversation) -> some View {
-        let busy = conversation.status == .working || conversation.status == .waiting
-        BarButton(
-            symbol: "terminal",
-            help: conversation.terminal == nil
-                ? "Open in \(conversation.provider.title)'s own terminal, for what only it has"
-                : "Back to Zero, with what happened in the terminal", selected: conversation.terminal != nil
-        ) {
-            Task {
-                conversation.terminal == nil
-                    ? await workspace.openTerminal(conversation.id) : await workspace.closeTerminal(conversation.id)
-            }
+        BarButton(symbol: "dots", help: "More", selected: WorkspaceSelector.shared.open == "more") {
+            WorkspaceSelector.shared.toggle("more", kind: .menu, anchor: moreAnchor) { ZeroContextMenu.sections(more(conversation)) }
         }
-        .disabled(conversation.terminal == nil && (conversation.thread == nil || busy))
-        Menu {
-            // Paused, its Resume is the pause's.
-            if workspace.isPaused(conversation.id) {
-                pausing(conversation.id, in: workspace)
-            } else {
-                if conversation.status == .offline {
-                    Button("Resume") { Task { await workspace.resume(conversation.id) } }
-                } else {
-                    Button("End session") { Task { await workspace.stop(conversation.id) } }
-                }
-                pausing(conversation.id, in: workspace)
-            }
-            Button("Copy folder path") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(conversation.cwd, forType: .string)
-            }
-            Button("Show folder in Finder") { NSWorkspace.shared.open(URL(fileURLWithPath: conversation.cwd)) }
-            Divider()
-            if case .task(let lead) = navigation.place {
-                Button("Move to Later") {
-                    navigation.place = .home; Task { await workspace.moveToLater(lead) }
-                }
-                Button("Archive…") { workspace.archiving = lead }
-            }
-        } label: {
-            NucleoIcon("dots", size: 15).foregroundStyle(.secondary).frame(width: 28, height: 28)
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
+        } action: {
+            moreAnchor = $0
         }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().tip("More")
+    }
+
+    @State private var moreAnchor = CGRect.zero
+
+    /// The ⋯ menu: where it opens, its session, and Later or Archive for a task's own page.
+    private func more(_ conversation: Conversation) -> [[MenuItem]] {
+        let id = conversation.id
+        let opening = [OpenTarget.menuItem(conversation, in: workspace), OpenTarget.continueItem(conversation, in: workspace)].compactMap {
+            $0
+        }
+        // Paused, its Resume is the pause's.
+        var session =
+            workspace.isPaused(id)
+            ? [MenuItem("Resume", "media-play") { Task { await workspace.unpause([id]) } }]
+            : [
+                MenuItem("Pause", "circle-pause") { Task { await workspace.pause([id]) } },
+                conversation.status == .offline
+                    ? MenuItem("Resume", "media-play") { Task { await workspace.resume(id) } }
+                    : MenuItem("End session", "media-stop") { Task { await workspace.stop(id) } },
+            ]
+        guard case .task(let lead) = navigation.place else { return [opening, session] }
+        session.append(
+            MenuItem("Save for later", "bookmark") {
+                navigation.place = .home; Task { await workspace.saveForLater(lead) }
+            })
+        return [opening, session, [MenuItem("Archive…", "archive") { workspace.archiving = lead }]]
     }
 }
 
 /// A small icon button in a bar: grey, a soft square under the pointer, a firmer one while it's on.
 private struct BarButton: View {
     let symbol: String
+    /// An app's own icon in place of the symbol (the terminal app's).
+    var image: Image? = nil
     let help: String
     var selected = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            NucleoIcon(symbol, size: 15).foregroundStyle(selected ? .primary : .secondary).frame(width: 28, height: 28)
+            Group {
+                if let image { image.resizable().frame(width: 18, height: 18) } else { NucleoIcon(symbol, size: 15) }
+            }
+            .foregroundStyle(selected ? .primary : .secondary).frame(width: 28, height: 28)
         }
         .buttonStyle(Hovering(selected: selected, radius: 7, fill: Theme.chip)).tip(help)
     }

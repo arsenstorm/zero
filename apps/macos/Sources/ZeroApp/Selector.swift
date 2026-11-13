@@ -24,6 +24,8 @@ struct SelectorRow: Identifiable {
     /// The mark's fill and colour, where they say something (a task's state: its glyph in its colour).
     var fill = "outline"
     var tint: Color? = nil
+    /// A menu row's mark as an image in place of a glyph (an app's own icon).
+    var image: Image? = nil
     /// A menu row's own menu, opened beside it as the pointer comes onto it.
     var children: [SelectorRow] = []
     /// A row that takes words: picked, it becomes a field in its place ("Other model…"), and Return gives them here.
@@ -309,7 +311,9 @@ struct SelectorView: View {
         } label: {
             let described = state.kind == .project ? describe(row) : ""
             HStack(alignment: described.isEmpty ? .center : .top, spacing: 8) {
-                if let glyph = row.glyph, row.fill != "outline" {
+                if let image = row.image {
+                    image.resizable().frame(width: 16, height: 16)
+                } else if let glyph = row.glyph, row.fill != "outline" {
                     // A filled mark in its own colour (a task's state, as the sidebar draws it).
                     NucleoIcon(glyph, fill: row.fill, size: 16).foregroundStyle(row.tint ?? Theme.menuIcon).frame(width: 16)
                 } else if let glyph = row.glyph {
@@ -580,11 +584,12 @@ struct MenuItem {
     var glyph: String? = nil
     var fill = "outline"
     var tint: Color? = nil
+    var image: Image? = nil
     var selected = false
     var children: [MenuItem] = []
     var action: () -> Void = {}
-    init(_ title: String, _ glyph: String? = nil, action: @escaping () -> Void) {
-        self.title = title; self.glyph = glyph; self.action = action
+    init(_ title: String, _ glyph: String? = nil, image: Image? = nil, action: @escaping () -> Void) {
+        self.title = title; self.glyph = glyph; self.image = image; self.action = action
     }
     init(_ title: String, _ glyph: String?, children: [MenuItem]) {
         self.title = title; self.glyph = glyph; self.children = children
@@ -597,7 +602,7 @@ struct MenuItem {
     func row(_ id: String) -> SelectorRow {
         SelectorRow(
             id: id, title: title, provider: nil, providerIcon: nil, detail: nil, context: nil, levels: [], defaultLevel: nil,
-            modelID: nil, selected: selected, pick: action, glyph: glyph, fill: fill, tint: tint,
+            modelID: nil, selected: selected, pick: action, glyph: glyph, fill: fill, tint: tint, image: image,
             children: children.enumerated().map { $1.row("\(id)-\($0)") })
     }
 }
@@ -635,12 +640,15 @@ private struct ContextMenuHost: ViewModifier {
         let inWindow = window.convertPoint(fromScreen: point)
         // SwiftUI's global frame (the window's content, from its top left): the menu hangs off the pointer.
         let anchor = CGRect(x: inWindow.x, y: content.bounds.height - inWindow.y, width: 1, height: 1)
-        WorkspaceSelector.shared.toggle("menu-" + id, kind: .menu, anchor: anchor, in: window) {
-            groups().filter { !$0.isEmpty }.enumerated().map { index, items in
-                SelectorSection(
-                    id: "group-\(index)", title: "", icon: nil,
-                    rows: items.enumerated().map { n, item in item.row("\(index)-\(n)") })
-            }
+        WorkspaceSelector.shared.toggle("menu-" + id, kind: .menu, anchor: anchor, in: window) { sections(groups()) }
+    }
+
+    /// A menu's groups as the selector's sections, a line between each.
+    static func sections(_ groups: [[MenuItem]]) -> [SelectorSection] {
+        groups.filter { !$0.isEmpty }.enumerated().map { index, items in
+            SelectorSection(
+                id: "group-\(index)", title: "", icon: nil,
+                rows: items.enumerated().map { n, item in item.row("\(index)-\(n)") })
         }
     }
 }
