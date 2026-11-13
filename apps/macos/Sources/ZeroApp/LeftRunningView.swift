@@ -72,10 +72,11 @@ struct LeftRunningDialog: View {
 
     var body: some View {
         let tasks = workspace.left.filter(\.value.settled).sorted { $0.value.memory > $1.value.memory }
-        VStack(alignment: .leading, spacing: 12) {
-            DialogTitle(text: tasks.isEmpty ? "Nothing left running" : LeftRunningLook.summary(tasks.map(\.value)))
-            Text("Started by tasks that are done, archived or quiet. Some may be meant to stay, such as a dev server you're using.")
-                .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 14) {
+            DialogTitle(
+                text: tasks.isEmpty ? "Nothing left running" : LeftRunningLook.summary(tasks.map(\.value)),
+                detail: "Started by tasks that are done, archived or quiet. Some may be meant to stay, such as a dev server you're using."
+            )
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach(tasks, id: \.key) { id, left in

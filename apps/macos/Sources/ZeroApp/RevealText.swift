@@ -231,7 +231,7 @@ final class RevealView: NSView {
             page = Theme.cardColor.cgColor
             // Over a panel, the page with the panel's see-through fill on it (covers(_:)).
             panel = page
-            panelFill = RichMarkdown.blockFill.cgColor
+            panelFill = Theme.codeColor.cgColor
         }
         CATransaction.begin()
         CATransaction.setDisableActions(true)

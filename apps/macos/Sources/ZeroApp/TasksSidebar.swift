@@ -37,7 +37,6 @@ struct TasksSidebar: View {
     @State private var drag: (lead: String, y: CGFloat)?
     /// Each lead's group (it and its workers shown) as drawn, with the gap below it: groups differ in height.
     @State private var heights: [String: CGFloat] = [:]
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private func height(_ lead: String) -> CGFloat { (heights[lead] ?? 30) + 1 }
 
@@ -69,7 +68,7 @@ struct TasksSidebar: View {
                 guard drag != nil else { return false }
                 var ids = rows.map(\.session)
                 let target = dropIndex(in: ids)
-                withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) {
+                withAnimation(Motion.animation(.snappy(duration: 0.25))) {
                     if let from = ids.firstIndex(of: lead), let target, target != from {
                         ids.remove(at: from)
                         ids.insert(lead, at: target)
@@ -123,7 +122,7 @@ struct TasksSidebar: View {
 
     var body: some View {
         SidebarColumn(title: workspace.currentWorkspace.name, picker: workspaceRows, glyph: workspace.currentWorkspace.glyph) {
-            SidebarItem("New task", icon: "compose", selected: place == .home) { place = .home }
+            SidebarItem("New task", icon: "compose", selected: place == .home, shortcut: "⌘N") { place = .home }
                 .keyboardShortcut("n", modifiers: .command)
             SidebarItem("All tasks", icon: "list-checkbox", selected: place == .board) { place = .board }
             // Each lead's workers looked up once per update, not by searching every task for every row.
@@ -148,16 +147,6 @@ struct TasksSidebar: View {
                     }
                 }
             }
-            .zeroDialog(item: $renaming) { task in
-                NameSheet(title: "Rename", name: task.name, action: "Rename") { name in
-                    Task { await workspace.rename(task.id, to: name, ticket: task.ticket) }
-                }
-            }
-            .zeroDialog(item: $pairing) { task in
-                PairSheet(task: task, others: workspace.board.filter { $0.session != task.id }) { other in
-                    Task { await workspace.introduce(task.id, to: other) }
-                }
-            }
             .background { taskShortcuts }
             // Soft edges, as the conversation has: more above, more below.
             .softEdges(top: 20, bottom: 28)
@@ -180,7 +169,7 @@ struct TasksSidebar: View {
                 SidebarHeading(text: "Earlier")
                 ForEach(earlier) { lead in
                     SidebarItem(Workspace.label(of: lead), selected: place == .task(lead.id)) { place = .task(lead.id) }
-                        .zeroContextMenu("task-\(lead.id)") { menu(lead.id, name: Workspace.label(of: lead), ticket: lead.ticket) }
+                        .zeroContextMenu("task-\(lead.id)") { TaskMenu.items(lead.id, in: workspace, navigation: navigation) }
                 }
             }
         }
@@ -188,7 +177,7 @@ struct TasksSidebar: View {
         .padding(.bottom, 36)
         // Tasks coming and going move the rest smoothly, Earlier's included.
         .animation(
-            reduceMotion ? nil : .snappy(duration: 0.25),
+            Motion.animation(.snappy(duration: 0.25)),
             value: (workspace.board.map(\.session) + starting(all).map(\.session) + earlier.map(\.id)))
     }
 
@@ -274,7 +263,7 @@ struct TasksSidebar: View {
                     navigation.worker = nil
                 }, toggle: { toggle(row.session) }, reorder: reorder(row.session, in: rows)
             )
-            .zeroContextMenu("task-\(row.session)") { menu(row.session, name: row.task, ticket: row.ticket) }
+            .zeroContextMenu("task-\(row.session)") { TaskMenu.items(row.session, in: workspace, navigation: navigation) }
             .onGeometryChange(for: CGFloat.self) {
                 $0.frame(in: .named("tasks")).minY
             } action: {
@@ -295,10 +284,10 @@ struct TasksSidebar: View {
             heights[row.session] = $0
         }
         .offset(y: drag?.lead == row.session ? drag!.y : shift(of: row.session, in: ids))
-        .animation(drag?.lead == row.session || reduceMotion ? nil : .snappy(duration: 0.2), value: dropIndex(in: ids))
+        .animation(drag?.lead == row.session ? nil : Motion.animation(.snappy(duration: 0.2)), value: dropIndex(in: ids))
         .zIndex(drag?.lead == row.session ? 1 : 0)
         // A task arriving slides in under the heading as the rest move down; one leaving fades.
-        .transition(.asymmetric(insertion: .move(edge: .top).combined(with: .opacity), removal: .opacity))
+        .transition(.asymmetric(insertion: Motion.transition(.move(edge: .top).combined(with: .opacity)), removal: .opacity))
     }
 
     private func workerRow(_ worker: Conversation, of row: BoardRow, branch: TaskRow.Branch) -> some View {
@@ -315,50 +304,13 @@ struct TasksSidebar: View {
                 navigation.worker = worker.id
             }
         )
-        // A worker's own menu, as its lead's: rename it, pause or stop it, archive it.
-        .zeroContextMenu("worker-\(worker.id)") { workerMenu(worker) }
+        .zeroContextMenu("worker-\(worker.id)") { TaskMenu.items(worker.id, in: workspace, navigation: navigation) }
         .onGeometryChange(for: CGFloat.self) {
             $0.frame(in: .named("tasks")).minY
         } action: {
             tops[worker.id] = $0
         }
         .onHover { inside in TaskPeek.shared.hover(worker.id, top: tops[worker.id] ?? 0, inside: inside && drag == nil) }
-    }
-
-    private func workerMenu(_ worker: Conversation) -> [[MenuItem]] {
-        [
-            [
-                MenuItem("Rename task", "pen") {
-                    renaming = Renaming(id: worker.id, name: Workspace.label(of: worker), ticket: worker.ticket)
-                }
-            ],
-            statusItems(worker.id) + [
-                workspace.isPaused(worker.id)
-                    ? MenuItem("Resume", "media-play") { Task { await workspace.unpause([worker.id]) } }
-                    : MenuItem("Pause", "circle-pause") { Task { await workspace.pause([worker.id]) } }
-            ]
-                + (worker.status == .working || worker.status == .waiting
-                    ? [MenuItem("Stop", "circle-xmark") { Task { await workspace.stop(worker.id) } }] : []),
-            [MenuItem("Archive…", "archive") { workspace.archiving = worker.id }],
-        ]
-    }
-
-    /// Where a task stands, by the user's word when its agent can't know (the last of it was the user's own work): a
-    /// "Status" row whose own menu has the states the user may set, each as the sidebar draws it, the one it's
-    /// in checked.
-    private func statusItems(_ id: String) -> [MenuItem] {
-        // A lead's row, or a worker in one.
-        let now =
-            workspace.board.first { $0.session == id }?.state
-            ?? workspace.board.lazy.compactMap { $0.team?.first { $0.session == id }?.state }.first
-        let states: [(BoardRow.State, String)] = [(.done, "done"), (.waiting, "waiting"), (.blocked, "blocked")]
-        let choices = states.map { state, word in
-            let look = TaskStateIcon.look(state)
-            return MenuItem(look.name, glyph: look.symbol, tint: look.color, selected: now == state) {
-                Task { await workspace.setStatus(id, word) }
-            }
-        }
-        return [MenuItem("Status", "circle-check", children: choices)]
     }
 
     /// ⌘1 to ⌘9: the first nine tasks as the sidebar shows them (this workspace's, leads only), as a browser's tabs.
@@ -381,56 +333,13 @@ struct TasksSidebar: View {
             if set.remove(lead) != nil { folded = set.sorted().joined(separator: "\n") }
         }
         let row = navigation.worker ?? lead
-        DispatchQueue.main.async { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(row) } }
+        DispatchQueue.main.async { withAnimation(Motion.animation(.easeOut(duration: 0.2))) { proxy.scrollTo(row) } }
     }
 
     private func toggle(_ lead: String) {
         var set = Set(folded.split(separator: "\n").map(String.init))
         if set.contains(lead) { set.remove(lead) } else { set.insert(lead) }
-        withAnimation(.easeOut(duration: 0.15)) { folded = set.sorted().joined(separator: "\n") }
-    }
-
-    /// Archive: the task leaves the sidebar; its files stay in zerod's archive/.
-    /// A task's name is the user's to change; the sheet asks for it.
-    struct Renaming: Identifiable { let id: String; let name: String; let ticket: String? }
-    @State private var renaming: Renaming?
-    /// Asked to work with another task: the one the menu was opened on.
-    @State private var pairing: Renaming?
-
-    private func menu(_ id: String, name: String, ticket: String?) -> [[MenuItem]] {
-        // Workspace: every one in its own menu, the one it's in (the sidebar's) ticked; another moves it there.
-        let moves =
-            workspace.workspaces.count > 1
-            ? [
-                MenuItem(
-                    "Workspace", "layers",
-                    children: workspace.workspaces.map { w in
-                        var item = MenuItem(w.name, w.glyph) {
-                            if w.id != workspace.current { Task { await workspace.place(id, in: w.id) } }
-                        }
-                        item.selected = w.id == workspace.current
-                        return item
-                    })
-            ] : []
-        return [
-            workspace.conversation(id).map {
-                [OpenTarget.menuItem($0, in: workspace), OpenTarget.continueItem($0, in: workspace)].compactMap { $0 }
-            } ?? [],
-            [MenuItem("Rename task", "pen") { renaming = Renaming(id: id, name: name, ticket: ticket) }] + statusItems(id) + moves + [
-                MenuItem("Work with…", "link") { pairing = Renaming(id: id, name: name, ticket: ticket) }
-            ],
-            [
-                workspace.isPaused(id)
-                    ? MenuItem("Resume", "media-play") { Task { await workspace.unpause([id]) } }
-                    : MenuItem("Pause", "circle-pause") { Task { await workspace.pause([id]) } },
-                MenuItem("Save for later", "bookmark") {
-                    Task {
-                        if place == .task(id) { place = .home }; await workspace.saveForLater(id)
-                    }
-                },
-            ],
-            [MenuItem("Archive…", "archive") { workspace.archiving = id }],
-        ]
+        folded = set.sorted().joined(separator: "\n")
     }
 
     /// At the foot, in a card of its own: the accounts used today and their usage; while Zero can't reach its daemon,
@@ -438,7 +347,7 @@ struct TasksSidebar: View {
     @ViewBuilder private var footer: some View {
         if !workspace.connected {
             NucleoLabel("Connecting to Zero's daemon…", icon: "plug", size: 12)
-                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10).padding(.vertical, 10)
                 .padding(.horizontal, 10).padding(.top, 22)
@@ -469,8 +378,8 @@ struct TasksSidebar: View {
 }
 
 /// Two tasks to work together: the other picked from the board's, and both told about each other and how to reach it.
-private struct PairSheet: View {
-    let task: TasksSidebar.Renaming
+struct PairSheet: View {
+    let task: TaskMenu.Named
     let others: [BoardRow]
     let pick: (String) -> Void
     @Environment(\.closeDialog) private var dismiss
@@ -478,9 +387,11 @@ private struct PairSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            DialogTitle(text: "Work with another task")
-            Text("\(task.name) and the task you pick each hear about the other and how to reach it, and settle between them what they can.")
-                .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            DialogTitle(
+                text: "Work with another task",
+                detail:
+                    "\(task.name) and the task you pick each hear about the other and how to reach it, and settle between them what they can."
+            )
             ScrollView {
                 VStack(spacing: 2) {
                     ForEach(others, id: \.session) { row in
@@ -490,7 +401,7 @@ private struct PairSheet: View {
                             HStack {
                                 Text(row.task).font(.system(size: 13)).lineLimit(1)
                                 Spacer()
-                                if chosen == row.session { NucleoIcon("check", size: 12) }
+                                NucleoIcon("check", size: 13).foregroundStyle(Theme.menuHot).opacity(chosen == row.session ? 1 : 0)
                             }
                             .padding(.horizontal, 10).frame(height: 30)
                             .background(chosen == row.session ? Theme.row : .clear, in: RoundedRectangle(cornerRadius: 8))
@@ -512,5 +423,101 @@ private struct PairSheet: View {
             }
         }
         .frame(width: 380)
+    }
+}
+
+/// A task's menu, the same wherever it opens (its sidebar row's right-click, its page's ⋯, the Board's ⋯): where it
+/// opens, what it is, its session, and putting it away. A worker's has no workspace or Later of its own.
+@MainActor enum TaskMenu {
+    struct Named: Identifiable { let id: String; let name: String; let ticket: String? }
+    /// The task being renamed, or paired with another: its dialog is the window's (WorkspaceView).
+    @MainActor @Observable final class Asked {
+        static let shared = Asked()
+        var renaming: Named?
+        var pairing: Named?
+    }
+
+    /// What the agent is asked when the user wants to know where it is.
+    static let statusCheck = """
+        Status check from the user: where is this task now? Answer in two or three lines, then post the same as a Zero \
+        note: `zero note "<where it is>"`, with --blocked and --needs "<what you need from the user>" if you're waiting \
+        on them, --waiting if on something else, --done if it's finished, --merged once it's merged. Keep the task's \
+        state pad current too. Then \
+        carry on with what you were doing.
+        """
+
+    static func items(_ id: String, in workspace: Workspace, navigation: Navigation) -> [[MenuItem]] {
+        let row = workspace.board.first { $0.session == id }
+        let conversation = workspace.conversation(id)
+        let worker = conversation?.parent != nil
+        let task = Named(
+            id: id, name: row?.task ?? conversation.map(Workspace.label(of:)) ?? id, ticket: row?.ticket ?? conversation?.ticket)
+        let online = conversation.map { $0.status != .offline } ?? row?.online ?? true
+        // Workspace: every one in its own menu, the one it's in (the sidebar's) ticked; another moves it there.
+        let moves =
+            workspace.workspaces.count > 1 && !worker
+            ? [
+                MenuItem(
+                    "Workspace", "layers",
+                    children: workspace.workspaces.map { w in
+                        var item = MenuItem(w.name, w.glyph) {
+                            if w.id != workspace.current { Task { await workspace.place(id, in: w.id) } }
+                        }
+                        item.selected = w.id == workspace.current
+                        return item
+                    })
+            ] : []
+        // One of each pair by its state: paused, Resume is the pause's; running, Pause and End session; ended, Resume
+        // alone (nothing runs to pause).
+        let session =
+            workspace.isPaused(id)
+            ? [MenuItem("Resume", "media-play") { Task { await workspace.unpause([id]) } }]
+            : online
+                ? [
+                    MenuItem("Pause", "circle-pause") { Task { await workspace.pause([id]) } },
+                    MenuItem("End session", "media-stop") { Task { await workspace.stop(id) } },
+                ]
+                : [MenuItem("Resume", "media-play") { Task { await workspace.resume(id) } }]
+        let later =
+            worker
+            ? []
+            : [
+                MenuItem("Save for later", "bookmark") {
+                    if navigation.place == .task(id) { navigation.place = .home }
+                    Task { await workspace.saveForLater(id) }
+                }
+            ]
+        return [
+            conversation.map { [OpenTarget.menuItem($0, in: workspace), OpenTarget.continueItem($0, in: workspace)].compactMap { $0 } }
+                ?? [],
+            [MenuItem("Rename task", "pen") { Asked.shared.renaming = task }] + statusItems(id, in: workspace) + moves + [
+                MenuItem("Work with…", "link") { Asked.shared.pairing = task },
+                MenuItem("Copy task id", "copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(id, forType: .string)
+                },
+            ],
+            [MenuItem("Ask for a status update", "message-check") { Task { await workspace.send(id, text: statusCheck) } }] + session
+                + later,
+            [MenuItem("Archive…", "archive") { workspace.archiving = id }],
+        ]
+    }
+
+    /// Where a task stands, by the user's word when its agent can't know (the last of it was the user's own work): a
+    /// "Status" row whose own menu has the states the user may set, each as the sidebar draws it, the one it's
+    /// in checked.
+    private static func statusItems(_ id: String, in workspace: Workspace) -> [MenuItem] {
+        // A lead's row, or a worker in one.
+        let now =
+            workspace.board.first { $0.session == id }?.state
+            ?? workspace.board.lazy.compactMap { $0.team?.first { $0.session == id }?.state }.first
+        let states: [(BoardRow.State, String)] = [(.done, "done"), (.waiting, "waiting"), (.blocked, "blocked")]
+        let choices = states.map { state, word in
+            let look = TaskStateIcon.look(state)
+            return MenuItem(look.name, glyph: look.symbol, tint: look.color, selected: now == state) {
+                Task { await workspace.setStatus(id, word) }
+            }
+        }
+        return [MenuItem("Status", "circle-check", children: choices)]
     }
 }

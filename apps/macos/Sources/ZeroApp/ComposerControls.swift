@@ -2,8 +2,6 @@ import AppKit
 import SwiftUI
 import ZeroCore
 
-/// Going back to a message of yours, as Claude Code's rewind has it: the conversation, the folder's code, or both,
-/// as they were when the message went; or a new task branched from there. What the code would lose is said first.
 /// Your messages waiting for after the agent's current turn, as a tab behind the composer: each with edit, delete and
 /// Steer (now, mid-turn); its words go back into the composer on a click. Held since you stopped the agent, the tab
 /// says so with Send.
@@ -189,7 +187,7 @@ struct AddMenu: View {
         }
         .padding(6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
+        .modifier(MenuCard(radius: 12, linear: true))
     }
 
     /// Most recently changed first; matched on title and folder.
@@ -204,12 +202,12 @@ struct AddMenu: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 NucleoIcon(icon, size: 15).foregroundStyle(.secondary).frame(width: 18)
-                Text(title).font(.system(size: 13)).lineLimit(1)
+                Text(title).font(SelectorView.menuFont).lineLimit(1)
                 if let detail { Text(detail).font(.system(size: 13)).foregroundStyle(.tertiary).lineLimit(1) }
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 10).frame(height: 32)
-            .background(hovered == id ? Theme.row : .clear, in: RoundedRectangle(cornerRadius: 10))
+            .background(hovered == id ? Theme.menuHover : .clear, in: RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -234,6 +232,15 @@ final class WorkspaceSelector {
         if open == chip { close(); return }
         // The click that closed it through the click-outside monitor arrives here next: it was that close.
         if let closed, closed.chip == chip, Date().timeIntervalSince(closed.at) < 0.3 { return }
+        show(chip, kind: kind, anchor: anchor, in: window, rows: rows, level: level, setLevel: setLevel)
+    }
+
+    /// Opens it whatever is open, its own included: a right click always brings a menu up where it was made, as Linear
+    /// and a Mac do, the open one going in the same frame.
+    func show(
+        _ chip: String, kind: SelectorKind, anchor: CGRect, in window: NSWindow? = nil, rows: @escaping () -> [SelectorSection],
+        level: @escaping (String) -> String? = { _ in nil }, setLevel: @escaping (String, String) -> Void = { _, _ in }
+    ) {
         guard let window = window ?? NSApp.keyWindow, let app = NSApp.delegate as? AppDelegate else { return }
         let state = SelectorState(kind: kind)
         state.sections = rows()
@@ -309,7 +316,7 @@ struct ComposerChip: View {
             // Plain words, as Codex's controls are; a soft fill under the pointer, and while its selector is open.
             // On frost, a see-through darkening, which takes the tint under it: an opaque grey read pale blue beside the
             // glow showing through.
-            .background(open || hovered ? (roomy ? Theme.frostFill : Theme.row) : .clear, in: Capsule())
+            .background(open || hovered ? (roomy ? Theme.frostFill : Theme.hover) : .clear, in: Capsule())
             .contentShape(Capsule())
         }
         .buttonStyle(.plain).fixedSize()

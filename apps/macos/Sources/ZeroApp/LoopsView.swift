@@ -79,15 +79,12 @@ struct LoopsPage: View {
                 if let shown {
                     LoopEditor(workspace: workspace, navigation: navigation, name: shown).id(shown)
                 } else {
-                    ContentUnavailableView {
-                        NucleoLabel("No loop open", icon: "animation-repeat", size: 20)
-                    } description: {
-                        Text(
-                            "A loop is an instruction an agent follows. Name one as @name in a message, and the agent gets its words. A loop can name the loops its workers follow."
-                        )
-                    } actions: {
-                        Button("New loop") { naming = true }
-                    }
+                    EmptyState(
+                        title: "No loop open",
+                        detail:
+                            "A loop is an instruction an agent follows. Name one as @name in a message, and the agent gets its words. A loop can name the loops its workers follow.",
+                        icon: "animation-repeat", action: ("New loop", { naming = true })
+                    )
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.card)
@@ -134,7 +131,7 @@ private struct LoopEditor: View {
                 .onChange(of: description) { _, now in if now != saved.description { scheduleSave() } }
                 footer(loop)
             } else if missing {
-                ContentUnavailableView("No such loop", systemImage: "", description: Text("It may have been deleted."))
+                EmptyState(title: "No such loop", detail: "It may have been deleted.").frame(maxWidth: .infinity).padding(.top, 40)
             }
         }
         .centredColumn(760)
@@ -146,7 +143,7 @@ private struct LoopEditor: View {
     private func header(_ loop: ZerodLink.Loop) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 8) {
-                Text("@" + loop.name).font(.system(size: 26, weight: .semibold))
+                PageTitle(text: "@" + loop.name)
                 Spacer()
                 Button {
                     NSPasteboard.general.clearContents(); NSPasteboard.general.setString("@" + loop.name, forType: .string)
@@ -169,14 +166,14 @@ private struct LoopEditor: View {
                     Text("Names").font(.system(size: 12.5)).foregroundStyle(.secondary)
                     ForEach(loop.children, id: \.self) { child in
                         Button("@" + child) { navigation.place = .loop(child) }
-                            .buttonStyle(.plain).font(.system(size: 12.5, weight: .medium)).foregroundStyle(TokenTextView.tokenText.asColor)
+                            .buttonStyle(.plain).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.tokenText.asColor)
                             .padding(.horizontal, 6).padding(.vertical, 2).background(
-                                TokenTextView.tokenFill.asColor, in: RoundedRectangle(cornerRadius: 5))
+                                Theme.tokenFill.asColor, in: RoundedRectangle(cornerRadius: 5))
                     }
                 }
             }
             if loop.uses.isEmpty {
-                Text("No session has run it yet.").font(.system(size: 12.5)).foregroundStyle(.tertiary)
+                Text("No session has run it yet").font(.system(size: 13)).foregroundStyle(.tertiary)
             } else {
                 Text("Ran by").font(.system(size: 12.5)).foregroundStyle(.secondary)
                 ForEach(Array(loop.uses.reversed().prefix(12).enumerated()), id: \.offset) { _, use in
@@ -211,12 +208,12 @@ private struct LoopEditor: View {
 
     private func banner(_ message: String) -> some View {
         HStack(spacing: 10) {
-            NucleoIcon("triangle-warning", size: 14).foregroundStyle(.orange)
+            NucleoIcon("triangle-warning", size: 14).foregroundStyle(Theme.amber.ink)
             Text(message).font(.system(size: 12.5))
             Spacer()
         }
         .padding(.horizontal, 14).padding(.vertical, 8)
-        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+        .background(Theme.orangeRow, in: RoundedRectangle(cornerRadius: 8))
         .padding(.bottom, 8)
     }
 

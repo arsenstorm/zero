@@ -16,9 +16,10 @@ struct ModelSelector: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            List {
+            // The app's own page (PageParts), not the system's inset-grouped list.
+            PageScroll {
                 ForEach(agents, id: \.provider) { agent in
-                    Section {
+                    PageGroup(title: agents.count > 1 ? agent.provider.title : nil) {
                         if agent.models.isEmpty {
                             Button {
                                 pick(agent.provider, nil, nil); dismiss()
@@ -43,8 +44,6 @@ struct ModelSelector: View {
                             }
                             .buttonStyle(.plain)
                         }
-                    } header: {
-                        if agents.count > 1 { Text(agent.provider.title) }
                     }
                 }
             }
@@ -69,8 +68,8 @@ struct ModelSelector: View {
     private func levels(of model: PhoneModel.ModelChoice, agent: Provider) -> some View {
         // The level in effect, if this is the model in effect; else the model's own default.
         let effort = model.id == current.model ? current.effort ?? model.defaultLevel : model.defaultLevel
-        return List {
-            Section {
+        return PageScroll {
+            PageGroup {
                 VStack(spacing: 0) {
                     logo(model.icon, size: 40).padding(.bottom, 10)
                     Text(model.name).font(.subheadline.weight(.semibold))
@@ -79,7 +78,7 @@ struct ModelSelector: View {
                 }
                 .frame(maxWidth: .infinity).padding(.vertical, 8)
             }
-            Section("Effort") {
+            PageGroup(title: "Effort") {
                 ForEach(model.levels, id: \.id) { level in
                     Button {
                         pick(agent, model.id, level.id); dismiss()
@@ -102,13 +101,13 @@ struct ModelSelector: View {
                 if !detail.isEmpty { Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
             }
             Spacer(minLength: 8)
-            Image("circle-check-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(Color.accentColor).opacity(chosen ? 1 : 0)
+            Image("circle-check-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(Theme.knob).opacity(chosen ? 1 : 0)
             if more {
                 Image("chevron-down-outline").resizable().frame(width: 10, height: 10).rotationEffect(.degrees(-90)).foregroundStyle(
                     .secondary)
             }
         }
-        .frame(minHeight: 36).contentShape(Rectangle())
+        .frame(minHeight: 46).contentShape(Rectangle())
     }
 
     @ViewBuilder private func logo(_ name: String, size: CGFloat) -> some View {

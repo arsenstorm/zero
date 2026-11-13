@@ -185,7 +185,7 @@ struct TaskRow: View {
                             // Centred on the name's capitals (about 12 pt tall at this size), not sat on its baseline
                             // like a full stop.
                             if row.ownState == .answered {
-                                Circle().fill(.blue).frame(width: 8, height: 8).alignmentGuide(.firstTextBaseline) {
+                                Circle().fill(.indigo).frame(width: 8, height: 8).alignmentGuide(.firstTextBaseline) {
                                     $0[VerticalAlignment.center] + 6
                                 }
                             }
@@ -196,7 +196,7 @@ struct TaskRow: View {
                     if Described.says(said) { Described(text: said, at: row.at) }
                 }
                 if let picked {
-                    Image("circle-check-glyph").resizable().frame(width: 20, height: 20).foregroundStyle(Color.accentColor)
+                    Image("circle-check-glyph").resizable().frame(width: 20, height: 20).foregroundStyle(Theme.knob)
                         .opacity(picked ? 1 : 0)
                 }
             }
@@ -214,6 +214,8 @@ struct TaskRow: View {
 struct ChoiceList: View {
     let rows: [(id: String, title: String)]
     let selected: String
+    /// A line under a row's title, by its id (what a permission lets the agent do).
+    var details: [String: String] = [:]
     let pick: (String) -> Void
 
     var body: some View {
@@ -223,12 +225,15 @@ struct ChoiceList: View {
                     pick(row.id)
                 } label: {
                     HStack {
-                        Text(row.title).lineLimit(1)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.title).lineLimit(1)
+                            if let detail = details[row.id] { Text(detail).font(.footnote).foregroundStyle(.secondary) }
+                        }
                         Spacer(minLength: 16)
-                        Image("circle-check-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(Color.accentColor).opacity(
+                        Image("circle-check-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(Theme.knob).opacity(
                             row.id == selected ? 1 : 0)
                     }
-                    .padding(.horizontal, 14).frame(height: 44).contentShape(Rectangle())
+                    .padding(.horizontal, 14).padding(.vertical, details.isEmpty ? 0 : 8).frame(minHeight: 44).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
@@ -236,5 +241,62 @@ struct ChoiceList: View {
         .padding(6)
         .frame(width: 260)
         .presentationCompactAdaptation(.popover)
+    }
+}
+
+/// The Mac's surfaces (its Theme), in both appearances: the same ink, code, choice and done colours on both apps.
+enum Theme {
+    static func dynamic(dark: UIColor, light: UIColor) -> Color {
+        Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? dark : light })
+    }
+    /// Zero's ink, solid: black in light, white in dark. The app's tint (its caret, ticks, primary buttons).
+    static let knob = dynamic(dark: .white, light: .black)
+    /// Words on the ink (your messages, a primary button's label).
+    static let onKnob = dynamic(dark: .black, light: .white)
+    static let code = dynamic(dark: UIColor(white: 0, alpha: 0.35), light: UIColor(white: 0, alpha: 0.05))
+    /// An answer's row: a tint over whatever it sits on.
+    static let choice = dynamic(dark: UIColor(white: 1, alpha: 0.07), light: UIColor(white: 0, alpha: 0.05))
+    /// "Done" as words on their own: the system green reads pale as small text; this one has weight.
+    static let done = dynamic(
+        dark: UIColor(red: 0.40, green: 0.82, blue: 0.50, alpha: 1), light: UIColor(red: 0.09, green: 0.50, blue: 0.22, alpha: 1))
+    /// A card's radius, as the Mac's card(); an option row or a box inside it, 10.
+    static let cardRadius: CGFloat = 18
+}
+
+/// A sheet's send or start button (New task, Record's, the share sheet's): a glass circle, filled with the ink once it
+/// can go and while it's going, its spinner in the words' colour on it.
+struct SendCircle: View {
+    let ready: Bool
+    let sending: Bool
+    var label = "Send"
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Group {
+                if sending {
+                    Spinner(color: Theme.onKnob).frame(width: 18, height: 18)
+                } else {
+                    Image("arrow-up-outline").resizable().frame(width: 20, height: 20)
+                        .foregroundStyle(ready ? AnyShapeStyle(Theme.onKnob) : AnyShapeStyle(.secondary))
+                }
+            }
+            .frame(width: 44, height: 44)
+            .background { if ready || sending { Circle().fill(Theme.knob) } }
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain).glassEffect(.regular.interactive(), in: Circle())
+        .disabled(!ready || sending)
+        .accessibilityLabel(label)
+    }
+}
+
+extension Permissions {
+    /// The two choices as the Mac lists them: what each is called, and what it lets the agent do.
+    static func choices(_ provider: Provider?) -> [(Permissions, String, String)] {
+        [
+            (.auto, "Auto", "\(provider?.title ?? "The agent") decides what's safe, and asks you the rest"),
+            (.unrestricted, "Unrestricted", "Anything, without asking"),
+        ]
     }
 }

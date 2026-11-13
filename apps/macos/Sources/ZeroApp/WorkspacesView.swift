@@ -14,11 +14,11 @@ struct WorkspacesPage: View {
         VStack(alignment: .leading, spacing: 32) {
             if let workspace {
                 SettingsSection(
-                    title: "Workspaces", accessory: AnyView(GhostButton(title: "Add workspace", icon: "plus") { adding = true })
+                    title: "Workspaces", accessory: AnyView(GhostButton(title: "Add workspace…", icon: "plus") { adding = true })
                 ) {
                     VStack(spacing: 0) {
                         ForEach(Array(workspace.workspaces.enumerated()), id: \.element.id) { index, w in
-                            if index > 0 { Divider().padding(.leading, 18) }
+                            if index > 0 { Hairline().padding(.horizontal, 18) }
                             WorkspaceRow(
                                 workspace: w, current: w.id == workspace.current, edit: { editing = w },
                                 delete: w.id == "zero" ? nil : { Task { await workspace.deleteWorkspace(w.id) } })
@@ -54,9 +54,8 @@ private struct WorkspaceRow: View {
             HStack(spacing: 8) {
                 Text(workspace.name).font(.system(size: 13, weight: .medium))
                 if current {
-                    Text("Shown").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).padding(.horizontal, 7).frame(
-                        height: 20
-                    ).background(Theme.chip, in: Capsule())
+                    Text("Shown").font(.system(size: 11.5, weight: .medium)).foregroundStyle(.secondary)
+                        .padding(.horizontal, 8).padding(.vertical, 3).background(Theme.chip, in: Capsule())
                 }
             }
             Spacer(minLength: 8)
@@ -71,7 +70,7 @@ private struct WorkspaceRow: View {
             }
             .opacity(hovered ? 1 : 0)
         }
-        .padding(.leading, 18).padding(.trailing, 10).frame(height: 48)
+        .padding(.leading, 18).padding(.trailing, 10).frame(height: 44)
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture(count: 2, perform: edit)
@@ -119,7 +118,7 @@ private struct WorkspaceForm: View {
                 HStack(spacing: 8) {
                     WorkspaceGlyph(glyph: workspace.glyph, size: 16).frame(width: 30, height: 30).background(
                         Theme.row, in: RoundedRectangle(cornerRadius: 8))
-                    TextField("Name", text: $workspace.name).textFieldStyle(.dialog)
+                    TextField("Name", text: $workspace.name).textFieldStyle(.dialog).firstField()
                 }
             }
             field("Icon") {
@@ -132,11 +131,11 @@ private struct WorkspaceForm: View {
                         } label: {
                             NucleoIcon(name, size: 16).foregroundStyle(on ? .primary : .secondary)
                                 .frame(width: 32, height: 32)
-                                .background(on ? Theme.card : .clear, in: RoundedRectangle(cornerRadius: 7))
+                                .background(on ? Theme.card : .clear, in: RoundedRectangle(cornerRadius: 6))
                                 .shadow(color: .black.opacity(on ? 0.08 : 0), radius: 1, y: 0.5)
                                 .contentShape(Rectangle())
                         }
-                        .buttonStyle(Hovering(radius: 7)).tip(name)
+                        .buttonStyle(Hovering(radius: 6)).tip(name)
                     }
                 }
                 .padding(4).background(Theme.row, in: RoundedRectangle(cornerRadius: 10))
@@ -148,8 +147,9 @@ private struct WorkspaceForm: View {
                             .secondary)
                         ForEach(model.mcpServers) { server in
                             if server.workspaces.isEmpty {
-                                Toggle(isOn: .constant(true)) { Text(server.name + " (every workspace)").font(.system(size: 12.5)) }
+                                Toggle(isOn: .constant(true)) { Text(server.name).font(.system(size: 12.5)) }
                                     .toggleStyle(.dialogCheckbox).disabled(true)
+                                    .tip("On in every workspace; change it in MCP servers")
                             } else {
                                 Toggle(
                                     isOn: Binding(

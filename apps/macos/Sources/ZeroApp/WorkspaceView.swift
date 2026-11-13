@@ -145,16 +145,27 @@ struct WorkspaceView: View {
                 if navigation.place == .task(asked.id) { navigation.place = .home }
             }
         }
+        // A task's menu asked to rename it or pair it, wherever that menu opened.
+        .zeroDialog(item: Bindable(TaskMenu.Asked.shared).renaming) { task in
+            NameSheet(title: "Rename", name: task.name, action: "Rename") { name in
+                Task { await workspace.rename(task.id, to: name, ticket: task.ticket) }
+            }
+        }
+        .zeroDialog(item: Bindable(TaskMenu.Asked.shared).pairing) { task in
+            PairSheet(task: task, others: workspace.board.filter { $0.session != task.id }) { other in
+                Task { await workspace.introduce(task.id, to: other) }
+            }
+        }
         // What went wrong, or Zero updating: a toast in the window's corner, clear of the composer and of a turn's
         // heading (at the top, the update covered it), on a menu's card (Linear's); an error gone on a click or after
         // a while. Eased in and out, never popping in a frame.
         .overlay(alignment: .bottomTrailing) {
             ZStack(alignment: .bottomTrailing) {
                 if let updating = workspace.updating {
-                    UpdatingBar(updating: updating).transition(.opacity.combined(with: .offset(y: 8)))
+                    UpdatingBar(updating: updating).transition(Motion.transition(.opacity.combined(with: .offset(y: 8))))
                 } else if let error = workspace.lastError {
                     ErrorToast(text: error) { workspace.lastError = nil }
-                        .transition(.opacity.combined(with: .offset(y: 8)))
+                        .transition(Motion.transition(.opacity.combined(with: .offset(y: 8))))
                 }
             }
             .animation(.easeOut(duration: 0.15), value: workspace.lastError)
@@ -191,13 +202,11 @@ private struct ArchiveDialog: View {
         let workers = workspace.team(of: id).count
         let left = ([id] + workspace.team(of: id).map(\.id)).compactMap { session in workspace.left[session].map { (session, $0) } }
         let name = workspace.conversation(id).map { "\u{201C}\(Workspace.label(of: $0))\u{201D}" } ?? "this task"
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 14) {
             DialogTitle(
-                text: workers == 0 ? "Archive \(name)?" : "Archive \(name) and its \(workers == 1 ? "worker" : "\(workers) workers")?"
+                text: workers == 0 ? "Archive \(name)?" : "Archive \(name) and its \(workers == 1 ? "worker" : "\(workers) workers")?",
+                detail: "Bring \(workers == 0 ? "it" : "them") back from Archived tasks."
             )
-            .fixedSize(horizontal: false, vertical: true)
-            Text("Bring \(workers == 0 ? "it" : "them") back from Archived tasks.")
-                .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if !left.isEmpty {
                 leftRunning(left)
             }
@@ -286,7 +295,7 @@ private struct Rail: View {
             let loops = { if case .loop = place { true } else { place == .loops } }()
             item("animation-repeat", selected: loops, help: "Loops") { if !loops { place = .loops } }
             Spacer()
-            // Zero's own trouble (HealthMonitor), said quietly: a dot on Settings, which then opens on Health.
+            // Zero's own trouble (HealthMonitor), said quietly: a dot on Settings, which then opens at Health.
             let trouble = HealthMonitor.shared.trouble
             let help = trouble ? "Settings · Health has something to look at" : "Settings"
             item("gear", selected: place == .settings, help: help, shortcut: "⌘,") {

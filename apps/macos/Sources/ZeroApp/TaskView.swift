@@ -243,28 +243,9 @@ struct TitleBar: View {
 
     @State private var moreAnchor = CGRect.zero
 
-    /// The ⋯ menu: where it opens, its session, and Later or Archive for a task's own page.
+    /// The ⋯ menu: the task's menu, as its sidebar row has it.
     private func more(_ conversation: Conversation) -> [[MenuItem]] {
-        let id = conversation.id
-        let opening = [OpenTarget.menuItem(conversation, in: workspace), OpenTarget.continueItem(conversation, in: workspace)].compactMap {
-            $0
-        }
-        // Paused, its Resume is the pause's.
-        var session =
-            workspace.isPaused(id)
-            ? [MenuItem("Resume", "media-play") { Task { await workspace.unpause([id]) } }]
-            : [
-                MenuItem("Pause", "circle-pause") { Task { await workspace.pause([id]) } },
-                conversation.status == .offline
-                    ? MenuItem("Resume", "media-play") { Task { await workspace.resume(id) } }
-                    : MenuItem("End session", "media-stop") { Task { await workspace.stop(id) } },
-            ]
-        guard case .task(let lead) = navigation.place else { return [opening, session] }
-        session.append(
-            MenuItem("Save for later", "bookmark") {
-                navigation.place = .home; Task { await workspace.saveForLater(lead) }
-            })
-        return [opening, session, [MenuItem("Archive…", "archive") { workspace.archiving = lead }]]
+        TaskMenu.items(conversation.id, in: workspace, navigation: navigation)
     }
 }
 

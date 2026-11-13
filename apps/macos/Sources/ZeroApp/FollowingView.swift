@@ -19,13 +19,13 @@ struct FollowRows: View {
     var body: some View {
         VStack(spacing: 0) {
             if rows.isEmpty {
-                Text(source == nil ? "No agent follows anything yet." : "No agent follows anything through \(source!.title) yet.")
-                    .font(.system(size: 12.5)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(
+                Text(source == nil ? "No agent follows anything yet" : "No agent follows anything through \(source!.title) yet")
+                    .font(.system(size: 13)).foregroundStyle(.tertiary).frame(maxWidth: .infinity, alignment: .leading).padding(
                         .horizontal, 18
                     ).frame(height: 44)
             }
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                if index > 0 { Divider().padding(.leading, 18) }
+                if index > 0 { Hairline().padding(.horizontal, 18) }
                 FollowRow(row: row, task: workspace.roster[row.session].map(Workspace.label(of:)) ?? "a task that is gone") {
                     Task { await workspace.unfollow(session: row.session, topic: row.topic) }
                 }
@@ -84,10 +84,10 @@ private struct FollowRow: View {
                     .padding(.horizontal, 8).frame(height: 24).background(Theme.chip, in: Capsule())
             }
             .buttonStyle(.plain).tip("Open the task that follows it")
-            Button(action: unfollow) { NucleoIcon("xmark", size: 13).foregroundStyle(.secondary).frame(width: 28, height: 28) }
+            Button(action: unfollow) { NucleoIcon("xmark", size: 11).foregroundStyle(.secondary).frame(width: 28, height: 28) }
                 .buttonStyle(Hovering(radius: 7)).tip("Unfollow").opacity(hovered ? 1 : 0)
         }
-        .padding(.leading, 18).padding(.trailing, 10).padding(.vertical, 11)
+        .padding(.leading, 18).padding(.trailing, 10).padding(.vertical, 12)
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture(count: 2) { if let url { NSWorkspace.shared.open(url) } }

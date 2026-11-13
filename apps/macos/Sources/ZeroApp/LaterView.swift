@@ -37,14 +37,15 @@ struct LaterPage: View {
                             } label: {
                                 HStack(spacing: 6) {
                                     Text("Suggested by agents · \(suggested.count)")
-                                    NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(suggestionsOpen ? 180 : 0))
+                                    NucleoIcon("chevron-down", size: 10).rotationEffect(.degrees(suggestionsOpen ? 0 : -90))
                                     Spacer(minLength: 0)
                                 }
-                                .font(.system(size: 12)).foregroundStyle(.secondary)
-                                .padding(.horizontal, 10).frame(height: 28).contentShape(Rectangle())
+                                // SidebarHeading's type and gaps.
+                                .font(.system(size: 13)).foregroundStyle(.secondary)
+                                .padding(.horizontal, 10).padding(.top, 18).padding(.bottom, 6).contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain).padding(.top, 10)
-                            .tip("Saved without you asking. Keep the ones you want; the rest go a week after they were saved.")
+                            .buttonStyle(.plain)
+                            .tip("Saved without you asking; keep the ones you want, the rest go a week after they were saved")
                             if suggestionsOpen { ForEach(suggested) { item in row(item) } }
                         }
                     }
@@ -58,15 +59,12 @@ struct LaterPage: View {
                 if let shown {
                     LaterDetail(workspace: workspace, navigation: navigation, id: shown).id(shown)
                 } else {
-                    ContentUnavailableView {
-                        NucleoLabel(workspace.later.isEmpty ? "Nothing saved for later" : "Nothing open", icon: "bookmark", size: 20)
-                    } description: {
-                        Text(
-                            "Save a task for later (right-click it in the sidebar): it leaves the sidebar, paused, until you resume it here. Agents save notes here too, each with everything behind it, in full."
-                        )
-                    } actions: {
-                        Button("Write one") { writing = true }
-                    }
+                    EmptyState(
+                        title: workspace.later.isEmpty ? "Nothing saved for later" : "Nothing open",
+                        detail:
+                            "Save a task for later (right-click it in the sidebar): it leaves the sidebar, paused, until you resume it here. Agents save notes here too, each with everything behind it, in full.",
+                        icon: "bookmark", action: ("Write one…", { writing = true })
+                    )
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.card)
@@ -118,12 +116,13 @@ private struct LaterRow: View {
     let item: ZerodLink.LaterItem
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(item.note).font(.system(size: 13, weight: .medium)).lineLimit(2).strikethrough(item.done, color: .secondary)
+            Text(item.note).font(.system(size: 13, weight: .medium)).lineLimit(1).strikethrough(item.done, color: .secondary)
             Text([item.task, item.createdAt.formatted(.relative(presentation: .named))].compactMap { $0 }.joined(separator: " · "))
                 .font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
         }
         .opacity(item.done ? 0.55 : 1)
-        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 7)
+        // Fixed, as Loops' two-line rows: the note in full is on its page.
+        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).frame(height: 42)
     }
 }
 
@@ -148,13 +147,13 @@ private struct LaterDetail: View {
                                 Button {
                                     navigation.place = .task(from)
                                 } label: {
-                                    Text(task).fontWeight(.medium).underline(pattern: .dash)
+                                    TaskDetails.linked(task)
                                 }
                                 .buttonStyle(.plain).tip("Open the task it came from")
                                 Text("·")
                             }
                             Text(item.createdAt.formatted(.relative(presentation: .named)))
-                            if item.done { StatePill(text: "Done", color: .green) }
+                            if item.done { StatePill(text: "Done", color: Theme.doneInk) }
                             if item.suggested == true && !item.done { StatePill(text: "Suggested", color: .secondary) }
                             if item.resume != nil && !item.done { StatePill(text: "Task", color: .secondary) }
                         }
@@ -172,7 +171,7 @@ private struct LaterDetail: View {
                                 Button {
                                     NSWorkspace.shared.open(URL(fileURLWithPath: file))
                                 } label: {
-                                    Text((file as NSString).lastPathComponent).fontWeight(.medium).underline(pattern: .dash)
+                                    TaskDetails.linked((file as NSString).lastPathComponent)
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -186,11 +185,11 @@ private struct LaterDetail: View {
                         Text("No artifact: the note is all there is.").font(.system(size: 13)).foregroundStyle(.tertiary)
                     }
                 }
-                .padding(.horizontal, 32).padding(.vertical, 28)
-                .frame(maxWidth: 760, alignment: .leading)
-                .frame(maxWidth: .infinity)
+                .padding(.vertical, 28)
+                .centredColumn(760)
             } else if missing {
-                ContentUnavailableView("Nothing saved as \(id)", systemImage: "", description: Text("It may have been deleted."))
+                EmptyState(title: "Nothing saved as \(id)", detail: "It may have been deleted.").frame(maxWidth: .infinity).padding(
+                    .top, 40)
             }
         }
         .thinScrollbar(remember: "later." + id)
@@ -208,18 +207,16 @@ private struct LaterDetail: View {
     }
 
     @ViewBuilder private func actions(_ item: ZerodLink.LaterItem) -> some View {
+        let copyAll = { copy(item.note + (item.artifact.map { "\n\n" + $0 } ?? "")) }
         // A task saved whole: picked up where it was, its conversation and all, not started over from a note.
         if item.resume != nil && !item.done {
             HStack(spacing: 8) {
-                Button {
+                RowButton(title: "Resume task") {
                     Task { if let session = await workspace.resumeLater(item.id) { navigation.place = .task(session) } }
-                } label: {
-                    NucleoLabel("Resume task", icon: "media-play:glyph", size: 13)
                 }
-                .buttonStyle(.borderedProminent)
-                Button("Copy") { copy(item.note + (item.artifact.map { "\n\n" + $0 } ?? "")) }
+                GhostButton(title: "Copy", icon: "copy", action: copyAll)
                 Spacer()
-                Button("Delete", role: .destructive) {
+                GhostButton(title: "Delete", icon: "trash") {
                     Task {
                         await workspace.deleteLater(item.id); navigation.place = .later
                     }
@@ -298,8 +295,8 @@ struct StatePill: View {
     let text: String
     let color: Color
     var body: some View {
-        Text(text).font(.system(size: 11, weight: .medium)).foregroundStyle(color)
-            .padding(.horizontal, 7).padding(.vertical, 2).background(color.opacity(0.12), in: Capsule())
+        Text(text).font(.system(size: 11.5, weight: .medium)).foregroundStyle(color)
+            .padding(.horizontal, 8).padding(.vertical, 3).background(color.opacity(0.12), in: Capsule())
     }
 }
 
@@ -311,15 +308,17 @@ private struct LaterWriter: View {
     @State private var artifact = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             DialogTitle(text: "Write one")
             TextField("What's to be done, in a sentence", text: $note, axis: .vertical).textFieldStyle(.dialog).lineLimit(1...3)
-            TextEditor(text: $artifact).font(.system(size: 13)).scrollContentBackground(.hidden).padding(6).frame(minHeight: 160)
+                .firstField()
+            MarkdownEditor(text: $artifact, scrollTo: .constant(nil), sectionLink: { _ in nil }, padLink: ("", ""), sections: [])
+                .padding(.horizontal, 10).frame(minHeight: 160)
                 .overlay(alignment: .topLeading) {
                     if artifact.isEmpty {
-                        Text("Anything behind it, in Markdown (optional)").font(.system(size: 13)).foregroundStyle(.tertiary).padding(
-                            .leading, 11
-                        ).padding(.top, 6).allowsHitTesting(false)
+                        Text("Anything behind it, in Markdown (optional)").font(.system(size: 14)).foregroundStyle(.tertiary).padding(
+                            .leading, 10
+                        ).padding(.top, 8).allowsHitTesting(false)
                     }
                 }
                 .background(Theme.row, in: RoundedRectangle(cornerRadius: 8))

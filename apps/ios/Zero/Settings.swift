@@ -44,7 +44,7 @@ struct SettingsView: View {
                     title: "Icons",
                     value: NSDataAsset(name: "icons").map { String(decoding: $0.data, as: UTF8.self) } == "Nucleo"
                         ? "Nucleo" : "Lucide (open-source build)",
-                    icon: "image-glyph")
+                    icon: "image-outline")
                 // Last, under the version: in a group of its own it had a heading's gap above it and nothing to head.
                 PageAction(title: "Unpair this phone", icon: "link-slash-outline", destructive: true) { unpairing = true }
                     // On the row: iOS points its confirmation at the view it's attached to (on the page, it
@@ -64,7 +64,7 @@ struct SettingsView: View {
         switch model.status {
         case .connected: "Connected"
         case .connecting: "Connecting…"
-        case .offline: "Can't reach it"
+        case .offline: "Can't reach \(model.pairing?.name ?? "your Mac")"
         case .unpaired: "Not paired"
         }
     }

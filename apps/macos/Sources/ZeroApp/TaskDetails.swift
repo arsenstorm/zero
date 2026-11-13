@@ -38,7 +38,7 @@ struct TaskDetails: View {
             .background(docked ? Theme.composer : Theme.card, in: RoundedRectangle(cornerRadius: docked ? 0 : Self.radius))
             .overlay { if !docked { RoundedRectangle(cornerRadius: Self.radius).strokeBorder(Theme.stroke) } }
             .compositingGroup()
-            .shadow(color: .black.opacity(docked ? 0 : 0.04), radius: 10, y: 2)
+            .floatingShadow(!docked)
             .coordinateSpace(name: "details")
             .overlay(alignment: .topLeading) {
                 if peek, let row {
@@ -155,6 +155,7 @@ struct TaskDetails: View {
                     Self.linked(open ? "Back to Zero" : "Continue in \(TerminalApp.shared.name)")
                 }
                 .buttonStyle(.plain).disabled(!open && conversation.thread == nil)
+                .tip(!open && conversation.thread == nil ? "Its CLI hasn't started a session to resume yet" : "")
             }
             property("Uses") { uses }
             if let branch = conversation.branch {
@@ -330,6 +331,8 @@ struct TaskDetails: View {
             .overlay(alignment: .bottom) {
                 Rule().stroke(.secondary.opacity(0.55), style: StrokeStyle(lineWidth: 1, dash: [2, 2])).frame(height: 1).offset(y: -1.5)
             }
+            // The hand, as a link in text has.
+            .pointerStyle(.link)
     }
 
     /// A followed thing: its title, opened on a click; unfollowed from the × on hover.

@@ -9,17 +9,6 @@ struct DiffLine: Equatable {
     let new: Int?
     let text: String
 
-    static let green = Color(
-        nsColor: NSColor(name: nil) {
-            $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(red: 0.42, green: 0.85, blue: 0.52, alpha: 1) : NSColor(red: 0.10, green: 0.55, blue: 0.24, alpha: 1)
-        })
-    static let red = Color(
-        nsColor: NSColor(name: nil) {
-            $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(red: 1.0, green: 0.48, blue: 0.45, alpha: 1) : NSColor(red: 0.78, green: 0.16, blue: 0.16, alpha: 1)
-        })
-
     /// A unified diff's lines, numbered from its hunk headers; a new file's text (with or without "+"s) all added.
     static func parse(_ diff: String, added: Bool) -> [DiffLine] {
         var lines = diff.components(separatedBy: "\n")
@@ -86,14 +75,14 @@ struct DiffText: View {
     @ViewBuilder private func row(_ line: DiffLine, gutter: CGFloat) -> some View {
         if line.kind == .hunk {
             HStack(spacing: 8) {
-                Text("⋯").frame(width: gutter * 2, alignment: .center)
+                NucleoIcon("dots", size: 11).frame(width: gutter * 2, alignment: .center)
                 Text(line.text).lineLimit(1)
             }
             .font(.system(size: 11, design: .monospaced)).foregroundStyle(.tertiary)
             .padding(.vertical, 3).frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.03))
+            .background(Theme.tint)
         } else {
-            let tint: Color? = line.kind == .added ? DiffLine.green : line.kind == .removed ? DiffLine.red : nil
+            let tint: Color? = line.kind == .added ? Theme.done : line.kind == .removed ? Theme.removed : nil
             HStack(spacing: 0) {
                 Text(line.old.map(String.init) ?? "").frame(width: gutter, alignment: .trailing)
                 Text(line.new.map(String.init) ?? "").frame(width: gutter, alignment: .trailing)

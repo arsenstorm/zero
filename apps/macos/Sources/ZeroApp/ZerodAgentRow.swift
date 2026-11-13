@@ -10,7 +10,7 @@ struct ZerodAgentRow: View {
     var body: some View {
         SettingRow(title: "Start Zero's daemon at login", detail: detail) {
             switch state {
-            case .on: StatePill(text: "On", color: .green)
+            case .on: StatePill(text: "On", color: Theme.done)
             case .off: RowButton(title: "Login Items") { ZerodAgent.openLoginItems() }
             case .unavailable: StatePill(text: "Not in this build", color: .secondary)
             }

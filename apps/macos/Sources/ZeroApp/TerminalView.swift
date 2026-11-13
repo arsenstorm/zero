@@ -19,6 +19,7 @@ struct TerminalView: NSViewRepresentable {
         let text = NSTextView()
         text.isEditable = false
         text.isSelectable = true
+        text.selectedTextAttributes = [.backgroundColor: Theme.selection]
         text.drawsBackground = false
         text.textContainerInset = .zero
         text.textContainer?.lineFragmentPadding = 0
@@ -40,8 +41,9 @@ struct TerminalView: NSViewRepresentable {
         if text.string == "$ " + said { return }
         let mono = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         let bold = NSFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
-        // The input line: an accent-coloured prompt and a semibold command; the output follows in regular weight.
-        let transcript = NSMutableAttributedString(string: "$ ", attributes: [.font: bold, .foregroundColor: NSColor.controlAccentColor])
+        // The input line: a quiet prompt, as the conversation's command pane has, and a semibold command; the output
+        // follows in regular weight.
+        let transcript = NSMutableAttributedString(string: "$ ", attributes: [.font: bold, .foregroundColor: NSColor.tertiaryLabelColor])
         transcript.append(NSAttributedString(string: command + "\n", attributes: [.font: bold, .foregroundColor: NSColor.labelColor]))
         transcript.append(NSAttributedString(string: output, attributes: [.font: mono, .foregroundColor: NSColor.labelColor]))
         text.textStorage?.setAttributedString(transcript)

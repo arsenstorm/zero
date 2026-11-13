@@ -24,6 +24,7 @@ struct ConversationView: View {
         return playback
     }()
     @State private var shape = TurnShape()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The lifted group's height as laid out, and what it keeps as its least (a turn's live row gone, see below).
     @State private var height: CGFloat = 0
     @State private var held: CGFloat = 0
@@ -138,7 +139,8 @@ struct ConversationView: View {
         Task {
             // Once an opened turn has laid out its steps.
             try? await Task.sleep(for: .milliseconds(50))
-            withAnimation(.easeOut(duration: 0.3)) { proxy.scrollTo(item, anchor: .center) }
+            // A jump under Reduce Motion; the wash still fades.
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.3)) { proxy.scrollTo(item, anchor: .center) }
             washed = item
             try? await Task.sleep(for: .seconds(1.6))
             if washed == item { withAnimation(.easeOut(duration: 0.6)) { washed = nil } }
@@ -237,7 +239,7 @@ extension EnvironmentValues {
 extension View {
     /// A message an About link went to: a soft wash behind it, fading.
     func washed(_ on: Bool) -> some View {
-        background(Color.accentColor.opacity(on ? 0.12 : 0), in: RoundedRectangle(cornerRadius: 12).inset(by: -6))
+        background(Theme.knob.opacity(on ? 0.12 : 0), in: RoundedRectangle(cornerRadius: 12).inset(by: -6))
     }
 }
 
@@ -270,13 +272,7 @@ struct TaskInbox: View {
             Group {
                 if waiting == 0 {
                     // Nothing to answer: said in a few words in the middle, in a sheet only as tall as that.
-                    VStack(spacing: 10) {
-                        Image("inbox-glyph").resizable().frame(width: 28, height: 28).foregroundStyle(.secondary)
-                        Text("Nothing waiting on you").font(.headline)
-                        Text("This task's questions and approvals come here.").font(.subheadline).foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity).padding(.horizontal, 24)
+                    EmptyPage(icon: "inbox-glyph", title: "Nothing waiting on you", line: "This task's questions and approvals come here.")
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
@@ -377,14 +373,14 @@ struct Answer: View {
                         try? await Task.sleep(for: .seconds(1.5)); copied = false
                     }
                 } label: {
-                    Image(copied ? "circle-check-glyph" : "copy-outline").resizable().frame(width: 16, height: 16)
+                    Image(copied ? "circle-check-outline" : "copy-outline").resizable().frame(width: 16, height: 16)
                         .foregroundStyle(.secondary).contentShape(Rectangle().inset(by: -10))
                 }
                 .accessibilityLabel("Copy")
                 Menu {
                     CopyActions(text: text, select: { selecting = true })
                 } label: {
-                    Image("dots-glyph").resizable().frame(width: 16, height: 16).foregroundStyle(.secondary)
+                    Image("dots-outline").resizable().frame(width: 16, height: 16).foregroundStyle(.secondary)
                         .contentShape(Rectangle().inset(by: -10))
                 }
                 .accessibilityLabel("More")
@@ -635,9 +631,10 @@ struct UserMessage: View {
                 VStack(alignment: .trailing, spacing: 6) {
                     if !tiles.isEmpty { MessageImages(tiles: tiles) }
                     if !words.isEmpty {
-                        Text(words).padding(.horizontal, 12).padding(.vertical, 8)
+                        // Solid, as the Mac's: Zero's ink, the words in the opposite.
+                        Text(words).foregroundStyle(Theme.onKnob).padding(.horizontal, 12).padding(.vertical, 8)
+                            .background(Theme.knob, in: RoundedRectangle(cornerRadius: 18))
                             .contextMenu { CopyActions(text: words) }
-                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
                     }
                     // When it was sent, always, by the bubble's edge (its copy is a long press away).
                     if let date = item.date {
@@ -751,8 +748,9 @@ struct WorkBlock: View {
         let rule = rule()
         VStack(alignment: .leading, spacing: Self.spacing) {
             // Its heading holds its place from the turn's start to its end.
+            // Opening and folding are instant, as everywhere in Zero.
             Button {
-                withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
+                expanded.toggle()
             } label: {
                 HStack(spacing: 6) {
                     if speaking {
@@ -843,18 +841,18 @@ struct WorkBlock: View {
         .padding(.bottom, live ? 0 : lead(steps: items) - (answered ? Self.headed : 0))
         // A message after it: it folds.
         .onChange(of: followed) { _, now in
-            if now, !live, expanded { withAnimation(.easeOut(duration: 0.2)) { expanded = false } }
+            if now, !live, expanded { expanded = false }
         }
         // Its words still the last thing a moment and a half after they started (an answer, not a message between
         // steps, which a step follows at once): its messages fold away and the answer reads on from the heading.
         .task(id: streamingWords == nil ? nil : items.last?.id) {
             guard live, streamingWords != nil else {
-                if live, answering { withAnimation(.easeOut(duration: 0.2)) { answering = false } }
+                if live, answering { answering = false }
                 return
             }
             try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled, live, streamingWords != nil, playback?.held != true else { return }
-            if !answering { withAnimation(.easeOut(duration: 0.2)) { answering = true } }
+            if !answering { answering = true }
         }
         .onReceive(NotificationCenter.default.publisher(for: Self.unfold)) { note in
             if let item = note.object as? String, items.contains(where: { $0.id == item }) { expanded = true }
@@ -922,7 +920,7 @@ struct StepView: View {
                         }
                         if open, !output.isEmpty {
                             ScrollView(.horizontal) { Text(output).padding(10) }
-                                .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                                .background(Theme.code, in: RoundedRectangle(cornerRadius: 10))
                         }
                     }
                     .font(.footnote.monospaced()).frame(maxWidth: .infinity, alignment: .leading)
@@ -1086,7 +1084,7 @@ struct MarkdownView: View {
             }
         case let .code(code):
             ScrollView(.horizontal) { Text(code).font(.footnote.monospaced()).revealed(reveal, start).padding(10) }
-                .background(.quaternary.opacity(reached), in: RoundedRectangle(cornerRadius: 10))
+                .background(Theme.code.opacity(reached), in: RoundedRectangle(cornerRadius: 10))
         case let .quote(text):
             inline(text).revealed(reveal, start).foregroundStyle(.secondary).padding(.leading, 10)
                 .overlay(alignment: .leading) { Rectangle().fill(.tertiary).frame(width: 3).opacity(reached) }
@@ -1197,7 +1195,7 @@ struct TableView: View {
                 .popover(isPresented: $showing) { Text(gaps).font(.footnote).padding().presentationCompactAdaptation(.popover) }
                 .disabled(gaps.isEmpty)
             case let .state(state): StatePill(state: state)
-            case .empty: MarkdownView.inline("–")
+            case .empty: MarkdownView.inline("–").foregroundStyle(.tertiary)
             case let .text(text): MarkdownView.inline(text)
             }
         }
@@ -1224,7 +1222,7 @@ struct RiskPill: View {
         let color: Color = level == "low" ? .green : level == "medium" ? .orange : .red
         HStack(spacing: 5) {
             Circle().fill(color).frame(width: 7, height: 7)
-            Text(level.capitalized).font(.caption.weight(.medium)).foregroundStyle(color)
+            Text(level.capitalized).font(.caption.weight(.medium)).foregroundStyle(level == "low" ? Theme.done : color)
         }
         .padding(.horizontal, 8).padding(.vertical, 3)
         .background(color.opacity(0.12), in: Capsule())
@@ -1260,13 +1258,29 @@ struct AskCard: View {
         }
     }
 
-    /// The question itself, as the Mac's card has it: a question's words (its --title is the agent's context), an
-    /// approval's request.
+    /// The question itself, as the Mac's card has it (CardView's headline): a question's words (its --title is the
+    /// agent's context), an approval's request as a question, a run's where it stands.
     private var headline: String {
         switch ask.kind {
-        case .run: ask.state == .waiting ? "Allow this command?" : ask.title
+        case .run:
+            switch ask.state {
+            case .running: "Running command…"
+            case .answered where ask.lost: "Lost track of the command"
+            case .answered: (ask.exitCode ?? 0) == 0 ? "Ran command" : "Command failed (exit \(ask.exitCode ?? 0))"
+            case .declined: "Command rejected"
+            default: "Allow this command?"
+            }
+        case .approve, .permission: ask.title.hasSuffix("?") ? ask.title : ask.title + "?"
         case .question, .choice: ask.body.isEmpty ? ask.title : ask.body
         default: ask.title
+        }
+    }
+
+    private var kindIcon: String {
+        switch ask.kind {
+        case .approve, .permission: "shield-outline"
+        case .run: "terminal-outline"
+        default: manual ? "terminal-outline" : "circle-question-glyph"
         }
     }
 
@@ -1284,8 +1298,7 @@ struct AskCard: View {
         VStack(alignment: .leading, spacing: 10) {
             if !inRow {
                 HStack(spacing: 5) {
-                    Image(ask.kind == .run || manual ? "terminal-outline" : "circle-question-glyph").resizable().frame(
-                        width: 13, height: 13)
+                    Image(kindIcon).resizable().frame(width: 13, height: 13)
                     Text(kindName)
                     Text("·")
                     Text(ask.agent.label ?? ask.agent.name).lineLimit(1)
@@ -1300,14 +1313,14 @@ struct AskCard: View {
                 MarkdownView(text: supporting).font(.subheadline).foregroundStyle(.secondary)
                     .lineLimit(inRow && !expanded ? 3 : nil)
                     .contentShape(Rectangle())
-                    .onTapGesture { if inRow { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } } }
+                    .onTapGesture { if inRow { expanded.toggle() } }
             }
             if let command = ask.command {
                 // What runs is what's read: the command, the script it runs, and what it printed.
                 let shown = [(ask.kind == .run ? "$ " : "") + command, ask.script, ask.output.isEmpty ? nil : ask.output].compactMap { $0 }
                     .joined(separator: "\n")
                 ScrollView(.horizontal) { Text(shown).font(.footnote.monospaced()).textSelection(.enabled).padding(10) }
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                    .background(Theme.code, in: RoundedRectangle(cornerRadius: 10))
                     .overlay(alignment: .topTrailing) {
                         Button {
                             UIPasteboard.general.string = [command, ask.script].compactMap { $0 }.joined(separator: "\n")
@@ -1319,7 +1332,7 @@ struct AskCard: View {
                     }
                 if manual, let typed = ask.options.firstIndex(where: Ask.expectsText) {
                     // What it printed, from the clipboard into the reply, ready to send.
-                    Button("Paste its output") {
+                    Button("Paste output") {
                         words = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""; typing = typed
                     }
                     .font(.footnote.weight(.medium))
@@ -1340,18 +1353,21 @@ struct AskCard: View {
                         }
                     }
                 }
-                .background(rowFill, in: RoundedRectangle(cornerRadius: 12))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .background(rowFill, in: RoundedRectangle(cornerRadius: 10))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
             } else if ask.state == .waiting {
-                ReplyBox(placeholder: "Reply…", words: $words, fill: rowFill) { text in await model.reply(ask, text: text) }
+                ReplyBox(placeholder: "Reply to \(ask.agent.label ?? ask.agent.name)…", words: $words, fill: rowFill) { text in
+                    await model.reply(ask, text: text)
+                }
             } else if let answer = ask.answer, ask.kind != .run {
                 answeredRow(answer)
             }
             if ask.state == .running {
                 Text("Running…").font(.footnote).foregroundStyle(.secondary)
             } else if ask.lost {
-                Text("Lost: Zero can't tell whether it finished. Check what it did before running it again.").font(.footnote)
-                    .foregroundStyle(.orange)
+                Text("Lost: check what it did before running it again").font(.footnote).foregroundStyle(.orange)
+            } else if ask.state == .expired {
+                Text("Expired").font(.footnote).foregroundStyle(.secondary)
             }
         }
         .padding(flat ? 0 : 14)
@@ -1359,9 +1375,9 @@ struct AskCard: View {
         // Whether the task is done: the whole card in the done question's shades, a question still.
         .background(
             ask.doneCheck == true ? AnyShapeStyle(DoneShades.surface) : flat ? AnyShapeStyle(.clear) : AnyShapeStyle(.background.secondary),
-            in: RoundedRectangle(cornerRadius: 16)
+            in: RoundedRectangle(cornerRadius: Theme.cardRadius)
         )
-        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(flat ? AnyShapeStyle(.clear) : AnyShapeStyle(.quaternary)))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(flat ? AnyShapeStyle(.clear) : AnyShapeStyle(.quaternary)))
     }
 
     /// What it's about, quietly under the question, as the Mac's: "About" and the message's title in one grey, the title
@@ -1413,18 +1429,15 @@ struct AskCard: View {
     /// A reply to an ask without options, once sent: as a chosen option.
     private func answeredRow(_ answer: String) -> some View {
         choiceRow(answer, muted: false, chosen: true)
-            .contentShape(RoundedRectangle(cornerRadius: 12))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
             .onTapGesture { if ask.delivery == .failed { Task { await model.deliver(ask) } } }
     }
 
     /// `grouped`: a row of the options' group, which has the fill: only a chosen one colours its own.
+    /// The option's words as the agent wrote them, "(Recommended)" and all, as the Mac shows them.
     private func choiceRow(_ text: String, muted: Bool, chosen: Bool, grouped: Bool = false) -> some View {
-        // An agent's "(Recommended)" as a tag after the words, not part of them.
-        let mark = " (Recommended)"
-        let recommended = text.hasSuffix(mark)
-        let words = recommended ? String(text.dropLast(mark.count)) : text
-        return HStack(alignment: .center, spacing: 8) {
-            (Text(words) + (recommended ? Text("  Recommended").font(.caption.weight(.semibold)).foregroundStyle(.blue) : Text("")))
+        HStack(alignment: .center, spacing: 8) {
+            Text(text)
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(
                     muted ? (ask.doneCheck == true ? AnyShapeStyle(DoneShades.muted) : AnyShapeStyle(.secondary)) : AnyShapeStyle(.primary)
@@ -1435,23 +1448,31 @@ struct AskCard: View {
         // Room above and below: an option of two lines sat against the group's edge.
         .padding(.vertical, 11)
         .padding(.leading, 14).padding(.trailing, chosen ? 8 : 14).frame(minHeight: 44)
-        .background(chosen ? chosenFill : grouped ? .clear : rowFill, in: RoundedRectangle(cornerRadius: grouped ? 0 : 12))
+        .background(chosen ? chosenFill : grouped ? .clear : rowFill, in: RoundedRectangle(cornerRadius: grouped ? 0 : 10))
     }
 
-    /// At the chosen row's end: a moment to take it back, then on its way, and not delivered, again.
+    /// At the chosen row's end, the Mac's three: an orange spinner on its way (a moment to take it back first), a green
+    /// tick delivered, a red cross not (a tap tries again, which the phone has no tooltip to say, so it's said).
     @ViewBuilder private var standing: some View {
-        if ask.state == .pending {
-            Button("Take back") { Task { await model.takeBack(ask) } }
-                .font(.footnote.weight(.semibold)).foregroundStyle(.primary)
-                .padding(.horizontal, 10).frame(height: 30).background(.background.opacity(0.6), in: Capsule())
-        } else if ask.delivery == .sending {
-            ProgressView().controlSize(.small).frame(width: 30, height: 30)
-        } else if ask.delivery == .failed {
-            Text("Not delivered · Try again").font(.footnote.weight(.medium)).foregroundStyle(.red)
+        HStack(spacing: 8) {
+            if ask.state == .pending {
+                Button("Take back") { Task { await model.takeBack(ask) } }
+                    .font(.footnote.weight(.semibold)).foregroundStyle(.primary)
+                    .padding(.horizontal, 10).frame(height: 30).background(.background.opacity(0.6), in: Capsule())
+            }
+            if ask.delivery == .failed {
+                Text("Try again").font(.footnote.weight(.medium)).foregroundStyle(.red)
+                Image("xmark-outline").resizable().frame(width: 13, height: 13).foregroundStyle(.red)
+            } else if ask.state.isFinal && ask.delivery != .sending {
+                Image("check-outline").resizable().frame(width: 13, height: 13).foregroundStyle(.green)
+            } else {
+                Spinner(color: .orange).frame(width: 12, height: 12)
+            }
         }
+        .frame(height: 30)
     }
 
-    private var rowFill: Color { ask.doneCheck == true ? DoneShades.row : Color.primary.opacity(0.08) }
+    private var rowFill: Color { ask.doneCheck == true ? DoneShades.row : Theme.choice }
 
     /// The Mac's chosen rows: apricot until it's landed, mint once it has, rose when it didn't.
     private var chosenFill: Color {
@@ -1460,7 +1481,8 @@ struct AskCard: View {
     }
 }
 
-/// The provider asking (Claude Code's or Codex's own question): each field's options, or words.
+/// The provider asking (Claude Code's or Codex's own question): each field's options as pills, solid once picked, or
+/// words, as the Mac's question card.
 struct QuestionCard: View {
     let model: PhoneModel
     let session: String
@@ -1469,47 +1491,47 @@ struct QuestionCard: View {
     @State private var words: [String: String] = [:]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Question", image: "circle-question-glyph").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            Label(
+                question.fields.count == 1 ? (question.fields.first?.header ?? "Question") : "Questions", image: "circle-question-glyph"
+            )
+            .font(.footnote.weight(.medium)).foregroundStyle(.secondary)
             ForEach(question.fields) { field in
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(field.question).font(.subheadline.weight(.semibold))
-                    ForEach(field.options, id: \.label) { option in
-                        let on = picked[field.id]?.contains(option.label) == true
-                        Button {
-                            if field.multiple {
-                                picked[field.id, default: []].toggle(option.label)
-                            } else {
-                                picked[field.id] = [option.label]
-                            }
-                        } label: {
-                            HStack {
-                                Image(on ? "circle-check-glyph" : "shape-circle-outline").resizable().frame(width: 18, height: 18)
-                                VStack(alignment: .leading) {
-                                    Text(option.label)
-                                    if let detail = option.description { Text(detail).font(.caption).foregroundStyle(.secondary) }
+                    Text(field.question).font(.body.weight(.semibold))
+                    WrappingStack(spacing: 6) {
+                        ForEach(field.options, id: \.label) { option in
+                            let on = picked[field.id]?.contains(option.label) == true
+                            Button(option.label) {
+                                if field.multiple {
+                                    picked[field.id, default: []].toggle(option.label)
+                                } else {
+                                    picked[field.id] = on ? [] : [option.label]
                                 }
-                                Spacer()
                             }
+                            .buttonStyle(ChoiceChip(on: on))
                         }
-                        .buttonStyle(.plain)
                     }
-                    if field.other || field.options.isEmpty {
-                        if field.secret {
-                            SecureField("Your answer", text: binding(field.id)).textFieldStyle(.roundedBorder)
-                        } else {
-                            TextField("Your answer", text: binding(field.id), axis: .vertical).textFieldStyle(.roundedBorder)
-                        }
+                    // What a picked option means (the Mac's tip on it; the phone has no pointer to hover with).
+                    ForEach(field.options.filter { picked[field.id]?.contains($0.label) == true && $0.description != nil }, id: \.label) {
+                        Text($0.description ?? "").font(.footnote).foregroundStyle(.secondary)
+                    }
+                    if field.secret {
+                        SecureField("Secret", text: binding(field.id)).modifier(AnswerField())
+                    } else if field.other || field.options.isEmpty {
+                        TextField(field.options.isEmpty ? "Your answer" : "Or say something else", text: binding(field.id), axis: .vertical)
+                            .modifier(AnswerField())
                     }
                 }
             }
-            Button("Send") { Task { await model.answer(session: session, question: question.id, answers: answers) } }
-                .buttonStyle(.borderedProminent)
-                .disabled(question.fields.contains { (answers[$0.id] ?? []).isEmpty })
+            WideButton(title: "Answer", prominent: true) {
+                Task { await model.answer(session: session, question: question.id, answers: answers) }
+            }
+            .disabled(question.fields.contains { (answers[$0.id] ?? []).isEmpty })
+            .opacity(question.fields.contains { (answers[$0.id] ?? []).isEmpty } ? 0.4 : 1)
         }
         .padding(14)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
+        .zeroCard()
     }
 
     private var answers: [String: [String]] {
@@ -1519,9 +1541,32 @@ struct QuestionCard: View {
     }
 
     private func binding(_ id: String) -> Binding<String> { Binding(get: { words[id] ?? "" }, set: { words[id] = $0 }) }
+
+    /// An option: a pill, solid once picked.
+    private struct ChoiceChip: ButtonStyle {
+        let on: Bool
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label.font(.subheadline.weight(.medium))
+                .foregroundStyle(on ? AnyShapeStyle(Theme.onKnob) : AnyShapeStyle(.primary))
+                .padding(.horizontal, 14).frame(minHeight: 36)
+                .background(on ? AnyShapeStyle(Theme.knob) : AnyShapeStyle(.background), in: Capsule())
+                .overlay(Capsule().strokeBorder(on ? AnyShapeStyle(.clear) : AnyShapeStyle(.quaternary)))
+                .opacity(configuration.isPressed ? 0.8 : 1)
+        }
+    }
+
+    /// The free answer's field: a plain field on the page's surface, a hairline round it.
+    private struct AnswerField: ViewModifier {
+        func body(content: Content) -> some View {
+            content.textFieldStyle(.plain).padding(.horizontal, 12).padding(.vertical, 10)
+                .background(.background, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
+        }
+    }
 }
 
-/// The provider asking to run a command or change files: its choices as buttons.
+/// The provider asking to run a command or change files: its choices as the ask card's options, one group with a line
+/// between each.
 struct ApprovalCard: View {
     let model: PhoneModel
     let session: String
@@ -1537,37 +1582,48 @@ struct ApprovalCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Approval", image: "shield-outline").font(.caption.weight(.medium)).foregroundStyle(.secondary)
-            Text(question).font(.subheadline.weight(.semibold))
-            if let reason = approval.reason { Text(reason).font(.footnote).foregroundStyle(.secondary).lineLimit(2) }
+            Label("Approval", image: "shield-outline").font(.footnote.weight(.medium)).foregroundStyle(.secondary)
+            Text(question).font(.body.weight(.semibold))
+            if let reason = approval.reason { Text(reason).font(.subheadline).foregroundStyle(.secondary).lineLimit(2) }
             if let command = approval.command {
                 let lines = command.split(separator: "\n", omittingEmptySubsequences: false).count
                 VStack(alignment: .leading, spacing: 6) {
-                    ScrollView(.horizontal) { Text("$ " + command).font(.footnote.monospaced()).lineLimit(commandOpen ? nil : 8) }
+                    ScrollView(.horizontal) { Text(command).font(.footnote.monospaced()).lineLimit(commandOpen ? nil : 8) }
                     if lines > 8 {
                         Button(commandOpen ? "Show less" : "Show all \(lines) lines") { commandOpen.toggle() }
                             .font(.caption.weight(.medium)).foregroundStyle(.secondary).buttonStyle(.plain)
                     }
                 }
-                .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                .padding(10).padding(.trailing, 22).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.code, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(alignment: .topTrailing) {
+                    Button {
+                        UIPasteboard.general.string = command
+                    } label: {
+                        Image("copy-outline").resizable().frame(width: 14, height: 14).foregroundStyle(.secondary).frame(
+                            width: 32, height: 32)
+                    }
+                    .accessibilityLabel("Copy the command")
+                }
             }
             ForEach(approval.changes, id: \.path) { change in Text(change.path).font(.footnote.monospaced()).foregroundStyle(.secondary) }
-            ForEach(approval.choices) { choice in
-                Button {
-                    Task { await model.decide(session: session, approval: approval.id, choice: choice.id) }
-                } label: {
-                    Text(choice.label).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.vertical, 9)
-                        .background(
-                            choice.kind == .deny || choice.kind == .stop ? Color.red.opacity(0.12) : Color.secondary.opacity(0.12),
-                            in: RoundedRectangle(cornerRadius: 10))
+            VStack(spacing: 0) {
+                ForEach(Array(approval.choices.enumerated()), id: \.element.id) { index, choice in
+                    if index > 0 { Divider().padding(.leading, 14) }
+                    Button {
+                        Task { await model.decide(session: session, approval: approval.id, choice: choice.id) }
+                    } label: {
+                        Text(choice.label).font(.subheadline.weight(.medium))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 11).padding(.horizontal, 14).frame(minHeight: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
+            .background(Theme.choice, in: RoundedRectangle(cornerRadius: 10))
         }
         .padding(14)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
+        .zeroCard()
     }
 }
 
@@ -1626,15 +1682,15 @@ private extension Array where Element == String {
     }
 }
 
-/// A step's state, as the Mac shows it: a spinner while it runs, a green tick done, a red cross failed, declined in
-/// orange; one size whatever the state, the first line's height.
+/// A step's state, as the Mac shows it: a spinner while it runs, a quiet tick done (done needs no colour, as Codex's
+/// steps), a red cross failed, declined in orange; one size whatever the state, the first line's height.
 struct StatusIcon: View {
     let status: ItemStatus
     var body: some View {
         Group {
             switch status {
             case .running: Spinner().frame(width: 12, height: 12)
-            case .done: Image("circle-check-glyph").resizable().frame(width: 14, height: 14).foregroundStyle(.green)
+            case .done: Image("check-outline").resizable().frame(width: 14, height: 14).foregroundStyle(.tertiary)
             case .failed: Image("circle-xmark-glyph").resizable().frame(width: 14, height: 14).foregroundStyle(.red)
             case .declined: Image("ban-outline").resizable().frame(width: 14, height: 14).foregroundStyle(.orange)
             }
@@ -1822,15 +1878,15 @@ private struct ReplyBox: View {
                 let text = words; words = ""; focused = false; Task { await send(text) }
             } label: {
                 Image("arrow-up-outline").resizable().frame(width: 14, height: 14)
-                    .foregroundStyle(Color(uiColor: .systemBackground))
-                    .frame(width: 30, height: 30).background(Color.primary.opacity(empty ? 0.25 : 1), in: Circle())
+                    .foregroundStyle(Theme.onKnob)
+                    .frame(width: 30, height: 30).background(Theme.knob.opacity(empty ? 0.25 : 1), in: Circle())
             }
             .disabled(empty)
             .padding(.bottom, 7)
             .accessibilityLabel("Send")
         }
         .padding(.leading, 14).padding(.trailing, 7).frame(minHeight: 44)
-        .background(fill, in: RoundedRectangle(cornerRadius: 12))
+        .background(fill, in: RoundedRectangle(cornerRadius: 10))
         // A moment after it's there: asked for in the same update, focus is dropped.
         .task {
             try? await Task.sleep(for: .milliseconds(50)); focused = true

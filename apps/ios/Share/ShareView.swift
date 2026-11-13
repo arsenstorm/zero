@@ -15,7 +15,9 @@ final class ShareViewController: UIViewController {
                     || $0.hasItemConformingToTypeIdentifier(UTType.movie.identifier)
             }
         let view = ShareView(providers: providers) { [weak self] in self?.extensionContext?.completeRequest(returningItems: nil) }
-        let host = UIHostingController(rootView: view)
+        let host = UIHostingController(rootView: view.tint(Theme.knob))
+        // Zero's ink for the caret and selection too, as the app's (its AccentColor), not the system blue.
+        host.view.tintColor = UIColor(Theme.knob)
         addChild(host)
         host.view.frame = self.view.bounds
         host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -86,26 +88,11 @@ struct ShareView: View {
     private var top: some View {
         HStack {
             Button(action: done) { glyph("xmark-outline") }
-                .buttonStyle(.plain).glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("Cancel")
+                .buttonStyle(.plain).glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("Close")
             Spacer(minLength: 12)
             Text(video != nil ? "1 video" : providers.count == 1 ? "1 image" : "\(providers.count) images").font(.headline)
             Spacer(minLength: 12)
-            Button {
-                Task { await send() }
-            } label: {
-                Group {
-                    if sending {
-                        Spinner().frame(width: 18, height: 18)
-                    } else {
-                        glyph("arrow-up-outline").foregroundStyle(picked != nil ? .white : .secondary)
-                    }
-                }
-                .frame(width: 44, height: 44)
-                .background { if picked != nil, !sending { Circle().fill(Color.accentColor) } }
-            }
-            .buttonStyle(.plain).glassEffect(.regular.interactive(), in: Circle())
-            .disabled(picked == nil || sending)
-            .accessibilityLabel("Send")
+            SendCircle(ready: picked != nil, sending: sending) { Task { await send() } }
         }
         .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 8)
     }
@@ -141,13 +128,13 @@ struct ShareView: View {
     /// New task's place pill: the folder, picked from Zero's own list.
     private var placePill: some View {
         Button {
-            withAnimation(.easeOut(duration: 0.15)) { choosingPlace.toggle() }
+            choosingPlace.toggle()
         } label: {
             HStack(spacing: 8) {
                 Image("folder-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(.blue)
-                Text(place.map { ($0 as NSString).lastPathComponent } ?? "Pick a folder").font(.body.weight(.medium)).lineLimit(1)
+                Text(place.map { ($0 as NSString).lastPathComponent } ?? "Folder").font(.body.weight(.medium)).lineLimit(1)
                 if place != nil {
-                    Image("circle-check-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(Color.accentColor)
+                    Image("circle-check-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(Theme.knob)
                 }
             }
             .padding(.horizontal, 16).frame(height: 44).contentShape(Capsule())
@@ -159,7 +146,7 @@ struct ShareView: View {
     private var places: some View {
         ChoiceList(rows: projects.map { (id: $0, title: ($0 as NSString).lastPathComponent) }, selected: place ?? "") {
             picked = "new:" + $0
-            withAnimation(.easeOut(duration: 0.15)) { choosingPlace = false }
+            choosingPlace = false
         }
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
     }
@@ -235,7 +222,7 @@ struct ShareView: View {
                 by: BoardRow.Sort(rawValue: sidebar["sort"] ?? "") ?? .state, order: sidebar["order"] ?? "")
             projects = (try? await link.call("projects")) as? [String] ?? []
         } catch {
-            problem = "Can't reach your Mac: Zero needs to be running there."
+            problem = "Can't reach \(Pairing.load()?.name ?? "your Mac"). Zero needs to be open there."
         }
     }
 
@@ -270,7 +257,10 @@ struct ShareView: View {
             if picked.hasPrefix("task:") {
                 try await link.send(session: String(picked.dropFirst(5)), text: words, images: paths)
             } else {
-                _ = try await link.start(provider: .claude, cwd: String(picked.dropFirst(4)), prompt: words, images: paths)
+                // With the agent New task last started one with, as the app would.
+                let provider =
+                    Keychain.read("newTaskProvider").flatMap { Provider(rawValue: String(decoding: $0, as: UTF8.self)) } ?? .claude
+                _ = try await link.start(provider: provider, cwd: String(picked.dropFirst(4)), prompt: words, images: paths)
             }
             done()
         } catch {

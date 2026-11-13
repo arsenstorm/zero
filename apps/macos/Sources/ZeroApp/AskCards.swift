@@ -89,7 +89,7 @@ struct AgentAskCard: View {
             Spacer(minLength: 8)
             Text(answered).foregroundStyle(.secondary).lineLimit(1)
         }
-        .font(.callout)
+        .font(.system(size: 12))
     }
 
     private var card: some View {
@@ -161,7 +161,7 @@ private struct PlainQuestionCard: View {
                         (try? AttributedString(markdown: field.question, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
                             ?? AttributedString(field.question)
                     )
-                    .font(.system(size: 13, weight: .medium)).lineSpacing(4).textSelection(.enabled)
+                    .font(.system(size: 13, weight: .medium)).lineSpacing(5).textSelection(.enabled).tint(Theme.link)
                     if !field.options.isEmpty {
                         WrappingStack(spacing: 6) {
                             ForEach(field.options, id: \.label) { option in
@@ -178,19 +178,22 @@ private struct PlainQuestionCard: View {
                         }
                     }
                     if field.secret {
-                        SecureField("Secret", text: Binding(get: { typed[field.id, default: ""] }, set: { typed[field.id] = $0 })).modifier(
-                            AnswerField())
+                        SecureField("Secret", text: Binding(get: { typed[field.id, default: ""] }, set: { typed[field.id] = $0 }))
+                            .textFieldStyle(.dialog)
                     } else if field.other || field.options.isEmpty {
                         TextField(
                             field.options.isEmpty ? "Your answer" : "Or say something else",
                             text: Binding(get: { typed[field.id, default: ""] }, set: { typed[field.id] = $0 })
                         )
-                        .modifier(AnswerField())
+                        .textFieldStyle(.dialog)
                     }
                 }
             }
-            Button("Answer") { send(Dictionary(uniqueKeysWithValues: question.fields.map { ($0.id, answer($0)) })) }
-                .buttonStyle(Prominent()).keyboardShortcut(.defaultAction).disabled(question.fields.contains { answer($0).isEmpty })
+            let unanswered = question.fields.contains { answer($0).isEmpty }
+            DialogButton(title: "Answer", kind: .primary, enabled: !unanswered) {
+                send(Dictionary(uniqueKeysWithValues: question.fields.map { ($0.id, answer($0)) }))
+            }
+            .tip(unanswered ? "Answer every question first" : "")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
@@ -206,16 +209,6 @@ private struct PlainQuestionCard: View {
                 .background(on ? AnyShapeStyle(Theme.knob) : AnyShapeStyle(Theme.card), in: Capsule())
                 .overlay(Capsule().strokeBorder(on ? Color.clear : Theme.stroke))
                 .opacity(configuration.isPressed ? 0.8 : 1)
-        }
-    }
-
-    /// The free answer's field: a plain field on a pale panel, as the composer's.
-    private struct AnswerField: ViewModifier {
-        func body(content: Content) -> some View {
-            content.textFieldStyle(.plain).font(.system(size: 13))
-                .padding(.horizontal, 10).frame(height: 30)
-                .background(Theme.card, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.stroke))
         }
     }
 }
@@ -438,7 +431,7 @@ struct AskDock: View, Equatable {
                 // fades where it is: sliding down as it faded read as something moving that the user didn't move.
                 .transition(
                     .asymmetric(
-                        insertion: foot == nil ? .offset(y: 36).combined(with: .opacity) : .identity,
+                        insertion: foot == nil ? Motion.transition(.offset(y: 36).combined(with: .opacity)) : .identity,
                         removal: .opacity))
         }
     }
@@ -450,7 +443,7 @@ struct AskDock: View, Equatable {
         guard abs(to - held) > 0.5 else { stepping = false; return }
         easing = true
         // Its height measured as it eased isn't kept (it was the held one's): the one it ends at is.
-        withAnimation(ConversationView.slide) {
+        withAnimation(Motion.animation(ConversationView.slide)) {
             held = to
         } completion: {
             shownHeight = to; stepping = false; easing = false

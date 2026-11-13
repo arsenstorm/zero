@@ -45,6 +45,8 @@ final class InboxController {
     /// The workspaces' view: the user's workspaces, the one shown ticked; opened from the bar's workspace control, as
     /// its other controls open theirs (a selector of its own beside the bar worked otherwise, and lay over these).
     var workspacesOpen = false
+    /// The inbox's panel is on screen beside the bar.
+    var panelOpen = false
     /// Whose workspaces: the app's.
     weak var workspace: Workspace?
 

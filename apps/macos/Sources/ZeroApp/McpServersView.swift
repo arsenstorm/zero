@@ -19,15 +19,15 @@ struct McpServersPage: View {
                 SettingsSection(title: "Servers") {
                     VStack(spacing: 0) {
                         ForEach(Array(workspace.mcpServers.enumerated()), id: \.element.id) { index, server in
-                            if index > 0 { Divider().padding(.leading, 18) }
+                            if index > 0 { Hairline().padding(.horizontal, 18) }
                             row(server, in: workspace)
                         }
-                        if !workspace.mcpServers.isEmpty { Divider() }
+                        if !workspace.mcpServers.isEmpty { Hairline() }
                         Button {
                             editing = ZerodLink.McpServer()
                         } label: {
                             NucleoLabel("Add a server", icon: "plus", size: 13).font(.system(size: 13)).foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).frame(height: 40).contentShape(
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).frame(height: 44).contentShape(
                                     Rectangle())
                         }
                         .buttonStyle(Hovering(radius: 0))
@@ -46,7 +46,7 @@ struct McpServersPage: View {
                     SettingsSection(title: "Claude Code's servers") {
                         VStack(spacing: 0) {
                             ForEach(Array(claudes.enumerated()), id: \.element.id) { index, server in
-                                if index > 0 { Divider().padding(.leading, 18) }
+                                if index > 0 { Hairline().padding(.horizontal, 18) }
                                 claudeRow(server, in: workspace)
                             }
                         }
@@ -89,7 +89,7 @@ struct McpServersPage: View {
                 }
             }
         }
-        .padding(.horizontal, 18).padding(.vertical, 10)
+        .padding(.horizontal, 18).padding(.vertical, 12)
     }
 
     private func row(_ server: ZerodLink.McpServer, in workspace: Workspace) -> some View {
@@ -116,14 +116,14 @@ struct McpServersPage: View {
                         Task { _ = await workspace.saveMcpServer(changed, secrets: [:]) }
                     })
             ).tip(server.enabled ? "On: given to tasks as they start" : "Off")
-            RowButton(title: "Edit") { editing = server }
+            RowButton(title: "Edit…") { editing = server }
         }
-        .padding(.horizontal, 18).padding(.vertical, 10)
+        .padding(.horizontal, 18).padding(.vertical, 12)
     }
 
     private func pill(_ text: String) -> some View {
-        Text(text).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-            .padding(.horizontal, 7).padding(.vertical, 2).background(Theme.row, in: Capsule())
+        Text(text).font(.system(size: 11.5, weight: .medium)).foregroundStyle(.secondary)
+            .padding(.horizontal, 8).padding(.vertical, 3).background(Theme.row, in: Capsule())
     }
 }
 
@@ -142,7 +142,7 @@ private struct McpServerForm: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             DialogTitle(text: server.id.isEmpty ? "Add an MCP server" : "Edit \(server.name)")
-            TextField("Name (CVE lookup)", text: $server.name).textFieldStyle(.dialog)
+            TextField("Name (CVE lookup)", text: $server.name).textFieldStyle(.dialog).firstField()
             DialogChoice(options: [("Runs a command", false), ("At a URL", true)], selection: $remote)
             if remote {
                 TextField("https://…/mcp", text: Binding(get: { server.url ?? "" }, set: { server.url = $0 })).textFieldStyle(.dialog)

@@ -323,7 +323,7 @@ import UserNotifications
             Task { @MainActor in
                 guard let self, self.link === link else { return }
                 self.link = nil
-                self.status = .offline("Can't reach your Mac: Zero needs to be running there")
+                self.status = .offline("Can't reach \(self.pairing?.name ?? "your Mac"). Zero needs to be open there.")
             }
         }
         Task {

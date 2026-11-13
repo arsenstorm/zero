@@ -3,7 +3,8 @@
 #
 # Zero's label           Lucide's name             The iPhone's fills (apps/ios/icons.sh makes an imageset for each)
 animation-repeat         repeat-2
-archive                  archive
+archive                  archive                   glyph
+arrow-down               arrow-down                outline
 arrow-left               arrow-left
 arrow-right              arrow-right
 arrow-rotate-clockwise   rotate-cw                 glyph outline
@@ -15,13 +16,13 @@ ban                      ban                       outline
 bolt-lightning           zap                       glyph
 bookmark                 bookmark                  glyph
 brain                    brain                     outline
-check                    check
+check                    check                     outline
 checkbox-checked         square-check
 chevron-down             chevron-down              outline
 chevron-expand-y         chevrons-up-down          outline
 chevron-right            chevron-right
 circle-arrow-up          circle-arrow-up
-circle-check             circle-check              glyph
+circle-check             circle-check              glyph outline
 circle-info              info                      outline
 circle-minus             circle-minus              glyph
 circle-pause             circle-pause              glyph
@@ -34,14 +35,14 @@ code-branch              git-branch
 command                  command
 compose                  square-pen
 copy                     copy                      outline
-dots                     ellipsis                  glyph
+dots                     ellipsis                  glyph outline
 eye                      eye
 file                     file
 file-content             file-text
 folder                   folder                    glyph
 folder-download          folder-down
 folder-plus              folder-plus
-gear                     settings                  outline
+gear                     settings                  glyph outline
 github                   git-pull-request
 globe                    globe
 hand-3                   hand                      glyph
@@ -51,7 +52,7 @@ heading-2                heading-2
 heading-3                heading-3
 hourglass                hourglass                 glyph
 house-4                  house
-image                    image                     glyph
+image                    image                     glyph outline
 inbox                    inbox                     glyph outline
 key                      key-round
 laptop                   laptop                    outline
@@ -62,7 +63,7 @@ link-slash               link-2-off                outline
 list-checkbox            list-todo                 glyph
 lock                     lock
 magnifier                search
-media-play               play
+media-play               play                      glyph
 media-stop               square                    glyph
 message-check            message-square-check      glyph
 microphone               mic                       outline

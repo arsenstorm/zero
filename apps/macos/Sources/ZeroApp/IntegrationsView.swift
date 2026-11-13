@@ -135,7 +135,7 @@ struct IntegrationPage: View {
             switch integration {
             case .slack:
                 SettingsSection(
-                    title: "Workspaces", accessory: AnyView(GhostButton(title: "Connect Slack", icon: "plus") { connectingSlack = true })
+                    title: "Workspaces", accessory: AnyView(GhostButton(title: "Connect Slack…", icon: "plus") { connectingSlack = true })
                 ) {
                     Rows {
                         ForEach(workspace.integrations?.slack ?? [], id: \.team.id) { connected in
@@ -213,7 +213,6 @@ struct ConnectCard: View {
     let workspace: Workspace
     let connectSlack: () -> Void
     @State private var waiting = false
-    @State private var copied = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -221,30 +220,24 @@ struct ConnectCard: View {
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.stroke))
                 .overlay(integration.icon(size: 30).foregroundStyle(.primary))
                 .padding(.bottom, 18)
-            Text("Connect \(integration.title)").font(.system(size: 20, weight: .semibold)).padding(.bottom, 6)
+            PageTitle(text: "Connect \(integration.title)").padding(.bottom, 6)
             BalancedText(pitch, font: .systemFont(ofSize: 13), maxWidth: 380)
                 .foregroundStyle(.secondary).padding(.bottom, 20)
             switch integration {
             case .linear:
-                Button(waiting ? "Waiting for Linear…" : "Connect Linear") { connectLinear() }
-                    .buttonStyle(Prominent()).disabled(waiting)
+                SolidButton(title: waiting ? "Waiting for Linear…" : "Connect Linear", enabled: !waiting) { connectLinear() }
             case .slack:
-                Button("Connect Slack", action: connectSlack).buttonStyle(Prominent())
+                SolidButton(title: "Connect Slack…", action: connectSlack)
             case .github:
                 HStack(spacing: 8) {
-                    Text("gh auth login").font(.system(size: 12.5).monospaced()).textSelection(.enabled)
-                    Button {
-                        copy()
-                    } label: {
-                        NucleoIcon(copied ? "check" : "copy", size: 13).foregroundStyle(.secondary).frame(width: 24, height: 24)
-                    }
-                    .buttonStyle(Hovering(radius: 6)).tip("Copy")
+                    Text("gh auth login").font(.system(size: 12.5).monospaced())
+                    CopyButton(text: "gh auth login", size: 24)
                 }
                 .padding(.leading, 12).padding(.trailing, 4).frame(height: 34)
-                .background(Theme.composer, in: RoundedRectangle(cornerRadius: 9))
+                .background(Theme.code, in: RoundedRectangle(cornerRadius: 9))
                 .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Theme.stroke))
                 .padding(.bottom, 14)
-                Button(waiting ? "Checking…" : "Check again") { check() }.buttonStyle(Prominent()).disabled(waiting)
+                SolidButton(title: waiting ? "Checking…" : "Check again", enabled: !waiting) { check() }
                 Text("Run it in a terminal to sign the GitHub CLI in. No GitHub CLI? brew install gh.")
                     .font(.system(size: 11)).foregroundStyle(.tertiary).padding(.top, 12)
             }
@@ -282,23 +275,6 @@ struct ConnectCard: View {
         }
     }
 
-    private func copy() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString("gh auth login", forType: .string)
-        copied = true
-        Task {
-            try? await Task.sleep(for: .seconds(1.5)); copied = false
-        }
-    }
-}
-
-/// The one button that matters on a screen: solid, in the app's ink.
-struct Prominent: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.onKnob)
-            .padding(.horizontal, 18).frame(height: 34)
-            .background(Theme.knob.opacity(configuration.isPressed ? 0.8 : 1), in: Capsule())
-    }
 }
 
 /// Centred text wrapped into lines of even length (CSS's text-wrap: balance): as narrow as still takes the same number
@@ -347,6 +323,12 @@ enum LinearLinks {
         let web = "https://linear.app/"
         return URL(string: inApp && link.hasPrefix(web) ? "linear://" + link.dropFirst(web.count) : link)
     }
+
+    /// Opens a link the way the user set: every link a user clicks in Zero goes through here, so a Linear issue
+    /// written as a full web link (an agent's Markdown link, a follow, a Later item) opens in the app too.
+    static func open(_ url: URL) {
+        NSWorkspace.shared.open(Self.url(url.absoluteString) ?? url)
+    }
 }
 
 /// Connecting a Slack workspace: Zero's Slack app made in it from the manifest, then the user token Slack shows.
@@ -359,13 +341,11 @@ struct SlackConnect: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
-                DialogTitle(text: "Connect Slack")
-                Text(
+            DialogTitle(
+                text: "Connect Slack",
+                detail:
                     "Zero reads channels, messages and names; it posts nothing. Each workspace gets Zero's own Slack app. Connected before agents could follow Slack? Add the scopes from the manifest to your app, reinstall it, and paste the new token."
-                )
-                .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
+            )
             DialogPart(title: "1. Make Zero's app in the workspace") {
                 HStack {
                     Text("Slack opens with it filled in: Create, then Install to Workspace.").font(.system(size: 12.5)).fixedSize(
@@ -375,7 +355,7 @@ struct SlackConnect: View {
                 }
             }
             DialogPart(title: "2. Paste its User OAuth Token") {
-                SecureField("", text: $token, prompt: Text("xoxp-…")).textFieldStyle(.dialog).onSubmit(connect)
+                SecureField("", text: $token, prompt: Text("xoxp-…")).textFieldStyle(.dialog).onSubmit(connect).firstField()
             }
             if let problem { Text(problem).font(.system(size: 12)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
             HStack {

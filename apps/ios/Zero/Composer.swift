@@ -200,6 +200,16 @@ struct Composer: View {
 
     private var draftKey: String { "draft." + session }
 
+    /// As the Mac's composer words it: "Reply", "Message to resume it" when it's gone. While it works the phone queues
+    /// what's sent for after the turn (it never steers), so it says that, not the Mac's "Steer it while it works".
+    private var placeholder: String {
+        switch conversation?.status {
+        case .offline: "Message to resume it"
+        case .working, .waiting: "Queue a message for after this turn"
+        default: "Reply"
+        }
+    }
+
     /// Open as far as the keyboard is up; all the way for dictation, or once a moment has passed with the field
     /// focused and no keyboard on screen.
     private func follow() {
@@ -229,7 +239,7 @@ struct Composer: View {
                                         let item = attached.remove(at: index).item
                                         panels.picked.removeAll { $0 == item }
                                     } label: {
-                                        Text("✕").font(.caption2.weight(.bold)).foregroundStyle(.white)
+                                        Image("xmark-outline").resizable().frame(width: 9, height: 9).foregroundStyle(.white)
                                             .frame(width: 18, height: 18).background(.black.opacity(0.6), in: Circle())
                                     }
                                     .padding(3)
@@ -246,7 +256,7 @@ struct Composer: View {
                 ComposerField(text: $draft, focused: $focused)
                     .overlay(alignment: .topLeading) {
                         if draft.isEmpty {
-                            Text(dictation.listening ? "Listening…" : "Write to this task").foregroundStyle(.tertiary).allowsHitTesting(
+                            Text(dictation.listening ? "Listening…" : placeholder).foregroundStyle(.tertiary).allowsHitTesting(
                                 false)
                         }
                     }
@@ -257,7 +267,7 @@ struct Composer: View {
                 // Closed: the draft's first line, fading if there's more, or the placeholder.
                 Group {
                     if draft.isEmpty {
-                        Text(dictation.listening ? "Listening…" : "Write to this task").foregroundStyle(.tertiary).lineLimit(1)
+                        Text(dictation.listening ? "Listening…" : placeholder).foregroundStyle(.tertiary).lineLimit(1)
                     } else {
                         FadingLine(text: draft.split(whereSeparator: \.isNewline).joined(separator: " "), font: .body)
                     }
@@ -343,11 +353,14 @@ struct Composer: View {
         let unrestricted = shown == .unrestricted
         // A menu, not a popover: a menu needs no page to be presented from (the composer is the keyboard's accessory).
         return Menu {
-            Picker(
-                "Permissions", selection: Binding(get: { shown }, set: { choice in Task { await model.setPermissions(session, choice) } })
-            ) {
-                Text("Auto").tag(Permissions.auto)
-                Text("Unrestricted").tag(Permissions.unrestricted)
+            // Each with what it means under it, as the Mac's list; the one in force ticked.
+            ForEach(Permissions.choices(conversation?.provider), id: \.0) { choice, title, detail in
+                Button {
+                    Task { await model.setPermissions(session, choice) }
+                } label: {
+                    Text(title); Text(detail)
+                    if choice == shown { Image("check-outline") }
+                }
             }
         } label: {
             Image(unrestricted ? "bolt-lightning-glyph" : "wand-sparkle-outline").resizable().frame(width: 18, height: 18)
@@ -364,7 +377,7 @@ struct Composer: View {
         .accessibilityLabel(unrestricted ? "Permissions: unrestricted" : "Permissions: auto")
     }
 
-    // The model and its effort, as "Opus 5.5 High": opens the Mac's selector, as a sheet.
+    // The model and its effort, as "Opus 5.5 · High" (New task's): opens the Mac's selector, as a sheet.
     /// A model's id as people read it, for one not in the list: "claude-opus-5-5" is "Opus 5.5".
     static func readable(_ id: String) -> String {
         guard id.hasPrefix("claude-") else { return id }
@@ -392,7 +405,7 @@ struct Composer: View {
                 if !panels.models.isEmpty { panels.selecting = true }
             }
         } label: {
-            (Text(name).fontWeight(.medium) + Text(level.map { " " + $0 } ?? "").foregroundStyle(.secondary))
+            (Text(name).fontWeight(.medium) + Text(level.map { " · " + $0 } ?? "").foregroundStyle(.secondary))
                 .font(.subheadline).lineLimit(1).padding(.horizontal, 7).frame(height: 40)
         }
         .buttonStyle(.plain)
@@ -725,7 +738,9 @@ struct PickedVideo: Transferable {
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 240, height: 240)
         if let frame = try? await generator.image(at: .zero).image { return UIImage(cgImage: frame) }
-        return UIImage(systemName: "video") ?? UIImage()
+        return UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1)).image { _ in
+            UIColor.systemGray4.setFill(); UIRectFill(CGRect(x: 0, y: 0, width: 1, height: 1))
+        }
     }
 }
 

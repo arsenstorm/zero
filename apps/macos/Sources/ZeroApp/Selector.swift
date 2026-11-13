@@ -110,10 +110,11 @@ struct SelectorView: View {
     /// Linear's menu words: 13 points at weight 450, between regular and medium.
     private static let menuStroke: CGFloat = 1.7
     private static let menuNSFont = NSFont.systemFont(ofSize: 13, weight: NSFont.Weight(0.115))
-    private static let menuFont = Font(menuNSFont)
+    /// Every menu row's title: the selector's, the + menu's, @ mentions' and the inbox's workspaces.
+    static let menuFont = Font(menuNSFont)
     /// Room around a menu's card in its window for its shadow (Linear's: 18 points of blur, 6 down).
     static func shadowRoom(_ kind: SelectorKind) -> CGFloat { kind == .runtime ? 0 : 24 }
-    /// Menus and short lists as Linear's (measured): 10 pt corners, rows 32 tall 6 in from the edge, a 6 pt highlight
+    /// Menus and short lists as Linear's (measured): 12 pt corners, rows 32 tall 6 in from the edge, a 6 pt highlight
     /// (#323234, the row's words and icon white on it), its icon 9 in from the highlight's edge, the words 8 after it.
     /// The model selector keeps its own.
     private var linear: Bool { state.kind != .runtime }

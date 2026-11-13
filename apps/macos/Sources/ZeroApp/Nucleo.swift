@@ -23,8 +23,8 @@ enum Nucleo {
     static func image(_ label: String, fill: String = "outline", size: CGFloat = 16, stroke: CGFloat? = nil) -> NSImage? {
         let name = "\(label)-\(fill)"
         let key = stroke.map { "\(name)@\($0)" } ?? name
-        let file = url(label, fill: fill)
-        let image = images[key] ?? file.flatMap { load($0, stroke: stroke) }
+        // The file looked up only on a miss: every menu row draws its icon again on each hover.
+        let image = images[key] ?? url(label, fill: fill).flatMap { load($0, stroke: stroke) }
         if image == nil { Log.write("icon missing: \(name)") }
         image?.isTemplate = true
         images[key] = image

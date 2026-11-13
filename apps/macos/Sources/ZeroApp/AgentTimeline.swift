@@ -21,7 +21,7 @@ struct AgentTimeline: View {
         ForEach(exchange.recent) { ask in
             CardView(ask: ask, controller: controller, focus: focus).id(ask.id)
                 // Yours rises out of the composer; a reply takes the placeholder's place.
-                .transition(ask.kind == .message ? .move(edge: .bottom).combined(with: .opacity) : .opacity)
+                .transition(ask.kind == .message ? Motion.transition(.move(edge: .bottom).combined(with: .opacity)) : .opacity)
         }
         // A task of Zero's: what it said last, in its own words, newer than any note above.
         if let agent = controller.agentFilter, let reply = latestReply(agent), !waiting { replyCard(agent, reply) }
@@ -31,7 +31,7 @@ struct AgentTimeline: View {
             ComposerCard(controller: controller, focus: focus, mode: .agent(agent))
         }
         if open.isEmpty && exchange.recent.isEmpty && exchange.earlier.isEmpty {
-            Text("Nothing from this agent yet").font(.callout).foregroundStyle(.secondary)
+            Text("Nothing from this agent yet").font(.system(size: 13)).foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity).padding(18)
                 .card()
         }
@@ -62,7 +62,7 @@ struct AgentTimeline: View {
             // A row opened from the list shows in full beneath it, inside the same card: it is history,
             // not a new turn in the conversation.
             if let id = controller.expandedEarlier, let ask = earlier.first(where: { $0.id == id }) {
-                Rectangle().fill(Theme.stroke).frame(height: 1).padding(.vertical, 4)
+                Hairline().padding(.horizontal, -14).padding(.vertical, 4)
                 EarlierDetail(ask: ask).transition(.opacity)
             }
         }
@@ -141,13 +141,13 @@ private struct EarlierDetail: View {
                 }
                 if let command = ask.command, !command.isEmpty {
                     Text(ask.kind == .run && !ask.output.isEmpty ? "$ \(command)\n\(ask.output.suffix(2000))" : command)
-                        .font(.system(size: 11, design: .monospaced)).textSelection(.enabled).lineLimit(14)
+                        .font(.system(size: 11.5, design: .monospaced)).textSelection(.enabled).lineLimit(14)
                         .padding(8).frame(maxWidth: .infinity, alignment: .leading)
                         .background(Theme.code).clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 if ask.kind != .run, let answer = ask.answer {
                     NucleoLabel(answer, icon: ask.state == .declined ? "circle-xmark" : "circle-check", fill: "glyph", size: 13)
-                        .font(.system(size: 12, weight: .medium)).foregroundStyle(ask.state == .declined ? .red : .green)
+                        .font(.system(size: 12, weight: .medium)).foregroundStyle(ask.state == .declined ? .red : Theme.done)
                 }
             }
         }
@@ -188,7 +188,7 @@ private struct EarlierRow: View {
         .onHover { hovered = $0 }
         .onTapGesture {
             controller.holdTop = true
-            withAnimation(.easeOut(duration: 0.2)) { controller.expandedEarlier = open ? nil : ask.id }
+            controller.expandedEarlier = open ? nil : ask.id
         }
     }
 

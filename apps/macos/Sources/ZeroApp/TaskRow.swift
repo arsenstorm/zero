@@ -71,7 +71,7 @@ struct TaskRow: View {
         .overlay(alignment: .trailing) {
             if let fold {
                 Button(action: toggle) {
-                    NucleoIcon("chevron-down", size: 9).foregroundStyle(.secondary).rotationEffect(.degrees(fold ? 0 : -90))
+                    NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(fold ? 0 : -90))
                         .frame(width: 20, height: 20).contentShape(Rectangle())
                 }
                 // Its own hover, a rounded square, in place of the row's.
@@ -193,11 +193,13 @@ struct TaskStateIcon: View {
                 guard !Task.isCancelled, let self, self.next != session else { return }
                 self.next = session
             }
+            // None while a menu is open, as tips.
+            guard WorkspaceSelector.shared.open == nil else { return }
             // Open already: on to this row at once. Else after a rest, so passing over the list shows nothing.
             if self.session != nil { self.session = session; self.top = top; return }
             pending = Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(450))
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, WorkspaceSelector.shared.open == nil else { return }
                 self?.session = session; self?.top = top
             }
         } else {
@@ -300,10 +302,7 @@ struct TaskPeekCard: View {
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
         .frame(width: 300, alignment: .leading)
-        .background(Theme.composer, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke))
-        .compositingGroup()
-        .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+        .modifier(MenuCard(radius: 12, linear: true))
     }
 
     private func line(_ icon: String, _ text: String) -> some View {
@@ -327,7 +326,7 @@ struct StateLabel: View {
             Text(look.name).font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(
                     look.color == .secondary
-                        ? AnyShapeStyle(.secondary) : look.color == .green ? AnyShapeStyle(Theme.done) : AnyShapeStyle(look.color))
+                        ? AnyShapeStyle(.secondary) : AnyShapeStyle(look.color))
         }
         .padding(.leading, 5).padding(.trailing, 8).padding(.vertical, 3)
         .background(tint.opacity(0.12), in: Capsule())

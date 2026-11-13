@@ -111,7 +111,7 @@ struct Splash: View {
     private var words: String {
         guard missed else { return "Zero on your Mac, through your relay." }
         let seen = model.pairing?.seen.map { "Last connected \($0.formatted(.relative(presentation: .named))). " } ?? ""
-        return seen + "Zero needs to be open on your Mac, and the Mac online. Still trying."
+        return seen + "Zero needs to be open there, and the Mac online. Still trying."
     }
 }
 
@@ -155,24 +155,5 @@ private struct Panel<Content: View>: View {
         VStack(spacing: 0) { content() }
             .padding(.horizontal, 20).padding(.vertical, 6)
             .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-    }
-}
-
-/// A button the page's width: the page's own colour inverted when it's the one to press, glass when it isn't.
-private struct WideButton: View {
-    let title: String
-    var prominent = false
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(title).font(.body.weight(.semibold))
-                .foregroundStyle(prominent ? Color(.systemBackground) : .primary)
-                .frame(maxWidth: .infinity).frame(height: 54)
-                .background { if prominent { Capsule().fill(Color.primary) } }
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .glassEffect(prominent ? .identity : .regular.interactive(), in: Capsule())
     }
 }

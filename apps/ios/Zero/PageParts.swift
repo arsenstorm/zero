@@ -73,3 +73,90 @@ struct PageScroll<Content: View>: View {
         }
     }
 }
+
+/// A page's action, the page's width: Zero's ink when it's the one to press, glass when it isn't. The app's one
+/// button for a page's actions (pairing, Later's, a task that didn't load).
+struct WideButton: View {
+    let title: String
+    var prominent = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title).font(.body.weight(.semibold))
+                .foregroundStyle(prominent ? Theme.onKnob : Color.primary)
+                .frame(maxWidth: .infinity).frame(height: 54)
+                .background { if prominent { Capsule().fill(Theme.knob) } }
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .glassEffect(prominent ? .identity : .regular.interactive(), in: Capsule())
+    }
+}
+
+/// A page with nothing on it, the app's one way of saying so (the Mac's empty pages): its icon, a headline, a line on
+/// what would show here.
+struct EmptyPage: View {
+    let icon: String
+    let title: String
+    let line: String
+
+    var body: some View {
+        ContentUnavailableView {
+            Label {
+                Text(title)
+            } icon: {
+                Image(icon).resizable().frame(width: 28, height: 28).foregroundStyle(.secondary)
+            }
+        } description: {
+            Text(line)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// Renaming a task: Zero's own small sheet, as New task's top (close, its name, done) and the Mac's NameSheet.
+struct RenameSheet: View {
+    @Binding var name: String
+    let rename: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var focused: Bool
+    private var ready: Bool { !name.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Button {
+                    dismiss()
+                } label: {
+                    Image("xmark-outline").resizable().frame(width: 20, height: 20).frame(width: 44, height: 44).contentShape(Circle())
+                }
+                .buttonStyle(.plain).glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("Close")
+                Spacer()
+                Text("Rename task").font(.headline)
+                Spacer()
+                SendCircle(ready: ready, sending: false, label: "Rename", action: submit)
+            }
+            TextField("Name", text: $name).font(.title3).focused($focused).submitLabel(.done).onSubmit(submit)
+                .padding(.horizontal, 4)
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .presentationDetents([.height(150)])
+        .onAppear { focused = true }
+    }
+
+    private func submit() {
+        guard ready else { return }
+        rename()
+        dismiss()
+    }
+}
+
+extension View {
+    /// The app's one card, as the Mac's card(): a raised surface, its radius, a hairline round it.
+    func zeroCard() -> some View {
+        background(.background.secondary, in: RoundedRectangle(cornerRadius: Theme.cardRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(.quaternary))
+    }
+}

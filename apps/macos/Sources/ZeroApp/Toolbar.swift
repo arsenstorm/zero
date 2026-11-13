@@ -15,7 +15,7 @@ extension AppDelegate: NSToolbarDelegate {
         -> NSToolbarItem?
     {
         switch id {
-        case Self.history: return HistoryItem(identifier: id, navigation: navigation, target: self)
+        case Self.history: return HistoryItem(identifier: id, navigation: navigation)
         case Self.title:
             let item = NSToolbarItem(itemIdentifier: id)
             item.view = TitleBarHost(workspace: workspace, navigation: navigation)
@@ -68,34 +68,38 @@ private final class TitleBarHost: NSView {
 
 private final class HistoryItem: NSToolbarItem {
     private let navigation: Navigation
-    private let back: NSButton
-    private let forward: NSButton
 
-    init(identifier: NSToolbarItem.Identifier, navigation: Navigation, target: AppDelegate) {
+    init(identifier: NSToolbarItem.Identifier, navigation: Navigation) {
         self.navigation = navigation
-        func button(_ icon: String, _ label: String, _ action: Selector) -> NSButton {
-            let button = NSButton(image: Nucleo.image(icon, size: 15) ?? NSImage(), target: target, action: action)
-            button.setAccessibilityLabel(label)
-            button.isBordered = false
-            button.contentTintColor = .secondaryLabelColor
-            button.toolTip = label
-            button.widthAnchor.constraint(equalToConstant: 24).isActive = true
-            return button
-        }
-        back = button("arrow-left", "Back", #selector(AppDelegate.goBack))
-        forward = button("arrow-right", "Forward", #selector(AppDelegate.goForward))
         super.init(itemIdentifier: identifier)
-        let pair = NSStackView(views: [back, forward])
-        pair.spacing = 6
-        view = pair
+        let host = NSHostingView(rootView: HistoryButtons(navigation: navigation))
+        host.frame.size = host.fittingSize
+        view = host
         label = "Back and forward"
         isBordered = false // no glass capsule around the pair
     }
 
-    /// AppKit asks as the window updates; the arrows dim where there's nowhere to go.
-    override func validate() {
-        view?.isHidden = !navigation.ready
-        back.isEnabled = navigation.canGoBack
-        forward.isEnabled = navigation.canGoForward
+    /// AppKit asks as the window updates: the pair shows once the window is ready.
+    override func validate() { view?.isHidden = !navigation.ready }
+}
+
+/// Back and forward as the title bar's buttons are: a soft square under the pointer, the tip with its key; dimmed where
+/// there's nowhere to go.
+private struct HistoryButtons: View {
+    let navigation: Navigation
+    var body: some View {
+        HStack(spacing: 2) {
+            button("arrow-left", "Back", "⌘[", navigation.canGoBack, navigation.goBack)
+            button("arrow-right", "Forward", "⌘]", navigation.canGoForward, navigation.goForward)
+        }
+    }
+
+    private func button(_ icon: String, _ label: String, _ key: String, _ enabled: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            NucleoIcon(icon, size: 15).foregroundStyle(.secondary).frame(width: 28, height: 28).opacity(enabled ? 1 : 0.4)
+        }
+        .buttonStyle(Hovering(radius: 7)).disabled(!enabled)
+        .accessibilityLabel(label)
+        .tip(label, shortcut: key)
     }
 }

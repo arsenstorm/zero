@@ -142,6 +142,7 @@ struct Home: View {
     @Bindable var model: PhoneModel
     @State private var newTask = false
     @State private var menu = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // The stack holds the tabs, not the other way round: a task slides in over the bar and back out with it there
     // all along.
@@ -161,7 +162,7 @@ struct Home: View {
                 ZStack(alignment: .bottom) {
                     if menu {
                         Color.black.opacity(0.25).ignoresSafeArea()
-                            .onTapGesture { withAnimation(.bouncy(duration: 0.35)) { menu = false } }
+                            .onTapGesture { withAnimation(reduceMotion ? nil : .bouncy(duration: 0.35)) { menu = false } }
                             .transition(.opacity)
                     }
                     NavBar(model: model, open: $menu, newTask: { newTask = true })
@@ -196,15 +197,18 @@ struct Home: View {
 /// Dropped after loading: what's here stays, the line says it's being got back.
 struct ConnectionBadge: View {
     let model: PhoneModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         ZStack {
             // Steadied (PhoneModel.banner): one message through a restart's many tries.
             if let banner = model.banner {
-                Text(banner == .reconnecting ? "Reconnecting to your Mac" : "Can't reach your Mac").font(.footnote.weight(.medium))
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .glassEffect(.regular, in: Capsule())
-                    .padding(.top, 4)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                Text(banner == .reconnecting ? "Reconnecting to your Mac" : "Can't reach \(model.pairing?.name ?? "your Mac")").font(
+                    .footnote.weight(.medium)
+                )
+                .padding(.horizontal, 14).padding(.vertical, 8)
+                .glassEffect(.regular, in: Capsule())
+                .padding(.top, 4)
+                .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
             }
         }
         .animation(.easeOut(duration: 0.2), value: model.banner)
@@ -293,13 +297,15 @@ struct TasksView: View {
         }
         .listStyle(.plain)
         .environment(\.defaultMinListRowHeight, 36)
-        .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-            TextField("Name", text: $newName)
-            Button("Cancel", role: .cancel) {}
-            Button("Rename") {
-                if let renaming, !newName.trimmingCharacters(in: .whitespaces).isEmpty {
-                    Task { await model.rename(renaming.session, to: newName) }
-                }
+        .overlay {
+            if model.tasks.isEmpty, model.status == .connected {
+                EmptyPage(icon: "list-checkbox-glyph", title: "No tasks yet", line: "Start one with + below, or from your Mac.")
+            }
+        }
+        // Zero's own sheet, as the Mac's: not the system's alert with a field in it.
+        .sheet(isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            RenameSheet(name: $newName) {
+                if let renaming { Task { await model.rename(renaming.session, to: newName) } }
             }
         }
         // As the Mac asks: archiving puts the task away with every worker under it.
@@ -327,13 +333,13 @@ extension TasksView {
         Button {
             archiving = (session, name, workers)
         } label: {
-            Label("Archive", image: "trash-glyph")
+            Label("Archive", image: "archive-glyph")
         }.tint(.red)
         if state == .paused {
             Button {
                 Task { _ = await model.unpause([session]) }
             } label: {
-                Label("Resume", image: "arrow-rotate-clockwise-glyph")
+                Label("Resume", image: "media-play-glyph")
             }.tint(.blue)
         } else {
             Button {
@@ -349,7 +355,7 @@ extension TasksView {
         Button {
             newName = name; renaming = (session, name)
         } label: {
-            Label("Rename", image: "pen-glyph")
+            Label("Rename task", image: "pen-glyph")
         }.tint(.indigo)
     }
 
@@ -359,7 +365,7 @@ extension TasksView {
             Button {
                 Task { _ = await model.unpause([session]) }
             } label: {
-                Label("Resume", image: "arrow-rotate-clockwise-glyph")
+                Label("Resume", image: "media-play-glyph")
             }
         } else {
             Button {
@@ -371,7 +377,7 @@ extension TasksView {
         Button {
             newName = name; renaming = (session, name)
         } label: {
-            Label("Rename", image: "pen-glyph")
+            Label("Rename task", image: "pen-glyph")
         }
         Button {
             Task { await model.saveForLater(session) }
@@ -381,7 +387,7 @@ extension TasksView {
         Button(role: .destructive) {
             archiving = (session, name, workers)
         } label: {
-            Label("Archive", image: "trash-glyph")
+            Label("Archive…", image: "archive-glyph")
         }
     }
 }
@@ -394,7 +400,7 @@ struct TaskPeek: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 StateGlyph(state: row.ownState)
-                Text(row.ownState.title).font(.footnote.weight(.medium)).foregroundStyle(.secondary)
+                Text(StateGlyph.look(row.ownState).name).font(.footnote.weight(.medium)).foregroundStyle(.secondary)
             }
             Text(name).font(.headline).lineLimit(2)
             if let now = row.now, !now.isEmpty { Text(now).font(.subheadline).foregroundStyle(.secondary).lineLimit(4) }
@@ -455,6 +461,7 @@ struct TaskView: View {
     /// What the composer opens over the page, presented here.
     @State private var panels = ComposerPanels()
     @Environment(\.scenePhase) private var phase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var details = false
     /// The task's inbox open: what waits on you on it.
     @State private var asking = false
@@ -493,13 +500,18 @@ struct TaskView: View {
             // Can't reach the Mac (or it didn't answer): said, in the page's middle, not a spinner going on.
             else if couldNotLoad || missedMac {
                 ContentUnavailableView {
-                    Text(missedMac ? "Can't reach \(model.pairing?.name ?? "your Mac")" : "Couldn't load this task")
+                    Label {
+                        Text(missedMac ? "Can't reach \(model.pairing?.name ?? "your Mac")" : "Couldn't load this task")
+                    } icon: {
+                        Image("link-slash-outline").resizable().frame(width: 28, height: 28).foregroundStyle(.secondary)
+                    }
                 } description: {
                     Text(missedMac ? "This task opens once your Mac is back." : "Your Mac didn't answer in time.")
                 } actions: {
-                    Button("Try again") {
+                    WideButton(title: "Try again", prominent: true) {
                         if model.offline { model.connect() }; Task { await loadUntilLoaded() }
-                    }.buttonStyle(.bordered)
+                    }
+                    .padding(.horizontal, 40)
                 }
                 .containerRelativeFrame(.vertical)
             } else {
@@ -555,7 +567,7 @@ struct TaskView: View {
             guard let sent else { return }
             lifted = (sent, end.room)
             DispatchQueue.main.async {
-                withAnimation(.easeOut(duration: 0.3)) { position.scrollTo(id: ConversationView.lifted, anchor: .top) }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.3)) { position.scrollTo(id: ConversationView.lifted, anchor: .top) }
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -577,7 +589,7 @@ struct TaskView: View {
                             // To the conversation's end, not into the empty room under it.
                             end.toEnd()
                         } label: {
-                            Image("arrow-up-outline").resizable().frame(width: 14, height: 14).rotationEffect(.degrees(180))
+                            Image("arrow-down-outline").resizable().frame(width: 14, height: 14)
                                 .foregroundStyle(.primary)
                                 // Solid: a material let the line of text under it read through ("Sim↓ator").
                                 .frame(width: 36, height: 36).background(Color(uiColor: .secondarySystemBackground), in: Circle())
@@ -660,7 +672,7 @@ struct TaskView: View {
         self.answered = nil
         lifted = (event.id, end.room)
         DispatchQueue.main.async {
-            withAnimation(.easeOut(duration: 0.3)) { position.scrollTo(id: ConversationView.lifted, anchor: .top) }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.3)) { position.scrollTo(id: ConversationView.lifted, anchor: .top) }
         }
     }
 
@@ -888,7 +900,10 @@ private struct ComposerFade: View {
         let target = min(highest, max(lowest, endY + Self.margin - (scroll.bounds.height - foot)))
         down = false
         still = Date().addingTimeInterval(0.4)
-        UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .allowUserInteraction]) {
+        // A jump under Reduce Motion, not a glide.
+        UIView.animate(
+            withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.35, delay: 0, options: [.curveEaseOut, .allowUserInteraction]
+        ) {
             scroll.contentOffset.y = target
         } completion: { _ in
             self.still = .distantPast
@@ -1009,50 +1024,59 @@ struct TaskDetails: View {
     let model: PhoneModel
     let session: String
     @Environment(\.openURL) private var openURL
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         let row = model.row(session), conversation = model.conversation(session)
         NavigationStack {
-            Form {
-                Section {
-                    if let row {
-                        LabeledContent("State") {
-                            HStack(spacing: 6) {
-                                StateGlyph(state: row.ownState); Text(row.ownState.title)
-                            }
+            // The app's own page (PageParts), as Settings: not the system's grouped form.
+            PageScroll {
+                if let row {
+                    PageGroup(note: (row.needs ?? row.now).flatMap { $0.isEmpty ? nil : $0 }) {
+                        HStack(spacing: 12) {
+                            StateGlyph(state: row.ownState, size: 20)
+                            Text(StateGlyph.look(row.ownState).name)
+                            Spacer(minLength: 12)
                         }
-                        if let now = row.needs ?? row.now, !now.isEmpty { Text(now).font(.subheadline).foregroundStyle(.secondary) }
-                        if row.workers > 0 { LabeledContent("Workers", value: "\(row.workers)") }
+                        .frame(minHeight: 46)
+                        if row.workers > 0 { PageRow(title: "Workers", value: "\(row.workers)") }
                     }
                 }
-                Section {
-                    LabeledContent(
-                        "Where",
+                PageGroup {
+                    PageRow(
+                        title: "Where",
                         value: row?.path ?? conversation.map { ($0.cwd as NSString).abbreviatingWithTildeInPath } ?? row?.place ?? "–")
-                    if let branch = conversation?.branch { LabeledContent("Branch", value: branch) }
-                    if let ticket = row?.ticket ?? conversation?.ticket { LabeledContent("Ticket", value: ticket) }
+                    if let branch = conversation?.branch { PageRow(title: "Branch", value: branch) }
+                    if let ticket = row?.ticket ?? conversation?.ticket { PageRow(title: "Ticket", value: ticket) }
                 }
                 if let conversation {
-                    Section {
-                        LabeledContent("Agent", value: conversation.provider.title)
+                    PageGroup {
+                        PageRow(title: "Agent", value: conversation.provider.title)
                         if let id = conversation.model {
-                            LabeledContent("Model", value: id + (conversation.effort.map { " · " + $0.capitalized } ?? ""))
+                            PageRow(title: "Model", value: id + (conversation.effort.map { " · " + $0.capitalized } ?? ""))
                         }
-                        LabeledContent("Permissions", value: conversation.permissions == .unrestricted ? "Unrestricted" : "Auto")
+                        PageRow(title: "Permissions", value: conversation.permissions == .unrestricted ? "Unrestricted" : "Auto")
                     }
                     if let attributes = conversation.attributes, !attributes.isEmpty {
-                        Section("Attributes") {
+                        PageGroup(title: "Attributes") {
                             ForEach(attributes.keys.sorted(), id: \.self) { key in
                                 let value = attributes[key] ?? ""
                                 if let url = URL(string: value), url.scheme?.hasPrefix("http") == true {
+                                    // A link in a property: medium weight on a dashed line, as the Mac's.
                                     Button {
                                         openURL(url)
                                     } label: {
-                                        LabeledContent(key) { Text(url.host() ?? value).fontWeight(.medium).lineLimit(1) }
+                                        HStack(spacing: 12) {
+                                            Text(key)
+                                            Spacer(minLength: 12)
+                                            Text(url.host() ?? value).fontWeight(.medium).lineLimit(1)
+                                                .overlay(alignment: .bottom) { DashedRule().offset(y: -1.5) }
+                                        }
+                                        .frame(minHeight: 46).contentShape(Rectangle())
                                     }
-                                    .foregroundStyle(.primary)
+                                    .buttonStyle(.plain)
                                 } else {
-                                    LabeledContent(key, value: value)
+                                    PageRow(title: key, value: value)
                                 }
                             }
                         }
@@ -1061,6 +1085,7 @@ struct TaskDetails: View {
             }
             .navigationTitle(row?.task ?? model.names[session] ?? "Details")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
     }
 }

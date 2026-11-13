@@ -25,11 +25,31 @@ extension View {
     }
 }
 
+extension View {
+    /// A floating surface's shadow (a menu, a hover card, a popover), Linear's three soft ones (0 6 18 at 2%, 0 3 9 at
+    /// 4%, 0 1 1 at 4%; a SwiftUI radius is half CSS's blur). Dialogs keep their own, deeper one. Put
+    /// `compositingGroup()` before it on a stack.
+    func floatingShadow(_ on: Bool = true) -> some View {
+        shadow(color: .black.opacity(on ? 0.02 : 0), radius: 9, y: 6)
+            .shadow(color: .black.opacity(on ? 0.04 : 0), radius: 4.5, y: 3)
+            .shadow(color: .black.opacity(on ? 0.04 : 0), radius: 0.5, y: 1)
+    }
+}
+
+/// The line between rows: `Theme.stroke`, 1 pt, opaque (the system's `Divider()` is translucent, so it reads darker
+/// over a hovered row's fill than beside it).
+struct Hairline: View {
+    var color = Theme.stroke
+    var body: some View { Rectangle().fill(color).frame(height: 1) }
+}
+
 /// Surfaces for both appearances, resolved by AppKit at draw time so the system setting applies live.
 enum Theme {
-    private static func dynamic(dark: NSColor, light: NSColor) -> Color {
-        Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light })
+    static func dynamicColor(dark: NSColor, light: NSColor) -> NSColor {
+        NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light }
     }
+    private static func dynamic(dark: NSColor, light: NSColor) -> Color { Color(nsColor: dynamicColor(dark: dark, light: light)) }
+    private static func rgb(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> NSColor { NSColor(red: r, green: g, blue: b, alpha: 1) }
     static let cardColor = NSColor(name: nil) {
         $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 0.11, alpha: 1) : .white
     }
@@ -81,7 +101,41 @@ enum Theme {
     /// A ticked checkbox: the knob's black in light; in dark a grey, as solid white was glaring on the dark card.
     static let checkOn = dynamic(dark: NSColor(white: 0.36, alpha: 1), light: .black)
     static let checkMark = dynamic(dark: NSColor(white: 0.95, alpha: 1), light: .white)
-    static let code = dynamic(dark: NSColor(white: 0, alpha: 0.35), light: NSColor(white: 0, alpha: 0.05))
+    /// Code on a card, in a command's box or an answer's block alike: a step darker than the card in both appearances.
+    static let codeColor = dynamicColor(dark: NSColor(white: 0, alpha: 0.35), light: NSColor(white: 0, alpha: 0.05))
+    static let code = Color(nsColor: codeColor)
+    /// Inline code's chip and a quote's bar, inside an answer's prose.
+    static let inlineCode = dynamicColor(dark: NSColor(white: 1, alpha: 0.09), light: NSColor(white: 0, alpha: 0.055))
+    static let quoteBar = dynamicColor(dark: NSColor(white: 1, alpha: 0.2), light: NSColor(white: 0, alpha: 0.15))
+    /// A pane's head or a box of arguments on a card: the faintest tint, under code's.
+    static let tint = Color.primary.opacity(0.03)
+    /// Selected text, everywhere text is (Codex's): a neutral grey, the same whether the window is active or not, that
+    /// light text stays readable on in dark mode and dark text in light. The caret is the text's own colour.
+    static let selection = dynamicColor(dark: NSColor(white: 0.36, alpha: 1), light: NSColor(white: 0.82, alpha: 1))
+    /// A link inside text: the conversation's colour, in every pad, card and notice.
+    static let linkColor = NSColor.linkColor
+    static let link = Color(nsColor: linkColor)
+    /// The thin scrollbar's thumb: rgb(161 161 170 / 70%) light, rgb(113 113 122 / 70%) dark, the site's zinc.
+    static let thumb = dynamic(
+        dark: NSColor(srgbRed: 113 / 255, green: 113 / 255, blue: 122 / 255, alpha: 0.7),
+        light: NSColor(srgbRed: 161 / 255, green: 161 / 255, blue: 170 / 255, alpha: 0.7))
+    /// A diff's removed lines; its added ones are `done`'s green.
+    static let removed = dynamic(dark: rgb(1.0, 0.48, 0.45), light: rgb(0.78, 0.16, 0.16))
+    /// A token in the composer ("/word", "@path"): amber words on an amber chip.
+    static let tokenText = dynamicColor(dark: rgb(0.98, 0.84, 0.40), light: rgb(0.55, 0.38, 0.0))
+    static let tokenFill = dynamicColor(dark: rgb(0.36, 0.29, 0.06), light: rgb(0.99, 0.93, 0.62))
+    /// A caution callout's three tones, light and dark: the shell around it, the panel its words sit on, the ink. Rose
+    /// for a failure, amber for trouble that may pass.
+    static let rose = (
+        shell: dynamic(dark: rgb(0.24, 0.03, 0.10), light: rgb(1.0, 0.894, 0.902)),
+        panel: dynamic(dark: rgb(0.40, 0.06, 0.18), light: rgb(1.0, 0.945, 0.949)),
+        ink: dynamic(dark: rgb(1.0, 0.894, 0.902), light: rgb(0.30, 0.02, 0.10))
+    )
+    static let amber = (
+        shell: dynamic(dark: rgb(0.26, 0.14, 0.02), light: rgb(1.0, 0.925, 0.835)),
+        panel: dynamic(dark: rgb(0.40, 0.22, 0.04), light: rgb(1.0, 0.957, 0.902)),
+        ink: dynamic(dark: rgb(1.0, 0.925, 0.835), light: rgb(0.36, 0.18, 0.0))
+    )
     static let pill = dynamic(dark: NSColor(white: 0, alpha: 0.9), light: NSColor(white: 1, alpha: 0.96))
     // Opaque, so a border is one colour along its length whatever sits behind each segment.
     // Light strokes sit a step above the key-cap grey (L 0.92 against 0.91): an outline, not a frame.
@@ -169,13 +223,26 @@ enum AgentStatus {
         case .trouble: return .orange
         case .blocked: return .red
         case .handed: return .teal
-        case .waiting: return .gray
+        case .waiting: return .secondary
         // Done: purple, as GitHub shows a merged pull request.
         case .done: return .purple
         case .working: return .blue
-        case .closed, .offline: return .gray
+        case .closed, .offline: return .secondary
         }
     }
+}
+
+/// Reduce Motion, one rule for the whole app: fades stay, movement and scale go. A fade is animated as it is, with no
+/// check; what moves or grows goes through here.
+enum Motion {
+    static var reduced: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    /// Something arriving (a card joining the inbox's stack, the stack making room, an onboarding page): Emil's strong
+    /// ease-out, mostly there in the first frames.
+    static let enter = Animation.timingCurve(0.32, 0.72, 0, 1, duration: 0.22)
+    /// An animation that moves or scales something (a scroll, a slide, a reorder): none under Reduce Motion.
+    static func animation(_ animation: Animation) -> Animation? { reduced ? nil : animation }
+    /// An entrance or exit that moves or scales: only its fade under Reduce Motion.
+    static func transition(_ transition: AnyTransition) -> AnyTransition { reduced ? .opacity : transition }
 }
 
 /// An arc turning once a second; a plain dot under Reduce Motion. Turned by Core Animation, on the render server:

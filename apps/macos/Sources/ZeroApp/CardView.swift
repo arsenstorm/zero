@@ -139,16 +139,16 @@ struct CardView: View {
         .contentShape(Rectangle())
         .onHover { if $0, ask.state == .waiting { controller.select(ask.id) } }
         .onTapGesture { controller.select(ask.id) }
-        // First showing: it joins at the bottom of the stack, so it rises 8 pt with a fade, 200 ms on the
-        // (0.32, 0.72, 0, 1) ease-out, the same curve the stack grows with. Seen cards appear as they are.
-        .offset(y: entered ? 0 : 8)
+        // First showing: it joins at the bottom of the stack, so it rises 8 pt with a fade, as the stack grows (same
+        // curve and length, InboxView). Seen cards appear as they are; under Reduce Motion it only fades.
+        .offset(y: entered || Motion.reduced ? 0 : 8)
         .opacity(entered ? 1 : 0)
         .onAppear {
-            if controller.seen.contains(ask.id) || reduceMotion {
+            if controller.seen.contains(ask.id) {
                 entered = true
             } else {
                 controller.seen.insert(ask.id)
-                withAnimation(.timingCurve(0.32, 0.72, 0, 1, duration: 0.2)) { entered = true }
+                withAnimation(Motion.enter) { entered = true }
             }
         }
     }
@@ -188,7 +188,7 @@ struct CardView: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(linked(headline)).font(.system(size: 15, weight: .semibold))
+                Text(linked(headline)).font(.system(size: 15, weight: .semibold)).tint(Theme.link)
                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 if showsByline, let byline {
                     Text(byline).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
@@ -253,9 +253,10 @@ struct CardView: View {
         return Group {
             // Folded, a click opens it; selecting text would take that click. Open, it is selectable.
             if folded {
-                Text(linked(supporting)).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(3, reservesSpace: true)
+                Text(linked(supporting)).font(.system(size: 13)).foregroundStyle(.secondary).tint(Theme.link).lineLimit(
+                    3, reservesSpace: true)
             } else {
-                Text(linked(supporting)).font(.system(size: 13)).foregroundStyle(.secondary).textSelection(.enabled)
+                Text(linked(supporting)).font(.system(size: 13)).foregroundStyle(.secondary).tint(Theme.link).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -270,9 +271,8 @@ struct CardView: View {
         .onTapGesture {
             guard long else { return }
             controller.holdTop = true
-            withAnimation(.easeOut(duration: 0.2)) { detailExpanded.toggle() }
+            detailExpanded.toggle()
         }
-        .pointerStyle(long ? .link : nil)
         .tip(long ? (detailExpanded ? "Click to fold" : "Click to read it all") : "")
     }
 
@@ -305,7 +305,7 @@ struct CardView: View {
 
     @ViewBuilder private func scriptText(_ script: String) -> some View {
         Rectangle().fill(Theme.stroke).frame(height: 1)
-        Text(script.trimmingCharacters(in: .whitespacesAndNewlines)).font(.system(size: 11, design: .monospaced))
+        Text(script.trimmingCharacters(in: .whitespacesAndNewlines)).font(.system(size: 11.5, design: .monospaced))
             .foregroundStyle(.secondary).textSelection(.enabled)
             .lineLimit(scriptExpanded ? nil : 12).fixedSize(horizontal: false, vertical: true)
         if script.split(separator: "\n").count > 12 {
@@ -409,17 +409,6 @@ struct CardView: View {
         .background(done ? Theme.doneRow : Theme.choice).clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
-    /// Same language as the pill: orange needs you, red blocked, green done, blue working.
-    private var stateColor: Color {
-        if ask.kind == .message { return (ask.status ?? "").hasPrefix("failed") ? .red : .gray }
-        if ask.kind == .note { return AgentStatus.of([ask]).color }
-        switch ask.state {
-        case .waiting, .pending: return .orange
-        case .declined: return .gray
-        default: return .blue
-        }
-    }
-
     @ViewBuilder private var footer: some View {
         switch ask.state {
         case .waiting:
@@ -482,7 +471,7 @@ struct CardView: View {
                         NucleoIcon("xmark", size: 13).foregroundStyle(.red)
                             .transition(.opacity)
                     } else if settled {
-                        NucleoIcon("check", size: 13).foregroundStyle(.green)
+                        NucleoIcon("check", size: 13).foregroundStyle(Theme.done)
                             .transition(.opacity)
                     } else {
                         Spinner(color: .orange).frame(width: 12, height: 12).transition(.opacity)
@@ -494,15 +483,14 @@ struct CardView: View {
         .padding(.horizontal, 10).padding(.vertical, 8)
         .background(surface)
         .clipShape(RoundedRectangle(cornerRadius: 10))
-        .tip(chosen && failed ? "Couldn't reach the agent. Click to try again." : "")
+        .tip(chosen && failed ? "Couldn't reach the agent; click to try again" : "")
         .opacity(decided && !chosen ? 0.4 : 1)
         // Colour only: surface, key cap and icon ease between states; the row itself never moves.
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: ask.state)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: ask.choice)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: ask.delivery)
+        .animation(.easeOut(duration: 0.2), value: ask.state)
+        .animation(.easeOut(duration: 0.2), value: ask.choice)
+        .animation(.easeOut(duration: 0.2), value: ask.delivery)
     }
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.askDocked) private var docked
 
     /// Same height as the reply box, so the footer swaps text without moving anything.

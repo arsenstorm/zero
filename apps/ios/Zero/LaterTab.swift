@@ -43,12 +43,13 @@ struct LaterView: View {
             if showing == .open {
                 if !suggested.isEmpty {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Suggested").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).padding(.bottom, 4)
+                        Text("Suggested by agents · \(suggested.count)").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                            .padding(.bottom, 4)
                         ForEach(suggested) { item in LaterLine(model: model, item: item) }
                     }
                     // Its heading and rows on the title's column, 12 pt inside it; the card reaching past it either side.
                     .padding(.horizontal, 12).padding(.vertical, 14)
-                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .zeroCard()
                     .listRowInsets(EdgeInsets(top: 0, leading: LaterView.column - 12, bottom: 12, trailing: LaterView.column - 12))
                     .listRowSeparator(.hidden)
                 }
@@ -60,15 +61,11 @@ struct LaterView: View {
         .listStyle(.plain)
         .overlay {
             if (showing == .open ? open : done).isEmpty {
-                ContentUnavailableView {
-                    Text(showing == .open ? "Nothing for later" : "Nothing done yet")
-                } description: {
-                    Text(
-                        showing == .open
-                            ? "In a task, choose Save for later from its menu: it waits here, paused, until you resume it."
-                            : "Notes you mark done show here.")
-                }
-                .allowsHitTesting(false)
+                EmptyPage(
+                    icon: "bookmark-glyph", title: showing == .open ? "Nothing saved for later" : "Nothing done yet",
+                    line: showing == .open
+                        ? "In a task, choose Save for later from its menu: it waits here, paused, until you resume it."
+                        : "Notes you mark done show here.")
             }
         }
         .refreshable { await model.loadLater() }
@@ -99,7 +96,8 @@ struct LaterLine: View {
             }.opacity(0)
             HStack(spacing: 12) {
                 if item.done {
-                    Image("circle-check-glyph").resizable().frame(width: 20, height: 20).foregroundStyle(.green)
+                    // Done as a task is: the state's purple badge.
+                    StateGlyph(state: .done, size: 20)
                 } else if let from = item.from, let row = model.row(from) {
                     StateGlyph(state: row.ownState, size: 20)
                 } else {
@@ -113,7 +111,7 @@ struct LaterLine: View {
             .frame(minHeight: 44)
         }
         .swipeActions {
-            Button(item.done ? "Not done" : "Done") { Task { await model.editLater(item.id, ["done": !item.done]) } }.tint(.green)
+            Button(item.done ? "Not done" : "Done") { Task { await model.editLater(item.id, ["done": !item.done]) } }.tint(.purple)
         }
     }
 }
@@ -122,6 +120,7 @@ struct LaterDetail: View {
     let model: PhoneModel
     let id: String
     @State private var item: ZerodLink.LaterItem?
+    @State private var choosingTask = false
 
     var body: some View {
         ScrollView {
@@ -131,44 +130,28 @@ struct LaterDetail: View {
                     HStack(spacing: 6) {
                         if let task = item.task { Text(task).fontWeight(.medium); Text("·") }
                         Text(item.createdAt.formatted(.relative(presentation: .named)))
-                        if item.done { Text("Done").foregroundStyle(.green) }
+                        if item.done { Text("Done").foregroundStyle(.purple) }
                     }
                     .font(.footnote).foregroundStyle(.secondary)
                     HStack(spacing: 8) {
                         if let resume = item.resume, !item.done {
                             // A whole task saved for later: back among the tasks, off hold.
-                            Button("Resume") {
+                            WideButton(title: "Resume task", prominent: true) {
                                 Task {
                                     let session = await model.resumeLater(item.id) ?? resume
                                     model.tab = .tasks
                                     model.path = [session]
                                 }
                             }
-                            .buttonStyle(.glassProminent)
                         } else {
-                            Menu {
-                                ForEach(model.tasks) { row in
-                                    Button(row.task) {
-                                        Task {
-                                            try? await model.send(laterPickUp(item), images: [], to: row.session)
-                                            model.tab = .tasks
-                                            model.path = [row.session]
-                                        }
-                                    }
-                                }
-                            } label: {
-                                Text("Send to a task")
-                            }
-                            .buttonStyle(.glassProminent)
+                            WideButton(title: "Send to a task", prominent: true) { choosingTask = true }
                         }
-                        Button(item.done ? "Not done" : "Done") {
+                        WideButton(title: item.done ? "Not done" : "Done") {
                             Task {
                                 await model.editLater(item.id, ["done": !item.done]); self.item = await model.laterItem(id)
                             }
                         }
-                        .buttonStyle(.glass)
-                        Button("Copy") { UIPasteboard.general.string = item.note + (item.artifact.map { "\n\n" + $0 } ?? "") }
-                            .buttonStyle(.glass)
+                        WideButton(title: "Copy") { UIPasteboard.general.string = item.note + (item.artifact.map { "\n\n" + $0 } ?? "") }
                     }
                     ForEach(item.links, id: \.self) { link in
                         if let url = URL(string: link) { Link(link, destination: url).font(.footnote).lineLimit(1) }
@@ -187,5 +170,24 @@ struct LaterDetail: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .task { item = await model.laterItem(id) }
+        // The tasks as the Tasks list draws them (TaskRow), as the share sheet and Record pick one: a tap sends it there.
+        .sheet(isPresented: $choosingTask) {
+            NavigationStack {
+                List(model.tasks) { row in
+                    TaskRow(row: row, said: row.needs ?? row.now) {
+                        guard let item else { return }
+                        choosingTask = false
+                        Task {
+                            try? await model.send(laterPickUp(item), images: [], to: row.session)
+                            model.tab = .tasks
+                            model.path = [row.session]
+                        }
+                    }
+                }
+                .listStyle(.plain)
+                .navigationTitle("Send to a task").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { choosingTask = false } } }
+            }
+        }
     }
 }

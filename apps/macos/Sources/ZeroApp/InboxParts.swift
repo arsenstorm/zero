@@ -41,16 +41,15 @@ struct MentionList: View {
                     HStack(spacing: 8) {
                         NucleoIcon(item.kind == .file ? "file" : item.kind == .loop ? "animation-repeat" : "command", size: 13)
                             .foregroundStyle(.secondary).frame(width: 14)
-                        Text(title(item)).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                        Text(title(item)).font(SelectorView.menuFont).lineLimit(1)
                         if let detail = detail(item) {
                             Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                                 .truncationMode(item.kind == .file ? .head : .tail)
                         }
                         Spacer(minLength: 0)
                     }
-                    .padding(.horizontal, 10).frame(height: 28)
-                    .background(index == state.selected ? Theme.row : .clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .padding(.horizontal, 10).frame(height: 32)
+                    .background(index == state.selected ? Theme.menuHover : .clear, in: RoundedRectangle(cornerRadius: 8))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -58,7 +57,7 @@ struct MentionList: View {
             }
         }
         .padding(6)
-        .card()
+        .modifier(MenuCard(radius: 12, linear: true))
     }
 
     private func title(_ item: Mention) -> String {
@@ -86,7 +85,7 @@ struct CopyCommand: View {
                 try? await Task.sleep(for: .seconds(1.5)); copied = false
             }
         } label: {
-            NucleoLabel(copied ? "Copied" : "Copy", icon: copied ? "circle-check" : "copy", size: 12)
+            NucleoLabel(copied ? "Copied" : "Copy", icon: copied ? "check" : "copy", size: 13)
                 .font(.system(size: 11.5, weight: .medium)).foregroundStyle(.secondary)
                 .padding(.horizontal, 8).padding(.vertical, 4)
                 .background(Theme.card.opacity(0.9), in: RoundedRectangle(cornerRadius: 6))

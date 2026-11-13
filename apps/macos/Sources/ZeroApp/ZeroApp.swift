@@ -35,8 +35,33 @@ final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
+/// The editor of every text field in Zero's windows while it's edited or selected (SwiftUI's TextField and selectable
+/// Text are both NSTextFields): Zero's grey selection, as the conversation's, and a caret in the text's colour, not
+/// the system accent. Kept so: a field sets its editor's selection colours back to the system's as it starts editing.
+final class FieldEditor: NSTextView {
+    override var selectedTextAttributes: [NSAttributedString.Key: Any] {
+        get { super.selectedTextAttributes }
+        set { super.selectedTextAttributes = [.backgroundColor: Theme.selection] }
+    }
+    static func make() -> FieldEditor {
+        let editor = FieldEditor()
+        editor.isFieldEditor = true
+        editor.selectedTextAttributes = [:]
+        editor.insertionPointColor = .textColor
+        return editor
+    }
+}
+
+/// A window with Zero's field editor (one per window: an editor is in one window's views at a time).
+final class ZeroWindow: NSWindow {
+    private lazy var editor = FieldEditor.make()
+    override func fieldEditor(_ createFlag: Bool, for object: Any?) -> NSText? { editor }
+}
+
 final class Panel: NSPanel {
     override var canBecomeKey: Bool { true }
+    private lazy var editor = FieldEditor.make()
+    override func fieldEditor(_ createFlag: Bool, for object: Any?) -> NSText? { editor }
     /// AppKit hands a new key window's focus to its first text field. The inbox only takes text focus when asked:
     /// a click in the field, or the controller arming it (R, Enter, "/"). Otherwise 1, 2, 3 stay shortcuts.
     var allowsTextFocus: () -> Bool = { true }

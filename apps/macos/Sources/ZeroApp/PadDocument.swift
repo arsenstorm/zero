@@ -168,7 +168,8 @@ private struct PadTextField: NSViewRepresentable {
         view.isAutomaticTextReplacementEnabled = false
         view.isAutomaticSpellingCorrectionEnabled = false
         view.isAutomaticLinkDetectionEnabled = false
-        view.linkTextAttributes = [.foregroundColor: NSColor.controlAccentColor, .cursor: NSCursor.pointingHand]
+        view.linkTextAttributes = [.foregroundColor: Theme.linkColor, .cursor: NSCursor.pointingHand]
+        view.insertionPointColor = .textColor
         view.textContainerInset = .zero
         view.textContainer?.lineFragmentPadding = 0
         view.textContainer?.widthTracksTextView = true
@@ -575,9 +576,9 @@ private struct PadToolbar: View {
             button("code", "Code", "⌘E", #selector(Field.zeroCode(_:)))
             button("link", "Link", "⌘K", #selector(Field.zeroLink(_:)))
             divider
-            button("heading-1", "Heading", "⌥⌘1", #selector(Field.zeroHeading1(_:)))
-            button("heading-2", "Subheading", "⌥⌘2", #selector(Field.zeroHeading2(_:)))
-            button("heading-3", "Small heading", "⌥⌘3", #selector(Field.zeroHeading3(_:)))
+            button("heading-1", "Heading 1", "⌥⌘1", #selector(Field.zeroHeading1(_:)))
+            button("heading-2", "Heading 2", "⌥⌘2", #selector(Field.zeroHeading2(_:)))
+            button("heading-3", "Heading 3", "⌥⌘3", #selector(Field.zeroHeading3(_:)))
             divider
             button("unordered-list", "Bulleted list", "⇧⌘8", #selector(Field.zeroBullets(_:)))
             button("ordered-list", "Numbered list", "⇧⌘7", #selector(Field.zeroNumbers(_:)))
@@ -600,7 +601,7 @@ private struct PadToolbar: View {
         } label: {
             NucleoIcon(icon, size: 15).foregroundStyle(.secondary).frame(width: 28, height: 28)
         }
-        .buttonStyle(Hovering())
+        .buttonStyle(Hovering(radius: 7))
         .tip(name, shortcut: shortcut)
     }
 }

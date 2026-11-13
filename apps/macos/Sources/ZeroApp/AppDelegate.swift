@@ -291,7 +291,7 @@ import ZeroCore
                     UserDefaults.standard.set(true, forKey: "onboarded")
                     self?.onboardingWindow?.close()
                 })
-            let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+            let window = ZeroWindow(contentViewController: NSHostingController(rootView: view))
             window.styleMask = [.titled, .closable, .fullSizeContentView]
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden

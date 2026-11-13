@@ -13,19 +13,15 @@ struct ArchiveSheet: View {
     @State private var unfolded: Set<String> = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                DialogTitle(text: "Archived tasks")
-                Spacer()
-                DialogButton(title: "Done") { dismiss() }.keyboardShortcut(.cancelAction)
-            }
-            TextField("Search", text: $search).textFieldStyle(.dialog)
+        VStack(alignment: .leading, spacing: 14) {
+            DialogTitle(text: "Archived tasks")
+            TextField("Search", text: $search).textFieldStyle(.dialog).firstField()
             ScrollView {
                 VStack(spacing: 1) {
                     if let archived {
                         let shown = archived.filter { search.isEmpty || $0.task.localizedCaseInsensitiveContains(search) }
                         if shown.isEmpty {
-                            Text(archived.isEmpty ? "Nothing archived." : "No archived task matches.").font(.system(size: 13))
+                            Text(archived.isEmpty ? "Nothing archived" : "No archived task matches").font(.system(size: 13))
                                 .foregroundStyle(.tertiary).padding(.top, 20)
                         }
                         if !search.isEmpty {
@@ -50,6 +46,10 @@ struct ArchiveSheet: View {
                 }
             }
             .thinScrollbar()
+            HStack {
+                Spacer()
+                DialogButton(title: "Done", kind: .primary) { dismiss() }
+            }
         }
         .frame(width: 520, height: 460)
         .task { archived = await workspace.archived() }
@@ -82,7 +82,7 @@ struct ArchiveSheet: View {
             if restoring == task.id {
                 Spinner().frame(width: 14, height: 14)
             } else {
-                Button("Unarchive") {
+                RowButton(title: "Unarchive", enabled: restoring == nil) {
                     restoring = task.id
                     Task {
                         await workspace.unarchive(task.id)
@@ -90,11 +90,11 @@ struct ArchiveSheet: View {
                         restoring = nil
                     }
                 }
-                .disabled(restoring != nil)
             }
         }
+        // A list on the dialog's card, a line under each row: not tiles, nor a card in the card.
         .padding(.horizontal, 10).frame(height: 44)
-        .background(Theme.row.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(alignment: .bottom) { Hairline() }
     }
 
     private func details(_ task: ZerodLink.Archived) -> String {

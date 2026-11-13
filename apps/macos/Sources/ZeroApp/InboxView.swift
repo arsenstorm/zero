@@ -8,7 +8,6 @@ import ZeroCore
 struct InboxView: View {
     @Bindable var controller: InboxController
     @FocusState private var focus: String?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Edge scrolling for the agent view; the ask list still centres by id through the reader.
     @State private var position = ScrollPosition()
     /// The stack's top within the bar's frame, kept while an opening grows it downward.
@@ -67,10 +66,10 @@ struct InboxView: View {
             }
         }
         // One frosted surface under the stack, so the gaps between cards never show raw desktop. Its
-        // inset matches the 10 pt between cards, so the edges read as one more gap.
+        // inset matches the 10 pt between cards, so the edges read as one more gap; concentric with the cards' 18.
         .padding(10)
         // Thin, not ultra-thin: in light mode the thinnest material took whatever colour sat behind it.
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 28))
         // The composer, or the empty inbox, sits on the bar's centre line in every view, whatever is above
         // it, so the eye never has to find it.
         // A conversation ends with its composer centred on the bar, where the new-agent composer and the
@@ -91,7 +90,7 @@ struct InboxView: View {
         // Outermost on purpose: the stack and its surface grow together when a card joins.
         // A view switch is excluded: that is a cut.
         .animation(
-            reduceMotion || controller.switching ? nil : .timingCurve(0.32, 0.72, 0, 1, duration: 0.22),
+            controller.switching ? nil : Motion.animation(Motion.enter),
             value: controller.cards.map { "\($0.id)/\($0.state.rawValue)" })
     }
 
@@ -133,16 +132,16 @@ struct InboxView: View {
     private func cardsChanged(_ proxy: ScrollViewProxy) {
         controller.holdTop = false
         controller.ensureSelection()
-        if controller.switching || reduceMotion {
+        if controller.switching || Motion.reduced {
             center(proxy)
         } else {
-            withAnimation(.timingCurve(0.32, 0.72, 0, 1, duration: 0.22)) { center(proxy) }
+            withAnimation(Motion.enter) { center(proxy) }
         }
     }
 
     private func scrollRequested(_ proxy: ScrollViewProxy) {
-        if controller.scrollAnimated && !reduceMotion {
-            withAnimation(.timingCurve(0.32, 0.72, 0, 1, duration: 0.25)) { center(proxy) }
+        if controller.scrollAnimated && !Motion.reduced {
+            withAnimation(Motion.enter) { center(proxy) }
         } else {
             center(proxy)
         }
@@ -179,12 +178,12 @@ private struct WorkspacesCard: View {
                 } label: {
                     HStack(spacing: 10) {
                         WorkspaceGlyph(glyph: space.glyph, size: 15).foregroundStyle(.secondary).frame(width: 18)
-                        Text(space.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                        Text(space.name).font(SelectorView.menuFont).lineLimit(1)
                         Spacer(minLength: 8)
-                        NucleoIcon("check", size: 13).foregroundStyle(Color.accentColor).opacity(space.id == workspace.current ? 1 : 0)
+                        NucleoIcon("check", size: 13).foregroundStyle(Theme.menuHot).opacity(space.id == workspace.current ? 1 : 0)
                     }
                     .padding(.horizontal, 10).frame(height: 32)
-                    .background(hovered == space.id ? Theme.row : .clear, in: RoundedRectangle(cornerRadius: 8))
+                    .background(hovered == space.id ? Theme.menuHover : .clear, in: RoundedRectangle(cornerRadius: 12))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -193,6 +192,6 @@ private struct WorkspacesCard: View {
         }
         .padding(6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 16))
+        .card()
     }
 }

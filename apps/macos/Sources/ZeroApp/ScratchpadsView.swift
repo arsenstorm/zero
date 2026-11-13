@@ -64,13 +64,11 @@ struct ScratchpadsPage: View {
                 if let shown {
                     PadEditor(workspace: workspace, navigation: navigation, id: shown).id(shown)
                 } else {
-                    ContentUnavailableView {
-                        NucleoLabel("No scratchpad open", icon: "note-3", size: 20)
-                    } description: {
-                        Text("Notes you and your agents share. Copy a pad's link, or a section's, to hand it to an agent.")
-                    } actions: {
-                        Button("New scratchpad") { create(in: "") }
-                    }
+                    EmptyState(
+                        title: "No scratchpad open",
+                        detail: "Notes you and your agents share. Copy a pad's link, or a section's, to hand it to an agent.",
+                        icon: "note-3", action: ("New scratchpad", { create(in: "") })
+                    )
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.card)
@@ -117,8 +115,8 @@ struct ScratchpadsPage: View {
                     .buttonStyle(.plain).tip("Clear")
                 }
             }
-            .padding(.horizontal, 9).frame(height: 30)
-            .background(Theme.chip.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, 10).frame(height: 30)
+            .background(Theme.row, in: RoundedRectangle(cornerRadius: 8))
             // The whole bar is the field: a click on its padding focuses it too.
             .contentShape(Rectangle()).onTapGesture { searchFocused = true }
             if !searching {
@@ -137,10 +135,10 @@ struct ScratchpadsPage: View {
                     .buttonStyle(Hovering()).tip("New folder")
                 }
                 .foregroundStyle(.secondary)
-                .transition(.move(edge: .trailing).combined(with: .opacity))
+                .transition(Motion.transition(.move(edge: .trailing).combined(with: .opacity)))
             }
         }
-        .animation(.spring(duration: 0.28, bounce: 0), value: searching)
+        .animation(Motion.animation(.snappy(duration: 0.25)), value: searching)
         .clipped()
     }
 
@@ -195,7 +193,7 @@ struct ScratchpadsPage: View {
             [
                 [
                     MenuItem("New scratchpad here", "compose") { create(in: folder) },
-                    MenuItem("New folder inside", "folder-plus") { naming = .folder(in: folder) },
+                    MenuItem("New folder inside…", "folder-plus") { naming = .folder(in: folder) },
                 ],
                 [MenuItem("Show in Finder", "folder") { NSWorkspace.shared.open(Self.root.appendingPathComponent(folder)) }],
             ]
@@ -274,14 +272,22 @@ struct NameSheet: View {
     @State var name: String
     let action: String
     let done: (String) -> Void
+    /// Back to the name it had before the user's (an agent's own label), where there is one to go back to.
+    var reset: (() -> Void)? = nil
     @Environment(\.closeDialog) private var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             DialogTitle(text: title)
-            TextField("Name", text: $name).textFieldStyle(.dialog).onSubmit(submit)
+            // Opens with the current name selected, so typing replaces it and an arrow key keeps it.
+            TextField("Name", text: $name).textFieldStyle(.dialog).onSubmit(submit).firstField()
             HStack {
                 Spacer()
+                if let reset {
+                    DialogButton(title: "Use the default name") {
+                        reset(); dismiss()
+                    }
+                }
                 DialogButton(title: "Cancel") { dismiss() }
                 DialogButton(title: action, kind: .primary, enabled: !name.trimmingCharacters(in: .whitespaces).isEmpty, action: submit)
             }
@@ -345,7 +351,8 @@ private struct PadEditor: View {
                 )
                 .onChange(of: text) { _, now in if now != saved { scheduleSave() } }
             } else if missing {
-                ContentUnavailableView("No such scratchpad", systemImage: "", description: Text("It may have been moved to the trash."))
+                EmptyState(title: "No such scratchpad", detail: "It may have been moved to the trash.").frame(maxWidth: .infinity).padding(
+                    .top, 40)
             }
         }
         // The conversation's column: the page reads as a task's does, not as a sheet across the window.
@@ -367,6 +374,26 @@ private struct PadEditor: View {
             if let section { scrollTo = section; navigation.padSection = nil }
         }
         .onDisappear { flush() }
+    }
+
+    @State private var linkAnchor = CGRect.zero
+
+    private func links(_ pad: Pad) -> [[MenuItem]] {
+        [
+            [MenuItem("Copy Markdown link", "copy") { PadLinks.copy(pad.link, title: pad.title, markdown: true) }],
+            pad.sections.isEmpty
+                ? []
+                : [
+                    MenuItem(
+                        "Link to a section", "link",
+                        children: pad.sections.map { section in
+                            MenuItem(String(repeating: "   ", count: max(0, section.level - 1)) + section.title) {
+                                PadLinks.copy(
+                                    PadLinks.section(pad.id, section.slug), title: "\(pad.title) › \(section.title)", markdown: true)
+                            }
+                        })
+                ],
+        ]
     }
 
     private func header(_ pad: Pad) -> some View {
@@ -412,7 +439,7 @@ private struct PadEditor: View {
 
     private func banner(_ message: String) -> some View {
         HStack(spacing: 10) {
-            NucleoIcon("triangle-warning", size: 14).foregroundStyle(.orange)
+            NucleoIcon("triangle-warning", size: 14).foregroundStyle(Theme.amber.ink)
             Text("Changed elsewhere while you were typing.").font(.system(size: 12.5))
             Spacer()
             Button("Keep mine") { Task { await write(force: true) } }
@@ -423,7 +450,7 @@ private struct PadEditor: View {
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 8)
-        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+        .background(Theme.orangeRow, in: RoundedRectangle(cornerRadius: 8))
         .padding(.bottom, 8)
         .tip(message)
     }
@@ -527,7 +554,8 @@ struct MarkdownEditor: NSViewRepresentable {
         view.isAutomaticTextReplacementEnabled = false
         view.isAutomaticSpellingCorrectionEnabled = false
         view.isAutomaticLinkDetectionEnabled = false
-        view.linkTextAttributes = [.foregroundColor: NSColor.controlAccentColor, .cursor: NSCursor.pointingHand]
+        view.linkTextAttributes = [.foregroundColor: Theme.linkColor, .cursor: NSCursor.pointingHand]
+        view.insertionPointColor = .textColor
         view.textContainerInset = NSSize(width: 0, height: 8)
         // The column is the view itself, kept to the page's column and centred in the clip, rather than a full-width
         // view with a huge inset: with an inset of hundreds of points the text view's hit-testing lands a click
@@ -598,9 +626,11 @@ struct MarkdownEditor: NSViewRepresentable {
             if let section = parent.sections.last(where: { $0.line <= line }), let found = parent.sectionLink(section.slug) {
                 items.append(LinkItem(title: "Copy link to “\(section.title)”", link: found.link, label: found.title))
             }
-            items.append(LinkItem(title: "Copy link to scratchpad", link: parent.padLink.link, label: parent.padLink.title))
+            if !parent.padLink.link.isEmpty {
+                items.append(LinkItem(title: "Copy link to scratchpad", link: parent.padLink.link, label: parent.padLink.title))
+            }
             for (index, item) in items.enumerated() { menu.insertItem(item, at: index) }
-            menu.insertItem(.separator(), at: items.count)
+            if !items.isEmpty { menu.insertItem(.separator(), at: items.count) }
             return menu
         }
     }

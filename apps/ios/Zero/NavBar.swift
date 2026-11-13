@@ -9,13 +9,15 @@ struct NavBar: View {
     let newTask: () -> Void
     @Namespace private var glass
     @State private var choosingWorkspace = false
+    /// Under Reduce Motion the menu opens and the selection moves without sliding or bouncing.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let places: [(PhoneModel.Place, String, String)] = [
         (.inbox, "Inbox", "inbox-glyph"), (.tasks, "Tasks", "list-checkbox-glyph"), (.later, "Later", "bookmark-glyph"),
     ]
     /// The pages only the menu leads to; while one is open, the menu's slot shows it, as Linear's does.
     private static let menuPages: [(PhoneModel.Place, String, String)] = [
-        (.record, "Record your screen", "record-glyph"), (.settings, "Settings", "gear-outline"),
+        (.record, "Record", "record-glyph"), (.settings, "Settings", "gear-glyph"),
     ]
     /// What's selected sits on: a lighter capsule, as Linear's (a set colour: a semantic one on glass comes out faint).
     static let here = Color(
@@ -42,7 +44,7 @@ struct NavBar: View {
         HStack(spacing: 0) {
             ForEach(Self.places, id: \.0) { place, title, image in
                 Button {
-                    withAnimation(.snappy(duration: 0.25)) { model.tab = place }
+                    withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) { model.tab = place }
                 } label: {
                     Image(image).resizable().frame(width: 22, height: 22)
                         // A dot while something waits on the user; its count is in the menu.
@@ -119,7 +121,7 @@ struct NavBar: View {
     /// The workspace shown, as the Mac's sidebar heading has it; with others, tapping it lists them here.
     private var workspace: some View {
         Button {
-            if model.workspaces.count > 1 { withAnimation(.snappy(duration: 0.25)) { choosingWorkspace.toggle() } }
+            if model.workspaces.count > 1 { choosingWorkspace.toggle() }
         } label: {
             HStack(spacing: 12) {
                 Logo(size: 26)
@@ -145,7 +147,7 @@ struct NavBar: View {
                         .padding(.horizontal, 7).frame(minWidth: 24, minHeight: 24).background(.blue, in: Capsule())
                 }
                 if image == nil && selected {
-                    Image("circle-check-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(Color.accentColor)
+                    Image("circle-check-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(Theme.knob)
                 }
             }
             .padding(.horizontal, 14).frame(height: 50)
@@ -156,7 +158,7 @@ struct NavBar: View {
     }
 
     private func setOpen(_ value: Bool) {
-        withAnimation(.bouncy(duration: 0.35)) {
+        withAnimation(reduceMotion ? nil : .bouncy(duration: 0.35)) {
             open = value
             if !value { choosingWorkspace = false }
         }

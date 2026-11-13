@@ -230,6 +230,8 @@ struct SidebarItem<Icon: View>: View {
     let title: String
     var selected = false
     var trailing = false
+    /// Its key, said in a tip.
+    var shortcut: String? = nil
     let action: () -> Void
     @ViewBuilder var icon: Icon
 
@@ -245,6 +247,7 @@ struct SidebarItem<Icon: View>: View {
             .padding(.horizontal, 10).frame(height: 30)
         }
         .buttonStyle(Hovering(selected: selected))
+        .tip(shortcut == nil ? "" : title, shortcut: shortcut)
     }
 }
 
@@ -277,14 +280,34 @@ struct Hovering: ButtonStyle {
 }
 
 extension SidebarItem where Icon == NucleoIcon {
-    init(_ title: String, icon: String, selected: Bool = false, action: @escaping () -> Void) {
-        self.init(title: title, selected: selected, action: action) { NucleoIcon(icon, size: 15) }
+    init(_ title: String, icon: String, selected: Bool = false, shortcut: String? = nil, action: @escaping () -> Void) {
+        self.init(title: title, selected: selected, shortcut: shortcut, action: action) { NucleoIcon(icon, size: 15) }
     }
 }
 
 extension SidebarItem where Icon == EmptyView {
     init(_ title: String, selected: Bool = false, action: @escaping () -> Void) {
         self.init(title: title, selected: selected, action: action) { EmptyView() }
+    }
+}
+
+/// Nothing to show: an icon in a soft circle, what would show here, and maybe the way to start one.
+struct EmptyState: View {
+    let title: String
+    let detail: String
+    var icon = "triangle-warning"
+    var action: (title: String, run: () -> Void)?
+
+    var body: some View {
+        VStack(spacing: 14) {
+            NucleoIcon(icon, size: 26).foregroundStyle(.secondary)
+                .frame(width: 64, height: 64).background(Theme.row, in: Circle())
+            VStack(spacing: 6) {
+                Text(title).font(.system(size: 17, weight: .semibold))
+                Text(detail).font(.system(size: 13)).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 360)
+            }
+            if let action { DialogButton(title: action.title, action: action.run) }
+        }
     }
 }
 

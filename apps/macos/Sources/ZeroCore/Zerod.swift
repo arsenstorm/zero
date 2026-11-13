@@ -1887,6 +1887,8 @@ public final class ZerodLink: @unchecked Sendable {
 /// How the folder differs from when a message went: what restoring its code would undo. No snapshot outside git, or
 /// for messages sent before Zero kept them.
 public struct RewindPreview: Decodable, Equatable, Sendable {
+    /// The messages that go: the one gone back to, the answers and the messages after it.
+    public let messages: Int?
     public let snapshot: Bool
     public let files: Int?
     public let insertions: Int?

@@ -51,7 +51,7 @@ struct ItemView: View {
         case let .reasoning(text):
             ReasoningRow(text: text, date: item.date, until: until)
         case let .plan(text):
-            Text(text).font(.system(.callout, design: .monospaced)).padding(12).frame(maxWidth: .infinity, alignment: .leading).card()
+            Text(text).font(.system(size: 12, design: .monospaced)).padding(12).frame(maxWidth: .infinity, alignment: .leading).card()
         case let .command(command, _, output, exitCode, _, description):
             CommandCard(
                 command: command, description: description, output: output, exitCode: exitCode, status: item.status, started: item.date)
@@ -74,7 +74,7 @@ struct ItemView: View {
                     .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4.5 }
                     Text(NoticeText.attributed(text))
                 }
-                .font(.callout).foregroundStyle(.secondary).tint(.primary)
+                .font(.system(size: 12)).foregroundStyle(.secondary).tint(Theme.link)
             }
         case let .table(title, columns, rows):
             TableCard(title: title, columns: columns, rows: rows, cwd: cwd)
@@ -98,13 +98,14 @@ struct CopyButton: View {
                 try? await Task.sleep(for: .seconds(1.5)); copied = false
             }
         } label: {
-            NucleoIcon(copied ? "circle-check" : "copy", size: 13).foregroundStyle(.secondary).frame(width: size, height: size)
+            NucleoIcon(copied ? "check" : "copy", size: 13).foregroundStyle(.secondary).frame(width: size, height: size)
         }
         .buttonStyle(Hovering(radius: 6)).tip("Copy")
     }
 }
 
-private struct StatusIcon: View {
+/// A step's state, one size whatever the state.
+struct StatusIcon: View {
     let status: ItemStatus
     var body: some View {
         Group {
@@ -124,27 +125,6 @@ private struct StatusIcon: View {
 /// Something that went wrong, as a caution callout built as the table's panel is: a rose shell with the warning mark
 /// and a label in its strip, the words on a rounded panel inside, bled out so they line up with the page's prose. A
 /// notice that names itself ("Blocked: …") gives the label; the rest say Error.
-/// A callout's three tones, light and dark: the shell around it, the panel its words sit on, the ink.
-private enum CalloutColors {
-    private static func tinted(light: (CGFloat, CGFloat, CGFloat), dark: (CGFloat, CGFloat, CGFloat)) -> Color {
-        Color(
-            nsColor: NSColor(name: nil) {
-                $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                    ? NSColor(red: dark.0, green: dark.1, blue: dark.2, alpha: 1)
-                    : NSColor(red: light.0, green: light.1, blue: light.2, alpha: 1)
-            })
-    }
-    static let rose = (
-        shell: tinted(light: (1.0, 0.894, 0.902), dark: (0.24, 0.03, 0.10)),
-        panel: tinted(light: (1.0, 0.945, 0.949), dark: (0.40, 0.06, 0.18)),
-        ink: tinted(light: (0.30, 0.02, 0.10), dark: (1.0, 0.894, 0.902))
-    )
-    static let amber = (
-        shell: tinted(light: (1.0, 0.925, 0.835), dark: (0.26, 0.14, 0.02)),
-        panel: tinted(light: (1.0, 0.957, 0.902), dark: (0.40, 0.22, 0.04)),
-        ink: tinted(light: (0.36, 0.18, 0.0), dark: (1.0, 0.925, 0.835))
-    )
-}
 
 struct CautionCallout<Actions: View>: View {
     /// Rose for a failure, amber for trouble that may pass (stuck, out of usage).
@@ -158,7 +138,7 @@ struct CautionCallout<Actions: View>: View {
     }
 
     var body: some View {
-        let colors = tone == .rose ? CalloutColors.rose : CalloutColors.amber
+        let colors = tone == .rose ? Theme.rose : Theme.amber
         let (label, body) = Self.split(text)
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
@@ -172,7 +152,7 @@ struct CautionCallout<Actions: View>: View {
                     (try? AttributedString(markdown: body, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
                         ?? AttributedString(body)
                 )
-                .font(.system(size: 13)).lineSpacing(4).foregroundStyle(colors.ink)
+                .font(.system(size: 13)).lineSpacing(5).foregroundStyle(colors.ink).tint(Theme.link)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 actions()
@@ -214,7 +194,7 @@ private struct TableCard: View {
             } content: {
                 VStack(spacing: 0) {
                     if rows.isEmpty {
-                        Text("Nothing in it").font(.system(size: 13)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(
+                        Text("Nothing in it").font(.system(size: 13)).foregroundStyle(.tertiary).frame(maxWidth: .infinity).padding(
                             .vertical, 16)
                     }
                     ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
@@ -286,13 +266,13 @@ private struct StepRow<Label: View, Trailing: View>: View {
             HStack(alignment: .top, spacing: 8) {
                 label()
                 if opens {
-                    NucleoIcon("chevron-down", size: 10).rotationEffect(.degrees(open ? 180 : 0)).frame(height: 16)
+                    NucleoIcon("chevron-down", size: 10).rotationEffect(.degrees(open ? 0 : -90)).frame(height: 16)
                         .opacity(hovered || open ? 1 : 0)
                 }
                 Spacer(minLength: 0)
                 trailing()
             }
-            .font(.callout).foregroundStyle(.secondary)
+            .font(.system(size: 12)).foregroundStyle(.secondary)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -335,7 +315,7 @@ private struct ReasoningRow: View {
             }
             if open { Text(text).foregroundStyle(.secondary).textSelection(.enabled).padding(.leading, 22) }
         }
-        .font(.callout)
+        .font(.system(size: 12))
     }
 }
 
@@ -373,11 +353,12 @@ private struct CommandCard: View {
                     title(running: nil)
                 }
             } trailing: {
-                if let exitCode, exitCode != 0 { Text("exit \(exitCode)").font(.caption).foregroundStyle(.red) }
+                if let exitCode, exitCode != 0 { Text("exit \(exitCode)").font(.system(size: 11)).foregroundStyle(.red) }
                 if status == .running, let started {
                     TimelineView(.periodic(from: .zeroBeat, by: 1)) { context in
-                        Text(Took.length(context.date.timeIntervalSince(started))).font(.caption.monospacedDigit()).foregroundStyle(
-                            .tertiary)
+                        Text(Took.length(context.date.timeIntervalSince(started))).font(.system(size: 11).monospacedDigit())
+                            .foregroundStyle(
+                                .tertiary)
                     }
                 }
             }
@@ -399,7 +380,7 @@ private struct CommandCard: View {
                         }
                     }
                     .padding(.leading, 12).padding(.trailing, 6).padding(.vertical, 6)
-                    .background(Color.primary.opacity(0.03))
+                    .background(Theme.tint)
                     if !output.isEmpty {
                         Rectangle().fill(Theme.stroke).frame(height: 1)
                         // Scrolling both ways, a box larger than what's in it centres it: anchored top left instead, and
@@ -433,7 +414,7 @@ private struct CommandCard: View {
         let printing = running.map { $0 >= 3 } == true ? latest : nil
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             if description.isEmpty, printing == nil {
-                (Text("$ ").foregroundStyle(.tertiary) + Text(CommandText.line(command))).font(.system(.callout, design: .monospaced))
+                (Text("$ ").foregroundStyle(.tertiary) + Text(CommandText.line(command))).font(.system(size: 12, design: .monospaced))
             } else {
                 if !description.isEmpty { Text(description).layoutPriority(1) }
                 Text(printing ?? CommandText.line(command)).font(.system(size: 12, design: .monospaced)).foregroundStyle(.tertiary)
@@ -458,12 +439,12 @@ struct FileChangeCard: View {
                 StatusIcon(status: status)
                 Text(verb).fontWeight(.medium)
                 // The file first, its folder after it and quieter: the name is what's read.
-                (Text(name).font(.system(.callout, design: .monospaced).weight(.medium))
-                    + Text(folder.isEmpty ? "" : "  " + folder).font(.system(.callout, design: .monospaced)).foregroundStyle(.tertiary))
+                (Text(name).font(.system(size: 12, design: .monospaced).weight(.medium))
+                    + Text(folder.isEmpty ? "" : "  " + folder).font(.system(size: 12, design: .monospaced)).foregroundStyle(.tertiary))
                     .lineLimit(1).truncationMode(.tail)
                 let added = lines.count { $0.kind == .added }, removed = lines.count { $0.kind == .removed }
-                if added > 0 { Text("+\(added)").foregroundStyle(DiffLine.green).monospacedDigit().fixedSize() }
-                if removed > 0 { Text("−\(removed)").foregroundStyle(DiffLine.red).monospacedDigit().fixedSize() }
+                if added > 0 { Text("+\(added)").foregroundStyle(Theme.done).monospacedDigit().fixedSize() }
+                if removed > 0 { Text("−\(removed)").foregroundStyle(Theme.removed).monospacedDigit().fixedSize() }
             }
             if open && !lines.isEmpty {
                 DiffText(lines: lines)
@@ -570,7 +551,7 @@ private struct ToolCard: View {
                 }
                 .padding(.horizontal, 12).padding(.vertical, 10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+                .background(Theme.tint, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke))
             }
         }

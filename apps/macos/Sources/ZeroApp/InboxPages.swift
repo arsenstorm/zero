@@ -35,7 +35,7 @@ struct InboxSidebar: View {
                         ForEach(agents, id: \.self) { name in
                             let open = waiting.filter { $0.agent.name == name }.count
                             row(InboxFilter.agent(name), controller.store.displayName(of: name), count: open > 0 ? open : nil) {
-                                Circle().fill(open > 0 ? Color.orange : Theme.stroke).frame(width: 7, height: 7)
+                                Circle().fill(open > 0 ? AgentStatus.needsYou.color : Theme.stroke).frame(width: 7, height: 7)
                             }
                         }
                     }
@@ -176,11 +176,11 @@ struct AsksPage: View {
         }
     }
 
-    /// When it was asked (waiting, in orange) or answered: the time today, the date before.
+    /// When it was asked (waiting, in needs-you blue) or answered: the time today, the date before.
     private func since(_ ask: Ask) -> some View {
         let date = ask.state.isFinal ? (ask.answeredAt ?? ask.createdAt) : ask.createdAt
         return Text(MessageBlock<EmptyView>.stamp(date) + (ask.state == .declined ? " · declined" : ""))
-            .foregroundStyle(ask.state.isFinal ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange)).lineLimit(1)
+            .foregroundStyle(ask.state.isFinal ? AnyShapeStyle(.secondary) : AnyShapeStyle(AgentStatus.needsYou.color)).lineLimit(1)
     }
 
     /// Nothing to show: said plainly, with what would show here.
@@ -190,20 +190,12 @@ struct AsksPage: View {
             case InboxFilter.waiting:
                 (
                     "You're all caught up",
-                    "When an agent asks you something, wants an approval or needs a command run, it lands here, and the bar's inbox turns orange."
+                    "When an agent asks you something, wants an approval or needs a command run, it lands here, and the bar's inbox gets a dot."
                 )
             case InboxFilter.answered: ("Nothing answered yet", "Asks you answer show here, newest first.")
-            default: ("Nothing from this agent", "Its questions, approvals and commands show here when it asks.")
+            default: ("Nothing from this agent yet", "Its questions, approvals and commands show here when it asks.")
             }
-        return VStack(spacing: 14) {
-            NucleoIcon("inbox", fill: "glyph", size: 26).foregroundStyle(.secondary)
-                .frame(width: 64, height: 64).background(Theme.row, in: Circle())
-            VStack(spacing: 6) {
-                Text(title).font(.system(size: 17, weight: .semibold))
-                Text(detail).font(.system(size: 13)).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 360)
-            }
-        }
-        .padding(.top, 40)
+        return EmptyState(title: title, detail: detail, icon: "inbox").padding(.top, 40)
     }
 }
 
@@ -272,7 +264,7 @@ struct StatusCard: View {
                     (try? AttributedString(markdown: now, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
                         ?? AttributedString(now)
                 )
-                .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 13)).foregroundStyle(.secondary).tint(Theme.link).fixedSize(horizontal: false, vertical: true)
             }
             // The inbox's card without its own frame (a card in a card), lined up with this one's padding.
             ForEach(asks) { ask in
@@ -281,11 +273,7 @@ struct StatusCard: View {
         }
         .padding(14)
         .frame(width: Self.width, alignment: .leading)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.stroke))
-        // One layer, then its shadow: a shadow on the stack itself shadows every row and word in it.
-        .compositingGroup()
-        .shadow(color: .black.opacity(0.08), radius: 16, y: 4)
+        .modifier(MenuCard(radius: 12, linear: true))
     }
 }
 
@@ -309,25 +297,26 @@ struct UpdatingBar: View {
                 if !updating.starting && !updating.waiting.isEmpty {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(updating.waiting.prefix(3).enumerated()), id: \.element.id) { index, waiting in
-                            if index > 0 { Divider().padding(.leading, 10) }
+                            if index > 0 { Hairline().padding(.horizontal, 10) }
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(waiting.task.isEmpty ? "A task" : waiting.task).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                                Text(waiting.command).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
-                                    .truncationMode(.tail)
+                                Text(waiting.command).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary).lineLimit(
+                                    1
+                                )
+                                .truncationMode(.tail)
                             }
                             .padding(.horizontal, 10).padding(.vertical, 7)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.row, in: RoundedRectangle(cornerRadius: 6))
+                    .background(Theme.row, in: RoundedRectangle(cornerRadius: 8))
                 }
             }
-            // Concentric: the commands' 6 pt corners inset 10 pt in the card's 16.
+            // Concentric: the commands' 8 pt corners inset 10 pt in the card's 18.
             .padding(10)
             .frame(width: 400, alignment: .leading)
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.stroke))
-            .compositingGroup().shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+            .card()
+            .compositingGroup().floatingShadow()
         }
     }
 

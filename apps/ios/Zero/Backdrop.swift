@@ -121,7 +121,11 @@ struct EmptyInbox: View {
                 VStack(spacing: 0) {
                     Spacer()
                     ContentUnavailableView {
-                        Text("Nothing for you")
+                        Label {
+                            Text("You're all caught up")
+                        } icon: {
+                            Image("inbox-glyph").resizable().frame(width: 28, height: 28)
+                        }
                     } description: {
                         Text("Asks, steps for you and unread replies show here.")
                             .foregroundStyle(scheme == .dark ? AnyShapeStyle(.white.opacity(0.8)) : AnyShapeStyle(.secondary))

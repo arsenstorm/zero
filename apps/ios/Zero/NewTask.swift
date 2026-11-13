@@ -31,7 +31,7 @@ struct NewTaskSheet: View {
             top
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    TextField("What should it do?", text: $prompt, axis: .vertical)
+                    TextField("Do anything", text: $prompt, axis: .vertical)
                         .font(.title3).focused($writing)
                     if let problem { Text(problem).font(.footnote).foregroundStyle(.red) }
                 }
@@ -50,6 +50,8 @@ struct NewTaskSheet: View {
                 chosen = m.map { ($0, e) }
             }
         }
+        // The share sheet starts its new tasks with the same agent (it can't read the app's defaults).
+        .onChange(of: provider, initial: true) { _, now in Keychain.write("newTaskProvider", Data(now.utf8)) }
         .task {
             writing = true
             folders = await model.projects()
@@ -84,22 +86,7 @@ struct NewTaskSheet: View {
                 list(folders.map { ($0, ($0 as NSString).lastPathComponent) }, selected: folder) { folder = $0 }
             }
             Spacer(minLength: 12)
-            Button {
-                Task { await start() }
-            } label: {
-                Group {
-                    if starting {
-                        Spinner().frame(width: 18, height: 18)
-                    } else {
-                        glyph("arrow-up-outline").foregroundStyle(canStart ? .white : .secondary)
-                    }
-                }
-                .frame(width: 44, height: 44)
-                .background { if canStart { Circle().fill(Color.accentColor) } }
-            }
-            .buttonStyle(.plain).glassEffect(.regular.interactive(), in: Circle())
-            .disabled(!canStart)
-            .accessibilityLabel("Start")
+            SendCircle(ready: canStart, sending: starting, label: "Start") { Task { await start() } }
         }
         .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 8)
     }
@@ -115,8 +102,12 @@ struct NewTaskSheet: View {
                     tint: permissions == .auto ? nil : .orange
                 ) { choosing = .permissions }
                 .popover(isPresented: Binding(get: { choosing == .permissions }, set: { if !$0 { choosing = nil } })) {
-                    list([("auto", "Auto"), ("unrestricted", "Unrestricted")], selected: permissions == .auto ? "auto" : "unrestricted") {
-                        permissions = $0 == "auto" ? .auto : .unrestricted
+                    let choices = Permissions.choices(agent)
+                    ChoiceList(
+                        rows: choices.map { (id: $0.0.rawValue, title: $0.1) }, selected: permissions.rawValue,
+                        details: Dictionary(uniqueKeysWithValues: choices.map { ($0.0.rawValue, $0.2) })
+                    ) {
+                        permissions = Permissions(rawValue: $0) ?? .auto; choosing = nil
                     }
                 }
             }

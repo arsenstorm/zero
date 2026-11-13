@@ -86,7 +86,6 @@ struct WorkBlock: View {
     @State private var expanded = false
     /// A step gone to from a link or an ask (WorkBlock.unfold): washed a moment, alone of the turn's steps.
     @State private var lit: String?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotionForLit
     /// Its words have been the last thing long enough to be its answer, not a note between steps: its notes fold away
     /// and the answer reads on from the heading (WorkBlock's task).
     @State private var answering = false
@@ -154,7 +153,7 @@ struct WorkBlock: View {
     /// once, as the page lifts the message; come from the queue's strip, eased, as the page glides.
     private func foldForNextMessage(animated: Bool) {
         guard !live, expanded else { return }
-        withAnimation(animated ? .easeOut(duration: 0.2) : nil) { expanded = false }
+        withAnimation(animated ? Motion.animation(.easeOut(duration: 0.2)) : nil) { expanded = false }
     }
 
     /// Between its heading, steps and notes, and above its answer (LiftStack.Headed).
@@ -172,7 +171,7 @@ struct WorkBlock: View {
             // it pushed the words down.
             Button {
                 ConversationView.folded = Date()
-                withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
+                expanded.toggle()
             } label: {
                 HStack(spacing: 6) {
                     if speaking {
@@ -188,7 +187,7 @@ struct WorkBlock: View {
                         let verb = worked ? "Worked" : "Thought"
                         Text(Took.text(verb, start.flatMap { start in end.map { $0.timeIntervalSince(start) } }))
                     }
-                    if !items.isEmpty { NucleoIcon("chevron-down", size: 9).rotationEffect(.degrees(open ? 0 : -90)) }
+                    if !items.isEmpty { NucleoIcon("chevron-down", size: 10).rotationEffect(.degrees(open ? 0 : -90)) }
                 }
                 // Figures of one width: the count ticks without the chevron after it shifting.
                 .font(.system(size: 13).monospacedDigit()).foregroundStyle(.secondary)
@@ -215,9 +214,6 @@ struct WorkBlock: View {
                     }
                 }
                 .padding(.top, 4)
-                // In once what's below has made room (the stack moves the rows under it over the same 0.15 s): faded in
-                // at once, they were drawn over the answer as it slid down past them. Gone at once on folding.
-                .transition(.asymmetric(insertion: .opacity.animation(.easeOut(duration: 0.15).delay(0.15)), removal: .identity))
             }
             // Folded, what it has said, each staying where it was; its steps aren't listed, only the one running now
             // (below). Its answer come, the notes fold away and the answer stands in their place.
@@ -299,11 +295,11 @@ struct WorkBlock: View {
             guard let item = note.object as? String, items.contains(where: { $0.id == item }) else { return }
             expanded = true
             Task {
-                // Once its steps are in (they fade in over 0.3 s), it alone, a moment.
-                try? await Task.sleep(for: .milliseconds(reduceMotionForLit ? 0 : 300))
-                withAnimation(reduceMotionForLit ? nil : .easeOut(duration: 0.2)) { lit = item }
+                // Once the page has scrolled to it, it alone, a moment.
+                try? await Task.sleep(for: .milliseconds(Motion.reduced ? 0 : 300))
+                withAnimation(.easeOut(duration: 0.2)) { lit = item }
                 try? await Task.sleep(for: .seconds(1.4))
-                withAnimation(reduceMotionForLit ? nil : .easeOut(duration: 0.6)) { if lit == item { lit = nil } }
+                withAnimation(.easeOut(duration: 0.6)) { if lit == item { lit = nil } }
             }
         }
     }
@@ -437,7 +433,7 @@ struct QuietTurns<Content: View>: View {
             } label: {
                 HStack(spacing: 6) {
                     Text(title).lineLimit(1).truncationMode(.middle)
-                    NucleoIcon("chevron-down", size: 9).rotationEffect(.degrees(open ? 0 : -90))
+                    NucleoIcon("chevron-down", size: 10).rotationEffect(.degrees(open ? 0 : -90))
                 }
                 .font(.system(size: 13)).foregroundStyle(.secondary)
                 .frame(height: 20)
@@ -487,7 +483,7 @@ struct GivenMessage: View {
                         }
                         Spacer(minLength: 0)
                         if !rest.isEmpty || sender != nil {
-                            NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).foregroundStyle(.secondary)
+                            NucleoIcon("chevron-down", size: 10).rotationEffect(.degrees(open ? 0 : -90)).foregroundStyle(.secondary)
                         }
                     }
                     .contentShape(Rectangle())
@@ -508,7 +504,7 @@ struct GivenMessage: View {
                 .padding(.leading, 22)
             }
         }
-        .font(.callout)
+        .font(.system(size: 12))
     }
 
     /// Its first line, as words: the heading of the folded row. Without a closing colon: folded, it read as if the
@@ -609,23 +605,27 @@ struct MessageBlock<Content: View>: View {
     /// Each action's tile, and the room between its icon (13) and the tile's edge.
     static var tile: CGFloat { 20 }
     static var inset: CGFloat { (tile - 13) / 2 }
-    /// Its menu (copy, quote, save, rewind) in Zero's own look, hung from the dots.
+    /// Its menu (copy, quote, save) in Zero's own look, hung from the dots.
     @State private var menuID = "message-" + UUID().uuidString
     @State private var menuAnchor = CGRect.zero
     private var menuSections: [SelectorSection] {
-        var groups = [
-            [MenuItem("Copy") { copy() }, MenuItem("Quote in reply") { quote(text) }, MenuItem("Save to a scratchpad") { save(text) }]
-        ]
-        if let rewind { groups.append([MenuItem("Rewind…", action: rewind)]) }
-        return groups.enumerated().map { index, items in
-            SelectorSection(
-                id: "group-\(index)", title: "", icon: nil, rows: items.enumerated().map { n, item in item.row("\(index)-\(n)") })
-        }
+        ZeroContextMenu.sections([
+            [
+                MenuItem("Copy", "copy") { copy() }, MenuItem("Quote in reply", "quote") { quote(text) },
+                MenuItem("Save to a scratchpad", "note-3") { save(text) },
+            ]
+        ])
     }
 
-    /// Copy, and more in a menu: shown on hover.
+    /// Rewind (yours), copy, and more in a menu: shown on hover.
     private var actions: some View {
         HStack(spacing: 0) {
+            if let rewind {
+                Button(action: rewind) {
+                    NucleoIcon("undo", size: 13).foregroundStyle(.secondary).frame(width: Self.tile, height: Self.tile)
+                }
+                .buttonStyle(Hovering(radius: 6)).tip("Rewind to here", shortcut: "⎋⎋")
+            }
             CopyButton(text: text, size: Self.tile)
             Button {
                 WorkspaceSelector.shared.toggle(menuID, kind: .menu, anchor: menuAnchor, rows: { menuSections })
@@ -805,7 +805,7 @@ struct MessageRail: View, Equatable {
         }
         let firstLine = mark.text.split(separator: "\n").first.map(String.init) ?? mark.text
         return VStack(alignment: .leading, spacing: 5) {
-            Text(firstLine).font(.system(size: 13.5, weight: .medium)).lineLimit(1)
+            Text(firstLine).font(.system(size: 13.5, weight: .semibold)).lineLimit(1)
             if let answer = mark.answer {
                 Text(inline(answer.replacingOccurrences(of: "\n", with: " "))).font(.system(size: 13)).foregroundStyle(.secondary)
                     .lineLimit(3)
@@ -813,9 +813,7 @@ struct MessageRail: View, Equatable {
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
         .frame(width: width, alignment: .leading)
-        .background(Theme.composer, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke))
-        .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+        .modifier(MenuCard(radius: 12, linear: true))
     }
 }
 
@@ -899,14 +897,6 @@ struct ThinScrollbar: View {
     @State private var shown = false
     @State private var hiding: Task<Void, Never>?
 
-    /// rgb(161 161 170 / 70%) light, rgb(113 113 122 / 70%) dark: the site's zinc.
-    static let thumb = Color(
-        nsColor: NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(srgbRed: 113 / 255, green: 113 / 255, blue: 122 / 255, alpha: 0.7)
-                : NSColor(srgbRed: 161 / 255, green: 161 / 255, blue: 170 / 255, alpha: 0.7)
-        })
-
     var body: some View {
         GeometryReader { space in
             if let geometry = tracker.geometry {
@@ -919,7 +909,7 @@ struct ThinScrollbar: View {
                     let room = total - visible
                     let offset = min(max(geometry.visibleRect.minY, 0), room)
                     let y = 4 + (track - length) * offset / room
-                    Capsule().fill(Self.thumb)
+                    Capsule().fill(Theme.thumb)
                         .frame(width: hovered || dragFrom != nil ? 6 : 4, height: length)
                         .opacity(shown || hovered || dragFrom != nil ? 1 : 0)
                         .frame(width: 12, height: length)
@@ -1046,7 +1036,7 @@ final class ThinScroller: NSScroller {
         let knob = rect(for: .knob)
         let width: CGFloat = hovered ? 6 : 4
         let bar = NSRect(x: knob.maxX - width - 2, y: knob.minY + 4, width: width, height: max(knob.height - 8, 24))
-        NSColor(ThinScrollbar.thumb).setFill()
+        NSColor(Theme.thumb).setFill()
         NSBezierPath(roundedRect: bar, xRadius: width / 2, yRadius: width / 2).fill()
     }
 
@@ -1068,7 +1058,7 @@ struct LoadingEarlier: View {
         HStack(spacing: 8) {
             if loading {
                 Spinner().frame(width: 12, height: 12)
-                Text("Loading earlier…").font(.callout).foregroundStyle(.secondary)
+                Text("Loading earlier…").font(.system(size: 12)).foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24)
@@ -1102,12 +1092,7 @@ struct StepLine: View {
 
     var body: some View {
         HStack(spacing: 7) {
-            switch item.status {
-            case .running: Spinner().frame(width: 11, height: 11)
-            case .done: NucleoIcon("check", size: 12).foregroundStyle(.tertiary)
-            case .failed: NucleoIcon("circle-xmark", size: 12).foregroundStyle(.red)
-            case .declined: NucleoIcon("ban", size: 12).foregroundStyle(.orange)
-            }
+            StatusIcon(status: item.status)
             text.lineLimit(1).truncationMode(.tail)
         }
         .font(.system(size: 12.5))

@@ -89,6 +89,7 @@ extension AppDelegate {
         inbox.pinned = byIntent
         pointerWasInside = false
         if byIntent { inboxPanel.makeKeyAndOrderFront(nil) } else { inboxPanel.orderFrontRegardless() }
+        inbox.panelOpen = true
         inbox.requestScroll()
     }
 
@@ -104,6 +105,7 @@ extension AppDelegate {
 
     func hideInbox() {
         inboxPanel.orderOut(nil)
+        inbox.panelOpen = false
         keyboardFront = nil
         inbox.newAgentOpen = false
         if let app = returnTo, NSApp.isActive, workspaceWindow?.isVisible != true, onboardingWindow?.isVisible != true {

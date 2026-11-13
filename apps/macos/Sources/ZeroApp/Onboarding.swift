@@ -19,7 +19,7 @@ struct OnboardingView: View {
                 page.id(step)
                     .transition(
                         .asymmetric(
-                            insertion: .offset(x: forward ? 16 : -16).combined(with: .opacity),
+                            insertion: Motion.transition(.offset(x: forward ? 16 : -16).combined(with: .opacity)),
                             removal: .opacity))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -39,7 +39,7 @@ struct OnboardingView: View {
         case .welcome:
             VStack(spacing: 18) {
                 ZeroMark().frame(width: 104, height: 100).padding(.top, 36)
-                Text("Welcome to Zero").font(.system(size: 26, weight: .semibold))
+                PageTitle(text: "Welcome to Zero")
                 Text(
                     "One inbox on your Mac for everything your agents need from you: a question, a go-ahead, a command to run on your side."
                 )
@@ -47,7 +47,7 @@ struct OnboardingView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     point(
                         AnyView(BarGlyph()), "The bar",
-                        "Sits at the edge of your screen, with a dot for each agent. A dot turns orange when that agent needs you.")
+                        "Sits at the edge of your screen, with a dot for each agent. A dot turns blue when that agent needs you.")
                     point(
                         AnyView(NucleoIcon("inbox", size: 17).foregroundStyle(.secondary)), "The inbox",
                         "Opens from the bar. Answer with 1, 2 or 3, type a reply, or start a new agent.")
@@ -65,15 +65,13 @@ struct OnboardingView: View {
             }
         case .habits:
             StepPage(title: "Make it yours", detail: "Change these later in **Settings** (⌘,).") {
-                VStack(spacing: 0) {
+                Rows {
                     OnboardingRow(icon: "command", title: "Inbox hotkey", detail: "Opens the inbox from any app.") {
                         HotKeyRecorder(settings: settings, minWidth: nil)
                     }
-                    Divider()
                     OnboardingRow(icon: "power-off", title: "Launch Zero at login", detail: "So agents can always reach you.") {
                         Switch(isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
                     }
-                    Divider()
                     OnboardingRow(icon: "monitor", title: "Follow the active screen", detail: "The bar moves to the screen you use.") {
                         Switch(isOn: $settings.followActiveScreen)
                     }
@@ -109,7 +107,7 @@ struct OnboardingView: View {
                     Capsule().fill(s == step ? Theme.knob : Theme.keycap).frame(width: s == step ? 16 : 6, height: 6)
                 }
             }
-            .animation(.snappy(duration: 0.2), value: step)
+            .animation(Motion.animation(.snappy(duration: 0.2)), value: step)
             Spacer()
             if step != .welcome {
                 // The same 32 pt capsule as Continue, just without a fill, so the whole shape takes the click.
@@ -128,7 +126,7 @@ struct OnboardingView: View {
     private func go(_ delta: Int) {
         guard let next = Step(rawValue: step.rawValue + delta) else { return }
         forward = delta > 0
-        withAnimation(.timingCurve(0.32, 0.72, 0, 1, duration: 0.22)) { step = next }
+        withAnimation(Motion.enter) { step = next }
     }
 }
 
@@ -141,7 +139,7 @@ private struct StepPage<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZeroMark(small: true).frame(width: 34, height: 33).padding(.bottom, 20)
-            Text(title).font(.system(size: 22, weight: .semibold))
+            PageTitle(text: title)
             Text(detail).font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 6).padding(.bottom, 24)
             content()
@@ -181,17 +179,17 @@ struct OnboardingRow<Trailing: View>: View {
     }
 }
 
-/// A small solid button for a row: black in light mode, white in dark; greyed and inert when disabled.
+/// A small solid button for a row: black in light mode, white in dark; faded and inert when disabled.
 struct RowButton: View {
     let title: String
     var enabled = true
     var action: () -> Void = {}
     var body: some View {
         Button(action: action) {
-            Text(title).font(.system(size: 12, weight: .semibold)).fixedSize()
-                .foregroundStyle(enabled ? AnyShapeStyle(Theme.onKnob) : AnyShapeStyle(.tertiary))
+            Text(title).font(.system(size: 12, weight: .semibold)).fixedSize().foregroundStyle(Theme.onKnob)
                 .padding(.horizontal, 12).frame(height: 26)
-                .background(enabled ? AnyShapeStyle(Theme.knob) : AnyShapeStyle(Theme.keycap)).clipShape(Capsule())
+                .background(Theme.knob, in: Capsule())
+                .opacity(enabled ? 1 : 0.4)
         }
         .buttonStyle(PressableStyle()).disabled(!enabled)
     }
@@ -200,20 +198,22 @@ struct RowButton: View {
 /// Black in light mode, white in dark: the one primary action on a page.
 struct SolidButton: View {
     let title: String
+    var enabled = true
     let action: () -> Void
     var body: some View {
         Button(action: action) {
             Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.onKnob)
                 .padding(.horizontal, 16).frame(height: 32)
-                .background(Theme.knob).clipShape(Capsule())
+                .background(Theme.knob, in: Capsule())
+                .opacity(enabled ? 1 : 0.4)
         }
-        .buttonStyle(PressableStyle())
+        .buttonStyle(PressableStyle()).disabled(!enabled)
     }
 }
 
 struct PressableStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.scaleEffect(configuration.isPressed ? 0.96 : 1).animation(
+        configuration.label.scaleEffect(configuration.isPressed && !Motion.reduced ? 0.96 : 1).animation(
             .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
@@ -226,7 +226,7 @@ private struct StatusControl: View {
     var body: some View {
         if done {
             NucleoLabel("Allowed", icon: "circle-check", fill: "glyph")
-                .font(.system(size: 12, weight: .medium)).foregroundStyle(.green)
+                .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.done)
         } else {
             RowButton(title: label, action: action)
         }
@@ -269,20 +269,23 @@ private struct AgentsStep: View {
                 icon: "sparkle", picture: choiceIcon("claude"), title: "Claude Code", detail: "Asks and progress come to your inbox."
             ) {
                 switch (check.claude, check.plugin) {
-                case (false, _): RowButton(title: "Not installed", enabled: false)
+                case (false, _): Text("Not installed").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                 case (true, true):
                     NucleoLabel("Plugin added", icon: "circle-check", fill: "glyph").font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Theme.done)
                 case (true, false): RowButton(title: "Add plugin") { check.addPlugin() }
-                default: ProgressView().controlSize(.small)
+                default: Spinner().frame(width: 12, height: 12)
                 }
             }
-            if let error = check.pluginError { Text(error).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
-            Divider()
+            if let error = check.pluginError { Text(error).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(3) }
+            Hairline()
             OnboardingRow(icon: "code", picture: choiceIcon("openai"), title: "Codex", detail: "Start Codex agents from Zero.") {
-                RowButton(title: check.codex == false ? "Not installed" : "Coming soon", enabled: false)
+                Text(check.codex == false ? "Not installed" : "Coming soon").font(.system(size: 12, weight: .medium)).foregroundStyle(
+                    .secondary)
             }
         }
+        // On a card, as Settings' rows are (Rows: its error line under Claude Code keeps it from being one).
+        .padding(.horizontal, 18).settingsCard()
     }
 }
 

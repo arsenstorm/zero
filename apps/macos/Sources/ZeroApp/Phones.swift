@@ -568,8 +568,8 @@ struct DevicesPage: View {
             SettingsSection(
                 title: "Phones",
                 accessory: AnyView(
-                    GhostButton(title: "Pair phone", icon: "plus", open: pairing) { pairing = true }
-                        .disabled(phones.relay.isEmpty))
+                    GhostButton(title: "Pair phone…", icon: "plus", open: pairing) { pairing = true }
+                        .disabled(phones.relay.isEmpty).tip(phones.relay.isEmpty ? "Set a relay first" : ""))
             ) {
                 Rows {
                     ForEach(phones.devices) { device in
@@ -579,9 +579,9 @@ struct DevicesPage: View {
                     }
                     if phones.devices.isEmpty {
                         Text("None yet. Pair your iPhone, and your tasks come with you.").font(.system(size: 13)).foregroundStyle(
-                            .secondary
+                            .tertiary
                         )
-                        .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 14)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).frame(height: 44)
                     }
                 }
             }
@@ -728,12 +728,12 @@ private struct RelaySheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
-                DialogTitle(text: "Your own relay")
-                Text("Where your relay runs, deployed from apps/relay. Phones paired before pair again with a new code.")
-                    .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
+            DialogTitle(
+                text: "Your own relay",
+                detail: "Where your relay runs, deployed from apps/relay. Phones paired before pair again with a new code."
+            )
             TextField("", text: $address, prompt: Text("wss://zero-relay.you.workers.dev")).textFieldStyle(.dialog).onSubmit(save)
+                .firstField()
             HStack {
                 Spacer()
                 DialogButton(title: "Cancel") { dismiss() }
@@ -803,14 +803,14 @@ private struct PairPhone: View {
     }
 
     private var getZero: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            DialogTitle(text: "Get Zero on your iPhone")
-            Text(
-                "Your tasks and questions come with you: answer what's waiting, write to a task, and get notified when something needs you."
+        VStack(alignment: .leading, spacing: 14) {
+            DialogTitle(
+                text: "Get Zero on your iPhone",
+                detail:
+                    "Your tasks and questions come with you: answer what's waiting, write to a task, and get notified when something needs you."
             )
-            .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Text("Install Zero on your iPhone, open it, and choose Next here when it shows Scan the code.")
-                .font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true).padding(.top, 6)
+                .font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -820,9 +820,10 @@ private struct PairPhone: View {
                 Image(nsImage: code).interpolation(.none).resizable().frame(width: 168, height: 168)
                     .padding(10).background(.white, in: RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 8) {
-                    DialogTitle(text: "Scan the code")
-                    Text("In Zero on your iPhone, tap Scan the code and point the camera here.")
-                        .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    DialogTitle(
+                        text: "Scan the code",
+                        detail: "In Zero on your iPhone, tap Scan the code and point the camera here."
+                    )
                     TimelineView(.periodic(from: .zeroBeat, by: 1)) { context in
                         let left = max(0, 300 - Int(context.date.timeIntervalSince(codeAt)))
                         Text(left == 0 ? "This code has expired" : String(format: "Expires in %d:%02d", left / 60, left % 60))
@@ -843,11 +844,10 @@ private struct PairPhone: View {
 
     private var paired: some View {
         let phone = phones.devices.first { !before.contains($0.id) }
-        return VStack(alignment: .leading, spacing: 8) {
-            DialogTitle(text: "\(phone?.name ?? "Your phone") is paired")
-            Text("It reaches this Mac through the relay whenever Zero is open here. Remove it from this page any time.")
-                .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        }
+        return DialogTitle(
+            text: "\(phone?.name ?? "Your phone") is paired",
+            detail: "It reaches this Mac through the relay whenever Zero is open here. Remove it from this page any time."
+        )
     }
 
     private func newCode() { before = Set(phones.devices.map(\.id)); phones.addPhone(); codeAt = .now }

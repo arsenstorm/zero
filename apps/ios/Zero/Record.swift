@@ -21,6 +21,7 @@ struct RecordView: View {
     @State private var words = ""
     @State private var sending = false
     @State private var problem: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Recording the screen, the page's one big action, as the camera's shutter: a red disc in a ring that turns to a
     /// stop square while it records, its time over it. The system's sheet picks the screen and the microphone; it stops
@@ -35,7 +36,7 @@ struct RecordView: View {
                     RoundedRectangle(cornerRadius: recorder.recording ? 8 : 32, style: .continuous).fill(.red)
                         .frame(width: recorder.recording ? 30 : 64, height: recorder.recording ? 30 : 64)
                 }
-                .animation(.snappy(duration: 0.25), value: recorder.recording)
+                .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: recorder.recording)
                 .contentShape(Circle())
             }
             .buttonStyle(.plain)
@@ -78,6 +79,10 @@ struct RecordView: View {
         // notice; thumbnails of our own would need the whole library.)
         VStack(spacing: 28) {
             shutter
+            // A recording that failed or couldn't be opened: said here, where it was tried (the send sheet isn't open).
+            if let problem, images.isEmpty, recording == nil {
+                Text(problem).font(.footnote).foregroundStyle(.red).multilineTextAlignment(.center).padding(.horizontal, 32)
+            }
             HStack(spacing: 8) {
                 PhotosPicker(selection: $picked, maxSelectionCount: 10, matching: .images) { chip("Photos", icon: "image-glyph") }
                 PhotosPicker(selection: $video, matching: .videos) { chip(reading ? "Reading…" : "Recordings", icon: "record-glyph") }
@@ -95,7 +100,7 @@ struct RecordView: View {
             recorder.finished = nil
             reading = true
             Task {
-                recording = await Recording.read(file); reading = false
+                problem = nil; recording = await Recording.read(file); reading = false
             }
         }
         .onChange(of: recorder.problem) { _, why in if let why { problem = why } }
@@ -140,23 +145,7 @@ struct RecordView: View {
                 Spacer()
                 Text("Send to a task").font(.headline)
                 Spacer()
-                Button {
-                    Task { await send() }
-                } label: {
-                    Group {
-                        if sending {
-                            Spinner(color: .white).frame(width: 18, height: 18)
-                        } else {
-                            Image("arrow-up-outline").resizable().frame(width: 20, height: 20).foregroundStyle(
-                                canSend ? .white : .secondary)
-                        }
-                    }
-                    .frame(width: 44, height: 44)
-                    .background { if canSend || sending { Circle().fill(Color.accentColor) } }
-                    .contentShape(Circle())
-                }
-                .buttonStyle(.plain).glassEffect(.regular.interactive(), in: Circle())
-                .disabled(!canSend).accessibilityLabel("Send")
+                SendCircle(ready: canSend, sending: sending) { Task { await send() } }
             }
             .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 8)
             PageScroll {
@@ -167,7 +156,7 @@ struct RecordView: View {
                                 ForEach(images.indices, id: \.self) { i in
                                     if let image = UIImage(data: images[i]) {
                                         Image(uiImage: image).resizable().scaledToFill().frame(width: 72, height: 72)
-                                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                            .clipShape(RoundedRectangle(cornerRadius: 12))
                                     }
                                 }
                             }
@@ -182,20 +171,9 @@ struct RecordView: View {
                 }
                 .padding(.horizontal, 20)
                 PageGroup(title: "Send to") {
-                    // Zero's own list, the tick on the right, as everywhere else here.
+                    // The tasks as the Tasks list draws them, ticked when picked, as the share sheet's.
                     ForEach(model.tasks) { row in
-                        Button {
-                            task = row.session
-                        } label: {
-                            HStack {
-                                Text(row.task).lineLimit(1)
-                                Spacer(minLength: 12)
-                                Image("circle-check-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(Color.accentColor)
-                                    .opacity(task == row.session ? 1 : 0)
-                            }
-                            .frame(minHeight: 44).contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
+                        TaskRow(row: row, said: row.needs ?? row.now, picked: task == row.session) { task = row.session }
                     }
                 }
             }

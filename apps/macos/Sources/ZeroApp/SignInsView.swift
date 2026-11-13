@@ -26,7 +26,7 @@ struct SignInsPage: View {
                         },
                         accessory: AnyView(
                             HStack(spacing: 4) {
-                                GhostButton(title: "Add model", icon: "plus", open: addingModel == cli) {
+                                GhostButton(title: "Add model…", icon: "plus", open: addingModel == cli) {
                                     addingModel = addingModel == cli ? nil : cli
                                 }
                                 AddAccountButton(cli: cli) { way in adding = Adding(cli: cli, way: way) }
@@ -64,14 +64,14 @@ struct SignInsPage: View {
     private func accounts(_ cli: Provider, in workspace: Workspace) -> some View {
         let mine = workspace.signins.filter { $0.cli == cli }
         return VStack(spacing: 0) {
-            // A line between them; each row's hover fills it edge to edge, square (the card's corners round the first
-            // and last).
+            // A line between them, edge to edge as each row's hover fill is, square (the card's corners round the
+            // first and last).
             ForEach(Array(mine.enumerated()), id: \.element.id) { index, signin in
-                if index > 0 { Divider().padding(.leading, 18) }
+                if index > 0 { Hairline() }
                 SignInRow(signin: signin, workspace: workspace) { adding = Adding(cli: cli, way: .signIn, replacing: signin) }
             }
             if mine.isEmpty {
-                Text("None yet").font(.system(size: 13)).foregroundStyle(.secondary)
+                Text("None yet").font(.system(size: 13)).foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).frame(height: 44)
             }
         }
@@ -146,11 +146,10 @@ private struct SignInRow: View {
     let switchToToken: () -> Void
     @State private var menuFrame = CGRect.zero
     @State private var hovered = false
-    /// Its name being edited: what's typed so far.
-    @State private var naming: String?
+    /// Its name being asked for, in Zero's dialog.
+    @State private var naming = false
     /// Remove picked: confirmed in the row, where its usage was.
     @State private var removing = false
-    @FocusState private var focused: Bool
 
     private var detail: String {
         switch signin.kind {
@@ -167,17 +166,7 @@ private struct SignInRow: View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
-                    if let naming {
-                        TextField(
-                            "A name for it", text: Binding(get: { naming }, set: { self.naming = $0 }),
-                            prompt: Text("Whose account is this? (its email, or a name)")
-                        )
-                        .textFieldStyle(.plain).font(.system(size: 13, weight: .medium)).focused($focused)
-                        .onSubmit(rename).onExitCommand { self.naming = nil }
-                        .onChange(of: focused) { if !focused { rename() } }
-                    } else {
-                        Text(signin.label).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                    }
+                    Text(signin.label).font(.system(size: 13, weight: .medium)).lineLimit(1)
                     if signin.pending == true {
                         HStack(spacing: 6) {
                             Spinner().frame(width: 10, height: 10); Text("Signing in… finish in your browser")
@@ -197,20 +186,19 @@ private struct SignInRow: View {
                 } else if workspace.signinUsage[signin.id]?.limited == true {
                     Text("At its limit").font(.system(size: 11.5, weight: .medium)).foregroundStyle(.red)
                 }
-                if !removing && naming == nil && signin.pending != true {
+                if !removing && signin.pending != true {
                     NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0))
                     menuButton
                 }
             }
-            .padding(.leading, 18).padding(.trailing, 10).padding(.vertical, 10)
-            .frame(minHeight: 56)
-            .background(hovered && !open && naming == nil && !removing ? Theme.row : .clear, in: Rectangle())
+            .padding(.leading, 18).padding(.trailing, 10).padding(.vertical, 12)
+            .background(hovered && !open && !removing ? Theme.row : .clear, in: Rectangle())
             .contentShape(Rectangle())
             .onHover { hovered = $0 }
             // A click opens it in place, taller: its usage and when it resets, then its activity. Its ⋯ has rename, switch
             // and remove.
             .onTapGesture {
-                if naming == nil && !removing && signin.pending != true { withAnimation(.snappy(duration: 0.22)) { open.toggle() } }
+                if !removing && signin.pending != true { open.toggle() }
             }
             if open {
                 AccountDetails(signin: signin, workspace: workspace)
@@ -219,7 +207,15 @@ private struct SignInRow: View {
             }
         }
         // Claude doesn't say whose a token is: a new one asks, in its own row.
-        .onAppear { if signin.kind == .token && signin.label == "Claude account" && naming == nil { naming = ""; focused = true } }
+        .onAppear { if signin.kind == .token && signin.label == "Claude account" { naming = true } }
+        .zeroDialog(isPresented: $naming) {
+            let unnamed = signin.label == "Claude account"
+            NameSheet(
+                title: unnamed ? "Whose account is this?" : "Rename", name: unnamed ? "" : signin.label, action: unnamed ? "Save" : "Rename"
+            ) {
+                name in Task { await workspace.renameSignIn(signin, to: name) }
+            }
+        }
     }
 
     private var menuButton: some View {
@@ -231,30 +227,21 @@ private struct SignInRow: View {
             ) {
                 var rows: [(id: String, title: String, glyph: String, selected: Bool, pick: () -> Void)] = [
                     (
-                        "rename", "Rename", "pen", false,
-                        {
-                            naming = signin.label; focused = true
-                        }
+                        "rename", "Rename…", "pen", false, { naming = true }
                     )
                 ]
                 if signin.kind == .claudeHome { rows.append(("token", "Switch to a token", "key", false, switchToToken)) }
                 return ComposerRows.menu([rows, [("remove", "Remove…", "trash", false, { removing = true })]])
             }
         } label: {
-            NucleoIcon("dots", size: 14).foregroundStyle(.secondary).frame(width: 26, height: 26).contentShape(Rectangle())
+            NucleoIcon("dots", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28).contentShape(Rectangle())
         }
-        .buttonStyle(Hovering(radius: 6))
+        .buttonStyle(Hovering(radius: 6)).tip("More")
         .onGeometryChange(for: CGRect.self) {
             $0.frame(in: .global)
         } action: {
             menuFrame = $0
         }
-    }
-
-    private func rename() {
-        guard let label = naming else { return }
-        naming = nil
-        Task { await workspace.renameSignIn(signin, to: label) }
     }
 }
 
@@ -305,7 +292,7 @@ struct UsageMeter: View {
     var width: CGFloat = 46
 
     var body: some View {
-        Capsule().fill(Color.primary.opacity(0.08)).frame(width: width, height: 4)
+        Capsule().fill(Theme.row).frame(width: width, height: 4)
             .overlay(alignment: .leading) { Capsule().fill(Self.color(used)).frame(width: width * used, height: 4) }
     }
 
@@ -342,7 +329,7 @@ struct TasksUseCard: View {
             // While memory is short, in this card rather than one of its own: one card for what tasks use.
             if let shortage = MemoryWatch.shared.shortage {
                 MemoryNotice(shortage: shortage, workspace: workspace, open: open) { showingLeft = true }
-                Rectangle().fill(Theme.hairline).frame(height: 1)
+                Hairline()
             }
             HStack(spacing: 6) {
                 NucleoIcon("server", size: 12).frame(width: 12, height: 12)
@@ -458,7 +445,7 @@ struct UsageFooter: View {
                 let used = live ? min(1, window.used) : 0
                 HStack(spacing: 8) {
                     Text(short).foregroundStyle(.secondary).frame(width: 30, alignment: .leading)
-                    Capsule().fill(Color.primary.opacity(0.08)).frame(height: 4)
+                    Capsule().fill(Theme.row).frame(height: 4)
                         .overlay(alignment: .leading) {
                             GeometryReader { space in Capsule().fill(UsageMeter.color(used)).frame(width: space.size.width * used) }
                         }
@@ -525,10 +512,10 @@ private struct AddAccount: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
-                DialogTitle(text: title)
-                Text(explanation).font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
+            DialogTitle(
+                text: title,
+                detail: explanation
+            )
             if keyed { keyForm } else if cli == .claude { claudeSteps } else { codexStep }
             if let problem { Text(problem).font(.system(size: 12)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
             HStack {
@@ -597,7 +584,7 @@ private struct AddAccount: View {
 
     private var keyForm: some View {
         VStack(spacing: 8) {
-            field(cli == .opencode ? "A name for it (\(provider.rawValue))" : "A name for it", text: $label)
+            field(cli == .opencode ? "A name for it (\(provider.rawValue))" : "A name for it", text: $label).firstField()
             field("Its API key", text: $key, secret: true).onSubmit(save)
         }
     }
@@ -649,7 +636,7 @@ private struct AddedModels: View {
         if !mine.isEmpty {
             VStack(spacing: 0) {
                 ForEach(Array(mine.enumerated()), id: \.element.id) { index, model in
-                    if index > 0 { Divider().padding(.leading, 18) }
+                    if index > 0 { Hairline().padding(.horizontal, 18) }
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(model.name).font(.system(size: 13, weight: .medium))
@@ -659,7 +646,7 @@ private struct AddedModels: View {
                         Spacer()
                         RowButton(title: "Remove") { Task { await CustomModels.shared.remove(model) } }
                     }
-                    .padding(.horizontal, 18).frame(minHeight: 52)
+                    .padding(.horizontal, 18).padding(.vertical, 12)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 14))
@@ -724,7 +711,7 @@ private struct AccountDetails: View {
             Text(window.name == "7 days" ? "This week" : "Last 5 hours").font(.system(size: 11.5)).foregroundStyle(.secondary)
             Text(UsageMeter.percent(used)).font(.system(size: 20, weight: .semibold)).monospacedDigit()
                 .foregroundStyle(used >= 1 ? .red : .primary)
-            Capsule().fill(Color.primary.opacity(0.08)).frame(height: 4)
+            Capsule().fill(Theme.row).frame(height: 4)
                 .overlay(alignment: .leading) {
                     GeometryReader { space in Capsule().fill(UsageMeter.color(used)).frame(width: space.size.width * used) }
                 }
@@ -859,16 +846,15 @@ private struct AddModel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
-                DialogTitle(text: "Add a \(cli.title) model")
-                Text(
+            DialogTitle(
+                text: "Add a \(cli.title) model",
+                detail:
                     "For a model \(cli.title) doesn't list yet. It's offered on every \(cli.title) account; an account that turns out not to have it is left out."
-                )
-                .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
+            )
             VStack(spacing: 8) {
-                TextField("", text: $id, prompt: Text("Its id, as \(cli.title) takes it (\(example))")).textFieldStyle(.dialog).onSubmit(
-                    save)
+                TextField("", text: $id, prompt: Text("Its id, as \(cli.title) takes it (\(example))")).textFieldStyle(.dialog).firstField()
+                    .onSubmit(
+                        save)
                 TextField("", text: $name, prompt: Text("Its name in the picker (Mythos 5.2)")).textFieldStyle(.dialog).onSubmit(save)
             }
             HStack {

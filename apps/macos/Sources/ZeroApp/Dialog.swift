@@ -36,18 +36,15 @@ import SwiftUI
     }
 }
 
-/// Where dialogs are drawn: over the whole window, the workspace view's root.
-/// It comes in as Linear's do: the backdrop fades while the card grows from just smaller and fades in, quickly and
-/// easing out (a little faster going); with Reduce Motion, only the fades.
+/// Where dialogs are drawn: over the whole window, the workspace view's root. Shown and gone at once, as Zero's
+/// popovers and cards are.
 struct DialogHost: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     var body: some View {
-        let open = Dialogs.shared.content != nil
         ZStack {
             if let content = Dialogs.shared.content {
                 Color.black.opacity(0.18).contentShape(Rectangle()).onTapGesture { Dialogs.shared.close() }
-                    .transition(.opacity)
+                // Escape closes it, whatever its buttons are called.
+                Button("") { Dialogs.shared.close() }.keyboardShortcut(.cancelAction).hidden()
                 content
                     .padding(22)
                     .background(Theme.card, in: RoundedRectangle(cornerRadius: 18))
@@ -60,11 +57,9 @@ struct DialogHost: View {
                         Dialogs.shared.card = $0
                     }
                     .environment(\.closeDialog, CloseDialog { Dialogs.shared.close() })
-                    .transition(reduceMotion ? .opacity : .scale(scale: 0.96).combined(with: .opacity))
             }
         }
         .ignoresSafeArea()
-        .animation(open ? .easeOut(duration: 0.15) : .easeOut(duration: 0.1), value: open)
     }
 }
 
@@ -107,10 +102,18 @@ private struct DialogOpener: ViewModifier {
     }
 }
 
-/// A dialog's title.
+/// A dialog's title, and what the dialog is for 4 pt under it.
 struct DialogTitle: View {
     let text: String
-    var body: some View { Text(text).font(.system(size: 15, weight: .semibold)) }
+    var detail: String?
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(text).font(.system(size: 15, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
+            if let detail {
+                Text(detail).font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
 }
 
 /// A labelled part of a dialog: a small grey heading, then its controls.
@@ -145,13 +148,22 @@ struct DialogButton: View {
                 .opacity(enabled ? 1 : 0.4)
         }
         .buttonStyle(PressableStyle()).disabled(!enabled)
-        switch kind {
-        case .primary: button.keyboardShortcut(.defaultAction)
-        case .secondary where title == "Cancel": button.keyboardShortcut(.cancelAction)
-        default: button
+        if kind == .primary { button.keyboardShortcut(.defaultAction) } else { button }
+    }
+}
+
+/// A dialog's first field, focused as it opens with its words selected (an edit's are replaced by typing): typing goes
+/// to the dialog, not to what's behind it.
+private struct FirstField: ViewModifier {
+    @FocusState private var focused: Bool
+    func body(content: Content) -> some View {
+        content.focused($focused).onAppear {
+            focused = true
         }
     }
 }
+
+extension View { func firstField() -> some View { modifier(FirstField()) } }
 
 /// Text fields on the row grey, as Zero's composer and forms have them.
 struct DialogFieldStyle: TextFieldStyle {
@@ -207,7 +219,7 @@ struct DialogCheckbox: ToggleStyle {
                         .frame(width: 16, height: 16)
                     configuration.label.font(.system(size: 13))
                 }
-                .opacity(enabled ? 1 : 0.5)
+                .opacity(enabled ? 1 : 0.4)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

@@ -431,7 +431,7 @@ enum ZeroSiriError: Error, CustomLocalizedStringResourceConvertible {
     case offline, noTask, nothingToSend
     var localizedStringResource: LocalizedStringResource {
         switch self {
-        case .offline: "Zero can't reach your Mac. Zero needs to be open there."
+        case .offline: "Can't reach your Mac. Zero needs to be open there."
         case .noTask: "There's no Zero task by that name."
         case .nothingToSend: "There's nothing to send."
         }
