@@ -46,6 +46,9 @@ pub(crate) async fn next_connection(listener: &UnixListener) -> UnixStream {
 }
 
 async fn connection(zerod: Zerod, stream: UnixStream) {
+    let token = crate::peer::audit_token(std::os::fd::AsRawFd::as_raw_fd(&stream));
+    // Whether the peer may make the app's own ops: asked once, the first time it makes one.
+    let mut app: Option<bool> = None;
     let (read, mut write) = stream.into_split();
     let (out, mut lines_out) = mpsc::unbounded_channel::<Value>();
     let writer = tokio::spawn(async move {
@@ -71,6 +74,11 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
                 continue;
             }
         };
+        if super::APP_ONLY.contains(&request.op.as_str()) && !*app.get_or_insert_with(|| (zerod.peers)(token)) {
+            let error = format!("{} is the user's to do, and only Zero.app does it: ask the user instead (zero ask)", request.op);
+            let _ = out.send(json!({"id": request.id, "ok": false, "error": error}));
+            continue;
+        }
         if request.op == "subscribe" {
             if subscription.is_none() {
                 subscription = Some(tokio::spawn(subscribe(zerod.daemon.clone(), out.clone(), request.lazy.unwrap_or(false))))

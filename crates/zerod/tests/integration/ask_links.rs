@@ -271,3 +271,25 @@ async fn an_ask_made_mid_turn_is_about_the_answer_its_turn_ends_on() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(inbox.ask(&ask.id).unwrap().about.unwrap().item, "m3:0");
 }
+
+#[tokio::test]
+async fn an_asks_text_under_it_is_two_or_three_sentences_wherever_it_is_asked() {
+    // Shown in full on every card, never folded: so it's capped where every ask is made (the CLI, Zero's tools, the
+    // socket), with the same words the CLI says.
+    let w = world("links-cap");
+    let (id, _seen, inbox) = asking(&w).await;
+    let mut long = question(&id, "Which bench?");
+    long.detail = Some("x".repeat(281));
+    let refused = inbox.admit(&mut long).unwrap_err();
+    assert!(refused.contains("--body") && refused.contains("280 characters; this is 281"), "{refused}");
+    let mut run = Ask::new(AskKind::Run, "Run a command", question(&id, "").agent, 3600);
+    run.body = "y".repeat(300);
+    assert!(inbox.admit(&mut run).unwrap_err().contains("--why"));
+    let mut fine = question(&id, "Which bench?");
+    fine.detail = Some("é".repeat(280));
+    assert!(inbox.admit(&mut fine).is_ok(), "280 characters, however many bytes");
+    // Zero's own asks (a permission's reason in the agent's words) aren't the agent's to shorten.
+    let mut permission = Ask::new(AskKind::Permission, "Run cargo test?", question(&id, "").agent, 3600);
+    permission.body = "z".repeat(900);
+    assert!(inbox.admit(&mut permission).is_ok());
+}

@@ -94,7 +94,12 @@ struct State {
     said_on: Vec<(String, String)>,
     /// `zero done`'s and `zero blocked`'s tokens, by "<status> <agent>": the second word that confirms one, good once, for DONE_WINDOW.
     done_tokens: HashMap<String, (String, std::time::Instant)>,
+    /// The asks the user answered while this inbox was open: not ones read back from the log.
+    answered_here: HashSet<String>,
 }
+
+/// The most an ask's text under it may be, in characters (the CLI says the same).
+const DETAIL: usize = 280;
 
 /// How long `zero done`'s token is good for.
 const DONE_WINDOW: Duration = Duration::from_secs(5 * 60);
@@ -133,6 +138,7 @@ impl Inbox {
                 default_ttl: 3600,
                 done_tokens: HashMap::new(),
                 said_on: vec![],
+                answered_here: HashSet::new(),
             }),
             runs: Arc::new(crate::runs::Runs::new(runs_dir(log.as_deref()))),
             events,
@@ -165,6 +171,25 @@ impl Inbox {
     /// How to read a task's conversation, given once.
     pub fn know_conversations(&self, read: Conversations) {
         let _ = self.conversations.set(read);
+    }
+
+    /// An ask an agent makes, checked before it's made: the text under it (a question's --body, a run's --why) two or
+    /// three sentences, as every card shows it in full; then what it's about. Err for the agent to fix: nothing asked.
+    pub fn admit(&self, ask: &mut Ask) -> Result<(), String> {
+        let (under, flag) = match ask.kind {
+            AskKind::Question | AskKind::Choice => (ask.detail.as_deref(), "body"),
+            AskKind::Approve => (Some(ask.body.as_str()), "body"),
+            AskKind::Run => (Some(ask.body.as_str()), "why"),
+            _ => (None, ""),
+        };
+        let count = under.map_or(0, |text| text.chars().count());
+        if count > DETAIL {
+            return Err(format!(
+                "keep --{flag} to two or three plain sentences ({DETAIL} characters; this is {count}): the problem, what you \
+                 recommend and why. Put anything longer in a file and give its path"
+            ));
+        }
+        self.about(ask)
     }
 
     /// What an ask from a zerod task is about (about.rs): the heading or item it names, else its agent's words just
@@ -409,6 +434,12 @@ impl Inbox {
         self.stage(id, text.into(), ask.kind == AskKind::Run, None);
     }
 
+    /// Whether the user answered this ask while this inbox was open (choose, answer, reply), rather than its answer
+    /// being read back from the log, which any of the user's processes can write.
+    pub fn answered_here(&self, id: &str) -> bool {
+        self.lock().answered_here.contains(id)
+    }
+
     pub fn take_back(&self, id: &str) -> bool {
         let mut state = self.lock();
         let Some(ask) = state.asks.iter_mut().find(|a| a.id == id && a.state == AskState::Pending) else { return false };
@@ -580,7 +611,10 @@ impl Inbox {
     }
 
     fn commit(&self, id: &str, declined: bool) {
-        self.lock().timers.remove(id);
+        let mut state = self.lock();
+        state.timers.remove(id);
+        state.answered_here.insert(id.into());
+        drop(state);
         let Some(ask) = self.ask(id).filter(|a| a.state == AskState::Pending) else { return };
         if declined {
             self.finish(id, AskState::Declined, None)

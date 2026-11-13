@@ -71,6 +71,7 @@ async fn harness(name: &str) -> Harness {
             loops: Arc::new(zerod::loops::Loops::open(&home.join("loops"))),
             places: Default::default(),
             notices: tokio::sync::broadcast::channel(64).0,
+            peers: std::sync::Arc::new(|_| true),
         },
         socket.clone(),
     ));
@@ -296,6 +297,7 @@ async fn sessions_survive_a_daemon_restart_and_a_message_resumes_one() {
             loops: Arc::new(zerod::loops::Loops::open(&h.home.join("loops"))),
             places: Default::default(),
             notices: tokio::sync::broadcast::channel(64).0,
+            peers: std::sync::Arc::new(|_| true),
         },
         socket.clone(),
     ));
@@ -560,6 +562,7 @@ async fn a_task_started_in_a_workspace_is_still_there_after_a_restart() {
             loops: Arc::new(zerod::loops::Loops::open(&h.home.join("loops"))),
             places: Default::default(),
             notices: tokio::sync::broadcast::channel(64).0,
+            peers: std::sync::Arc::new(|_| true),
         },
         socket.clone(),
     ));

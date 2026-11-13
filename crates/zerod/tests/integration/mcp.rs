@@ -140,3 +140,26 @@ async fn a_server_whose_zerod_is_down_doesnt_start_one_itself() {
     assert_eq!(answer["result"]["isError"], true, "{answer}");
     assert!(!dir.join(".zero").exists(), "a zerod was started in the server's home");
 }
+
+#[tokio::test]
+async fn agents_without_a_shell_read_slack_and_linear_through_zeros_tools() {
+    let list = respond(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}), |_, _| async { Ok(json!({})) }).await.unwrap();
+    let names: Vec<&str> = list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"zero_slack") && names.contains(&"zero_linear"), "{names:?}");
+    let message = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "zero_slack", "arguments": {"method": "users.info", "params": {"user": "U1"}}}});
+    let heard = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let seen = heard.clone();
+    let answer = respond(&message, |tool, args| {
+        *seen.lock().unwrap() = Some((tool, args));
+        async { Ok(json!({"ok": true, "user": {"name": "ada"}})) }
+    })
+    .await
+    .unwrap();
+    assert_eq!(heard.lock().unwrap().clone().unwrap().0, "zero_slack");
+    let text = answer["result"]["content"][0]["text"].as_str().unwrap();
+    assert_eq!(serde_json::from_str::<Value>(text).unwrap()["user"]["name"], "ada", "Slack's answer as JSON");
+    let refused = json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "zero_linear", "arguments": {"query": "mutation { x }"}}});
+    let answer = respond(&refused, |_, _| async { Err("Asked the user (ask abc123)".to_string()) }).await.unwrap();
+    assert_eq!(answer["result"]["isError"], true);
+}

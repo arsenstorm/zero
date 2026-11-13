@@ -123,6 +123,11 @@ struct Request {
     /// defaultSignIn: {cli, id}.
     signin: Option<Value>,
     limit: Option<usize>,
+    /// configure: the write switches, kept with the integrations' tokens rather than in settings.json.
+    #[serde(rename = "slackPosts")]
+    slack_posts: Option<bool>,
+    #[serde(rename = "linearChanges")]
+    linear_changes: Option<bool>,
     #[serde(flatten)]
     settings: Settings,
 }
@@ -233,6 +238,10 @@ impl Settings {
         let mut settings: Settings =
             std::fs::read(home.join("settings.json")).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default();
         settings.git = settings.git.map(crate::git::AgentGit::upgraded);
+        // Where an older zerod kept the write switches: anyone's to edit, so not read (vault.rs keeps them now).
+        for key in ["slackPosts", "linearChanges"] {
+            settings.rest.remove(key);
+        }
         settings
     }
 
@@ -264,7 +273,46 @@ pub struct Zerod {
     pub places: Arc<crate::board::Places>,
     /// Changes that aren't a session's, for subscribers: "pads" when a scratchpad changes.
     pub notices: broadcast::Sender<&'static str>,
+    /// Whether a connection's peer, by its audit token, may make the app's own ops (APP_ONLY): Zero.app's signature
+    /// for the user's zerod (peer.rs).
+    pub peers: Peers,
 }
+
+/// Who may make the app's own ops, by the peer's audit token (none when the kernel didn't say).
+pub type Peers = Arc<dyn Fn(Option<[u32; 8]>) -> bool + Send + Sync>;
+
+/// What only the user does, through Zero.app: answer asks and tasks' approvals and questions, speak to an agent as
+/// them, change settings, permissions, sign-ins and connections. Agents' own commands never send these; from any
+/// other process they're refused, so an agent can't approve itself or let itself write.
+pub(crate) const APP_ONLY: &[&str] = &[
+    "choose",
+    "answerAsk",
+    "reply",
+    "takeBack",
+    "dismiss",
+    "cancelRun",
+    "deliver",
+    "message",
+    "decide",
+    "answer",
+    "configure",
+    "setPermissions",
+    "saveMcpServer",
+    "deleteMcpServer",
+    "saveWorkspace",
+    "deleteWorkspace",
+    "gitKey",
+    "saveBrowserSettings",
+    "saveSignIn",
+    "codexSignIn",
+    "claudeSignIn",
+    "deleteSignIn",
+    "defaultSignIn",
+    "connectSlack",
+    "disconnectSlack",
+    "connectLinear",
+    "disconnectLinear",
+];
 
 impl Zerod {
     /// The board as every client sees it: each session as a summary (its latest answer for Now, not its whole
@@ -422,9 +470,8 @@ pub async fn archive_completed(zerod: Zerod) {
 /// Each op to its topic's handler.
 async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
     match request.op.as_str() {
-        "integrations" | "linearTeams" | "connectLinear" | "disconnectLinear" | "connectSlack" | "disconnectSlack" | "refreshSlack" => {
-            integrations::handle(zerod, request).await
-        }
+        "integrations" | "linearTeams" | "connectLinear" | "disconnectLinear" | "connectSlack" | "disconnectSlack" | "refreshSlack"
+        | "slack" | "linear" => integrations::handle(zerod, request).await,
         "pad" | "later" | "loops" | "loop" | "saveLoop" | "deleteLoop" => notes::handle(zerod, request),
         "watch" | "watchFile" | "watches" | "unwatch" | "remind" | "schedule" | "schedules" | "unschedule" | "follow" | "unfollow"
         | "following" => watches::handle(zerod, request).await,
@@ -532,6 +579,9 @@ fn setup(zerod: &Zerod, request: Request) -> Result<Value, String> {
             }
             settings["buildCacheTools"] = crate::build_cache::tools(crate::build_cache::installed);
             settings["terminalApp"] = json!(crate::daemon::terminal_app(daemon.home()));
+            let writes = zerod.integrations.writes();
+            settings["slackPosts"] = json!(writes.slack_posts);
+            settings["linearChanges"] = json!(writes.linear_changes);
             Ok(settings)
         }
         // The agents' signing key, taken from a file the user chose: its public half back, for GitHub.
@@ -539,7 +589,10 @@ fn setup(zerod: &Zerod, request: Request) -> Result<Value, String> {
             let from = request.args.as_ref().and_then(|a| a["path"].as_str()).ok_or("Which key file?")?;
             crate::git::take_key(std::path::Path::new(from), daemon.home()).map(|key| json!({"publicKey": key}))
         }
-        "configure" => configure(zerod, request.settings),
+        "configure" => {
+            zerod.integrations.set_writes(request.slack_posts, request.linear_changes)?;
+            configure(zerod, request.settings)
+        }
         other => unknown(other),
     }
 }

@@ -45,6 +45,9 @@ is their UI and the inbox where agents reach the user. `docs/workspace.md` has t
   in) and hands each CLI the chosen one as it starts, in the form that CLI reads. It never calls providers' services
   itself (the CLIs make every call), and never logs, prints or sends a sign-in anywhere but to its CLI. Use the
   `claude` CLI (stream-json), never the Agent SDK with a subscription.
+- Integrations' tokens (and their write switches) live in zerod's own Keychain item (`vault.rs`), never in a file.
+  An op only the user makes (answering, settings, sign-ins, connections) goes in `APP_ONLY` (server.rs): zerod
+  makes it only for Zero.app, by its signature (`peer.rs`).
 - Never commit `~/.zero/asks.jsonl` or anything from `~/.zero`; never print secrets.
 - Don't change the user's OpenCode permission config unasked.
 

@@ -58,6 +58,7 @@ async fn main() {
     // Started by launchd as the LaunchAgent (launchd.rs): no one reads its output, so it goes to the log.
     let launchd = args.next_if_eq("--launchd").is_some();
     let args = Args::parse(args, &zero);
+    let own = args.home == zero.join("zerod");
     if mcp {
         return zerod::mcp::serve(&args.socket).await;
     }
@@ -86,7 +87,7 @@ async fn main() {
     });
     let mut terminate = signal(SignalKind::terminate()).expect("a SIGTERM handler");
     eprintln!("zerod: {} sessions, listening on {}", daemon.list().len(), args.socket.display());
-    let zerod = zerod_for(&args, &daemon, inbox);
+    let zerod = zerod_for(&args, &daemon, inbox, own);
     tokio::spawn(zerod::server::archive_completed(zerod.clone()));
     tokio::spawn(zerod::uses::follow(daemon.clone()));
     tokio::spawn(zerod::left::follow(daemon.clone()));
@@ -147,9 +148,14 @@ fn open_inbox(daemon: &Arc<zerod::daemon::Daemon>, args: &Args) -> Arc<zerod::in
 }
 
 /// What a connection reaches, each part opened from where it's kept, and what follows on its own set going.
-fn zerod_for(args: &Args, daemon: &Arc<zerod::daemon::Daemon>, inbox: Arc<zerod::inbox::Inbox>) -> zerod::server::Zerod {
+/// The user's own zerod (`own`, on ~/.zero/zerod) keeps the integrations' tokens in its Keychain item and makes the
+/// app's own ops only for Zero.app; one on another home (a test's, a copy run by hand) has nothing of the user's to
+/// keep from anyone: its tokens are in a file there, and its client is whoever started it.
+fn zerod_for(args: &Args, daemon: &Arc<zerod::daemon::Daemon>, inbox: Arc<zerod::inbox::Inbox>, own: bool) -> zerod::server::Zerod {
     let (home, beside) = (&args.home, &args.beside);
-    let integrations = zerod::integrations::Integrations::open(home, Arc::new(zerod::integrations::Commands::default()));
+    let vault = if own { zerod::vault::Vault::Keychain(None) } else { zerod::vault::Vault::File(home.join("secrets.json")) };
+    let integrations = zerod::integrations::Integrations::open_in(home, Arc::new(zerod::integrations::Commands::default()), vault);
+    let peers: zerod::server::Peers = if own { Arc::new(zerod::peer::is_zero_app) } else { Arc::new(|_| true) };
     let pads = Arc::new(zerod::pads::Pads::open(&beside.join("scratchpads")));
     let later = Arc::new(zerod::later::Later::open(&beside.join("later")));
     let loops = Arc::new(zerod::loops::Loops::open(&beside.join("loops")));
@@ -171,6 +177,7 @@ fn zerod_for(args: &Args, daemon: &Arc<zerod::daemon::Daemon>, inbox: Arc<zerod:
         browsers,
         places,
         notices: tokio::sync::broadcast::channel(64).0,
+        peers,
     }
 }
 

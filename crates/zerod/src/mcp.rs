@@ -19,7 +19,8 @@ to what you wrote, as Markdown: [Title › Section](zero://pad/<id>#section). \
 In a Zero task, anything you need from the user goes through zero_ask (a question, a choice), zero_run (a command they run on their \
 Mac, its output coming back to you), zero_note (where the task stands), zero_done (the task done, confirmed in two steps) or zero_blocked (it can't go on at all, as \
 confirmed), when \
-the `zero` command can't reach Zero (a sandbox).";
+the `zero` command can't reach Zero (a sandbox). zero_slack and zero_linear read Slack and Linear through the user's \
+connections in Zero, no tokens needed.";
 
 /// Zero's own: what a task asks of the user, as `zero ask`, `zero run` and `zero note` do, for agents whose commands
 /// can't reach Zero's socket.
@@ -48,6 +49,17 @@ fn zero_tools() -> Vec<Value> {
         json!({"name": "zero_blocked", "description": "Marks the task blocked (red), in two steps as zero_done: only when it can't go on at all until something outside you and the user changes (an outage, another team's access). Waiting on a review or CI is zero_note's waiting; what the user can give is zero_ask.",
                "inputSchema": {"type": "object", "required": ["text"], "properties": {
                    "text": string("What blocks it, one line."), "confirm": string("The token the first call gave.")}}}),
+        json!({"name": "zero_slack", "description": "Calls Slack's Web API through the user's Slack connection in Zero (no token needed): read methods such as conversations.history, conversations.replies, conversations.info, search.messages, users.info. Slack's JSON comes back; page with its response_metadata.next_cursor as cursor. A write (chat.postMessage…) works only if the user lets agents post, and is asked first: approve it, then call again with approval: the ask's id.",
+               "inputSchema": {"type": "object", "required": ["method"], "properties": {
+                   "method": string("The Web API method, as conversations.history."),
+                   "params": {"type": "object", "description": "Its arguments, as {\"channel\": \"C0123\", \"limit\": 20}."},
+                   "workspace": string("The workspace's name, id or domain; left out, the first connected."),
+                   "approval": string("For a write: the id of the ask the user approved it in.")}}}),
+        json!({"name": "zero_linear", "description": "Sends a GraphQL query to Linear's API through the user's Linear connection in Zero (no key needed); Linear's JSON comes back. Keep queries small (first: 50) for Linear's complexity limit. A mutation works only if the user lets agents make changes, and is asked first: approve it, then call again with approval: the ask's id.",
+               "inputSchema": {"type": "object", "required": ["query"], "properties": {
+                   "query": string("The GraphQL document, as query($id: String!) { issue(id: $id) { title state { name } } }."),
+                   "variables": {"type": "object", "description": "Its variables, as {\"id\": \"ENG-123\"}."},
+                   "approval": string("For a mutation: the id of the ask the user approved it in.")}}}),
         json!({"name": "zero_note", "description": "Says where the task stands, on its row in Zero.",
                "inputSchema": {"type": "object", "required": ["text"], "properties": {
                    "text": string("Where it stands, one line."), "state": string("waiting (on someone else); left out, working. Done is zero_done's."), "needs": string("What it needs from the user, if anything.")}}}),
@@ -152,6 +164,15 @@ where
         "tools/call" if params["name"].as_str().is_some_and(|n| n.starts_with("browser_")) => {
             match call(params["name"].as_str().unwrap_or_default().to_string(), params["arguments"].clone()).await {
                 Ok(answer) => json!({"content": answer["content"], "isError": answer["isError"].as_bool().unwrap_or(false)}),
+                Err(why) => json!({"content": [{"type": "text", "text": why}], "isError": true}),
+            }
+        }
+        // Slack's and Linear's own JSON, as they answered.
+        "tools/call" if matches!(params["name"].as_str(), Some("zero_slack" | "zero_linear")) => {
+            match call(params["name"].as_str().unwrap_or_default().to_string(), params["arguments"].clone()).await {
+                Ok(answer) => {
+                    json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&answer).unwrap_or_default()}], "isError": false})
+                }
                 Err(why) => json!({"content": [{"type": "text", "text": why}], "isError": true}),
             }
         }
@@ -264,12 +285,14 @@ pub async fn connect(socket: &Path) -> Result<tokio::net::UnixStream, String> {
     Err("Zero isn't running".into())
 }
 
-/// One tool call to zerod: a scratchpad's (`pad`), a browser's (`browserCall`), or an ask's (`agentAsk`), the last two for
-/// the session this server runs in.
+/// One tool call to zerod: a scratchpad's (`pad`), a browser's (`browserCall`), an ask's (`agentAsk`), or Slack's or
+/// Linear's (`slack`, `linear`), all but the first for the session this server runs in.
 async fn through(socket: &Path, tool: String, args: Value) -> Result<Value, String> {
     let mut stream = connect(socket).await?;
     let session = std::env::var("ZERO_SESSION").ok();
-    let request = if let Some(own) = tool.strip_prefix("zero_") {
+    let request = if let Some(api) = tool.strip_prefix("zero_").filter(|t| *t == "slack" || *t == "linear") {
+        json!({"id": 1, "op": api, "args": args, "session": session})
+    } else if let Some(own) = tool.strip_prefix("zero_") {
         let mut args = if args.is_object() { args } else { json!({}) };
         args["tool"] = json!(own);
         json!({"id": 1, "op": "agentAsk", "session": session.ok_or("zero_ tools are for Zero's tasks; elsewhere, use the zero command")?, "args": args})

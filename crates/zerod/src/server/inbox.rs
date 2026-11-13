@@ -14,7 +14,7 @@ pub(super) async fn handle(zerod: &Zerod, request: Request) -> Result<Value, Str
         "create" => {
             let mut incoming: Ask =
                 serde_json::from_value(request.ask.clone().ok_or("Create which ask?")?).map_err(|e| format!("Not an ask: {e}"))?;
-            inbox.about(&mut incoming)?;
+            inbox.admit(&mut incoming)?;
             Ok(json!(inbox.create(incoming, request.keep.unwrap_or(false))))
         }
         "asks" => Ok(json!(inbox.asks())),
@@ -93,7 +93,7 @@ fn agent_ask(zerod: &Zerod, request: &Request) -> Result<Value, String> {
     if ask.kind != crate::ask::AskKind::Note {
         ask.waits = Some(false)
     }
-    zerod.inbox.about(&mut ask)?;
+    zerod.inbox.admit(&mut ask)?;
     let made = zerod.inbox.create(ask, false);
     Ok(json!({"id": made.id}))
 }

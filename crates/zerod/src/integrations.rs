@@ -1,6 +1,7 @@
 //! Integrations: who gh is signed in as, and the Linear and Slack connections zerod makes in the browser (Linear) or
-//! with a pasted token (Slack) and keeps in linear.json and slack.json (the user's alone). Following reads through
-//! them; Linear's team keys and Slack's channels make issue keys and channels in messages links.
+//! with a pasted token (Slack): what they are in linear.json and slack.json, their tokens in zerod's vault (vault.rs),
+//! with the switches that let agents write through them. Following reads through them; Linear's team keys and Slack's
+//! channels make issue keys and channels in messages links.
 
 use crate::now;
 use std::collections::BTreeMap;
@@ -63,6 +64,9 @@ impl Fetcher for Commands {
     }
 }
 
+/// The approvals agents' writes have used, in zerod's home.
+const SPENT: &str = "spent-approvals.json";
+
 /// Zero's Linear OAuth app (authorization code with PKCE: a public client id and no secret).
 const LINEAR_CLIENT: &str = "6a5057347cad54818f0b528ee7763622";
 const LINEAR_GRAPHQL: &str = "https://api.linear.app/graphql";
@@ -70,7 +74,10 @@ const LINEAR_GRAPHQL: &str = "https://api.linear.app/graphql";
 struct Account {
     name: String,
     url_key: String,
+    /// The tokens: in the vault, never in linear.json.
+    #[serde(default, skip_serializing)]
     access: String,
+    #[serde(default, skip_serializing)]
     refresh: Option<String>,
     expires: i64,
     /// Its teams' keys ("ENG"), whose issue ids link to it.
@@ -79,7 +86,7 @@ struct Account {
 }
 
 /// A Slack workspace connected: a user token of Zero's own Slack app (made from the app's manifest, read-only scopes),
-/// the team it is for, and the channels' ids by name (what Slack's app opens by). In slack.json, the user's alone.
+/// the team it is for, and the channels' ids by name (what Slack's app opens by). In slack.json, but for its token.
 #[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SlackTeam {
@@ -91,14 +98,42 @@ pub struct SlackTeam {
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct SlackAccount {
+    /// In the vault, never in slack.json.
+    #[serde(default, skip_serializing)]
     token: String,
     team: SlackTeam,
     user_id: String,
     channels: BTreeMap<String, String>,
 }
 
+/// Whether the user lets agents write through the connections (`zero slack`, `zero linear`), each write still theirs
+/// to approve. Set by the app alone (server.rs, APP_ONLY), kept in the vault.
+#[derive(Serialize, Deserialize, Clone, Copy, Default, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Writes {
+    #[serde(default)]
+    pub slack_posts: bool,
+    #[serde(default)]
+    pub linear_changes: bool,
+}
+
+/// What the vault holds: Slack's tokens by team id, Linear's tokens, and the write switches.
+#[derive(Serialize, Deserialize, Default)]
+struct Secrets {
+    #[serde(default)]
+    slack: BTreeMap<String, String>,
+    #[serde(default)]
+    linear: Option<(String, Option<String>)>,
+    #[serde(default, flatten)]
+    writes: Writes,
+}
+
 pub struct Integrations {
     home: PathBuf,
+    vault: crate::vault::Vault,
+    writes: Mutex<Writes>,
+    /// Held while the connections are written, so two changes can't each write the other's old tokens.
+    saving: Mutex<()>,
     fetcher: Arc<dyn Fetcher>,
     linear: Mutex<Option<Account>>,
     /// Every Slack workspace connected, in the order connected.
@@ -106,6 +141,9 @@ pub struct Integrations {
     /// Which workspace a channel or person (an id the connections don't list) turned out to be in.
     slack_homes: Mutex<std::collections::HashMap<String, String>>,
     port: Mutex<u16>,
+    /// Approvals agents' writes were made with: each is for one call, kept in spent-approvals.json so a restart can't
+    /// let one run twice.
+    spent: Mutex<std::collections::HashSet<String>>,
     /// The Linear sign-in the listener waits for (its state and verifier), and whether one is listening.
     signing_in: Mutex<(Option<(String, String)>, bool)>,
     /// Who gh is signed in as, once it has said.
@@ -113,10 +151,23 @@ pub struct Integrations {
 }
 
 impl Integrations {
+    /// With its tokens in a file of `home`'s own (secrets.json): a zerod on a home other than the user's.
     pub fn open(home: &Path, fetcher: Arc<dyn Fetcher>) -> Arc<Integrations> {
-        let linear = std::fs::read(home.join("linear.json")).ok().and_then(|data| serde_json::from_slice(&data).ok());
+        Self::open_in(home, fetcher, crate::vault::Vault::File(home.join("secrets.json")))
+    }
+
+    /// Tokens left in linear.json or slack.json (by a zerod from before the vault) move into it.
+    pub fn open_in(home: &Path, fetcher: Arc<dyn Fetcher>, vault: crate::vault::Vault) -> Arc<Integrations> {
+        let secrets: Secrets = match vault.read() {
+            Ok(data) => data.and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default(),
+            Err(error) => {
+                eprintln!("zerod: couldn't read the integrations' tokens: {error}");
+                Secrets::default()
+            }
+        };
+        let mut linear: Option<Account> = std::fs::read(home.join("linear.json")).ok().and_then(|data| serde_json::from_slice(&data).ok());
         // One workspace, as slack.json kept it before there could be several, or a list.
-        let slack = std::fs::read(home.join("slack.json"))
+        let mut slack: Vec<SlackAccount> = std::fs::read(home.join("slack.json"))
             .ok()
             .and_then(|data| {
                 serde_json::from_slice::<Vec<SlackAccount>>(&data)
@@ -124,16 +175,72 @@ impl Integrations {
                     .or_else(|| serde_json::from_slice::<SlackAccount>(&data).ok().map(|one| vec![one]))
             })
             .unwrap_or_default();
-        Arc::new(Integrations {
+        let left_in_files = slack.iter().any(|a| !a.token.is_empty()) || linear.as_ref().is_some_and(|a| !a.access.is_empty());
+        for account in slack.iter_mut().filter(|a| a.token.is_empty()) {
+            account.token = secrets.slack.get(&account.team.id).cloned().unwrap_or_default()
+        }
+        if let (Some(account), Some((access, refresh))) = (linear.as_mut().filter(|a| a.access.is_empty()), secrets.linear) {
+            (account.access, account.refresh) = (access, refresh)
+        }
+        let integrations = Arc::new(Integrations {
             home: home.into(),
+            vault,
+            writes: Mutex::new(secrets.writes),
+            saving: Mutex::new(()),
             fetcher,
             linear: Mutex::new(linear),
             slack: Mutex::new(slack),
             slack_homes: Mutex::default(),
+            spent: Mutex::new(std::fs::read(home.join(SPENT)).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default()),
             port: Mutex::new(47615),
             signing_in: Mutex::new((None, false)),
             github: Mutex::new(None),
-        })
+        });
+        if left_in_files && let Err(error) = integrations.save() {
+            eprintln!("zerod: couldn't move the integrations' tokens out of their files: {error}")
+        }
+        integrations
+    }
+
+    /// Whether agents may write through the connections.
+    pub fn writes(&self) -> Writes {
+        *self.writes.lock().unwrap()
+    }
+
+    /// The write switches the app set (each, if given), kept in the vault.
+    pub fn set_writes(&self, slack_posts: Option<bool>, linear_changes: Option<bool>) -> Result<(), String> {
+        if slack_posts.is_none() && linear_changes.is_none() {
+            return Ok(());
+        }
+        let _saving = self.saving.lock().unwrap();
+        let mut writes = self.writes.lock().unwrap();
+        writes.slack_posts = slack_posts.unwrap_or(writes.slack_posts);
+        writes.linear_changes = linear_changes.unwrap_or(writes.linear_changes);
+        drop(writes);
+        self.save()
+    }
+
+    /// Everything kept as it is now: the tokens and switches in the vault first, then the connections in their files
+    /// without their tokens (none left, the file goes). The vault refusing, the files stay as they were.
+    fn save(&self) -> Result<(), String> {
+        let slack = self.slack.lock().unwrap().clone();
+        let linear = self.linear.lock().unwrap().clone();
+        let secrets = Secrets {
+            slack: slack.iter().map(|a| (a.team.id.clone(), a.token.clone())).collect(),
+            linear: linear.as_ref().map(|a| (a.access.clone(), a.refresh.clone())),
+            writes: self.writes(),
+        };
+        self.vault.write(&serde_json::to_vec(&secrets).map_err(|e| e.to_string())?)?;
+        let (slack_file, linear_file) = (self.home.join("slack.json"), self.home.join("linear.json"));
+        match slack.is_empty() {
+            true => drop(std::fs::remove_file(slack_file)),
+            false => write_private(&slack_file, &serde_json::to_vec(&slack).map_err(|e| e.to_string())?)?,
+        }
+        match &linear {
+            Some(account) => write_private(&linear_file, &serde_json::to_vec(account).map_err(|e| e.to_string())?)?,
+            None => drop(std::fs::remove_file(linear_file)),
+        }
+        Ok(())
     }
 
     /// Where Linear's sign-in comes back to (Zero's registered redirect is on 47615); a test's own port.
@@ -178,6 +285,18 @@ impl Integrations {
 
     /// One GraphQL request to Linear on the connection, refreshed first if it has run out.
     pub(crate) async fn linear(&self, body: Value) -> Result<Value, String> {
+        let access = self.linear_access().await?;
+        let config = curl_config(LINEAR_GRAPHQL, Some(&access), &body.to_string(), "application/json");
+        let reply: Value =
+            serde_json::from_str(&self.fetcher.run(curl(), Some(config)).await?).map_err(|e| format!("Linear answered oddly: {e}"))?;
+        if let Some(error) = reply["errors"][0]["message"].as_str() {
+            return Err(format!("Linear: {error}"));
+        }
+        Ok(reply)
+    }
+
+    /// The connection's access token, refreshed first if it has run out.
+    async fn linear_access(&self) -> Result<String, String> {
         let mut account = self.linear.lock().unwrap().clone().ok_or("Linear isn't connected")?;
         if account.expires <= now() + 60
             && let Some(refresh) = account.refresh.clone()
@@ -187,13 +306,46 @@ impl Integrations {
             account = Account { access: tokens.0, refresh: tokens.1.or(Some(refresh)), expires: tokens.2, ..account };
             self.keep(Some(account.clone()))?;
         }
-        let config = curl_config(LINEAR_GRAPHQL, Some(&account.access), &body.to_string(), "application/json");
-        let reply: Value =
-            serde_json::from_str(&self.fetcher.run(curl(), Some(config)).await?).map_err(|e| format!("Linear answered oddly: {e}"))?;
-        if let Some(error) = reply["errors"][0]["message"].as_str() {
-            return Err(format!("Linear: {error}"));
+        Ok(account.access)
+    }
+
+    /// An agent's GraphQL request to Linear (`zero linear`), Linear's whole answer back; its first error as the error.
+    /// Over Linear's rate or complexity limits, says when they reset rather than waiting that long.
+    pub async fn linear_for_agent(&self, query: &str, variables: Option<&Value>) -> Result<Value, String> {
+        let mut body = json!({"query": query});
+        if let Some(variables) = variables.filter(|v| !v.is_null()) {
+            body["variables"] = variables.clone()
         }
-        Ok(reply)
+        let access = self.linear_access().await?;
+        let config = curl_config(LINEAR_GRAPHQL, Some(&access), &body.to_string(), "application/json");
+        let reply = api(&*self.fetcher, config).await?;
+        let error = &reply.body["errors"][0];
+        if let Some(message) = error["message"].as_str() {
+            let limited = reply.status == 429 || error["extensions"]["code"] == "RATELIMITED";
+            let reset = reply
+                .resets
+                .filter(|_| limited)
+                .map(|at| format!(" (rate limited: it resets in {}s)", (at - now()).max(1)))
+                .unwrap_or_default();
+            return Err(format!("Linear: {message}{reset}"));
+        }
+        if reply.status >= 400 {
+            return Err(format!("Linear answered {}: {}", reply.status, reply.body));
+        }
+        Ok(reply.body)
+    }
+
+    /// Spends an approval on the write it was for: true the first time only.
+    pub fn spend(&self, approval: &str) -> bool {
+        let mut spent = self.spent.lock().unwrap();
+        if !spent.insert(approval.into()) {
+            return false;
+        }
+        // ponytail: kept forever (6-letter ids, a few a day); trim when it's ever large.
+        if let Err(error) = write_private(&self.home.join(SPENT), &serde_json::to_vec(&*spent).unwrap_or_default()) {
+            eprintln!("zerod: couldn't keep a spent approval: {error}")
+        }
+        true
     }
 
     /// Starts connecting Linear: the page to open in the browser. zerod listens for it to come back, then keeps the
@@ -208,7 +360,8 @@ impl Integrations {
                 ("client_id", LINEAR_CLIENT),
                 ("redirect_uri", &redirect),
                 ("response_type", "code"),
-                ("scope", "read"),
+                // Changes need Linear's write scope, asked for only once the user lets agents make them.
+                ("scope", if self.writes().linear_changes { "read,write" } else { "read" }),
                 ("state", &state),
                 ("prompt", "consent"),
                 ("code_challenge", &base64url(&sha256(verifier.as_bytes()))),
@@ -387,15 +540,60 @@ impl Integrations {
         Err(failed)
     }
 
-    fn keep_slack(&self, accounts: Vec<SlackAccount>) -> Result<(), String> {
-        let file = self.home.join("slack.json");
-        if accounts.is_empty() {
-            let _ = std::fs::remove_file(&file);
-        } else {
-            write_private(&file, &serde_json::to_vec(&accounts).map_err(|e| e.to_string())?)?
+    /// An agent's call to Slack's Web API (`zero slack`): to `workspace` (its name, id or domain), else the first
+    /// connected; Slack's whole answer back, or its error. Rate limited, it waits as Slack's Retry-After says (up to
+    /// half a minute) and asks again; longer, it says how long.
+    pub async fn slack_for_agent(&self, workspace: Option<&str>, method: &str, params: &[(String, String)]) -> Result<Value, String> {
+        let token = {
+            let accounts = self.slack.lock().unwrap();
+            let named = |a: &&SlackAccount| {
+                workspace.is_none_or(|w| [&a.team.name, &a.team.id, &a.team.domain].iter().any(|n| n.eq_ignore_ascii_case(w.trim())))
+            };
+            match accounts.iter().find(named) {
+                Some(account) => account.token.clone(),
+                None if accounts.is_empty() => return Err("Slack isn't connected to Zero: the user connects it in Settings › Slack".into()),
+                None => {
+                    let names: Vec<&str> = accounts.iter().map(|a| a.team.name.as_str()).collect();
+                    return Err(format!("No Slack workspace {}: Zero is connected to {}", workspace.unwrap_or_default(), names.join(", ")));
+                }
+            }
+        };
+        let pairs: Vec<(&str, &str)> = params.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let config = curl_config(
+            &format!("https://slack.com/api/{method}"),
+            Some(&token),
+            &encode_form(&pairs),
+            "application/x-www-form-urlencoded",
+        );
+        let mut waited = 0;
+        loop {
+            let reply = api(&*self.fetcher, config.clone()).await?;
+            if reply.status == 429 || reply.body["error"] == "ratelimited" {
+                let wait = reply.retry_after.unwrap_or(1);
+                if waited + wait > 30 {
+                    return Err(format!("Slack {method}: ratelimited (Slack says to wait {wait}s)"));
+                }
+                waited += wait.max(1);
+                tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+                continue;
+            }
+            if reply.body["ok"] != true {
+                let error = reply.body["error"].as_str().unwrap_or("no answer");
+                if let Some(needed) = reply.body["needed"].as_str().filter(|_| error == "missing_scope") {
+                    return Err(format!(
+                        "Slack {method}: missing_scope: Zero's Slack app hasn't {needed}. The user adds it to the app's User Token Scopes in Slack, reinstalls the app and connects Slack again in Settings › Slack"
+                    ));
+                }
+                return Err(format!("Slack {method}: {error}"));
+            }
+            return Ok(reply.body);
         }
+    }
+
+    fn keep_slack(&self, accounts: Vec<SlackAccount>) -> Result<(), String> {
+        let _saving = self.saving.lock().unwrap();
         *self.slack.lock().unwrap() = accounts;
-        Ok(())
+        self.save()
     }
 
     /// Tokens for a form sent to Linear's token endpoint: access, refresh, when the access runs out.
@@ -413,22 +611,16 @@ impl Integrations {
         ))
     }
 
-    /// The connection, in linear.json, readable by the user alone; none removes it.
+    /// The Linear connection kept; none removes it.
     fn keep(&self, account: Option<Account>) -> Result<(), String> {
-        let file = self.home.join("linear.json");
-        match &account {
-            Some(account) => write_private(&file, &serde_json::to_vec(account).map_err(|e| e.to_string())?)?,
-            None => {
-                let _ = std::fs::remove_file(&file);
-            }
-        }
+        let _saving = self.saving.lock().unwrap();
         *self.linear.lock().unwrap() = account;
-        Ok(())
+        self.save()
     }
 }
 
 /// Writes `file` readable by the user alone.
-fn write_private(file: &Path, data: &[u8]) -> Result<(), String> {
+pub(crate) fn write_private(file: &Path, data: &[u8]) -> Result<(), String> {
     use std::os::unix::fs::OpenOptionsExt;
     let mut out = std::fs::OpenOptions::new().create(true).write(true).truncate(true).mode(0o600).open(file).map_err(|e| e.to_string())?;
     std::io::Write::write_all(&mut out, data).map_err(|e| e.to_string())
@@ -447,6 +639,104 @@ async fn slack_call(fetcher: &dyn Fetcher, token: &str, method: &str, params: &[
         return Err(format!("Slack {method}: {}", reply["error"].as_str().unwrap_or("no")));
     }
     Ok(reply)
+}
+
+/// Slack's Web API methods agents may call without the user's leave: they read. Anything else writes.
+const SLACK_READS: &[&str] = &[
+    "auth.test",
+    "bookmarks.list",
+    "bots.info",
+    "chat.getPermalink",
+    "conversations.history",
+    "conversations.info",
+    "conversations.list",
+    "conversations.members",
+    "conversations.replies",
+    "dnd.info",
+    "emoji.list",
+    "files.info",
+    "files.list",
+    "pins.list",
+    "reactions.get",
+    "reactions.list",
+    "search.all",
+    "search.files",
+    "search.messages",
+    "stars.list",
+    "team.info",
+    "team.profile.get",
+    "usergroups.list",
+    "usergroups.users.list",
+    "users.conversations",
+    "users.getPresence",
+    "users.info",
+    "users.list",
+    "users.lookupByEmail",
+    "users.profile.get",
+];
+
+pub fn slack_reads(method: &str) -> bool {
+    SLACK_READS.contains(&method)
+}
+
+/// Whether a GraphQL document would change Linear: any of its operations isn't a query. Read off the words outside
+/// every brace, parenthesis, string and comment, where an operation says what it is.
+pub fn changes_linear(document: &str) -> bool {
+    let (mut depth, mut word, mut words) = (0i32, String::new(), vec![]);
+    let mut chars = document.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '#' => while chars.next_if(|c| *c != '\n').is_some() {},
+            '"' => {
+                while let Some(c) = chars.next() {
+                    match c {
+                        '\\' => {
+                            chars.next();
+                        }
+                        '"' => break,
+                        _ => {}
+                    }
+                }
+            }
+            '{' | '(' => depth += 1,
+            '}' | ')' => depth -= 1,
+            c if depth == 0 && (c.is_alphanumeric() || c == '_') => {
+                word.push(c);
+                continue;
+            }
+            _ => {}
+        }
+        words.push(std::mem::take(&mut word));
+    }
+    words.push(word);
+    words.iter().any(|w| w == "mutation" || w == "subscription")
+}
+
+/// An answer from an API, with what its headers say of its rate limits.
+struct Reply {
+    status: u16,
+    body: Value,
+    /// Slack's Retry-After, in seconds.
+    retry_after: Option<u64>,
+    /// When Linear's request or complexity limit resets, in seconds since 1970.
+    resets: Option<i64>,
+}
+
+/// One request (curl's config, token and all, on its stdin), its status and rate-limit headers read off a last line
+/// curl writes after the body.
+async fn api(fetcher: &dyn Fetcher, config: String) -> Result<Reply, String> {
+    let config = config
+        + "write-out = \"\\n%{http_code}|%header{retry-after}|%header{x-ratelimit-requests-reset}|%header{x-ratelimit-complexity-reset}\"\n";
+    let printed = fetcher.run(["curl", "-sS", "-K", "-"].map(String::from).to_vec(), Some(config)).await?;
+    let (body, last) = printed.trim_end_matches('\n').rsplit_once('\n').unwrap_or(("", &printed));
+    let mut fields = last.split('|');
+    let status = fields.next().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
+    let retry_after = fields.next().and_then(|s| s.trim().parse().ok());
+    // Linear's resets are milliseconds since 1970; the later of the two is when both allow again.
+    let resets = fields.filter_map(|s| s.trim().parse::<i64>().ok()).max().map(|ms| ms / 1000);
+    let body =
+        serde_json::from_str(body).map_err(|_| format!("The API answered {status}: {}", body.chars().take(300).collect::<String>()))?;
+    Ok(Reply { status, body, retry_after, resets })
 }
 
 /// Every channel's id by name, public and private, page by page.

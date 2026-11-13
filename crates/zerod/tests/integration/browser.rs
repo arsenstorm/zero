@@ -64,6 +64,7 @@ async fn zerod(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
             browsers: zerod::browser::Browsers::open(&home),
             places: Default::default(),
             notices: tokio::sync::broadcast::channel(64).0,
+            peers: std::sync::Arc::new(|_| true),
         },
         socket.clone(),
     ));

@@ -80,7 +80,7 @@ async fn connection(inbox: Arc<Inbox>, stream: UnixStream) {
                 return;
             };
             // An anchor that isn't there (`--about "#plan"`) is the agent's to fix: told, and nothing asked.
-            if let Err(message) = inbox.about(&mut incoming) {
+            if let Err(message) = inbox.admit(&mut incoming) {
                 send(&mut out, error(message)).await;
                 return;
             }
