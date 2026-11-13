@@ -230,7 +230,10 @@ impl Settings {
     }
 
     pub fn load(home: &std::path::Path) -> Settings {
-        std::fs::read(home.join("settings.json")).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default()
+        let mut settings: Settings =
+            std::fs::read(home.join("settings.json")).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default();
+        settings.git = settings.git.map(crate::git::AgentGit::upgraded);
+        settings
     }
 
     /// Agents' processes started from here on commit and sign as the settings say.
@@ -549,7 +552,7 @@ fn configure(zerod: &Zerod, given: Settings) -> Result<Value, String> {
     settings.ttl = given.ttl.or(settings.ttl);
     settings.places = given.places.or(settings.places);
     settings.archive_completed = given.archive_completed.or(settings.archive_completed);
-    settings.git = given.git.or(settings.git);
+    settings.git = given.git.map(crate::git::AgentGit::upgraded).or(settings.git);
     settings.subagents = given.subagents.or(settings.subagents);
     settings.models = given.models.or(settings.models);
     settings.compact_window = given.compact_window.or(settings.compact_window);

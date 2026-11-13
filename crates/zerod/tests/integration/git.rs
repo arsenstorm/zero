@@ -17,6 +17,7 @@ fn agents(folders: Vec<String>) -> AgentGit {
         coauthor_name: String::new(),
         coauthor_email: String::new(),
         scoped_token: false,
+        old_https: None,
     }
 }
 
@@ -165,9 +166,10 @@ fn agents_sign_as_their_own_committer_with_their_key_and_push_over_https() {
 fn nothing_changes_when_its_off_has_no_key_or_is_outside_its_folders() {
     let home = temp_dir("git-off");
     let key = home.join("git-signing-key");
-    assert!(zerod::git::variables_for(&agents(vec![]), &key, &home).is_empty(), "no key yet");
+    let ssh = AgentGit { https: false, ..agents(vec![]) };
+    assert!(zerod::git::variables_for(&ssh, &key, &home).is_empty(), "no key yet");
     std::fs::write(&key, "key").unwrap();
-    assert!(zerod::git::variables_for(&AgentGit { enabled: false, ..agents(vec![]) }, &key, &home).is_empty());
+    assert!(zerod::git::variables_for(&AgentGit { enabled: false, ..ssh }, &key, &home).is_empty());
     let work = home.join("work");
     std::fs::create_dir_all(work.join("repo")).unwrap();
     let only = agents(vec![work.to_str().unwrap().into()]);
@@ -241,4 +243,24 @@ fn a_tasks_own_terminal_commits_as_the_agents_too() {
     let script = zerod::daemon::terminal_script(&conversation, &vars, &home.join("s1.pid")).unwrap();
     let exported = script.find("export GIT_COMMITTER_EMAIL='117126823+arsenstorm2@users.noreply.github.com'").expect(&script);
     assert!(script.find("'claude'").is_some_and(|at| at > exported), "then the command: {script}");
+}
+
+#[test]
+fn https_push_works_on_its_own_and_an_old_setting_keeps_its_meaning() {
+    let home = temp_dir("git-https-alone");
+    let key = home.join("git-signing-key");
+    let alone = AgentGit { enabled: false, https: true, ..agents(vec![]) };
+    let vars = zerod::git::variables_for(&alone, &key, &home);
+    assert!(vars.iter().any(|(_, v)| v == "git@github.com:"), "pushes over HTTPS without agents' own account: {vars:?}");
+    assert!(!vars.iter().any(|(k, _)| k.starts_with("GIT_COMMITTER") || k.starts_with("GIT_AUTHOR")), "commits stay the user's");
+    assert!(!vars.iter().any(|(_, v)| v == "commit.gpgSign"));
+
+    // Before, "https" held only with agents' own account: an old setting with it off stays SSH.
+    let old: AgentGit = serde_json::from_str(r#"{"enabled": false, "https": true}"#).unwrap();
+    assert!(!old.upgraded().https);
+    let old: AgentGit = serde_json::from_str(r#"{"enabled": true, "https": true}"#).unwrap();
+    assert!(old.upgraded().https);
+    let new: AgentGit = serde_json::from_str(r#"{"enabled": false, "httpsPush": true}"#).unwrap();
+    assert!(new.clone().upgraded().https);
+    assert!(!serde_json::to_string(&new.upgraded()).unwrap().contains("\"https\""), "kept under its new name only");
 }

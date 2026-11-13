@@ -21,9 +21,13 @@ pub struct AgentGit {
     pub name: String,
     #[serde(default)]
     pub email: String,
-    /// GitHub over HTTPS, with the GitHub CLI's sign-in, in place of SSH (which may be behind the user's own agent).
-    #[serde(default)]
+    /// GitHub over HTTPS, with the GitHub CLI's sign-in, in place of SSH (which may be behind the user's own agent); on
+    /// its own, with or without agents' own account.
+    #[serde(default, rename = "httpsPush")]
     pub https: bool,
+    /// The older "https", which held only with agents' own account: read once into `https` (`upgraded`), never kept.
+    #[serde(default, rename = "https", skip_serializing)]
+    pub old_https: Option<bool>,
     /// Only agents working in these folders (or under them); none, every folder.
     #[serde(default)]
     pub folders: Vec<String>,
@@ -38,6 +42,16 @@ pub struct AgentGit {
     /// Give agents a separate GitHub token from the Keychain.
     #[serde(default)]
     pub scoped_token: bool,
+}
+
+impl AgentGit {
+    /// An older setting's "https" as it held: only with agents' own account on.
+    pub fn upgraded(mut self) -> Self {
+        if let Some(old) = self.old_https.take() {
+            self.https = old && self.enabled;
+        }
+        self
+    }
 }
 
 pub const TOKEN_SERVICE: &str = "Zero GitHub token";
@@ -164,7 +178,8 @@ pub fn variables_for_with_token(settings: &AgentGit, key: &Path, cwd: &Path, tok
             ("tag.gpgSign", "true".to_string()),
         ]);
     }
-    if (identity && settings.https) || settings.scoped_token {
+    let token = token.filter(|_| settings.scoped_token);
+    if settings.https || token.is_some() {
         config.push(("url.https://github.com/.insteadOf", "git@github.com:".to_string()));
         config.push(("url.https://github.com/.insteadOf", "ssh://git@github.com/".to_string()));
     }
@@ -176,7 +191,6 @@ pub fn variables_for_with_token(settings: &AgentGit, key: &Path, cwd: &Path, tok
     {
         config.push(("core.hooksPath", hooks.to_string_lossy().to_string()));
     }
-    let token = token.filter(|_| settings.scoped_token);
     if token.is_some()
         && let Some((_, credential)) = &helpers
     {
@@ -184,7 +198,7 @@ pub fn variables_for_with_token(settings: &AgentGit, key: &Path, cwd: &Path, tok
         config.push(("credential.helper", String::new()));
         config.push(("credential.helper", credential.to_string_lossy().to_string()));
     }
-    if !identity && token.is_none() {
+    if config.is_empty() {
         return vec![];
     }
     let mut vars: Variables = Vec::new();
