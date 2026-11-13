@@ -1,4 +1,4 @@
-//! `zerod [--home DIR] [--socket PATH] [--cli-socket PATH] [--asks FILE] [--resources DIR]`: Zero's daemon. Sessions
+//! `zerod [--home DIR] [--socket PATH] [--cli-socket PATH] [--asks FILE]`: Zero's daemon. Sessions
 //! live in ~/.zero/zerod and clients connect to ~/.zero/zerod.sock; the inbox keeps its log in asks.jsonl and serves the
 //! `zero` CLI on zero.sock, both next to the home (so a test's home keeps them its own). One daemon per socket: a second
 //! one finds the first answering and leaves.
@@ -76,7 +76,7 @@ async fn main() {
     };
     zerod::self_check::at_start(&args.home);
     let daemon = open_daemon(&args.home);
-    let (inbox, drops) = open_inbox(&daemon, &args);
+    let inbox = open_inbox(&daemon, &args);
     keep_liveness(&inbox);
     let (cli, cli_socket) = (inbox.clone(), args.cli_socket.clone());
     tokio::spawn(async move {
@@ -86,7 +86,7 @@ async fn main() {
     });
     let mut terminate = signal(SignalKind::terminate()).expect("a SIGTERM handler");
     eprintln!("zerod: {} sessions, listening on {}", daemon.list().len(), args.socket.display());
-    let zerod = zerod_for(&args, &daemon, inbox, drops);
+    let zerod = zerod_for(&args, &daemon, inbox);
     tokio::spawn(zerod::server::archive_completed(zerod.clone()));
     tokio::spawn(zerod::uses::follow(daemon.clone()));
     tokio::spawn(zerod::left::follow(daemon.clone()));
@@ -120,15 +120,13 @@ fn open_daemon(home: &Path) -> Arc<zerod::daemon::Daemon> {
     daemon
 }
 
-/// The inbox with every runtime its agents run in, the drops feeding it, and the bridge from tasks to it.
-fn open_inbox(daemon: &Arc<zerod::daemon::Daemon>, args: &Args) -> (Arc<zerod::inbox::Inbox>, Arc<zerod::drops::Drops>) {
-    let runtimes: Vec<Arc<dyn Runtime>> = vec![Arc::new(zerod::daemon::Sessions::of(daemon)), Arc::new(zerod::host::Host::installed())];
-    let inbox = zerod::inbox::Inbox::open_with(Some(args.asks_log.clone()), runtimes, Some(zerod::host::Host::installed()));
-    let drops = zerod::drops::Drops::new(inbox.clone(), args.resources.clone());
+/// The inbox with every runtime its agents run in, and the bridge from tasks to it.
+fn open_inbox(daemon: &Arc<zerod::daemon::Daemon>, args: &Args) -> Arc<zerod::inbox::Inbox> {
+    let runtimes: Vec<Arc<dyn Runtime>> = vec![Arc::new(zerod::daemon::Sessions::of(daemon))];
+    let inbox = zerod::inbox::Inbox::open(Some(args.asks_log.clone()), runtimes);
     let settings = zerod::server::Settings::load(&args.home);
-    settings.apply(&inbox, Some(&drops));
+    settings.apply(&inbox);
     settings.apply_git(&args.home);
-    drops.start();
     zerod::bridge::Bridge::start(daemon.clone(), inbox.clone());
     zerod::mcp_auth::start(daemon.clone(), inbox.clone());
     zerod::recap::start(daemon.clone(), inbox.clone());
@@ -136,13 +134,11 @@ fn open_inbox(daemon: &Arc<zerod::daemon::Daemon>, args: &Args) -> (Arc<zerod::i
     zerod::server::know_what_wakes(daemon, &inbox);
     zerod::server::know_workers(daemon, &inbox);
     zerod::server::link_asks(daemon, &inbox);
-    (inbox, drops)
+    inbox
 }
 
 /// What a connection reaches, each part opened from where it's kept, and what follows on its own set going.
-fn zerod_for(
-    args: &Args, daemon: &Arc<zerod::daemon::Daemon>, inbox: Arc<zerod::inbox::Inbox>, drops: Arc<zerod::drops::Drops>,
-) -> zerod::server::Zerod {
+fn zerod_for(args: &Args, daemon: &Arc<zerod::daemon::Daemon>, inbox: Arc<zerod::inbox::Inbox>) -> zerod::server::Zerod {
     let (home, beside) = (&args.home, &args.beside);
     let integrations = zerod::integrations::Integrations::open(home, Arc::new(zerod::integrations::Commands::default()));
     let pads = Arc::new(zerod::pads::Pads::open(&beside.join("scratchpads")));
@@ -158,7 +154,6 @@ fn zerod_for(
     zerod::server::Zerod {
         daemon: daemon.clone(),
         inbox,
-        drops: Some(drops),
         integrations,
         pads,
         later,
@@ -176,7 +171,6 @@ struct Args {
     socket: PathBuf,
     cli_socket: PathBuf,
     asks_log: PathBuf,
-    resources: PathBuf,
     /// The folder the home is in: the `zero` CLI's socket, the inbox's log, scratchpads, later and loops by default.
     beside: PathBuf,
 }
@@ -185,16 +179,15 @@ impl Args {
     /// Every flag takes a value; anything else is a usage error.
     fn parse(mut args: impl Iterator<Item = String>, zero: &Path) -> Args {
         let (mut home, mut socket) = (zero.join("zerod"), zero.join("zerod.sock"));
-        let (mut cli_socket, mut asks_log, mut resources): (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>) = (None, None, None);
+        let (mut cli_socket, mut asks_log): (Option<PathBuf>, Option<PathBuf>) = (None, None);
         while let Some(arg) = args.next() {
             match (arg.as_str(), args.next()) {
                 ("--home", Some(value)) => home = value.into(),
                 ("--socket", Some(value)) => socket = value.into(),
                 ("--cli-socket", Some(value)) => cli_socket = Some(value.into()),
                 ("--asks", Some(value)) => asks_log = Some(value.into()),
-                ("--resources", Some(value)) => resources = Some(value.into()),
                 _ => {
-                    eprintln!("usage: zerod [mcp] [--home DIR] [--socket PATH] [--cli-socket PATH] [--asks FILE] [--resources DIR]");
+                    eprintln!("usage: zerod [mcp] [--home DIR] [--socket PATH] [--cli-socket PATH] [--asks FILE]");
                     std::process::exit(2);
                 }
             }
@@ -203,13 +196,6 @@ impl Args {
         Args {
             cli_socket: cli_socket.unwrap_or_else(|| beside.join("zero.sock")),
             asks_log: asks_log.unwrap_or_else(|| beside.join("asks.jsonl")),
-            // Zero.app's Resources, beside the MacOS folder zerod is in: the drop clients.
-            resources: resources.unwrap_or_else(|| {
-                std::env::current_exe()
-                    .ok()
-                    .and_then(|exe| exe.parent()?.parent().map(|contents| contents.join("Resources")))
-                    .unwrap_or_default()
-            }),
             home,
             socket,
             beside,

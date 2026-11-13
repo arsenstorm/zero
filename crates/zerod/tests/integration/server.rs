@@ -59,7 +59,6 @@ async fn harness(name: &str) -> Harness {
         zerod::server::Zerod {
             daemon: daemon.clone(),
             inbox: zerod::inbox::Inbox::open(None, vec![]),
-            drops: None,
             integrations: zerod::integrations::Integrations::open(&home, Arc::new(zerod::integrations::Commands::default())),
             following: zerod::following::Following::open(
                 &home,
@@ -285,7 +284,6 @@ async fn sessions_survive_a_daemon_restart_and_a_message_resumes_one() {
         zerod::server::Zerod {
             daemon,
             inbox: zerod::inbox::Inbox::open(None, vec![]),
-            drops: None,
             integrations: zerod::integrations::Integrations::open(&h.home, Arc::new(zerod::integrations::Commands::default())),
             following: zerod::following::Following::open(
                 &h.home,
@@ -387,7 +385,9 @@ async fn a_lead_spawns_names_waits_on_and_reads_a_worker_over_the_socket() {
 async fn the_inbox_is_followed_and_answered_over_the_socket() {
     let h = harness("server-inbox").await;
     let mut client = Client::connect(&h.socket).await;
-    client.call(json!({"op": "configure", "takeBack": 0.02, "ttl": 600, "patterns": ["~/drops/*"]})).await;
+    // A setting this zerod no longer reads (drop folders' patterns) stays in the file as it was.
+    std::fs::write(h.home.join("settings.json"), r#"{"patterns": ["~/drops/*"]}"#).unwrap();
+    client.call(json!({"op": "configure", "takeBack": 0.02, "ttl": 600})).await;
     let kept: Value = serde_json::from_slice(&std::fs::read(h.home.join("settings.json")).unwrap()).unwrap();
     assert_eq!(kept, json!({"takeBack": 0.02, "ttl": 600, "patterns": ["~/drops/*"]}), "kept for the next start");
     client.call(json!({"op": "inbox"})).await;
@@ -408,13 +408,9 @@ async fn the_inbox_is_followed_and_answered_over_the_socket() {
     }
     assert_eq!(client.call(json!({"op": "choose", "ask": id})).await["error"], "Which option?");
     assert_eq!(client.call(json!({"op": "board"})).await["result"], json!([]), "no sessions, no rows");
-    let integrations = client.call(json!({"op": "setIntegration", "integration": "github", "enabled": true})).await["result"].clone();
-    assert_eq!((integrations["settings"]["github"]["enabled"].clone(), integrations["linear"].clone()), (json!(true), Value::Null));
-    let saved = client.call(json!({"op": "saveView", "integration": "github", "view": {"name": "Ours", "query": "is:pr org:acme"}})).await
-        ["result"]
-        .clone();
-    assert_eq!(saved["settings"]["github"]["views"][2]["name"], "Ours");
-    assert_eq!(client.call(json!({"op": "viewItems", "integration": "github", "view": "nope"})).await["error"], "No view nope");
+    let integrations = client.call(json!({"op": "disconnectLinear"})).await["result"].clone();
+    assert_eq!((integrations["linear"].clone(), integrations["linearTeams"].clone()), (Value::Null, json!({})));
+    assert_eq!(client.call(json!({"op": "saveView"})).await["error"], "Unknown op saveView", "no views");
 }
 
 #[tokio::test]
@@ -427,34 +423,6 @@ async fn scratchpads_are_reached_through_the_pad_op() {
     assert_eq!(read["result"]["content"], "## Steps\n\nShip.\n");
     assert!(h.home.join("scratchpads/Plan.md").exists());
     assert_eq!(client.call(json!({"op": "pad", "tool": "nope"})).await["error"], "No scratchpad tool nope");
-}
-
-#[tokio::test]
-async fn an_issue_starts_one_task_with_a_state_pad_of_its_own() {
-    let h = harness("server-start-task").await;
-    let mut client = Client::connect(&h.socket).await;
-    let saved = client
-        .call(json!({"op": "saveView", "integration": "linear", "view": {"id": "mine", "name": "My issues", "assignee": "me",
-        "start": {"cwd": h.project, "prompt": "Supervise {key}: {title}", "provider": "codex"}}}))
-        .await;
-    assert_eq!(saved["ok"], true, "{saved}");
-    let item = json!({"id": "i1", "key": "ENG-1", "title": "Fix it", "url": "u", "place": "ENG", "state": "Plan", "updated": "t"});
-    let started = client.call(json!({"op": "startTask", "integration": "linear", "view": "mine", "item": item})).await;
-    assert_eq!(started["ok"], true, "{started}");
-    let session = started["result"]["session"].as_str().unwrap().to_string();
-    let task: Conversation = serde_json::from_value(client.call(json!({"op": "get", "session": session})).await["result"].clone()).unwrap();
-    assert_eq!((task.ticket.as_deref(), task.label.as_deref()), (Some("ENG-1"), Some("ENG-1 Fix it")));
-    let pad = client.call(json!({"op": "pad", "tool": "read", "args": {"pad": started["result"]["pad"]}})).await;
-    assert_eq!((pad["result"]["title"].as_str(), pad["result"]["folder"].as_str()), (Some("State"), Some("Tasks/ENG-1")));
-    let again = client.call(json!({"op": "startTask", "integration": "linear", "view": "mine", "item": item})).await;
-    assert_eq!(
-        (again["result"]["session"].as_str(), again["result"]["existing"].as_bool()),
-        (Some(session.as_str()), Some(true)),
-        "one task per issue"
-    );
-    let pr = json!({"id": "PR_5", "key": "#5", "title": "Docs", "url": "u", "place": "o/r", "state": "Open", "updated": "t"});
-    let unset = client.call(json!({"op": "startTask", "integration": "github", "view": "mine", "item": pr})).await;
-    assert_eq!(unset["error"], "My pull requests doesn't start tasks yet: give it a folder and a prompt in Integrations");
 }
 
 #[tokio::test]
@@ -580,7 +548,6 @@ async fn a_task_started_in_a_workspace_is_still_there_after_a_restart() {
         zerod::server::Zerod {
             daemon,
             inbox: zerod::inbox::Inbox::open(None, vec![]),
-            drops: None,
             integrations: zerod::integrations::Integrations::open(&h.home, Arc::new(zerod::integrations::Commands::default())),
             following: zerod::following::Following::open(
                 &h.home,
@@ -749,11 +716,11 @@ async fn every_op_is_routed_to_its_handler() {
     let mut client = Client::connect(&h.socket).await;
     let ops = "adopt agentAsk anchor answer answerAsk archive archived asks attr board branch browserCall browserSettings browserState browsers \
         cancelRun choose close closeTerminal configure connectSlack create decide defaultSignIn deleteLoop deleteMcpServer deleteSignIn \
-        deleteView deleteWorkspace deliver detach dismiss firefox follow following get hello interrupt items label later list loop loops \
-        mcpServers message migrate notify openTerminal orderViews outline pad place placeInWorkspace press queue recent release remind \
-        reply restartStatus result resume rewind rewindPreview saveBrowserSettings saveLoop saveMcpServer saveSignIn saveView saveWorkspace \
-        schedule schedules screen seen send setIntegration setPermissions settings signIns spawn start startTask stop switch switchModel \
-        table takeBack unarchive unfollow unqueue unschedule unwatch viewItems wait watch watchFile watches window withdraw workers workspaces";
+        deleteWorkspace deliver detach dismiss firefox follow following get hello interrupt items label later list loop loops \
+        mcpServers message migrate notify openTerminal outline pad place placeInWorkspace queue recent release remind \
+        reply restartStatus result resume rewind rewindPreview saveBrowserSettings saveLoop saveMcpServer saveSignIn saveWorkspace \
+        schedule schedules seen send setPermissions settings signIns spawn start stop switch switchModel \
+        table takeBack unarchive unfollow unqueue unschedule unwatch wait watch watchFile watches window withdraw workers workspaces";
     for op in ops.split_whitespace() {
         let answer = client.call(json!({"op": op})).await;
         let error = answer["error"].as_str().unwrap_or_default();
@@ -935,4 +902,16 @@ async fn a_subscriber_that_falls_behind_gets_snapshots_of_what_changed_since_not
     }
     assert_eq!(sent.get(busy), Some(&1), "what changed, once");
     assert_eq!(sent.get(quiet), None, "not what didn't");
+}
+
+#[tokio::test]
+async fn settings_say_which_terminal_app_tasks_open_in_resolved() {
+    // The app names the action after it ("Open in Ghostty"): unset, it's what zerod would open, the default.
+    let h = harness("server-terminal").await;
+    let mut client = Client::connect(&h.socket).await;
+    let unset = client.call(json!({"op": "settings"})).await["result"].clone();
+    assert!(["Ghostty", "Terminal"].contains(&unset["terminalApp"].as_str().unwrap()), "{unset}");
+    assert!(unset["terminal"].is_null(), "the setting itself stays unset");
+    client.call(json!({"op": "configure", "terminal": "/Applications/iTerm.app"})).await;
+    assert_eq!(client.call(json!({"op": "settings"})).await["result"]["terminalApp"], "/Applications/iTerm.app");
 }

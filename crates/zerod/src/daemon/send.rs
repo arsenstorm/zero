@@ -90,7 +90,7 @@ impl Daemon {
         if let Some(conversation) = self.get(id)
             && conversation.terminal.is_some()
         {
-            return Err(format!("{} is open in its terminal; type there, or go back to Zero", conversation.provider.title()));
+            return Err(format!("{} is open in Terminal; type there, or bring it back to Zero", conversation.provider.title()));
         }
         // Writing to a paused task resumes it.
         if self.is_paused(id) {
@@ -212,7 +212,7 @@ impl Daemon {
             return Err(format!("{} is working; stop its turn first", conversation.provider.title()));
         }
         if conversation.terminal.is_some() {
-            return Err(format!("{} is open in its terminal; go back to Zero first", conversation.provider.title()));
+            return Err(format!("{} is open in Terminal; bring it back to Zero first", conversation.provider.title()));
         }
         self.take_offline(&session).await;
         session.change(Change::Switched { provider, model: choice.model.map(Into::into), effort: choice.effort.map(Into::into) });
@@ -235,7 +235,7 @@ impl Daemon {
             return Ok(());
         }
         if conversation.terminal.is_some() {
-            return Err(format!("{} is open in its terminal; go back to Zero first", conversation.provider.title()));
+            return Err(format!("{} is open in Terminal; bring it back to Zero first", conversation.provider.title()));
         }
         self.take_offline(&session).await;
         session.change(Change::Permitted { permissions });

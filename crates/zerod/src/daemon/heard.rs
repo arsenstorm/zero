@@ -270,10 +270,10 @@ impl Daemon {
 
     /// The user saw a task's reply: its latest answer unless one is named, now unless a time is given (a client
     /// passing on what it recorded before zerod kept this).
-    /// A command that looks stuck, stopped when the user's settings say so: not one they said never to stop, nor in a
-    /// task whose commands they keep. Once: a command stopped can't be stopped again.
+    /// A command that looks stuck, stopped when the user's settings say so: not one they said never to stop. Once: a
+    /// command stopped can't be stopped again.
     fn stop_if_stuck(&self, conversation: &Conversation) {
-        let Some(item) = conversation.stuck.as_deref().filter(|_| !conversation.keep_commands) else { return };
+        let Some(item) = conversation.stuck.as_deref() else { return };
         if crate::stuck::settings().when != crate::stuck::When::Stop {
             return;
         }

@@ -22,6 +22,8 @@ pub enum State {
     /// confirmed (`zero blocked`, its token): red, kept for what's big. Said alone it's Waiting.
     Blocked,
     Working,
+    /// Open in the user's own terminal app (daemon/terminals.rs): theirs to work in there, until its CLI exits.
+    InTerminal,
     /// Over to the user: done, with a step only they can take (its note's `needs`, or an issue's row `over`: merge,
     /// deploy, check). A to-do, not a decision.
     Handed,
@@ -419,6 +421,10 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
     // Its first line of prose: a table, heading or rule says nothing on its own; a list's item without its marker.
     let prose = |l: &&str| !l.is_empty() && !l.starts_with('|') && !l.starts_with('#') && !l.starts_with("---") && !l.starts_with("[zero:");
     let answer = session.answer().and_then(|a| a.lines().map(str::trim).find(prose)).map(|line| unlisted(line).to_string());
+    // In the user's terminal: what it last said is from before; only what needs them more shows over it.
+    if session.terminal.is_some() {
+        state = state.min(State::InTerminal)
+    }
     Standing {
         state,
         online,

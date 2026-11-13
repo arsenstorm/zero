@@ -329,12 +329,6 @@ async fn open_asks_survive_a_relaunch() {
     let _ = std::fs::remove_file(&log);
 }
 
-#[test]
-fn trouble_an_agent_cannot_report_is_read_off_its_screen() {
-    assert_eq!(Inbox::trouble("⏺ working\n⎿ Not logged in · Please run /login\n❯ ").as_deref(), Some("Not logged in · Please run /login"));
-    assert_eq!(Inbox::trouble("⏺ All tests pass.\n❯ "), None);
-}
-
 #[tokio::test]
 async fn words_typed_in_the_terminal_withdraw_open_questions_but_not_runs() {
     let s = inbox();
@@ -439,31 +433,21 @@ fn a_prompts_gist_is_its_first_five_words() {
 #[test]
 fn the_log_reads_and_writes_as_the_app_wrote_it() {
     let line = r#"{"id":"nds8sn","kind":"permission","title":"Write notes.md","body":"why","options":["Allow","Deny"],"command":"notes.md",
-        "cwd":"/w","agent":{"name":"zerod-01a1","host":"mac","cwd":"/w","soloProcessID":7,"soloProjectID":13,"ticket":"WEB-1","label":"L",
-        "session":"s","account":"a@b","runtime":"zerod","ref":"01a1","refGroup":"g","launch":["claude","-p"]},"createdAt":"2026-10-26T12:44:00Z",
+        "cwd":"/w","agent":{"name":"zerod-01a1","host":"mac","cwd":"/w","ticket":"WEB-1","label":"L",
+        "session":"s","account":"a@b","runtime":"zerod","ref":"01a1","launch":["claude","-p"]},"createdAt":"2026-10-26T12:44:00Z",
         "expiresAt":"2026-10-27T12:44:00Z","state":"answered","answer":"Allow","output":"","exitCode":0,"answeredAt":"2026-10-26T12:44:34Z",
         "status":"withdrawn","choice":0,"waits":false,"delivery":"delivered","detail":"d","script":"echo","sameAs":"abc123","request":"r1"}"#;
     let ask: Ask = serde_json::from_str(line).unwrap();
-    assert_eq!(serde_json::to_value(&ask).unwrap(), without_retired(serde_json::from_str(line).unwrap()));
-    // And the real log, where there is one: nothing in it may be lost on the way through zerod.
+    assert_eq!(serde_json::to_value(&ask).unwrap(), serde_json::from_str::<serde_json::Value>(line).unwrap());
+    // And the real log, where there is one: every line reads, and reads the same once zerod has written it back.
     let real = std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join(".zero/asks.jsonl");
     if let Ok(text) = std::fs::read_to_string(real) {
         for line in text.lines() {
             let ask: Ask = serde_json::from_str(line).unwrap_or_else(|e| panic!("{e}: {line}"));
-            assert_eq!(serde_json::to_value(&ask).unwrap(), without_retired(serde_json::from_str(line).unwrap()));
+            let written = serde_json::to_string(&ask).unwrap();
+            assert_eq!(serde_json::to_value(serde_json::from_str::<Ask>(&written).unwrap()).unwrap(), serde_json::to_value(&ask).unwrap());
         }
     }
-}
-
-/// A line as zerod writes it back: what an agent had from when Zero reached Solo and Rex (its Solo process and project,
-/// its Rex session) is read past.
-fn without_retired(mut line: serde_json::Value) -> serde_json::Value {
-    if let Some(agent) = line["agent"].as_object_mut() {
-        for key in ["soloProcessID", "soloProjectID", "refGroup"] {
-            agent.remove(key);
-        }
-    }
-    line
 }
 
 #[tokio::test]

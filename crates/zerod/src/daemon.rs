@@ -32,7 +32,7 @@ pub use heard::report;
 pub use inbox::Sessions;
 pub use rewind::Rewind;
 use send::kept_pending;
-pub use terminals::terminal_command;
+pub use terminals::{Opener, default_terminal, open_args, quoted, set_terminal_wait, terminal_app, terminal_script};
 
 /// Starts a session's runtime process: its conversation, its folder in the daemon's home, and the command line
 /// its provider starts with.
@@ -84,8 +84,10 @@ pub struct Daemon {
     queues: broadcast::Sender<()>,
     /// The limit resets already waited for, by session, so each is waited for once.
     resets: Mutex<HashMap<String, i64>>,
-    /// The user's home (where Claude Code keeps its sessions) and zero-host's socket.
-    user: Mutex<(PathBuf, PathBuf)>,
+    /// The user's home, where Claude Code keeps its sessions.
+    user: Mutex<PathBuf>,
+    /// How a task's terminal script is opened in the user's terminal app (terminals.rs): `open -a`, a stand-in in tests.
+    terminal_opener: Mutex<Opener>,
     /// zerod is about to become a new build: words wait for it, rather than starting turns the restart would cut.
     restarting: std::sync::atomic::AtomicBool,
     /// While a restart waits: each turn it waits on, and the command it's letting finish.
@@ -206,11 +208,8 @@ const COMMAND_WAIT: Duration = Duration::from_secs(2 * 60);
 /// How long an agent waits between turns, with nothing open, before its process is stopped (parked): finished work
 /// shouldn't hold memory, and resuming takes seconds. Words for it resume it.
 pub const PARK_AFTER: Duration = Duration::from_secs(3 * 60);
-/// How long a task's provider terminal sits with nothing written or typed before it closes and the task comes back to
-/// Zero: longer, since someone may be reading it.
 /// An offline task whose conversation nobody has wanted for this long leaves memory, kept as a summary.
 pub const UNLOAD_AFTER: Duration = Duration::from_secs(10 * 60);
-pub const TERMINAL_PARK_AFTER: Duration = Duration::from_secs(15 * 60);
 
 /// How a lead starts a worker; anything left out comes from the lead.
 #[derive(Default, Clone, Debug)]
@@ -336,7 +335,8 @@ impl Daemon {
             queues: broadcast::channel(64).0,
             resets: Mutex::new(HashMap::new()),
             me: me.clone(),
-            user: Mutex::new(user_places()),
+            user: Mutex::new(PathBuf::from(std::env::var("HOME").unwrap_or_default())),
+            terminal_opener: Mutex::new(terminals::open_app()),
             restarting: Default::default(),
             held_up: Mutex::default(),
             updating: Mutex::default(),
@@ -375,6 +375,7 @@ impl Daemon {
             seen: Mutex::new(std::fs::read(home.join(SEEN)).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default()),
         });
         park_every_minute(&daemon);
+        daemon.watch_terminals();
         hear_sessions(&daemon);
         daemon.carry_on_watches_and_wakes();
         Ok(daemon)
@@ -515,17 +516,18 @@ impl Daemon {
         Ok(())
     }
 
-    /// Where the user's home and zero-host are, for a test's own.
-    pub fn place(&self, home: &Path, host: &Path) {
-        *self.user.lock().unwrap() = (home.into(), host.into());
+    /// Where the user's home is, for a test's own.
+    pub fn place(&self, home: &Path) {
+        *self.user.lock().unwrap() = home.into();
     }
 
-    fn host(&self) -> crate::host::Host {
-        crate::host::Host { socket: self.user.lock().unwrap().1.clone(), sessions: Default::default(), poll: Duration::from_secs(2) }
+    /// How tasks' terminals are opened, for a test's own.
+    pub fn open_terminals_with(&self, opener: Opener) {
+        *self.terminal_opener.lock().unwrap() = opener;
     }
 
     fn user_home(&self) -> PathBuf {
-        self.user.lock().unwrap().0.clone()
+        self.user.lock().unwrap().clone()
     }
 
     /// Something its agent says about the task, by name (`zero attr PR <link>`); no value takes it back.
@@ -724,12 +726,6 @@ impl Daemon {
 }
 
 /// The user's home, and zero-host's socket in Zero's folder there.
-fn user_places() -> (PathBuf, PathBuf) {
-    let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
-    let host = home.join(".zero/host.sock");
-    (home, host)
-}
-
 /// The branch a folder's repository has checked out; none outside a repository.
 fn branch(folder: &Path) -> Option<String> {
     let output = std::process::Command::new("git")

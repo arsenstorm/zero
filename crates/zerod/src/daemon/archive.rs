@@ -178,15 +178,7 @@ impl Daemon {
                 continue;
             }
             let conversation = session.summary();
-            if let Some(open) = conversation.terminal {
-                let (Some(daemon), id) = (self.me.upgrade(), conversation.id.clone()) else { continue };
-                tokio::spawn(async move {
-                    if daemon.host().idle(&open.id).await.is_some_and(|idle| idle >= TERMINAL_PARK_AFTER)
-                        && let Err(error) = daemon.close_terminal(&id).await
-                    {
-                        eprintln!("zerod: couldn't close {id}'s idle terminal: {error}")
-                    }
-                });
+            if conversation.terminal.is_some() {
                 continue;
             }
             if pending.get(&conversation.id).is_some_and(|words| !words.is_empty()) {

@@ -41,13 +41,6 @@ pub trait Runtime: Send + Sync {
     fn find_session<'a>(&'a self, _: &'a AgentIdentity, _: &'a str) -> Fut<'a, Option<String>> {
         Box::pin(async { None })
     }
-    fn screen<'a>(&'a self, _: &'a AgentIdentity) -> Fut<'a, Option<String>> {
-        Box::pin(async { None })
-    }
-    /// Keys into the agent's terminal; the screen just after.
-    fn press<'a>(&'a self, _: &'a [u8], _: &'a AgentIdentity) -> Fut<'a, Result<Option<String>, String>> {
-        Box::pin(async { Ok(None) })
-    }
     /// Changes a running agent's model and effort, where its runtime has a way.
     fn switch_model<'a>(&'a self, agent: &'a AgentIdentity, _: Option<&'a str>, _: Option<&'a str>) -> Fut<'a, Result<(), String>> {
         Box::pin(async move { Err(format!("{} can't change {}'s model", self.name(), agent.name)) })
@@ -92,7 +85,6 @@ struct State {
     offline: HashSet<String>,
     /// What Zero typed into each agent lately, so a prompt it caused isn't taken for the user typing.
     sent: HashMap<String, Vec<(String, Time)>>,
-    reported: HashMap<String, String>,
     /// The last `Agents` event, to send the next only when it differs.
     agents: (Vec<String>, Vec<String>),
     ticks: u64,
@@ -128,12 +120,6 @@ pub type Conversations = Box<dyn Fn(&str, bool) -> Option<Vec<crate::model::Item
 
 impl Inbox {
     pub fn open(log: Option<PathBuf>, runtimes: Vec<Arc<dyn Runtime>>) -> Arc<Inbox> {
-        Self::open_with(log, runtimes, None)
-    }
-
-    /// As `open`, runs in zero-host's terminals where it keeps them (a real terminal the user can attach to); given
-    /// here, so the runs under way it picks up are found where they run.
-    pub fn open_with(log: Option<PathBuf>, runtimes: Vec<Arc<dyn Runtime>>, host: Option<crate::host::Host>) -> Arc<Inbox> {
         let (events, _) = broadcast::channel(4096);
         let inbox = Arc::new_cyclic(|me| Inbox {
             state: Mutex::new(State {
@@ -141,7 +127,6 @@ impl Inbox {
                 timers: HashMap::new(),
                 offline: HashSet::new(),
                 sent: HashMap::new(),
-                reported: HashMap::new(),
                 agents: Default::default(),
                 ticks: 0,
                 take_back: Duration::from_secs(2),
@@ -149,7 +134,7 @@ impl Inbox {
                 done_tokens: HashMap::new(),
                 said_on: vec![],
             }),
-            runs: Arc::new(crate::runs::Runs::new(runs_dir(log.as_deref()), host)),
+            runs: Arc::new(crate::runs::Runs::new(runs_dir(log.as_deref()))),
             events,
             log,
             runtimes,
@@ -663,7 +648,7 @@ impl Inbox {
         });
         let (me, runs) = (self.me.clone(), self.runs());
         tokio::spawn(async move {
-            let started = runs.start(&id, ask.command.as_deref().unwrap_or(""), ask.cwd.as_deref(), &ask.title).await;
+            let started = runs.start(&id, ask.command.as_deref().unwrap_or(""), ask.cwd.as_deref()).await;
             let Some(inbox) = me.upgrade() else { return };
             match started {
                 Ok(handle) => {
@@ -1046,23 +1031,13 @@ impl Inbox {
             == Some("closed")
     }
 
-    pub async fn screen(&self, name: &str) -> Option<String> {
-        let identity = self.identity(name)?;
-        self.runtime_for(&identity)?.screen(&identity).await
-    }
-
-    pub async fn press(&self, name: &str, bytes: &[u8]) -> Result<Option<String>, String> {
-        let identity = self.identity(name).ok_or_else(|| format!("Zero doesn't know {name}"))?;
-        self.runtime_for(&identity).ok_or_else(|| format!("No way to reach {name}"))?.press(bytes, &identity).await
-    }
-
     pub async fn switch_model(&self, name: &str, model: Option<&str>, level: Option<&str>) -> Result<(), String> {
         let identity = self.identity(name).ok_or_else(|| format!("Zero doesn't know {name}"))?;
         self.runtime_for(&identity).ok_or_else(|| format!("No way to reach {name}"))?.switch_model(&identity, model, level).await
     }
 
-    /// Which agents still run (every few seconds): stopped ones go grey, closed ones leave, titles catch up, and once a
-    /// minute each running agent's screen is read for trouble it can't report itself.
+    /// Which agents still run (every few seconds): stopped ones go grey, closed ones leave, titles catch up; once a
+    /// minute, what has left the window goes.
     pub async fn refresh_liveness(&self) {
         let mut identities: HashMap<String, AgentIdentity> = HashMap::new();
         for ask in self.asks().into_iter().filter(|a| a.state != AskState::Expired) {
@@ -1096,18 +1071,6 @@ impl Inbox {
             return;
         }
         self.trim(Time::now());
-        for identity in all.iter().filter(|i| !stopped.contains(&i.name) && !self.is_closed(&i.name)) {
-            let Some(runtime) = self.runtime_for(identity) else { continue };
-            let Some(trouble) = runtime.screen(identity).await.as_deref().and_then(Inbox::trouble) else { continue };
-            if self.lock().reported.get(&identity.name) == Some(&trouble) {
-                continue;
-            }
-            self.lock().reported.insert(identity.name.clone(), trouble.clone());
-            let mut note = Ask::new(AskKind::Note, "Stuck", identity.clone(), 3600);
-            note.body = format!("Claude Code stopped: {trouble}");
-            note.status = Some("blocked".into());
-            self.create(note, false);
-        }
     }
 
     /// Lets go of what has left the window (`window`), telling clients (`Removed`) so they let go of it too.
@@ -1132,30 +1095,6 @@ impl Inbox {
         for id in removed {
             let _ = self.events.send(InboxEvent::Removed(id));
         }
-    }
-
-    /// A line on an agent's screen that means it stopped and can't say so: signed out, out of usage, or an API
-    /// error ending its turn.
-    pub fn trouble(screen: &str) -> Option<String> {
-        let lines: Vec<&str> = screen.lines().collect();
-        let tail = &lines[lines.len().saturating_sub(25)..];
-        let signs = [
-            "please run /login",
-            "not logged in",
-            "oauth access token is invalid",
-            "usage limit",
-            "credit balance is too low",
-            "api error: 5",
-            "api error: 401",
-            "api error: 403",
-        ];
-        tail.iter()
-            .rev()
-            .find(|line| {
-                let lower = line.to_lowercase();
-                signs.iter().any(|s| lower.contains(s))
-            })
-            .map(|line| line.trim().trim_matches(|c| "⏺⎿ ".contains(c)).to_string())
     }
 
     /// The first line of a prompt, cut to five words, as an agent's label; none when too short to name anything.

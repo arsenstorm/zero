@@ -33,7 +33,7 @@ fn task(name: &str) -> (Arc<Daemon>, String, std::path::PathBuf, std::path::Path
     git(&project, &["add", "."]);
     git(&project, &["-c", "user.name=T", "-c", "user.email=t@t", "commit", "-qm", "start"]);
     let daemon = Daemon::open(&home.join("zerod"), quiet()).unwrap();
-    daemon.place(&user, &home.join("host.sock"));
+    daemon.place(&user);
     let cwd = project.to_str().unwrap();
     let file = zerod::handoff::claude_folder(&user, cwd).join("t1.jsonl");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();

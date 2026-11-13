@@ -31,7 +31,7 @@ impl Daemon {
         let current = session.snapshot();
         let (_, text, images) = yours(&current, item)?;
         if current.terminal.is_some() {
-            return Err(format!("{} is open in its terminal; go back to Zero first", current.provider.title()));
+            return Err(format!("{} is open in Terminal; bring it back to Zero first", current.provider.title()));
         }
         if matches!(current.status, Status::Working | Status::Waiting) {
             return Err(format!("{} is working; stop its turn first", current.provider.title()));

@@ -19,7 +19,7 @@ async fn a_claude_code_session_from_elsewhere_becomes_a_task_with_its_history() 
     let (user, project) = (home.join("user"), home.join("project"));
     std::fs::create_dir_all(&project).unwrap();
     let daemon = Daemon::open(&home.join("zerod"), quiet()).unwrap();
-    daemon.place(&user, &home.join("host.sock"));
+    daemon.place(&user);
     let cwd = project.to_str().unwrap();
     let file = zerod::handoff::claude_folder(&user, cwd).join("5cb4036a-0000.jsonl");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -116,7 +116,7 @@ async fn a_lead_adopts_tasks_and_claude_code_sessions_as_its_workers() {
     let (user, project) = (home.join("user"), home.join("project"));
     std::fs::create_dir_all(&project).unwrap();
     let daemon = Daemon::open(&home.join("zerod"), quiet()).unwrap();
-    daemon.place(&user, &home.join("host.sock"));
+    daemon.place(&user);
     let cwd = project.to_str().unwrap();
     let lead = daemon.start(Provider::Claude, "lead them", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() }).unwrap();
     let task = daemon
@@ -159,7 +159,7 @@ async fn a_session_from_claude_code_or_codex_migrates_by_its_id_alone() {
     let (user, project) = (home.join("user"), home.join("project"));
     std::fs::create_dir_all(&project).unwrap();
     let daemon = Daemon::open(&home.join("zerod"), quiet()).unwrap();
-    daemon.place(&user, &home.join("host.sock"));
+    daemon.place(&user);
     let cwd = project.to_str().unwrap();
     let lines = |records: &[serde_json::Value]| records.iter().map(|r| r.to_string() + "\n").collect::<String>();
     // Claude Code's: its folder is in its records.

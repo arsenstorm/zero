@@ -1,7 +1,7 @@
-//! Starting a runtime's process: in the session's folder, through the user's login shell so their PATH applies (as
-//! zero-host does for terminals), with the login environment zerod has from launchd, as the provider's CLI has when
-//! run by hand (so its own settings, a custom model provider's key say, come along; zerod never reads them). Only what
-//! would tell the agent it runs inside whatever started zerod is left out.
+//! Starting a runtime's process: in the session's folder, through the user's login shell so their PATH applies, with
+//! the login environment zerod has from launchd, as the provider's CLI has when run by hand (so its own settings, a
+//! custom model provider's key say, come along; zerod never reads them). Only what would tell the agent it runs inside
+//! whatever started zerod is left out.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -11,9 +11,8 @@ use tokio::process::Command;
 use crate::session::Transport;
 
 /// What another agent or terminal sets for the processes it runs: an agent inheriting it would think it is nested in
-/// Claude Code (and refuse to start), speak to Zero as another terminal's agent, or take a Codex sandbox for its own.
-const LEFT_OUT: [&str; 6] =
-    ["ZERO_HOST_TERMINAL", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CODEX_THREAD_ID", "CODEX_SANDBOX"];
+/// Claude Code (and refuse to start), or take a Codex sandbox for its own.
+pub(crate) const LEFT_OUT: [&str; 5] = ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CODEX_THREAD_ID", "CODEX_SANDBOX"];
 
 /// Variables for one session's processes alone (its MCP servers' values, for Claude to expand): set by zerod before
 /// it starts the session's CLI, by session.

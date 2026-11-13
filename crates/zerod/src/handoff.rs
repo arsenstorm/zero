@@ -9,9 +9,11 @@ use serde_json::{Value, json};
 
 use crate::model::{Conversation, Item, ItemKind, ItemStatus};
 
-/// Where Claude Code keeps a folder's sessions: its path with every character but letters and digits as a dash.
+/// Where Claude Code keeps a folder's sessions: its real path (a link followed: macOS's /tmp is /private/tmp) with
+/// every character but letters and digits as a dash.
 pub fn claude_folder(home: &Path, cwd: &str) -> PathBuf {
-    home.join(".claude/projects").join(cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect::<String>())
+    let real = std::fs::canonicalize(cwd).map_or_else(|_| cwd.to_string(), |path| path.to_string_lossy().into_owned());
+    home.join(".claude/projects").join(real.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect::<String>())
 }
 
 /// The conversation as a Claude Code session file (JSON lines, one chain of messages) with the id `session`.

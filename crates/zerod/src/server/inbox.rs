@@ -52,8 +52,6 @@ pub(super) async fn handle(zerod: &Zerod, request: Request) -> Result<Value, Str
             inbox.close_agent(&request.agent()?, request.stop.unwrap_or(true));
             Ok(Value::Null)
         }
-        "screen" => Ok(json!(inbox.screen(&request.agent()?).await)),
-        "press" => inbox.press(&request.agent()?, request.keys.as_deref().unwrap_or_default()).await.map(|screen| json!(screen)),
         "switchModel" => {
             inbox.switch_model(&request.agent()?, request.model.as_deref(), request.effort.as_deref()).await.map(|_| Value::Null)
         }

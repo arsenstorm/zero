@@ -21,7 +21,6 @@ use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
 use crate::daemon::Daemon;
-use crate::drops::Drops;
 use crate::inbox::Inbox;
 use crate::model::{Permissions, Provider};
 
@@ -66,15 +65,6 @@ struct Request {
     /// An agent's name in the inbox.
     agent: Option<String>,
     stop: Option<bool>,
-    keys: Option<Vec<u8>>,
-    /// "github" or "linear", with whether it's on, and one of its views (its id, or for saveView the view itself).
-    integration: Option<String>,
-    enabled: Option<bool>,
-    view: Option<Value>,
-    /// Views' ids, in the order they go.
-    ids: Option<Vec<String>>,
-    /// viewItems and linearTeams: what was last fetched (null for nothing yet) rather than fetching.
-    cached: Option<bool>,
     /// A loop's description and body (loops.rs); its name is `name`.
     description: Option<String>,
     body: Option<String>,
@@ -87,7 +77,7 @@ struct Request {
     args: Option<Value>,
     /// An MCP server to save, or the id of one to delete.
     server: Option<Value>,
-    /// startTask: the view's item (an issue or a pull request) to start a task from.
+    /// A queued message, a command, or a schedule: its id.
     item: Option<Value>,
     /// Rewinding: the message of yours to go back to, and what to bring back (the conversation, the folder's code).
     message: Option<String>,
@@ -149,12 +139,6 @@ impl Request {
     fn session(&self) -> Result<String, &'static str> {
         self.session.clone().ok_or("Which session?")
     }
-    fn integration(&self) -> Result<String, &'static str> {
-        self.integration.clone().ok_or("Which integration: github or linear?")
-    }
-    fn view(&self) -> Result<String, &'static str> {
-        self.view.as_ref().and_then(|v| v.as_str()).map(String::from).ok_or("Which view?")
-    }
     /// The model and effort asked for; none, the session's own.
     fn choice(&self) -> crate::session::ModelChoice<'_> {
         crate::session::ModelChoice { model: self.model.as_deref(), effort: self.effort.as_deref() }
@@ -174,9 +158,6 @@ pub struct Settings {
     /// Seconds an ask without its own expiry waits.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttl: Option<i64>,
-    /// The folders that are drops.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub patterns: Option<Vec<String>>,
     /// A command printing where tasks run by ticket, `[{"ticket", "place"}]`, rerun every minute (board.rs); empty for none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub places: Option<String>,
@@ -201,6 +182,12 @@ pub struct Settings {
     /// What Zero does about commands that look stuck (stuck.rs); unset, it tells the user.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stuck: Option<crate::stuck::Settings>,
+    /// The terminal app a task opens in (its name, or an .app's path); unset, Ghostty where installed, else Terminal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<String>,
+    /// What this zerod doesn't read (an older one's settings, such as drop folders' patterns), kept as it was.
+    #[serde(flatten)]
+    pub rest: serde_json::Map<String, Value>,
 }
 
 /// A model the user added: for which CLI, the id it's started with (`--model`), and the name the picker shows.
@@ -249,24 +236,20 @@ impl Settings {
         crate::git::set(self.git.clone(), crate::git::key_path(home))
     }
 
-    pub fn apply(&self, inbox: &Inbox, drops: Option<&Drops>) {
+    pub fn apply(&self, inbox: &Inbox) {
         inbox.configure(std::time::Duration::from_secs_f64(self.take_back.unwrap_or(2.0).max(0.0)), self.ttl.unwrap_or(3600));
         crate::adapter::allow_subagents(self.allows_subagents());
         crate::adapter::set_compact_window(self.compact_window());
         crate::build_cache::set(self.shares_build_cache());
         crate::stuck::set(self.stuck.clone().unwrap_or_default());
-        if let (Some(drops), Some(patterns)) = (drops, &self.patterns) {
-            drops.set_patterns(patterns.clone())
-        }
     }
 }
 
-/// What a connection reaches: the sessions, the inbox, and the drops feeding it.
+/// What a connection reaches: the sessions, the inbox, and the rest zerod keeps.
 #[derive(Clone)]
 pub struct Zerod {
     pub daemon: Arc<Daemon>,
     pub inbox: Arc<Inbox>,
-    pub drops: Option<Arc<Drops>>,
     pub integrations: Arc<crate::integrations::Integrations>,
     pub pads: Arc<crate::pads::Pads>,
     pub later: Arc<crate::later::Later>,
@@ -433,8 +416,7 @@ pub async fn archive_completed(zerod: Zerod) {
 /// Each op to its topic's handler.
 async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
     match request.op.as_str() {
-        "integrations" | "setIntegration" | "saveView" | "deleteView" | "orderViews" | "viewItems" | "startTask" | "linearTeams"
-        | "connectLinear" | "disconnectLinear" | "connectSlack" | "disconnectSlack" | "refreshSlack" => {
+        "integrations" | "linearTeams" | "connectLinear" | "disconnectLinear" | "connectSlack" | "disconnectSlack" | "refreshSlack" => {
             integrations::handle(zerod, request).await
         }
         "pad" | "later" | "loops" | "loop" | "saveLoop" | "deleteLoop" => notes::handle(zerod, request),
@@ -445,8 +427,9 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "release" | "resume" | "openTerminal" | "closeTerminal" | "rewindPreview" | "rewind" | "branch" | "switch" | "interrupt"
         | "stop" | "pause" | "unpause" => sessions::control(zerod, request).await,
         "send" | "queue" | "unqueue" | "notify" | "decide" | "answer" | "seen" | "introduce" => sessions::messages(zerod, request).await,
-        "label" | "setPermissions" | "placeInWorkspace" | "setStatus" | "attr" | "issue" | "table" | "place" | "expect" | "stopCommand"
-        | "keepCommands" => sessions::properties(zerod, request).await,
+        "label" | "setPermissions" | "placeInWorkspace" | "setStatus" | "attr" | "issue" | "table" | "place" | "expect" | "stopCommand" => {
+            sessions::properties(zerod, request).await
+        }
         "hello" | "selfCheck" | "list" | "get" | "workers" | "result" | "wait" | "usage" | "board" | "recent" | "items" | "window"
         | "outline" | "anchor" => sessions::reads(zerod, request).await,
         "browserCall"
@@ -462,8 +445,8 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
             signins::handle(zerod, request).await
         }
         "agentAsk" | "create" | "asks" | "choose" | "answerAsk" | "reply" | "takeBack" | "withdraw" | "dismiss" | "cancelRun"
-        | "deliver" | "message" | "close" | "screen" | "press" | "switchModel" => inbox::handle(zerod, request).await,
-        "gitAccount" | "gitCheck" => git(zerod, request).await,
+        | "deliver" | "message" | "close" | "switchModel" => inbox::handle(zerod, request).await,
+        "gitAccount" | "gitCheck" | "gitTokenStatus" => git(zerod, request).await,
         "mcpSignIn" => mcp_sign_in(zerod, request).await,
         "mcpServers" | "saveMcpServer" | "deleteMcpServer" | "workspaces" | "saveWorkspace" | "deleteWorkspace" | "settings"
         | "configure" | "gitKey" => setup(zerod, request),
@@ -541,6 +524,7 @@ fn setup(zerod: &Zerod, request: Request) -> Result<Value, String> {
                 settings["gitPublicKey"] = json!(key)
             }
             settings["buildCacheTools"] = crate::build_cache::tools(crate::build_cache::installed);
+            settings["terminalApp"] = json!(crate::daemon::terminal_app(daemon.home()));
             Ok(settings)
         }
         // The agents' signing key, taken from a file the user chose: its public half back, for GitHub.
@@ -559,7 +543,6 @@ fn configure(zerod: &Zerod, given: Settings) -> Result<Value, String> {
     let mut settings = Settings::load(daemon.home());
     settings.take_back = given.take_back.or(settings.take_back);
     settings.ttl = given.ttl.or(settings.ttl);
-    settings.patterns = given.patterns.or(settings.patterns);
     settings.places = given.places.or(settings.places);
     settings.archive_completed = given.archive_completed.or(settings.archive_completed);
     settings.git = given.git.or(settings.git);
@@ -568,8 +551,9 @@ fn configure(zerod: &Zerod, given: Settings) -> Result<Value, String> {
     settings.compact_window = given.compact_window.or(settings.compact_window);
     settings.build_cache = given.build_cache.or(settings.build_cache);
     settings.stuck = given.stuck.or(settings.stuck);
+    settings.terminal = given.terminal.or(settings.terminal);
     settings.apply_git(daemon.home());
-    settings.apply(&zerod.inbox, zerod.drops.as_deref());
+    settings.apply(&zerod.inbox);
     let _ = std::fs::write(daemon.home().join("settings.json"), serde_json::to_vec_pretty(&settings).unwrap_or_default());
     Ok(Value::Null)
 }

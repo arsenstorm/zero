@@ -34,7 +34,6 @@ fn a_runtime_gets_the_login_environment_but_not_who_started_zero() {
         ("HOME", "/Users/u"),
         ("CLIPROXY_API_KEY", "k"),
         ("PATH", "/opt/x/bin"),
-        ("ZERO_HOST_TERMINAL", "t1"),
         ("CLAUDECODE", "1"),
         ("CLAUDE_CODE_ENTRYPOINT", "cli"),
         ("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "9"),
@@ -49,7 +48,7 @@ fn a_runtime_gets_the_login_environment_but_not_who_started_zero() {
         ("/Users/u", "k", "9")
     );
     // Whatever started zerod (a terminal, a Claude Code session, Codex) isn't the agent's parent: it isn't told it's nested in one.
-    for gone in ["ZERO_HOST_TERMINAL", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CODEX_THREAD_ID"] {
+    for gone in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CODEX_THREAD_ID"] {
         assert!(!env.contains_key(gone), "{gone}")
     }
     assert_eq!((env["ZERO_AGENT"].as_str(), env["ZERO_SESSION"].as_str(), env["TERM"].as_str()), ("zerod-s1", "s1", "dumb"));

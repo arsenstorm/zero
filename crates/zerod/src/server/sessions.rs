@@ -213,11 +213,6 @@ pub(super) async fn properties(zerod: &Zerod, request: Request) -> Result<Value,
             let item = request.item.as_ref().and_then(|i| i.as_str()).ok_or("Which command?")?;
             daemon.stop_command(&request.session()?, item).map(|_| Value::Null)
         }
-        "keepCommands" => {
-            let keep = request.keep.unwrap_or(true);
-            daemon.session(&request.session()?)?.change(crate::model::Change::KeepCommands { keep });
-            Ok(Value::Null)
-        }
         other => unknown(other),
     }
 }

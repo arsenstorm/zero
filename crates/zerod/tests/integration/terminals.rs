@@ -1,6 +1,6 @@
-//! A task in its provider's own terminal: Zero's UI is the way to work with an agent, and its provider's terminal is a
-//! door to what only that provider has. The terminal takes over the task's own thread (Zero stops its headless process
-//! first); back in Zero, what happened there joins the task's record, so nothing is lost and switching still works.
+//! A task opened in the user's own terminal app, on its CLI's own resume: Zero's UI is the way to work with an agent, and
+//! the CLI's terminal UI a door to what only it has. The terminal takes over the task's own thread (Zero stops its
+//! headless process first); back in Zero, what happened there joins the task's record, so nothing is lost.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::common::{temp_dir, until};
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use std::os::unix::process::ExitStatusExt;
 use zerod::daemon::{Daemon, Runtime};
 use zerod::model::*;
 
@@ -128,41 +128,33 @@ fn only_codex_turns_zero_doesnt_have_yet_come_back() {
     assert!(matches!(&items[1].kind, ItemKind::Agent { text, final_answer: true } if text == "Typed there"));
 }
 
-/// zero-host as a socket: answers each request from a table, and records them.
-async fn fake_host(dir: &Path, answers: Value) -> (std::path::PathBuf, Arc<Mutex<Vec<Value>>>) {
-    let socket = dir.join("host.sock");
-    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-    let seen = Arc::new(Mutex::new(vec![]));
-    let record = seen.clone();
-    tokio::spawn(async move {
-        while let Ok((stream, _)) = listener.accept().await {
-            let (read, mut write) = stream.into_split();
-            if let Ok(Some(line)) = BufReader::new(read).lines().next_line().await {
-                let request: Value = serde_json::from_str(&line).unwrap();
-                let reply = answers[request["op"].as_str().unwrap()].clone();
-                record.lock().unwrap().push(request);
-                let _ = write.write_all(format!("{reply}\n").as_bytes()).await;
-            }
-        }
-    });
-    (socket, seen)
+/// The terminal app as a test has it: records the script it's given and starts a stand-in for the CLI in its place,
+/// whose process id goes where the script would write its own.
+/// Each terminal opened, as its app and its script.
+type Scripts = Arc<Mutex<Vec<(String, String)>>>;
+
+fn fake_terminal(daemon: &Daemon) -> (Scripts, Arc<Mutex<Option<std::process::Child>>>) {
+    let (seen, child) = (Arc::new(Mutex::new(vec![])), Arc::new(Mutex::new(None)));
+    let (record, keep) = (seen.clone(), child.clone());
+    daemon.open_terminals_with(Arc::new(move |app: &str, script: &Path| {
+        record.lock().unwrap().push((app.to_string(), std::fs::read_to_string(script).unwrap()));
+        let cli = std::process::Command::new("/bin/sleep").arg("30").spawn().unwrap();
+        std::fs::write(script.with_extension("pid"), cli.id().to_string()).unwrap();
+        *keep.lock().unwrap() = Some(cli);
+        Ok(())
+    }));
+    (seen, child)
 }
 
 #[tokio::test]
-async fn a_task_goes_to_its_terminal_and_comes_back_with_what_happened_there() {
+async fn a_task_opens_in_the_users_terminal_and_comes_back_with_what_happened_there() {
     let home = temp_dir("terminal-flow");
     let user = home.join("user");
-    let (socket, seen) = fake_host(
-        &home,
-        json!({
-            "hello": {"ok": true}, "spawn": {"ok": true, "terminal": {"id": "term-1", "running": true}},
-            "state": {"ok": true, "terminal": {"id": "term-1", "running": true}}, "close": {"ok": true},
-        }),
-    )
-    .await;
     let runtime: Runtime = Arc::new(|_, _, _| Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())));
     let daemon = Daemon::open(&home.join("zerod"), runtime).unwrap();
-    daemon.place(&user, &socket);
+    daemon.place(&user);
+    std::fs::write(home.join("zerod/settings.json"), r#"{"terminal": "iTerm"}"#).unwrap();
+    let (seen, cli) = fake_terminal(&daemon);
     let id = daemon
         .start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() })
         .unwrap();
@@ -173,27 +165,38 @@ async fn a_task_goes_to_its_terminal_and_comes_back_with_what_happened_there() {
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     std::fs::write(&file, json!({"type": "user", "uuid": "u0", "message": {"role": "user", "content": "hi"}}).to_string() + "\n").unwrap();
 
-    assert_eq!(daemon.open_terminal(&id).await.unwrap(), "term-1");
-    let spawned = seen.lock().unwrap().iter().find(|r| r["op"] == "spawn").cloned().unwrap();
-    assert_eq!(spawned["cwd"], home.to_str().unwrap());
-    assert!(spawned["argv"].as_array().unwrap().windows(2).any(|w| w[0] == "--resume" && w[1] == thread.as_str()), "{spawned}");
-    assert_eq!(
-        session.snapshot().terminal,
-        Some(Opened { id: "term-1".into(), mark: 1 }),
-        "what the file held before is already in the record"
-    );
+    let pid = daemon.open_terminal(&id).await.unwrap();
+    let (app, script) = seen.lock().unwrap()[0].clone();
+    assert_eq!(app, "iTerm", "the terminal app Settings names");
+    assert!(script.contains(&format!("cd {}", zerod::daemon::quoted(home.to_str().unwrap()))), "{script}");
+    assert!(script.contains(&format!("'--resume' '{thread}'")), "the CLI's own resume, on the task's thread: {script}");
+    assert!(script.contains(&format!("export ZERO_SESSION='{id}'")), "its zero calls still reach the task: {script}");
+    assert!(script.contains("export ZERO_MANAGED='0'"), "the user is at the keyboard: its prompts stay in the terminal");
+    assert!(!script.contains("TERM="), "the terminal's own TERM and PATH, not the headless ones: {script}");
+    assert_eq!(pid, cli.lock().unwrap().as_ref().unwrap().id().to_string());
+    assert_eq!(session.snapshot().terminal, Some(Opened { id: pid.clone(), mark: 1 }), "what the file held before is in the record");
     assert_eq!(
         daemon.send(&id, zerod::session::Message::text("from Zero"), Default::default()).await.unwrap_err(),
-        "Claude Code is open in its terminal; type there, or go back to Zero"
+        "Claude Code is open in Terminal; type there, or bring it back to Zero"
     );
+    assert_eq!(daemon.open_terminal(&id).await.unwrap(), pid, "open already: the same one");
+    assert_eq!(seen.lock().unwrap().len(), 1);
 
     let mut written = std::fs::read_to_string(&file).unwrap();
     for record in claude_turn() {
         written += &(record.to_string() + "\n")
     }
     std::fs::write(&file, written).unwrap();
-    daemon.close_terminal(&id).await.unwrap();
-    assert!(seen.lock().unwrap().iter().any(|r| r["op"] == "close" && r["id"] == "term-1"));
+    // The CLI exits in the terminal: the task comes back on its own.
+    let mut exited = cli.lock().unwrap().take().unwrap();
+    exited.kill().unwrap();
+    exited.wait().unwrap();
+    for _ in 0..50 {
+        if session.snapshot().terminal.is_none() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
     let conversation = session.snapshot();
     assert_eq!(conversation.terminal, None);
     let texts: Vec<String> = conversation
@@ -214,6 +217,61 @@ async fn a_task_goes_to_its_terminal_and_comes_back_with_what_happened_there() {
     let runtime: Runtime = Arc::new(|_, _, _| Err(std::io::Error::other("not started")));
     let again = Daemon::open(&home.join("zerod"), runtime).unwrap();
     assert_eq!(again.get(&id).unwrap().items.len(), conversation.items.len());
+}
+
+#[test]
+fn ghostty_is_given_the_script_as_its_command_as_it_asks_before_running_one_opened() {
+    let script = Path::new("/z/t.command");
+    assert_eq!(zerod::daemon::open_args("Terminal", script), ["-a", "Terminal", "/z/t.command"]);
+    for ghostty in ["Ghostty", "/Applications/Ghostty.app"] {
+        assert_eq!(
+            zerod::daemon::open_args(ghostty, script),
+            ["-na", ghostty, "--args", "--quit-after-last-window-closed=true", "-e", "/z/t.command"]
+        );
+    }
+}
+
+#[test]
+fn unset_the_terminal_is_ghostty_where_installed_else_terminal() {
+    assert_eq!(zerod::daemon::default_terminal(|app| app == "Ghostty"), "Ghostty");
+    assert_eq!(zerod::daemon::default_terminal(|_| false), "Terminal");
+}
+
+#[tokio::test]
+async fn back_to_zero_ends_the_cli_still_running_in_the_terminal() {
+    let home = temp_dir("terminal-back");
+    let runtime: Runtime = Arc::new(|_, _, _| Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())));
+    let daemon = Daemon::open(&home.join("zerod"), runtime).unwrap();
+    daemon.place(&home.join("user"));
+    let (_, cli) = fake_terminal(&daemon);
+    let id = daemon
+        .start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() })
+        .unwrap();
+    let session = daemon.session(&id).unwrap();
+    until(&session, |c| c.status == Status::Offline).await;
+    daemon.open_terminal(&id).await.unwrap();
+    daemon.close_terminal(&id).await.unwrap();
+    assert_eq!(session.snapshot().terminal, None);
+    let mut child = cli.lock().unwrap().take().unwrap();
+    assert!(child.wait().unwrap().signal().is_some(), "two writers on one thread never: the terminal's CLI is ended");
+}
+
+#[tokio::test]
+async fn a_terminal_that_never_starts_the_cli_leaves_the_task_in_zero() {
+    let home = temp_dir("terminal-never");
+    let runtime: Runtime = Arc::new(|_, _, _| Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())));
+    let daemon = Daemon::open(&home.join("zerod"), runtime).unwrap();
+    daemon.place(&home.join("user"));
+    daemon.open_terminals_with(Arc::new(|_: &str, _: &Path| Ok(())));
+    zerod::daemon::set_terminal_wait(std::time::Duration::from_millis(300));
+    let id = daemon
+        .start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() })
+        .unwrap();
+    let session = daemon.session(&id).unwrap();
+    until(&session, |c| c.status == Status::Offline).await;
+    let error = daemon.open_terminal(&id).await.unwrap_err();
+    assert!(error.contains("didn't start"), "{error}");
+    assert_eq!(session.snapshot().terminal, None);
 }
 
 #[tokio::test]
@@ -241,38 +299,42 @@ async fn a_resume_that_fails_lets_go_of_the_process_it_started() {
     until(&session, |c| c.status == Status::Offline).await;
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_terminal_left_idle_is_closed_and_its_task_comes_back_to_zero() {
-    let home = temp_dir("terminal-park");
-    let user = home.join("user");
-    // zero-host says the terminal has had nothing written or typed for 16 minutes.
-    let (socket, seen) = fake_host(
-        &home,
-        json!({
-            "hello": {"ok": true}, "spawn": {"ok": true, "terminal": {"id": "term-1", "running": true}},
-            "state": {"ok": true, "terminal": {"id": "term-1", "running": true, "idle": 16 * 60}}, "close": {"ok": true},
-        }),
-    )
-    .await;
+#[tokio::test]
+async fn claudes_session_file_is_found_by_the_folders_real_path_too() {
+    // Claude Code names its folder by the real path: a task in /tmp is in /private/tmp to it.
+    let home = temp_dir("terminal-real-path");
+    let real = home.join("project");
+    std::fs::create_dir_all(&real).unwrap();
+    let link = home.join("linked");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
     let runtime: Runtime = Arc::new(|_, _, _| Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink())));
     let daemon = Daemon::open(&home.join("zerod"), runtime).unwrap();
-    daemon.place(&user, &socket);
+    let user = home.join("user");
+    daemon.place(&user);
+    let (_, cli) = fake_terminal(&daemon);
     let id = daemon
-        .start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() })
+        .start(Provider::Claude, "hi", zerod::daemon::Options { cwd: Some(link.to_str().unwrap().into()), ..Default::default() })
         .unwrap();
     let session = daemon.session(&id).unwrap();
     until(&session, |c| c.status == Status::Offline).await;
-    let file = zerod::handoff::claude_folder(&user, home.to_str().unwrap()).join(format!("{}.jsonl", session.snapshot().thread.unwrap()));
+    let thread = session.snapshot().thread.unwrap();
+    let canonical = std::fs::canonicalize(&link).unwrap();
+    let file = zerod::handoff::claude_folder(&user, canonical.to_str().unwrap()).join(format!("{thread}.jsonl"));
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-    std::fs::write(&file, "").unwrap();
+    std::fs::write(&file, json!({"type": "user", "uuid": "u0", "message": {"role": "user", "content": "hi"}}).to_string() + "\n").unwrap();
     daemon.open_terminal(&id).await.unwrap();
-    for _ in 0..12 {
-        tokio::time::sleep(std::time::Duration::from_secs(15)).await
+    assert_eq!(session.snapshot().terminal.map(|t| t.mark), Some(1));
+    let mut written = std::fs::read_to_string(&file).unwrap();
+    for record in claude_turn() {
+        written += &(record.to_string() + "\n")
     }
-    assert!(
-        seen.lock().unwrap().iter().any(|r| r["op"] == "close" && r["id"] == "term-1"),
-        "closed once idle for {:?}",
-        zerod::daemon::TERMINAL_PARK_AFTER
-    );
-    assert_eq!(session.snapshot().terminal, None);
+    std::fs::write(&file, written).unwrap();
+    let mut exited = cli.lock().unwrap().take().unwrap();
+    exited.kill().unwrap();
+    exited.wait().unwrap();
+    until(&session, |c| {
+        c.terminal.is_none()
+            && c.items.iter().any(|i| matches!(&i.kind, ItemKind::Agent { text, .. } if text == "There is one file, a.txt."))
+    })
+    .await;
 }

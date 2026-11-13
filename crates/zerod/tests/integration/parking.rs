@@ -32,7 +32,7 @@ async fn an_idle_agent_is_parked_and_woken_by_words_for_it() {
     let user = home.join("user");
     let started = Arc::new(Mutex::new(vec![]));
     let daemon = Daemon::open(&home.join("zerod"), silent(started.clone())).unwrap();
-    daemon.place(&user, &home.join("host.sock"));
+    daemon.place(&user);
     let cwd = home.to_str().unwrap();
     let file = zerod::handoff::claude_folder(&user, cwd).join("t1.jsonl");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -150,7 +150,7 @@ async fn two_resumes_at_once_start_one_agent() {
         quiet(c, d, a)
     });
     let daemon = Daemon::open(&home.join("zerod"), slow).unwrap();
-    daemon.place(&user, &home.join("host.sock"));
+    daemon.place(&user);
     let cwd = home.to_str().unwrap();
     let file = zerod::handoff::claude_folder(&user, cwd).join("t1.jsonl");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();

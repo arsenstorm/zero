@@ -1,43 +1,23 @@
 //! Where the user's commands run (`zero run`, a production deploy say): somewhere a restart of zerod can't reach, their
-//! output and exit code going to files that zerod follows, and that a zerod started again picks up. In zero-host's
-//! terminals (host.rs) where it keeps them (version 2 on), a real terminal the user can attach to; else detached from
+//! output and exit code going to files that zerod follows, and that a zerod started again picks up: detached from
 //! zerod in a shell of their own. Never as zerod's own children: its restart would cut them off mid-run.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde_json::json;
-
-use crate::host::Host;
-
 pub struct Runs {
-    /// Where detached runs keep their output, exit code and process id.
+    /// Where runs keep their output, exit code and process id.
     dir: PathBuf,
-    host: Option<Host>,
 }
 
 impl Runs {
-    pub fn new(dir: PathBuf, host: Option<Host>) -> Runs {
-        Runs { dir, host }
+    pub fn new(dir: PathBuf) -> Runs {
+        Runs { dir }
     }
 
-    /// Starts `command` for ask `id`, in `cwd`: the handle to find it by again ("host:<terminal>", "file:<id>").
-    pub async fn start(&self, id: &str, command: &str, cwd: Option<&str>, label: &str) -> Result<String, String> {
+    /// Starts `command` for ask `id`, in `cwd`: the handle to find it by again ("file:<id>").
+    pub async fn start(&self, id: &str, command: &str, cwd: Option<&str>) -> Result<String, String> {
         let shell = format!("export ZERO_ASK_ID={id}; {command}");
-        if let Some(host) = &self.host
-            && host.version().await >= Some(2)
-        {
-            let reply = host
-                .request(
-                    json!({"op": "spawn", "cwd": cwd.unwrap_or("/"), "argv": ["/bin/zsh", "-lic", shell], "label": label, "record": true}),
-                )
-                .await
-                .ok_or("Zero's terminal host didn't answer")?;
-            let terminal = reply["terminal"]["id"]
-                .as_str()
-                .ok_or_else(|| reply["error"].as_str().unwrap_or("zero-host started nothing").to_string())?;
-            return Ok(format!("host:{terminal}"));
-        }
         std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
         let (out, exit, pid) =
             (self.dir.join(format!("{id}.out")), self.dir.join(format!("{id}.exit")), self.dir.join(format!("{id}.pid")));
@@ -67,73 +47,46 @@ impl Runs {
 
     /// The run's output file and the file its exit code lands in.
     pub fn files(&self, handle: &str) -> Option<(PathBuf, PathBuf)> {
-        let (kind, name) = handle.split_once(':')?;
-        let dir = match kind {
-            "host" => self.host.as_ref()?.runs_dir(),
-            "file" => self.dir.clone(),
-            _ => return None,
-        };
-        Some((dir.join(format!("{name}.out")), dir.join(format!("{name}.exit"))))
+        let name = handle.strip_prefix("file:")?;
+        Some((self.dir.join(format!("{name}.out")), self.dir.join(format!("{name}.exit"))))
     }
 
     /// Whether something still runs it: false once it has ended, or nothing knows of it any more.
     pub async fn alive(&self, handle: &str) -> bool {
-        match handle.split_once(':') {
-            Some(("host", terminal)) => match &self.host {
-                Some(host) => host.running(terminal).await == Some(true),
-                None => false,
-            },
-            Some(("file", id)) => self.pid(id).is_some_and(|pid| signal(pid, "-0")),
-            _ => false,
-        }
+        handle.strip_prefix("file:").and_then(|id| self.pid(id)).is_some_and(|pid| signal(pid, "-0"))
     }
 
     /// Stops it: the user cancelled the run.
     pub async fn stop(&self, handle: &str) {
-        match handle.split_once(':') {
-            Some(("host", terminal)) => {
-                if let Some(host) = &self.host {
-                    host.shut(terminal).await
-                }
+        let Some(pid) = handle.strip_prefix("file:").and_then(|id| self.pid(id)) else { return };
+        // Everything under it, held still so none goes on to what's next, asked to stop, then made to: its
+        // shell is an interactive one (`zsh -lic`), which ignores a polite stop, and signalled only it and its
+        // own children, the command's went on.
+        let tree = tree(pid);
+        for &p in &tree {
+            signal(p, "-STOP");
+        }
+        // The shells (whatever has a process under it) go at once: asked politely, an interactive one ignored
+        // it, and as soon as the command under it ended it went on to the next one (`sleep 3; touch x`
+        // touched x before the KILL below came). Then the commands themselves are asked to stop.
+        let parents: Vec<u32> = tree.iter().copied().filter(|&p| tree.iter().any(|&c| c != p && parent_of(c) == Some(p))).collect();
+        for &p in &parents {
+            signal(p, "-KILL");
+        }
+        for &p in tree.iter().filter(|p| !parents.contains(p)) {
+            signal(p, "-TERM");
+            signal(p, "-CONT");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        for &p in &tree {
+            if signal(p, "-0") {
+                signal(p, "-KILL");
             }
-            Some(("file", id)) => {
-                if let Some(pid) = self.pid(id) {
-                    // Everything under it, held still so none goes on to what's next, asked to stop, then made to: its
-                    // shell is an interactive one (`zsh -lic`), which ignores a polite stop, and signalled only it and its
-                    // own children, the command's went on.
-                    let tree = tree(pid);
-                    for &p in &tree {
-                        signal(p, "-STOP");
-                    }
-                    // The shells (whatever has a process under it) go at once: asked politely, an interactive one ignored
-                    // it, and as soon as the command under it ended it went on to the next one (`sleep 3; touch x`
-                    // touched x before the KILL below came). Then the commands themselves are asked to stop.
-                    let parents: Vec<u32> =
-                        tree.iter().copied().filter(|&p| tree.iter().any(|&c| c != p && parent_of(c) == Some(p))).collect();
-                    for &p in &parents {
-                        signal(p, "-KILL");
-                    }
-                    for &p in tree.iter().filter(|p| !parents.contains(p)) {
-                        signal(p, "-TERM");
-                        signal(p, "-CONT");
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                    for &p in &tree {
-                        if signal(p, "-0") {
-                            signal(p, "-KILL");
-                        }
-                    }
-                }
-            }
-            _ => {}
         }
     }
 
-    /// Let go of, once its outcome is kept on its ask: its terminal closed (it has ended) and its files gone.
+    /// Let go of, once its outcome is kept on its ask: its files gone.
     pub async fn release(&self, handle: &str) {
-        if let (Some(("host", terminal)), Some(host)) = (handle.split_once(':'), &self.host) {
-            host.shut(terminal).await
-        }
         if let Some((out, exit)) = self.files(handle) {
             let _ = std::fs::remove_file(&out);
             let _ = std::fs::remove_file(&exit);
@@ -153,7 +106,7 @@ fn parent_of(pid: u32) -> Option<u32> {
 }
 
 /// A process and all under it.
-fn tree(pid: u32) -> Vec<u32> {
+pub(crate) fn tree(pid: u32) -> Vec<u32> {
     let mut all = vec![pid];
     let mut next = 0;
     while next < all.len() {
@@ -165,7 +118,7 @@ fn tree(pid: u32) -> Vec<u32> {
     all
 }
 
-fn signal(pid: u32, which: &str) -> bool {
+pub(crate) fn signal(pid: u32, which: &str) -> bool {
     std::process::Command::new("/bin/kill")
         .args([which, &pid.to_string()])
         .stdout(std::process::Stdio::null())

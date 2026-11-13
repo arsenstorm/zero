@@ -137,9 +137,6 @@ pub struct Conversation {
     /// The running command that has it stalled, by its item, when one does: Zero can stop it (stuck.rs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stuck: Option<String>,
-    /// The user said Zero is never to stop this task's commands on its own.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub keep_commands: bool,
     /// The unified diff of everything the latest turn changed.
     pub diff: Option<String>,
     /// While the task is in its provider's own terminal (zero-host's): which one, and where Zero's record of the
@@ -565,9 +562,6 @@ pub enum Change {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         command: Option<String>,
     },
-    KeepCommands {
-        keep: bool,
-    },
     Diff {
         diff: Option<String>,
     },
@@ -656,7 +650,6 @@ impl Conversation {
             failure: None,
             stalled: None,
             stuck: None,
-            keep_commands: false,
             diff: None,
             terminal: None,
             seq: 0,
@@ -700,7 +693,6 @@ impl Conversation {
             failure: self.failure.clone(),
             stalled: self.stalled.clone(),
             stuck: self.stuck.clone(),
-            keep_commands: self.keep_commands,
             diff: self.diff.clone(),
             terminal: self.terminal.clone(),
             seq: self.seq,
@@ -795,7 +787,6 @@ impl Conversation {
             Change::Usage { usage } => self.usage = Some(usage),
             Change::Failed { failure } => self.failure = failure,
             Change::Stalled { reason, command } => (self.stalled, self.stuck) = (reason, command),
-            Change::KeepCommands { keep } => self.keep_commands = keep,
             Change::Diff { diff } => self.diff = diff,
             Change::Terminal { terminal } => self.terminal = terminal,
             Change::Archived | Change::McpSignIn { .. } => {}

@@ -99,7 +99,7 @@ pub struct Ask {
     pub output: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
-    /// Where a run runs (runs.rs): "host:<terminal>" in zero-host, "file:<ask>" detached. Kept so a zerod started
+    /// Where a run runs (runs.rs): "file:<ask>", detached. Kept so a zerod started
     /// again finds it and follows it to its end.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,

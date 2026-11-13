@@ -880,3 +880,16 @@ fn a_finished_worker_is_due_to_be_put_away_a_while_after_its_answer() {
     assert_eq!(finished_workers(&rows, 1_000 + hour, hour, &said), ["confirmed", "done"], "only those that finished, nothing open");
     assert!(finished_workers(&rows, 1_000 + hour, hour, &|_| None).is_empty(), "not known to have said so: not due");
 }
+
+#[test]
+fn a_task_open_in_the_users_terminal_is_in_terminal_whatever_it_last_said() {
+    let mut open = session("open", "/w/a", Status::Offline);
+    open.terminal = Some(Opened { id: "4242".into(), mark: 0 });
+    let rows = board(&[open, session("idle", "/w/b", Status::Idle)], &[note("open", "Ready to ship?", None, None)]);
+    let states: Vec<(&str, State, State)> = rows.iter().map(|r| (r.session.as_str(), r.state, r.own)).collect();
+    assert_eq!(
+        states,
+        [("open", State::InTerminal, State::InTerminal), ("idle", State::Idle, State::Idle)],
+        "the user has it in their terminal, as near the top as work under way"
+    );
+}
