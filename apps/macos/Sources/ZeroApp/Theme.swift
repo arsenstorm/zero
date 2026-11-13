@@ -78,6 +78,9 @@ enum Theme {
     static let knob = dynamic(dark: .white, light: .black)
     /// Text on a solid `knob` surface (the user's message bubbles).
     static let onKnob = dynamic(dark: .black, light: .white)
+    /// A ticked checkbox: the knob's black in light; in dark a grey, as solid white was glaring on the dark card.
+    static let checkOn = dynamic(dark: NSColor(white: 0.36, alpha: 1), light: .black)
+    static let checkMark = dynamic(dark: NSColor(white: 0.95, alpha: 1), light: .white)
     static let code = dynamic(dark: NSColor(white: 0, alpha: 0.35), light: NSColor(white: 0, alpha: 0.05))
     static let pill = dynamic(dark: NSColor(white: 0, alpha: 0.9), light: NSColor(white: 1, alpha: 0.96))
     // Opaque, so a border is one colour along its length whatever sits behind each segment.

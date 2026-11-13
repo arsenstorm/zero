@@ -188,7 +188,7 @@ struct DialogChoice<Value: Hashable>: View {
     }
 }
 
-/// A checkbox in Zero's colours: the knob's black (white in dark) when on; faded when it can't be changed.
+/// A checkbox in Zero's colours: black when on (a soft grey in dark); faded when it can't be changed.
 struct DialogCheckbox: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View { Box(configuration: configuration) }
 
@@ -201,9 +201,9 @@ struct DialogCheckbox: ToggleStyle {
             } label: {
                 HStack(spacing: 8) {
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(configuration.isOn ? Theme.knob : Theme.row)
+                        .fill(configuration.isOn ? Theme.checkOn : Theme.row)
                         .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(configuration.isOn ? .clear : Theme.stroke))
-                        .overlay { if configuration.isOn { NucleoIcon("check", size: 10).foregroundStyle(Theme.onKnob) } }
+                        .overlay { if configuration.isOn { NucleoIcon("check", size: 10).foregroundStyle(Theme.checkMark) } }
                         .frame(width: 16, height: 16)
                     configuration.label.font(.system(size: 13))
                 }
