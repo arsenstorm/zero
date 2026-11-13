@@ -89,7 +89,10 @@ func reason(_ ask: Ask) -> String? {
 @MainActor func create(_ ask: Ask, finish: (Ask) -> Never = outcome) -> Never {
     let socket = connect()
     try? socket.send(Request(op: "create", ask: ask, wait: !async))
-    guard let reply = socket.receive(Response.self), reply.op == "created", let id = reply.id else { fail("zero: no reply from Zero.app") }
+    guard let reply = socket.receive(Response.self) else { fail("zero: no reply from Zero.app") }
+    // Refused by Zero (text under it too long, an --about heading that isn't there): what to fix, not "no reply".
+    if reply.op == "error" { fail("zero: " + (reply.message ?? "Zero refused the ask")) }
+    guard reply.op == "created", let id = reply.id else { fail("zero: no reply from Zero.app") }
     if async { print(id); exit(0) }
     stderr("zero: waiting on ask \(id)")
     follow(socket, id: id, finish: finish)

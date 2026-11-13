@@ -43,7 +43,6 @@ struct CardView: View {
 
     @State private var commandExpanded = false
     @State private var scriptExpanded = false
-    @State private var detailExpanded = false
     /// False until the entrance has played; cards already seen start true.
     @State private var entered = false
     /// Heights of the command box and the options while waiting; the terminal takes exactly their space.
@@ -244,35 +243,11 @@ struct CardView: View {
         }
     }
 
-    /// Three lines; a longer one fades out on its last line instead of being cut mid-word, and a
-    /// click on the text opens it in place. No button and no extra row.
+    /// In full, always: two or three sentences at most (zerod refuses more, Inbox::admit), so nothing to fold, and
+    /// nothing changes the card's height under the pointer.
     private func supportingText(_ supporting: String) -> some View {
-        let long = supporting.count > 180 && !flat
-        let folded = long && !detailExpanded
-        return Group {
-            // Folded, a click opens it; selecting text would take that click. Open, it is selectable.
-            if folded {
-                Text(linked(supporting)).font(.system(size: 13)).foregroundStyle(.secondary).tint(Theme.link).lineLimit(
-                    3, reservesSpace: true)
-            } else {
-                Text(linked(supporting)).font(.system(size: 13)).foregroundStyle(.secondary).tint(Theme.link).textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .mask {
-            VStack(spacing: 0) {
-                Color.black
-                LinearGradient(colors: [.black, folded ? .clear : .black], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 16)
-            }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            guard long else { return }
-            controller.holdTop = true
-            detailExpanded.toggle()
-        }
-        .tip(long ? (detailExpanded ? "Click to fold" : "Click to read it all") : "")
+        Text(linked(supporting)).font(.system(size: 13)).foregroundStyle(.secondary).tint(Theme.link).textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder private func commandBlock(_ command: String) -> some View {

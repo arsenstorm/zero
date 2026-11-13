@@ -158,6 +158,11 @@ struct ConversationView: View {
         func setTyping(_ on: Bool) { if typing != on { typing = on } }
         /// As far as it sinks: all but its strip.
         var deepest: CGFloat { max(0, card - AskDock.tuck - 24) }
+        /// Where the composer, the queue's strip and the question card are on the page (ConversationView.pane), the card
+        /// in its place before it sinks or rises: the page fades out around them (SoftFoot). Zero when not there.
+        var composerFrame: CGRect = .zero
+        var stripFrame: CGRect = .zero
+        var cardFrame: CGRect = .zero
     }
     private var composerHeight: CGFloat { foot.height }
     /// Queued from here, not yet in zerod's queue: shown in the strip until it is.
@@ -351,18 +356,22 @@ struct ConversationView: View {
         return all.last(where: \.isYours).map { $0.sent ?? $0.id }
     }
 
+    /// The conversation's page and what lies over it, as one space: where the docked surfaces are, for its fade.
+    static let pane = "conversationPane"
+
     private var conversationPane: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 scrollingTimeline
-                    // Soft edges: at the top, there's more above; just above the composer, the text fades out before it,
-                    // as Codex's does, with nothing behind the composer but the page.
-                    // Under the composer: nothing, so the conversation doesn't show at its sides.
+                    // Soft edges round the composer and what's docked on it: the text fades out as it nears them, and runs
+                    // on in the margins beside and below them.
                     .mask { SoftFoot(foot: foot) }
                     // Scrolled up: a way back down, just above the composer (and its question card's strip), under the card.
                     .overlay(alignment: .bottom) { wayDown(proxy) }
                     // The composer lies over the conversation's foot; the conversation runs the full height under it.
                     .overlay(alignment: .bottom) { composerOverlay }
+                    // The page's space, the composer's overlay in it: where its surfaces are, for the mask above.
+                    .coordinateSpace(.named(Self.pane))
                     .overlay(alignment: .trailing) {
                         ThinScrollbar(tracker: tracker) {
                             following = false; lifted = false; ScrollMemory.keepLift(nil, in: conversation.id)
@@ -833,7 +842,6 @@ struct ConversationView: View {
             let queued = shownQueue
             DockSlot(
                 conversation: conversation, inbox: inbox, playback: playback, foot: foot, page: pageHeight,
-                behindQueue: !queued.isEmpty || held,
                 answer: { [workspace, id = conversation.id] question, answers in
                     Task { await workspace.answer(id, question: question, answers: answers) }
                 },
@@ -860,6 +868,10 @@ struct ConversationView: View {
                 )
                 .frame(maxWidth: 680)
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] in foot.stripHeight = $0 }
+                .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(Self.pane)) }) { [foot] in
+                    if foot.stripFrame != $0 { foot.stripFrame = $0 }
+                }
+                .onDisappear { [foot] in foot.stripFrame = .zero }
             } else {
                 StripRoom(foot: foot)
             }
@@ -872,6 +884,9 @@ struct ConversationView: View {
                 if undoable != nil { RewoundNotice(undo: undoRewind).offset(y: -38) }
             }
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] in if foot.composer != $0 { foot.composer = $0 } }
+            .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(Self.pane)) }) { [foot] in
+                if foot.composerFrame != $0 { foot.composerFrame = $0 }
+            }
             .onHover { [foot] inside in if foot.overComposer != inside { foot.overComposer = inside } }
         }
         // Once zerod has it, the one shown at once goes: left until it went, it came back when the queue emptied.
@@ -1579,14 +1594,52 @@ private struct FootClock: View {
 /// changing redraws the mask, not the conversation (a modifier reading it counted as the conversation reading it).
 private struct SoftFoot: View {
     let foot: ConversationView.Foot
+
     var body: some View {
         VStack(spacing: 0) {
-            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: 28)
-            Color.black
-            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 32)
-            // Under the composer only: the conversation runs on behind the question card, which a ring of its own sets
-            // apart (Sinker).
-            Color.clear.frame(height: foot.composer)
+            // Under the title bar: there's more above.
+            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: Feathered.top)
+            // Eased as the card is when the pointer brings it up or lets it sink (Sinker), on the same curve; a scroll
+            // moves both one point for one.
+            Feathered(sunk: foot.sunk, rise: foot.rise, composer: foot.composerFrame, strip: foot.stripFrame, card: foot.cardFrame)
+                .animation(Motion.animation(ConversationView.slide), value: foot.hovering)
+        }
+    }
+}
+
+/// The page shown everywhere (under its top fade) but round the docked surfaces: each one's own rounded rect, grown a little and blurred,
+/// so the text fades out only as it nears a surface, on all four sides, and runs on in the margins beside and below
+/// them to the window's foot. No band across the page. The card's sink is animatable, to go with the card.
+private struct Feathered: View, Animatable {
+    /// Past a surface's edge: gone this far out, then fading over the blur.
+    static let grow: CGFloat = 6
+    static let blur: CGFloat = 8
+    /// The page's fade under the title bar, above this: the surfaces' frames are the page's, this starts that far down.
+    static let top: CGFloat = 28
+    var sunk: CGFloat
+    let rise: CGFloat
+    let composer: CGRect
+    let strip: CGRect
+    let card: CGRect
+
+    var animatableData: CGFloat {
+        get { sunk }
+        set { sunk = newValue }
+    }
+
+    var body: some View {
+        // The card as far as it shows: sunk while the page is scrolled up, not yet risen as it comes.
+        let down = card.height > 0 ? sunk + min(rise, card.height) : 0
+        let shown = CGRect(x: card.minX, y: card.minY + down, width: card.width, height: max(0, card.height - down))
+        let surfaces = [composer, strip, shown]
+        return Canvas { context, size in
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black))
+            context.blendMode = .destinationOut
+            context.addFilter(.blur(radius: Self.blur))
+            for rect in surfaces where rect.height > 0 {
+                let shape = rect.offsetBy(dx: 0, dy: -Self.top).insetBy(dx: -Self.grow, dy: -Self.grow)
+                context.fill(Path(roundedRect: shape, cornerRadius: 18 + Self.grow), with: .color(.black))
+            }
         }
     }
 }
@@ -1601,15 +1654,14 @@ private struct FootRoom: View {
 }
 
 /// What waits on you, on the composer: the agent's asks read here, so one coming or going redraws this, not the
-/// conversation. A tab behind what's in front of it, its foot under it (drawn later, over it): the composer, at the
-/// queue's inset; or the queue's tab, one inset further back.
+/// conversation. A tab behind what's in front of it, its foot under it (drawn later, over it): the composer, or the
+/// queue's strip, at that strip's inset either way.
 private struct DockSlot: View {
     let conversation: Conversation
     let inbox: InboxController
     let playback: Playback
     let foot: ConversationView.Foot
     let page: CGFloat
-    let behindQueue: Bool
     let answer: (String, [String: [String]]) -> Void
     let decide: (String, String) -> Void
     let left: () -> Void
@@ -1630,8 +1682,8 @@ private struct DockSlot: View {
             asks: asks, inbox: inbox, page: page, foot: foot, answer: answer, decide: decide
         )
         .equatable()
-        // Behind the queue's strip one inset further in; as the strip goes, eased out with it.
-        .animation(Motion.animation(ConversationView.rise)) { $0.padding(.horizontal, behindQueue ? 26 : 13) }
+        // At the queue's strip's inset, a queue there or not: one width, so a queue coming or going moves nothing.
+        .padding(.horizontal, 13)
         .frame(maxWidth: 680)
         .padding(.bottom, ids.isEmpty ? 0 : -(AskDock.tuck + 8))
         .onChange(of: ids, initial: true) { old, new in
@@ -1669,14 +1721,18 @@ struct Sinking: ViewModifier {
 }
 
 private struct Sinker<Card: View>: View {
+    /// Room past its edges for its shadow, kept by the mask that hides what has sunk.
+    static var bleed: CGFloat { 22 }
     let foot: ConversationView.Foot
     let content: Card
     @State private var id = UUID()
     var body: some View {
         content
+            // In its place, before it sinks or rises (SoftFoot works those out).
+            .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(ConversationView.pane)) }) { [foot] in
+                if foot.cardFrame != $0 { foot.cardFrame = $0 }
+            }
             .environment(\.dockFocus, foot)
-            // Over the conversation, which runs on behind it: a ring of blur and fade at its edges sets it apart.
-            .background { Ring() }
             .onHover { inside in if foot.overCard != inside { foot.overCard = inside } }
             .offset(y: foot.sunk)
             // Come up from behind the composer: its whole height down at first (clipped at its foot, out of sight),
@@ -1685,30 +1741,14 @@ private struct Sinker<Card: View>: View {
             .animation(Motion.animation(ConversationView.slide), value: foot.hovering)
             // What has sunk is gone below its place (behind the composer), not shown under it; the ring above and at
             // its sides kept.
-            .mask { Rectangle().padding(.horizontal, -Ring.width).padding(.top, -Ring.width) }
+            .mask { Rectangle().padding(.horizontal, -Self.bleed).padding(.top, -Self.bleed) }
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] in if foot.card != $0 { foot.card = $0 } }
             .onAppear { [foot] in foot.shownCard = id }
             .onDisappear { [foot] in
                 guard foot.shownCard == id else { return }
                 foot.shownCard = nil
-                foot.card = 0; foot.overCard = false; foot.typing = false
+                foot.card = 0; foot.cardFrame = .zero; foot.overCard = false; foot.typing = false
                 foot.arriving = false; foot.riseEase = nil; foot.riseRoom = false; foot.rise = 0
             }
-    }
-}
-
-/// The question card's edge over the conversation behind it: what's just around it blurred and faded, out to a
-/// soft edge.
-private struct Ring: View {
-    static let width: CGFloat = 22
-    private var shape: UnevenRoundedRectangle {
-        UnevenRoundedRectangle(topLeadingRadius: 18 + Self.width, topTrailingRadius: 18 + Self.width, style: .continuous)
-    }
-    var body: some View {
-        shape.fill(.thinMaterial)
-            .overlay(shape.fill(Theme.card.opacity(0.45)))
-            .padding(.horizontal, -Self.width).padding(.top, -Self.width)
-            .mask { shape.padding(.horizontal, -Self.width / 3).padding(.top, -Self.width / 3).blur(radius: Self.width / 2.5) }
-            .allowsHitTesting(false)
     }
 }
