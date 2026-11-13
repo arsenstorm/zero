@@ -14,6 +14,12 @@ final class Settings {
     /// The control bar in the workspace window: when the window fills its screen, always while it's open, or never.
     enum BarDock: String, CaseIterable { case auto, always, never }
     var barDock: BarDock { didSet { defaults.set(barDock.rawValue, forKey: "barDock"); onChange?() } }
+    /// What the bar shows, in its order (Settings › Inbox and bar › In the bar): the parts switched off, and which
+    /// agents have a dot. Defaults keep the bar as it was.
+    var barParts: [BarPart] { didSet { defaults.set(barParts.map(\.rawValue), forKey: "barParts") } }
+    var barHidden: Set<BarPart> { didSet { defaults.set(barHidden.map(\.rawValue), forKey: "barHidden") } }
+    var barAgents: BarAgents { didSet { defaults.set(barAgents.rawValue, forKey: "barAgents") } }
+    func shows(_ part: BarPart) -> Bool { part == .agents ? barAgents != .none : !barHidden.contains(part) }
     /// Agent names in the order the user dragged them into; agents not listed follow in first-seen order.
     var agentOrder: [String] { didSet { defaults.set(agentOrder, forKey: "agentOrder") } }
     /// Minutes before an ask that arrives without its own expiry is marked expired.
@@ -70,6 +76,9 @@ final class Settings {
         followActiveScreen = defaults.bool(forKey: "followActiveScreen")
         barDock = defaults.string(forKey: "barDock").flatMap(BarDock.init) ?? .auto
         agentOrder = defaults.stringArray(forKey: "agentOrder") ?? []
+        barParts = BarPart.order(defaults.stringArray(forKey: "barParts") ?? [])
+        barHidden = Set((defaults.stringArray(forKey: "barHidden") ?? []).compactMap(BarPart.init))
+        barAgents = defaults.string(forKey: "barAgents").flatMap(BarAgents.init) ?? .all
         defaultTTLMinutes = defaults.object(forKey: "defaultTTLMinutes") as? Int ?? 60
         takeBackSeconds = defaults.object(forKey: "takeBackSeconds") as? Double ?? 2
         hotKeyCode = defaults.object(forKey: "hotKeyCode") as? Int ?? kVK_Space

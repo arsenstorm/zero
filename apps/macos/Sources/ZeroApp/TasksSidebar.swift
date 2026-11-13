@@ -453,6 +453,7 @@ struct PairSheet: View {
         let task = Named(
             id: id, name: row?.task ?? conversation.map(Workspace.label(of:)) ?? id, ticket: row?.ticket ?? conversation?.ticket)
         let online = conversation.map { $0.status != .offline } ?? row?.online ?? true
+        let pinned = UserDefaults.standard.string(forKey: "barPinned") ?? ""
         // Workspace: every one in its own menu, the one it's in (the sidebar's) ticked; another moves it there.
         let moves =
             workspace.workspaces.count > 1 && !worker
@@ -492,6 +493,9 @@ struct PairSheet: View {
                 ?? [],
             [MenuItem("Rename task", "pen") { Asked.shared.renaming = task }] + statusItems(id, in: workspace) + moves + [
                 MenuItem("Work with…", "link") { Asked.shared.pairing = task },
+                MenuItem(BarPins.set(pinned).contains("zerod-" + id) ? "Unpin from bar" : "Pin to bar", "pin-tack") {
+                    UserDefaults.standard.set(BarPins.toggle("zerod-" + id, in: pinned), forKey: "barPinned")
+                },
                 MenuItem("Copy task id", "copy") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(id, forType: .string)

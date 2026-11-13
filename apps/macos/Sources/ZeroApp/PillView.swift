@@ -5,14 +5,14 @@ import ZeroCore
 
 /// The small pin that marks whichever control the inbox is pinned on.
 struct PinBadge: View {
-    var body: some View { Text("📌").font(.system(size: 9)).frame(width: 12, height: 12) }
+    var body: some View { NucleoIcon("pin-tack", size: 10).foregroundStyle(.secondary).frame(width: 12, height: 12) }
 }
 
 /// The bar's outline: rounded on the left, and merging into the screen edge on the right through two concave
 /// fillets above and below, like a tab grown out of the edge.
 struct PillShape: InsettableShape {
     var radius: CGFloat = 22
-    var fillet: CGFloat = 10
+    var fillet: CGFloat = 22
     var inset: CGFloat = 0
 
     func inset(by amount: CGFloat) -> PillShape {
@@ -57,6 +57,9 @@ struct PillView: View {
     /// The workspace control clicked: the workspaces, in the inbox's pane.
     var openWorkspaces: () -> Void = {}
     @State private var overWorkspace = false
+    /// The settings button in the bar's foot (Settings › Inbox and bar), and the pointer on the bar that brings it out.
+    @AppStorage("barFoot") private var barFoot = false
+    @State private var overBar = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// A dot being dragged up or down the bar, and how far.
     @State private var drag: (name: String, y: CGFloat)?
@@ -81,19 +84,39 @@ struct PillView: View {
     /// The sidebar's sort and dragged order, shared: the bar lists the tasks as the sidebar does.
     @AppStorage("taskSort") private var taskSort = BoardRow.Sort.state
     @AppStorage("taskOrder") private var taskOrder = ""
+    /// The dots pinned to the bar, for "Pinned tasks only" (the sidebar's menu pins them too).
+    @AppStorage("barPinned") private var barPinned = ""
 
     /// A dot: one of Zero's tasks, drawn as the sidebar draws it, or an agent outside Zero (a terminal's) with asks.
     private enum Mark: Equatable { case task(BoardRow.State, why: String), agent(AgentStatus) }
 
     /// The bar's dots: this workspace's tasks as the sidebar lists them (its order, its icons), then the agents
-    /// outside Zero that have asks. Built from the agents with asks alone, it showed other things than the sidebar,
-    /// in other shapes.
+    /// outside Zero that have asks; those the user's choice of agents (Settings › Inbox and bar) keeps. Built from
+    /// the agents with asks alone, it showed other things than the sidebar, in other shapes.
     private func dots(_ agents: [(String, AgentStatus)]) -> [(String, Mark)] {
+        let mode = settings.barAgents
+        guard mode != .none else { return [] }
+        let pinned = BarPins.set(barPinned)
         let rows =
             workspace.map { w in BoardRow.sorted(w.board.filter { $0.workspace == w.current }, by: taskSort, order: taskOrder) } ?? []
+        // A lead needs you when its team does (a worker's ask), though its dot draws the lead's own state.
+        let tasks = rows.filter { mode.shows("zerod-" + $0.session, needsYou: $0.state.needsYou || $0.ownState.needsYou, pinned: pinned) }
+        let others = agents.filter {
+            !$0.0.hasPrefix("zerod-") && mode.shows($0.0, needsYou: [.needsYou, .handed, .trouble].contains($0.1), pinned: pinned)
+        }
         // The lead's own state, as the sidebar's icon: the team's (a worker's trouble) drew another icon than the sidebar.
-        return rows.map { ("zerod-" + $0.session, Mark.task($0.ownState, why: $0.why)) }
-            + agents.filter { !$0.0.hasPrefix("zerod-") }.map { ($0.0, Mark.agent($0.1)) }
+        return tasks.map { ("zerod-" + $0.session, Mark.task($0.ownState, why: $0.why)) } + others.map { ($0.0, Mark.agent($0.1)) }
+    }
+
+    /// The parts on, in the user's order; one with nothing to show (a lone workspace, no dots) takes no room.
+    private func parts(dots: [(String, Mark)]) -> [BarPart] {
+        settings.barParts.filter { part in
+            switch part {
+            case .inbox: settings.shows(.inbox)
+            case .workspaces: settings.shows(.workspaces) && (workspace?.workspaces.count ?? 0) > 1
+            case .agents: !dots.isEmpty
+            }
+        }
     }
 
     private func scale(_ name: String) -> CGFloat { controller.agentFilter == name ? 13 / 11 : 1 }
@@ -117,20 +140,32 @@ struct PillView: View {
     var body: some View {
         // Once a redraw: worked out from every ask the store holds, four reads of it cost the bar a frame.
         let dots = dots(agents)
+        let names = dots.map(\.0)
+        let parts = parts(dots: dots)
         VStack(spacing: 2) {
-            inboxSlot
-            if let workspace, workspace.workspaces.count > 1 { workspaceSlot(workspace) }
-            if !dots.isEmpty {
-                Rectangle().fill(Theme.hairline).frame(width: 18, height: 1).padding(.vertical, 4)
-                    .onChange(of: dots.map(\.0), initial: true) { controller.barOrder = $1 }
-                    .onDisappear { controller.barOrder = [] }
+            ForEach(Array(parts.enumerated()), id: \.element) { index, part in
+                // The dots set apart from the controls, on whichever side they meet them.
+                if index > 0, part == .agents || parts[index - 1] == .agents {
+                    Rectangle().fill(Theme.stroke).frame(width: 18, height: 1).padding(.vertical, 4)
+                }
+                switch part {
+                case .inbox: inboxSlot
+                case .workspaces: workspace.map(workspaceSlot)
+                case .agents: ForEach(dots, id: \.0) { name, mark in agentDot(name, mark, among: names) }
+                }
             }
-            let names = dots.map(\.0)
-            ForEach(dots, id: \.0) { name, mark in agentDot(name, mark, among: names) }
         }
-        .padding(.vertical, 8 + 10).padding(.horizontal, 6)
+        .onChange(of: names, initial: true) { controller.barOrder = $1 }
+        .padding(.vertical, 8 + 22).padding(.horizontal, 6)
         .background(PillShape().fill(Theme.pill))
         .overlay(PillShape().strokeBorder(Theme.stroke, lineWidth: 1))
+        .onHover { overBar = $0 }
+        // In the bottom fillet's hollow: centred on its centre, the rect's bottom edge, 6 pt short of its radius.
+        .overlay(alignment: .bottom) {
+            if barFoot { BarFoot(barHovered: overBar, away: controller.panelOpen).offset(y: BarFoot.size / 2) }
+        }
+        // Nothing switched on, or nothing to show: no bar at all, rather than an empty tab at the edge.
+        .opacity(parts.isEmpty ? 0 : 1)
         // The bar's drawn height, which the inbox uses for its scroll limits.
         .onGeometryChange(for: CGFloat.self) {
             $0.size.height
@@ -138,14 +173,17 @@ struct PillView: View {
             controller.barHeight = $0
         }
         // Outermost on purpose: placed inside, only the dots would animate and the shape would snap.
-        .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: dots.map(\.0))
-        .pointerStyle(.link)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: names)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: parts)
         // Behind the dots, so a dot's own menu (in front) answers on a dot and this one everywhere else on the bar.
         .background {
             RightClick {
                 ZeroContextMenu.open("bar") {
                     [
-                        [MenuItem("Open Log", "file-content") { NSWorkspace.shared.open(Paths.log) }],
+                        [
+                            MenuItem("Customise bar…", "sliders", action: BarFoot.customise),
+                            MenuItem("Open log", "file-content") { NSWorkspace.shared.open(Paths.log) },
+                        ],
                         [
                             MenuItem("Settings…", "gear") { (NSApp.delegate as? AppDelegate)?.openSettings() },
                             MenuItem("Quit Zero", "power-off") { NSApp.terminate(nil) },
@@ -165,7 +203,7 @@ struct PillView: View {
                 if controller.pinned && selected == nil && !controller.newAgentOpen {
                     PinBadge().offset(x: 4, y: -6)
                 } else if waiting > 0 {
-                    Circle().fill(Color.red).frame(width: 7, height: 7).offset(x: 3, y: -3)
+                    Circle().fill(AgentStatus.needsYou.color).frame(width: 7, height: 7).offset(x: 3, y: -3)
                 }
             }
             .frame(width: 32, height: 32)
@@ -175,6 +213,7 @@ struct PillView: View {
             } action: {
                 controller.barSlots[InboxController.inboxSlot] = $0
             }
+            .onDisappear { controller.barSlots[InboxController.inboxSlot] = nil }
             .onTapGesture(perform: openInbox)
             .tip("Open asks")
     }
@@ -202,6 +241,7 @@ struct PillView: View {
         } action: {
             controller.barSlots[InboxController.workspacesSlot] = $0
         }
+        .onDisappear { controller.barSlots[InboxController.workspacesSlot] = nil }
         .onTapGesture(perform: openWorkspaces)
         .tip(workspace.currentWorkspace.name)
     }
@@ -271,6 +311,7 @@ struct PillView: View {
                     if let url = URL(string: "zero://task/" + id) { (NSApp.delegate as? AppDelegate)?.openZeroURL(url) }
                 }
                 rows.append([("open", "Open", "arrow-up-right", false, open)])
+                rows.append([pinRow(name)])
                 // Named, not inline in a ternary of tuples: CI's compiler found `Task` there ambiguous.
                 let paused = workspace.isPaused(id)
                 let toggle: () -> Void = {
@@ -289,6 +330,7 @@ struct PillView: View {
                     )
                 ])
             } else {
+                rows.append([pinRow(name)])
                 rows.append([
                     (
                         controller.store.canStop(name) ? "stop" : "remove", controller.store.canStop(name) ? "Remove and stop" : "Remove",
@@ -299,6 +341,12 @@ struct PillView: View {
             }
             return ComposerRows.menu(rows)
         }
+    }
+
+    /// Pinned, the dot stays on the bar when it shows pinned tasks only.
+    private func pinRow(_ name: String) -> (id: String, title: String, glyph: String, selected: Bool, pick: () -> Void) {
+        let pinned = BarPins.set(barPinned).contains(name)
+        return ("pin", pinned ? "Unpin from bar" : "Pin to bar", "pin-tack", false, { barPinned = BarPins.toggle(name, in: barPinned) })
     }
 
     /// The dragged dot let go: the bar's order with it moved into the slot it's over.

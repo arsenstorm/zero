@@ -75,6 +75,7 @@ note-3                   notepad-text
 ordered-list             list-ordered
 paper-plane              send
 pen                      pen                       glyph
+pin-tack                 pin
 plug                     plug
 plus                     plus                      outline
 power-off                power                     glyph
