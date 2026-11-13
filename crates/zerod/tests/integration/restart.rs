@@ -36,7 +36,7 @@ fn command(status: ItemStatus) -> Change {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_restart_waits_for_a_running_command_then_pauses_the_turn_to_carry_on() {
     let home = temp_dir("restart");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
@@ -116,7 +116,7 @@ async fn a_task_between_turns_with_a_run_in_the_background_carries_on_too() {
     assert!(words.contains("background"), "told what a restart stops: {words}");
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_task_waiting_on_the_user_is_told_its_question_went_with_the_restart() {
     // Its question (the provider's own, open in the chat) doesn't outlive the process: the new one is told so, not
     // that its turn was paused mid-step, which reads as nonsense to an agent that was only waiting.
@@ -159,7 +159,7 @@ async fn a_restart_doesnt_wait_on_a_session_closed_while_its_command_ran() {
     assert!(paused.is_empty() || paused == [working.clone()]);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn after_a_restart_only_what_it_paused_carries_on() {
     let home = temp_dir("restart-carry");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
@@ -247,7 +247,7 @@ async fn a_turn_carried_on_after_a_restart_says_so_in_place_of_interrupted() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_worker_paused_for_a_restart_isnt_reported_to_its_lead_as_stopped() {
     let home = temp_dir("restart-report");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
@@ -272,7 +272,7 @@ async fn a_worker_paused_for_a_restart_isnt_reported_to_its_lead_as_stopped() {
     assert!(!waiting.contains("Worker"), "a turn paused to carry on isn't a worker stopping: {waiting}");
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_turn_paused_for_an_update_says_so_once_however_its_agent_notes_the_stop() {
     let home = temp_dir("restart-once");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();

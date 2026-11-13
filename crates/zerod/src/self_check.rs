@@ -18,13 +18,33 @@ unsafe extern "C" {
 /// The build on disk when zerod started: another one there means an install that didn't restart it.
 static BUILT: LazyLock<Option<(SystemTime, u64)>> = LazyLock::new(|| fingerprint(&std::env::current_exe().ok()?));
 
-/// A build's date and a digest of its bytes: an install copies an unchanged build again with a newer date.
+/// A build's date and a digest of it: an install copies an unchanged build again with a newer date, and signs it again
+/// (a new signing time in its bytes), so a Mach-O's build is its LC_UUID, which the linker sets and codesign keeps.
 pub fn fingerprint(path: &Path) -> Option<(SystemTime, u64)> {
     use std::hash::Hasher;
     let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok()?;
+    let bytes = std::fs::read(path).ok()?;
     let mut hasher = std::hash::DefaultHasher::new();
-    hasher.write(&std::fs::read(path).ok()?);
+    hasher.write(mach_o_uuid(&bytes).unwrap_or(&bytes));
     Some((modified, hasher.finish()))
+}
+
+/// A 64-bit little-endian Mach-O's LC_UUID, read from its load commands.
+fn mach_o_uuid(bytes: &[u8]) -> Option<&[u8]> {
+    const LC_UUID: u32 = 0x1b;
+    let word = |at: usize| Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
+    if word(0)? != 0xfeed_facf {
+        return None;
+    }
+    let mut at = 32;
+    for _ in 0..word(16)? {
+        let (command, size) = (word(at)?, word(at + 4)? as usize);
+        if command == LC_UUID {
+            return bytes.get(at + 8..at + 24);
+        }
+        at += size.max(8);
+    }
+    None
 }
 
 /// Whether the build at `path` is no longer the one fingerprinted: its bytes are read again only when its date moved.

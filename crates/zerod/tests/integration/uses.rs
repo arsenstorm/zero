@@ -38,10 +38,20 @@ async fn a_tasks_cli_its_mcp_servers_and_its_commands_are_measured_apart() {
 
 #[tokio::test]
 async fn nothing_is_sent_again_until_it_changes_meaningfully() {
-    let mut idle = tokio::process::Command::new("/bin/sh").args(["-c", "sleep 60"]).kill_on_drop(true).spawn().unwrap();
+    let mut idle = tokio::process::Command::new("/bin/sleep").arg("60").kill_on_drop(true).spawn().unwrap();
     let pid = idle.id().unwrap() as i32;
     let mut sampler = Sampler::default();
     assert!(sampler.sample(&[("s1".into(), pid)]).is_some());
+    // Just after exec its memory and CPU still move (the loader at work; slow on a busy runner): it settles first.
+    let mut settled = false;
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        if sampler.sample(&[("s1".into(), pid)]).is_none() {
+            settled = true;
+            break;
+        }
+    }
+    assert!(settled, "an idle process settles: not news on every look");
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(sampler.sample(&[("s1".into(), pid)]).is_none(), "an idle task's few kilobytes either way wake no one");
     assert!(sampler.sample(&[]).is_some_and(|t| t.is_empty()), "a task parked (no process) is news: it uses nothing now");

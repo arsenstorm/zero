@@ -26,7 +26,8 @@ is their UI and the inbox where agents reach the user. `docs/workspace.md` has t
   characters, no body or trailers (scopes in use: `zerod`, `app`). Pushing also needs their word.
 - zerod is test first: write the failing test in `crates/zerod/tests/integration/` (one test program: a new file
   there is a `mod` in its `main.rs`, never a test file of its own, as each program costs seconds to start), then the
-  code. Swift UI isn't unit tested;
+  code. A test that waits out one of zerod's timers runs on paused time (`#[tokio::test(start_paused = true)]`):
+  the whole program runs in seconds, and one real 4-minute wait once made it 4 minutes. Swift UI isn't unit tested;
   `ZeroCore` is (`apps/macos/Tests/ZeroCoreTests`).
 - Before installing: `cargo test -p zerod`, `cargo clippy -p zerod --all-targets` (clean), `swift test --package-path apps/macos`.
 - `make install` builds, installs `/Applications/Zero.app` and reopens it where the user was (their drafts are kept).

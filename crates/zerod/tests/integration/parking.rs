@@ -96,7 +96,7 @@ async fn an_agent_waiting_on_someone_is_parked_too_unless_work_runs_in_its_backg
     assert!(daemon.session(&busy).unwrap().is_attached(), "its background work runs on");
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test(start_paused = true)]
 async fn an_agent_that_asked_the_user_is_parked_too_unless_its_process_holds_the_question() {
     // The answer comes as a message, which resumes it: no need to keep its process while the user is away. Not an
     // approval its CLI holds open, which would die with the process.

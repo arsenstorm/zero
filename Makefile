@@ -18,8 +18,9 @@ ZERO_PRIVATE ?= ../zero-private
 ICONS     = $(if $(wildcard $(ZERO_PRIVATE)/icons/macos/*.svg),Nucleo,Lucide)
 ICONS_DIR = $(if $(filter Nucleo,$(ICONS)),$(ZERO_PRIVATE)/icons/macos,$(MACOS)/Resources/lucide)
 
-build: zerod
-	swift build -c release --package-path $(MACOS)
+# zerod and the app side by side: each is mostly one long single-threaded step, so together they take the longer's time.
+build:
+	@cargo build --release -p zerod & zerod=$$!; swift build -c release --package-path $(MACOS); app=$$?; wait $$zerod && exit $$app
 
 # zerod, Zero's daemon (crates/zerod): owns agent sessions whether or not the app is open.
 zerod:
