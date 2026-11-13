@@ -1607,13 +1607,10 @@ private struct SoftFoot: View {
     }
 }
 
-/// The page shown everywhere (under its top fade) but round the docked surfaces: each one's own rounded rect, grown a little and blurred,
-/// so the text fades out only as it nears a surface, on all four sides, and runs on in the margins beside and below
-/// them to the window's foot. No band across the page. The card's sink is animatable, to go with the card.
+/// The page under its top fade, less each docked surface's column (FadeMask): hidden from its text's start to the same
+/// inset on its right, from just above it to the window's foot, eased out above and into the margins beside it. The
+/// card's sink is animatable, to go with the card.
 private struct Feathered: View, Animatable {
-    /// Past a surface's edge: gone this far out, then fading over the blur.
-    static let grow: CGFloat = 6
-    static let blur: CGFloat = 8
     /// The page's fade under the title bar, above this: the surfaces' frames are the page's, this starts that far down.
     static let top: CGFloat = 28
     var sunk: CGFloat
@@ -1631,16 +1628,13 @@ private struct Feathered: View, Animatable {
         // The card as far as it shows: sunk while the page is scrolled up, not yet risen as it comes.
         let down = card.height > 0 ? sunk + min(rise, card.height) : 0
         let shown = CGRect(x: card.minX, y: card.minY + down, width: card.width, height: max(0, card.height - down))
-        let surfaces = [composer, strip, shown]
-        return Canvas { context, size in
-            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black))
-            context.blendMode = .destinationOut
-            context.addFilter(.blur(radius: Self.blur))
-            for rect in surfaces where rect.height > 0 {
-                let shape = rect.offsetBy(dx: 0, dy: -Self.top).insetBy(dx: -Self.grow, dy: -Self.grow)
-                context.fill(Path(roundedRect: shape, cornerRadius: 18 + Self.grow), with: .color(.black))
-            }
-        }
+        // Each one's text inset: the composer's text 14 in; the strip's, its own 13 pt margin (in its frame) and its
+        // heading's 16; the card's heading and words 16 in from its shell.
+        let surfaces = [
+            FadeMask.Surface(frame: composer, inset: 14), FadeMask.Surface(frame: strip, inset: 13 + 16),
+            FadeMask.Surface(frame: shown, inset: 16),
+        ].map { FadeMask.Surface(frame: $0.frame.offsetBy(dx: 0, dy: -Self.top), inset: $0.inset) }
+        return Canvas { context, size in FadeMask.draw(&context, size: size, surfaces: surfaces) }
     }
 }
 
