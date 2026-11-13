@@ -96,9 +96,34 @@ struct ReplyBox: View {
 }
 
 private func buildChoiceIcon(_ name: String) -> Image? {
+    if name == "opencode" { return Image(nsImage: openCodeMark()) }
+    if name == "openai-glyph" {
+        guard let url = Bundle.main.url(forResource: "openai", withExtension: "png"), let image = NSImage(contentsOf: url) else {
+            return nil
+        }
+        image.isTemplate = true
+        return Image(nsImage: image)
+    }
     guard let url = Bundle.main.url(forResource: name, withExtension: "png"), let image = NSImage(contentsOf: url) else { return nil }
     if name == "openai" { return Image(nsImage: onWhiteTile(image)) }
     return Image(nsImage: image)
+}
+
+/// OpenCode's mark, alone and in the text's colour (a template): its frame, and the block in its lower half fainter,
+/// as OpenCode draws it in grey. Its geometry is the site's opencode-mark.svg (256 × 320, the opening 64 in).
+private func openCodeMark() -> NSImage {
+    let image = NSImage(size: NSSize(width: 64, height: 80), flipped: true) { _ in
+        let frame = NSBezierPath(rect: NSRect(x: 0, y: 0, width: 64, height: 80))
+        frame.append(NSBezierPath(rect: NSRect(x: 16, y: 16, width: 32, height: 48)))
+        frame.windingRule = .evenOdd
+        NSColor.black.setFill()
+        frame.fill()
+        NSColor.black.withAlphaComponent(0.4).setFill()
+        NSBezierPath(rect: NSRect(x: 16, y: 32, width: 32, height: 32)).fill()
+        return true
+    }
+    image.isTemplate = true
+    return image
 }
 
 /// OpenAI's mark as OpenAI now shows it: black on a white rounded square. The asset's shape is used as a mask,

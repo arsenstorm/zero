@@ -49,9 +49,37 @@ final class TerminalApp {
             : bundle.flatMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
                 ?? URL(fileURLWithPath: "/Applications/\(app).app")
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        let image = Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+        let image = Image(nsImage: trimmed(NSWorkspace.shared.icon(forFile: url.path)))
         icons[app] = image
         return image
+    }
+
+    /// An app icon without the clear margin macOS's icon grid leaves round it (wider for some apps than others), so
+    /// every app's mark fills its slot the same.
+    private static func trimmed(_ icon: NSImage) -> NSImage {
+        let side = 128
+        guard
+            let rep = NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: side, pixelsHigh: side, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        else { return icon }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        icon.draw(in: NSRect(x: 0, y: 0, width: side, height: side))
+        NSGraphicsContext.restoreGraphicsState()
+        var (minX, minY, maxX, maxY) = (side, side, -1, -1)
+        for y in 0..<side {
+            for x in 0..<side where (rep.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.1 {
+                minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
+            }
+        }
+        guard maxX >= minX, maxY >= minY, let cg = rep.cgImage else { return icon }
+        // A square crop round the mark (rep's rows run top-down), so it isn't stretched.
+        let size = max(maxX - minX, maxY - minY) + 1
+        let cx = (minX + maxX + 1) / 2, cy = (minY + maxY + 1) / 2
+        let rect = CGRect(x: max(0, cx - size / 2), y: max(0, cy - size / 2), width: size, height: size)
+        guard let cropped = cg.cropping(to: rect) else { return icon }
+        return NSImage(cgImage: cropped, size: NSSize(width: size, height: size))
     }
 
     /// A run's output in the terminal app, from its start and as it comes.
