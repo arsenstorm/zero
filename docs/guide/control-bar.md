@@ -28,6 +28,7 @@ The task states:
 | Teal box | Over to you | The task is done, and there's a step left for you. |
 | Indigo speech bubble | Replied | The task answered you. It turns grey once you've read it. |
 | Grey hourglass | Waiting | The task is waiting on someone else, such as a review. |
+| Blue terminal | In Ghostty | The task is open in your terminal app, which the state names. |
 | Purple badge | Done | Nothing is left to do. |
 
 ## Open the inbox from the bar
@@ -50,12 +51,11 @@ Right-click a task's mark for its menu, beside the bar:
 |---|---|
 | **Open** | Opens the task in Zero's window. |
 | **Pause** / **Resume** | Puts the task and its workers on hold, or takes them off hold. |
-| **Move to Later** | Puts the whole task in Later. See [Later, scratchpads and loops](/docs/later-scratchpads-loops). |
+| **Save for later** | Puts the whole task in Later. See [Later, scratchpads and loops](/docs/later-scratchpads-loops). |
 | **Archive…** | Opens the task and asks you to confirm archiving it. See [Tasks and workers](/docs/tasks-and-workers). |
 
 Right-click the mark of an agent outside Zero:
 
-- **Open in Terminal** shows the terminal the agent runs in, when Zero started that terminal.
 - **Remove** closes the agent in the inbox. Its open asks expire, and a **Closed** note stays in its history.
 - **Remove and stop** does the same and also stops the agent. It shows in place of **Remove** when Zero can stop the agent.
 
@@ -69,12 +69,12 @@ Right-click the bar for:
 
 ## Settings for the bar
 
-These are in **Settings › Control bar**. Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> or the gear at the foot of the window's left rail.
+These are in **Settings › Inbox and bar**. Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> or the gear at the foot of the window's left rail.
 
 | Setting | Where | What it does |
 |---|---|---|
-| Follow the active screen | Settings › Control bar › Placement | On: the bar moves to the screen you're using. Off: it stays on the screen where it first appeared. |
-| Bar in the window | Settings › Control bar › Placement | Puts the bar in Zero's window, not on the screen's edge: **When it fills the screen**, **Always** or **Never**. **When it fills the screen** is the default. |
-| Agents in the bar | Settings › Control bar › Agents in the bar | The agents outside Zero that the bar shows. Rename or remove one, or drag them into a new order. A removed agent comes back when it next asks you something. |
+| Follow the active screen | Settings › Inbox and bar › Placement | On: the bar moves to the screen you're using. Off: it stays on the screen where it first appeared. |
+| Show the bar in Zero's window | Settings › Inbox and bar › Placement | Puts the bar in Zero's window, not on the screen's edge: **When it fills the screen**, **Always** or **Never**. **When it fills the screen** is the default. |
+| Agents in the bar | Settings › Inbox and bar › Agents in the bar | The agents outside Zero that the bar shows. Rename or remove one, or drag them into a new order. A removed agent comes back when it next asks you something. |
 
-The **Talk hotkey** opens the inbox and starts dictation, so you can answer by speaking. It's <kbd>⌥</kbd> <kbd>Space</kbd> unless you change it in **Settings › General › Zero › Talk hotkey**.
+The **Inbox hotkey** opens the inbox from any app. It's <kbd>⌥</kbd> <kbd>Space</kbd> unless you change it in **Settings › General › Zero › Inbox hotkey**.

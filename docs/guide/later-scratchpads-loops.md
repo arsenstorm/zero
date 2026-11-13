@@ -6,7 +6,7 @@ order: 7
 
 Three places in Zero's window keep things that you and your agents come back to:
 
-- **Later**: work to pick up another time. Each item has a short note and everything behind it.
+- **Later**: work to pick up another time: tasks you saved whole, and notes with everything behind them.
 - **Scratchpads**: Markdown notes that you and every agent can read and write.
 - **Loops**: named instructions that you give an agent when you type `@name`.
 
@@ -14,9 +14,11 @@ Each has a button on the window's left rail, below **Inbox**, in this order. Poi
 
 ## Save something for later
 
-A Later item has two parts. The note says in one sentence what to do. The artifact holds everything behind it in full, such as an agent's findings or a plan.
+Later holds two kinds of item: tasks you saved whole, and notes. A note has two parts. It says in one sentence what to do, and its artifact holds everything behind it in full, such as an agent's findings or a plan.
 
 Items come to Later in four ways.
+
+**Save a whole task.** Right-click a task in the tasks sidebar or its dot in the control bar, or open the **⋯** menu in the window's title bar. Then choose **Save for later**. The task leaves the sidebar, and it and its workers pause. Zero doesn't archive the task. In Later, it shows with a **Task** pill.
 
 **Write one yourself.**
 
@@ -26,14 +28,7 @@ Items come to Later in four ways.
 4. Fill in **Anything behind it, in Markdown (optional)**, or leave it empty.
 5. Click **Save**.
 
-**Ask a task to save one.** The agent writes the note and the artifact from what it has learned. There are two ways:
-
-- Right-click the task in the tasks sidebar and choose **Save for later**.
-- To save one of the agent's answers, point at the answer, click its **⋯** and choose **Save for later**.
-
-The agent saves the item after its current turn.
-
-**Move a whole task there.** Right-click a task in the tasks sidebar or its dot in the control bar, or open the **⋯** menu in the window's title bar. Then choose **Move to Later**. The task leaves the sidebar, and it and its workers pause. Zero doesn't archive the task. In Later, it shows with a **Task** pill.
+**An agent saves one.** Ask a task's agent to save something for later, and it writes the note and the artifact from what it has learned.
 
 **Agents suggest them.** An agent can save an item unasked when it expects you'll want to come back to it. These items go under **Suggested by agents** at the foot of the Later list. The heading shows how many there are. Click the heading to show them. Zero deletes a suggestion a week after it was saved, unless you click **Keep**.
 
@@ -121,6 +116,8 @@ When an agent changes the pad while you type, Zero says **Changed elsewhere whil
 ## Hand a scratchpad to an agent
 
 Every pad has a link, `zero://pad/<id>`. Every heading in a pad has a link too. When a message has one of these links, the agent reads that pad, or that part of it.
+
+In a conversation, Zero shows such a link as the pad's title, such as **Release plan**. A heading's link shows as the title, ›, and the heading, such as **Release plan › Checks**. Click it to open the pad.
 
 - **The whole pad**: click **Copy link** beside the pad's title, or right-click the pad in the list. The arrow beside **Copy link** has **Copy Markdown link**. It also has a link for each heading, under **Link to a section**.
 - **One section**: right-click in the pad's text and choose **Copy link to "<section>"**. **Copy link to scratchpad** in the same menu copies the link for the whole pad.

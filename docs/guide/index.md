@@ -8,7 +8,7 @@ Zero is a Mac app for coding agents. It runs Claude Code, Codex and OpenCode, ea
 
 ## The parts of Zero
 
-- **The window.** Your tasks and their conversations. The rail on its left side leads to Home, the Inbox, Later, Scratchpads, Loops, Integrations and Settings.
+- **The window.** Your tasks and their conversations. The rail on its left side leads to Home, the Inbox, Later, Scratchpads, Loops and Settings.
 - **The control bar.** A small bar on the right edge of your screen. It shows the inbox and a mark for each task. It keeps your agents in view while you work in another app.
 - **The inbox.** Everything your agents have asked you: questions, choices, commands to allow. It opens beside the control bar, and it's also a page in the window.
 - **The iPhone app.** Your inbox and tasks on your phone, coming soon.

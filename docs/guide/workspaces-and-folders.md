@@ -69,11 +69,11 @@ Right-click the task in the tasks sidebar and choose **Move to** and the workspa
 
 Tasks start in a project: a folder on your Mac that you added to Zero. Every workspace shares the same projects.
 
-1. Go to **Settings › Folders**.
+1. Go to **Settings › Workspaces**.
 2. Next to **Projects**, click **Add folder**.
 3. Choose one or more folders and click **Open**.
 
-Your projects then show in the project chip on the **New task** page. Until you add one, that page says **Add a project in Settings › Folders** in place of its chips.
+Your projects then show in the project chip on the **New task** page. Until you add one, that page says **Add a project in Settings › Workspaces** in place of its chips.
 
 Each project shows with its folder's name. Point at a row to see the folder's full path. Click a row for its menu:
 
@@ -83,26 +83,20 @@ Each project shows with its folder's name. Point at a row to see the folder's fu
 | **Show in Finder** | Shows the folder in Finder. |
 | **Remove** | Takes the folder off the list. The folder and its files stay on your Mac, and tasks that already run there continue. |
 
-**Drop folders**, on the same page, are synced folders that agents on other machines use to reach your inbox. To add one:
-
-1. Click **Add drop folder**.
-2. Type a pattern such as `~/projects/*/.zero`, or click **Choose…**.
-3. Click **Add**.
-
-To take a drop folder off, click its row and choose **Remove**.
-
 ## Set how agents commit
 
-**Settings › Git** gives your agents a Git identity of their own. When it's on, you stay the author of their commits, but the identity you set here commits and signs them. Pushes use the GitHub CLI's sign-in.
+**Settings › Git** gives your agents a Git identity of their own. When it's on, the identity you set here commits and signs their commits. You stay the author unless you turn on **Credit you as co-author**.
 
 So nothing waits on your own signing key: agents commit and push while your key is locked or you're away. Only the agents' processes get this identity. Your own Git settings and your own terminal keep yours.
 
 | Setting | Where | What it does |
 |---|---|---|
-| Sign with the agents' own key | Settings › Git › Agents' commits | Turns the agents' identity on. Off by default. |
+| Agents commit as their own account | Settings › Git › Agents' commits | Turns the agents' identity on. Off by default. While it's off, the other rows are hidden. |
 | Account | Settings › Git › Agents' commits | The GitHub account that commits and signs. Click **Choose…** or **Change…**, type the account's login and click **Use**. Its name and GitHub's noreply email become the committer. |
 | Signing key | Settings › Git › Agents' commits | The private key the agents sign with. It must have no passphrase. Click **Choose…** or **Replace…** and pick the key file. A pill shows **On** and the login when the key is one of the account's signing keys on GitHub, so commits show as Verified. **Not on** means you still need to add it to the account as a signing key. |
-| Push over HTTPS | Settings › Git › Agents' commits | Pushes to GitHub over HTTPS with the GitHub CLI's sign-in, instead of SSH, which can wait on your own key. On by default. |
-| Folders | Settings › Git › Folders | Keeps the agents' identity to these folders and the folders inside them. Click **Add folder** to add one, and **Remove** to take one off. With no folders added, it reads **Every folder**, and agents in all folders commit this way. |
+| Credit you as co-author | Settings › Git › Agents' commits | On: the agents' account is the author too, and Zero adds a `Co-authored-by` trailer for you. **Your name and email**, with **Set…**, sets the name and email in it. Left blank, Zero uses each repository's `user.name` and `user.email`. Off by default: you stay the author. |
+| Only in these folders | Settings › Git › Only in these folders | Keeps the agents' identity, and their GitHub token, to these folders and the folders inside them. Click **Add folder** to add one, and **Remove** to take one off. With no folders added, it reads **Every folder**, and agents in all folders commit this way. |
 
-The identity applies only when it's on and both an account and a signing key are set. Push over HTTPS also applies only then.
+The identity applies only when it's on and both an account and a signing key are set.
+
+How agents push, and a GitHub token of their own, are in **Settings › GitHub › Agents' access**. See [Settings](/docs/settings#github).

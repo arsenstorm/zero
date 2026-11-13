@@ -13,12 +13,12 @@ Your phone reaches your Mac through a relay: a server on the internet that passe
 To run your own relay, deploy `apps/relay` from Zero's source code. Its README shows how. Then, on your Mac:
 
 1. Go to **Settings › Phone › Relay**.
-2. Click the **Relay** chip and choose **Your own relay…**.
+2. Click the chip on the **Relay server** row and choose **Your own relay…**.
 3. Type the relay's `wss://` address and click **Use it**.
 
 Phones you paired before must pair again. To go back, choose **Zero's relay** in the same chip.
 
-Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> or the gear at the foot of the window's left rail. The **Relay** row shows the state of the connection under its name:
+Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> or the gear at the foot of the window's left rail. The **Relay server** row shows the state of the connection under its name:
 
 | Status | What it means |
 |---|---|
@@ -127,7 +127,7 @@ Opening a task marks its reply as read on the phone and on the Mac, and clears i
 The **…** menu at the top right has:
 
 - **Details**: the task's **State**, **Workers**, **Where**, **Branch**, **Ticket**, **Agent**, **Model** and **Permissions**, and any **Attributes** its agent set. Tap a link in an attribute to open it.
-- **Save for later**: asks the agent to write down what's left, in Later.
+- **Save for later**: puts the whole task in Later. It leaves your tasks and pauses with its workers until you resume it.
 
 Write to the task in the box at the foot, **Write to this task**. When you leave the task, Zero keeps your draft.
 
@@ -156,7 +156,7 @@ The task starts in the workspace your phone shows, and opens.
 
 ## Come back to saved work
 
-**Later** holds work that your agents saved for you. **Open** and **Done** at the top switch between what's left and what you finished. Notes an agent saved without you asking show under **Suggested**.
+**Later** holds tasks you saved for later and notes your agents saved for you. **Open** and **Done** at the top switch between what's left and what you finished. Notes an agent saved without you asking show under **Suggested**.
 
 Swipe a note to mark it **Done** or **Not done**. Tap it to read all of it, with its links and the agent's write-up. From there:
 
@@ -164,7 +164,7 @@ Swipe a note to mark it **Done** or **Not done**. Tap it to read all of it, with
 - **Done** or **Not done** marks it.
 - **Copy** copies it.
 
-To save a task's work, choose **Save for later** from the task's menu.
+To save a whole task for later, choose **Save for later** from the task's menu.
 
 ## Record your screen
 
@@ -228,7 +228,7 @@ Each action works through Siri and in the Shortcuts app. In the phrases below, L
 | What needs me | "What needs me in Zero", "What's waiting for me in Zero" or "Anything need me in Zero" | Siri reads out the tasks and asks that wait for you, or "Nothing needs you right now." |
 | Check a task | "How is Login fix doing in Zero", "What's Login fix doing in Zero" or "Check on Login fix in Zero" | Siri says the task's state and what it does now. |
 | Open a task | "Open Login fix in Zero" | Opens the task. |
-| Save for later | "Save Login fix for later in Zero" | Asks the task's agent to save its work to Later. |
+| Save for later | "Save Login fix for later in Zero" | Puts the task in Later, paused, until you resume it. |
 | Pause agents | "Pause my agents in Zero" or "Pause Zero" | After you confirm, every task and its workers finish their current step and stop. |
 | Resume agents | "Resume my agents in Zero" or "Unpause Zero" | Takes your tasks off hold. Tasks with messages waiting continue. |
 

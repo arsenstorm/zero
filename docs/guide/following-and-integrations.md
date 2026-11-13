@@ -6,7 +6,7 @@ order: 8
 
 An agent can follow a pull request, an issue or a Slack thread. Zero reads it and tells the agent what changed, so the agent learns of a review or a reply without your help.
 
-Integrations connect Zero to GitHub, Linear and Slack, so agents can follow things there. GitHub and Linear also show your pull requests and issues in Zero's window.
+Integrations connect Zero to GitHub, Linear and Slack, so agents can follow things there.
 
 ## What following does
 
@@ -30,7 +30,13 @@ A task that's done and archived still follows its things. When one of them chang
 
 ## How agents follow things
 
-To make an agent follow something, give it the link. Agents start each follow themselves with the `zero` command, usually when they open a pull request or pick up an issue. Zero has no button to start a follow.
+To make an agent follow something, give it the link. Agents start follows themselves with the `zero` command, usually when they pick up an issue or watch a pull request. Zero has no button to start a follow.
+
+Zero follows each pull request that an agent opens, with no command from the agent. This works when the agent opens it with `gh pr create`, GitHub's API or an MCP tool. The task's conversation then shows a line such as **Following app#7**. When the task has no **PR** attribute yet, the pull request becomes its PR. An agent that sets a PR attribute with `zero attr PR <link>` follows that pull request too.
+
+A worker's pull requests pass to its lead with the worker's report, so the lead keeps hearing of reviews and merges once the worker is archived.
+
+When an agent ends its turn waiting, but follows nothing and runs nothing, nothing would wake it. Zero then asks the agent, once, to follow what it waits on or to say who it waits on.
 
 | Command | What it does |
 |---|---|
@@ -44,9 +50,9 @@ See [The zero command](/docs/cli) for every command.
 
 ## See and stop what agents follow
 
-Open **Settings › Following**. To open Settings, press <kbd>⌘</kbd> <kbd>,</kbd> or click the gear at the foot of the window's left rail.
+Each service's page in Settings, such as **Settings › GitHub**, lists the follows that Zero reads through it, under **Following**. To open Settings, press <kbd>⌘</kbd> <kbd>,</kbd> or click the gear at the foot of the window's left rail.
 
-The page groups the follows by **GitHub**, **Linear** and **Slack**. Until an agent follows something, the page shows **No agent follows anything yet.** Each row shows:
+Until an agent follows something there, the list shows **No agent follows anything through GitHub yet.**, with the service's name. Each row shows:
 
 - The thing's title, such as the pull request's name.
 - Below the title, the topic that Zero reads, such as `github/acme/app/42`. Next comes the filter, if the follow has one: **only your pull requests**, or **about** and the words. Last comes the time of Zero's last read.
@@ -55,15 +61,15 @@ The page groups the follows by **GitHub**, **Linear** and **Slack**. Until an ag
 
 To stop a follow, point at its row and click **×**, **Unfollow**. Double-click a row to open the thing in your browser. Right-click a row for **Open**, **Copy topic** and **Unfollow**.
 
-Each integration's page in **Integrations** also lists the follows that Zero reads through it, under **Following**.
+A task's details pane lists what that task follows, under **Follows**. Click one to open it. To stop it, point at it and click **×**, **Unfollow**.
 
-## Open Integrations
+## Open the integrations
 
-Click **Integrations**, the puzzle piece near the foot of the window's left rail. The page lists **GitHub**, **Linear** and **Slack** on its left. Pick one to connect it, to see what agents follow through it, and to make its views.
+**GitHub**, **Linear** and **Slack** are in Settings, under **Connections** in the sidebar. **Browsers** and **MCP servers** are under **Agents**. To open Settings, press <kbd>⌘</kbd> <kbd>,</kbd> or click the gear at the foot of the window's left rail. The pages for GitHub, Linear and Slack each show the connection, the links and what agents follow through it.
 
 ## Connect GitHub, Linear and Slack
 
-An integration that isn't connected says so at the top of its page, as **Connect GitHub**, **Connect Linear** or **Connect Slack**, with the steps below it.
+An integration that isn't connected says so under **Connection** on its page, as **Connect GitHub**, **Connect Linear** or **Connect Slack**, with the steps below it.
 
 **GitHub.** Zero uses the GitHub CLI and the account that the CLI is already signed in to.
 
@@ -83,73 +89,28 @@ An integration that isn't connected says so at the top of its page, as **Connect
 
 The page then shows **Connected as** and your GitHub login. To disconnect, sign out of the GitHub CLI.
 
-**Linear.** Click **Connect Linear**, then allow Zero on the Linear page that opens in your browser. Zero reads Linear and never writes to it. It keeps the connection on this Mac. To disconnect, click **Disconnect** on the page.
+**Linear.** Click **Connect Linear**, then allow Zero on the Linear page that opens in your browser. Zero reads Linear and never writes to it. Issue keys of the workspace's teams, such as `ABC-123`, then link in messages. It keeps the connection on this Mac. To disconnect, click **Disconnect** on the page.
 
 **Slack.** Zero reads channels, messages and names. It posts nothing. Each Slack workspace gets Zero's own Slack app:
 
-1. Click **Create Zero's Slack app**. Slack opens with the app filled in.
+1. Click **Connect Slack**, then **Open Slack**. Slack opens with the app filled in.
 2. In Slack, click **Create**, then **Install to Workspace**.
 3. Copy the **User OAuth Token** that Slack shows.
 4. Paste the token in the `xoxp-…` box in Zero and click **Connect**.
 
-**Settings › Links › Slack › Connect Slack** goes through the same steps. To connect more than one Slack workspace, do the same steps for each one.
+To connect more than one Slack workspace, click **Connect Slack** beside **Workspaces** and do the same steps for each one.
 
 A Slack connection made before agents could follow Slack needs new scopes. Add the scopes from the app's manifest to your Slack app, reinstall the app and paste the new token.
 
-The page then shows **Connected to** and the workspace's name. When one Slack workspace is connected, **Disconnect** is on the Integrations page. When more than one is connected, disconnect each one in **Settings › Links › Slack**.
-
-## Keep your pull requests and issues in the rail
-
-With GitHub or Linear connected, turn on **Show in the sidebar** on its page in Integrations. The integration then gets its own place in the window's left rail, under Loops. The switch is off by default.
-
-Click the integration's icon in the rail. Its views show down the left, and the items of the open view show on the right. While the list is on screen, it refreshes every minute. The refresh button fetches it again at once.
-
-- **GitHub** shows a table of pull requests: **#**, **Pull request**, **Repository**, **State**, **Checks** and **Author**. Click a row to open the pull request.
-- **Linear** shows issues grouped by state, as Linear does. Click a state's heading to fold its issues away. Each row shows the priority, key, state, title, labels, assignee and when the issue was made. Click a row to open the issue. Right-click a row for **Open in Linear**, **Copy link**, and **Start task** or **Open task**.
-
-Right-click an integration's icon in the rail for **Move up**, **Move down**, **Edit views** and **Hide from the sidebar**. To move an icon, hold <kbd>⌘</kbd> and drag it. **Edit views** at the foot of an integration's views opens its page in Integrations.
-
-## Set up views
-
-A view is a saved list of pull requests or issues. To make one, click **Add a view** under **Views** on GitHub's or Linear's page in **Integrations**.
-
-To change a view, point at it and click the pen, **Edit**, or double-click the view. The **…** button beside the pen has **Move up**, **Move down** and **Delete**. The view's right-click menu has the same items, and **Edit**.
-
-GitHub starts with **My pull requests** and **Review requests**. Linear starts with **My issues**: issues assigned to you that are in the backlog, to do or in progress.
-
-A **GitHub view** has:
-
-- **Name**.
-- **Search**: a search in GitHub's own syntax, as on github.com. Click a chip under the box, such as `author:@me`, `review-requested:@me` or `org:`, to add it to the search. To show only the repositories of one organisation, add `org:` and the organisation's name.
-
-A **Linear view** has:
-
-- **Name**.
-- **Assigned to**: **Me**, **Anyone** or **No one**.
-- **Teams**: **Every team**, or the teams you pick.
-- **States**: the states to show. When you pick none, the view shows every state.
-
-## Start a task from an issue
-
-A Linear view can start a task for any of its issues. In the view's form, turn on **Start a task from each issue** and fill in:
-
-- **Folder**: where the task works. Type a path or click **Choose…**.
-- **Agent**: **Claude**, **Codex** or **OpenCode**, with a model and an effort. To use the agent's default model, leave the model empty.
-- **Prompt**: what Zero tells the task. Zero fills in `{key}`, `{title}` and `{url}` from the issue. The default is `Work on {key}: {title} ({url}).`
-
-Then, in the view, point at an issue and click **Start**, or right-click the issue and choose **Start task**. The task gets the issue's key and title as its name.
-
-The task also gets its own scratchpad, State, where it records where it stands. The prompt tells the task where that scratchpad is, unless you put `{state}` in the prompt yourself.
-
-When an issue already has a task, the issue shows the task's state instead of **Start**. Click the state to open the task. For scratchpads, see [Later, scratchpads and loops](/docs/later-scratchpads-loops).
+The page then lists the workspace under **Workspaces**. Each workspace has its own **Disconnect**.
 
 ## Make references in messages open where you want
 
-When an agent's message names a pull request, a commit, an issue or a Slack channel, Zero makes the name a link. Choose where those links go in **Settings › Links**:
+When an agent's message names a pull request, a commit, an issue or a Slack channel, Zero makes the name a link. Choose where those links go under **Links** on the integration's page:
 
 | Setting | Where | What it does |
 |---|---|---|
-| Link pull requests and commits | Settings › Links › GitHub | `repo#123`, `#123` and commit hashes open on GitHub. On by default. |
-| Link issues | Settings › Links › Linear | Issue keys such as `ABC-123` open the issue. On by default. |
-| Open issues in the Linear app | Settings › Links › Linear | Opens issues in Linear's app, not in the browser. On by default. Greyed out when Linear's app isn't installed. The Linear page in Integrations has the same switch. |
-| Slack | Settings › Links › Slack | The Slack workspaces that Zero is connected to. Their #channels and message links open in Slack. **Connect Slack** adds a workspace. **Disconnect** removes it. |
+| Link pull requests and commits | Settings › GitHub › Links | `repo#123`, `#123` and commit hashes open on GitHub. On by default. |
+| Link issues | Settings › Linear › Links | Issue keys such as `ABC-123` open the issue. On by default. |
+| Open issues in the Linear app | Settings › Linear › Links | Opens issues in Linear's app, not in the browser. On by default. Greyed out when Linear's app isn't installed. |
+| Slack | Settings › Slack › Workspaces | The Slack workspaces that Zero is connected to. Their #channels and message links open in Slack. **Connect Slack** adds a workspace. **Disconnect** removes it. |

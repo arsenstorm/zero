@@ -10,7 +10,7 @@ Accounts in Zero are optional. When Zero has no account for an agent, the agent'
 
 ## Open the Accounts page
 
-Open **Settings › Accounts**. To open Settings, press <kbd>⌘</kbd> <kbd>,</kbd> or click the gear at the foot of the window's left rail.
+Open **Settings › Accounts and models**. To open Settings, press <kbd>⌘</kbd> <kbd>,</kbd> or click the gear at the foot of the window's left rail.
 
 The page has a section for each agent: **Claude Code**, **Codex** and **OpenCode**. Each section lists its accounts. A section with no accounts shows **None yet**. **Add model** and **Add account** are beside the agent's name.
 
@@ -57,7 +57,7 @@ Under the tiles, **Activity** has a square for each day, darker the more turns t
 
 While the page is open, Zero asks each agent for its accounts' usage every two minutes. API keys have no allowance, so they show no tiles.
 
-The foot of the tasks sidebar also shows the accounts your tasks used in the last day, with a **5h** and a **Week** bar each. Point at a bar to see when it resets. Click the card to open **Settings › Accounts**.
+The foot of the tasks sidebar also shows the accounts your tasks used in the last day, with a **5h** and a **Week** bar each. Point at a bar to see when it resets. Click the card to open **Settings › Accounts and models**.
 
 ## Which account a task uses
 
@@ -80,7 +80,7 @@ When an account's key is missing from your Keychain, the task doesn't start. It 
 
 ## Pick a model and effort for a new task
 
-To open the **New task** page, click **Home**, the house at the top of the window's left rail. On the right of the row under the box, a chip shows the agent's icon, the model and the effort, such as "Model · High".
+To open the **New task** page, click **Home**, the house at the top of the window's left rail. On the right of the row under the box, a chip shows the agent's icon, the model and the effort, such as "Opus 5.5 · High". A model the list doesn't have shows by a readable name, such as "Opus 5.5" for `claude-opus-5-5`.
 
 1. Click the chip. It has a tab for each agent: **Claude Code**, **Codex** and **OpenCode**. To switch agent, click a tab or press <kbd>←</kbd> and <kbd>→</kbd>.
 2. Point at a model, or move to it with <kbd>↑</kbd> and <kbd>↓</kbd>. The pane beside the list describes the model. For models that have levels, the pane also shows an **Effort** slider.
@@ -103,7 +103,7 @@ The list also shows the models of the other agents. When you pick one, the task 
 
 Sometimes a new model is available before an agent lists it. To add it to Zero:
 
-1. Open **Settings › Accounts**.
+1. Open **Settings › Accounts and models**.
 2. Click **Add model** beside the agent's name.
 3. In **Add a Claude Code model**, or the Codex or OpenCode form, type the model's id in the form that the agent accepts. For example, `claude-mythos-5-2`, `gpt-5.5-codex`, or `provider/model` for OpenCode.
 4. Optionally, type a name for the list, such as "Mythos 5.2". Without one, the list shows the id.
@@ -115,6 +115,8 @@ When an account turns out not to have the model, its tasks on that model run on 
 
 ## Where the lists come from
 
-- **Claude Code**: **Fable**, **Opus**, **Sonnet** and **Haiku**, which Claude Code resolves to the latest model of each. Then the models that Claude Code has offered your account, such as the 1M-context versions, and the models you added. Zero reads these from Claude Code's own files and never calls Anthropic.
+- **Claude Code**: first **Fable**, **Opus**, **Sonnet** and **Haiku**. Each follows the latest model of its family. Once a task has run one, the row shows that version's name, such as "Opus 5.5". Then come the models that Claude Code has offered your account, such as the 1M-context versions, and the models you added. Zero reads these from Claude Code's own files and never calls Anthropic.
+- Under them, each version your tasks ran or you typed, newest first. Such a row stays on that version, even when a newer one comes out.
+- **Other model…**, at the end of Claude Code's list, takes any Claude model by its full id. Click it, type the id, such as `claude-opus-5`, and press <kbd>Return</kbd>. The model stays in the list from then on.
 - **Codex**: the models that Codex offers your account, as Codex lists them, plus the models you added.
 - **OpenCode**: its own list, which Zero reads when you open the chip. The rows fill in after Zero reads the list.

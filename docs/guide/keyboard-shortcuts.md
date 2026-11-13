@@ -10,11 +10,11 @@ Some keys, such as the number keys in the inbox, work only when you aren't typin
 
 | Keys | What it does |
 |---|---|
-| <kbd>⌥</kbd> <kbd>Space</kbd> | The **Talk hotkey**. Opens the inbox panel on the oldest waiting ask and starts dictation. Press it again to stop dictation. |
+| <kbd>⌥</kbd> <kbd>Space</kbd> | The **Inbox hotkey**. Opens the inbox panel. |
 
-To change the Talk hotkey:
+To change the Inbox hotkey:
 
-1. Open **Settings › General › Zero › Talk hotkey**. To open Settings, press <kbd>⌘</kbd> <kbd>,</kbd> or click the gear at the foot of the window's left rail.
+1. Open **Settings › General › Zero › Inbox hotkey**. To open Settings, press <kbd>⌘</kbd> <kbd>,</kbd> or click the gear at the foot of the window's left rail.
 2. Click the button. While it waits for keys, the button reads **Press keys…**.
 3. Press the new keys. They must include at least one of <kbd>⌘</kbd>, <kbd>⌥</kbd>, <kbd>⌃</kbd> or <kbd>⇧</kbd>. <kbd>Esc</kbd> cancels.
 
@@ -32,7 +32,7 @@ Click Zero's icon in the menu bar. These keys work while its menu is open.
 
 ## In the inbox panel
 
-The inbox panel opens beside the control bar, on the right edge of your screen. These keys work while the panel has the keyboard focus. The panel gets the focus when you click the bar or press the Talk hotkey. See [The inbox and asks](/docs/inbox-and-asks).
+The inbox panel opens beside the control bar, on the right edge of your screen. These keys work while the panel has the keyboard focus. The panel gets the focus when you click the bar or press the Inbox hotkey. See [The inbox and asks](/docs/inbox-and-asks).
 
 | Keys | What it does |
 |---|---|
@@ -42,7 +42,6 @@ The inbox panel opens beside the control bar, on the right edge of your screen. 
 | Any letter | Starts to type that letter into the selected card's reply box, or into the agent's message box. |
 | <kbd>Return</kbd>, in a reply box | Sends your reply. |
 | <kbd>⌘</kbd> <kbd>V</kbd>, in a reply box | Pastes. A pasted image goes in as its file path. |
-| <kbd>Space</kbd> | Starts or stops dictation. |
 | <kbd>Delete</kbd> | Removes the selected card from the panel, once you've answered it. |
 | <kbd>Esc</kbd> | Steps back one thing at a time, in the order below. |
 
@@ -51,12 +50,11 @@ Each <kbd>Esc</kbd> does the first of these that applies:
 1. Closes the suggestions list in the message box.
 2. Closes an open model or project list.
 3. Closes the agent's screen in the panel.
-4. Stops dictation.
-5. Closes the open text box of an answer.
-6. Takes back the answer you picked last, while its row is still orange: 2 seconds by default. To change the time, go to **Settings › Composer and inbox › Inbox › Take-back window**.
-7. Leaves the box you're typing in.
-8. Leaves the agent's view and goes back to the inbox.
-9. Hides the panel.
+4. Closes the open text box of an answer.
+5. Takes back the answer you picked last, while its row is still orange: 2 seconds by default. To change the time, go to **Settings › Inbox and bar › Answers › Undo an answer**.
+6. Leaves the box you're typing in.
+7. Leaves the agent's view and goes back to the inbox.
+8. Hides the panel.
 
 An agent's screen, such as a command's picker, can open in the panel. While it's open, the arrows, <kbd>Return</kbd>, <kbd>Delete</kbd> and letters go to that screen.
 
@@ -75,7 +73,6 @@ An agent's screen, such as a command's picker, can open in the panel. While it's
 | <kbd>⌘</kbd> <kbd>Z</kbd> | Undo. |
 | <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>Z</kbd> | Redo. |
 | <kbd>⌘</kbd> <kbd>X</kbd>, <kbd>⌘</kbd> <kbd>C</kbd>, <kbd>⌘</kbd> <kbd>V</kbd>, <kbd>⌘</kbd> <kbd>A</kbd> | Cut, copy, paste, select all. |
-| <kbd>⌘</kbd> and drag | Moves an integration's icon up or down the left rail. |
 
 In dialogs, <kbd>Return</kbd> presses the main button. <kbd>Esc</kbd> presses **Cancel**. When you rename something, <kbd>Return</kbd> saves and <kbd>Esc</kbd> cancels.
 
@@ -132,6 +129,8 @@ These lists open from the chips in the composer, such as the model chip.
 | <kbd>Return</kbd> | Picks the highlighted row. |
 | <kbd>Esc</kbd> | Closes the list. A second click on its chip also closes it. |
 
+In Claude Code's model list, **Other model…** takes any Claude model by its full name, such as `claude-opus-5`. Pick the row, type the name and press <kbd>Return</kbd>. <kbd>Esc</kbd> turns the box back into the row.
+
 ## In a menu
 
 Zero's menus, such as a task's right-click menu, take these keys:
@@ -142,7 +141,7 @@ Zero's menus, such as a task's right-click menu, take these keys:
 | <kbd>Return</kbd> | Picks the highlighted item. |
 | <kbd>Esc</kbd> | Closes the menu. |
 
-An item with an arrow, such as **Change status**, has its own menu. Point at the item to open it beside the menu.
+An item with an arrow, such as **Status**, has its own menu. Point at the item to open it beside the menu.
 
 ## In a scratchpad
 
@@ -159,13 +158,3 @@ An item with an arrow, such as **Change status**, has its own menu. Point at the
 | <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>9</kbd> | Checklist. |
 
 See [Later, scratchpads and loops](/docs/later-scratchpads-loops).
-
-## In a terminal
-
-In a task's terminal, all keys go to the terminal except these:
-
-| Keys | What it does |
-|---|---|
-| <kbd>⌘</kbd> <kbd>C</kbd> | Copies the selection. |
-| <kbd>⌘</kbd> <kbd>V</kbd> | Pastes. |
-| <kbd>⌘</kbd> <kbd>A</kbd> | Selects all. |

@@ -74,7 +74,7 @@ In **Settings › Browsers › Firefox**, the **Firefox Developer Edition** row 
 
 An agent that checks a change to a web page can run one step in Chrome, Firefox and Safari at the same time. It then sees the page in each browser, side by side. Chrome and Firefox are yours, and you're signed in. Safari is an automation window that's signed out of everything and keeps nothing.
 
-To make sure that Safari's automation windows work, open **Settings › Browsers › Safari**. Then click **Try it** on the **Safari's automation windows** row. If Safari refuses remote control, turn on **Allow remote automation** in Safari's own settings, under **Developer**.
+To make sure that Safari's automation windows work, open **Settings › Browsers › Safari**. Then click **Try it** on the **Let agents use Safari** row. If Safari refuses remote control, turn on **Allow remote automation** in Safari's own settings, under **Developer**.
 
 ## Add an MCP server
 
@@ -90,6 +90,7 @@ An MCP server gives agents more tools, such as a lookup in a database that you u
 | **Runs a command** or **At a URL** | How the server runs: a command on your Mac, or a server at an address. A new server starts on **Runs a command**. |
 | Command | For **Runs a command**: the program, such as `npx`, `uvx` or a path. |
 | Arguments | For **Runs a command**: its arguments, separated by spaces. |
+| Start when first used | For **Runs a command**. Zero starts the server when a task first calls one of its tools, not as each task starts. Until then, Zero answers for it with the tools it listed last time. Off by default. Turn it on for a server that tasks seldom call, as each running copy takes memory. |
 | URL | For **At a URL**: the server's address, such as `https://…/mcp`. A server that signs in with OAuth needs no headers. |
 | Environment | For **Runs a command**: values that the server gets, each with a **NAME**. **Add** adds another value. |
 | Headers | For **At a URL**: headers sent with each request, each with a **NAME**. |

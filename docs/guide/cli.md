@@ -36,12 +36,14 @@ Each of these puts a card in your inbox. By default, the command waits until you
 
 | Command | Flags | What you see in Zero |
 |---|---|---|
-| `zero ask "question?"` | `--option`, `--body`, `--title`, `--code`, `--block` | A question, or a choice when there are options. Each `--option` adds one option. The first option is the one that the agent recommends. An option that ends in "…" opens a box for your own words. `--body` adds a few sentences of detail under the question. `--code` shows a command or snippet in the card for you to run yourself. |
-| `zero approve "what"` | `--body`, `--code` | A request for your go-ahead, with **Yes**, **No** and **Suggest something else…**. |
-| `zero run 'command'` | `--why`, `--cwd`, `--title`, `--allow` | **Allow this command?**, with **Run**, **Reject** and **Suggest something else…**. When you click **Run**, Zero runs the command on your Mac and gives its output back to the agent. `--why` is required: it says what the agent needs the output for. |
+| `zero ask "question?"` | `--option`, `--body`, `--title`, `--code`, `--block`, `--about` | A question, or a choice when there are options. Each `--option` adds one option. The first option is the one that the agent recommends. An option that ends in "…" opens a box for your own words. `--body` adds a few sentences of detail under the question. `--code` shows a command or snippet in the card for you to run yourself. |
+| `zero approve "what"` | `--body`, `--code`, `--about` | A request for your go-ahead, with **Yes**, **No** and **Suggest something else…**. |
+| `zero run 'command'` | `--why`, `--cwd`, `--title`, `--allow`, `--about` | **Allow this command?**, with **Run**, **Reject** and **Suggest something else…**. When you click **Run**, Zero runs the command on your Mac and gives its output back to the agent. `--why` is required: it says what the agent needs the output for. |
 | `zero withdraw <id>` | `--reason` | The ask leaves your inbox, because the agent no longer needs it. |
 
 Zero refuses an ask whose question is longer than 140 characters or whose detail is longer than 280, and tells the agent to shorten it. Zero also refuses a question with choices such as "(a) … (b) …" in its text, and tells the agent to use `--option`.
+
+**What an ask is about.** In a task Zero runs, the card shows **About** and a link to the agent's words just before the ask. Click it to go to those words in the conversation. With `--about "#bench-plan"`, the link goes to that heading of the agent's instead, by GitHub's anchor for it. Zero refuses an ask whose heading isn't in the conversation.
 
 **Repeated reads with `--allow`.** When an agent runs the same read-only command on different files, it can pass the start of the command as `--allow`, for example `zero run 'cat logs/today.txt' --allow 'cat'`. The card then also offers **Run, and allow the same for this task**. After you choose it, later commands of that kind from the same task, in the same folder, run without an ask.
 
@@ -49,7 +51,7 @@ Zero refuses an ask whose question is longer than 140 characters or whose detail
 
 | Setting | Where | What it does |
 |---|---|---|
-| Ask expiry | Settings › Composer and inbox › Inbox › Ask expiry | How long an ask waits for you before it expires, unless the agent sets its own with `--ttl`. The default is 60 minutes. |
+| Unanswered asks expire after | Settings › Inbox and bar › Answers | How long an ask waits for you before it expires, unless the agent sets its own with `--ttl`. The default is 1 hour. |
 
 Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> or the gear at the foot of the window's left rail.
 
@@ -67,7 +69,7 @@ Zero starts a turn for a message from another task, an event or a reminder. The 
 | Last line | State in Zero |
 |---|---|
 | `[zero: done]` | **Done**, once `zero done` has confirmed it. Otherwise **Replied**. |
-| `[zero: waiting]` | **Waiting**: the next move is someone else's, such as a review. |
+| `[zero: waiting]` | **Waiting**: the next move is someone else's, such as a review. When the task follows nothing and has nothing running, Zero tells the agent once that nothing will wake it. |
 | `[zero: asked <id>]` | **Needs you**, while that ask is open. |
 | `[zero: working]` | **Replied**: the agent pauses between steps. |
 | `[zero: blocked]` | **Waiting**. Only `zero blocked`, once confirmed, marks the task **Blocked**. |
@@ -102,13 +104,14 @@ Zero puts a finished worker away an hour after its lead has its report. A worker
 |---|---|---|
 | `zero table "Title"` | `--column NAME`, `--row "a \| b"`, `--session` | A table in the task's conversation. Give `--column` once per column and `--row` once per row. A cell holding a state, such as `working` or `done`, shows as a pill. In a column named for a risk, `low`, `medium` and `high` show as pills too. The table can also come as JSON on standard input: `{"title", "columns", "rows"}`. |
 | `zero attr NAME [VALUE]` | `--session` | An attribute in the task's details pane, such as `zero attr PR https://github.com/example/app/pull/12`. A link opens when you click it. Without a value, the command removes the attribute. |
+| `zero expect DURATION ["what"]` | `--session` | Says how long the step under way takes, such as `20m` for a full test run, so Zero doesn't take it for stuck. `DURATION` is like `90s`, `20m` or `1h30m`. A command that hangs well past it, with no output and no CPU, Zero may stop, and it tells the agent why. **Settings › Agents › Stuck commands** sets what Zero does. |
 | `zero label "name"` | `--ticket`, `--where PLACE`, `--session` | Renames the task. `--ticket` sets its ticket. `--where` sets the **Where** shown for it, such as a machine it runs on. `--where ""` shows its folder again. |
 
 ## Hear of changes and wake up later
 
 | Command | Flags | What it does |
 |---|---|---|
-| `zero follow <url or topic>...` | `--mine`, `--about "word,other words"`, `--session` | The task hears of changes between its turns. It can follow a pull request, for its reviews, comments, checks, pushes and merge. It can also follow an issue, one comment thread in an issue, or a Slack thread or channel. In a busy channel, `--mine` passes on only messages that name the pull requests the task follows, and `--about` only those with these words. **Settings › Following** shows what tasks follow. So does each service's page under **Integrations** in the window's left rail. |
+| `zero follow <url or topic>...` | `--mine`, `--about "word,other words"`, `--session` | The task hears of changes between its turns. It can follow a pull request, for its reviews, comments, checks, pushes and merge. It can also follow an issue, one comment thread in an issue, or a Slack thread or channel. In a busy channel, `--mine` passes on only messages that name the pull requests the task follows, and `--about` only those with these words. Each service's page in Settings, such as **Settings › GitHub**, shows what tasks follow through it, under **Following**. A task's details pane shows its own, under **Follows**. Zero follows a pull request that a task opens by itself, and makes it the task's **PR** attribute when it has none. |
 | `zero unfollow <topic>...` | `--all`, `--session` | Stops following. |
 | `zero following` | `--session` | Lists what the task follows, and any trouble reading it. |
 | `zero watch -- command...` | `--session` | Runs the command in the background. The task is told how it ended, so it doesn't need to keep checking. |
@@ -130,7 +133,7 @@ Zero puts a finished worker away an hour after its lead has its report. A worker
 | `zero later done <id>`, `open <id>`, `delete <id>` | | Marks an item done or open again, or deletes it. |
 | `zero browser <tool> ['{json}']` | `--session` | Uses your Chrome, through Zero for Chrome, for agents that don't have Zero's browser tools. Screenshots are saved to a file. See [Browsers and MCP servers](/docs/browsers-and-mcp). |
 | `zero video <file>` | `--frames N`, `--at T,T…`, `--from T`, `--to T`, `--every S`, `--out DIR` | Turns a video into pictures an agent can look at. Without flags, it takes 12 pictures spread over the video. |
-| `zero mcp` | | Runs Zero's MCP server, for adding it to an agent by hand. |
+| `zero mcp` | | Runs Zero's MCP server, for adding it to an agent by hand. When Zero's daemon isn't running, it starts it from the Mac's Login Items, or opens Zero in the background. |
 
 ## Commands for you in a terminal
 
@@ -138,13 +141,13 @@ Run these yourself to check on Zero.
 
 | Command | Flags | What it does |
 |---|---|---|
-| `zero list` | `--all` | Lists the open asks: id, state, kind, agent and title. `--all` lists every ask Zero keeps. |
+| `zero list` | `--all` | Lists the open asks: id, state, kind, agent and title. `--all` lists every ask Zero keeps: the open ones, those from the last day, and each agent's latest. |
 | `zero status <id>` | | Prints an ask's state and answer. |
 | `zero wait <id>` | | Waits for an ask's answer. If Zero restarts while it waits, it keeps waiting for up to 10 minutes. |
 | `zero say <agent> "text"` | | Sends your words to an agent, as the inbox's message box does. |
 | `zero board` | `--watch` | Prints your tasks as the sidebar shows them, as JSON. `--watch` prints a new line each time something changes. |
 | `zero usage` | | Each agent's usage limits, as its CLI last reported them. |
-| `zero attach [agent]` | | Shows one of Zero's own terminal agents in your terminal, to watch or type in. <kbd>⌃</kbd> <kbd>]</kbd> detaches. Without an agent, it lists them. |
+| `zero open-terminal [task]` | | Opens the task in your terminal app, on its agent's own resume. Without a task, the one it runs in. See [Open in Terminal](/docs/tasks-and-workers#continue-in-your-terminal-app). |
 
 ## Flags every ask takes
 
@@ -153,7 +156,7 @@ Run these yourself to check on Zero.
 | `--async` | Prints the ask's id and returns at once. | Waits for your answer. |
 | `--agent NAME` | The name the ask comes from. | Inside a task, that task. Elsewhere, the `ZERO_AGENT` variable. |
 | `--ticket ID` | The ticket the ask is about, shown with it. | None. |
-| `--ttl MINUTES` | How long the ask waits before it expires. | **Ask expiry** in Settings. |
+| `--ttl MINUTES` | How long the ask waits before it expires. | **Unanswered asks expire after** in Settings. |
 
 The command exits with `0` when you answered, `2` when you declined and `3` when the ask expired or was withdrawn. For `zero run`, the exit code is the command's own.
 
@@ -171,7 +174,7 @@ Zero's plugin connects Claude Code to Zero. Turn it on in **Settings › Agents 
 
 The plugin has three parts.
 
-**Hooks.** They apply to Claude Code that Zero starts in its own terminal. They also apply to agents that work beside a drop folder. They don't apply to Claude Code that you start in a terminal yourself.
+**Hooks.** They apply to Claude Code that Zero runs. They don't apply to Claude Code in a terminal: one you start yourself, or a task you open there with **Open in Terminal**.
 
 | Hook | What it does |
 |---|---|

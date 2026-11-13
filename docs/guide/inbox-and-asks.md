@@ -15,7 +15,7 @@ Your asks show in two places:
 - **The inbox panel**, beside the control bar on the right edge of your screen. Point at the tray icon at the top of the bar to peek at the panel, or click the icon to keep it open. A red dot on the icon means at least one ask is waiting. See [The control bar](/docs/control-bar).
 - **The Inbox page** in Zero's window. Click the tray icon in the window's left rail. Its tip reads **Inbox**. A red badge on the icon shows how many asks are waiting on you.
 
-The **Talk hotkey** works from any app: <kbd>⌥</kbd> <kbd>Space</kbd> unless you've changed it. It opens the inbox panel on the oldest waiting ask and starts dictation, so you can answer by speaking. See [Answer by speaking](#answer-by-speaking).
+The **Inbox hotkey** works from any app: <kbd>⌥</kbd> <kbd>Space</kbd> unless you've changed it. It opens the inbox panel. To change it, see [Keyboard shortcuts](/docs/keyboard-shortcuts).
 
 When **Bar in the window** puts the control bar in Zero's window, clicking the bar's inbox icon opens the Inbox page instead of the panel. Pointing at it still peeks at the panel.
 
@@ -27,6 +27,7 @@ Each card has:
 
 - **The question** in bold. For a command, it reads **Allow this command?**
 - **Who asked** under it: the agent's name, and the title it gave the ask.
+- **About**, for an ask from a task in Zero: what the ask is about. It's the agent's words just before the ask, or a heading the agent named. Click it to open the task at those words, which light up for a moment. **Back to the ask**, at the top of the task's page, takes you back to the ask in the inbox. It shows only when the ask isn't docked on that page.
 - **Why**, in the agent's words. Zero folds long text to three lines. Click it to read it all, and click again to fold it.
 - **A command box**, when the ask is about a command. **Copy** copies the command. A long command shows **Show all** and **Show less**. When the command runs a script, the script shows under the command, with **Show the whole script** for a long one. When the command runs in a folder other than the agent's own, that folder shows under it.
 - **The answers** as numbered rows, or a box for your reply.
@@ -52,27 +53,15 @@ Once you pick an answer:
 2. The row turns green with a tick once the agent has it. The other rows fade.
 3. When Zero can't reach the agent, the row turns red with a cross. Point at it to read **Couldn't reach the agent. Click to try again.**, and click it to send the answer again.
 
-Three seconds after your answer lands, the panel selects the next waiting ask. To stay on the card you answered, turn off **Move to the next ask** in **Settings › Composer and inbox › Inbox**.
+Three seconds after your answer lands, the panel selects the next waiting ask.
 
 Press <kbd>Delete</kbd> to remove a finished card from the panel.
-
-## Answer by speaking
-
-1. Press the **Talk hotkey**, <kbd>⌥</kbd> <kbd>Space</kbd> unless you've changed it. The panel opens on the oldest waiting ask and starts listening.
-2. Speak your answer. Your words show in the card's reply box, or in the box of its answer that ends in "…". A red waveform in place of the microphone shows that Zero is listening.
-3. Press the Talk hotkey again to stop listening, then press <kbd>Return</kbd> to send.
-
-In the panel, <kbd>Space</kbd> starts and stops dictation too, and so does the microphone button in a reply box.
-
-Dictation needs a box to type into. On a card with only fixed answers, such as **Yes** and **No**, and no message box for the agent, click an answer or press its number instead.
-
-To change the hotkey, go to **Settings › General › Zero › Talk hotkey**. Click the button and press the new keys. It needs at least one of <kbd>⌘</kbd>, <kbd>⌥</kbd>, <kbd>⌃</kbd> or <kbd>⇧</kbd>. <kbd>Esc</kbd> cancels. To choose the microphone, go to **Settings › Composer and inbox › Dictation › Microphone**. It's **System default** unless you pick one.
 
 ## Take an answer back
 
 Picked the wrong answer? Press <kbd>Esc</kbd> in the inbox panel while the row is still orange. The card goes back to waiting, with nothing chosen, and you can answer again.
 
-You have 2 seconds unless you change it. Set the time in **Settings › Composer and inbox › Inbox › Take-back window**, from 0 to 5 seconds in half-second steps. At 0, every answer goes at once.
+You have 2 seconds unless you change it. Set the time in **Settings › Inbox and bar › Answers › Undo an answer**: **Off**, **1 s**, **2 s**, **3 s** or **5 s**. At **Off**, every answer goes at once.
 
 Taking back works only in the inbox panel. Once the row turns green, the agent has your answer.
 
@@ -80,7 +69,7 @@ Taking back works only in the inbox panel. Once the row turns green, the agent h
 
 ### A question
 
-The agent asks something and waits for your words. The card shows the question and a box that reads **Reply to** and the agent's name. Type or dictate your answer and press <kbd>Return</kbd>.
+The agent asks something and waits for your words. The card shows the question and a box that reads **Reply to** and the agent's name. Type your answer and press <kbd>Return</kbd>.
 
 ### A choice
 
@@ -91,6 +80,8 @@ One choice has its own look: **Is this task done?**, in purple, with **Done** an
 ### An approval
 
 The agent asks whether it can do something, such as "Delete the old build folder?". The answers are **Yes**, **No** and **Suggest something else…**. Both **No** and **Suggest something else…** count as declining.
+
+Zero sends one approval of its own: **Sign in to** and an MCP server's name, when a task needs you to sign in to that server. Click **Open the sign-in page** and sign in on this Mac, or **Not now**. See [Browsers and MCP servers](/docs/browsers-and-mcp).
 
 ### A command to run
 
@@ -103,7 +94,7 @@ The agent wants to run a command on your Mac and see its output. The card reads 
 | **Reject** | The command doesn't run. |
 | **Suggest something else…** | Opens a box to tell the agent what to do instead. The command doesn't run. |
 
-While the command runs, the card reads **Running command…** and its output scrolls in the box. **Stop**, in red, stops it. When the command has a terminal of its own, **Terminal** shows it in place of the output, and **Output** switches back.
+While the command runs, the card reads **Running command…** and its output scrolls in the box. **Stop**, in red, stops it. **Terminal** follows its output in your terminal app.
 
 Then the card reads **Ran command**, **Command failed (exit** and its exit code **)**, or **Command rejected**. When Zero lost track of the command while it ran, the card reads **Lost track of the command**, with **Lost: check what it did before running it again** under it.
 
@@ -124,7 +115,7 @@ A note tells you where an agent stands. It needs no answer and never shows in th
 
 Before a tool acts, the agent's CLI can ask for your permission. Zero turns the request into an ask.
 
-Claude Code can run in a terminal that Zero starts. It can also work beside a drop folder, a synced folder that agents on other machines use to reach your inbox. In both cases, the question says what Claude Code wants to do, such as **Run a command?**, **Edit a file?**, **Write a file?** or **Fetch a page?**. The box shows the command, file or address.
+When Claude Code runs in a terminal that Zero starts, the question says what Claude Code wants to do, such as **Run a command?**, **Edit a file?**, **Write a file?** or **Fetch a page?**. The box shows the command, file or address.
 
 The answers are **Allow**, **Always allow**, **Deny**, and **Deny, and say why…**. **Always allow** shows only when Claude Code suggests a rule to remember. Only the **Deny** answers count as declining.
 
@@ -166,7 +157,7 @@ The Inbox page in Zero's window lists every ask in a table. To open it, click th
 Its sidebar has:
 
 - **Waiting on you**, with how many: the asks waiting, oldest first.
-- **Answered**: the last 50 asks you've answered, newest first.
+- **Answered**: up to 50 asks you've answered in the last day, newest first.
 - **Agents**: one row for each agent that has asked you something. An orange dot and a count mean that agent has asks waiting, and a grey dot means none. Click an agent to see its waiting asks, then its answered ones.
 
 The table's columns are:
@@ -200,11 +191,11 @@ An ask you don't answer in time expires and leaves the inbox and the Inbox page.
 
 | Ask | Expires after |
 |---|---|
-| Asks where the agent set no time | 60 minutes unless you change **Ask expiry** |
+| Asks where the agent set no time | 1 hour unless you change **Unanswered asks expire after** |
 | Asks where the agent set its own time | The agent's time |
 | Permission requests from a task in Zero | 24 hours |
 
-To change the default, go to **Settings › Composer and inbox › Inbox › Ask expiry**. It takes 5 to 1,440 minutes, in steps of 5.
+To change the default, go to **Settings › Inbox and bar › Answers › Unanswered asks expire after**: **15 min**, **1 h**, **4 h**, **1 day** or **Never**.
 
 An agent can also withdraw an ask it no longer needs, and it leaves the inbox the same way. When the ask was a command that's running, the command stops.
 
@@ -225,23 +216,19 @@ These settings are in **Settings › General**. Open Settings with <kbd>⌘</kbd
 
 | Setting | Where | What it does |
 |---|---|---|
-| Needs you | Settings › General › Notifications | Tells you when a task, one of its workers, or an agent outside Zero asks you something. On by default. |
-| Sounds | Settings › General › Notifications | Plays a sound with each notification, and a sound instead of one while you're in Zero. On by default. |
-| Needs you | Settings › General › Sounds | The sound for a task that needs you. **Blow** by default. Asks from agents outside Zero play **Glass** while you're in Zero. |
+| Needs you | Settings › General › Notifications | Tells you when a task, one of its workers, or an agent outside Zero asks you something, or a task is over to you. On by default. Its sound chip sets the sound: **Blow** by default, or **None** for no sound. Asks from agents outside Zero play **Glass** while you're in Zero. |
 
 macOS's own settings for Zero, and Focus, can quiet its notifications as they do for any app.
 
 ## Settings for the inbox
 
-Most are in **Settings › Composer and inbox**.
+Most are in **Settings › Inbox and bar**.
 
 | Setting | Where | What it does |
 |---|---|---|
-| Take-back window | Settings › Composer and inbox › Inbox | How long <kbd>Esc</kbd> can take an answer back: 0 to 5 seconds. 2 seconds by default. |
-| Move to the next ask | Settings › Composer and inbox › Inbox | On: 3 seconds after an answer lands, the panel selects the next waiting ask. On by default. |
-| Ask expiry | Settings › Composer and inbox › Inbox | How long an ask waits when the agent set no time: 5 to 1,440 minutes. 60 minutes by default. |
-| Microphone | Settings › Composer and inbox › Dictation | The microphone dictation uses. **System default** by default. When the one you picked isn't connected, it reads **Not connected; the system default is used.** |
-| Talk hotkey | Settings › General › Zero | The keys that open the inbox and start dictation, from any app. <kbd>⌥</kbd> <kbd>Space</kbd> by default. |
+| Undo an answer | Settings › Inbox and bar › Answers | How long <kbd>Esc</kbd> can take an answer back: **Off**, **1 s**, **2 s**, **3 s** or **5 s**. **2 s** by default. |
+| Unanswered asks expire after | Settings › Inbox and bar › Answers | How long an ask waits when the agent set no time: **15 min**, **1 h**, **4 h**, **1 day** or **Never**. **1 h** by default. |
+| Inbox hotkey | Settings › General › Zero | The keys that open the inbox, from any app. <kbd>⌥</kbd> <kbd>Space</kbd> by default. |
 
 Zero records every ask and answer in `~/.zero/asks.jsonl`. To open it, right-click the control bar and choose **Open Log**.
 

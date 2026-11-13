@@ -25,7 +25,7 @@ Download Zero from [withzero.dev/download](/download). It needs macOS 26 or late
 2. Drag **Zero** onto **Applications**. Zero updates itself there, and the tools it gives your agents look for it there.
 3. Open Zero from your **Applications** folder. Then eject the **Zero** disk in Finder's sidebar.
 
-If you open Zero from somewhere else, such as the disk image or your **Downloads** folder, Zero asks to move itself first. Click **Move to Applications**. Zero copies itself to **Applications**, opens from there and puts the copy you opened in the Trash, or ejects the disk image. If a Zero is already in **Applications**, it goes to the Trash. If your account can't add apps to **Applications**, Zero goes in the **Applications** folder in your home folder instead.
+If you open Zero from somewhere else, such as the disk image or your **Downloads** folder, Zero asks to move itself first. Click **Move to Applications**. Zero copies itself to **Applications**, opens from there and puts the copy you opened in the Trash, or ejects the disk image. If a Zero is already in **Applications**, it goes to the Trash. If your account can't add apps to **Applications**, the button reads **Move to ~/Applications**, and Zero goes in the **Applications** folder in your home folder instead.
 
 Each release also has **Zero.zip**, the same app zipped. Zero's updater uses it.
 
@@ -45,24 +45,23 @@ Each agent you have installed prints its path. One that prints nothing isn't on 
 
 ## Go through the welcome
 
-The first time you open Zero, a welcome window walks you through five steps. Click **Continue** for the next step, or **Back** to go back.
+The first time you open Zero, a welcome window walks you through four steps. Click **Continue** for the next step, or **Back** to go back.
 
 1. **Welcome to Zero.** What the control bar and the inbox are.
 2. **Your agents.** Shows whether Claude Code and Codex are installed. For Claude Code, click **Add plugin** to install the Zero plugin. The plugin lets Claude Code ask you things in Zero. Once it's installed, the button reads **Plugin added**. The Codex row is for information only.
-3. **Permissions.** To dictate replies, click **Allow** beside **Microphone** and **Speech recognition**. Both permissions are optional.
-4. **Make it yours.** Set the **Talk hotkey**. Turn on **Launch Zero at login**. Turn **Follow the active screen** on or off for the control bar. The Talk hotkey is <kbd>⌥</kbd> <kbd>Space</kbd> unless you change it.
-5. **Try it.** Click **Send test ask**. A sample ask opens in the inbox, just like one from an agent. Press <kbd>1</kbd> to answer it. Then click **Done**.
+3. **Make it yours.** Set the **Inbox hotkey**. Turn on **Launch Zero at login**. Turn **Follow the active screen** on or off for the control bar. The Inbox hotkey is <kbd>⌥</kbd> <kbd>Space</kbd> unless you change it.
+4. **Try it.** Click **Send test ask**. A sample ask opens in the inbox, just like one from an agent. Press <kbd>1</kbd> to answer it. Then click **Done**.
 
 macOS also asks whether Zero can send notifications. Allow them so you hear when a task needs you.
 
-To see the welcome again, open **Settings › General › Advanced › Onboarding** and click **Open**. Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> or the gear at the foot of the window's left rail.
+To see the welcome again, open **Settings › About › Help › Show welcome again** and click **Open**. Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> or the gear at the foot of the window's left rail.
 
 ## Sign in an agent
 
 An agent needs an account to work. Give it one in either of two ways:
 
 - **Use the sign-in the agent already has.** When Claude Code, Codex or OpenCode already works in your Terminal, Zero's tasks use that sign-in. You set up nothing in Zero.
-- **Add accounts to Zero.** Open **Settings › Accounts** and click **Add account** beside the agent's name. Sign in with your Claude or ChatGPT subscription, or add an API key. Zero keeps the account and gives it to the agent when a task starts. With more than one account, a task that reaches one account's usage limit carries on with another.
+- **Add accounts to Zero.** Open **Settings › Accounts and models** and click **Add account** beside the agent's name. Sign in with your Claude or ChatGPT subscription, or add an API key. Zero keeps the account and gives it to the agent when a task starts. With more than one account, a task that reaches one account's usage limit carries on with another.
 
 Once you add an account for an agent in Zero, that agent's tasks use Zero's accounts. See [Accounts and models](/docs/accounts-and-models).
 
@@ -70,11 +69,11 @@ Once you add an account for an agent in Zero, that agent's tasks use Zero's acco
 
 Each task works in a project: a folder on your Mac that you added to Zero. To add one:
 
-1. Open **Settings › Folders**.
+1. Open **Settings › Workspaces**.
 2. Beside **Projects**, click **Add folder**.
 3. Choose one or more folders.
 
-Until you add a folder, the new task page shows **Add a project in Settings › Folders** in place of the project chip.
+Until you add a folder, the new task page shows **Add a project in Settings › Workspaces** in place of the project chip.
 
 ## Start your first task
 
@@ -92,14 +91,14 @@ The task opens and the agent gets to work. When it needs you, its question shows
 
 Zero has three places on your screen:
 
-- **The window.** Your tasks and their conversations. The rail on its left side leads to **Home**, **Inbox**, **Later**, **Scratchpads**, **Loops**, **Integrations** and **Settings**. To open it, choose **Show Zero** from the menu bar icon, or open Zero again from the Applications folder.
+- **The window.** Your tasks and their conversations. The rail on its left side leads to **Home**, **Inbox**, **Later**, **Scratchpads**, **Loops** and **Settings**. To open it, choose **Show Zero** from the menu bar icon, or open Zero again from the Applications folder.
 - **The control bar.** A small bar on the right edge of your screen, halfway down. It shows the inbox and a mark for each task. Point at it to open the inbox. See [The control bar](/docs/control-bar).
 - **The menu bar icon.** Zero's mark in the menu bar. Click it for:
 
 | Item | What it does |
 |---|---|
 | **Show Zero** | Opens the window. |
-| **Check for Updates…** | Opens **Settings › General** and checks for a new version. |
+| **Check for Updates…** | Opens **Settings › About** and checks for a new version. |
 | **Settings…** | Opens Settings in the window. |
 | **Quit Zero** | Quits the app. |
 
@@ -109,7 +108,7 @@ Closing the window with <kbd>⌘</kbd> <kbd>W</kbd> leaves Zero in the menu bar,
 
 Zero checks for a new version when it opens and every six hours after that. It installs one only when you say so.
 
-- When a new version is out, the menu bar icon's menu shows **Update to Zero** and the version. Choose it to go to **Settings › General**.
-- In **Settings › General**, the first row shows your version. It reads **Up to date.** with **Check now**, or names the new version with **Update and restart**.
+- When a new version is out, the menu bar icon's menu shows **Update to Zero** and the version. Choose it to go to **Settings › About**.
+- In **Settings › About**, the first row shows your version. It reads **Up to date.** with **Check now**, or names the new version with **Update and restart**.
 
 Click **Update and restart**. Zero quits and opens again as the new version. Agents that are working pause between steps for a few seconds, then carry on.
