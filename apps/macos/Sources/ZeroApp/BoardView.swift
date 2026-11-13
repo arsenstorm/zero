@@ -7,7 +7,8 @@ import ZeroCore
 
 struct BoardView: View {
     let workspace: Workspace
-    let open: (String) -> Void
+    let navigation: Navigation
+    private func open(_ id: String) { navigation.place = .task(id) }
 
     var body: some View {
         // The workspace shown, as the sidebar: another workspace's tasks are there.
@@ -30,11 +31,10 @@ struct BoardView: View {
         .thinScrollbar(remember: "board")
         .overlay {
             if rows.isEmpty {
-                ContentUnavailableView {
-                    NucleoLabel("No tasks", icon: "list-checkbox", size: 20)
-                } description: {
-                    Text("Start one with New task (⌘N). Each shows here as a row, its workers folded in.")
-                }
+                EmptyState(
+                    title: "No tasks", detail: "Start one with New task (⌘N). Each shows here as a row, its workers folded in.",
+                    icon: "list-checkbox"
+                )
             }
         }
     }
@@ -92,7 +92,9 @@ struct BoardView: View {
                     }
                     .buttonStyle(Hovering(radius: 0, hover: Theme.rowHover))
                     // Over the row's last column, not in its label: a menu inside a button gives its clicks to the button.
-                    .overlay(alignment: .trailing) { RowActions(workspace: workspace, row: row, open: open).padding(.trailing, 12) }
+                    .overlay(alignment: .trailing) {
+                        RowActions(workspace: workspace, navigation: navigation, id: row.session).padding(.trailing, 12)
+                    }
                 }
             }
         }
@@ -124,53 +126,33 @@ struct BoardView: View {
     }
 }
 
-/// A row's quick actions, in the ⋯ menu at its end.
+/// A row's ⋯ at its end: the task's menu, as its sidebar row has it.
 private struct RowActions: View {
     let workspace: Workspace
-    let row: BoardRow
-    let open: (String) -> Void
-
-    /// What the agent is asked when the user wants to know where it is.
-    static let statusCheck = """
-        Status check from the user: where is this task now? Answer in two or three lines, then post the same as a Zero \
-        note: `zero note "<where it is>"`, with --blocked and --needs "<what you need from the user>" if you're waiting \
-        on them, --waiting if on something else, --done if it's finished, --merged once it's merged. Keep the task's \
-        state pad current too. Then \
-        carry on with what you were doing.
-        """
-
-    @State private var hovered = false
+    let navigation: Navigation
+    let id: String
+    @State private var anchor = CGRect.zero
 
     var body: some View {
-        Menu {
-            Button("Ask for a status update") { Task { await workspace.send(row.session, text: Self.statusCheck) } }
-            Button("Open") { open(row.session) }
-            Divider()
-            if !workspace.isPaused(row.session) {
-                if row.online {
-                    Button("End session") { Task { await workspace.stop(row.session) } }
-                } else {
-                    Button("Resume") { Task { await workspace.resume(row.session) } }
-                }
-            }
-            pausing(row.session, in: workspace)
-            Button("Copy task id") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(row.session, forType: .string)
-            }
-            Divider()
-            Button("Archive…") { workspace.archiving = row.session }
-        } label: {
-            NucleoIcon("dots", size: 15).foregroundStyle(hovered ? .primary : .secondary).frame(width: 30, height: 30).contentShape(
-                Rectangle())
+        let name = "board-" + id
+        // A menu-wide anchor: the menu hangs under the button, its right edge on the button's.
+        let toggle = {
+            let width = SelectorView.width(.menu)
+            WorkspaceSelector.shared.toggle(
+                name, kind: .menu, anchor: CGRect(x: anchor.maxX - width, y: anchor.minY, width: width, height: anchor.height)
+            ) { ZeroContextMenu.sections(TaskMenu.items(id, in: workspace, navigation: navigation)) }
         }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-        // The menu's own size is wider than its dots; a square, as the rail's items are.
-        .frame(width: 30, height: 30)
-        // A square under the pointer, as the rail's items have; behind the menu, which draws no background of its label's.
-        .background(hovered ? Theme.hover : .clear, in: RoundedRectangle(cornerRadius: 8))
-        .onHover { hovered = $0 }
-        .tip("Actions")
+        Button(action: unlessClicked(toggle)) {
+            NucleoIcon("dots", size: 15).frame(width: 30, height: 30)
+        }
+        .buttonStyle(Hovering(selected: WorkspaceSelector.shared.open == name)).foregroundStyle(.secondary)
+        .opensOnPress(toggle)
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
+        } action: {
+            anchor = $0
+        }
+        .tip("More")
     }
 }
 
@@ -231,14 +213,6 @@ struct ArticlePanel<Strip: View, Content: View>: View {
 }
 
 /// A task's Pause, or its Resume when it's paused: it and its workers, on hold and off it.
-@MainActor @ViewBuilder func pausing(_ id: String, in workspace: Workspace) -> some View {
-    if workspace.isPaused(id) {
-        Button("Resume") { Task { await workspace.unpause([id]) } }
-    } else {
-        Button("Pause") { Task { await workspace.pause([id]) } }
-    }
-}
-
 /// One line of text, cut short with an ellipsis when it doesn't fit. While `moving`, a line that doesn't fit glides
 /// left to its end after a moment and stops there; it slides back when `moving` ends.
 struct Marquee: View {

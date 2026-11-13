@@ -403,27 +403,27 @@ private struct PadEditor: View {
                     .textFieldStyle(.plain).font(.system(size: 26, weight: .semibold))
                     .onSubmit(rename)
                 Spacer()
-                Menu {
-                    Button("Copy link") { PadLinks.copy(pad.link, title: pad.title) }
-                    Button("Copy Markdown link") { PadLinks.copy(pad.link, title: pad.title, markdown: true) }
-                    if !pad.sections.isEmpty {
-                        Divider()
-                        Section("Link to a section") {
-                            ForEach(pad.sections, id: \.slug) { section in
-                                Button(String(repeating: "   ", count: max(0, section.level - 1)) + section.title) {
-                                    PadLinks.copy(
-                                        PadLinks.section(pad.id, section.slug), title: "\(pad.title) › \(section.title)", markdown: true)
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    NucleoLabel("Copy link", icon: "link", size: 14).font(.system(size: 12.5, weight: .medium))
-                } primaryAction: {
-                    PadLinks.copy(pad.link, title: pad.title)
+                GhostButton(title: "Copy link", icon: "link") { PadLinks.copy(pad.link, title: pad.title) }
+                    .tip("Copy this pad's link")
+                // A Markdown link, and each section's, in Zero's menu under the chevron (its right edge on the chevron's).
+                let toggle = {
+                    let width = SelectorView.width(.menu)
+                    WorkspaceSelector.shared.toggle(
+                        "pad-links", kind: .menu,
+                        anchor: CGRect(x: linkAnchor.maxX - width, y: linkAnchor.minY, width: width, height: linkAnchor.height)
+                    ) { ZeroContextMenu.sections(links(pad)) }
                 }
-                .menuStyle(.borderlessButton).fixedSize()
-                .tip("Copy this pad's link; the arrow has a Markdown link and each section's")
+                Button(action: unlessClicked(toggle)) {
+                    NucleoIcon("chevron-down", size: 10).frame(width: 26, height: 26)
+                }
+                .buttonStyle(Hovering(selected: WorkspaceSelector.shared.open == "pad-links", radius: 13)).foregroundStyle(.secondary)
+                .opensOnPress(toggle)
+                .onGeometryChange(for: CGRect.self) {
+                    $0.frame(in: .global)
+                } action: {
+                    linkAnchor = $0
+                }
+                .tip("A Markdown link, or a section's")
             }
             Text(
                 [

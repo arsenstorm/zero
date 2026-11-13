@@ -56,6 +56,8 @@ final class SelectorState {
     @ObservationIgnored var submenuFrame: CGRect?
     /// The menu row whose own menu is open beside it.
     var submenu: String?
+    /// Rows' own menus open on the card's left: no room on its right (a menu under a button at the screen's edge).
+    @ObservationIgnored var submenuLeading = false
     /// The row taking words (SelectorRow.entry), shown as a field.
     var entering: String?
     /// What the selector asks of whoever opened it (the inbox, or a workspace composer): to close it, a model's
@@ -65,6 +67,30 @@ final class SelectorState {
     @ObservationIgnored var setLevel: (String, String) -> Void = { _, _ in }
     @ObservationIgnored var rebuild: () -> [SelectorSection] = { [] }
     init(kind: SelectorKind) { self.kind = kind }
+
+    /// The pointer's last place over the card, and its moves.
+    @ObservationIgnored private var pointer: CGPoint?
+    @ObservationIgnored private var moves = 0
+
+    /// The pointer over a menu's card (window coordinates, top left): the row under it lights and its own menu opens
+    /// (or the open one closes) in the same frame, as Linear's do. Heading for the open submenu (MenuAim), the rows
+    /// crossed on the way change nothing; stopped on one for a moment, it takes over.
+    func aim(_ at: CGPoint, rows: [SelectorRow]) {
+        let from = pointer
+        pointer = at
+        moves += 1
+        if submenu != nil, let from, let menu = submenuFrame, MenuAim.heading(from: from, to: at, menu: menu, leading: submenuLeading) {
+            let move = moves
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                if let self, moves == move { aim(at, rows: rows) }
+            }
+            return
+        }
+        guard let row = rows.first(where: { rowFrames[$0.id]?.contains(at) == true }) else { return }
+        if highlighted != row.id { highlighted = row.id }
+        let next = row.children.isEmpty ? nil : row.id
+        if submenu != next { submenu = next }
+    }
 }
 
 /// Zero's selector, a compact palette: provider tabs across the top, the chosen provider's rows beneath at
@@ -146,20 +172,20 @@ struct SelectorView: View {
             } else if state.kind == .runtime {
                 if sections.count > 1 { tabs } else if let section { singleHeader(section) }
             }
-            if state.kind == .runtime { Divider().padding(.horizontal, 10) }
+            if state.kind == .runtime { Hairline(color: Theme.menuLine).padding(.horizontal, 10) }
             if state.kind == .menu {
                 EmptyView()
             } else if state.kind == .runtime {
                 HStack(spacing: 0) {
                     list.frame(width: Self.paneWidth, height: Self.modelListHeight)
-                    Divider().padding(.vertical, 10)
+                    Rectangle().fill(Theme.menuLine).frame(width: 1).padding(.vertical, 10)
                     details.frame(width: Self.paneWidth - 1, height: Self.modelListHeight)
                 }
                 .frame(height: Self.modelListHeight) // a vertical Divider would otherwise stretch the row to the strip
             } else if sections.count > 1 {
                 // A short list in sections (agents' places, say): tabs, as models have, then its rows.
                 tabs
-                Divider().padding(.horizontal, 10)
+                Hairline(color: Theme.menuLine).padding(.horizontal, 10)
                 shortList
             } else {
                 shortList
@@ -171,6 +197,9 @@ struct SelectorView: View {
             $0.frame(in: .global)
         } action: {
             state.cardHeight = $0.height; state.cardFrame = $0
+        }
+        .onContinuousHover(coordinateSpace: .global) { phase in
+            if state.kind == .menu, case .active(let at) = phase { state.aim(at, rows: rows) }
         }
         .overlay(alignment: .topLeading) { submenu }
         .focusable()
@@ -210,6 +239,7 @@ struct SelectorView: View {
             column
         } else {
             ScrollView(.vertical, showsIndicators: false) { column }.frame(height: Self.modelListHeight + 40).scrollEdgeFades()
+                .thinScrollbar()
         }
     }
 
@@ -219,6 +249,8 @@ struct SelectorView: View {
                 .padding(.horizontal, 6).padding(.vertical, 4)
         }
         .scrollEdgeFades()
+        // Outside the fades' mask: drawn inside, it faded out at the ends.
+        .thinScrollbar()
     }
 
     private var tabs: some View {
@@ -277,7 +309,9 @@ struct SelectorView: View {
                     state.submenuFrame = $0
                 }
                 .onDisappear { state.submenuFrame = nil }
-                .offset(x: Self.width(state) + Self.submenuGap, y: at.minY - state.cardFrame.minY - inset - 1)
+                .offset(
+                    x: state.submenuLeading ? -(Self.menuWidth(parent.children) + Self.submenuGap) : Self.width(state) + Self.submenuGap,
+                    y: at.minY - state.cardFrame.minY - inset - 1)
         }
     }
 
@@ -334,7 +368,7 @@ struct SelectorView: View {
                 Spacer(minLength: linear ? 0 : 6)
                 // The check's place only where something can be checked: a menu of actions has none, and kept no gap.
                 if (siblings ?? rows).contains(where: \.selected) {
-                    NucleoIcon("check", size: 13).foregroundStyle(Color.accentColor).opacity(row.selected ? 1 : 0)
+                    NucleoIcon("check", size: 13).foregroundStyle(Theme.menuHot).opacity(row.selected ? 1 : 0)
                 }
                 if parent { NucleoIcon("chevron-right", size: 12).foregroundStyle(Theme.menuIcon) }
             }
@@ -348,10 +382,9 @@ struct SelectorView: View {
         }
         .buttonStyle(.plain)
         .onHover { inside in
-            guard inside else { return }
+            // A menu's own rows follow the pointer's intent instead (SelectorState.aim, from the card).
+            guard inside, siblings != nil || state.kind != .menu else { return }
             state.highlighted = row.id
-            // Onto a row of the menu itself: its own menu opens, any other closes.
-            if siblings == nil, state.kind == .menu { state.submenu = parent ? row.id : nil }
         }
         // Where it is in the window: a right-button drag (which hover doesn't follow) finds its row by it.
         .onGeometryChange(for: CGRect.self) {
@@ -465,10 +498,10 @@ private struct EntryRow: View {
     }
 }
 
-/// Effort level ids as Zero shows them; `short` is for the chip, where "Extra High" would not fit.
+/// Effort level ids as Zero shows them; `short` is for the chip, where "Extra high" would not fit.
 func effortLabel(_ id: String, short: Bool = false) -> String {
     switch id {
-    case "xhigh": short ? "XHigh" : "Extra High"
+    case "xhigh": short ? "XHigh" : "Extra high"
     default: id.capitalized
     }
 }
@@ -511,8 +544,8 @@ struct EffortSlider: View {
                     .scaleEffect(held ? 1.2 : 1)
                     .position(x: x, y: mid)
             }
-            .animation(.snappy(duration: 0.2), value: index)
-            .animation(.snappy(duration: 0.15), value: held)
+            .animation(Motion.animation(.snappy(duration: 0.2)), value: index)
+            .animation(Motion.animation(.snappy(duration: 0.15)), value: held)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -563,11 +596,11 @@ struct EdgeFadeMask: View {
             VStack(spacing: 0) {
                 LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: fade)
                     .blendMode(.destinationOut).opacity(above ? 1 : 0)
-                    .animation(.easeOut(duration: 0.15), value: above)
+                    .animation(.easeOut(duration: 0.12), value: above)
                 Spacer(minLength: 0)
                 LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: fade)
                     .blendMode(.destinationOut).opacity(below ? 1 : 0)
-                    .animation(.easeOut(duration: 0.15), value: below)
+                    .animation(.easeOut(duration: 0.12), value: below)
             }
         }
         .compositingGroup()
@@ -641,7 +674,7 @@ private struct ContextMenuHost: ViewModifier {
         let inWindow = window.convertPoint(fromScreen: point)
         // SwiftUI's global frame (the window's content, from its top left): the menu hangs off the pointer.
         let anchor = CGRect(x: inWindow.x, y: content.bounds.height - inWindow.y, width: 1, height: 1)
-        WorkspaceSelector.shared.toggle("menu-" + id, kind: .menu, anchor: anchor, in: window) { sections(groups()) }
+        WorkspaceSelector.shared.show("menu-" + id, kind: .menu, anchor: anchor, in: window) { sections(groups()) }
     }
 
     /// A menu's groups as the selector's sections, a line between each.
@@ -684,10 +717,7 @@ struct MenuCard: ViewModifier {
                 RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(
                     linear ? Theme.menuStroke : Theme.stroke, lineWidth: linear ? 1 : 0.5)
             )
-            // Linear's three soft shadows (0 6 18 at 2%, 0 3 9 at 4%, 0 1 1 at 4%): a SwiftUI radius is half CSS's blur.
             .compositingGroup()
-            .shadow(color: .black.opacity(linear ? 0.02 : 0), radius: 9, y: 6)
-            .shadow(color: .black.opacity(linear ? 0.04 : 0), radius: 4.5, y: 3)
-            .shadow(color: .black.opacity(linear ? 0.04 : 0), radius: 0.5, y: 1)
+            .floatingShadow(linear)
     }
 }

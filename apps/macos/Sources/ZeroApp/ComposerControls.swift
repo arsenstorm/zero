@@ -260,6 +260,22 @@ final class WorkspaceSelector {
     }
 }
 
+extension View {
+    /// A menu's button opens it as the button goes down, as a Mac's menus do, not a click's release later. Pair with
+    /// `unlessClicked` on the Button's own action, which the keyboard and VoiceOver still press.
+    func opensOnPress(_ open: @escaping () -> Void) -> some View {
+        simultaneousGesture(
+            DragGesture(minimumDistance: 0).onChanged { _ in
+                if NSApp.currentEvent?.type == .leftMouseDown { open() }
+            })
+    }
+}
+
+/// A menu button's action but for a click's release: the press already opened it (opensOnPress).
+func unlessClicked(_ action: @escaping () -> Void) -> () -> Void {
+    { if NSApp.currentEvent?.type != .leftMouseUp { action() } }
+}
+
 /// A chip in the composer's row, the control bar's: an icon, what's chosen, and a chevron, on a small pill; it opens
 /// Zero's selector, and reads pressed while that's open.
 struct ComposerChip: View {
@@ -286,9 +302,8 @@ struct ComposerChip: View {
 
     var body: some View {
         let open = WorkspaceSelector.shared.open == id
-        Button {
-            WorkspaceSelector.shared.toggle(id, kind: kind, anchor: anchor, rows: rows, level: level, setLevel: setLevel)
-        } label: {
+        let toggle = { WorkspaceSelector.shared.toggle(id, kind: kind, anchor: anchor, rows: rows, level: level, setLevel: setLevel) }
+        Button(action: unlessClicked(toggle)) {
             HStack(spacing: 5) {
                 if let icon {
                     icon.resizable().aspectRatio(contentMode: .fit).frame(width: roomy ? 16 : 14, height: roomy ? 16 : 14).clipShape(
@@ -320,6 +335,7 @@ struct ComposerChip: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain).fixedSize()
+        .opensOnPress(toggle)
         .tip(iconOnly ? label : "")
         .onHover { hovered = $0 }
         .onGeometryChange(for: CGRect.self) {

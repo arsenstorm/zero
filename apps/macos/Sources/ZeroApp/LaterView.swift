@@ -223,70 +223,77 @@ private struct LaterDetail: View {
                 }
                 .tip("Back to the sidebar, on hold, and out of Later")
             }
-            .controlSize(.regular)
         } else {
-            notes(item)
+            let tasks = workspace.board.filter { $0.workspace == workspace.current }
+            HStack(spacing: 8) {
+                RowButton(title: "Start a task from this") {
+                    workspace.pendingDrafts["new"] = laterPickUp(item)
+                    navigation.place = .home
+                }
+                menuButton("later-send", "Send to a task", icon: "arrow-up-right") {
+                    [
+                        tasks.map { row in
+                            MenuItem(row.task) {
+                                Task {
+                                    await workspace.send(row.session, text: laterPickUp(item)); navigation.place = .task(row.session)
+                                }
+                            }
+                        }
+                    ]
+                }
+                .disabled(tasks.isEmpty).tip(tasks.isEmpty ? "No task to send it to" : "")
+                GhostButton(title: "Copy", icon: "copy", action: copyAll)
+                if item.suggested == true {
+                    GhostButton(title: "Keep", icon: "bookmark") {
+                        Task {
+                            await workspace.editLater(item.id, ["keep": true]); await load()
+                        }
+                    }
+                    .tip("Keep it in Later; otherwise it goes a week after it was saved")
+                }
+                GhostButton(title: item.done ? "Not done" : "Done", icon: item.done ? "undo" : "check") {
+                    Task {
+                        await workspace.editLater(item.id, ["done": !item.done]); await load()
+                    }
+                }
+                Spacer()
+                if item.versions.count > 1 {
+                    SettingChoice(
+                        id: "later-version",
+                        choices: [
+                            item.versions.reversed().map { v in
+                                (
+                                    title: "Version \(v.version) · "
+                                        + Date(timeIntervalSince1970: TimeInterval(v.at)).formatted(.relative(presentation: .named)),
+                                    value: v.version
+                                )
+                            }
+                        ],
+                        selection: Binding(
+                            get: { version ?? item.version }, set: { version = $0 == item.versions.last?.version ? nil : $0 })
+                    )
+                }
+                GhostButton(title: item.suggested == true ? "Dismiss" : "Delete", icon: item.suggested == true ? "xmark" : "trash") {
+                    Task {
+                        await workspace.deleteLater(item.id); navigation.place = .later
+                    }
+                }
+            }
         }
     }
 
-    private func notes(_ item: ZerodLink.LaterItem) -> some View {
-        HStack(spacing: 8) {
-            Button {
-                workspace.pendingDrafts["new"] = laterPickUp(item)
-                navigation.place = .home
-            } label: {
-                NucleoLabel("Start a task from this", icon: "paper-plane", size: 13)
+    @State private var anchor = CGRect.zero
+
+    /// A quiet button that opens Zero's menu under it, on the press as every menu of Zero's.
+    private func menuButton(_ id: String, _ title: String, icon: String, items: @escaping () -> [[MenuItem]]) -> some View {
+        let toggle = { WorkspaceSelector.shared.toggle(id, kind: .menu, anchor: anchor) { ZeroContextMenu.sections(items()) } }
+        return GhostButton(title: title, icon: icon, open: WorkspaceSelector.shared.open == id, action: unlessClicked(toggle))
+            .opensOnPress(toggle)
+            .onGeometryChange(for: CGRect.self) {
+                $0.frame(in: .global)
+            } action: {
+                anchor = $0
             }
-            .buttonStyle(.borderedProminent)
-            Menu {
-                ForEach(workspace.board.filter { $0.workspace == workspace.current }) { row in
-                    Button(row.task) {
-                        Task {
-                            await workspace.send(row.session, text: laterPickUp(item)); navigation.place = .task(row.session)
-                        }
-                    }
-                }
-            } label: {
-                Text("Send to a task")
-            }
-            .fixedSize()
-            Button("Copy") { copy(item.note + (item.artifact.map { "\n\n" + $0 } ?? "")) }
-            if item.suggested == true {
-                Button("Keep") {
-                    Task {
-                        await workspace.editLater(item.id, ["keep": true]); await load()
-                    }
-                }
-                .tip("Keep it in Later; otherwise it goes a week after it was saved")
-            }
-            Button(item.done ? "Not done" : "Done") {
-                Task {
-                    await workspace.editLater(item.id, ["done": !item.done]); await load()
-                }
-            }
-            Spacer()
-            if item.versions.count > 1 {
-                Menu {
-                    ForEach(item.versions.reversed(), id: \.version) { v in
-                        Button(
-                            "Version \(v.version) · "
-                                + Date(timeIntervalSince1970: TimeInterval(v.at)).formatted(.relative(presentation: .named))
-                        ) {
-                            version = v.version == item.versions.last?.version ? nil : v.version
-                        }
-                    }
-                } label: {
-                    Text("Version \(version ?? item.version)")
-                }
-                .fixedSize()
-            }
-            Button(item.suggested == true ? "Dismiss" : "Delete", role: .destructive) {
-                Task {
-                    await workspace.deleteLater(item.id); navigation.place = .later
-                }
-            }
-        }
-        .controlSize(.regular)
     }
 }
 

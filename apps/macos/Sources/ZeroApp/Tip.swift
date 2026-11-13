@@ -100,6 +100,8 @@ final class TipView: NSView {
         // Zero's window's tips while Zero is in front only: its views see the pointer through another app's window over
         // them, and a tip floats over every app. The control bar's panels (used from other apps) keep theirs.
         guard NSApp.isActive || window is NSPanel else { return }
+        // A menu or selector open: no tip but its own rows', not even its control's under the pointer.
+        if let menu = (NSApp.delegate as? AppDelegate)?.selectorPanel, menu.isVisible, window !== menu { return }
         watchApp()
         owner = view
         let host = NSHostingController(rootView: TipLabel(text: text, shortcut: shortcut))
@@ -137,6 +139,8 @@ final class TipView: NSView {
             }
         }
     }
+
+    func hideAny() { if let owner { hide(from: owner) } }
 
     func hide(from view: NSView) {
         guard owner === view else { return }

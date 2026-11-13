@@ -176,7 +176,7 @@ struct WorkspaceView: View {
 
     @ViewBuilder private var page: some View {
         switch navigation.place {
-        case .board: BoardView(workspace: workspace, open: { navigation.place = .task($0) })
+        case .board: BoardView(workspace: workspace, navigation: navigation)
         case .agent(let name): AgentPage(controller: inbox, name: name).id(name)
         case .task(let id) where workspace.conversation(id) != nil:
             TaskPages(workspace: workspace, inbox: inbox, navigation: navigation, current: id)

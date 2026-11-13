@@ -12,8 +12,11 @@ import ZeroCore
     private var statusItem: NSStatusItem!
     private var updateItem: NSMenuItem?
     var selectorPanel: Panel?
-    /// The chip's point in the selector view, bottom-left origin: the card scales out of it and back into it.
-    var selectorAnchor = CGPoint.zero
+    /// The two panels menus open in and their views, kept between them and taken in turn (SelectorPanel.selectorWindow).
+    var selectorHosts: [(panel: Panel, view: FirstMouseHostingView<AnyView>)] = []
+    /// The menu just closed, still on screen until the end of this turn: one opened by the same click takes its place
+    /// first (hideSelector, presentSelector).
+    var selectorLeaving: Panel?
     var selectorMonitors: [Any] = []
     /// The window the open selector gives the keys back to, when it isn't the inbox.
     var selectorReturn: NSWindow?

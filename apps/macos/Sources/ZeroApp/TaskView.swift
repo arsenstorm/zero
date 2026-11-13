@@ -231,14 +231,19 @@ struct TitleBar: View {
     }
 
     @ViewBuilder private func actions(_ conversation: Conversation) -> some View {
-        BarButton(symbol: "dots", help: "More", selected: WorkspaceSelector.shared.open == "more") {
-            WorkspaceSelector.shared.toggle("more", kind: .menu, anchor: moreAnchor) { ZeroContextMenu.sections(more(conversation)) }
+        // A menu-wide anchor: the menu hangs under the button, its right edge on the button's.
+        let toggle = {
+            let width = SelectorView.width(.menu)
+            let anchor = CGRect(x: moreAnchor.maxX - width, y: moreAnchor.minY, width: width, height: moreAnchor.height)
+            WorkspaceSelector.shared.toggle("more", kind: .menu, anchor: anchor) { ZeroContextMenu.sections(more(conversation)) }
         }
-        .onGeometryChange(for: CGRect.self) {
-            $0.frame(in: .global)
-        } action: {
-            moreAnchor = $0
-        }
+        BarButton(symbol: "dots", help: "More", selected: WorkspaceSelector.shared.open == "more", action: unlessClicked(toggle))
+            .opensOnPress(toggle)
+            .onGeometryChange(for: CGRect.self) {
+                $0.frame(in: .global)
+            } action: {
+                moreAnchor = $0
+            }
     }
 
     @State private var moreAnchor = CGRect.zero

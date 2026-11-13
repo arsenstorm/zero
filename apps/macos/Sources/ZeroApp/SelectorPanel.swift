@@ -19,6 +19,12 @@ extension AppDelegate {
     ) {
         guard let content = window.contentView else { return }
         hideSelector(keepState: true)
+        // Another menu open until this very click (closed by it, or just now): this one takes its place as it is, as
+        // Linear's do, with no animation.
+        let switching = selectorLeaving != nil
+        // The tip of the control that opened it goes, and none shows outside the menu while it's open (TipPanel.show).
+        TipPanel.shared.hideAny()
+        TaskPeek.shared.close() // a task's card too, as a tip (and none shows while it's open: TaskPeek.hover)
         selectorReturn = returning
         // SwiftUI's global frame is in the window's content, top-left origin; AppKit wants bottom-left.
         let appKit = NSRect(x: anchor.minX, y: content.bounds.height - anchor.maxY, width: anchor.width, height: anchor.height)
@@ -45,32 +51,38 @@ extension AppDelegate {
             selector.kind == .runtime
             ? (centredOn ?? chip).midX - strip.width / 2
             : selector.kind == .menu && chip.width >= SelectorView.width(.menu) ? chip.maxX - strip.width : chip.minX
-        let x = max(screen.minX + 8, min(left, screen.maxX - strip.width - room - 8)).rounded() - pad
+        // No room on the right for a row's own menu: it opens on the left, and the card stays where it hangs.
+        selector.submenuLeading = room > 0 && left + strip.width + room + 8 > screen.maxX
+        let x =
+            selector.submenuLeading
+            ? (max(screen.minX + 8 + room, min(left, screen.maxX - strip.width - 8)) - room).rounded() - pad
+            : max(screen.minX + 8, min(left, screen.maxX - strip.width - room - 8)).rounded() - pad
         let y = (opensBelow ? chip.minY - 6 - strip.height : chip.maxY + 6).rounded() - pad
-        let view = FirstMouseHostingView(
-            rootView: AnyView(
-                SelectorView(state: selector)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: opensBelow ? .topLeading : .bottomLeading).padding(pad)))
-        view.sizingOptions = []
-        // The animated layer is a plain container's, not the hosting view's: AppKit resets a hosting view's layer
-        // geometry whenever SwiftUI lays out, which stutters a transform on it.
-        let container = NSView(frame: NSRect(origin: .zero, size: size))
-        container.wantsLayer = true
-        view.frame = container.bounds
-        view.autoresizingMask = [.width, .height]
-        container.addSubview(view)
-        let panel = makePanel(size: size, content: container)
-        panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
-        panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
-        container.layer?.opacity = 0 // invisible until the animation starts; the window's own alpha stays 1
+        let root = AnyView(
+            SelectorView(state: selector)
+                .frame(
+                    maxWidth: .infinity, maxHeight: .infinity,
+                    alignment: selector.submenuLeading
+                        ? (opensBelow ? .topTrailing : .bottomTrailing) : (opensBelow ? .topLeading : .bottomLeading)
+                ).padding(pad)
+                .id(ObjectIdentifier(selector))) // a new menu's own state (its focus, its first highlight), not the last one's
+        let panel = selectorWindow(root)
+        panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: false)
+        // Drawn and handed to the window server while still out of sight: ordered in, it shows this menu at once, never
+        // the last one's picture at the new place.
+        panel.layoutIfNeeded()
+        panel.displayIfNeeded()
+        CATransaction.flush()
         panel.makeKeyAndOrderFront(nil)
-        panel.layoutIfNeeded() // the heavy first layout happens now, invisible, not inside the animation
+        // The last menu goes only now, in the same instant as this one shows: no frame without a menu, none with two
+        // (measured with the window server's list every millisecond).
+        if let leaving = selectorLeaving, leaving !== panel { leaving.orderOut(nil) }
+        selectorLeaving = nil
         selectorPanel = panel
-        selectorAnchor = CGPoint(x: chip.midX - x, y: opensBelow ? size.height - pad : pad)
-        DispatchQueue.main.async { [weak self, weak panel] in
-            // One turn later the first frame is committed; the animation then has nothing to wait on.
-            guard let self, let panel, selectorPanel === panel else { return }
-            Self.animateSelector(panel, anchor: selectorAnchor, opening: true)
+        // At the pointer (a right click), it's there at once, as a Mac's are; off a button, a quick ease out of it,
+        // scaled from the chip's point (bottom-left origin).
+        if chip.width > 1, !switching {
+            Self.animateSelector(panel, anchor: CGPoint(x: chip.midX - x, y: opensBelow ? size.height - pad : pad))
         }
         // A click anywhere but the card closes it: in another app (global), in Zero's other windows, or in the
         // strip's empty part (local).
@@ -82,8 +94,9 @@ extension AppDelegate {
         {
             selectorMonitors.append(global)
         }
+        // A right click elsewhere closes it too; on something with a menu of its own, that one opens in its place.
         if let local = NSEvent.addLocalMonitorForEvents(
-            matching: .leftMouseDown,
+            matching: [.leftMouseDown, .rightMouseDown],
             handler: { [weak self, weak selector] event in
                 guard let self, let panel = selectorPanel else { return event }
                 // On the card or its open submenu (their frames top left origin, as SwiftUI gives them).
@@ -133,8 +146,15 @@ extension AppDelegate {
     func hideSelector(keepState: Bool = false) {
         selectorMonitors.forEach { NSEvent.removeMonitor($0) }
         selectorMonitors.removeAll()
+        // Gone with no exit, at the end of this turn: a menu the same click opens shows in its place first
+        // (presentSelector); else it's taken away before the next frame is drawn.
         if let panel = selectorPanel {
-            Self.animateSelector(panel, anchor: selectorAnchor, opening: false) { panel.orderOut(nil) }
+            selectorLeaving = panel
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let leaving = selectorLeaving else { return }
+                leaving.orderOut(nil)
+                selectorLeaving = nil
+            }
         }
         selectorPanel = nil
         guard !keepState else { return }
@@ -142,39 +162,55 @@ extension AppDelegate {
         selectorReturn = nil
     }
 
-    /// Emil's popover: fade with a scale from 0.95 at the trigger, ease-out in, faster ease-in out. (No nudge
-    /// toward the trigger: the card sits flush with the strip's edge there, so a nudge pushed it out of the
-    /// window and its top border vanished for the first frames.)
-    /// faster ease-in out. One Core Animation group on the content layer, so both run on the render server in
-    /// step; a window-alpha fade is an AppKit timer animation and starts a frame late.
-    private static func animateSelector(_ panel: NSWindow, anchor: CGPoint, opening: Bool, completion: (() -> Void)? = nil) {
-        guard let layer = panel.contentView?.layer else { completion?(); return }
+    /// The panel a menu opens in: of the two, made once each, the one out of sight, so a switch draws the new menu
+    /// before the old one goes; only their content changes.
+    private func selectorWindow(_ root: AnyView) -> Panel {
+        if let host = selectorHosts.first(where: { !$0.panel.isVisible }) ?? (selectorHosts.count == 2 ? selectorHosts.first : nil) {
+            host.view.rootView = root
+            return host.panel
+        }
+        let view = FirstMouseHostingView(rootView: root)
+        view.sizingOptions = []
+        // The animated layer is a plain container's, not the hosting view's: AppKit resets a hosting view's layer
+        // geometry whenever SwiftUI lays out, which stutters a transform on it.
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 100, height: 100))
+        container.wantsLayer = true
+        view.frame = container.bounds
+        view.autoresizingMask = [.width, .height]
+        container.addSubview(view)
+        let panel = makePanel(size: container.frame.size, content: container)
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
+        // AppKit's own window animation off: by default a panel zooms in as it's ordered in and fades and drifts out
+        // over ~70 ms as it's ordered out, a ghost of the menu where it was.
+        panel.animationBehavior = .none
+        selectorHosts.append((panel, view))
+        return panel
+    }
+
+    /// Emil's popover, short: a fade with a scale from 0.97 at the trigger, 100 ms of a strong ease-out, so it's
+    /// mostly there in the first frames. One Core Animation group on the content layer, so both run on the render
+    /// server in step. Only the fade with Reduce Motion (Motion).
+    private static func animateSelector(_ panel: NSWindow, anchor: CGPoint) {
+        guard let layer = panel.contentView?.layer else { return }
         // AppKit gives a view's layer an anchor point of (0, 0), so the pivot is measured from the bottom-left,
         // not the centre (verified; measuring from the centre put the pivot half a width to the left).
         var small = CATransform3DMakeTranslation(anchor.x, anchor.y, 0)
-        small = CATransform3DScale(small, 0.95, 0.95, 1)
+        small = CATransform3DScale(small, 0.97, 0.97, 1)
         small = CATransform3DTranslate(small, -anchor.x, -anchor.y, 0)
-        let (from, to) = opening ? (small, CATransform3DIdentity) : (CATransform3DIdentity, small)
-        let duration = opening ? 0.12 : 0.08
-        let curve = opening ? CAMediaTimingFunction(controlPoints: 0.32, 0.72, 0, 1) : CAMediaTimingFunction(name: .easeIn)
         let scale = CABasicAnimation(keyPath: "transform")
-        scale.fromValue = from
-        scale.toValue = to
+        scale.fromValue = small
+        scale.toValue = CATransform3DIdentity
         let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = opening ? 0 : 1
-        fade.toValue = opening ? 1 : 0
+        fade.fromValue = 0
+        fade.toValue = 1
         // The children need the duration too: a group's duration only clips them, and a child without its own
-        // runs Core Animation's default 0.25 s, so at 0.1 s it was cut off part-way and snapped to the end.
-        for child in [scale, fade] { child.duration = duration; child.timingFunction = curve }
+        // runs Core Animation's default 0.25 s, so it was cut off part-way and snapped to the end.
+        let curve = CAMediaTimingFunction(controlPoints: 0.32, 0.72, 0, 1)
+        let parts = Motion.reduced ? [fade] : [scale, fade]
+        for child in parts { child.duration = 0.1; child.timingFunction = curve }
         let group = CAAnimationGroup()
-        group.animations = [scale, fade]
-        group.duration = duration
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        CATransaction.setCompletionBlock(completion)
+        group.animations = parts
+        group.duration = 0.1
         layer.add(group, forKey: "selector")
-        layer.transform = to
-        layer.opacity = opening ? 1 : 0
-        CATransaction.commit()
     }
 }
