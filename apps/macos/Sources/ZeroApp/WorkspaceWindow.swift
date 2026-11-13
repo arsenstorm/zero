@@ -153,12 +153,11 @@ extension AppDelegate {
     func inWindow(_ place: Navigation.Place) {
         hideInbox()
         navigation.place = place
-        NSApp.activate(ignoringOtherApps: true)
-        workspaceWindow?.makeKeyAndOrderFront(nil)
+        openWorkspace()
     }
 
     /// An agent from the docked bar: one of zerod's sessions opens as its task (a worker under its lead); any other
-    /// (Solo's, Rex's, a terminal's) as a page with its conversation with you.
+    /// (a terminal's) as a page with its conversation with you.
     func openAgent(_ name: String) {
         guard let identity = inbox.store.identity(of: name), identity.runtime == "zerod", let session = identity.ref,
             let task = workspace.conversation(session)

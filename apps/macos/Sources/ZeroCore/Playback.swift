@@ -22,6 +22,11 @@ import Observation
     /// How long a run of words takes to fade in.
     public static let fade: Double = 0.7
 
+    /// This one's cap on speeding up, and how far behind it shows the rest at once: the statics, unless set (the
+    /// phone reads more calmly, a word at a time).
+    @ObservationIgnored public var fastest = Playback.fastest
+    @ObservationIgnored public var limit = Playback.limit
+
     /// How many of the items given are on screen: always the first ones.
     public private(set) var count = 0
     /// Something to show, read out or fade in: the clock runs only then.
@@ -123,10 +128,10 @@ import Observation
     public func advance(to now: Date) {
         let step = min(max(0, now.timeIntervalSince(last ?? now)), 0.1)
         last = now
-        if let behind = oldestWaiting, now.timeIntervalSince(behind) > Self.limit {
+        if let behind = oldestWaiting, now.timeIntervalSince(behind) > limit {
             show(through: items.count - 1, now: now, fading: true)
         }
-        credit += step * min(Self.fastest, max(1, waiting / Self.lag))
+        credit += step * min(fastest, max(1, waiting / Self.lag))
         while credit > 0 {
             if let reading, reading.read < reading.total {
                 guard read(reading, now: now) else { break }

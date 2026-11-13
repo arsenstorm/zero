@@ -15,4 +15,4 @@ mkdir -p "$HOME/.local/bin" && ln -sf "$app/Contents/MacOS/zero-cli" "$HOME/.loc
 if [ "$restart" = restart ] && printf '{"op":"restart"}\n' | nc -U "$HOME/.zero/zerod.sock" 2>/dev/null | grep -q restarting; then
 	echo "zerod: restarting as the new build, the agents running on through it"
 fi
-open -g "$app"
+open -g "$app" --args --restore

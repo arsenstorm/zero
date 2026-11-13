@@ -84,6 +84,9 @@ struct WorkBlock: View {
     /// Opened by you: every step and note listed. Only your click opens it (a turn going live again as Zero restarts
     /// opened it by itself, when its openness followed its state); your next message folds it.
     @State private var expanded = false
+    /// A step gone to from a link or an ask (WorkBlock.unfold): washed a moment, alone of the turn's steps.
+    @State private var lit: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotionForLit
     /// Its words have been the last thing long enough to be its answer, not a note between steps: its notes fold away
     /// and the answer reads on from the heading (WorkBlock's task).
     @State private var answering = false
@@ -205,6 +208,10 @@ struct WorkBlock: View {
                     // Each step knows when the next began (a thought's length); the last, when the turn ended.
                     ForEach(Array(steps.enumerated()), id: \.element.id) { index, item in
                         StepOrAsk(item: item, cwd: cwd, until: index + 1 < items.count ? items[index + 1].date : (live ? nil : end))
+                            .background {
+                                RoundedRectangle(cornerRadius: 8).fill(Theme.choice).padding(.horizontal, -8).padding(.vertical, -4)
+                                    .opacity(lit == item.id ? 1 : 0).allowsHitTesting(false)
+                            }
                     }
                 }
                 .padding(.top, 4)
@@ -289,7 +296,15 @@ struct WorkBlock: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: WorkBlock.fold)) { _ in foldForNextMessage(animated: false) }
         .onReceive(NotificationCenter.default.publisher(for: WorkBlock.unfold)) { note in
-            if let item = note.object as? String, items.contains(where: { $0.id == item }) { expanded = true }
+            guard let item = note.object as? String, items.contains(where: { $0.id == item }) else { return }
+            expanded = true
+            Task {
+                // Once its steps are in (they fade in over 0.3 s), it alone, a moment.
+                try? await Task.sleep(for: .milliseconds(reduceMotionForLit ? 0 : 300))
+                withAnimation(reduceMotionForLit ? nil : .easeOut(duration: 0.2)) { lit = item }
+                try? await Task.sleep(for: .seconds(1.4))
+                withAnimation(reduceMotionForLit ? nil : .easeOut(duration: 0.6)) { if lit == item { lit = nil } }
+            }
         }
     }
 }

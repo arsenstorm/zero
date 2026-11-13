@@ -30,7 +30,7 @@ struct TaskDetails: View {
     var body: some View {
         // Its properties, then its issues and its workers.
         VStack(alignment: .leading, spacing: 0) {
-            properties; issues; workers; leftRunning
+            properties; issues; workers; leftRunning; follows
         }.padding(16)
             .frame(width: 280, alignment: .leading)
             .frame(maxHeight: docked ? .infinity : nil, alignment: .top)
@@ -269,6 +269,21 @@ struct TaskDetails: View {
         }
     }
 
+    /// What it follows (zero follow): each thing opens on a click, and its × unfollows it.
+    @ViewBuilder private var follows: some View {
+        let follows = workspace.followed.filter { $0.session == conversation.id }
+        VStack(alignment: .leading, spacing: 6) {
+            if !follows.isEmpty {
+                Text("Follows").foregroundStyle(.secondary).padding(.top, 14).padding(.bottom, 2)
+                ForEach(follows) { follow in
+                    FollowLine(follow: follow) { Task { await workspace.unfollow(session: follow.session, topic: follow.topic) } }
+                }
+            }
+        }
+        .font(.system(size: 12.5))
+        .task(id: workspace.followingVersion) { await workspace.loadFollowing() }
+    }
+
     @ViewBuilder private func workerRows(_ members: [BoardRow.Member]) -> some View {
         ForEach(members, id: \.session) { member in
             Button {
@@ -318,6 +333,27 @@ struct TaskDetails: View {
             .overlay(alignment: .bottom) {
                 Rule().stroke(.secondary.opacity(0.55), style: StrokeStyle(lineWidth: 1, dash: [2, 2])).frame(height: 1).offset(y: -1.5)
             }
+    }
+
+    /// A followed thing: its title, opened on a click; unfollowed from the × on hover.
+    private struct FollowLine: View {
+        let follow: ZerodLink.Followed
+        let unfollow: () -> Void
+        @State private var hovered = false
+        var body: some View {
+            HStack(spacing: 6) {
+                Button {
+                    if let url = follow.url { NSWorkspace.shared.open(url) }
+                } label: {
+                    TaskDetails.linked(follow.title).truncationMode(.middle)
+                }
+                .buttonStyle(.plain).tip(follow.error.map { "Can't read it: \($0)" } ?? follow.topic)
+                Spacer(minLength: 0)
+                Button(action: unfollow) { NucleoIcon("xmark", size: 11).foregroundStyle(.secondary).frame(width: 18, height: 18) }
+                    .buttonStyle(Hovering(radius: 5)).tip("Unfollow").opacity(hovered ? 1 : 0)
+            }
+            .contentShape(Rectangle()).onHover { hovered = $0 }
+        }
     }
 
     /// A line across, for the dashed underline.

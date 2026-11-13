@@ -69,3 +69,30 @@ import Testing
     navigation.goBack()
     #expect(navigation.place == .task("t1"))
 }
+
+/// A worker opened by its own id (a link, an inbox card, a report) is its lead's page with it shown, as the sidebar opens
+/// it: one step back goes to where you were.
+@MainActor @Test func aWorkerOpenedByItsIdIsShownOnItsLeadsPage() {
+    let navigation = Navigation()
+    navigation.leadOf = { $0 == "w1" ? "lead" : nil }
+    navigation.place = .task("other")
+    navigation.place = .task("w1")
+    #expect(navigation.place == .task("lead"))
+    #expect(navigation.worker == "w1")
+    navigation.goBack()
+    #expect(navigation.place == .task("other"))
+    #expect(navigation.worker == nil)
+    // On the lead's page already: only the worker changes, a step of its own.
+    navigation.place = .task("lead")
+    navigation.place = .task("w1")
+    #expect(navigation.place == .task("lead") && navigation.worker == "w1")
+    navigation.goBack()
+    #expect(navigation.place == .task("lead") && navigation.worker == nil)
+}
+
+/// Integrations left the rail for Settings: a window last there opens on Settings' first integration.
+@MainActor @Test func theOldIntegrationsPlaceOpensSettings() {
+    UserDefaults.standard.set("integrations", forKey: "place")
+    let navigation = Navigation(restoring: true)
+    #expect(navigation.place == .settings && navigation.settingsPage == "GitHub")
+}

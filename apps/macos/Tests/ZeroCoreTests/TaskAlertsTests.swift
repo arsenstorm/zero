@@ -30,9 +30,11 @@ private func row(
 }
 
 @Test func aFinishedTaskSaysHowItEnded() {
+    // Over to you is a step for the user: told as Needs you is, though it's no ask (the dock's count leaves it out).
     let changes = TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "handed", needs: "Merge the PR")])
     #expect(
-        changes.alerts == [TaskAlert(session: "1", kind: .finished, state: .handed, title: "Task 1", body: "Over to you: Merge the PR")])
+        changes.alerts == [TaskAlert(session: "1", kind: .needsYou, state: .handed, title: "Task 1", body: "Over to you: Merge the PR")])
+    #expect(TaskAlerts.needingYou([row("1", state: "handed", needs: "Merge the PR")]) == 0)
     let done = TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "done", now: "Fixed the build")])
     #expect(done.alerts.map(\.body) == ["Done: Fixed the build"])
 }

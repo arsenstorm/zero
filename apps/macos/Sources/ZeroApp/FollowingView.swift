@@ -57,18 +57,23 @@ struct FollowRows: View {
     }
 }
 
+extension ZerodLink.Followed {
+    /// The thing's description without its URL (the row opens it), or the topic when nothing was read yet.
+    var title: String {
+        let words = summary.split(separator: " ").filter { !$0.hasPrefix("http") }.joined(separator: " ")
+        return words.isEmpty ? topic : words
+    }
+    var url: URL? { summary.split(separator: " ").last { $0.hasPrefix("http") }.flatMap { URL(string: String($0)) } }
+}
+
 private struct FollowRow: View {
     let row: ZerodLink.Followed
     let task: String
     let unfollow: () -> Void
     @State private var hovered = false
 
-    /// The thing's description without its URL (the row opens it), or the topic when nothing was read yet.
-    private var title: String {
-        let words = row.summary.split(separator: " ").filter { !$0.hasPrefix("http") }.joined(separator: " ")
-        return words.isEmpty ? row.topic : words
-    }
-    private var url: URL? { row.summary.split(separator: " ").last { $0.hasPrefix("http") }.flatMap { URL(string: String($0)) } }
+    private var title: String { row.title }
+    private var url: URL? { row.url }
     private var filter: String {
         ((row.mine ? ["only your pull requests"] : []) + (row.about.isEmpty ? [] : ["about " + row.about.joined(separator: ", ")])).joined(
             separator: ", ")

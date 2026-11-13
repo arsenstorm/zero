@@ -10,10 +10,23 @@ public final class Navigation {
             String), later, laterItem(String)
     }
 
-    public var place = Place.home {
-        didSet {
-            if place != oldValue && !travelling { behind.append((oldValue, worker, settingsPage)); ahead.removeAll() }
-            if place != oldValue && !travelling { changingPlace = true; worker = nil; changingPlace = false }
+    /// Where the window is. A worker's task set here by its own id (a link, an inbox card, a report: every way into a
+    /// task comes through here) is its lead's page with it shown, as the sidebar opens it, so the sidebar shows where
+    /// you are; one step in the history.
+    public var place: Place {
+        get { at }
+        set {
+            var place = newValue
+            var shown: String?
+            if case let .task(id) = newValue, let lead = leadOf?(id), lead != id { place = .task(lead); shown = id }
+            let old = at
+            at = place
+            if place != old && !travelling { behind.append((old, worker, settingsPage)); ahead.removeAll() }
+            if place != old && !travelling {
+                changingPlace = true; worker = shown; changingPlace = false
+            } else if let shown {
+                worker = shown
+            }
             UserDefaults.standard.set(place.key, forKey: "place")
             switch place {
             case .home, .board, .task, .agent: homePlace = place;
@@ -21,6 +34,9 @@ public final class Navigation {
             }
         }
     }
+    private var at = Place.home
+    /// The lead whose page shows a worker (the app's: its tasks' parents), nil for a lead.
+    @ObservationIgnored public var leadOf: (@MainActor (String) -> String?)?
     /// Where Home was last: the task that was open, so the rail's Home goes back to it rather than to New task.
     public private(set) var homePlace = Place.home
     /// On a task's page: the worker shown instead of its lead. Showing one is a step in the history too: back from a
@@ -86,7 +102,10 @@ public final class Navigation {
     /// quit or an update.
     public init(restoring: Bool = false) {
         guard restoring else { return }
-        place = UserDefaults.standard.string(forKey: "place").flatMap(Place.init(key:)) ?? .home
+        let kept = UserDefaults.standard.string(forKey: "place")
+        place = kept.flatMap(Place.init(key:)) ?? .home
+        // Integrations was a place of its own before it became Settings' pages.
+        if kept == "integrations" { place = .settings; settingsPage = "GitHub" }
         worker = UserDefaults.standard.string(forKey: "placeWorker")
     }
 

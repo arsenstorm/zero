@@ -286,6 +286,9 @@ struct ConversationView: View {
             let ask = inbox.store.asks(of: conversation.id).first { $0.id == id }
             return ask.map { AgentAskCard.open($0, in: conversation) } == true ? nil : id
         }
+        // The message alone: an answer or a message is its own block; a working note inside a turn's steps is washed by
+        // the steps it's among (WorkBlock), not the whole turn.
+        guard block == item else { return }
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { revealed = block }
         try? await Task.sleep(for: .seconds(1.4))
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.6)) { if revealed == block { revealed = nil } }

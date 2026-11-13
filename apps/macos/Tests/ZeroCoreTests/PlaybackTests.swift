@@ -115,6 +115,19 @@ private func step(_ id: String) -> ConversationItem { item(id, .tool(name: "Read
     #expect(player.read("a1") == 2000, "done in about five seconds, not eight")
 }
 
+/// The phone's reading: a calmer cap on speeding up, and a long wait before the rest shows at once, so a long answer
+/// coming whole reads out a word at a time rather than in runs of several.
+@MainActor @Test func aCalmerCapReadsAWholeAnswerSteadily() {
+    let player = Player([yours("u1")])
+    player.playback.fastest = 2
+    player.playback.limit = 60
+    player.give([words("a1", 6000)])
+    player.play(1)
+    #expect(player.read("a1") < 700, "about twice the pace at most (each tick ends at a word's end), not the Mac's eight")
+    player.play(10)
+    #expect(player.read("a1") < 6000, "not shown at once ten seconds behind")
+}
+
 @MainActor @Test func farBehindItShowsTheRestAtOnce() {
     let player = Player([yours("u1")])
     // More than anyone reads in ten seconds even sped up.

@@ -40,6 +40,7 @@ import ZeroCore
     private var hotKeyHandlerInstalled = false
     /// Shown instead of everything else while Zero runs from outside Applications (MoveToApplications).
     private var moveWindow: NSWindow?
+    private var launchedAtLogin = false
 
     /// A zero://pad link, clicked anywhere: the pad, at its section. A zero://loop link: the loop.
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -108,7 +109,7 @@ import ZeroCore
         connectWorkspace()
         connectInbox()
         makePanels()
-        restoreWorkspace()
+        if launchedToRestore() { restoreWorkspace() } else { openWorkspace() }
         activateForTypingInInbox()
         makeStatusItem()
         Updater.shared.watch()
@@ -133,6 +134,13 @@ import ZeroCore
     /// zerod's sessions, their notifications, and the phones that see them.
     private func connectWorkspace() {
         workspace = Workspace()
+        // A worker opened by its id, however (a link, a card, a report), shows on its lead's page, as the sidebar opens it;
+        // a worker's worker has no row there, and keeps its own page.
+        navigation.leadOf = { [weak workspace] id in
+            guard let workspace, let parent = workspace.conversation(id)?.parent, workspace.conversation(parent)?.parent == nil
+            else { return nil }
+            return parent
+        }
         inbox.workspace = workspace
         // The control bar names Zero's own tasks as the window does. Their names only, read on their own (not the
         // roster, which changes with every task's state); what they run on is the composer's (ComposerCard.zeroRuns).
@@ -183,6 +191,18 @@ import ZeroCore
         inbox.onTyping = { [weak self] typing in if typing { self?.activateForTyping() } }
         inbox.presentSelector = { [weak self] anchor in self?.showSelector(anchorInInbox: anchor) }
         inbox.dismissSelector = { [weak self] in self?.hideSelector() }
+    }
+
+    /// Opened by the user (the Dock, Finder, Spotlight, `open`), Zero opens its window. Reopened by an install or an
+    /// update (install.sh passes --restore), or at login, it comes back as it was.
+    private func launchedToRestore() -> Bool { CommandLine.arguments.contains("--restore") || launchedAtLogin }
+
+    /// The launch's open event is gone by applicationDidFinishLaunching.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        let event = NSAppleEventManager.shared().currentAppleEvent
+        launchedAtLogin =
+            event?.eventID == kAEOpenApplication
+            && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
     }
 
     /// Back where you were: the window, if it was open when Zero last quit. Not over someone's full-screen app (a film,

@@ -25,7 +25,9 @@ public enum TaskAlerts {
         case .trouble, .blocked: return (.trouble, own, false)
         // A reply to a turn Zero started (an event, a worker's report): there to read, nothing to tell.
         case .answered where row.quiet == true: return nil
-        case .handed, .done, .answered, .waiting: return (.finished, own, false)
+        // Over to you: a step only the user can take, so it's told as Needs you is.
+        case .handed: return (.needsYou, own, false)
+        case .done, .answered, .waiting: return (.finished, own, false)
         default: return nil
         }
     }
@@ -154,7 +156,7 @@ public enum TaskAlerts {
     }
 
     /// The tasks waiting on the user, a worker's ask counted as its lead's: the Dock's badge.
-    public static func needingYou(_ rows: [BoardRow]) -> Int { rows.filter { standing($0)?.kind == .needsYou }.count }
+    public static func needingYou(_ rows: [BoardRow]) -> Int { rows.filter { standing($0)?.state == .needsYou }.count }
 
     private static func body(_ row: BoardRow, _ state: BoardRow.State, worker: Bool) -> String {
         if worker { return "A worker needs you" + (row.asks.first.map { ": " + $0.title } ?? "") }
