@@ -13,7 +13,126 @@ fn agents(folders: Vec<String>) -> AgentGit {
         email: "117126823+arsenstorm2@users.noreply.github.com".into(),
         https: true,
         folders,
+        agents_author: false,
+        coauthor_name: String::new(),
+        coauthor_email: String::new(),
+        scoped_token: false,
     }
+}
+
+#[test]
+fn author_and_token_are_opt_in_and_the_token_is_only_for_github() {
+    let home = temp_dir("git-options");
+    let key = home.join("git-signing-key");
+    std::fs::write(&key, "key").unwrap();
+    let normal = zerod::git::variables_for(&agents(vec![]), &key, &home);
+    assert!(!normal.iter().any(|(k, _)| k == "GIT_AUTHOR_NAME" || k == "GIT_AUTHOR_EMAIL" || k == "GH_TOKEN"));
+    assert!(!normal.iter().any(|(_, v)| v.contains("core.hooksPath") || v.contains("credential.helper")));
+
+    let settings = AgentGit { agents_author: true, scoped_token: true, ..agents(vec![]) };
+    let vars = zerod::git::variables_for_with_token(&settings, &key, &home, None);
+    assert!(vars.iter().any(|(k, v)| k == "GIT_AUTHOR_NAME" && v == "Arsen (Agent)"));
+    assert!(vars.iter().any(|(k, v)| k == "GIT_AUTHOR_EMAIL" && v == "117126823+arsenstorm2@users.noreply.github.com"));
+    assert!(!vars.iter().any(|(k, _)| k == "GH_TOKEN"), "no saved token");
+    assert!(
+        !zerod::git::variables_for_with_token(&agents(vec![]), &key, &home, Some("secret".into())).iter().any(|(k, _)| k == "GH_TOKEN"),
+        "the option is off"
+    );
+    let with_token = zerod::git::variables_for_with_token(&settings, &key, &home, Some("secret".into()));
+    assert!(with_token.iter().any(|(k, v)| k == "GH_TOKEN" && v == "secret"));
+    assert!(with_token.iter().any(|(_, v)| v == "credential.helper"));
+    let token_only = zerod::git::variables_for_with_token(
+        &AgentGit { enabled: false, scoped_token: true, ..agents(vec![]) },
+        &key,
+        &home,
+        Some("secret".into()),
+    );
+    assert!(token_only.iter().any(|(k, _)| k == "GH_TOKEN"));
+    assert!(!token_only.iter().any(|(k, _)| k == "GIT_COMMITTER_NAME"));
+    let helper = home.join("git-credential");
+    let reply = |input: &str| {
+        use std::io::Write;
+        let mut child = std::process::Command::new(&helper)
+            .arg("get")
+            .env("GH_TOKEN", "secret")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap()
+    };
+    assert!(reply("protocol=https\nhost=github.com\n").contains("password=secret"));
+    assert!(reply("protocol=https\nhost=example.com\n").is_empty());
+    assert!(reply("protocol=http\nhost=github.com\n").is_empty());
+}
+
+#[test]
+fn agent_authored_commit_chains_hooks_and_amend_has_one_coauthor() {
+    let home = temp_dir("git-coauthor");
+    let key = home.join("git-signing-key");
+    assert!(
+        std::process::Command::new("ssh-keygen")
+            .args(["-q", "-t", "ed25519", "-N", "", "-f", key.to_str().unwrap()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let repo = home.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let hooks = home.join("original-hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    let marker = home.join("ran-hook");
+    std::fs::write(hooks.join("commit-msg"), format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
+    let precommit = home.join("ran-pre-commit");
+    std::fs::write(hooks.join("pre-commit"), format!("#!/bin/sh\ntouch '{}'\n", precommit.display())).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(hooks.join("commit-msg"), std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::set_permissions(hooks.join("pre-commit"), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let settings = AgentGit { agents_author: true, ..agents(vec![]) };
+    let vars = zerod::git::variables_for(&settings, &key, &repo);
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(&repo)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin:/opt/homebrew/bin")
+            .env("HOME", &home)
+            .envs(vars.iter().cloned())
+            .output()
+            .unwrap()
+    };
+    assert!(git(&["init", "-q"]).status.success());
+    assert!(git(&["config", "user.name", "User Name"]).status.success());
+    assert!(git(&["config", "user.email", "user@example.com"]).status.success());
+    assert!(git(&["config", "core.hooksPath", hooks.to_str().unwrap()]).status.success());
+    let first = git(&["commit", "-q", "--allow-empty", "-m", "first"]);
+    assert!(first.status.success(), "{}", String::from_utf8_lossy(&first.stderr));
+    assert!(marker.exists(), "the repository's own commit-msg hook ran");
+    assert!(precommit.exists(), "the repository's own pre-commit hook ran");
+    let amended = git(&["commit", "-q", "--amend", "--allow-empty", "--no-edit"]);
+    assert!(amended.status.success(), "{}", String::from_utf8_lossy(&amended.stderr));
+    let raw = String::from_utf8_lossy(&git(&["cat-file", "-p", "HEAD"]).stdout).to_string();
+    assert!(raw.contains("author Arsen (Agent) <117126823+arsenstorm2@users.noreply.github.com>"), "{raw}");
+    assert_eq!(raw.matches("Co-authored-by: User Name <user@example.com>").count(), 1, "{raw}");
+
+    let branch = String::from_utf8(git(&["symbolic-ref", "--short", "HEAD"]).stdout).unwrap().trim().to_string();
+    assert!(git(&["checkout", "-q", "-b", "side"]).status.success());
+    std::fs::write(repo.join("side"), "side\n").unwrap();
+    assert!(git(&["add", "side"]).status.success());
+    assert!(git(&["commit", "-q", "-m", "side"]).status.success());
+    assert!(git(&["checkout", "-q", &branch]).status.success());
+    std::fs::write(repo.join("main"), "main\n").unwrap();
+    assert!(git(&["add", "main"]).status.success());
+    assert!(git(&["commit", "-q", "-m", "main"]).status.success());
+    assert!(git(&["checkout", "-q", "side"]).status.success());
+    let rebased = git(&["rebase", &branch]);
+    assert!(rebased.status.success(), "{}", String::from_utf8_lossy(&rebased.stderr));
+    assert!(git(&["checkout", "-q", &branch]).status.success());
+    let merged = git(&["merge", "-q", "--no-ff", "side", "-m", "merge"]);
+    assert!(merged.status.success(), "{}", String::from_utf8_lossy(&merged.stderr));
+    let merge = String::from_utf8_lossy(&git(&["cat-file", "-p", "HEAD"]).stdout).to_string();
+    assert_eq!(merge.matches("Co-authored-by: User Name <user@example.com>").count(), 1, "{merge}");
 }
 
 #[test]

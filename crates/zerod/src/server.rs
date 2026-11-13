@@ -463,6 +463,7 @@ async fn git(zerod: &Zerod, request: Request) -> Result<Value, String> {
             .await
             .map(|(name, email)| json!({"login": login.trim().trim_start_matches('@'), "name": name, "email": email})),
         "gitCheck" => Ok(json!({"title": crate::git::on_github(&login, zerod.daemon.home()).await})),
+        "gitTokenStatus" => Ok(crate::git::token_status().await),
         other => unknown(other),
     }
 }
