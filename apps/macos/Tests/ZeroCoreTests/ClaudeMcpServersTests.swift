@@ -23,3 +23,25 @@ import Testing
     #expect(servers[2].project == "/work/app" && !servers[2].needsSignIn)
     #expect(ClaudeMcpServers.list(home: home.appendingPathComponent("none"), config: config).isEmpty)
 }
+
+/// Manage in Zero: one of Claude Code's own servers as Zero's form starts it, under the same name (so the sign-in
+/// Claude Code keeps for it is still its own), its values kept apart for the Keychain rather than in Zero's file.
+@Test func aClaudeServerBecomesOneOfZerosWithItsValuesForTheKeychain() throws {
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent("claude-mcp-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+    let state: [String: Any] = [
+        "mcpServers": [
+            "paper": ["type": "stdio", "command": "paper", "args": ["mcp"], "env": ["PAPER_KEY": "k"]],
+            "testing": ["type": "http", "url": "https://mcp.example.com", "headers": ["Authorization": "Bearer t"]],
+        ]
+    ]
+    try JSONSerialization.data(withJSONObject: state).write(to: home.appendingPathComponent(".claude.json"))
+    let servers = ClaudeMcpServers.list(home: home, config: home)
+    let paper = try #require(servers.first { $0.name == "paper" })
+    #expect(paper.zeros.name == "paper" && paper.zeros.command == "paper" && paper.zeros.args == ["mcp"] && paper.zeros.url == nil)
+    #expect(paper.zeros.env.map(\.name) == ["PAPER_KEY"] && paper.zeros.env[0].from == .keychain && paper.zeros.env[0].value == nil)
+    #expect(paper.values == ["PAPER_KEY": "k"])
+    let testing = try #require(servers.first { $0.name == "testing" })
+    #expect(testing.zeros.url == "https://mcp.example.com" && testing.zeros.command == nil)
+    #expect(testing.zeros.headers.map(\.name) == ["Authorization"] && testing.values == ["Authorization": "Bearer t"])
+}

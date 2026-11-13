@@ -8,6 +8,10 @@ import Observation
 @MainActor @Observable public final class ClaudeSignIn {
     public enum Status: Equatable, Sendable { case signingIn, checking, done, failed(String) }
     public private(set) var status: Status?
+    /// The sign-in kept, once done.
+    public private(set) var saved: ZerodLink.SignIn?
+    /// What a token is called when Claude Code doesn't say whose it is.
+    public static let unnamed = "Claude account"
     @ObservationIgnored private var setup: TokenSetup?
 
     public init() {}
@@ -34,10 +38,13 @@ import Observation
                     self.setup = nil
                     let whose = await Self.account(of: token)
                     var signin = ZerodLink.SignIn(
-                        cli: .claude, kind: .token, label: whose.email ?? replacing?.label ?? (label.isEmpty ? "Claude account" : label))
+                        cli: .claude, kind: .token, label: whose.email ?? replacing?.label ?? (label.isEmpty ? Self.unnamed : label))
                     if let replacing { signin.id = replacing.id }
                     signin.plan = whose.plan ?? replacing?.plan
+                    let before = Set(workspace.signins.map(\.id))
                     let error = await workspace.addSignIn(signin, secret: token)
+                    // The one kept: the one replaced, or the one that wasn't there before.
+                    saved = workspace.signins.first { kept in replacing.map { kept.id == $0.id } ?? !before.contains(kept.id) }
                     status = error.map(Status.failed) ?? .done
                     return
                 }

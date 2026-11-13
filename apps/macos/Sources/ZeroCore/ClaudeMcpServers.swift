@@ -12,6 +12,10 @@ public enum ClaudeMcpServers {
         /// The project it's in, for one of a project's own; nil for the user's.
         public let project: String?
         public let needsSignIn: Bool
+        /// It as one of Zero's (Manage in Zero): its name, how it runs, and its values' names, to be kept in the
+        /// Keychain; `values` has what they are.
+        public let zeros: ZerodLink.McpServer
+        public let values: [String: String]
     }
 
     public static func list(
@@ -31,7 +35,14 @@ public enum ClaudeMcpServers {
                 let detail =
                     (entry["url"] as? String)
                     ?? ([entry["command"] as? String ?? ""] + (entry["args"] as? [String] ?? [])).joined(separator: " ")
-                return Server(name: name, detail: detail, project: project, needsSignIn: cache[name] != nil)
+                let env = entry["env"] as? [String: String] ?? [:], headers = entry["headers"] as? [String: String] ?? [:]
+                let named = { (values: [String: String]) in values.keys.sorted().map { ZerodLink.McpServer.Value(name: $0) } }
+                let zeros = ZerodLink.McpServer(
+                    name: name, command: entry["command"] as? String, args: entry["args"] as? [String] ?? [], url: entry["url"] as? String,
+                    env: named(env), headers: named(headers))
+                return Server(
+                    name: name, detail: detail, project: project, needsSignIn: cache[name] != nil, zeros: zeros,
+                    values: env.merging(headers) { a, _ in a })
             }
         }
         let projects = (state["projects"] as? [String: Any] ?? [:]).sorted { $0.key < $1.key }

@@ -474,6 +474,8 @@ public struct UsageWindow: Decodable, Equatable, Sendable {
     /// The share used, 0 to 1.
     public var used: Double
     public var resetsAt: Int?
+    /// When its CLI said it (Unix seconds).
+    public var readAt: Int?
 }
 
 public struct Usage: Decodable, Equatable, Sendable {
@@ -481,6 +483,73 @@ public struct Usage: Decodable, Equatable, Sendable {
     /// Unix seconds.
     public var resetsAt: Int?
     public var windows: [UsageWindow]
+    /// Its plan has no windows (an API-billed account): nothing to show, and nothing missing.
+    public var noLimits: Bool?
+}
+
+/// The accounts' usage as the rail shows it: every account with usage known, the most used first (its mark is the
+/// first's, its card all of them).
+public enum UsageShown {
+    /// A window's share while it hasn't reset (at most all of it), none once it has.
+    public static func used(_ window: UsageWindow, now: Int) -> Double {
+        (window.resetsAt ?? Int.max) > now ? min(1, window.used) : 0
+    }
+
+    /// An account's fullest window: the one that stops it first; level, the week, the longer wait.
+    public static func fullest(_ usage: Usage, now: Int) -> UsageWindow? {
+        usage.windows.max { a, b in
+            let (x, y) = (used(a, now: now), used(b, now: now))
+            return x != y ? x < y : a.name != "7 days" && b.name == "7 days"
+        }
+    }
+
+    /// At its limit until its reset (one not known: until a read says otherwise).
+    public static func limited(_ usage: Usage, now: Int) -> Bool { usage.limited && (usage.resetsAt ?? Int.max) > now }
+
+    /// An account's fullest window's share; all of it while it's at its limit, whatever the figures say.
+    public static func used(_ usage: Usage, now: Int) -> Double {
+        limited(usage, now: now) ? 1 : fullest(usage, now: now).map { used($0, now: now) } ?? 0
+    }
+
+    /// How old its figures are, said once over half an hour ("Read 45 min ago"): its oldest window's read.
+    public static func stale(_ usage: Usage, now: Int) -> String? { stale(read: usage.windows.compactMap(\.readAt).min(), now: now) }
+
+    public static func stale(read: Int?, now: Int) -> String? {
+        guard let read, now - read > 30 * 60 else { return nil }
+        let minutes = (now - read) / 60
+        return minutes < 60
+            ? "Read \(minutes) min ago" : minutes < 48 * 60 ? "Read \(minutes / 60) h ago" : "Read \(minutes / 1440) days ago"
+    }
+
+    /// Every account with something to show: figures, a limit, or a plan without limits. The most recently used first
+    /// (`lastUsed`, by id: when a turn last ended on it), then the rest, the most used first; those at a limit last.
+    public static func accounts(signins: [ZerodLink.SignIn], usage: [String: Usage], lastUsed: [String: Int] = [:], now: Int)
+        -> [(ZerodLink.SignIn, Usage)]
+    {
+        signins.compactMap { s in
+            usage[s.id].flatMap { $0.windows.isEmpty && !limited($0, now: now) && $0.noLimits != true ? nil : (s, $0) }
+        }
+        // At its limit, an account can't be the one in use: after every one that can run.
+        .sorted { a, b in
+            let (fullA, fullB) = (used(a.1, now: now) >= 1, used(b.1, now: now) >= 1)
+            if fullA != fullB { return fullB }
+            let (x, y) = (lastUsed[a.0.id] ?? .min, lastUsed[b.0.id] ?? .min)
+            return x != y ? x > y : used(a.1, now: now) > used(b.1, now: now)
+        }
+    }
+
+    /// Shown accounts grouped by CLI: the groups in the order their first account comes, each in its accounts' order.
+    public static func byCLI(_ shown: [(ZerodLink.SignIn, Usage)]) -> [[(ZerodLink.SignIn, Usage)]] {
+        var groups: [[(ZerodLink.SignIn, Usage)]] = []
+        for account in shown {
+            if let at = groups.firstIndex(where: { $0[0].0.cli == account.0.cli }) {
+                groups[at].append(account)
+            } else {
+                groups.append([account])
+            }
+        }
+        return groups
+    }
 }
 
 public enum FailureKind: String, Decodable, Sendable { case limit, signIn, network, model, other }
@@ -1454,26 +1523,40 @@ public final class ZerodLink: @unchecked Sendable {
     }
     public static let signInKeychain = "Zero sign-ins"
 
-    public func signIns() async throws -> (list: [SignIn], defaults: [String: String], usage: [String: Usage], refused: [String: [String]])
-    {
+    /// Every sign-in, each CLI's default, each sign-in's usage, the models refused it, and when a turn last ended on it.
+    public func signIns() async throws -> (
+        list: [SignIn], defaults: [String: String], usage: [String: Usage], refused: [String: [String]], lastTurn: [String: Int]
+    ) {
         struct Listed: Decodable {
             let signins: [SignIn]; let defaults: [String: String]; let usage: [String: Usage]?; let refused: [String: [String]]?
+            let lastTurn: [String: Int]?
         }
         let listed = try decode(Listed.self, from: await call("signIns"))
-        return (listed.signins, listed.defaults, listed.usage ?? [:], listed.refused ?? [:])
+        return (listed.signins, listed.defaults, listed.usage ?? [:], listed.refused ?? [:], listed.lastTurn ?? [:])
     }
     public func saveSignIn(_ signin: SignIn) async throws -> SignIn {
         let data = try JSONEncoder().encode(signin)
         return try decode(SignIn.self, from: await call("saveSignIn", ["signin": try JSONSerialization.jsonObject(with: data)]))
     }
     public func deleteSignIn(_ id: String) async throws { _ = try await call("deleteSignIn", ["signin": id]) }
-    /// Each account's finished turns by the hour they ended in (Unix hours), by its id.
-    public func accountActivity() async throws -> [String: [Int: Int]] {
-        let raw = try decode([String: [String: Int]].self, from: await call("accountActivity"))
-        return raw.mapValues { hours in Dictionary(uniqueKeysWithValues: hours.compactMap { key, count in Int(key).map { ($0, count) } }) }
+    /// Every account's finished turns (removed accounts' too), in the user's own days.
+    public func accountActivity() async throws -> AccountActivity {
+        struct Kept: Decodable { let hours: [String: [String: Int]]; let accounts: [String: SignIn] }
+        let kept = try decode(Kept.self, from: await call("accountActivity"))
+        let hours = kept.hours.mapValues { hours in
+            Dictionary(uniqueKeysWithValues: hours.compactMap { key, count in Int(key).map { ($0, count) } })
+        }
+        return AccountActivity(hours: hours, accounts: kept.accounts)
     }
     /// Each account's usage asked of its CLI now; the sign-ins notice says when it's in.
     public func readUsage() async throws { _ = try await call("readUsage") }
+    /// Claude Code signs an account in itself, in a folder of its own (`claude auth login` opens its page in the
+    /// browser; the page is given back in case it didn't): a new one, or `replacing` a token's, which becomes it once
+    /// signed in.
+    public func claudeSignIn(replacing: String?) async throws -> (id: String, page: URL?) {
+        let result = try await call("claudeSignIn", ["signin": replacing]) as? [String: Any]
+        return (result?["id"] as? String ?? "", (result?["page"] as? String).flatMap(URL.init(string:)))
+    }
     /// Codex signs an account in itself, in a home of its own: its ChatGPT page to open (none for an API key).
     public func codexSignIn(label: String?, apiKey: String?) async throws -> (id: String, page: URL?) {
         let result = try await call("codexSignIn", ["signin": ["label": label as Any, "apiKey": apiKey as Any]]) as? [String: Any]
@@ -1982,4 +2065,27 @@ public struct StuckCommands: Equatable, Sendable {
     /// Commands never stopped on their own, by any part of their text.
     public var never: [String] = []
     public init() {}
+}
+
+/// Every account's finished turns as zerod keeps them, whatever became of the account, put in the user's own days.
+public struct AccountActivity: Sendable, Equatable {
+    /// Turns by local day (its start), by account id.
+    public var days: [Date: [String: Int]] = [:]
+    /// What each id is called: its sign-in's name (removed ones too), or for a CLI's name, that CLI's own sign-in.
+    public var names: [String: String] = [:]
+
+    public init() {}
+
+    public init(hours: [String: [Int: Int]], accounts: [String: ZerodLink.SignIn], calendar: Calendar = .current) {
+        for (id, hours) in hours {
+            names[id] = accounts[id]?.label ?? Provider(rawValue: id).map { "\($0.title)'s own sign-in" } ?? id
+            for (hour, count) in hours {
+                days[calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(hour * 3600))), default: [:]][id, default: 0] +=
+                    count
+            }
+        }
+    }
+
+    /// Every account's turns that day, together.
+    public var totals: [Date: Int] { days.mapValues { $0.values.reduce(0, +) } }
 }

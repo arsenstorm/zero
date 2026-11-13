@@ -104,9 +104,19 @@ struct WorkspaceView: View {
 
     private var window: some View {
         HStack(spacing: 0) {
-            Rail(place: $navigation.place, homePlace: navigation.homePlace, inbox: inbox) {
-                navigation.openSettings(SettingsView.Page.general.rawValue, section: "health")
+            Rail(place: $navigation.place, homePlace: navigation.homePlace, inbox: inbox, workspace: workspace) {
+                navigation.openSettings(SettingsView.Page.general.rawValue)
+            } open: { id in
+                // A worker opens under its lead, as its row does.
+                if let lead = workspace.conversation(id)?.parent {
+                    navigation.place = .task(lead); navigation.worker = id
+                } else {
+                    navigation.place = .task(id)
+                }
+            } openAccounts: {
+                navigation.openSettings(SettingsView.Page.signins.rawValue)
             }
+            .zIndex(1) // its cards go over the panel
             Group {
                 switch navigation.place {
                 case .settings: settings()
@@ -153,6 +163,9 @@ struct WorkspaceView: View {
                 Task { await workspace.rename(task.id, to: name, ticket: task.ticket) }
             }
         }
+        .zeroDialog(item: Bindable(TaskMenu.Asked.shared).restarting) { task in
+            RestartDialog { Task { await workspace.restartAgent(task.id) } }
+        }
         .zeroDialog(item: Bindable(TaskMenu.Asked.shared).pairing) { task in
             PairSheet(task: task, others: workspace.board.filter { $0.session != task.id }) { other in
                 Task { await workspace.introduce(task.id, to: other) }
@@ -168,9 +181,12 @@ struct WorkspaceView: View {
                 } else if let error = workspace.lastError {
                     ErrorToast(text: error) { workspace.lastError = nil }
                         .transition(Motion.transition(.opacity.combined(with: .offset(y: 8))))
+                } else if let copied = CopiedToast.shown {
+                    CopiedToast(id: copied).transition(Motion.transition(.opacity.combined(with: .offset(y: 8))))
                 }
             }
             .animation(.easeOut(duration: 0.15), value: workspace.lastError)
+            .animation(.easeOut(duration: 0.15), value: CopiedToast.shown == nil)
             .animation(.easeOut(duration: 0.2), value: workspace.updating == nil)
             .padding(16)
         }
@@ -182,6 +198,7 @@ struct WorkspaceView: View {
         case .agent(let name): AgentPage(controller: inbox, name: name).id(name)
         case .task(let id) where workspace.conversation(id) != nil:
             TaskPages(workspace: workspace, inbox: inbox, navigation: navigation, current: id)
+                .background { TaskCopyKeys(id: navigation.worker ?? id, workspace: workspace) }
         default: NewTaskView(workspace: workspace, started: { navigation.place = .task($0) })
         }
     }
@@ -192,6 +209,28 @@ private struct Archiving: Identifiable { let id: String }
 
 /// Archiving puts a task away with every worker under it: the task named, what goes with it, and where it comes back
 /// from. Return archives, Escape cancels.
+/// Restart agent mid-turn: asked first, as the turn stops with it.
+private struct RestartDialog: View {
+    let restart: () -> Void
+    @Environment(\.closeDialog) private var close
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            DialogTitle(text: "Restart agent?", detail: "Its current turn stops.")
+            HStack(spacing: 8) {
+                Spacer()
+                DialogButton(title: "Cancel") { close() }
+                DialogButton(title: "Restart", kind: .primary) {
+                    close()
+                    restart()
+                }
+            }
+            .padding(.top, 12)
+        }
+        .frame(width: 320, alignment: .leading)
+    }
+}
+
 private struct ArchiveDialog: View {
     let workspace: Workspace
     let id: String
@@ -256,14 +295,19 @@ private struct ArchiveDialog: View {
 /// The title bar adds however far the sidebar has been dragged from that.
 let pageStart: CGFloat = 48 + CGFloat(SidebarWidth.standard) + 1
 
-/// The outer rail: home and Zero's pages at the top; integrations and settings at the foot.
+/// The outer rail: home and Zero's pages at the top; what tasks use, the accounts' usage and settings at the foot.
 private struct Rail: View {
     @Binding var place: Navigation.Place
     /// Where Home was last (a task, say): what its icon goes back to.
     var homePlace: Navigation.Place = .home
     let inbox: InboxController
-    /// Settings › General at its Health section, where the gear's dot points.
-    let openHealth: () -> Void
+    let workspace: Workspace
+    /// Settings › General, whose Health section the gear's dot points to (opened at the top, not scrolled there).
+    let openGeneral: () -> Void
+    /// Opens a task by its session (the Tasks card's).
+    let open: (String) -> Void
+    /// Settings › Accounts and models (the usage mark's click).
+    let openAccounts: () -> Void
 
     private var home: Bool {
         switch place {
@@ -299,11 +343,13 @@ private struct Rail: View {
             let loops = { if case .loop = place { true } else { place == .loops } }()
             item("animation-repeat", selected: loops, help: "Loops") { if !loops { place = .loops } }
             Spacer()
-            // Zero's own trouble (HealthMonitor), said quietly: a dot on Settings, which then opens at Health.
+            RailTasks(workspace: workspace, open: open)
+            RailUsage(workspace: workspace, openAccounts: openAccounts)
+            // Zero's own trouble (HealthMonitor), said quietly: a dot on Settings, which then opens on General.
             let trouble = HealthMonitor.shared.trouble
-            let help = trouble ? "Settings · Health has something to look at" : "Settings"
+            let help = trouble ? "Settings · General › Health has something to look at" : "Settings"
             item("gear", selected: place == .settings, help: help, shortcut: "⌘,") {
-                if trouble { openHealth() } else { place = .settings }
+                if trouble { openGeneral() } else { place = .settings }
             }
             .overlay(alignment: .topTrailing) {
                 Circle().fill(.orange).frame(width: 6, height: 6).padding(6).opacity(trouble ? 1 : 0).allowsHitTesting(false)

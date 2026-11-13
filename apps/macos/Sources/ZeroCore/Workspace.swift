@@ -991,16 +991,25 @@ public final class Workspace {
     /// The models each sign-in's provider refused it (no access), by id: zerod doesn't choose it for them.
     public private(set) var signinRefused: [String: [String]] = [:]
 
+    /// When a turn last ended on each sign-in, by id (Unix seconds): zerod's record of the account each CLI ran as.
+    public private(set) var signinLastTurn: [String: Int] = [:]
+
     public func loadSignIns() async {
-        guard let (list, defaults, usage, refused) = try? await link?.signIns() else { return }
+        guard let (list, defaults, usage, refused, lastTurn) = try? await link?.signIns() else { return }
+        if lastTurn != signinLastTurn { signinLastTurn = lastTurn }
         if refused != signinRefused { signinRefused = refused }
         if list != signins { signins = list }
         if defaults != signinDefaults { signinDefaults = defaults }
         if usage != signinUsage { signinUsage = usage }
     }
 
-    /// Each account's finished turns by the hour (Unix hours): its activity graph's.
-    public func accountActivity() async -> [String: [Int: Int]] { (try? await link?.accountActivity()) ?? [:] }
+    /// Every account's finished turns by day: the Activity graph's.
+    public func accountActivity() async -> AccountActivity { (try? await link?.accountActivity()) ?? AccountActivity() }
+
+    /// Every account with usage known, the most recently used first (UsageShown): by when a turn last ended on it.
+    public func usageShown(now: Date = Date()) -> [(ZerodLink.SignIn, Usage)] {
+        UsageShown.accounts(signins: signins, usage: signinUsage, lastUsed: signinLastTurn, now: Int(now.timeIntervalSince1970))
+    }
 
     /// Each account's usage asked of its CLI, rather than as its tasks last heard it.
     public func readUsage() async { try? await link?.readUsage() }
@@ -1034,6 +1043,17 @@ public final class Workspace {
         _ = await attempt { try await $0.deleteSignIn(signin.id) }
         Keychain.saveString(nil, service: ZerodLink.signInKeychain, account: signin.id)
         await loadSignIns()
+    }
+
+    /// A Claude account, signed in by Claude Code itself in a folder of its own (a token `replacing` switched to one):
+    /// its page, in case the browser didn't open it, or why not.
+    public func signInClaude(replacing: ZerodLink.SignIn? = nil) async -> (page: URL?, error: String?) {
+        guard let link = await linked() else { return (nil, "Zero's daemon isn't running") }
+        do {
+            let (_, page) = try await link.claudeSignIn(replacing: replacing?.id)
+            await loadSignIns()
+            return (page, nil)
+        } catch { return (nil, error.localizedDescription) }
     }
 
     /// A Codex account, signed in by Codex itself: its ChatGPT page to open (none for a key), or why not.

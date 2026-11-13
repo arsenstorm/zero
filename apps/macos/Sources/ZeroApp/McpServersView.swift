@@ -4,11 +4,14 @@ import ZeroCore
 // Settings › MCP servers: servers set up once in Zero and given to every task's CLI (Claude Code, Codex, OpenCode) as
 // it starts, on top of the CLI's own; each for every workspace or only those it's put in. A value (an API key, a
 // header) is kept in the Keychain unless said otherwise. Below them, Claude Code's own (read from its config), with a
-// Sign in for one that needs it: Claude Code's own sign-in, run by zerod.
+// Sign in for one that needs it (Claude Code's own sign-in, run by zerod) and, for one not in Zero yet, Manage in Zero:
+// every CLI and account gets it from then on, Claude accounts' folders copied from the user's config only once.
 
 struct McpServersPage: View {
     let workspace: Workspace?
     @State private var editing: ZerodLink.McpServer?
+    /// The values of one of Claude Code's servers being brought into Zero, for the Keychain.
+    @State private var given: [String: String] = [:]
     @State private var claudes: [ClaudeMcpServers.Server] = []
     /// Servers whose sign-in page was opened: waiting for Claude Code to say they're signed in.
     @State private var signingIn: Set<String> = []
@@ -24,7 +27,7 @@ struct McpServersPage: View {
                         }
                         if !workspace.mcpServers.isEmpty { Hairline() }
                         Button {
-                            editing = ZerodLink.McpServer()
+                            given = [:]; editing = ZerodLink.McpServer()
                         } label: {
                             NucleoLabel("Add a server", icon: "plus", size: 13).font(.system(size: 13)).foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).frame(height: 44).contentShape(
@@ -41,7 +44,7 @@ struct McpServersPage: View {
                 .task {
                     await workspace.loadMcpServers(); await workspace.loadWorkspaces()
                 }
-                .zeroDialog(item: $editing) { server in McpServerForm(server: server, workspace: workspace) }
+                .zeroDialog(item: $editing) { server in McpServerForm(server: server, workspace: workspace, given: given) }
                 if !claudes.isEmpty {
                     SettingsSection(title: "Claude Code's servers") {
                         VStack(spacing: 0) {
@@ -88,6 +91,14 @@ struct McpServersPage: View {
                     }
                 }
             }
+            // Under its own name, so the sign-in Claude Code keeps for it carries on.
+            if !workspace.mcpServers.contains(where: { $0.name == server.name }) {
+                RowButton(title: "Manage in Zero") {
+                    given = server.values
+                    editing = server.zeros
+                }
+                .tip("Given to every task, every account and every CLI from then on")
+            }
         }
         .padding(.horizontal, 18).padding(.vertical, 12)
     }
@@ -116,7 +127,9 @@ struct McpServersPage: View {
                         Task { _ = await workspace.saveMcpServer(changed, secrets: [:]) }
                     })
             ).tip(server.enabled ? "On: given to tasks as they start" : "Off")
-            RowButton(title: "Edit…") { editing = server }
+            RowButton(title: "Edit…") {
+                given = [:]; editing = server
+            }
         }
         .padding(.horizontal, 18).padding(.vertical, 12)
     }
@@ -131,6 +144,8 @@ struct McpServersPage: View {
 private struct McpServerForm: View {
     @State var server: ZerodLink.McpServer
     let workspace: Workspace
+    /// Values it starts with, for the Keychain (one of Claude Code's servers brought in).
+    var given: [String: String] = [:]
     @Environment(\.closeDialog) private var dismiss
     @State private var remote = false
     @State private var arguments = ""
@@ -194,6 +209,7 @@ private struct McpServerForm: View {
             remote = server.url != nil && server.command == nil
             arguments = server.args.joined(separator: " ")
             everywhere = server.workspaces.isEmpty
+            if server.id.isEmpty { secrets = given }
         }
     }
 
