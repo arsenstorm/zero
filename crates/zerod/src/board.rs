@@ -77,6 +77,9 @@ pub struct Row {
     pub now: Option<String>,
     /// What the agent handed to the user, by its latest note.
     pub needs: Option<String>,
+    /// Why the lead itself is in trouble: what looks stuck, or what failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trouble: Option<String>,
     /// The open asks of the lead and its workers.
     pub asks: Vec<Waiting>,
     pub workers: usize,
@@ -87,6 +90,9 @@ pub struct Row {
     pub queued: Vec<Queued>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub held: bool,
+    /// Paused by the user: the events waiting for their Resume.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub paused_held: usize,
     /// When it next wakes itself (`zero schedule`), in seconds since 1970.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wakes: Option<i64>,
@@ -119,6 +125,9 @@ pub struct Member {
     pub queued: Vec<Queued>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub held: bool,
+    /// Paused by the user: the events waiting for their Resume.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub paused_held: usize,
 }
 
 /// A session's standing, with its workers counted in: what a row and a member say.
@@ -212,6 +221,7 @@ pub fn board_in(
                         asks: own.asks,
                         queued,
                         held,
+                        paused_held: 0,
                     }
                 })
                 .collect();
@@ -230,11 +240,15 @@ pub fn board_in(
                 own,
                 now: its.now,
                 needs: its.needs,
+                trouble: (own == State::Trouble)
+                    .then(|| lead.stalled.clone().or_else(|| lead.failure.as_ref().map(|f| f.message.clone())))
+                    .flatten(),
                 asks: its.asks,
                 workers: team.len() - 1,
                 team: members,
                 queued,
                 held,
+                paused_held: 0,
                 wakes: None,
                 next: None,
                 quiet: lead
@@ -646,4 +660,8 @@ fn place(folder: &str, all: &[String]) -> String {
         .map(|n| tail(folder, n))
         .find(|end| all.iter().filter(|other| other.as_str() != folder).all(|other| tail(other, end.matches('/').count() + 1) != *end))
         .unwrap_or_else(|| parts.join("/"))
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }

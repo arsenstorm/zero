@@ -196,13 +196,23 @@ impl Daemon {
         serde_json::json!({"restarting": self.restarting.load(Ordering::Relaxed), "waiting": waiting, "most": COMMAND_WAIT.as_secs()})
     }
 
-    /// Paused by a restart, until the new zerod carries it on: the board shows it as paused.
+    /// Paused by a restart, until the new zerod carries it on: Zero's own, so the board doesn't call it paused.
     pub fn is_paused_for_update(&self, id: &str) -> bool {
         self.updating.lock().unwrap().contains(id)
     }
 
     pub fn is_paused(&self, id: &str) -> bool {
         self.paused.lock().unwrap().contains(id)
+    }
+
+    /// How many events (follows, reports, watches, other tasks' words) wait for a paused task's Resume: the user's
+    /// own words and Zero's carry-on for the pause left out.
+    pub fn held_while_paused(&self, id: &str) -> usize {
+        if !self.is_paused(id) {
+            return 0;
+        }
+        let resumed = crate::model::from_line("zero", RESUMED);
+        self.pending.lock().unwrap().get(id).map_or(0, |list| list.iter().filter(|q| q.report && q.text != resumed).count())
     }
 
     /// Puts `ids` and their workers (every lead's, `ids` empty) on hold: each working one is asked to wrap up, given
@@ -293,6 +303,14 @@ impl Daemon {
             ids.into_iter().filter(|id| paused.remove(id)).collect()
         };
         self.keep_paused();
+        // What was held for them goes first, in one wake, then the user's own words (deliver joins the reports at the
+        // queue's head).
+        for id in &resumed {
+            if let Some(list) = self.pending.lock().unwrap().get_mut(id) {
+                list.sort_by_key(|q| !q.report)
+            }
+            self.keep_pending(id);
+        }
         let waiting = self.pending.lock().unwrap().clone();
         for id in &resumed {
             if !waiting.get(id).is_some_and(|words| !words.is_empty()) {

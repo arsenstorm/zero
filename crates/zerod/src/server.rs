@@ -353,11 +353,15 @@ impl Zerod {
         );
         crate::board::mark_read(&mut rows, &|id| daemon.has_read(id));
         crate::board::mark_background(&mut rows, &|id| daemon.background(id).is_some());
-        crate::board::mark_paused(&mut rows, &|id| daemon.is_paused(id) || daemon.is_paused_for_update(id));
+        crate::board::mark_paused(&mut rows, &|id| daemon.is_paused(id));
         // Saved for later: in Later until it's resumed from there.
         rows.retain(|r| !daemon.is_saved(&r.session));
         for row in rows.iter_mut() {
             row.wakes = daemon.next_wake(&row.session);
+            row.paused_held = daemon.held_while_paused(&row.session);
+            for member in row.team.iter_mut() {
+                member.paused_held = daemon.held_while_paused(&member.session)
+            }
             row.next = daemon.next(&row.session)
         }
         rows
@@ -486,7 +490,7 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "start" | "spawn" | "adopt" | "detach" | "migrate" | "archive" | "unarchive" | "archived" | "saveForLater" | "resumeLater"
         | "restartStatus" | "restart" | "stopLeft" => sessions::lifecycle(zerod, request).await,
         "release" | "resume" | "openTerminal" | "closeTerminal" | "rewindPreview" | "rewind" | "unrewind" | "branch" | "switch"
-        | "interrupt" | "stop" | "pause" | "unpause" => sessions::control(zerod, request).await,
+        | "interrupt" | "stop" | "restartAgent" | "pause" | "unpause" => sessions::control(zerod, request).await,
         "send" | "queue" | "unqueue" | "notify" | "decide" | "answer" | "seen" | "introduce" => sessions::messages(zerod, request).await,
         "label" | "setPermissions" | "placeInWorkspace" | "setStatus" | "attr" | "issue" | "table" | "place" | "expect" | "stopCommand" => {
             sessions::properties(zerod, request).await

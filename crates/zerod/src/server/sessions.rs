@@ -102,6 +102,7 @@ pub(super) async fn control(zerod: &Zerod, request: Request) -> Result<Value, St
         }
         "interrupt" => daemon.interrupt(&request.session()?).await.map(|_| Value::Null),
         "stop" => daemon.stop(&request.session()?).map(|_| Value::Null),
+        "restartAgent" => daemon.restart_agent(&request.session()?).await.map(|_| Value::Null),
         // The tasks named (every task, none named) and their workers: on hold, and off it. A working one is given five
         // minutes to wrap up.
         "pause" => Ok(json!(daemon.pause(&request.sessions.clone().unwrap_or_default(), std::time::Duration::from_secs(5 * 60)).await)),

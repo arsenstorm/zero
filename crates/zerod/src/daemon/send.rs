@@ -92,9 +92,9 @@ impl Daemon {
         {
             return Err(format!("{} is open in Terminal; type there, or bring it back to Zero", conversation.provider.title()));
         }
-        // Writing to a paused task resumes it.
+        // Paused by the user: the message waits for their Resume, after what was held for it meanwhile.
         if self.is_paused(id) {
-            self.unpause(&[id.to_string()]).await;
+            return self.queue_as(id, message.text, message.images, message.sent).map(|_| ());
         }
         // OpenCode takes one message at a time: one sent mid-turn waits for the turn's end, as Return does while it
         // works, rather than being refused (and lost from the box it was written in).
@@ -399,12 +399,28 @@ impl Daemon {
     /// Keeps `words` for `id` until it can take them; a parked (offline) session is resumed for them, and they go
     /// once it's between turns.
     pub(super) fn tell(&self, id: &str, words: String) {
-        self.pending.lock().unwrap().entry(id.into()).or_default().push(Queued { id: new_id(), text: words, images: vec![], report: true });
+        self.pending.lock().unwrap().entry(id.into()).or_default().push(Queued {
+            id: new_id(),
+            text: words.clone(),
+            images: vec![],
+            report: true,
+        });
         self.keep_pending(id);
+        let Ok(session) = self.session(id) else { return };
+        // Paused by the user: kept for their Resume, and shown in the conversation meanwhile, so they see what came.
         if self.is_paused(id) {
+            let said = crate::model::from(&words).map_or(words.as_str(), |_| words.split_once('\n').map_or("", |(_, rest)| rest));
+            let first = said.lines().find(|l| !l.trim().is_empty()).unwrap_or_default();
+            let item = crate::model::Item {
+                at: Some(crate::now_ms()),
+                id: format!("held-{}", new_id()),
+                turn: None,
+                kind: ItemKind::Notice { text: format!("Held while paused: {first}"), error: false },
+                status: crate::model::ItemStatus::Done,
+            };
+            session.change(Change::Item { item });
             return;
         }
-        let Ok(session) = self.session(id) else { return };
         if self.held_signed_out(&session.summary()) {
             return;
         }
@@ -550,6 +566,17 @@ impl Daemon {
         }
         session.stop();
         Ok(())
+    }
+
+    /// The user's Restart agent: its CLI's process stopped (a turn under way with it) and a fresh one started at once
+    /// on the same conversation, for an agent that's stuck or to pick up a new MCP server, account or plugin.
+    pub async fn restart_agent(&self, id: &str) -> Result<(), String> {
+        let session = self.session(id)?;
+        if session.summary().terminal.is_some() {
+            return Err("It's open in Terminal; restart it there, or bring it back to Zero".into());
+        }
+        self.take_offline(&session).await;
+        self.resume(id).await
     }
 }
 

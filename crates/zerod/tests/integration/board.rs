@@ -171,6 +171,8 @@ fn states_come_from_the_session_and_the_note_most_urgent_first() {
         ],
         "blocked elsewhere asks nothing of the user: it sorts below the work"
     );
+    let trouble: Vec<Option<&str>> = rows.iter().map(|r| r.trouble.as_deref()).collect();
+    assert_eq!(trouble, [Some("No word for 20 minutes"), None, None, None, None], "why it's in trouble, for its notification");
 }
 
 #[test]

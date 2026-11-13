@@ -102,7 +102,7 @@ async fn a_paused_task_with_nothing_waiting_stays_parked_when_resumed() {
 }
 
 #[tokio::test]
-async fn the_users_message_resumes_a_paused_task() {
+async fn the_users_message_to_a_paused_task_waits_until_it_is_resumed() {
     let home = temp_dir("pause-message");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
     let id = daemon
@@ -111,12 +111,62 @@ async fn the_users_message_resumes_a_paused_task() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     idle(&daemon, &id);
     daemon.pause(std::slice::from_ref(&id), Duration::from_secs(1)).await;
-    let _ = tokio::time::timeout(Duration::from_secs(2), daemon.send(&id, zerod::session::Message::text("back again"), Default::default()))
-        .await;
-    assert!(!daemon.is_paused(&id));
+    daemon.send(&id, zerod::session::Message::text("back again"), Default::default()).await.unwrap();
+    assert!(daemon.is_paused(&id), "still paused");
+    assert!(!daemon.session(&id).unwrap().is_attached(), "not resumed for it");
+    assert_eq!(daemon.queued(&id).0.iter().map(|q| q.text.as_str()).collect::<Vec<_>>(), ["back again"], "queued for the resume");
 }
 
 #[tokio::test]
+async fn events_held_while_paused_show_in_the_conversation_counted_and_go_first_together_on_resume() {
+    let home = temp_dir("pause-events");
+    let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
+    let id = daemon
+        .start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() })
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    idle(&daemon, &id);
+    daemon.pause(std::slice::from_ref(&id), Duration::from_secs(1)).await;
+    assert_eq!(daemon.held_while_paused(&id), 0);
+
+    daemon.send(&id, zerod::session::Message::text("go on"), Default::default()).await.unwrap();
+    daemon.notify(&id, "CI finished").unwrap();
+    daemon.notify(&id, "Review came in").unwrap();
+    assert_eq!(daemon.held_while_paused(&id), 2, "the events, not the user's words");
+    let notices: Vec<String> = daemon
+        .session(&id)
+        .unwrap()
+        .snapshot()
+        .items
+        .iter()
+        .filter_map(|i| match &i.kind {
+            ItemKind::Notice { text, error: false } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(notices.iter().any(|n| n.contains("CI finished")) && notices.iter().any(|n| n.contains("Review came in")), "{notices:?}");
+
+    daemon.unpause(std::slice::from_ref(&id)).await;
+    assert_eq!(daemon.held_while_paused(&id), 0, "cleared on resume");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    idle(&daemon, &id);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let said: Vec<String> = daemon
+        .session(&id)
+        .unwrap()
+        .snapshot()
+        .items
+        .iter()
+        .filter_map(|i| match &i.kind {
+            ItemKind::User { text, .. } if !text.contains("build it") => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(said[0].contains("CI finished") && said[0].contains("Review came in"), "one wake, first: {said:?}");
+    assert_eq!(said.last().map(String::as_str), Some("go on"), "the user's words after it: {said:?}");
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_working_task_is_asked_to_wrap_up_then_stopped_and_told_to_carry_on_when_resumed() {
     let home = temp_dir("pause-working");
     let daemon = Daemon::open(&home.join("zerod"), alive()).unwrap();
@@ -164,4 +214,32 @@ async fn a_paused_task_shows_as_paused_on_the_board() {
         (row.state, row.own, row.team[0].state),
         (zerod::board::State::Paused, zerod::board::State::Paused, zerod::board::State::Paused)
     );
+}
+
+#[tokio::test]
+async fn restarting_the_agent_starts_a_fresh_process_on_the_same_conversation_at_once() {
+    let home = temp_dir("restart-agent");
+    let started = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = started.clone();
+    let runtime: Runtime = Arc::new(move |_, _, _| {
+        count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        std::mem::forget(theirs);
+        Ok(zerod::session::Transport::new(ours, tokio::io::sink()))
+    });
+    let daemon = Daemon::open(&home.join("zerod"), runtime).unwrap();
+    let id = daemon
+        .start(Provider::Claude, "build it", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() })
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let session = daemon.session(&id).unwrap();
+    session.change(Change::Status { status: Status::Working, turn: Some("t1".into()), error: None });
+    let thread = session.summary().thread;
+
+    tokio::time::timeout(Duration::from_secs(10), daemon.restart_agent(&id)).await.unwrap().unwrap();
+    assert_eq!(started.load(std::sync::atomic::Ordering::SeqCst), 2, "a fresh process");
+    assert!(session.is_attached(), "running again, not left stopped");
+    assert_eq!(session.summary().thread, thread, "on the same conversation");
+    assert!(session.summary().turn.is_none(), "its turn stopped");
+    assert!(!daemon.is_paused(&id));
 }
