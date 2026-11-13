@@ -3,9 +3,9 @@ import SwiftUI
 import ZeroCore
 
 /// Whether zerod starts at login as Zero's LaunchAgent: on unless the user switched it off in Login Items, where it's
-/// switched back on (macOS lets only the user do that). Read again as Zero comes back from System Settings.
+/// switched back on (macOS lets only the user do that). Settings reads it again as Zero comes back from System Settings.
 struct ZerodAgentRow: View {
-    @State private var state = ZerodAgent.state
+    let state: ZerodAgent.State
 
     var body: some View {
         SettingRow(title: "Start Zero's daemon at login", detail: detail) {
@@ -14,9 +14,6 @@ struct ZerodAgentRow: View {
             case .off: RowButton(title: "Login Items") { ZerodAgent.openLoginItems() }
             case .unavailable: StatePill(text: "Not in this build", color: .secondary)
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            state = ZerodAgent.state
         }
     }
 

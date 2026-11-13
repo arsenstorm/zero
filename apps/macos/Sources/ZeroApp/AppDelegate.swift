@@ -34,6 +34,10 @@ import ZeroCore
     /// Opened by ⌥Space, a notification or a click in the pill: stays until Esc, or until the pointer has come in and left.
     var openedByIntent = false
     var pointerWasInside = false
+    /// The pointer where it was last seen, to tell a way from the bar towards the inbox from leaving it.
+    var lastPointer: NSPoint?
+    /// A peeked inbox the pointer has left, closing in a moment unless the pointer comes back.
+    var closingInbox: Task<Void, Never>?
     var onboardingWindow: NSWindow?
     private var responderWatch: NSKeyValueObservation?
     /// The app that was in front before Zero took it for typing; it comes back when the inbox closes.
@@ -96,6 +100,7 @@ import ZeroCore
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = Self.editMenu()
+        FieldEditorStyle.start()
         if let app = MoveToApplications.needed() {
             moveWindow = MoveToApplications(source: app).window()
             NSApp.setActivationPolicy(.regular)

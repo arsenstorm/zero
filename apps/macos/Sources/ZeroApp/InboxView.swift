@@ -70,6 +70,11 @@ struct InboxView: View {
         .padding(10)
         // Thin, not ultra-thin: in light mode the thinnest material took whatever colour sat behind it.
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 28))
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
+        } action: {
+            controller.surfaceFrame = $0
+        }
         // The composer, or the empty inbox, sits on the bar's centre line in every view, whatever is above
         // it, so the eye never has to find it.
         // A conversation ends with its composer centred on the bar, where the new-agent composer and the

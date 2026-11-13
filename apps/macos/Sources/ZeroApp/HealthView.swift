@@ -6,16 +6,15 @@ import ZeroCore
 /// daemon when it doesn't start at login, which icons this build draws, the log, the welcome. About and Health are
 /// ids links scroll to.
 struct AboutSections: View {
+    let settings: Settings
     let showOnboarding: () -> Void
-    /// Read as the page opens and as Zero comes back from System Settings: shown only while it's off.
-    @State private var daemon = ZerodAgent.state
 
     var body: some View {
         Sections {
             SettingsSection(title: "About") {
                 Rows {
                     UpdateRow()
-                    if daemon != .on { ZerodAgentRow() }
+                    if settings.zerodAgent != .on { ZerodAgentRow(state: settings.zerodAgent) }
                     // The one difference between an official build and one from source, shown so no one wonders.
                     SettingRow(
                         title: Nucleo.set == "Nucleo" ? "Icons: Nucleo" : "Icons: Lucide (open-source build)",
@@ -40,9 +39,6 @@ struct AboutSections: View {
                     }
                 }
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            daemon = ZerodAgent.state
         }
     }
 }

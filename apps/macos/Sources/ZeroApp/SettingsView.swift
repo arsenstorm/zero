@@ -16,7 +16,7 @@ struct SettingsView: View {
     var showOnboarding: () -> Void = {}
 
     enum Page: String, CaseIterable, Identifiable {
-        case general = "General", inbox = "Inbox and bar", devices = "Phone"
+        case general = "General", inbox = "Inbox", bar = "Control bar", devices = "Phone"
         case agents = "Agents", signins = "Accounts and models", git = "Git", chrome = "Browsers", mcp = "MCP servers"
         case workspaces = "Workspaces", github = "GitHub", linear = "Linear", slack = "Slack"
         var id: String { rawValue }
@@ -25,6 +25,7 @@ struct SettingsView: View {
             switch self {
             case .general: "sliders"
             case .inbox: "inbox"
+            case .bar: "sidebar-right"
             case .devices: "mobile"
             case .agents: "robot"
             case .signins: "circle-user"
@@ -37,9 +38,9 @@ struct SettingsView: View {
         }
         /// GitHub, Linear and Slack: drawn with their own marks.
         var integration: Integration? { Integration(rawValue: rawValue.lowercased()) }
-        /// The pages before the groups: General (Zero's version and health at its foot), the inbox and the phone, which
-        /// everyone meets.
-        static let top: [Page] = [.general, .inbox, .devices]
+        /// The pages before the groups: General (Zero's version and health at its foot), the inbox, the control bar and
+        /// the phone, which everyone meets.
+        static let top: [Page] = [.general, .inbox, .bar, .devices]
         /// Then what agents run with (the tools they use among them), how the work is laid out, and the services Zero
         /// connects to.
         static let groups: [(String, [Page])] = [
@@ -78,18 +79,25 @@ struct SettingsView: View {
                         PageTitle(text: page.rawValue).padding(.bottom, 24)
                         content
                     }
-                    .centredColumn(680)
+                    .frame(maxWidth: 680, alignment: .leading)
+                    .padding(.horizontal, 36)
+                    // Centred in the width the scroll view offers. (containerRelativeFrame here took the window's
+                    // width, wider than the page, and pushed the sidebar off the window's left edge.)
+                    .frame(maxWidth: .infinity)
                     .padding(.vertical, 28)
                 }
-                .thinScrollbar(remember: "settings")
+                .frame(maxWidth: .infinity)
+                .thinScrollbar()
                 .background(Theme.card)
                 .onAppear { scroll(proxy, to: navigation?.settingsSection) }
                 .onChange(of: navigation?.settingsSection) { _, section in scroll(proxy, to: section) }
             }
+            // Each page from its top: no offset kept between pages or visits.
+            .id(page)
         }
     }
 
-    /// To a section asked for (the gear's dot: Health), once laid out and after the remembered offset is restored.
+    /// To a section a link asked for (Check for Updates…: About), once laid out.
     private func scroll(_ proxy: ScrollViewProxy, to section: String?) {
         guard let section else { return }
         navigation?.settingsSection = nil
@@ -99,7 +107,7 @@ struct SettingsView: View {
     @ViewBuilder private var content: some View {
         switch page {
         case .general: GeneralPage(settings: settings, workspace: workspace, showOnboarding: showOnboarding) { page = $0 }
-        case .inbox: InboxPage(settings: settings, store: store, inbox: inbox, workspace: workspace)
+        case .inbox, .bar: InboxPage(settings: settings, store: store, inbox: inbox, workspace: workspace, bar: page == .bar)
         case .devices: DevicesPage()
         case .agents: AgentsPage(settings: settings)
         case .signins: SignInsPage(workspace: workspace)
@@ -602,7 +610,7 @@ private struct GeneralPage: View {
             SettingsSection(title: "Zero") {
                 Rows {
                     SettingRow(title: "Launch Zero at login", detail: "So agents can always reach you.") {
-                        Switch(isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
+                        Switch(isOn: Binding(get: { settings.launchAtLogin }, set: { settings.setLaunchAtLogin($0) }))
                     }
                     SettingRow(title: "Inbox hotkey", detail: "Opens the inbox from any app.") {
                         HotKeyRecorder(settings: settings, minWidth: nil)
@@ -621,7 +629,7 @@ private struct GeneralPage: View {
                 Text("While you're in Zero, you hear the sound instead of seeing a notification.")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             }
-            AboutSections(showOnboarding: showOnboarding)
+            AboutSections(settings: settings, showOnboarding: showOnboarding)
         }
         .zeroDialog(isPresented: $eachState) { StateSoundsSheet(settings: settings) }
     }
@@ -768,11 +776,13 @@ private struct SoundPicker: View {
 }
 
 /// The inbox and the control bar: where the bar sits, how answers and asks behave, and the bar's agents.
+/// Settings › Inbox (answers and asks), or, with `bar`, Settings › Control bar.
 private struct InboxPage: View {
     @Bindable var settings: Settings
     let store: Store
     let inbox: InboxController
     let workspace: Workspace?
+    let bar: Bool
     /// The agent being renamed, in the dialog every rename in Zero uses.
     @State private var renaming: Agent?
     private struct Agent: Identifiable { let id: String }
@@ -781,6 +791,30 @@ private struct InboxPage: View {
     static let never = 10 * 365 * 1440
 
     var body: some View {
+        if bar { barSections } else { answers }
+    }
+
+    private var answers: some View {
+        SettingsSection(title: "Answers") {
+            Rows {
+                SettingRow(title: "Undo an answer", detail: "Esc takes it back within this time.") {
+                    // A time set before these choices stays among them.
+                    let seconds = Set([0, 1, 2, 3, 5, settings.takeBackSeconds]).sorted()
+                    SettingChoice(
+                        id: "takeBack", choices: [seconds.map { (title: $0 == 0 ? "Off" : String(format: "%g s", $0), value: $0) }],
+                        selection: $settings.takeBackSeconds)
+                }
+                SettingRow(title: "Unanswered asks expire after", detail: "When the agent didn't set its own expiry.") {
+                    let minutes = Set([15, 60, 240, 1440, Self.never, settings.defaultTTLMinutes]).sorted()
+                    SettingChoice(
+                        id: "askExpiry", choices: [minutes.map { (title: Self.duration($0), value: $0) }],
+                        selection: $settings.defaultTTLMinutes)
+                }
+            }
+        }
+    }
+
+    private var barSections: some View {
         Sections {
             SettingsSection(title: "Control bar") {
                 Rows {
@@ -812,23 +846,6 @@ private struct InboxPage: View {
                     }
                 }
                 .barOnly(settings.showBar)
-            }
-            SettingsSection(title: "Answers") {
-                Rows {
-                    SettingRow(title: "Undo an answer", detail: "Esc takes it back within this time.") {
-                        // A time set before these choices stays among them.
-                        let seconds = Set([0, 1, 2, 3, 5, settings.takeBackSeconds]).sorted()
-                        SettingChoice(
-                            id: "takeBack", choices: [seconds.map { (title: $0 == 0 ? "Off" : String(format: "%g s", $0), value: $0) }],
-                            selection: $settings.takeBackSeconds)
-                    }
-                    SettingRow(title: "Unanswered asks expire after", detail: "When the agent didn't set its own expiry.") {
-                        let minutes = Set([15, 60, 240, 1440, Self.never, settings.defaultTTLMinutes]).sorted()
-                        SettingChoice(
-                            id: "askExpiry", choices: [minutes.map { (title: Self.duration($0), value: $0) }],
-                            selection: $settings.defaultTTLMinutes)
-                    }
-                }
             }
             SettingsSection(title: "Agents in the bar") { list.barOnly(settings.showBar) }
         }
@@ -884,7 +901,8 @@ private struct InboxPage: View {
 }
 
 /// The bar's parts in its order, top to bottom: each switched on or off (for Agents, which of them), dragged to
-/// reorder. Rows of one height, so a dragged row steps over its neighbours a row at a time.
+/// reorder. Rows of one height, so a dragged row steps over its neighbours a row at a time. The inbox is first and
+/// stays there: the bar draws it in its top curve, wherever it is in the order.
 private struct BarPartsCard: View {
     @Bindable var settings: Settings
     @State private var drag: (part: BarPart, y: CGFloat)?
@@ -893,8 +911,16 @@ private struct BarPartsCard: View {
     private let height: CGFloat = 60
 
     var body: some View {
-        let parts = settings.barParts
+        let parts = settings.barParts.filter { $0 != .inbox }
         VStack(spacing: 0) {
+            SettingRow(title: title(.inbox), detail: detail(.inbox)) { control(.inbox) }
+                .padding(.horizontal, 18)
+                .frame(height: height)
+                .background(
+                    hovered == .inbox ? Theme.row : .clear,
+                    in: UnevenRoundedRectangle(topLeadingRadius: 14, bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: 14)
+                )
+                .onHover { hovered = $0 ? .inbox : (hovered == .inbox ? nil : hovered) }
             ForEach(Array(parts.enumerated()), id: \.element) { index, part in
                 row(part, index: index, among: parts)
             }
@@ -917,18 +943,18 @@ private struct BarPartsCard: View {
 
     private func row(_ part: BarPart, index: Int, among parts: [BarPart]) -> some View {
         let dragging = drag?.part == part
-        // Square, but for the card's own corners at its ends.
-        let top: CGFloat = index == 0 ? 14 : 0, bottom: CGFloat = index == parts.count - 1 ? 14 : 0
+        // Square, but for the card's own corners at its foot (the inbox's row has its top).
+        let bottom: CGFloat = index == parts.count - 1 ? 14 : 0
         return SettingRow(title: title(part), detail: detail(part)) { control(part) }
             .padding(.horizontal, 18)
             .frame(height: height)
             .background(
                 hovered == part || dragging ? Theme.row : .clear,
                 in: UnevenRoundedRectangle(
-                    topLeadingRadius: top, bottomLeadingRadius: bottom, bottomTrailingRadius: bottom, topTrailingRadius: top)
+                    topLeadingRadius: 0, bottomLeadingRadius: bottom, bottomTrailingRadius: bottom, topTrailingRadius: 0)
             )
             // Edge to edge, as the fill is; it travels with its row.
-            .overlay(alignment: .top) { if index > 0 && !dragging { Hairline() } }
+            .overlay(alignment: .top) { if !dragging { Hairline() } }
             .contentShape(Rectangle())
             .onHover { hovered = $0 ? part : (hovered == part ? nil : hovered) }
             .pointerStyle(dragging ? .grabActive : .grabIdle)
@@ -942,7 +968,7 @@ private struct BarPartsCard: View {
                         if let to = dropIndex(in: parts), let from = parts.firstIndex(of: part) {
                             var order = parts
                             order.move(fromOffsets: [from], toOffset: to > from ? to + 1 : to)
-                            settings.barParts = order
+                            settings.barParts = [.inbox] + order
                         }
                         drag = nil
                     })
@@ -1572,7 +1598,7 @@ private struct FoldersPage: View {
 
     var body: some View {
         Sections {
-            SettingsSection(title: "Projects", accessory: AnyView(GhostButton(title: "Add folder…", icon: "plus", action: addFolders))) {
+            SettingsSection(title: "Projects", accessory: AnyView(GhostButton(title: "Add folder", icon: "plus", action: addFolders))) {
                 card(empty: folders.isEmpty) {
                     ForEach(Array(folders.enumerated()), id: \.element) { index, folder in
                         if index > 0 { Hairline() } // edge to edge, as the row's hover fill is

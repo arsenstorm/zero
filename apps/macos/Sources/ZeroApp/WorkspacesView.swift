@@ -14,7 +14,7 @@ struct WorkspacesPage: View {
         VStack(alignment: .leading, spacing: 32) {
             if let workspace {
                 SettingsSection(
-                    title: "Workspaces", accessory: AnyView(GhostButton(title: "Add workspace…", icon: "plus") { adding = true })
+                    title: "Workspaces", accessory: AnyView(GhostButton(title: "Add workspace", icon: "plus") { adding = true })
                 ) {
                     VStack(spacing: 0) {
                         ForEach(Array(workspace.workspaces.enumerated()), id: \.element.id) { index, w in

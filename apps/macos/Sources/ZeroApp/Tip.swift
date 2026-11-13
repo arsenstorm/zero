@@ -7,6 +7,7 @@ extension View {
     /// beside the words. Shown after a short rest, at once when moving on from another; gone when the pointer leaves
     /// or clicks. An empty text shows nothing.
     func tip(_ text: String, shortcut: String? = nil) -> some View { modifier(Tipped(text: text, shortcut: shortcut)) }
+
 }
 
 /// The pointer on the view as SwiftUI sees it (its hover goes to what's on top, not to what's under a card or panel
@@ -15,11 +16,12 @@ extension View {
 private struct Tipped: ViewModifier {
     let text: String
     let shortcut: String?
+    var left = false
     @State private var over = false
 
     func body(content: Content) -> some View {
         content
-            .background { if over { TipAnchor(text: text, shortcut: shortcut) } }
+            .background { if over { TipAnchor(text: text, shortcut: shortcut, left: left) } }
             .onHover { over = $0 }
     }
 }
@@ -28,7 +30,10 @@ private struct Tipped: ViewModifier {
 private struct TipAnchor: NSViewRepresentable {
     let text: String
     let shortcut: String?
-    func makeNSView(context: Context) -> TipView { let view = TipView(); view.shortcut = shortcut; view.text = text; return view }
+    let left: Bool
+    func makeNSView(context: Context) -> TipView {
+        let view = TipView(); view.shortcut = shortcut; view.left = left; view.text = text; return view
+    }
     func updateNSView(_ view: TipView, context: Context) { view.shortcut = shortcut; view.text = text }
     static func dismantleNSView(_ view: TipView, coordinator: ()) { view.leave() }
 }
@@ -40,10 +45,12 @@ final class TipView: NSView {
     var text = "" {
         didSet {
             guard text != oldValue, TipPanel.shared.owner === self else { return }
-            if text.isEmpty { leave() } else { TipPanel.shared.show(text, shortcut: shortcut, over: self) }
+            if text.isEmpty { leave() } else { TipPanel.shared.show(text, shortcut: shortcut, over: self, left: left) }
         }
     }
     var shortcut: String?
+    /// Beside the view on its left rather than above it.
+    var left = false
     private var pending: Task<Void, Never>?
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -58,7 +65,7 @@ final class TipView: NSView {
         pending = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(wait))
             guard !Task.isCancelled, let self, self.window != nil, !self.text.isEmpty else { return }
-            TipPanel.shared.show(self.text, shortcut: self.shortcut, over: self)
+            TipPanel.shared.show(self.text, shortcut: self.shortcut, over: self, left: self.left)
         }
     }
 
@@ -95,7 +102,7 @@ final class TipView: NSView {
     /// A tip showing, or one just gone: the next shows at once, as moving along a row of buttons.
     var recently: Bool { panel.isVisible || Date().timeIntervalSince(hiddenAt) < 0.4 }
 
-    func show(_ text: String, shortcut: String?, over view: NSView) {
+    func show(_ text: String, shortcut: String?, over view: NSView, left: Bool = false) {
         guard let window = view.window, let screen = window.screen ?? NSScreen.main else { return }
         // Zero's window's tips while Zero is in front only: its views see the pointer through another app's window over
         // them, and a tip floats over every app. The control bar's panels (used from other apps) keep theirs.
@@ -112,6 +119,8 @@ final class TipView: NSView {
         let room = screen.visibleFrame
         var origin = CGPoint(x: anchor.midX - size.width / 2, y: anchor.maxY + 6)
         if origin.y + size.height > room.maxY { origin.y = anchor.minY - size.height - 6 }
+        // Left of the view, clear of the control bar (a bar control sits 6 pt in from the bar's edge).
+        if left { origin = CGPoint(x: anchor.minX - size.width - 14, y: anchor.midY - size.height / 2) }
         origin.x = min(max(origin.x, room.minX + 4), room.maxX - size.width - 4)
         panel.contentView = host.view
         panel.setFrame(CGRect(origin: origin, size: size), display: true)

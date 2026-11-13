@@ -35,8 +35,32 @@ final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
+/// Zero's grey selection and a caret in the text's colour in every SwiftUI TextField and selectable Text (both edit
+/// in their window's field editor), not the system accent. A field sets its editor's colours back to the system's
+/// each time it takes focus, so they're set again whenever an editor becomes first responder. SwiftUI's own editor,
+/// styled, never subclassed or replaced: SwiftUI force-casts it to its private class (a custom one aborted Zero on
+/// every launch on macOS 27.2.1).
+enum FieldEditorStyle {
+    private static var key = 0
+
+    static func start() {
+        NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { note in
+            guard let window = note.object as? NSWindow, objc_getAssociatedObject(window, &key) == nil else { return }
+            // Kept by the window, so it lives as long as the window does.
+            let observation = window.observe(\.firstResponder, options: [.initial]) { window, _ in
+                guard let editor = window.firstResponder as? NSTextView, editor.isFieldEditor else { return }
+                editor.selectedTextAttributes = [.backgroundColor: Theme.selection]
+                editor.insertionPointColor = .textColor
+            }
+            objc_setAssociatedObject(window, &key, observation, .OBJC_ASSOCIATION_RETAIN)
+        }
+    }
+}
+
 final class Panel: NSPanel {
-    override var canBecomeKey: Bool { true }
+    /// Off for a menu over a window: taking the keys would turn that window's toggles and selections inactive grey.
+    var keyable = true
+    override var canBecomeKey: Bool { keyable }
     /// AppKit hands a new key window's focus to its first text field. The inbox only takes text focus when asked:
     /// a click in the field, or the controller arming it (R, Enter, "/"). Otherwise 1, 2, 3 stay shortcuts.
     var allowsTextFocus: () -> Bool = { true }

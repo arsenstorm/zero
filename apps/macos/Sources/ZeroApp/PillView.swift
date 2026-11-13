@@ -57,9 +57,12 @@ struct PillView: View {
     /// The workspace control clicked: the workspaces, in the inbox's pane.
     var openWorkspaces: () -> Void = {}
     @State private var overWorkspace = false
-    /// The settings button in the bar's foot (Settings › Inbox and bar), and the pointer on the bar that brings it out.
+    /// The settings button in the bar's foot (Settings › Control bar), and the pointer on the bar that brings it out.
     @AppStorage("barFoot") private var barFoot = false
     @State private var overBar = false
+    /// The pointer on one of the two buttons: only the one under it comes out (the inbox stays out while asks wait).
+    @State private var overInbox = false
+    @State private var overSettings = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// A dot being dragged up or down the bar, and how far.
     @State private var drag: (name: String, y: CGFloat)?
@@ -91,7 +94,7 @@ struct PillView: View {
     private enum Mark: Equatable { case task(BoardRow.State, why: String), agent(AgentStatus) }
 
     /// The bar's dots: this workspace's tasks as the sidebar lists them (its order, its icons), then the agents
-    /// outside Zero that have asks; those the user's choice of agents (Settings › Inbox and bar) keeps. Built from
+    /// outside Zero that have asks; those the user's choice of agents (Settings › Control bar) keeps. Built from
     /// the agents with asks alone, it showed other things than the sidebar, in other shapes.
     private func dots(_ agents: [(String, AgentStatus)]) -> [(String, Mark)] {
         let mode = settings.barAgents
@@ -108,11 +111,12 @@ struct PillView: View {
         return tasks.map { ("zerod-" + $0.session, Mark.task($0.ownState, why: $0.why)) } + others.map { ($0.0, Mark.agent($0.1)) }
     }
 
-    /// The parts on, in the user's order; one with nothing to show (a lone workspace, no dots) takes no room.
+    /// The parts on in the bar's body, in the user's order; one with nothing to show (a lone workspace, no dots) takes
+    /// no room. The inbox isn't one: it's the button in the top hollow.
     private func parts(dots: [(String, Mark)]) -> [BarPart] {
         settings.barParts.filter { part in
             switch part {
-            case .inbox: settings.shows(.inbox)
+            case .inbox: false
             case .workspaces: settings.shows(.workspaces) && (workspace?.workspaces.count ?? 0) > 1
             case .agents: !dots.isEmpty
             }
@@ -142,30 +146,25 @@ struct PillView: View {
         let dots = dots(agents)
         let names = dots.map(\.0)
         let parts = parts(dots: dots)
-        VStack(spacing: 2) {
-            ForEach(Array(parts.enumerated()), id: \.element) { index, part in
-                // The dots set apart from the controls, on whichever side they meet them.
-                if index > 0, part == .agents || parts[index - 1] == .agents {
-                    Rectangle().fill(Theme.stroke).frame(width: 18, height: 1).padding(.vertical, 4)
-                }
-                switch part {
-                case .inbox: inboxSlot
-                case .workspaces: workspace.map(workspaceSlot)
-                case .agents: ForEach(dots, id: \.0) { name, mark in agentDot(name, mark, among: names) }
+        let inbox = settings.shows(.inbox)
+        let slim = parts.isEmpty
+        Group {
+            if slim {
+                slimPair
+            } else {
+                // The buttons sit in the hollows, half over the body's ends: its fillets are centred on its edges.
+                VStack(spacing: -barKnob / 2) {
+                    if inbox { inboxKnob.zIndex(1) }
+                    barBody(parts: parts, dots: dots, names: names)
+                    if barFoot { settingsKnob.zIndex(1) }
                 }
             }
         }
-        .onChange(of: names, initial: true) { controller.barOrder = $1 }
-        .padding(.vertical, 8 + 22).padding(.horizontal, 6)
-        .background(PillShape().fill(Theme.pill))
-        .overlay(PillShape().strokeBorder(Theme.stroke, lineWidth: 1))
+        .frame(width: 44)
         .onHover { overBar = $0 }
-        // In the bottom fillet's hollow: centred on its centre, the rect's bottom edge, 6 pt short of its radius.
-        .overlay(alignment: .bottom) {
-            if barFoot { BarFoot(barHovered: overBar, away: controller.panelOpen).offset(y: BarFoot.size / 2) }
-        }
-        // Nothing switched on, or nothing to show: no bar at all, rather than an empty tab at the edge.
-        .opacity(parts.isEmpty ? 0 : 1)
+        .onChange(of: names, initial: true) { controller.barOrder = $1 }
+        // Nothing switched on: no bar at all, rather than an empty tab at the edge.
+        .opacity(slim && !inbox ? 0 : 1)
         // The bar's drawn height, which the inbox uses for its scroll limits.
         .onGeometryChange(for: CGFloat.self) {
             $0.size.height
@@ -181,7 +180,7 @@ struct PillView: View {
                 ZeroContextMenu.open("bar") {
                     [
                         [
-                            MenuItem("Customise bar…", "sliders", action: BarFoot.customise),
+                            MenuItem("Customise bar…", "sliders", action: customiseBar),
                             MenuItem("Open log", "file-content") { NSWorkspace.shared.open(Paths.log) },
                         ],
                         [
@@ -194,28 +193,85 @@ struct PillView: View {
         }
     }
 
-    private var inboxSlot: some View {
-        let waiting = controller.store.open.count
-        let selected = controller.agentFilter
-        return NucleoIcon("inbox", size: 15)
-            .foregroundStyle(selected == nil && !controller.newAgentOpen ? .primary : .secondary)
-            .overlay(alignment: .topTrailing) {
-                if controller.pinned && selected == nil && !controller.newAgentOpen {
-                    PinBadge().offset(x: 4, y: -6)
-                } else if waiting > 0 {
-                    Circle().fill(AgentStatus.needsYou.color).frame(width: 7, height: 7).offset(x: 3, y: -3)
+    /// The workspaces and the dots, between the bar's curves; at least a slot tall, so the curves always fit.
+    private func barBody(parts: [BarPart], dots: [(String, Mark)], names: [String]) -> some View {
+        VStack(spacing: 2) {
+            ForEach(Array(parts.enumerated()), id: \.element) { index, part in
+                // The dots set apart from the controls, on whichever side they meet them.
+                if index > 0, part == .agents || parts[index - 1] == .agents {
+                    Rectangle().fill(Theme.stroke).frame(width: 18, height: 1).padding(.vertical, 4)
+                }
+                switch part {
+                case .inbox: EmptyView()
+                case .workspaces: workspace.map(workspaceSlot)
+                case .agents: ForEach(dots, id: \.0) { name, mark in agentDot(name, mark, among: names) }
                 }
             }
-            .frame(width: 32, height: 32)
-            .contentShape(Rectangle())
-            .onGeometryChange(for: CGRect.self) {
-                $0.frame(in: .global)
-            } action: {
-                controller.barSlots[InboxController.inboxSlot] = $0
-            }
-            .onDisappear { controller.barSlots[InboxController.inboxSlot] = nil }
-            .onTapGesture(perform: openInbox)
-            .tip("Open asks")
+        }
+        .frame(width: 32).frame(minHeight: 28)
+        .padding(.vertical, 8 + 22).padding(.horizontal, 6)
+        .background(PillShape().fill(Theme.pill))
+        .overlay(PillShape().strokeBorder(Theme.stroke, lineWidth: 1))
+    }
+
+    /// The inbox, in the top hollow: out while asks wait (with their dot), while its panel is open, or with the
+    /// pointer on the bar; otherwise folded to its arc. The pointer on it opens the inbox, as the other slots do.
+    /// Nothing in the body: the two buttons alone, 12 pt apart, joined from the screen edge by a low bump that's always
+    /// there, so a button that's out never floats alone. Without the settings button its arc stays, for the same reason.
+    private var slimPair: some View {
+        VStack(spacing: BarPeak.gap) {
+            inboxKnob
+            if barFoot { settingsKnob } else { BarKnob(out: false) { _ in EmptyView() }.allowsHitTesting(false) }
+        }
+        .frame(width: 44)
+        .background { BarPeak().fill(Theme.pill).overlay(BarPeak().stroke(Theme.stroke, lineWidth: 1)) }
+    }
+
+    /// The inbox is out while asks wait, while its panel is open, or with the pointer on the bar.
+    private var inboxOut: Bool {
+        settings.shows(.inbox) && (!controller.store.open.isEmpty || (!overSettings && (overBar || controller.panelOpen)))
+    }
+    /// The settings button is out with the pointer on the bar, and in while the inbox's panel is open.
+    private var settingsOut: Bool { barFoot && overBar && !overInbox && !controller.panelOpen }
+
+    private var inboxKnob: some View {
+        let waiting = controller.store.open.count
+        let selected = controller.agentFilter
+        return BarKnob(top: true, out: inboxOut) { hovered in
+            // 16 pt, on whole points in the 32 pt disc; half a point up, as the tray's ink sits low in its box.
+            NucleoIcon("inbox", size: 16).offset(y: -0.5)
+                .foregroundStyle(hovered || (controller.panelOpen && selected == nil && !controller.newAgentOpen) ? .primary : .secondary)
+                .overlay(alignment: .topTrailing) {
+                    if controller.pinned && selected == nil && !controller.newAgentOpen {
+                        PinBadge().offset(x: 4, y: -6)
+                    } else if waiting > 0 {
+                        Circle().fill(AgentStatus.needsYou.color).frame(width: 7, height: 7).offset(x: 3, y: -3)
+                    }
+                }
+        }
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
+        } action: {
+            controller.barSlots[InboxController.inboxSlot] = $0
+        }
+        .onDisappear { controller.barSlots[InboxController.inboxSlot] = nil }
+        .onTapGesture(perform: openInbox)
+        .onHover { overInbox = $0 }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Open asks")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    /// The settings button, in the bottom hollow: out with the pointer on the bar, in while the inbox's panel is open.
+    private var settingsKnob: some View {
+        BarKnob(out: settingsOut) { hovered in
+            NucleoIcon("gear", size: 16).foregroundStyle(hovered ? .primary : .secondary)
+        }
+        .onTapGesture(perform: customiseBar)
+        .onHover { overSettings = $0 }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Customise bar")
+        .accessibilityAddTraits(.isButton)
     }
 
     /// The workspace the bar lists (and the window shows): its glyph; a click opens the others beside the bar.
@@ -243,14 +299,13 @@ struct PillView: View {
         }
         .onDisappear { controller.barSlots[InboxController.workspacesSlot] = nil }
         .onTapGesture(perform: openWorkspaces)
-        .tip(workspace.currentWorkspace.name)
     }
 
     private func agentDot(_ name: String, _ mark: Mark, among names: [String]) -> some View {
         Group {
             switch mark {
             // The sidebar's own icon for the task's state, at its size.
-            case .task(let state, let why): TaskStateIcon(state: state).font(.system(size: 12)).tip(why)
+            case .task(let state, _): TaskStateIcon(state: state).font(.system(size: 12))
             case .agent(let status):
                 Group { if status == .working { Spinner() } else { Circle().fill(status.color) } }.frame(width: 11, height: 11)
             }
@@ -275,7 +330,6 @@ struct PillView: View {
         // Gone from the bar, gone from its slots: a pointer where it was peeks nothing.
         .onDisappear { controller.barSlots[name] = nil }
         .zIndex(drag?.name == name ? 1 : 0)
-        .tip(controller.store.displayName(of: name))
         // A right-click: Zero's own menu by the dot, with the task's actions under its name (not the system's menu,
         // which said "Remove zerod-01a1…").
         .overlay { RightClick { menu(name) } }

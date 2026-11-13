@@ -70,7 +70,7 @@ struct OnboardingView: View {
                         HotKeyRecorder(settings: settings, minWidth: nil)
                     }
                     OnboardingRow(icon: "power-off", title: "Launch Zero at login", detail: "So agents can always reach you.") {
-                        Switch(isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
+                        Switch(isOn: Binding(get: { settings.launchAtLogin }, set: { settings.setLaunchAtLogin($0) }))
                     }
                     OnboardingRow(icon: "monitor", title: "Follow the active screen", detail: "The bar moves to the screen you use.") {
                         Switch(isOn: $settings.followActiveScreen)

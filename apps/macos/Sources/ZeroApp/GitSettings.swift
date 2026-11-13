@@ -101,7 +101,7 @@ struct GitPage: View {
             // The folders limit the GitHub token and HTTPS pushes too (GitHub › Agents' access): shown while any is on.
             if git.enabled || git.scopedToken || git.https {
                 SettingsSection(
-                    title: "Only in these folders", accessory: AnyView(GhostButton(title: "Add folder…", icon: "plus", action: addFolder))
+                    title: "Only in these folders", accessory: AnyView(GhostButton(title: "Add folder", icon: "plus", action: addFolder))
                 ) {
                     Rows {
                         if git.folders.isEmpty {

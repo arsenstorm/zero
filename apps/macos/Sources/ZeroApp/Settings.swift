@@ -14,7 +14,7 @@ final class Settings {
     /// The control bar in the workspace window: when the window fills its screen, always while it's open, or never.
     enum BarDock: String, CaseIterable { case auto, always, never }
     var barDock: BarDock { didSet { defaults.set(barDock.rawValue, forKey: "barDock"); onChange?() } }
-    /// What the bar shows, in its order (Settings › Inbox and bar › In the bar): the parts switched off, and which
+    /// What the bar shows, in its order (Settings › Control bar › In the bar): the parts switched off, and which
     /// agents have a dot. Defaults keep the bar as it was.
     var barParts: [BarPart] { didSet { defaults.set(barParts.map(\.rawValue), forKey: "barParts") } }
     var barHidden: Set<BarPart> { didSet { defaults.set(barHidden.map(\.rawValue), forKey: "barHidden") } }
@@ -66,9 +66,28 @@ final class Settings {
     ]
     @ObservationIgnored var onChange: (() -> Void)?
 
-    var launchAtLogin: Bool {
-        get { SMAppService.mainApp.status == .enabled }
-        set { try? newValue ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister() }
+    /// Zero and zerod's LaunchAgent as Login Items has them. SMAppService's status is a synchronous call to smd, 25 to
+    /// 150 ms each when it's busy (read in General's body, it held Settings up by a third of a second): read off the main
+    /// thread as Zero starts and comes back to the front, never in a view.
+    private(set) var launchAtLogin = false
+    private(set) var zerodAgent = ZerodAgent.State.on
+
+    func setLaunchAtLogin(_ on: Bool) {
+        launchAtLogin = on
+        Task.detached {
+            if on { try? SMAppService.mainApp.register() } else { try? await SMAppService.mainApp.unregister() }
+            await self.readLoginItems()
+        }
+    }
+
+    private func readLoginItems() {
+        Task.detached {
+            let (app, agent) = (SMAppService.mainApp.status == .enabled, ZerodAgent.state)
+            await MainActor.run {
+                if self.launchAtLogin != app { self.launchAtLogin = app }
+                if self.zerodAgent != agent { self.zerodAgent = agent }
+            }
+        }
     }
 
     init() {
@@ -96,6 +115,10 @@ final class Settings {
             defaults.set(stateSounds, forKey: "stateSounds")
         }
         defaults.removeObject(forKey: "notificationSounds")
+        readLoginItems()
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) {
+            [weak self] _ in MainActor.assumeIsolated { self?.readLoginItems() }
+        }
     }
 
     /// In the user's order, the rest after in the order given. Positions looked up once: found inside the comparison,

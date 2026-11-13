@@ -195,9 +195,9 @@ extension AppDelegate {
         inboxPanel.makeKey()
     }
 
-    /// Entering the cards gives them the keyboard. While the inbox is open, the whole strip from its left edge to
-    /// the screen edge is a safe zone (pill, gap, and the way up or down to the cards), so only moving left past
-    /// the cards, or to another screen, closes it.
+    /// Entering the cards gives them the keyboard. A peeked inbox stays open while the pointer is on the bar or the
+    /// cards' surface, or on its way from one to the other (MenuAim's triangle towards the surface); anywhere else,
+    /// up the screen edge or away, it closes a moment later unless the pointer comes back.
     func trackPointer() {
         let mouse = NSEvent.mouseLocation
         hoverBar(at: mouse)
@@ -208,16 +208,32 @@ extension AppDelegate {
             layout()
             placeBar()
         }
+        let from = lastPointer
+        lastPointer = mouse
         guard inboxPanel.isVisible else { return }
-        let onScreen = inboxPanel.screen?.frame.contains(mouse) ?? false
-        let inSafeZone = onScreen && mouse.x >= inboxPanel.frame.minX
-        if inSafeZone {
+        if inboxHolds(mouse, from: from) {
+            closingInbox?.cancel()
+            closingInbox = nil
             // Pinned: the keyboard is taken only by a deliberate act (the pin click, a click into the inbox), never
             // by the pointer drifting back; otherwise typing elsewhere gets stolen mid-sentence.
             if !openedByIntent { syncKeyboard() }
-        } else if !openedByIntent, inbox.selector == nil {
+        } else if !openedByIntent, inbox.selector == nil, closingInbox == nil {
             // An open selector keeps the inbox up wherever the pointer goes; a click elsewhere closes it.
-            hideInbox()
+            closingInbox = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(100))
+                guard let self, !Task.isCancelled else { return }
+                closingInbox = nil
+                if !openedByIntent, inbox.selector == nil, !inboxHolds(NSEvent.mouseLocation, from: nil) { hideInbox() }
+            }
         }
+    }
+
+    /// The pointer keeps the inbox: on the bar's drawn part or the cards' surface, or heading from `from` into it.
+    private func inboxHolds(_ mouse: NSPoint, from: NSPoint?) -> Bool {
+        guard inboxPanel.screen?.frame.contains(mouse) ?? false else { return false }
+        let bar = NSRect(x: pill.frame.minX, y: pill.frame.midY - inbox.barHeight / 2, width: pill.frame.width, height: inbox.barHeight)
+        let s = inbox.surfaceFrame, panel = inboxPanel.frame
+        let surface = NSRect(x: panel.minX + s.minX, y: panel.maxY - s.maxY, width: s.width, height: s.height).intersection(panel)
+        return MenuAim.holds(mouse, from: from, bar: bar, panel: surface)
     }
 }

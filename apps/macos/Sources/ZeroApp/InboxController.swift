@@ -423,6 +423,9 @@ final class InboxController {
     @ObservationIgnored var lastAnswered: String?
     /// The bar's current height, so the list's scroll limits can sit level with its top and bottom.
     var barHeight: CGFloat = 200
+    /// The panel's frosted surface, in the panel's own (top-down) coordinates: what the pointer has to be on, or
+    /// heading for, to keep a peeked inbox open.
+    @ObservationIgnored var surfaceFrame: CGRect = .zero
     /// When the inbox last opened: answered cards stay visible until the next open, then they're gone.
     var inboxOpenedAt = Date()
     /// Cards that have been shown once; a card not in here slides in the first time it appears.

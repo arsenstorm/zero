@@ -67,6 +67,14 @@ extension AppDelegate {
                 ).padding(pad)
                 .id(ObjectIdentifier(selector))) // a new menu's own state (its focus, its first highlight), not the last one's
         let panel = selectorWindow(root)
+        // Over a window, the keys stay with it, so it keeps its active look (its toggles, selections, focus rings): the
+        // menu's keys come through the monitor below. Over the control bar's panels it takes them, as no window holds
+        // them; and for a row taking words (SelectorState.enter).
+        panel.keyable = window is NSPanel
+        selector.takeKeys = { [weak panel] in
+            panel?.keyable = true
+            panel?.makeKey()
+        }
         panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: false)
         // Drawn and handed to the window server while still out of sight: ordered in, it shows this menu at once, never
         // the last one's picture at the new place.
@@ -83,6 +91,18 @@ extension AppDelegate {
         // scaled from the chip's point (bottom-left origin).
         if chip.width > 1, !switching {
             Self.animateSelector(panel, anchor: CGPoint(x: chip.midX - x, y: opensBelow ? size.height - pad : pad))
+        }
+        // Its keys, before anything else's (the newest monitor runs first): ↑↓, ←→, Return, Esc, and the rest held back
+        // from the window under it, as when the menu had the keys itself; ⌘ shortcuts go on.
+        if let keys = NSEvent.addLocalMonitorForEvents(
+            matching: .keyDown,
+            handler: { [weak selector] event in
+                guard let selector, selector.entering == nil, !event.modifierFlags.contains(.command) else { return event }
+                selector.key(event.keyCode)
+                return nil
+            })
+        {
+            selectorMonitors.append(keys)
         }
         // A click anywhere but the card closes it: in another app (global), in Zero's other windows, or in the
         // strip's empty part (local).

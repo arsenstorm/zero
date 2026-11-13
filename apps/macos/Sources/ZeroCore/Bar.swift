@@ -1,4 +1,4 @@
-/// A part of the control bar, as Settings › Inbox and bar › In the bar lists them.
+/// A part of the control bar, as Settings › Control bar › In the bar lists them.
 public enum BarPart: String, CaseIterable, Sendable {
     case inbox, workspaces, agents
 
