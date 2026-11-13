@@ -16,7 +16,7 @@ struct BlockRow: View, Equatable {
     var followed = false
     let quote: (String) -> Void
     let save: (String) -> Void
-    /// Going back to a message of yours (WorkspaceView's RewindCard).
+    /// Going back to a message of yours (RewindBar).
     var rewind: (ConversationItem) -> Void = { _ in }
     @Environment(\.playback) private var playback
 
@@ -866,6 +866,8 @@ struct WayDown: View {
     let tracker: ScrollTracker
     /// Away from the end whatever the scroll says: a window jumped to, the latest not loaded.
     var away = false
+    /// Said in words, a pill in the arrow's place: "Back to the ask", gone to a passage from one.
+    var label: String? = nil
     let go: () -> Void
 
     var body: some View {
@@ -876,11 +878,21 @@ struct WayDown: View {
                 }) == true
         {
             Button(action: go) {
-                NucleoIcon("arrow-up", size: 14).rotationEffect(.degrees(180)).foregroundStyle(.primary)
-                    .frame(width: 32, height: 32).background(Theme.card, in: Circle())
-                    .overlay(Circle().strokeBorder(Theme.stroke))
+                if let label {
+                    HStack(spacing: 6) {
+                        NucleoIcon("arrow-up", size: 12).rotationEffect(.degrees(180))
+                        Text(label).font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundStyle(.primary)
+                    .padding(.leading, 10).padding(.trailing, 12).frame(height: 32).background(Theme.card, in: Capsule())
+                    .overlay(Capsule().strokeBorder(Theme.stroke))
+                } else {
+                    NucleoIcon("arrow-up", size: 14).rotationEffect(.degrees(180)).foregroundStyle(.primary)
+                        .frame(width: 32, height: 32).background(Theme.card, in: Circle())
+                        .overlay(Circle().strokeBorder(Theme.stroke))
+                }
             }
-            .buttonStyle(.plain).tip("Go to the latest")
+            .buttonStyle(.plain).tip(label == nil ? "Go to the latest" : "")
             .transition(.opacity)
         }
     }

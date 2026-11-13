@@ -34,8 +34,12 @@ struct ConversationView: View {
     @State private var following = true
     /// Your hand on the page (dragging, or its momentum): nothing else moves it meanwhile.
     @State private var userScrolling = false
-    /// The message of yours being gone back to.
+    /// The message of yours being gone back to (RewindBar under it), and how far back.
     @State private var rewinding: ConversationItem?
+    @State private var rewindChoice = RewindChoice.both
+    /// A rewind just done, while it can be undone: the folder before it, whether the conversation went back, and the
+    /// message put back in the composer.
+    @State private var undoable: (undo: String?, conversation: Bool, text: String)?
     /// The conversation's blocks, rows and asks, kept between redraws.
     @State private var shape = TimelineShape()
     /// What of the conversation is on screen: zerod's items played back in order, an answer read out before what follows.
@@ -47,9 +51,7 @@ struct ConversationView: View {
     @State private var backTo: String?
     /// Going to one: where the page was isn't restored over it.
     @State private var revealing = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// Esc twice in quick succession: pick a message to rewind to, then how (RewindCard).
-    @State private var pickingRewind = false
+    /// Esc twice in quick succession: rewind to your latest message.
     @State private var lastEscape: Date?
     @State private var escapeMonitor: Any?
     /// Anything done in the window while this page is shown: its reply is seen.
@@ -250,7 +252,14 @@ struct ConversationView: View {
 
     /// A block. The asks its turn made are among its steps, folded as thinking is; the card to answer one is above
     /// the composer.
-    private func row(_ block: TimelineBlock, turns: [String: String], newest: String? = nil) -> some View {
+    private func row(_ block: TimelineBlock, turns: [String: String], newest: String? = nil, dimmed: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: Self.gap) {
+            slot(block, turns: turns, newest: newest).opacity(dimmed ? 0.3 : 1)
+            if let item = rewinding, item.id == block.id { rewindBar(item) }
+        }
+    }
+
+    private func slot(_ block: TimelineBlock, turns: [String: String], newest: String?) -> some View {
         RowSlot(
             block: block, cwd: conversation.cwd, answered: shape.answered.contains(block.id), followed: shape.followed.contains(block.id),
             turn: turns[block.id], entering: block.id == newest && !lifted, tracker: tracker,
@@ -278,41 +287,17 @@ struct ConversationView: View {
         if tracker.seen[block] == nil {
             following = false; lifted = false
             try? await Task.sleep(for: .milliseconds(30))
-            withAnimation(reduceMotion ? nil : .smooth(duration: 0.35)) { proxy.scrollTo(block, anchor: .top) }
-            try? await Task.sleep(for: .milliseconds(reduceMotion ? 0 : 300))
-        }
-        // A way back only to an ask out of sight: one docked on this page is in view already.
-        backTo = reveal.ask.flatMap { id in
-            let ask = inbox.store.asks(of: conversation.id).first { $0.id == id }
-            return ask.map { AgentAskCard.open($0, in: conversation) } == true ? nil : id
+            withAnimation(Motion.animation(.smooth(duration: 0.35))) { proxy.scrollTo(block, anchor: .top) }
+            try? await Task.sleep(for: .milliseconds(Motion.reduced ? 0 : 300))
+            // The way back, in the way down's place (wayDown): to the ask docked at this page's end, or in the inbox.
+            backTo = reveal.ask
         }
         // The message alone: an answer or a message is its own block; a working note inside a turn's steps is washed by
         // the steps it's among (WorkBlock), not the whole turn.
         guard block == item else { return }
-        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { revealed = block }
+        withAnimation(.easeOut(duration: 0.2)) { revealed = block }
         try? await Task.sleep(for: .seconds(1.4))
-        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.6)) { if revealed == block { revealed = nil } }
-    }
-
-    /// Back to the ask a passage was gone to from, in the inbox (one docked on this page is in view, and needs none).
-    @ViewBuilder private var backToAsk: some View {
-        if let backTo {
-            Button {
-                self.backTo = nil
-                NSApp.sendAction(#selector(AppDelegate.backToAsk(_:)), to: nil, from: backTo as NSString)
-            } label: {
-                HStack(spacing: 6) {
-                    NucleoIcon("arrow-left", size: 12)
-                    Text("Back to the ask").font(.system(size: 12, weight: .medium))
-                }
-                .padding(.horizontal, 12).frame(height: 28)
-                .background(Theme.pill, in: Capsule())
-                .overlay(Capsule().strokeBorder(Theme.stroke))
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 12)
-            .transition(.opacity)
-        }
+        withAnimation(.easeOut(duration: 0.6)) { if revealed == block { revealed = nil } }
     }
 
     /// Where you are in the conversation: at its end (nothing kept), or the block at the top of the screen.
@@ -383,7 +368,14 @@ struct ConversationView: View {
                         }.padding(.trailing, 2)
                     }
                     .overlay(alignment: .leading) { rail(proxy) }
-                    .overlay(alignment: .top) { backToAsk }
+                    // Back at the end (scrolled there, or the way down taken): no way back left to offer.
+                    .onChange(of: following) { _, now in if now { backTo = nil } }
+                    // A message gone back to: in view, its bar under it.
+                    .onChange(of: rewinding?.id) { _, id in
+                        guard let id else { return }
+                        following = false; lifted = false
+                        withAnimation(Motion.animation(.smooth(duration: 0.35))) { proxy.scrollTo(id, anchor: UnitPoint(x: 0.5, y: 0.25)) }
+                    }
                     .onChange(of: workspace.reveal, initial: true) { _, reveal in
                         guard let reveal, reveal.task == conversation.id else { return }
                         revealing = true
@@ -424,7 +416,6 @@ struct ConversationView: View {
                         if let activityMonitor { NSEvent.removeMonitor(activityMonitor) }; activityMonitor = nil
                     }
                     .onChange(of: images) { Drafts.save("task:" + conversation.id, text: box.text, images: images) }
-                    .overlay { rewindOverlay }
             }
         }
     }
@@ -469,12 +460,19 @@ struct ConversationView: View {
         let (blocks, turns) = (shape.blocks, shape.turns)
         let start = liftStart(blocks)
         let newest = blocks.last { if case .user = $0 { true } else { false } }?.id
+        // Rewinding the conversation: what would go is dimmed, after the message gone back to.
+        let gone: Set<String> =
+            if let picked = rewinding?.id, rewindChoice.conversation, let at = blocks.firstIndex(where: { $0.id == picked }) {
+                Set(blocks[(at + 1)...].map(\.id))
+            } else { [] }
         return VStack(alignment: .leading, spacing: Self.gap) {
             olderRows
             LiftStack(room: start == nil ? 0 : liftMin) {
                 ForEach(shape.rows(blocks)) { line in
-                    timelineRow(line, turns: turns, newest: newest).layoutValue(key: LiftStack.Start.self, value: line.id == start)
-                        .layoutValue(key: LiftStack.Headed.self, value: shape.headed.contains(line.id))
+                    timelineRow(line, turns: turns, newest: newest, gone: gone).layoutValue(
+                        key: LiftStack.Start.self, value: line.id == start
+                    )
+                    .layoutValue(key: LiftStack.Headed.self, value: shape.headed.contains(line.id))
                 }
             }
             // Its provider still getting ready (signing in, say): say so, rather than an empty page.
@@ -484,7 +482,7 @@ struct ConversationView: View {
             }
             if let health { healthCallout(health) }
             if let diff = conversation.diff, conversation.status == .idle, !diff.isEmpty {
-                CaughtUp(playback: playback) { lastTurnDiff(diff) }
+                CaughtUp(playback: playback) { lastTurnDiff(diff) }.opacity(gone.isEmpty ? 1 : 0.3)
             }
             newerRows
             // Room for the composer and the fade above it: scrolled to the end, the last message sits just
@@ -526,9 +524,9 @@ struct ConversationView: View {
         }
     }
 
-    @ViewBuilder private func timelineRow(_ line: TimelineRow, turns: [String: String], newest: String?) -> some View {
+    @ViewBuilder private func timelineRow(_ line: TimelineRow, turns: [String: String], newest: String?, gone: Set<String>) -> some View {
         switch line {
-        case let .block(block): row(block, turns: turns, newest: newest)
+        case let .block(block): row(block, turns: turns, newest: newest, dimmed: gone.contains(block.id))
         case let .quiet(id, blocks, count):
             QuietTurns(
                 turns: count,
@@ -538,8 +536,9 @@ struct ConversationView: View {
                 },
                 open: Binding(get: { openQuiet.contains(id) }, set: { if $0 { openQuiet.insert(id) } else { openQuiet.remove(id) } })
             ) {
-                ForEach(blocks) { block in row(block, turns: turns) }
+                ForEach(blocks) { block in row(block, turns: turns, dimmed: gone.contains(block.id)) }
             }
+            .opacity(blocks.first.map { gone.contains($0.id) } == true ? 0.3 : 1)
             .id(id)
         }
     }
@@ -598,7 +597,7 @@ struct ConversationView: View {
             try? await Task.sleep(for: .milliseconds(16))
             guard lifted else { return }
             let anchor = UnitPoint(x: 0, y: 52 / max(pageHeight, 1))
-            if animated {
+            if animated, !Motion.reduced {
                 tracker.slideEnds = Date().addingTimeInterval(Self.slideDuration)
                 withAnimation(Self.rise) { position.scrollTo(id: id, anchor: anchor) }
             } else {
@@ -670,7 +669,8 @@ struct ConversationView: View {
         // to its new end, the growth added to the way it has left (one movement, however often it grows on the way).
         // At once: more than a page (a task opened, a window jumped to: sliding a whole screen would only slow it),
         // rows measuring themselves as it opens, or just after a click (something opened, a step, a notice).
-        if following, !lifted, !loadingAbove, !userScrolling, grew - pinned > 0.5, grew < now.containerSize.height,
+        // Under Reduce Motion it's simply kept to the end (keepToEnd).
+        if following, !lifted, !loadingAbove, !userScrolling, !Motion.reduced, grew - pinned > 0.5, grew < now.containerSize.height,
             Date().timeIntervalSince(foot.opened) > 0.5, Date().timeIntervalSince(Self.clicked) > 0.6
         {
             // With the GPU reveal (RevealText.on): to the new end at once, slid there by the render server (slide).
@@ -864,6 +864,10 @@ struct ConversationView: View {
                 // Open in the user's terminal: typed into there, so no composer here; back once its CLI exits.
                 if conversation.terminal != nil { inTerminal } else { composer }
             }
+            // Just rewound: the way back, above the composer, over the page rather than pushing it.
+            .overlay(alignment: .top) {
+                if undoable != nil { RewoundNotice(undo: undoRewind).offset(y: -38) }
+            }
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] in if foot.composer != $0 { foot.composer = $0 } }
             .onHover { [foot] inside in if foot.overComposer != inside { foot.overComposer = inside } }
         }
@@ -872,7 +876,7 @@ struct ConversationView: View {
         // The strip gone (its last message moved into the conversation): its room given back on the card's curve, the
         // card on it easing down with the page, not dropping by the strip's height in a frame.
         .onChange(of: shownQueue.isEmpty && !held) { [foot] _, gone in
-            guard gone, foot.stripHeight > 0 else { return }
+            guard gone, foot.stripHeight > 0, !Motion.reduced else { return }
             foot.stripGone = foot.stripHeight
             foot.stripEase = Ease(from: foot.stripHeight, start: Date())
             startTicking()
@@ -918,7 +922,19 @@ struct ConversationView: View {
     }
 
     private func wayDown(_ proxy: ScrollViewProxy) -> some View {
-        WayDown(tracker: tracker, away: live.later > 0) {
+        // Gone to a passage from an ask: the way down is the way back to it, said so. One docked here is at the end,
+        // where the way down goes (its card comes up from behind the composer there); another is in the inbox.
+        WayDown(tracker: tracker, away: live.later > 0, label: backTo == nil ? nil : "Back to the ask") {
+            if let id = backTo {
+                backTo = nil
+                let docked = inbox.store.asks(of: conversation.id).contains {
+                    $0.id == id && !$0.state.isFinal && $0.isAgents(in: conversation.id)
+                }
+                if !docked {
+                    NSApp.sendAction(#selector(AppDelegate.backToAsk(_:)), to: nil, from: id as NSString)
+                    return
+                }
+            }
             Task {
                 // Jumped back through it: the latest page again first.
                 if live.later > 0 { await workspace.loadLatest(conversation.id); try? await Task.sleep(for: .milliseconds(50)) }
@@ -952,7 +968,9 @@ struct ConversationView: View {
 
     private func jump(to id: String, _ proxy: ScrollViewProxy) async {
         following = false
-        if conversation.items.contains(where: { $0.id == id }) { withAnimation { proxy.scrollTo(id, anchor: .top) }; return }
+        if conversation.items.contains(where: { $0.id == id }) {
+            withAnimation(Motion.animation(.smooth(duration: 0.35))) { proxy.scrollTo(id, anchor: .top) }; return
+        }
         // Not loaded: a page from it, in place of what is (not every item from it to the end,
         // all laid out), and straight there rather than animated across it.
         await workspace.jump(conversation.id, to: id)
@@ -999,21 +1017,46 @@ struct ConversationView: View {
         watchEscape()
     }
 
-    @ViewBuilder private var rewindOverlay: some View {
-        if pickingRewind {
-            RewindPicker(
-                messages: conversation.items.filter { if case .user = $0.kind { true } else { false } }.reversed(),
-                close: { pickingRewind = false }
-            ) { item in
-                pickingRewind = false; rewinding = item
-            }
-        } else if let item = rewinding {
-            RewindCard(workspace: workspace, task: conversation.id, item: item, close: { rewinding = nil }) { rewound, conversationToo in
+    /// Your messages here, oldest first: what a rewind goes back to (a worker's report or Zero's word isn't yours).
+    private var yours: [ConversationItem] {
+        conversation.items.filter { if case let .user(text, _) = $0.kind { ConversationItem.from(text) == nil } else { false } }
+    }
+
+    private func rewindBar(_ item: ConversationItem) -> some View {
+        RewindBar(
+            workspace: workspace, task: conversation.id, item: item,
+            working: conversation.status == .working || conversation.status == .waiting, choice: $rewindChoice,
+            move: { step in
+                let mine = yours
+                guard let at = mine.firstIndex(where: { $0.id == item.id }), mine.indices.contains(at + step) else { return }
+                rewinding = mine[at + step]
+            },
+            cancel: { rewinding = nil },
+            rewound: { back, choice in
+                rewinding = nil
                 // The message back in the box, to send again or change.
-                if conversationToo { draft = rewound.text; images = rewound.images.map { URL(fileURLWithPath: $0) } }
-            } branched: {
-                open($0)
+                if choice.conversation { draft = back.text; images = back.images.map { URL(fileURLWithPath: $0) } }
+                let done = (undo: back.undo, conversation: choice.conversation, text: back.text)
+                undoable = done
+                Task {
+                    try? await Task.sleep(for: .seconds(6))
+                    if undoable?.undo == done.undo && undoable?.text == done.text { undoable = nil }
+                }
+            },
+            branched: {
+                rewinding = nil; open($0)
             }
+        )
+    }
+
+    /// The rewind just done, taken back: the folder and conversation as they were, the box emptied of the message it
+    /// was given if it's still as it was.
+    private func undoRewind() {
+        guard let done = undoable else { return }
+        undoable = nil
+        Task {
+            guard await workspace.unrewind(conversation.id, undo: done.undo, conversation: done.conversation) else { return }
+            if done.conversation && draft == done.text { draft = ""; images = [] }
         }
     }
 
@@ -1045,17 +1088,18 @@ struct ConversationView: View {
         }
     }
 
-    /// Esc, then Esc again within half a second, on the page or in its composer: the rewind picker. A single Esc goes
+    /// Esc, then Esc again within half a second, on the page or in its composer: rewinding to your latest message (↑↓
+    /// then move to the others, RewindBar). A single Esc goes
     /// on to whatever it was for; nothing opens over a card already open.
     private func watchEscape() {
         guard escapeMonitor == nil else { return }
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard isActive, event.keyCode == 53, !pickingRewind, rewinding == nil else { return event }
+            guard isActive, event.keyCode == 53, rewinding == nil else { return event }
             let now = Date()
             if let last = lastEscape, now.timeIntervalSince(last) < 0.5 {
                 lastEscape = nil
-                guard conversation.items.contains(where: { if case .user = $0.kind { true } else { false } }) else { return event }
-                pickingRewind = true
+                guard let latest = yours.last else { return event }
+                rewinding = latest
                 return nil
             }
             lastEscape = now
@@ -1120,13 +1164,20 @@ struct ConversationView: View {
                     }
                 } : nil,
             // ponytail: the first agent ask waiting, not the dock's page shown; follow the pager if several wait.
-            pick: { [inbox, conversation] digit in
-                guard conversation.questions.isEmpty, conversation.approvals.isEmpty,
-                    let ask = inbox.store.asks.first(where: { !$0.state.isFinal && $0.isAgents(in: conversation.id) }),
-                    digit <= ask.options.count
-                else { return false }
-                inbox.choose(digit - 1, on: ask.id)
-                return true
+            pick: { [inbox, conversation, workspace] digit in
+                guard conversation.questions.isEmpty else { return false }
+                let ask = inbox.store.asks.first { !$0.state.isFinal && $0.isAgents(in: conversation.id) }
+                if conversation.approvals.isEmpty, let ask, digit <= ask.options.count {
+                    inbox.choose(digit - 1, on: ask.id)
+                    return true
+                }
+                // An approval's numbered rows, when no agent ask waits beside it (which of the two the dock shows
+                // isn't known here).
+                if ask == nil, let approval = conversation.approvals.first, digit <= approval.choices.count {
+                    Task { await workspace.decide(conversation.id, approval: approval.id, choice: approval.choices[digit - 1].id) }
+                    return true
+                }
+                return false
             }
         ) {
             let (text, attached) = ImageToken.outgoing(draft, images: images.map(\.path))
@@ -1576,13 +1627,14 @@ private struct DockSlot: View {
         )
         .equatable()
         // Behind the queue's strip one inset further in; as the strip goes, eased out with it.
-        .animation(ConversationView.rise) { $0.padding(.horizontal, behindQueue ? 26 : 13) }
+        .animation(Motion.animation(ConversationView.rise)) { $0.padding(.horizontal, behindQueue ? 26 : 13) }
         .frame(maxWidth: 680)
         .padding(.bottom, ids.isEmpty ? 0 : -(AskDock.tuck + 8))
         .onChange(of: ids, initial: true) { old, new in
             // One come while it's open (one there as it opened shows in place): it rises as its room comes in
             // (Foot.rise), out of sight until then. Its room not seen to come, it shows in place.
-            if old.isEmpty, !new.isEmpty, Date().timeIntervalSince(foot.opened) > 0.5 {
+            // Under Reduce Motion it shows in place.
+            if old.isEmpty, !new.isEmpty, !Motion.reduced, Date().timeIntervalSince(foot.opened) > 0.5 {
                 foot.arriving = true; foot.riseEase = nil; foot.riseRoom = false; foot.rise = .infinity
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [foot] in
                     if foot.arriving, foot.riseEase == nil { foot.arriving = false; foot.rise = 0 }
@@ -1626,7 +1678,7 @@ private struct Sinker<Card: View>: View {
             // Come up from behind the composer: its whole height down at first (clipped at its foot, out of sight),
             // then as far as its room at the conversation's end has still to grow (Foot.rise), frame by frame.
             .visualEffect { [rise = foot.rise] card, proxy in card.offset(y: min(rise, proxy.size.height)) }
-            .animation(.smooth(duration: 0.25), value: foot.hovering)
+            .animation(Motion.animation(ConversationView.slide), value: foot.hovering)
             // What has sunk is gone below its place (behind the composer), not shown under it; the ring above and at
             // its sides kept.
             .mask { Rectangle().padding(.horizontal, -Ring.width).padding(.top, -Ring.width) }

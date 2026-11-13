@@ -470,6 +470,10 @@ public final class Workspace {
         await attempt { try await $0.rewind(session: session, message: message, conversation: conversation, code: code) }
     }
 
+    public func unrewind(_ session: String, undo: String?, conversation: Bool) async -> Bool {
+        await attempt { try await $0.unrewind(session: session, undo: undo, conversation: conversation) } != nil
+    }
+
     public func branch(_ session: String, message: String) async -> Rewound? {
         let branched = await attempt { try await $0.branch(session: session, message: message) }
         if let id = branched?.session { pendingDrafts[id] = branched?.text }

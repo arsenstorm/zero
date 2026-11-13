@@ -177,10 +177,12 @@ struct DialogFieldStyle: TextFieldStyle {
 
 extension TextFieldStyle where Self == DialogFieldStyle { static var dialog: DialogFieldStyle { DialogFieldStyle() } }
 
-/// One of a few, on a track: the chosen one raised on the card's colour.
+/// One of a few, on a track: the chosen one raised on the card's colour. `unavailable`: why an option can't be picked
+/// (faded, said on hover), nil when it can.
 struct DialogChoice<Value: Hashable>: View {
     let options: [(title: String, value: Value)]
     @Binding var selection: Value
+    var unavailable: (Value) -> String? = { _ in nil }
     var body: some View {
         HStack(spacing: 2) {
             ForEach(options, id: \.value) { option in
@@ -195,6 +197,9 @@ struct DialogChoice<Value: Hashable>: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .disabled(unavailable(option.value) != nil)
+                .opacity(unavailable(option.value) == nil ? 1 : 0.4)
+                .tip(unavailable(option.value) ?? "")
             }
         }
         .padding(2).background(Theme.row, in: RoundedRectangle(cornerRadius: 8)).fixedSize()

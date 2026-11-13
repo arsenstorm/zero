@@ -1034,6 +1034,11 @@ public final class ZerodLink: @unchecked Sendable {
     }
 
     /// A new task from just before a message of yours; this one stays. Its id comes back with the message.
+    /// A rewind undone: the folder back as `undo` kept it, the conversation back if `conversation`.
+    public func unrewind(session: String, undo: String?, conversation: Bool) async throws {
+        _ = try await call("unrewind", ["session": session, "undo": undo, "conversation": conversation])
+    }
+
     public func branch(session: String, message: String) async throws -> Rewound {
         try decode(Rewound.self, from: await call("branch", ["session": session, "message": message]))
     }
@@ -1893,13 +1898,23 @@ public struct RewindPreview: Decodable, Equatable, Sendable {
     public let files: Int?
     public let insertions: Int?
     public let deletions: Int?
+    public let changes: [Change]?
+
+    /// A file the folder has changed in since: what restoring the code would put back.
+    public struct Change: Decodable, Equatable, Sendable {
+        public let path: String
+        public let insertions: Int
+        public let deletions: Int
+    }
 }
 
-/// A message gone back to: its words and images, to send again or change; and, branched, the new task's id.
+/// A message gone back to: its words and images, to send again or change; and, branched, the new task's id. With the
+/// folder restored, `undo`: the folder as it was just before, for `unrewind`.
 public struct Rewound: Decodable, Sendable {
     public let text: String
     public let images: [String]
     public let session: String?
+    public let undo: String?
 }
 
 public struct GitTokenStatus: Decodable, Sendable {
