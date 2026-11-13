@@ -868,6 +868,8 @@ struct WayDown: View {
     var away = false
     /// Said in words, a pill in the arrow's place: "Back to the ask", gone to a passage from one.
     var label: String? = nil
+    /// Where it is on the page while it shows (zero when it doesn't): the page fades round it (FadeMask).
+    var placed: (CGRect) -> Void = { _ in }
     let go: () -> Void
 
     var body: some View {
@@ -893,6 +895,8 @@ struct WayDown: View {
                 }
             }
             .buttonStyle(.plain).tip(label == nil ? "Go to the latest" : "")
+            .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(ConversationView.pane)) }) { placed($0) }
+            .onDisappear { placed(.zero) }
             .transition(.opacity)
         }
     }

@@ -163,10 +163,18 @@ struct ConversationView: View {
         var composerFrame: CGRect = .zero
         var stripFrame: CGRect = .zero
         var cardFrame: CGRect = .zero
+        /// The way down's button, while it shows: the page fades round it too, never runs under it.
+        var downFrame: CGRect = .zero
     }
     private var composerHeight: CGFloat { foot.height }
     /// Queued from here, not yet in zerod's queue: shown in the strip until it is.
     @State private var queuing: [Queued] = []
+    /// Taken from zerod's queue to go to the agent, its message not in the conversation yet: kept in the strip (as
+    /// Next) meanwhile. zerod's queue drops it a moment before its message comes; in neither list, the row went and
+    /// came back as Next, 64 pt each way.
+    @State private var taking: [Queued] = []
+    /// Taken out of the queue here (edited back into the composer, deleted): gone, not being sent on.
+    @State private var unqueued: Set<String> = []
     /// The strip's messages: those waiting (zerod's queue, and any just queued from here), then those zerod has sent on
     /// that playback hasn't reached yet (they move into the conversation in their turn). Never in both places.
     /// Known by id, never by words (the same words can be queued twice, or be an earlier message's): one queued here
@@ -177,16 +185,30 @@ struct ConversationView: View {
         // In the conversation already (the board's word that it went can come a moment after the message itself).
         let carried = Set(items.compactMap(\.sent))
         let unplayed = items.dropFirst(shown).compactMap { item -> Queued? in
-            // Its images as they were in the strip ("· an image"): only its buttons go as zerod sends it on.
+            // Its images as they were in the strip ("· an image"): only its buttons go as zerod sends it on. By the id
+            // it was queued with, so its row stays the same row as it goes from waiting to Next.
             guard item.isYours, case let .user(text, images) = item.kind else { return nil }
-            return Queued(id: item.id, text: text, images: images.isEmpty ? nil : images)
+            return Queued(id: item.sent ?? item.id, text: text, images: images.isEmpty ? nil : images)
         }
+        let taken = taking.filter { !carried.contains($0.id) }
         let waiting = (queued + queuing.filter { pending in !queued.contains { $0.id == pending.id } })
-            .filter { !carried.contains($0.id) }
-        return unplayed + waiting
+            .filter { row in !carried.contains(row.id) && !taken.contains { $0.id == row.id } }
+        return unplayed + taken + waiting
     }
-    /// Those in the strip zerod has sent on already: no edit, delete or Steer for them.
-    private var sentOn: Set<String> { Set(conversation.items.dropFirst(min(playback.count, conversation.items.count)).map(\.id)) }
+    /// Those in the strip zerod has sent on already (Next): no edit, delete or Steer for them.
+    private var sentOn: Set<String> {
+        let items = conversation.items
+        return Set(items.dropFirst(min(playback.count, items.count)).map { $0.sent ?? $0.id }).union(taking.map(\.id))
+    }
+    /// The agent at it, as the page shows it: the one answer the composer's words, its stop and the strip's Steer all
+    /// take, so they never disagree. Its turn under way (zerod's, or its answer still read out here) and on the page,
+    /// not a message of yours still to move in; or a message of yours zerod has sent on, Next in the strip.
+    private var shownWorking: Bool {
+        let working = conversation.status == .working || conversation.status == .waiting
+        if (working || playback.playing) && playback.working(true) { return true }
+        let next = sentOn
+        return shownQueue.contains { next.contains($0.id) }
+    }
     /// Just sent: the message sits at the top of the page with room under it for the answer, which fills that room
     /// without moving anything, as Codex's does. Over once you scroll.
     @State private var lifted = false
@@ -852,17 +874,21 @@ struct ConversationView: View {
                 left: { [tracker] in room = max(room, tracker.columnHeight) })
             if !queued.isEmpty || held || paused != nil {
                 QueueStrip(
-                    queued: queued, sent: sentOn, held: held, paused: paused,
+                    queued: queued, sent: sentOn, held: held, paused: paused, working: shownWorking, overCard: foot.card > 0,
                     hover: { [foot] inside in if foot.overQueue != inside { foot.overQueue = inside } },
                     steer: { item in Task { await workspace.steer(conversation.id, item: item) } },
                     edit: { item in
+                        unqueued.insert(item.id)
                         Task {
                             if await workspace.unqueue(conversation.id, item: item.id) {
                                 draft = item.text; images = (item.images ?? []).map { URL(fileURLWithPath: $0) }
                             }
                         }
                     },
-                    remove: { item in Task { _ = await workspace.unqueue(conversation.id, item: item.id) } },
+                    remove: { item in
+                        unqueued.insert(item.id)
+                        Task { _ = await workspace.unqueue(conversation.id, item: item.id) }
+                    },
                     release: { Task { await workspace.release(conversation.id) } },
                     resume: { Task { await workspace.unpause([conversation.id]) } }
                 )
@@ -890,7 +916,23 @@ struct ConversationView: View {
             .onHover { [foot] inside in if foot.overComposer != inside { foot.overComposer = inside } }
         }
         // Once zerod has it, the one shown at once goes: left until it went, it came back when the queue emptied.
-        .onChange(of: queued) { _, now in queuing.removeAll { pending in now.contains { $0.id == pending.id } } }
+        .onChange(of: queued) { old, now in
+            queuing.removeAll { pending in now.contains { $0.id == pending.id } }
+            // Gone from zerod's queue, not by the user's hand here: going to the agent. Kept as Next until its message
+            // is in the conversation. ponytail: let go after 5 s, in case another client took it out of the queue.
+            let carried = Set(conversation.items.compactMap(\.sent))
+            let gone = old.filter { row in
+                !now.contains { $0.id == row.id } && !unqueued.contains(row.id) && !carried.contains(row.id)
+                    && !taking.contains { $0.id == row.id }
+            }
+            unqueued.subtract(old.map(\.id).filter { id in !now.contains { $0.id == id } })
+            guard !gone.isEmpty else { return }
+            taking += gone
+            Task {
+                try? await Task.sleep(for: .seconds(5))
+                taking.removeAll { row in gone.contains { $0.id == row.id } }
+            }
+        }
         // The strip gone (its last message moved into the conversation): its room given back on the card's curve, the
         // card on it easing down with the page, not dropping by the strip's height in a frame.
         .onChange(of: shownQueue.isEmpty && !held && paused == nil) { [foot] _, gone in
@@ -942,7 +984,10 @@ struct ConversationView: View {
     private func wayDown(_ proxy: ScrollViewProxy) -> some View {
         // Gone to a passage from an ask: the way down is the way back to it, said so. One docked here is at the end,
         // where the way down goes (its card comes up from behind the composer there); another is in the inbox.
-        WayDown(tracker: tracker, away: live.later > 0, label: backTo == nil ? nil : "Back to the ask") {
+        WayDown(
+            tracker: tracker, away: live.later > 0, label: backTo == nil ? nil : "Back to the ask",
+            placed: { [foot] in if foot.downFrame != $0 { foot.downFrame = $0 } }
+        ) {
             if let id = backTo {
                 backTo = nil
                 let docked = inbox.store.asks(of: conversation.id).contains {
@@ -1150,10 +1195,9 @@ struct ConversationView: View {
         let working = conversation.status == .working || conversation.status == .waiting
         // Playing, not only caught up: the last words still fade in after the last is read (half a second of Reply).
         let busy = working || playback.playing
-        // What the page shows: the last turn still reading out, the next (a queued message zerod sent on) not on the
-        // page yet, the composer says what the heading says (Reply, no stop) until that message moves in. Return still
-        // queues meanwhile, as zerod is at it.
-        let shownBusy = busy && playback.working(true)
+        // As the page and the strip show it (shownWorking): Steer and stop while the agent is at it there, Next in
+        // the strip included; the placeholder says the same.
+        let shownBusy = shownWorking
         // Typing to a task whose agent has stopped starts it now, so the message goes the moment it's sent.
         return Composer(
             draft: Binding(
@@ -1331,17 +1375,9 @@ struct ConversationView: View {
     private var placeholder: String {
         // Its answer still being read out here, though zerod's turn has ended: as the page reads, still at it.
         if paused != nil { return "Paused · your message waits until you resume" }
-        if playback.playing, conversation.status == .idle {
-            return conversation.provider == .opencode ? "OpenCode answers one message at a time" : "Steer it while it works"
-        }
-        return switch conversation.status {
-        // Its next turn not on the page yet (the last still reading out): as the page reads.
-        case .working, .waiting:
-            !playback.working(true)
-                ? "Reply"
-                : conversation.provider == .opencode ? "OpenCode answers one message at a time" : "Steer it while it works"
-        default: "Reply"
-        }
+        // As the stop beside it and the strip's Steer: the agent at it as the page shows it.
+        guard shownWorking else { return "Reply" }
+        return conversation.provider == .opencode ? "OpenCode answers one message at a time" : "Steer it while it works"
     }
 }
 
@@ -1601,8 +1637,11 @@ private struct SoftFoot: View {
             LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: Feathered.top)
             // Eased as the card is when the pointer brings it up or lets it sink (Sinker), on the same curve; a scroll
             // moves both one point for one.
-            Feathered(sunk: foot.sunk, rise: foot.rise, composer: foot.composerFrame, strip: foot.stripFrame, card: foot.cardFrame)
-                .animation(Motion.animation(ConversationView.slide), value: foot.hovering)
+            Feathered(
+                sunk: foot.sunk, rise: foot.rise, composer: foot.composerFrame, strip: foot.stripFrame, card: foot.cardFrame,
+                down: foot.downFrame
+            )
+            .animation(Motion.animation(ConversationView.slide), value: foot.hovering)
         }
     }
 }
@@ -1618,6 +1657,7 @@ private struct Feathered: View, Animatable {
     let composer: CGRect
     let strip: CGRect
     let card: CGRect
+    let down: CGRect
 
     var animatableData: CGFloat {
         get { sunk }
@@ -1626,13 +1666,13 @@ private struct Feathered: View, Animatable {
 
     var body: some View {
         // The card as far as it shows: sunk while the page is scrolled up, not yet risen as it comes.
-        let down = card.height > 0 ? sunk + min(rise, card.height) : 0
-        let shown = CGRect(x: card.minX, y: card.minY + down, width: card.width, height: max(0, card.height - down))
+        let sinking = card.height > 0 ? sunk + min(rise, card.height) : 0
+        let shown = CGRect(x: card.minX, y: card.minY + sinking, width: card.width, height: max(0, card.height - sinking))
         // Each one's text inset: the composer's text 14 in; the strip's, its own 13 pt margin (in its frame) and its
         // heading's 16; the card's heading and words 16 in from its shell.
         let surfaces = [
             FadeMask.Surface(frame: composer, inset: 14), FadeMask.Surface(frame: strip, inset: 13 + 16),
-            FadeMask.Surface(frame: shown, inset: 16),
+            FadeMask.Surface(frame: shown, inset: 16), FadeMask.Surface(frame: down, inset: 0),
         ].map { FadeMask.Surface(frame: $0.frame.offsetBy(dx: 0, dy: -Self.top), inset: $0.inset) }
         return Canvas { context, size in FadeMask.draw(&context, size: size, surfaces: surfaces) }
     }

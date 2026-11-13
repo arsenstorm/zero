@@ -12,6 +12,11 @@ struct QueueStrip: View {
     let held: Bool
     /// Paused by you, with how many events wait for your Resume: the strip says so, with Resume.
     var paused: Int?
+    /// The agent at it, as the page shows it (ConversationView.shownWorking): a row steers it mid-turn; not, a row
+    /// is sent now.
+    var working = true
+    /// A question card tucked behind it: a hairline along its top, so the sunk card's tab and this one read as two.
+    var overCard = false
     /// The pointer on it: the question card behind it comes up, as for the composer.
     var hover: (Bool) -> Void = { _ in }
     let steer: (Queued) -> Void
@@ -77,7 +82,7 @@ struct QueueStrip: View {
                                         steer(item)
                                     } label: {
                                         HStack(spacing: 5) {
-                                            Text("Steer").font(.system(size: 12, weight: .medium))
+                                            Text(working ? "Steer" : "Send").font(.system(size: 12, weight: .medium))
                                             NucleoIcon("arrow-turn-up-2", size: 12)
                                         }
                                         .foregroundStyle(lit ? AnyShapeStyle(Theme.onKnob) : AnyShapeStyle(.primary))
@@ -85,7 +90,9 @@ struct QueueStrip: View {
                                         .background(lit ? Theme.knob : Theme.chip, in: Capsule())
                                         .overlay(Capsule().strokeBorder(lit ? Color.clear : Theme.stroke))
                                     }
-                                    .buttonStyle(PressableStyle()).tip("Send it now, mid-turn").padding(.leading, 4)
+                                    .buttonStyle(PressableStyle()).tip(working ? "Send it now, mid-turn" : "Send it now").padding(
+                                        .leading, 4
+                                    )
                                     .onHover { inside in
                                         if inside { control = item.id + "/steer" } else if control == item.id + "/steer" { control = nil }
                                     }
@@ -115,6 +122,13 @@ struct QueueStrip: View {
         // card sits 4 down inside its own column (the composer's top padding), so 16 here puts 12 of the tab under it:
         // the last row's 12 exactly, leaving the same 4 under its pill as over the first row's.
         .background(Theme.fieldTab, in: UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18, style: .continuous))
+        // Over a sunk card (the same grey): its top edge drawn, corners and all, so the two tabs don't merge into one.
+        .overlay(alignment: .top) {
+            if overCard {
+                UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18, style: .continuous).strokeBorder(Theme.stroke)
+                    .mask(alignment: .top) { Rectangle().frame(height: 19) }.allowsHitTesting(false)
+            }
+        }
         .onHover(perform: hover)
         .padding(.horizontal, 13).padding(.bottom, -16)
     }
