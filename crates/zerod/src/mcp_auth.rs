@@ -39,6 +39,8 @@ pub enum News<'a> {
     Link(&'a str),
     SignedIn,
     Failed(&'a str),
+    /// A claude.ai connector, connected in claude.ai's settings rather than here.
+    Connector,
 }
 
 /// Tells a task (by id) about a server's sign-in.
@@ -59,12 +61,20 @@ pub struct McpAuth {
     run: Runner,
     inbox: OnceLock<(Arc<Inbox>, Tell)>,
     attempts: Mutex<HashMap<String, Attempt>>,
+    /// The claude.ai connectors the user has been told about.
+    connectors: Mutex<std::collections::HashSet<String>>,
     me: Weak<McpAuth>,
 }
 
 impl McpAuth {
     pub fn new(run: Runner) -> Arc<McpAuth> {
-        Arc::new_cyclic(|me| McpAuth { run, inbox: OnceLock::new(), attempts: Mutex::default(), me: me.clone() })
+        Arc::new_cyclic(|me| McpAuth {
+            run,
+            inbox: OnceLock::new(),
+            attempts: Mutex::default(),
+            connectors: Mutex::default(),
+            me: me.clone(),
+        })
     }
 
     /// Where its asks go, and how tasks are told: given once.
@@ -96,6 +106,15 @@ impl McpAuth {
         };
         if let (Some(url), Some((_, tell))) = (link, self.inbox.get()) {
             tell(&conversation.id, &server, News::Link(&url))
+        }
+    }
+
+    /// A task's Claude says claude.ai connector `server` needs connecting: told once per zerod, in the first task.
+    pub fn connector(&self, conversation: &Conversation, server: &str) {
+        if self.connectors.lock().unwrap().insert(server.into())
+            && let Some((_, tell)) = self.inbox.get()
+        {
+            tell(&conversation.id, server, News::Connector)
         }
     }
 
@@ -254,9 +273,11 @@ pub fn start(daemon: Arc<crate::daemon::Daemon>, inbox: Arc<Inbox>) {
                 ),
                 News::SignedIn => (format!("Signed in to {server}"), false),
                 News::Failed(why) => (format!("Couldn't sign in to {server}: {why}"), true),
+                News::Connector => (format!("{server} needs connecting in claude.ai's connector settings before tasks can use it."), false),
             };
             notice(&session, &text, error);
-            // Claude skipped the server when it started: it connects now, with what the sign-in kept.
+            // Claude skipped the server when it started: it connects now, with what the sign-in kept. (Its folder, with
+            // Claude running in it, isn't written: another account's folder gets the sign-in at its next start.)
             if matches!(news, News::SignedIn) && session.summary().provider == Provider::Claude && session.is_attached() {
                 let _ = session.write(json!({"type": "control_request", "request_id": format!("mcp-reconnect-{server}"),
                                              "request": {"subtype": "mcp_reconnect", "serverName": server}}));
@@ -272,9 +293,13 @@ pub fn start(daemon: Arc<crate::daemon::Daemon>, inbox: Arc<Inbox>) {
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(_) => return,
             };
-            let Change::McpSignIn { server } = event.change else { continue };
+            let Change::McpSignIn { server, connector } = event.change else { continue };
             let Some(daemon) = weak.upgrade() else { return };
             let Some(conversation) = daemon.get(&event.session) else { continue };
+            if connector {
+                daemon.mcp_auth.connector(&conversation, &server);
+                continue;
+            }
             let env = crate::process::SESSION_ENV.lock().unwrap().get(&conversation.id).cloned().unwrap_or_default();
             let job = Job { server, provider: conversation.provider, cwd: conversation.cwd.clone(), env, mcp: conversation.mcp.clone() };
             daemon.mcp_auth.wanted(&conversation, job);

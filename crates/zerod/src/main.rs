@@ -91,7 +91,16 @@ async fn main() {
     tokio::spawn(zerod::uses::follow(daemon.clone()));
     tokio::spawn(zerod::left::follow(daemon.clone()));
     let (named, notices) = (daemon.clone(), zerod.notices.clone());
-    tokio::spawn(async move { zerod::server::name_codex_accounts(&named, &notices).await });
+    // The turns from before Zero counted them, from the transcripts: once, in the background (they're gigabytes).
+    let counting = daemon.clone();
+    tokio::task::spawn_blocking(move || {
+        let home = counting.home().to_path_buf();
+        counting.signins.count_earlier_turns(&[home.join("sessions"), home.join("archive")])
+    });
+    // Zero writes to the Keychain (MCP servers' sign-ins shared between Claude folders) only as the real zerod.
+    daemon.signins.set_store(std::sync::Arc::new(zerod::mcp_servers::keychain_write));
+    tokio::spawn(zerod::server::follow_usage(daemon.clone(), notices.clone()));
+    tokio::spawn(async move { zerod::server::name_accounts(&named, &notices).await });
     // Codex processes end with the daemon: their input closes when it exits.
     tokio::select! {
         served = zerod::server::serve(zerod, args.socket.clone()) => if let Err(error) = served { eprintln!("zerod: {error}"); std::process::exit(1) },

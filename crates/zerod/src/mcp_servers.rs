@@ -123,6 +123,56 @@ pub fn keychain(service: &str, account: &str) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
+/// Writes a value to the Keychain, never on a command line: `security -i` is given the command on its input. Only
+/// `security` writes an item and leaves it trusting `security` (Claude Code's items, and the ones Zero reads through
+/// it): the Security framework, called from zerod, makes the item zerod's, and `security` (Claude Code with it) then
+/// can't read it. None removes it (names alone on the command line). The value as read back is checked.
+// ponytail: a line of `security -i` holds about 4 KB, so a longer value (a Claude folder's item with many servers'
+// sign-ins) isn't written; the Security framework can't keep its item `security`'s.
+pub fn keychain_write(service: &str, account: &str, value: Option<&str>) -> Result<(), String> {
+    use std::io::Write;
+    let Some(value) = value else {
+        let output = std::process::Command::new("/usr/bin/security")
+            .args(["delete-generic-password", "-s", service, "-a", account])
+            .output()
+            .map_err(|e| e.to_string())?;
+        // 44: there was none.
+        return if output.status.success() || output.status.code() == Some(44) { Ok(()) } else { Err("the Keychain refused".into()) };
+    };
+    if !fits_keychain(service, account, value) {
+        return Err(format!("too long to give the Keychain without a command line ({} bytes)", value.len()));
+    }
+    let line = security_line(service, account, value);
+    let mut child = std::process::Command::new("/usr/bin/security")
+        .arg("-i")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    child.stdin.take().ok_or("no input")?.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+    child.wait().map_err(|e| e.to_string())?;
+    // `security -i` ends well whatever its command did: what it kept is how it went.
+    if keychain(service, account).as_deref() != Some(value) {
+        return Err("the Keychain didn't keep it".into());
+    }
+    Ok(())
+}
+
+/// The longest line `security -i` reads whole (4096 bytes, with room to spare).
+const SECURITY_LINE: usize = 4032;
+
+/// Whether `keychain_write` can give the Keychain this value: on one line of `security -i`, as it's quoted there.
+pub fn fits_keychain(service: &str, account: &str, value: &str) -> bool {
+    security_line(service, account, value).len() <= SECURITY_LINE && ![service, account, value].iter().any(|s| s.contains(['\n', '\r']))
+}
+
+/// The command `security -i` is given to keep a value, each word quoted.
+fn security_line(service: &str, account: &str, value: &str) -> String {
+    let quoted = |text: &str| format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""));
+    format!("add-generic-password -U -a {} -s {} -w {}\n", quoted(account), quoted(service), quoted(value))
+}
+
 pub struct McpServers {
     file: PathBuf,
     list: Mutex<Vec<McpServer>>,

@@ -390,7 +390,7 @@ fn any_server_that_needs_signing_in_is_zeros_to_sign_in_to_once_per_process() {
         .changes
         .iter()
         .filter_map(|c| match c {
-            Change::McpSignIn { server } => Some(server.as_str()),
+            Change::McpSignIn { server, connector: false } => Some(server.as_str()),
             _ => None,
         })
         .collect();
@@ -399,6 +399,18 @@ fn any_server_that_needs_signing_in_is_zeros_to_sign_in_to_once_per_process() {
         &json!({"type": "system", "subtype": "init", "session_id": "t1", "mcp_servers": [{"name": "betterstack", "status": "needs-auth"}]}),
     );
     assert!(!again.changes.iter().any(|c| matches!(c, Change::McpSignIn { .. })), "said once: the next turn's init doesn't say it again");
+}
+
+#[test]
+fn a_claude_ai_connector_is_said_to_be_one() {
+    let mut core = Core::new(with_remote_server(Provider::Claude));
+    let effects = core.receive(&json!({"type": "system", "subtype": "init", "session_id": "t1", "mcp_servers": [
+        {"name": "claude.ai Amazonomics", "source": "claudeai", "status": "needs-auth"}]}));
+    assert!(
+        effects.changes.iter().any(|c| matches!(c, Change::McpSignIn { server, connector: true } if server == "claude.ai Amazonomics")),
+        "connected on claude.ai, not signed in to by Zero: {:?}",
+        effects.changes
+    );
 }
 
 #[test]
@@ -565,4 +577,26 @@ fn agents_compact_their_context_at_the_size_the_user_chose() {
     zerod::adapter::set_compact_window(None);
     assert_eq!(variable(), None);
     assert!(!Provider::Codex.command(&codex, false, None, None).iter().any(|a| a.contains("compact")));
+}
+
+/// At its limit, Claude Code says which window and when it resets (a rejected rate_limit_event, or the refused request's
+/// own api_error_params), often without the window's figures: that window is full until then, and when it was heard.
+#[test]
+fn a_limit_claude_code_reports_fills_its_window_until_it_resets() {
+    let info = json!({"isUsingOverage": false, "overageStatus": "rejected", "rateLimitType": "seven_day", "resetsAt": 1794337200, "status": "rejected"});
+    for message in [
+        json!({"type": "rate_limit_event", "rate_limit_info": info, "uuid": "u", "session_id": "s"}),
+        json!({"type": "assistant", "is_api_error_message": true, "error": "rate_limit", "api_error": "usage_limit_reached", "api_error_status": 429,
+               "api_error_params": {"rate_limit_info": info}, "message": {"id": "m", "content": [{"type": "text", "text": "You've hit your weekly limit"}]}}),
+    ] {
+        let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+        core.at(1_794_300_000_000);
+        core.receive(&message);
+        let usage = core.conversation().usage.clone().expect("the limit heard");
+        assert!(usage.limited);
+        assert_eq!(usage.resets_at, Some(1794337200));
+        let windows: Vec<_> = usage.windows.iter().map(|w| (w.name.as_str(), w.used, w.resets_at)).collect();
+        assert_eq!(windows, [("7 days", 1.0, Some(1794337200))]);
+        assert_eq!(usage.windows[0].read_at, Some(1_794_300_000), "when it was heard");
+    }
 }

@@ -13,9 +13,9 @@ pub(super) async fn handle(zerod: &Zerod, request: Request) -> Result<Value, Str
     let daemon = &zerod.daemon;
     match request.op.as_str() {
         "signIns" => Ok(list(daemon)),
-        // Each account's finished turns by the hour (Unix hours), for its activity graph: asked for apart from the list,
-        // which is read every minute.
-        "accountActivity" => Ok(json!(daemon.signins.activity())),
+        // Every account's finished turns by the hour (Unix hours), for the Activity graph, and what each id is (removed
+        // sign-ins too; an id that's a CLI's name is its own sign-in): asked for apart from the list, read every minute.
+        "accountActivity" => Ok(json!({"hours": daemon.signins.activity(), "accounts": daemon.signins.named()})),
         "saveSignIn" => {
             let signin =
                 serde_json::from_value(request.signin.clone().ok_or("Which sign-in?")?).map_err(|e| format!("Not a sign-in: {e}"))?;
@@ -26,7 +26,8 @@ pub(super) async fn handle(zerod: &Zerod, request: Request) -> Result<Value, Str
         // A Codex account signed in by Codex itself, in a home of its own: its page back now, the rest in the background.
         "codexSignIn" => codex_sign_in(zerod, request.signin.as_ref()).await,
         // A Claude account signed in by Claude Code itself, in a folder of its own: the same, through `claude auth login`.
-        "claudeSignIn" => claude_sign_in(zerod).await,
+        // With `signin` a token's id: that account signed in again in a folder of its own, the token let go once it is.
+        "claudeSignIn" => claude_sign_in(zerod, request.signin.as_ref().and_then(Value::as_str)).await,
         "deleteSignIn" => {
             daemon.signins.delete(request.signin.as_ref().and_then(|s| s.as_str()).ok_or("Which sign-in?")?)?;
             let _ = zerod.notices.send("signins");
@@ -39,48 +40,74 @@ pub(super) async fn handle(zerod: &Zerod, request: Request) -> Result<Value, Str
             let _ = zerod.notices.send("signins");
             Ok(Value::Null)
         }
-        // Each account's usage asked of its CLI now (the Accounts page is open), not only as its tasks last heard it.
+        // Each account's usage asked of its CLI now (the Accounts page is open), not only when it's next due.
         "readUsage" => {
-            let (daemon, notices) = (zerod.daemon.clone(), zerod.notices.clone());
-            tokio::spawn(async move { read_usage(&daemon, &notices).await });
+            daemon.signins.read_now.notify_one();
             Ok(Value::Null)
         }
         other => unknown(other),
     }
 }
 
-/// Every subscription's usage, asked of its CLI as that account, all at once: what's kept for choosing accounts by
-/// too. Keys have no plan windows to read; an account whose CLI doesn't answer in time keeps what it had.
-async fn read_usage(daemon: &std::sync::Arc<Daemon>, notices: &broadcast::Sender<&'static str>) {
-    let mut reads = tokio::task::JoinSet::new();
-    for signin in daemon.signins.list().into_iter().filter(|s| !s.pending) {
-        let daemon = daemon.clone();
-        reads.spawn(async move {
-            let read = tokio::time::timeout(std::time::Duration::from_secs(30), usage_of(&daemon, &signin)).await;
-            (signin.id, read.unwrap_or_else(|_| Some(Err("its CLI didn't answer in time".into()))))
-        });
-    }
-    let mut read_any = false;
-    while let Some(Ok((id, read))) = reads.join_next().await {
-        match read {
-            Some(Ok(usage)) => {
-                daemon.signins.replace_usage(&id, &usage);
-                read_any = true
+/// Every subscription's usage, asked of its CLI as that account, for as long as zerod runs: what's kept for choosing
+/// accounts by and what the app shows. Each account is read when `next_read` says (a quarter of an hour on, just after
+/// a reset, backing off while reads fail) and when woken (`read_now`); one read in the last minute isn't read again.
+/// A read that fails keeps what was known, its age showing how old.
+pub async fn follow_usage(daemon: std::sync::Arc<Daemon>, notices: broadcast::Sender<&'static str>) {
+    // By account: when it's next due, its failed reads running, when it was last tried.
+    let mut due: std::collections::HashMap<String, (i64, u32, i64)> = Default::default();
+    loop {
+        let now = crate::now();
+        let mut reads = tokio::task::JoinSet::new();
+        for signin in daemon.signins.list().into_iter().filter(|s| !s.pending) {
+            if due.get(&signin.id).is_some_and(|(at, _, _)| *at > now) {
+                continue;
             }
-            Some(Err(error)) => eprintln!("zerod: couldn't read {id}'s usage: {error}"),
-            None => {}
+            let daemon = daemon.clone();
+            reads.spawn(async move {
+                let read = tokio::time::timeout(std::time::Duration::from_secs(30), usage_of(&daemon, &signin)).await;
+                (signin.id, read.unwrap_or_else(|_| Some(Err("its CLI didn't answer in time".into()))))
+            });
         }
-    }
-    if read_any {
-        let _ = notices.send("signins");
+        let mut read_any = false;
+        while let Some(Ok((id, read))) = reads.join_next().await {
+            let failures = due.get(&id).map_or(0, |d| d.1);
+            let next = match read {
+                Some(Ok(usage)) => {
+                    daemon.signins.replace_usage(&id, &usage);
+                    // Its folder's sign-in may have changed since (signed in again as someone else): named again.
+                    daemon.signins.name_claude_folders();
+                    read_any = true;
+                    (crate::signins::next_read(now, Some(&usage), 0), 0)
+                }
+                Some(Err(error)) => {
+                    eprintln!("zerod: couldn't read {id}'s usage: {error}");
+                    (crate::signins::next_read(now, None, failures + 1), failures + 1)
+                }
+                // Nothing to read (a key, a Claude Code token): its usage comes from its tasks.
+                None => (i64::MAX, 0),
+            };
+            due.insert(id, (next.0, next.1, now));
+        }
+        if read_any {
+            let _ = notices.send("signins");
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
+            _ = daemon.signins.read_now.notified() => {
+                let now = crate::now();
+                due.retain(|_, (_, _, tried)| *tried > now - 60);
+            }
+        }
     }
 }
 
-/// One sign-in's usage, asked of its CLI; none for a key.
+/// One sign-in's usage, asked of its CLI; none for a key, or a Claude Code token (`claude setup-token` has no profile
+/// scope, so `get_usage` has no limits to give: its tasks' reports are all there is).
 async fn usage_of(daemon: &Daemon, signin: &crate::signins::SignIn) -> Option<Result<crate::model::Usage, String>> {
     use crate::signins::Kind;
     Some(match signin.kind {
-        Kind::Token | Kind::ClaudeHome => match daemon.signins.environment(signin) {
+        Kind::ClaudeHome => match daemon.signins.environment(signin) {
             Ok(env) => crate::claude_login::usage(&crate::claude_login::usage_command(), &env).await,
             Err(error) => Err(error),
         },
@@ -89,7 +116,7 @@ async fn usage_of(daemon: &Daemon, signin: &crate::signins::SignIn) -> Option<Re
             let (_child, input, output) = codex_in(&home).ok()?;
             crate::codex_login::rate_limits(output, input).await
         }
-        Kind::ApiKey => return None,
+        Kind::ApiKey | Kind::Token => return None,
     })
 }
 
@@ -107,7 +134,10 @@ fn list(daemon: &Daemon) -> Value {
         .map(|s| (s.id.clone(), json!(daemon.signins.refused(&s.id))))
         .filter(|(_, r)| r.as_array().is_some_and(|r| !r.is_empty()))
         .collect();
-    json!({"signins": list, "defaults": defaults, "usage": usage, "refused": refused})
+    let last = daemon.signins.last_turns();
+    let last_turn: serde_json::Map<String, Value> =
+        list.iter().filter_map(|s| last.get(&s.id).map(|at| (s.id.clone(), json!(at)))).collect();
+    json!({"signins": list, "defaults": defaults, "usage": usage, "refused": refused, "lastTurn": last_turn})
 }
 
 /// Starts a Codex sign-in: a pending sign-in and its home, Codex's app-server run there, and its ChatGPT page given
@@ -144,7 +174,7 @@ async fn codex_sign_in(zerod: &Zerod, asked: Option<&Value>) -> Result<Value, St
             .unwrap_or_else(|_| Err("the sign-in wasn't finished".into()));
         signed_in(&daemon, &notices, &id, label, outcome);
         drop(child);
-        name_codex_accounts(&daemon, &notices).await;
+        name_accounts(&daemon, &notices).await;
     });
     let _ = zerod.notices.send("signins");
     let page = tokio::time::timeout(std::time::Duration::from_secs(30), opened).await.ok().and_then(Result::ok).flatten();
@@ -168,10 +198,14 @@ fn codex_in(home: &std::path::Path) -> Result<(tokio::process::Child, tokio::pro
     Ok((child, input, output))
 }
 
-/// Codex accounts that don't say whose they are (signed in before Zero asked, or Codex hadn't said yet) are asked
-/// of Codex, in their homes: the email becomes the name unless the user gave it one, and the plan is kept.
-pub async fn name_codex_accounts(daemon: &Daemon, notices: &broadcast::Sender<&'static str>) {
+/// Accounts named by who they are. Codex accounts that don't say (signed in before Zero asked, or Codex hadn't said
+/// yet) are asked of Codex, in their homes: the email becomes the name unless the user gave it one, and the plan is kept.
+pub async fn name_accounts(daemon: &Daemon, notices: &broadcast::Sender<&'static str>) {
     use crate::signins::Kind;
+    // Claude accounts with folders of their own say so in a file there: read at once.
+    if daemon.signins.name_claude_folders() {
+        let _ = notices.send("signins");
+    }
     for mut signin in daemon.signins.list() {
         if signin.kind != Kind::CodexHome || signin.pending || signin.plan.is_some() {
             continue;
@@ -222,10 +256,38 @@ fn signed_in(
 
 /// Starts a Claude sign-in: a pending sign-in and its own Claude Code folder, `claude auth login` run there (Claude
 /// Code opens its page in the browser), and that page given back in case it didn't open. Once Claude Code is signed
-/// in, the sign-in takes the account's email and plan from `claude auth status`.
-async fn claude_sign_in(zerod: &Zerod) -> Result<Value, String> {
+/// in, the sign-in takes the account's email and plan from `claude auth status`. `replacing` a token, the token stays
+/// in use while the folder (under its id) signs in, and becomes it once signed in; a sign-in that fails leaves it.
+async fn claude_sign_in(zerod: &Zerod, replacing: Option<&str>) -> Result<Value, String> {
     use crate::signins::{Kind, SignIn};
     let signins = &zerod.daemon.signins;
+    if let Some(id) = replacing {
+        let token = signins.get(id).filter(|s| s.kind == Kind::Token).ok_or("Only a Claude Code token switches to a browser sign-in")?;
+        let env = signins.environment(&SignIn { kind: Kind::ClaudeHome, ..token })?;
+        let (page, opened) = tokio::sync::oneshot::channel();
+        let (daemon, notices, id) = (zerod.daemon.clone(), zerod.notices.clone(), id.to_string());
+        let answer = json!({"id": id});
+        tokio::spawn(async move {
+            let outcome =
+                tokio::time::timeout(SIGN_IN_TIME, crate::claude_login::sign_in(&crate::claude_login::Commands::claude(), &env, page))
+                    .await
+                    .unwrap_or_else(|_| Err("the sign-in wasn't finished".into()));
+            match outcome.and_then(|account| daemon.signins.switched_to_folder(&id, account)) {
+                Ok(_) => daemon.signins.share_mcp_sign_ins(None),
+                Err(error) => {
+                    eprintln!("zerod: switching {id} to a browser sign-in: {error}");
+                    // The folder, which never signed in, goes; the token carries on.
+                    if daemon.signins.get(&id).is_some_and(|s| s.kind == Kind::Token) {
+                        let _ = std::fs::remove_dir_all(daemon.home().join("claude-homes").join(&id));
+                    }
+                }
+            }
+            daemon.signins.name_claude_folders();
+            let _ = notices.send("signins");
+        });
+        let page = tokio::time::timeout(std::time::Duration::from_secs(3), opened).await.ok().and_then(Result::ok).flatten();
+        return Ok(json!({"id": answer["id"], "page": page}));
+    }
     let signin = signins.save(SignIn {
         id: String::new(),
         cli: Provider::Claude,
@@ -244,6 +306,9 @@ async fn claude_sign_in(zerod: &Zerod) -> Result<Value, String> {
                 .await
                 .unwrap_or_else(|_| Err("the sign-in wasn't finished".into()));
         signed_in(&daemon, &notices, &id, "Claude".into(), outcome);
+        if daemon.signins.name_claude_folders() {
+            let _ = notices.send("signins");
+        }
     });
     let _ = zerod.notices.send("signins");
     let page = tokio::time::timeout(std::time::Duration::from_secs(3), opened).await.ok().and_then(Result::ok).flatten();

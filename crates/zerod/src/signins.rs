@@ -18,6 +18,16 @@ const ACTIVITY: &str = "activity.json";
 /// Reads a value from the Keychain (service, account); a stand-in in tests.
 pub type Secrets = Arc<dyn Fn(&str, &str) -> Option<String> + Send + Sync>;
 
+/// Writes a value to the Keychain (service, account, value; none removes it); a stand-in in tests.
+pub type Store = Arc<dyn Fn(&str, &str, Option<&str>) -> Result<(), String> + Send + Sync>;
+
+/// Whether a Claude Code folder has a process running in it (`folder_in_use`); a stand-in in tests.
+pub type InUse = Arc<dyn Fn(&Path) -> bool + Send + Sync>;
+
+/// The account an MCP server's sign-in is kept under in KEYCHAIN: "mcp:" and Claude Code's name for it (its name and a
+/// hash of where it is).
+const MCP_SIGN_IN: &str = "mcp:";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Kind {
@@ -62,6 +72,18 @@ struct Kept {
     /// The models each sign-in's provider refused it (no access), by id: never chosen for them.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     refused: std::collections::BTreeMap<String, Vec<String>>,
+    /// Sign-ins removed, by id: what their activity is shown as.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    former: std::collections::BTreeMap<String, SignIn>,
+    /// The turns from before Zero counted them have been counted from the transcripts (`count_earlier_turns`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    earlier_counted: bool,
+    /// When a turn last ended on each account (Unix seconds), by id: the app's most recently used account.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    last_turn: std::collections::BTreeMap<String, i64>,
+    /// The MCP servers' sign-ins Zero keeps (each in the Keychain), by Claude Code's name for each.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    mcp: std::collections::BTreeSet<String>,
 }
 
 pub struct SignIns {
@@ -70,12 +92,18 @@ pub struct SignIns {
     home: PathBuf,
     kept: Mutex<Kept>,
     secrets: Mutex<Secrets>,
+    /// Writes to the Keychain: none, Zero writes nothing there (tests not given one, so they never touch the user's).
+    store: Mutex<Option<Store>>,
+    in_use: Mutex<InUse>,
     /// The user's own Codex home and Claude Code folder, whose config and history every account's folder shares.
     codex: Mutex<PathBuf>,
     claude: Mutex<PathBuf>,
     /// Each account's finished turns, by the hour (Unix hours) they ended in: its activity, as a contribution graph
     /// shows it. Kept in activity.json, a little over a year of it.
     activity: Mutex<Activity>,
+    /// Wakes the accounts' usage reads (server/signins.rs `follow_usage`) to read now: the Accounts page opened, a
+    /// limit heard in a task.
+    pub read_now: tokio::sync::Notify,
 }
 
 /// An account's turns by hour, by its id.
@@ -94,33 +122,151 @@ impl SignIns {
             home: home.into(),
             kept: Mutex::new(kept),
             secrets: Mutex::new(Arc::new(crate::mcp_servers::keychain)),
+            store: Mutex::new(None),
+            in_use: Mutex::new(Arc::new(folder_in_use)),
             codex: Mutex::new(codex),
             claude: Mutex::new(claude),
             activity: Mutex::new(activity),
+            read_now: tokio::sync::Notify::new(),
         }
     }
 
     /// A turn the account's task finished at `at` (Unix seconds), counted in its hour; what's over a year old let go.
+    /// Kept whatever becomes of the account: `id` is a sign-in's, or a CLI's name for a turn run as its own sign-in.
     pub fn record_turn(&self, id: &str, at: i64) {
-        if !self.kept.lock().unwrap().signins.iter().any(|s| s.id == id) {
-            return;
-        }
         let mut activity = self.activity.lock().unwrap();
         let hours = activity.entry(id.into()).or_default();
         *hours.entry(at / 3600).or_default() += 1;
         let oldest = at / 3600 - 400 * 24;
         hours.retain(|hour, _| *hour >= oldest);
-        if let Ok(data) = serde_json::to_vec(&*activity) {
+        self.keep_activity(&activity);
+        drop(activity);
+        let mut kept = self.kept.lock().unwrap();
+        if kept.last_turn.get(id).is_none_or(|last| *last < at) {
+            kept.last_turn.insert(id.into(), at);
+            let _ = self.persist(&kept);
+        }
+    }
+
+    /// When a turn last ended on each account, by id (Unix seconds); for one with no turn since that was kept, the start
+    /// of the hour its activity last counted one in.
+    pub fn last_turns(&self) -> std::collections::BTreeMap<String, i64> {
+        let mut last: std::collections::BTreeMap<String, i64> = self
+            .activity
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(id, hours)| hours.keys().max().map(|hour| (id.clone(), hour * 3600)))
+            .collect();
+        last.extend(self.kept.lock().unwrap().last_turn.clone());
+        last
+    }
+
+    fn keep_activity(&self, activity: &Activity) {
+        if let Ok(data) = serde_json::to_vec(activity) {
             let _ = std::fs::write(self.home.join(ACTIVITY), data);
         }
+    }
+
+    /// The turns tasks finished before Zero counted them, counted once from their transcripts in `folders` (sessions,
+    /// archive: each line with when zerod heard it, in milliseconds), by the hour each ended, under the task's CLI's
+    /// name (which account each ran as wasn't kept). Only those before the first turn counted, so none counts twice.
+    pub fn count_earlier_turns(&self, folders: &[PathBuf]) {
+        use std::io::BufRead;
+        if self.kept.lock().unwrap().earlier_counted {
+            return;
+        }
+        let first = self.activity.lock().unwrap().values().filter_map(|hours| hours.keys().next().copied()).min();
+        let before = first.map_or(i64::MAX, |hour| hour * 3_600_000);
+        let mut found = Activity::new();
+        for task in folders.iter().flat_map(|f| std::fs::read_dir(f).into_iter().flatten().flatten()) {
+            let meta = std::fs::read(task.path().join("meta.json")).ok();
+            let Some(cli) = meta
+                .and_then(|m| serde_json::from_slice::<serde_json::Value>(&m).ok())
+                .and_then(|m| m["provider"].as_str().map(String::from))
+            else {
+                continue;
+            };
+            let Ok(file) = std::fs::File::open(task.path().join("transcript.jsonl")) else { continue };
+            for line in std::io::BufReader::new(file).split(b'\n').map_while(Result::ok) {
+                // Most lines aren't a turn's end: only those that may be are read as JSON.
+                if ![&b"\"result\""[..], b"turn/completed"].iter().any(|word| line.windows(word.len()).any(|w| w == *word)) {
+                    continue;
+                }
+                let Ok(heard) = serde_json::from_slice::<serde_json::Value>(&line) else { continue };
+                let Some(at) = heard["at"].as_i64().filter(|at| *at < before) else { continue };
+                if finished(&heard["in"]) {
+                    *found.entry(cli.clone()).or_default().entry(at / 3_600_000).or_default() += 1;
+                }
+            }
+        }
+        {
+            let mut activity = self.activity.lock().unwrap();
+            for (id, hours) in found {
+                for (hour, turns) in hours {
+                    *activity.entry(id.clone()).or_default().entry(hour).or_default() += turns;
+                }
+            }
+            self.keep_activity(&activity);
+        }
+        let mut kept = self.kept.lock().unwrap();
+        kept.earlier_counted = true;
+        let _ = self.persist(&kept);
     }
 
     pub fn activity(&self) -> Activity {
         self.activity.lock().unwrap().clone()
     }
 
+    /// Every sign-in activity may be counted under, by id: those kept, and those removed since.
+    pub fn named(&self) -> std::collections::BTreeMap<String, SignIn> {
+        let kept = self.kept.lock().unwrap();
+        kept.former.clone().into_iter().chain(kept.signins.iter().map(|s| (s.id.clone(), s.clone()))).collect()
+    }
+
+    /// Each Claude account with a folder of its own named by the account Claude Code keeps there (`.claude.json`'s
+    /// oauthAccount: its email and plan, nothing else read): the email unless the user gave it a name. True when one
+    /// changed.
+    pub fn name_claude_folders(&self) -> bool {
+        let mut kept = self.kept.lock().unwrap();
+        let mut changed = false;
+        for signin in kept.signins.iter_mut().filter(|s| s.kind == Kind::ClaudeHome && !s.pending) {
+            let file = self.home.join("claude-homes").join(&signin.id).join(".claude.json");
+            let Some(account) = std::fs::read(file).ok().and_then(|d| serde_json::from_slice::<serde_json::Value>(&d).ok()) else {
+                continue;
+            };
+            let account = &account["oauthAccount"];
+            // ponytail: a name with an @ is taken for an email Zero gave it; a user's own with one is renamed.
+            if let Some(email) = account["emailAddress"].as_str()
+                && (signin.label == "Claude" || signin.label.contains('@'))
+                && signin.label != email
+            {
+                signin.label = email.into();
+                changed = true;
+            }
+            let plan = account["planDisplayName"]
+                .as_str()
+                .map(String::from)
+                .or_else(|| account["organizationType"].as_str().map(|t| t.trim_start_matches("claude_").into()));
+            if plan.is_some() && signin.plan != plan {
+                signin.plan = plan;
+                changed = true;
+            }
+        }
+        if changed {
+            let _ = self.persist(&kept);
+        }
+        changed
+    }
+
     pub fn set_secrets(&self, secrets: Secrets) {
         *self.secrets.lock().unwrap() = secrets
+    }
+    pub fn set_store(&self, store: Store) {
+        *self.store.lock().unwrap() = Some(store)
+    }
+    pub fn set_in_use(&self, in_use: InUse) {
+        *self.in_use.lock().unwrap() = in_use
     }
     pub fn set_codex_dir(&self, dir: PathBuf) {
         *self.codex.lock().unwrap() = dir
@@ -169,12 +315,16 @@ impl SignIns {
 
     pub fn delete(&self, id: &str) -> Result<(), String> {
         let mut kept = self.kept.lock().unwrap();
-        let before = kept.signins.len();
-        kept.signins.retain(|s| s.id != id);
-        if kept.signins.len() == before {
-            return Err(format!("No sign-in {id}"));
-        }
+        let Some(at) = kept.signins.iter().position(|s| s.id == id) else { return Err(format!("No sign-in {id}")) };
+        let removed = kept.signins.remove(at);
+        kept.former.insert(removed.id.clone(), removed.clone());
         kept.defaults.retain(|_, chosen| chosen != id);
+        // Claude Code's item for its folder (its account's sign-in and MCP servers') goes with the folder.
+        if removed.kind == Kind::ClaudeHome
+            && let Some(store) = self.store.lock().unwrap().clone()
+        {
+            let _ = store(&claude_keychain(Some(&self.home.join("claude-homes").join(id))), &claude_user(), None);
+        }
         for cli in ["codex", "claude"] {
             let _ = std::fs::remove_dir_all(self.home.join(format!("{cli}-homes")).join(id));
         }
@@ -205,14 +355,34 @@ impl SignIns {
         self.replace_usage(id, &merged)
     }
 
-    /// A sign-in's usage as a read of its plan gave it: every window it has, so one it no longer reports goes.
+    /// A sign-in's usage as a read of its plan gave it: every window it has, so one it no longer reports goes. A read
+    /// with no window at all (its CLI answered without its limits) read nothing, so what's known stays, unless it said
+    /// the plan has none.
     pub fn replace_usage(&self, id: &str, usage: &crate::model::Usage) {
         let mut kept = self.kept.lock().unwrap();
-        if !kept.signins.iter().any(|s| s.id == id) || kept.usage.get(id) == Some(usage) {
+        let known = kept.usage.get(id).is_some_and(|u| !u.windows.is_empty());
+        let read_nothing = usage.windows.is_empty() && !usage.no_limits && !usage.limited;
+        if !kept.signins.iter().any(|s| s.id == id) || kept.usage.get(id) == Some(usage) || (read_nothing && known) {
             return;
         }
         kept.usage.insert(id.into(), usage.clone());
         let _ = self.persist(&kept);
+    }
+
+    /// Its usage, now known to be at a limit its CLI said in an error (no figures, no reset): kept as limited (an hour,
+    /// until a read says otherwise) so it isn't chosen again at once, and read now for the real figures. False when it
+    /// was already known to be.
+    pub fn limit_said(&self, id: &str, now: i64) -> bool {
+        let mut usage = self.usage(id).unwrap_or_default();
+        if usage.limited && usage.resets_at.is_some_and(|at| at > now) {
+            return false;
+        }
+        // ponytail: a guessed hour; the read it wakes (or the account's next) corrects it.
+        usage.limited = true;
+        usage.resets_at = Some(now + 3600);
+        self.record_usage(id, &usage);
+        self.read_now.notify_one();
+        true
     }
 
     pub fn usage(&self, id: &str) -> Option<crate::model::Usage> {
@@ -299,7 +469,9 @@ impl SignIns {
             }
             (Provider::Codex, _) => vec![("CODEX_HOME".into(), self.folder(Provider::Codex, &signin.id)?.to_string_lossy().into())],
             (Provider::Claude, Kind::ClaudeHome) => {
-                vec![("CLAUDE_CONFIG_DIR".into(), self.folder(Provider::Claude, &signin.id)?.to_string_lossy().into())]
+                let folder = self.folder(Provider::Claude, &signin.id)?;
+                self.share_mcp_sign_ins(Some(&folder));
+                vec![("CLAUDE_CONFIG_DIR".into(), folder.to_string_lossy().into())]
             }
             (cli, kind) => return Err(format!("{} doesn't sign in with {kind:?}", cli.title())),
         })
@@ -338,6 +510,97 @@ impl SignIns {
         Ok(folder)
     }
 
+    /// MCP servers' sign-ins (their OAuth), which Claude Code keeps in each folder's Keychain item, made every Claude
+    /// account's: each server's latest (the one expiring last, as Claude Code refreshed it in whichever folder) kept by
+    /// Zero, and given to `into`'s item (a folder whose task is starting) if it has an older one or none. Only a
+    /// folder signed in (one with an item) is given any, and only while no Claude runs in it: Claude Code rewrites the
+    /// item as it renews the account's sign-in, rotating its refresh token, and a write at the same time would lose
+    /// that. A folder in use gets them at its next start with none. What's written is the item as read just before,
+    /// with only the servers' sign-ins added or renewed changed. Zero never calls a server: Claude Code signs in and
+    /// refreshes, Zero copies what it kept.
+    pub fn share_mcp_sign_ins(&self, into: Option<&Path>) {
+        let Some(store) = self.store.lock().unwrap().clone() else { return };
+        let read = self.secrets.lock().unwrap().clone();
+        let user = claude_user();
+        let item = |service: &str| read(service, &user).and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok());
+        let (names, folders): (Vec<String>, Vec<PathBuf>) = {
+            let kept = self.kept.lock().unwrap();
+            let folders = kept.signins.iter().filter(|s| s.kind == Kind::ClaudeHome && !s.pending);
+            (kept.mcp.iter().cloned().collect(), folders.map(|s| self.home.join("claude-homes").join(&s.id)).collect())
+        };
+        let mut latest: serde_json::Map<String, serde_json::Value> = names
+            .iter()
+            .filter_map(|name| {
+                read(KEYCHAIN, &format!("{MCP_SIGN_IN}{name}")).and_then(|v| serde_json::from_str(&v).ok()).map(|e| (name.clone(), e))
+            })
+            .collect();
+        let zeros = latest.clone();
+        let own = self.claude.lock().unwrap().clone();
+        let user_home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".claude");
+        let own = (own != user_home).then_some(own);
+        for service in std::iter::once(claude_keychain(own.as_deref())).chain(folders.iter().map(|f| claude_keychain(Some(f)))) {
+            for (name, entry) in item(&service).and_then(|i| i["mcpOAuth"].as_object().cloned()).unwrap_or_default() {
+                if later(&entry, latest.get(&name)) {
+                    latest.insert(name, entry);
+                }
+            }
+        }
+        let mut kept_names = false;
+        for (name, entry) in &latest {
+            if zeros.get(name) != Some(entry) && store(KEYCHAIN, &format!("{MCP_SIGN_IN}{name}"), Some(&entry.to_string())).is_ok() {
+                kept_names |= self.kept.lock().unwrap().mcp.insert(name.clone());
+            }
+        }
+        if kept_names {
+            let _ = self.persist(&self.kept.lock().unwrap());
+        }
+        let Some(folder) = into else { return };
+        // ponytail: a Claude started in the folder between this look and the write below (milliseconds) isn't seen.
+        if (self.in_use.lock().unwrap())(folder) {
+            return;
+        }
+        let service = claude_keychain(Some(folder));
+        let Some(text) = read(&service, &user) else { return };
+        let Ok(theirs) = serde_json::from_str::<serde_json::Value>(&text) else { return };
+        let mut renewed: Vec<(String, serde_json::Value)> =
+            latest.into_iter().filter(|(name, entry)| later(entry, theirs["mcpOAuth"].get(name))).collect();
+        // The item goes on one line of `security -i`: as many as fit, the servers used last first (Claude Code renews
+        // a server's sign-in as it uses it, so the latest to expire); the rest wait for the folder's next start.
+        renewed.sort_by_key(|(_, entry)| std::cmp::Reverse(entry["expiresAt"].as_i64().unwrap_or(0)));
+        let (mut taken, mut left, mut written) = (vec![], vec![], None);
+        for (name, entry) in renewed {
+            taken.push((name.clone(), entry.to_string()));
+            match with_servers(&text, &taken).filter(|item| crate::mcp_servers::fits_keychain(&service, &user, item)) {
+                Some(item) => written = Some(item),
+                None => {
+                    taken.pop();
+                    left.push(name)
+                }
+            }
+        }
+        if !left.is_empty() {
+            eprintln!("zerod: {} has no room for {} on a line of `security -i`: left for its next start", folder.display(), left.join(", "))
+        }
+        let Some(written) = written else { return };
+        if let Err(error) = store(&service, &user, Some(&written)) {
+            eprintln!("zerod: couldn't give a Claude folder its MCP sign-ins: {error}")
+        }
+    }
+
+    /// A Claude Code token signed in again in a folder of its own (`account`, as Claude Code said who signed in there):
+    /// the same id, so tasks set to it carry on and its activity and usage stay; the token goes from the Keychain.
+    pub fn switched_to_folder(&self, id: &str, account: crate::codex_login::Account) -> Result<SignIn, String> {
+        let mut signin = self.get(id).ok_or_else(|| format!("No sign-in {id}"))?;
+        signin.kind = Kind::ClaudeHome;
+        signin.label = account.email.unwrap_or(signin.label);
+        signin.plan = account.plan.or(signin.plan);
+        let saved = self.save(signin)?;
+        if let Some(store) = self.store.lock().unwrap().clone() {
+            store(KEYCHAIN, id, None)?
+        }
+        Ok(saved)
+    }
+
     fn persist(&self, kept: &Kept) -> Result<(), String> {
         let data = serde_json::to_vec_pretty(kept).map_err(|e| e.to_string())?;
         if let Some(parent) = self.file.parent() {
@@ -345,6 +608,131 @@ impl SignIns {
         }
         write_private(&self.file, &data)
     }
+}
+
+/// When to read an account's usage again, after a read at `now`: `read` what it gave, or None when it failed, the
+/// `failures`th time running. A quarter of an hour on, or just after a window resets if sooner (a limit's end seen at
+/// once); a failing read less and less often, half an hour apart at most, so a provider that's down isn't hammered.
+pub fn next_read(now: i64, read: Option<&crate::model::Usage>, failures: u32) -> i64 {
+    let Some(usage) = read else { return now + (60i64 << failures.saturating_sub(1).min(5)).min(30 * 60) };
+    let limit = usage.resets_at.filter(|_| usage.limited);
+    usage.windows.iter().filter_map(|w| w.resets_at).chain(limit).filter(|at| *at > now).map(|at| at + 30).fold(now + 15 * 60, i64::min)
+}
+
+/// Claude Code's Keychain item for a folder (its CLAUDE_CONFIG_DIR; none, the user's own), where it keeps the
+/// account's sign-in and its MCP servers' (`mcpOAuth`) as one JSON: its name and a hash of the folder's path.
+pub fn claude_keychain(folder: Option<&Path>) -> String {
+    match folder {
+        None => "Claude Code-credentials".into(),
+        Some(folder) => {
+            let hash = crate::integrations::sha256(folder.to_string_lossy().as_bytes());
+            format!("Claude Code-credentials-{}", hash[..4].iter().map(|b| format!("{b:02x}")).collect::<String>())
+        }
+    }
+}
+
+/// The Keychain account Claude Code keeps its items under: the user's name, as it reads it.
+pub fn claude_user() -> String {
+    let user = std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).unwrap_or_default();
+    let fits = !user.is_empty() && user.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c));
+    if fits { user } else { "claude-code-user".into() }
+}
+
+/// Whether a Claude Code folder has a process running in it: one whose environment has CLAUDE_CONFIG_DIR set to it (a
+/// task's Claude, one the user started there, an MCP server either started). `ps` reads the environment of the user's
+/// own processes (not Apple's own programs', which Claude Code isn't). Unsure (`ps` failed) is in use.
+pub fn folder_in_use(folder: &Path) -> bool {
+    let Ok(output) = std::process::Command::new("/bin/ps").args(["-axE", "-ww", "-o", "command="]).output() else { return true };
+    if !output.status.success() {
+        return true;
+    }
+    let wanted = format!("CLAUDE_CONFIG_DIR={}", folder.to_string_lossy());
+    String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+        line.match_indices(&wanted).any(|(at, _)| {
+            let after = &line[at + wanted.len()..];
+            line[..at].ends_with(' ') && (after.is_empty() || after.starts_with(' '))
+        })
+    })
+}
+
+/// A folder's item (Claude Code's JSON, as read) with `servers`' sign-ins (name, JSON) put in its `mcpOAuth`: each
+/// replacing the one there by that name, or added after them. Every other byte as it was.
+fn with_servers(item: &str, servers: &[(String, String)]) -> Option<String> {
+    let span = |raw: &serde_json::value::RawValue, within: &str| {
+        let start = raw.get().as_ptr() as usize - within.as_ptr() as usize;
+        start..start + raw.get().len()
+    };
+    let top = members(item)?;
+    let mut edits: Vec<(std::ops::Range<usize>, String)> = vec![];
+    let pair = |name: &str, entry: &str| format!("{}:{entry}", serde_json::Value::from(name));
+    match top.iter().find(|(name, _)| name == "mcpOAuth") {
+        Some((_, raw)) => {
+            let at = span(raw, item);
+            let inner = members(raw.get())?;
+            let mut added = vec![];
+            for (name, entry) in servers {
+                match inner.iter().find(|(n, _)| n == name) {
+                    Some((_, old)) => {
+                        let old = span(old, raw.get());
+                        edits.push((at.start + old.start..at.start + old.end, entry.clone()))
+                    }
+                    None => added.push(pair(name, entry)),
+                }
+            }
+            if !added.is_empty() {
+                let close = at.start + raw.get().rfind('}')?;
+                let comma = if inner.is_empty() { "" } else { "," };
+                edits.push((close..close, format!("{comma}{}", added.join(","))))
+            }
+        }
+        None => {
+            let close = item.rfind('}')?;
+            let comma = if top.is_empty() { "" } else { "," };
+            let all: Vec<String> = servers.iter().map(|(name, entry)| pair(name, entry)).collect();
+            edits.push((close..close, format!("{comma}\"mcpOAuth\":{{{}}}", all.join(","))))
+        }
+    }
+    edits.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
+    let mut written = item.to_string();
+    for (range, text) in edits {
+        written.replace_range(range, &text)
+    }
+    serde_json::from_str::<serde_json::Value>(&written).ok().map(|_| written)
+}
+
+/// A JSON object's members in order, each value as its own text within `json`.
+fn members(json: &str) -> Option<Vec<(String, &serde_json::value::RawValue)>> {
+    struct Members;
+    impl<'de> serde::de::Visitor<'de> for Members {
+        type Value = Vec<(String, &'de serde_json::value::RawValue)>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("an object")
+        }
+        fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+            let mut all = vec![];
+            while let Some(member) = map.next_entry()? {
+                all.push(member)
+            }
+            Ok(all)
+        }
+    }
+    serde::Deserializer::deserialize_map(&mut serde_json::Deserializer::from_str(json), Members).ok()
+}
+
+/// Whether what a CLI said ends a turn it finished: Claude Code's result, Codex's turn completed, an ACP prompt's
+/// answer (OpenCode) ending its turn. One that failed, or was stopped, isn't.
+fn finished(said: &serde_json::Value) -> bool {
+    (said["type"] == "result" && said["subtype"] == "success" && said["is_error"] != true)
+        || (said["method"] == "turn/completed" && said["params"]["turn"]["status"] == "completed")
+        || said["result"]["stopReason"] == "end_turn"
+}
+
+/// Whether an MCP server's sign-in is a later one than `than`: one that signs in at all, expiring later (a refresh), or
+/// able to refresh where the other isn't.
+fn later(entry: &serde_json::Value, than: Option<&serde_json::Value>) -> bool {
+    let usable = |e: &serde_json::Value| e["accessToken"].is_string() || e["refreshToken"].is_string();
+    let rank = |e: &serde_json::Value| (e["expiresAt"].as_i64().unwrap_or(0), e["refreshToken"].is_string());
+    usable(entry) && than.is_none_or(|than| !usable(than) || rank(entry) > rank(than))
 }
 
 /// Written for the user alone to read.
@@ -359,7 +747,7 @@ fn write_private(path: &Path, data: &[u8]) -> Result<(), String> {
 }
 
 /// A CLI as the file names it: "claude", "codex", "opencode".
-fn name(cli: Provider) -> String {
+pub(crate) fn name(cli: Provider) -> String {
     format!("{cli:?}").to_lowercase()
 }
 

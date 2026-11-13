@@ -184,3 +184,24 @@ async fn a_sign_in_that_fails_takes_its_ask_back_and_isnt_tried_again_unasked() 
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(runs.lock().unwrap().len(), 1, "once per Zero session: Settings' Sign in tries again");
 }
+
+#[tokio::test]
+async fn a_claude_ai_connector_is_never_signed_in_to_and_said_once() {
+    let (run, runs, _ends) = runner();
+    let inbox = zerod::inbox::Inbox::open(None, vec![]);
+    let told = Arc::new(Mutex::new(vec![]));
+    let heard = told.clone();
+    let auth = McpAuth::new(run);
+    auth.attach(
+        inbox.clone(),
+        Box::new(move |session: &str, server: &str, news: News| heard.lock().unwrap().push(format!("{session} {server} {news:?}"))),
+    );
+    let (a, b) = (Conversation::new("a", Provider::Claude, "/work/a"), Conversation::new("b", Provider::Claude, "/work/b"));
+    auth.connector(&a, "claude.ai Amazonomics");
+    auth.connector(&b, "claude.ai Amazonomics");
+    auth.connector(&a, "claude.ai Amazonomics");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(runs.lock().unwrap().is_empty(), "connected in claude.ai's settings, not by Zero");
+    assert!(inbox.open_asks().is_empty(), "no ask");
+    assert_eq!(*told.lock().unwrap(), ["a claude.ai Amazonomics Connector"], "once per zerod, in the task that first hit it");
+}

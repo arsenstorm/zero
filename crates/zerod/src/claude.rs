@@ -232,11 +232,13 @@ impl Adapter for Claude {
                     });
                 }
                 // A server that wants signing in, Zero's or the user's own: Zero signs in to it (mcp_auth.rs), once.
+                // The account's claude.ai connectors are connected on claude.ai: `claude -p` can't find them.
                 for server in message["mcp_servers"].as_array().into_iter().flatten().filter(|s| s["status"] == "needs-auth") {
                     if let Some(name) = server["name"].as_str()
                         && self.signing_in.insert(name.into())
                     {
-                        effects.changes.push(Change::McpSignIn { server: name.into() });
+                        let connector = server["source"] == "claudeai" || name.starts_with("claude.ai ");
+                        effects.changes.push(Change::McpSignIn { server: name.into(), connector });
                     }
                 }
             }
@@ -298,8 +300,14 @@ impl Adapter for Claude {
             }
             Some("stream_event") => self.stream(conversation, message, &mut effects),
             // Claude Code's own word of an API error, made up as the agent's: one it retries is nothing to show, one
-            // that ends the turn its result reports.
-            Some("assistant") if message["is_api_error_message"] == true => {}
+            // that ends the turn its result reports. One refused at the account's usage limit says which limit and
+            // until when, as a rate_limit_event would.
+            Some("assistant") if message["is_api_error_message"] == true => {
+                let info = &message["api_error_params"]["rate_limit_info"];
+                if message["api_error"] == "usage_limit_reached" && info.is_object() {
+                    effects.changes.push(Change::Usage { usage: usage(info) })
+                }
+            }
             Some("assistant") => self.assistant(conversation, message, &mut effects),
             Some("user") => results(conversation, message, &mut effects, &self.background),
             Some("control_request") => self.request(conversation, message, &mut effects),
@@ -669,27 +677,37 @@ fn remember(suggestions: &Value) -> Option<Choice> {
     Some(Choice { id: "always".into(), label: "Always allow".into(), kind: ChoiceKind::AllowAlways })
 }
 
-/// Claude's own report of the account's limits: a status, and the use of each window.
+/// Claude's own report of the account's limits: a status, and the use of each window. Refused, it names the window
+/// that's full (`rateLimitType`) and when it resets, often without that window's figures: it's full until then.
 fn usage(info: &Value) -> crate::model::Usage {
     let limited = info["status"] == "rejected";
-    let windows = info["unifiedWindows"]
+    let name = |key: &str| match key {
+        "five_hour" => "5 hours".into(),
+        "seven_day" => "7 days".into(),
+        other => other.replace('_', " "),
+    };
+    let mut windows: Vec<crate::model::UsageWindow> = info["unifiedWindows"]
         .as_object()
         .map(|windows| {
             windows
                 .iter()
                 .map(|(key, window)| crate::model::UsageWindow {
-                    name: match key.as_str() {
-                        "five_hour" => "5 hours".into(),
-                        "seven_day" => "7 days".into(),
-                        other => other.replace('_', " "),
-                    },
+                    name: name(key),
                     used: window["utilization"].as_f64().unwrap_or(0.0),
                     resets_at: window["resetsAt"].as_i64(),
+                    read_at: None,
                 })
                 .collect()
         })
         .unwrap_or_default();
-    crate::model::Usage { limited, resets_at: if limited { info["resetsAt"].as_i64() } else { None }, windows }
+    let resets_at = if limited { info["resetsAt"].as_i64() } else { None };
+    if limited && let Some(full) = info["rateLimitType"].as_str().map(name) {
+        match windows.iter_mut().find(|w| w.name == full) {
+            Some(window) => window.used = window.used.max(1.0),
+            None => windows.push(crate::model::UsageWindow { name: full, used: 1.0, resets_at, read_at: None }),
+        }
+    }
+    crate::model::Usage { limited, resets_at, windows, ..Default::default() }
 }
 
 fn text(content: &Value) -> String {

@@ -26,18 +26,13 @@ impl Daemon {
             return false;
         }
         if !reported && let Some(signin) = conversation.signin.as_deref() {
-            // Kept as limited, so it isn't chosen again at once. Its reset unknown: an hour, until a read says otherwise.
-            // ponytail: a guessed hour; the account's next usage read (Settings, a task's report) corrects it.
-            let mut usage = self.signins.usage(signin).unwrap_or(crate::model::Usage { limited: true, resets_at: None, windows: vec![] });
-            usage.limited = true;
-            usage.resets_at = usage.resets_at.filter(|at| *at > now()).or(Some(now() + 3600));
-            self.signins.record_usage(signin, &usage);
+            self.signins.limit_said(signin, now());
         }
         let Some(next) = self.signins.choose(conversation.provider, now(), conversation.signin.as_deref()) else { return false };
         let Ok(session) = self.session(&conversation.id) else { return false };
         session.change(Change::SignedIn { signin: Some(next.id.clone()) });
         // The limit was the last account's: this one starts clear.
-        session.change(Change::Usage { usage: crate::model::Usage { limited: false, resets_at: None, windows: vec![] } });
+        session.change(Change::Usage { usage: crate::model::Usage::default() });
         // As is the error that said so (the failure is worked out from it).
         session.change(Change::Status { status: conversation.status, turn: conversation.turn.clone(), error: None });
         session.change(Change::Failed { failure: None });
@@ -164,7 +159,8 @@ impl Daemon {
                 ended(&conversation)
             }
         }
-        // A turn finished counts for the account it ran as (its own, else its CLI's default): that account's activity.
+        // A turn finished counts for the account it ran as (its own, else its CLI's default, else its CLI's own sign-in):
+        // that account's activity.
         // Once per answer, by its item: the session's state passing through an end more than once a turn (it counted
         // six times the turns there were) is still the one turn.
         let answer = conversation
@@ -177,8 +173,12 @@ impl Daemon {
             && conversation.failure.is_none()
             && let Some(answer) = answer
             && self.counted.lock().unwrap().insert(id.to_string(), answer.clone()) != Some(answer)
-            && let Some(account) = conversation.signin.clone().or_else(|| self.signins.default_for(conversation.provider).map(|s| s.id))
         {
+            let account = conversation
+                .signin
+                .clone()
+                .or_else(|| self.signins.default_for(conversation.provider).map(|s| s.id))
+                .unwrap_or_else(|| crate::signins::name(conversation.provider));
             self.signins.record_turn(&account, crate::now());
         }
         // While zerod restarts, a turn ending is the pause for it: the new zerod carries it on, so its lead hears nothing.

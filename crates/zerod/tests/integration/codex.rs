@@ -174,7 +174,11 @@ fn any_server_codex_says_needs_signing_in_is_zeros_to_sign_in_to() {
     let needs = |name: &str| json!({"method": "mcpServer/startupStatus/updated", "params": {"name": name, "status": "failed", "failureReason": "reauthenticationRequired", "threadId": "t1"}});
     let effects = core.receive(&needs("linear"));
     assert!(effects.replies.is_empty(), "signed in by a Codex of Zero's own: not this task's");
-    assert!(effects.changes.iter().any(|c| matches!(c, Change::McpSignIn { server } if server == "linear")), "{:?}", effects.changes);
+    assert!(
+        effects.changes.iter().any(|c| matches!(c, Change::McpSignIn { server, connector: false } if server == "linear")),
+        "{:?}",
+        effects.changes
+    );
 }
 
 #[test]
@@ -190,4 +194,16 @@ fn codex_compacting_shows_while_it_runs_and_ends_as_compacted() {
     assert_eq!(items.len(), 1, "{items:?}");
     assert!(matches!(&items[0].kind, ItemKind::Notice { text, .. } if text == "Conversation compacted"));
     assert_eq!(items[0].status, ItemStatus::Done);
+}
+
+/// Codex says a limit was reached without a full window (a workspace's credits spent): the account is limited all the
+/// same.
+#[test]
+fn codex_saying_a_limit_was_reached_is_a_limit() {
+    let usage = zerod::codex::usage(&json!({"primary": {"usedPercent": 40, "windowDurationMins": 300, "resetsAt": 1794609866},
+                                            "rateLimitReachedType": "workspace_member_usage_limit_reached"}));
+    assert!(usage.limited);
+    assert!(
+        !zerod::codex::usage(&json!({"primary": {"usedPercent": 40, "windowDurationMins": 300}, "rateLimitReachedType": null})).limited
+    );
 }

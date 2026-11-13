@@ -380,7 +380,7 @@ pub struct QuestionOption {
     pub description: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Usage {
     /// A limit is reached: the provider won't take more until `resets_at`.
@@ -388,9 +388,12 @@ pub struct Usage {
     /// Unix seconds.
     pub resets_at: Option<i64>,
     pub windows: Vec<UsageWindow>,
+    /// A read of the account said its plan has no windows (an API-billed account): nothing to show, and nothing missing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_limits: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageWindow {
     /// "5 hours", "7 days".
@@ -398,6 +401,9 @@ pub struct UsageWindow {
     /// The share of the window used, 0 to 1.
     pub used: f64,
     pub resets_at: Option<i64>,
+    /// When its CLI said this figure (Unix seconds): how old what's shown is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_at: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -624,9 +630,12 @@ pub enum Change {
     /// The latest rewind undone: what it took (Conversation::rewound) back, the provider on its thread as before.
     Unrewound,
     /// Its CLI says this MCP server needs signing in (its own OAuth): Zero has the CLI sign in to it once (mcp_auth.rs).
-    /// Nothing changes in the conversation.
+    /// Nothing changes in the conversation. A claude.ai connector (`connector`) is connected in claude.ai's settings,
+    /// never signed in to by Zero: the user is told once instead.
     McpSignIn {
         server: String,
+        #[serde(default)]
+        connector: bool,
     },
 }
 

@@ -64,7 +64,8 @@ where
     read(&mut lines, &mut writer).await
 }
 
-/// How much of its plan's windows the home's account has used, as Codex reads it: no task needed.
+/// How much of its plan's windows the home's account has used, as Codex reads it: no task needed. Codex saying the
+/// account may not go on (`ordinaryUsageAllowed`) is a limit whatever the figures; no window at all, a plan without.
 pub async fn rate_limits<R, W>(reader: R, mut writer: W) -> Result<crate::model::Usage, String>
 where
     R: AsyncRead + Unpin,
@@ -73,7 +74,11 @@ where
     let mut lines = BufReader::new(reader).lines();
     greet(&mut lines, &mut writer).await?;
     write(&mut writer, json!({"id": 4, "method": "account/rateLimits/read"})).await?;
-    Ok(crate::codex::usage(&answer(&mut lines, 4).await?["rateLimits"]))
+    let read = answer(&mut lines, 4).await?;
+    let mut usage = crate::codex::usage(&read["rateLimits"]);
+    usage.limited |= read["ordinaryUsageAllowed"] == false;
+    usage.no_limits = usage.windows.is_empty() && !usage.limited;
+    Ok(usage)
 }
 
 async fn greet<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(

@@ -178,7 +178,7 @@ fn notification(conversation: &Conversation, method: &str, params: &Value, effec
         // A server that wants signing in, Zero's or the user's own: Zero signs in to it (mcp_auth.rs), once.
         "mcpServer/startupStatus/updated" if params["failureReason"] == "reauthenticationRequired" => {
             if let Some(name) = params["name"].as_str() {
-                effects.changes.push(Change::McpSignIn { server: name.into() })
+                effects.changes.push(Change::McpSignIn { server: name.into(), connector: false })
             }
         }
         "thread/started" => {
@@ -278,7 +278,8 @@ fn notification(conversation: &Conversation, method: &str, params: &Value, effec
     }
 }
 
-/// Codex's rate limits (`account/rateLimits/*`): its primary and secondary windows, by their length.
+/// Codex's rate limits (`account/rateLimits/*`): its primary and secondary windows, by their length. A limit reached
+/// (`rateLimitReachedType`) stops the account even with no window full (a workspace's credits spent).
 pub fn usage(limits: &Value) -> crate::model::Usage {
     let windows: Vec<crate::model::UsageWindow> = ["primary", "secondary"]
         .iter()
@@ -295,11 +296,13 @@ pub fn usage(limits: &Value) -> crate::model::Usage {
                 name,
                 used: window["usedPercent"].as_f64().unwrap_or(0.0) / 100.0,
                 resets_at: window["resetsAt"].as_i64(),
+                read_at: None,
             })
         })
         .collect();
     let full = windows.iter().find(|w| w.used >= 1.0);
-    crate::model::Usage { limited: full.is_some(), resets_at: full.and_then(|w| w.resets_at), windows }
+    let reached = limits["rateLimitReachedType"].is_string();
+    crate::model::Usage { limited: full.is_some() || reached, resets_at: full.and_then(|w| w.resets_at), windows, ..Default::default() }
 }
 
 /// The items of the turns Zero doesn't know yet (those run in Codex's own terminal), from `thread/read`'s turns.

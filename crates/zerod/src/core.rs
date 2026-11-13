@@ -41,8 +41,13 @@ impl Core {
         self.clock = Some(ms);
     }
 
-    /// An item keeps the time it was first seen; a new one takes the clock's.
+    /// An item keeps the time it was first seen; a new one takes the clock's, as does a usage figure (when it was read).
     fn stamp(&mut self, change: &mut Change) {
+        if let Change::Usage { usage } = change {
+            for window in usage.windows.iter_mut().filter(|w| w.read_at.is_none()) {
+                window.read_at = self.clock.map(|ms| ms / 1000)
+            }
+        }
         let Change::Item { item } = change else { return };
         let known = self.conversation.item(&item.id);
         if item.at.is_none() {

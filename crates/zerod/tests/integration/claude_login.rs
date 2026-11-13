@@ -46,3 +46,13 @@ async fn an_accounts_usage_is_asked_of_claude_code_without_a_turn() {
     assert!(usage.limited, "a window used up");
     assert_eq!(usage.resets_at, Some(1793973600));
 }
+
+/// An account whose plan has no windows (an API-billed one) says so through `get_usage`: no plan limits, rather than
+/// nothing known.
+#[tokio::test]
+async fn an_account_without_plan_limits_says_so() {
+    let answer = r#"{"type":"control_response","response":{"subtype":"success","request_id":"usage","response":{"subscription_type":null,"rate_limits_available":false,"rate_limits":null}}}"#;
+    let script = format!("read request; echo '{answer}'; sleep 5");
+    let usage = usage(&sh(&script), &[]).await.unwrap();
+    assert!(usage.no_limits && usage.windows.is_empty() && !usage.limited);
+}

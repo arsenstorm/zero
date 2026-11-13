@@ -111,6 +111,11 @@ pub async fn usage(command: &[String], env: &[(String, String)]) -> Result<crate
         if response["subtype"] != "success" {
             return Err(response["error"].as_str().unwrap_or("Claude Code didn't say").into());
         }
+        // No plan limits for this account (API-billed); a Claude Code token can't read them (no profile scope), but
+        // tokens aren't read (server/signins.rs).
+        if response["response"]["rate_limits_available"] == false {
+            return Ok(crate::model::Usage { no_limits: true, ..Default::default() });
+        }
         return Ok(plan_usage(&response["response"]["rate_limits"]));
     }
     Err("Claude Code stopped before it answered".into())
@@ -126,11 +131,12 @@ fn plan_usage(limits: &serde_json::Value) -> crate::model::Usage {
                 name: (*name).into(),
                 used: window["utilization"].as_f64()? / 100.0,
                 resets_at: window["resets_at"].as_str().and_then(crate::ask::Time::parse).map(|t| t.0),
+                read_at: Some(crate::now()),
             })
         })
         .collect();
     let full = windows.iter().find(|w| w.used >= 1.0);
-    crate::model::Usage { limited: full.is_some(), resets_at: full.and_then(|w| w.resets_at), windows }
+    crate::model::Usage { limited: full.is_some(), resets_at: full.and_then(|w| w.resets_at), windows, ..Default::default() }
 }
 
 /// The first web address in a line of a terminal's output, its control sequences and carriage returns left behind.

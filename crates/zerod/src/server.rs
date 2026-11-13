@@ -26,7 +26,7 @@ use crate::model::{Permissions, Provider};
 
 pub(crate) use connection::next_connection;
 pub use connection::serve;
-pub use signins::name_codex_accounts;
+pub use signins::{follow_usage, name_accounts};
 
 pub const VERSION: u64 = 1;
 

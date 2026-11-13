@@ -106,3 +106,40 @@ async fn an_accounts_usage_is_read_without_a_task() {
         ["initialize", "initialized", "account/rateLimits/read"]
     );
 }
+
+/// A stand-in app-server answering `account/rateLimits/read` with `result`.
+fn codex_limits(result: Value) -> tokio::io::DuplexStream {
+    let (zero, server) = tokio::io::duplex(1 << 16);
+    tokio::spawn(async move {
+        let (read, mut write) = tokio::io::split(server);
+        let mut lines = BufReader::new(read).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            let message: Value = serde_json::from_str(&line).unwrap();
+            let reply = match message["method"].as_str() {
+                Some("initialize") => json!({"id": message["id"], "result": {"userAgent": "codex"}}),
+                Some("account/rateLimits/read") => json!({"id": message["id"], "result": result}),
+                _ => continue,
+            };
+            write.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+        }
+    });
+    zero
+}
+
+/// A read when the account may not go on (Codex's `ordinaryUsageAllowed`), its windows' figures aside, is a limit; a
+/// read with no window at all is an account whose plan has none (an API key's), said so rather than nothing known.
+#[tokio::test]
+async fn a_read_says_when_the_account_is_stopped_and_when_its_plan_has_no_limits() {
+    let stopped = codex_limits(json!({"ordinaryUsageAllowed": false, "rateLimits": {
+        "primary": {"usedPercent": 100, "windowDurationMins": 300, "resetsAt": 1793970000}, "rateLimitReachedType": "rate_limit_reached"}}));
+    let (read, write) = tokio::io::split(stopped);
+    let usage = rate_limits(read, write).await.unwrap();
+    assert!(usage.limited);
+    assert_eq!(usage.resets_at, Some(1793970000));
+    assert!(!usage.no_limits);
+
+    let key = codex_limits(json!({"rateLimits": {"primary": null, "secondary": null}}));
+    let (read, write) = tokio::io::split(key);
+    let usage = rate_limits(read, write).await.unwrap();
+    assert!(usage.no_limits && !usage.limited && usage.windows.is_empty());
+}
