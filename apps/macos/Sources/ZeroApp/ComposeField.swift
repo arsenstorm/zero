@@ -73,6 +73,9 @@ struct ComposeField: NSViewRepresentable {
     /// Images and videos dropped on the words: attached, as a drop on the composer is (the field alone writes their
     /// paths). Nil, the field's own way.
     var onAttach: (([URL]) -> Void)?
+    /// Whether such files are being dragged over the words: the composer shows its drop state for them as for a drag
+    /// over the rest of it (the field takes the drag from SwiftUI's onDrop there).
+    var onDropping: (Bool) -> Void = { _ in }
     /// For edits from outside the view (ComposeHandle).
     var handle: ComposeHandle?
     /// Scrolled inside: whether there's more above, and more below, for a fade at that edge.
@@ -363,15 +366,24 @@ final class TokenTextView: NSTextView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        attachable(sender) != nil ? .copy : super.draggingEntered(sender)
+        guard attachable(sender) != nil else { return super.draggingEntered(sender) }
+        coordinator?.parent.onDropping(true)
+        return .copy
     }
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
         attachable(sender) != nil ? .copy : super.draggingUpdated(sender)
     }
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        coordinator?.parent.onDropping(false)
+        super.draggingExited(sender)
+    }
 
+    /// Copied off the main thread (a clone on the same volume is instant; from another disk, a video's copy isn't), so
+    /// the composer never waits on it.
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         guard let files = attachable(sender), let attach = coordinator?.parent.onAttach else { return super.performDragOperation(sender) }
-        attach(files.compactMap(Attachments.copy))
+        coordinator?.parent.onDropping(false)
+        Task { @MainActor in attach(await Task.detached { files.compactMap(Attachments.copy) }.value) }
         return true
     }
 

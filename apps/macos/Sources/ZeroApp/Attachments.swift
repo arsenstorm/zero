@@ -38,8 +38,9 @@ enum Attachments {
     static func isImage(_ url: URL) -> Bool { UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true }
     static func isVideo(_ url: URL) -> Bool { UTType(filenameExtension: url.pathExtension)?.conforms(to: .movie) == true }
 
-    /// A video attached, as an agent will get it: a few stills through it, cut as it's attached (so sending waits on
-    /// nothing), with its length and size. By the video's path.
+    /// A video attached, as an agent will get it: three stills through it, 1000 px at most (Claude Code keeps them through
+    /// compacting; its path and `zero video` give the rest), cut as it's attached (so sending waits on nothing), with its
+    /// length and size. By the video's path.
     struct Video { let images: [String]; let times: [Double]; let info: VideoFrames.Info }
     /// Observed: a video's tile shows its first still once it's cut.
     @MainActor @Observable final class Cut { static let shared = Cut(); var videos: [String: Video] = [:] }
@@ -48,13 +49,14 @@ enum Attachments {
         set { Cut.shared.videos = newValue }
     }
 
-    @MainActor static func prepare(_ video: URL, most: Int = 6) {
+    @MainActor static func prepare(_ video: URL, most: Int = 3) {
         guard videos[video.path] == nil else { return }
         Task { @MainActor in
             guard let info = try? await VideoFrames.info(of: video), info.seconds > 0 else { return }
             let times = VideoFrames.spread(min(most, max(1, Int(info.seconds.rounded(.up)))), over: info.seconds)
             let frames =
-                (try? await VideoFrames.frames(of: video, at: times, into: folder.appendingPathComponent(UUID().uuidString.lowercased())))
+                (try? await VideoFrames.frames(
+                    of: video, at: times, into: folder.appendingPathComponent(UUID().uuidString.lowercased()), largest: 1000))
                 ?? []
             videos[video.path] = Video(images: frames.map(\.path), times: frames.map(\.at), info: info)
         }
@@ -155,12 +157,16 @@ struct Thumbnail: View {
         } label: {
             Group {
                 if let image {
-                    Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+                    Image(nsImage: image).resizable().aspectRatio(contentMode: .fill).transition(.opacity)
+                } else if Attachments.isVideo(URL(fileURLWithPath: path)) {
+                    // A video before its first still is cut: its badge over the tile says what it is.
+                    Theme.chip
                 } else {
                     NucleoIcon("file", size: 18).foregroundStyle(.tertiary).frame(maxWidth: .infinity, maxHeight: .infinity).background(
                         Theme.chip)
                 }
             }
+            .animation(.easeOut(duration: 0.15), value: image == nil)
             .frame(width: size.width, height: size.height).clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
             .contentShape(RoundedRectangle(cornerRadius: 10))

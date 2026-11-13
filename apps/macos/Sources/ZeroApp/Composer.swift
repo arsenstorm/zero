@@ -46,7 +46,10 @@ struct Composer<Controls: View>: View {
     @State private var fades = (top: false, bottom: false)
     /// Whether the text has focus, where the paste handler (AppKit's, outside SwiftUI's updates) can read it.
     @State private var focus = FocusBox()
-    @State private var dropping = false
+    /// Files being dragged over the card's edges and chips (SwiftUI's onDrop), or over its words (the field's own).
+    @State private var cardDropping = false
+    @State private var fieldDropping = false
+    private var dropping: Bool { cardDropping || fieldDropping }
     @State private var monitor: Any?
     /// The "/" or "@" suggestions open over the composer, and where the caret goes after one is taken.
     @State private var mention: InboxController.MentionState?
@@ -68,8 +71,7 @@ struct Composer<Controls: View>: View {
     final class PickBox { var pick: ((Int) -> Bool)? }
     @State private var picker = PickBox()
 
-    /// The same switches as the control bar's composer (Settings → Inbox).
-    private var suggestCommands: Bool { UserDefaults.standard.object(forKey: "suggestCommands") as? Bool ?? true }
+    /// The same switch as the control bar's composer (Settings › Agents).
     private var suggestFiles: Bool { UserDefaults.standard.object(forKey: "suggestFiles") as? Bool ?? false }
 
     // In two: the card, then what it watches and handles. As one chain, the compiler gave up type-checking it on a
@@ -79,7 +81,7 @@ struct Composer<Controls: View>: View {
             .onChange(of: adding == nil) { _, closed in closed ? stopWatchingAdd() : watchAdd() }
             .task(id: workspace?.loopsVersion) { await workspace?.loadLoops() }
             .onChange(of: adding) { _, page in if page == .pads { Task { await workspace?.loadPads() } } }
-            .onDrop(of: [.fileURL, .image], isTargeted: $dropping) { providers in
+            .onDrop(of: [.fileURL, .image], isTargeted: $cardDropping) { providers in
                 Attachments.fromDrop(providers) { attach($0) }
                 return true
             }
@@ -154,13 +156,16 @@ struct Composer<Controls: View>: View {
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
                         ForEach(attached, id: \.offset) { number, url in
-                            // A click puts the image's token where the caret is; its pill opens the image.
+                            // A click opens it, as its pill does. A video's tile keeps its place while its first
+                            // still is cut (in the background), then shows it and its length.
                             let video = Attachments.isVideo(url)
+                            let poster = video ? Attachments.poster(url) : nil
                             Thumbnail(
-                                path: (video ? Attachments.poster(url) : nil) ?? url.path,
-                                tap: { insert(ImageToken.text(number + 1, video: video)) }, remove: { handle.remove(number + 1) }
+                                path: poster ?? url.path, tap: { open(number + 1) }, remove: { handle.remove(number + 1) }
                             )
-                            .overlay { if video { VideoBadge() } }
+                            .overlay {
+                                if video { VideoBadge(seconds: Attachments.videos[url.path]?.info.seconds, loading: poster == nil) }
+                            }
                         }
                     }
                 }
@@ -175,14 +180,8 @@ struct Composer<Controls: View>: View {
                 onSubmit: { if ready { (queue ?? send)() } },
                 onCommandSubmit: queue == nil ? nil : { if ready { send() } },
                 onTrigger: suggest, onKey: key, highlightFiles: suggestFiles,
-                onImage: { number in
-                    guard images.indices.contains(number - 1) else { return }
-                    // A video's pill plays it, in the Mac's own player.
-                    if Attachments.isVideo(images[number - 1]) { NSWorkspace.shared.open(images[number - 1]); return }
-                    ImageViewer.shared.show(
-                        images[number - 1].path, among: images.map(\.path).filter { !Attachments.isVideo(URL(fileURLWithPath: $0)) })
-                },
-                onAttach: { attach($0) },
+                onImage: open,
+                onAttach: { attach($0) }, onDropping: { fieldDropping = $0 },
                 handle: handle, onEdges: { fades = (top: $0, bottom: $1) }
             )
             .padding(.horizontal, -TokenTextView.inset.width) // the text still starts on the card's 14 pt
@@ -251,8 +250,17 @@ struct Composer<Controls: View>: View {
         .background(translucent ? .clear : Theme.field, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .strokeBorder(dropping ? Color.accentColor : translucent ? .clear : Theme.fieldEdge, lineWidth: dropping ? 2 : 1)
+                .strokeBorder(dropping ? Color.accentColor : translucent ? .clear : Theme.fieldEdge, lineWidth: dropping ? 1.5 : 1)
         )
+        // Files over it: what's in it fades behind a quiet line saying what a drop does; gone as the drag leaves.
+        .overlay {
+            if dropping {
+                // Inside the 1.5 pt edge, concentric with it.
+                RoundedRectangle(cornerRadius: 24.5, style: .continuous).fill(Theme.field.opacity(translucent ? 0.75 : 0.9)).padding(1.5)
+                    .overlay { Text("Drop to attach").font(.system(size: 13, weight: .medium)).foregroundStyle(Color.accentColor) }
+                    .allowsHitTesting(false)
+            }
+        }
         .compositingGroup()
         // No card to lift when translucent: its words and chips would cast it.
         .shadow(color: .black.opacity(translucent ? 0 : 0.06), radius: 14, y: 5)
@@ -330,6 +338,14 @@ struct Composer<Controls: View>: View {
         attach(pictures)
     }
 
+    /// An attachment opened (its tile or pill clicked), counting from 1: an image in Zero, a video in the Mac's player.
+    private func open(_ number: Int) {
+        guard images.indices.contains(number - 1) else { return }
+        if Attachments.isVideo(images[number - 1]) { NSWorkspace.shared.open(images[number - 1]); return }
+        ImageViewer.shared.show(
+            images[number - 1].path, among: images.map(\.path).filter { !Attachments.isVideo(URL(fileURLWithPath: $0)) })
+    }
+
     /// Images attached, each leaving its token in the words: at the caret (a paste while typing is about that spot),
     /// else at the end.
     private func attach(_ urls: [URL]) {
@@ -373,7 +389,7 @@ struct Composer<Controls: View>: View {
 
     private func suggest(_ trigger: MentionTrigger?) {
         mentionTask?.cancel()
-        guard let trigger, trigger.symbol == "/" ? suggestCommands : true else { mention = nil; return }
+        guard let trigger else { mention = nil; return }
         if trigger.symbol == "@" {
             // Loops first, always; the folder's files after them when that's on.
             let query = trigger.query.lowercased()
@@ -457,10 +473,35 @@ extension Composer where Controls == EmptyView {
     }
 }
 
-/// A video's tile: a play mark over its first still, so it reads as a video.
+/// A video's tile: a play mark over its first still, so it reads as a video, and its length when known. While its
+/// still is being cut (`loading`), a spinner in the mark's place, only once that has taken longer than a glance.
 struct VideoBadge: View {
+    var seconds: Double?
+    var loading = false
+    @State private var slow = false
+
     var body: some View {
-        NucleoIcon("media-play", fill: "glyph", size: 13).foregroundStyle(.white)
-            .frame(width: 30, height: 30).background(.black.opacity(0.55), in: Circle()).allowsHitTesting(false)
+        Group {
+            if loading && slow {
+                Spinner(color: .white).frame(width: 12, height: 12)
+            } else {
+                NucleoIcon("media-play", fill: "glyph", size: 13).foregroundStyle(.white)
+            }
+        }
+        .frame(width: 30, height: 30).background(.black.opacity(0.55), in: Circle())
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .bottomTrailing) {
+            if let seconds {
+                Text(Duration.seconds(seconds).formatted(.time(pattern: .minuteSecond))).font(.system(size: 10, weight: .semibold))
+                    .monospacedDigit().foregroundStyle(.white).padding(.horizontal, 5).padding(.vertical, 1.5)
+                    .background(.black.opacity(0.55), in: Capsule()).padding(5)
+            }
+        }
+        .allowsHitTesting(false)
+        .task(id: loading) {
+            guard loading else { return }
+            try? await Task.sleep(for: .milliseconds(300))
+            slow = true
+        }
     }
 }
