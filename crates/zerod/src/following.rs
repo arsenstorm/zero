@@ -12,6 +12,7 @@
 use crate::now;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -23,10 +24,25 @@ use crate::model::ItemKind;
 
 pub mod github;
 pub mod linear;
+pub mod own;
 pub mod slack;
 
 /// After this many polls failing in a row, followers hear of it (once), and once more when polling works again.
 pub const REPORT_FAILS: u32 = 3;
+
+/// Events for a task between turns are held this long from the first, then wake it once with all of them: a burst
+/// (six issues moved, each polled on its own) is one turn, not six.
+pub const BATCH: i64 = 30;
+
+/// How long what a step did is remembered, to know the events it causes as the task's own.
+pub const OWN_FOR: i64 = 300;
+
+/// How a follower hears of events: news wakes it; its own changes coming back are only noted in its conversation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Heard {
+    News,
+    Own,
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -68,10 +84,14 @@ struct Kept {
     /// channel's poll and the thread's): `topic#dedupe`, the latest last.
     #[serde(default)]
     seen: HashMap<String, Vec<String>>,
+    /// Per session between turns, the events held for one wake (BATCH), and since when.
+    #[serde(default)]
+    held: HashMap<String, (i64, Vec<Event>)>,
 }
 
 /// Something that changed on a followed thing.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Event {
     pub topic: String,
     pub kind: String,
@@ -180,6 +200,10 @@ pub struct Following {
     fetcher: Arc<dyn Fetcher>,
     integrations: Arc<Integrations>,
     kept: Mutex<Kept>,
+    /// What sessions' steps did lately (OWN_FOR): session, when, what.
+    touches: Mutex<Vec<(String, i64, own::Touch)>>,
+    /// Seconds events for a session between turns are held (BATCH).
+    window: AtomicI64,
     /// Fires when follows or targets change, for the app.
     pub changed: broadcast::Sender<()>,
 }
@@ -188,7 +212,36 @@ impl Following {
     pub fn open(home: &Path, fetcher: Arc<dyn Fetcher>, integrations: Arc<Integrations>) -> Arc<Following> {
         let file = home.join("following.json");
         let kept = std::fs::read(&file).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default();
-        Arc::new(Following { file, fetcher, integrations, kept: Mutex::new(kept), changed: broadcast::channel(16).0 })
+        Arc::new(Following {
+            file,
+            fetcher,
+            integrations,
+            kept: Mutex::new(kept),
+            touches: Mutex::default(),
+            window: AtomicI64::new(BATCH),
+            changed: broadcast::channel(16).0,
+        })
+    }
+
+    /// How long events for a session between turns are held for one wake.
+    pub fn set_window(&self, seconds: i64) {
+        self.window.store(seconds, Ordering::Relaxed)
+    }
+
+    /// A step of `session`'s, as it starts: what it does to things followed is remembered a while, so the events it
+    /// causes come back as its own.
+    pub fn touched(&self, session: &str, kind: &ItemKind) {
+        let found = own::touches(kind);
+        let mut touches = self.touches.lock().unwrap();
+        let now = now();
+        touches.retain(|(s, at, t)| now - at <= OWN_FOR && !(s == session && found.contains(t)));
+        touches.extend(found.into_iter().map(|t| (session.to_string(), now, t)));
+    }
+
+    /// Whether `event` is what one of `session`'s steps did lately.
+    pub fn own(&self, session: &str, event: &Event) -> bool {
+        let now = now();
+        self.touches.lock().unwrap().iter().any(|(s, at, t)| s == session && now - at <= OWN_FOR && own::matches(t, event))
     }
 
     fn keep(&self, kept: &Kept) {
@@ -341,12 +394,14 @@ impl Following {
     }
 
     /// One pass: follows of sessions gone are dropped, each thing due is polled, and its followers are told what
-    /// changed. `alive` says whether a session still exists; `tell` gives a session words.
-    pub async fn tick(&self, alive: impl Fn(&str) -> bool, tell: impl Fn(&str, &str)) {
+    /// changed. `alive` says whether a session still exists; `idle` whether it's between turns (what it's told is
+    /// held a while, for one wake); `tell` gives a session words.
+    pub async fn tick(&self, alive: impl Fn(&str) -> bool, idle: impl Fn(&str) -> bool, tell: impl Fn(&str, &str, Heard)) {
         let due: Vec<String> = {
             let mut kept = self.kept.lock().unwrap();
             let before = kept.follows.len();
             kept.follows.retain(|f| alive(&f.session));
+            kept.held.retain(|session, _| alive(session));
             if kept.follows.len() != before {
                 self.prune(&mut kept);
                 self.keep(&kept);
@@ -359,8 +414,8 @@ impl Following {
         for key in due {
             events.extend(self.poll(&key).await)
         }
-        // Everything a tick found goes to each follower as one message, however many things changed.
-        self.deliver(&events, &tell);
+        self.hold(&events);
+        self.flush(&idle, &tell);
     }
 
     /// Polls `key`, keeps the reading, and gives the events (polling trouble included).
@@ -439,9 +494,8 @@ impl Following {
         }
     }
 
-    /// Each follower of what changed hears of it, once, in one message per poll; a filtered follow hears only what
-    /// it asked for.
-    fn deliver(&self, events: &[Event], tell: &impl Fn(&str, &str)) {
+    /// What changed, held for each follower that wants it, once; a filtered follow hears only what it asked for.
+    fn hold(&self, events: &[Event]) {
         if events.is_empty() {
             return;
         }
@@ -450,7 +504,7 @@ impl Following {
         for session in sessions {
             let follows: Vec<Follow> = kept.follows.iter().filter(|f| f.session == session).cloned().collect();
             let mine = mine_terms(&follows);
-            let mut wanted: Vec<&Event> = vec![];
+            let mut wanted: Vec<Event> = vec![];
             for event in events {
                 let covering = follows.iter().filter(|f| covers(&f.topic, &event.topic));
                 let asked = covering.into_iter().any(|f| {
@@ -482,13 +536,37 @@ impl Following {
                         seen.drain(..100);
                     }
                 }
-                wanted.push(event);
+                wanted.push(event.clone());
             }
-            if wanted.is_empty() {
-                continue;
+            if !wanted.is_empty() {
+                kept.held.entry(session).or_insert_with(|| (now(), vec![])).1.extend(wanted);
             }
-            let text = format(&wanted, |topic| kept.targets.get(&poll_key(topic)).map(|t| t.summary.clone()).unwrap_or_default());
-            tell(&session, &text);
+        }
+        self.keep(&kept);
+    }
+
+    /// What's held for each session goes when it's mid-turn (its queue joins them) or its window has passed: its own
+    /// changes noted, the rest in one message that wakes it.
+    fn flush(&self, idle: &impl Fn(&str) -> bool, tell: &impl Fn(&str, &str, Heard)) {
+        let window = self.window.load(Ordering::Relaxed);
+        let mut kept = self.kept.lock().unwrap();
+        let due: Vec<String> =
+            kept.held.iter().filter(|(s, (since, _))| !idle(s) || now() - since >= window).map(|(s, _)| s.clone()).collect();
+        if due.is_empty() {
+            return;
+        }
+        for session in due {
+            let Some((_, events)) = kept.held.remove(&session) else { continue };
+            let (mine, news): (Vec<&Event>, Vec<&Event>) = events.iter().partition(|e| self.own(&session, e));
+            if !mine.is_empty() {
+                let what: Vec<String> = mine.iter().map(|e| format!("{} {}", name(&e.topic), e.summary.trim())).collect();
+                let s = if mine.len() == 1 { "" } else { "s" };
+                tell(&session, &format!("Your own change{s} on what you follow, heard back: {}", what.join("; ")), Heard::Own);
+            }
+            if !news.is_empty() {
+                let text = format(&news, |topic| kept.targets.get(&poll_key(topic)).map(|t| t.summary.clone()).unwrap_or_default());
+                tell(&session, &text, Heard::News);
+            }
         }
         self.keep(&kept);
     }
@@ -496,6 +574,14 @@ impl Following {
 
 fn is_pr(topic: &str) -> bool {
     topic.starts_with("github/") && topic.split('/').count() == 4
+}
+
+/// A thing as a line names it: `repo#N` for a pull request, an issue by its id.
+fn name(topic: &str) -> String {
+    match topic.split('/').collect::<Vec<_>>()[..] {
+        ["linear", issue, ..] => issue.to_string(),
+        _ => short(topic),
+    }
 }
 
 /// A topic as the conversation names it: `repo#N` for a pull request.

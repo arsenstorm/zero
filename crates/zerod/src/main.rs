@@ -248,7 +248,7 @@ fn keep_liveness(inbox: &Arc<zerod::inbox::Inbox>) {
     });
 }
 
-/// What tasks follow, polled every 5 seconds, each change told to its task.
+/// What tasks follow, polled every 5 seconds, each change told to its task: held a while for one between turns.
 fn poll_following(poller: Arc<zerod::following::Following>, polled: Arc<zerod::daemon::Daemon>) {
     tokio::spawn(async move {
         loop {
@@ -256,9 +256,13 @@ fn poll_following(poller: Arc<zerod::following::Following>, polled: Arc<zerod::d
             poller
                 .tick(
                     |id| polled.exists(id),
-                    |id, words| {
-                        if let Err(error) = polled.notify(id, words) {
-                            eprintln!("zerod: couldn't tell {id} what it follows changed: {error}")
+                    |id| polled.summary(id).is_none_or(|c| c.status != zerod::model::Status::Working),
+                    |id, words, heard| match heard {
+                        zerod::following::Heard::Own => polled.say_quietly(id, words),
+                        zerod::following::Heard::News => {
+                            if let Err(error) = polled.notify(id, words) {
+                                eprintln!("zerod: couldn't tell {id} what it follows changed: {error}")
+                            }
                         }
                     },
                 )

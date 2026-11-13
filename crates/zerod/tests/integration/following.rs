@@ -7,6 +7,7 @@ use crate::common::temp_dir;
 use serde_json::{Value, json};
 use zerod::following::*;
 use zerod::integrations::{Fetcher, Integrations};
+use zerod::model::ItemKind;
 
 #[derive(Default)]
 struct Canned {
@@ -146,10 +147,10 @@ async fn following_a_pull_request_reads_it_through_gh_and_tells_the_session_what
 
     let told = Arc::new(Mutex::new(vec![]));
     let tell = |session: &str, words: &str| told.lock().unwrap().push((session.to_string(), words.to_string()));
-    following.tick(|_| true, &tell).await;
+    following.tick(|_| true, |_| false, |s: &str, w: &str, _| tell(s, w)).await;
     assert!(told.lock().unwrap().is_empty(), "not due yet");
     following.hurry();
-    following.tick(|_| true, &tell).await;
+    following.tick(|_| true, |_| false, |s: &str, w: &str, _| tell(s, w)).await;
     let (session, words) = told.lock().unwrap()[0].clone();
     assert_eq!(session, "s1");
     assert_eq!(
@@ -158,7 +159,7 @@ async fn following_a_pull_request_reads_it_through_gh_and_tells_the_session_what
     );
     // Nothing changed: nothing said.
     following.hurry();
-    following.tick(|_| true, &tell).await;
+    following.tick(|_| true, |_| false, |s: &str, w: &str, _| tell(s, w)).await;
     assert_eq!(told.lock().unwrap().len(), 1);
     assert_eq!(fetcher.asked.lock().unwrap().len(), 3);
 
@@ -166,7 +167,7 @@ async fn following_a_pull_request_reads_it_through_gh_and_tells_the_session_what
     let again = Following::open(&home, canned(vec![]), Integrations::open(&home, canned(vec![])));
     let listed = again.list(None);
     assert_eq!((listed.len(), listed[0].follow.session.as_str(), listed[0].follow.topic.as_str()), (1, "s1", "github/o/r/42"));
-    again.tick(|_| false, |_, _| panic!("nothing to tell")).await;
+    again.tick(|_| false, |_| false, |_, _, _| panic!("nothing to tell")).await;
     assert!(again.list(None).is_empty());
     let kept: Value = serde_json::from_slice(&std::fs::read(home.join("following.json")).unwrap()).unwrap();
     assert!(
@@ -187,7 +188,9 @@ async fn a_filtered_follow_hears_only_what_it_asked_for() {
     following.follow("s3", "github/o/r/42", false, vec![]).await.unwrap();
     let told = Arc::new(Mutex::new(vec![]));
     following.hurry();
-    following.tick(|_| true, |session: &str, words: &str| told.lock().unwrap().push((session.to_string(), words.to_string()))).await;
+    following
+        .tick(|_| true, |_| false, |session: &str, words: &str, _| told.lock().unwrap().push((session.to_string(), words.to_string())))
+        .await;
     let mut told = told.lock().unwrap().clone();
     told.sort();
     assert_eq!(told.len(), 3);
@@ -215,13 +218,13 @@ async fn polling_trouble_is_reported_once_and_so_is_its_end() {
     let tell = |_: &str, words: &str| told.lock().unwrap().push(words.to_string());
     for _ in 0..4 {
         following.hurry();
-        following.tick(|_| true, &tell).await;
+        following.tick(|_| true, |_| false, |s: &str, w: &str, _| tell(s, w)).await;
     }
     assert_eq!(told.lock().unwrap().len(), 1, "the third failure says so, the fourth doesn't again");
     assert!(told.lock().unwrap()[0].contains("polling is failing: gh: HTTP 502"));
     assert_eq!(following.list(None)[0].error.as_deref(), Some("gh: HTTP 502"));
     following.hurry();
-    following.tick(|_| true, &tell).await;
+    following.tick(|_| true, |_| false, |s: &str, w: &str, _| tell(s, w)).await;
     assert!(told.lock().unwrap()[1].contains("polling works again"));
     assert_eq!(following.list(None)[0].error, None);
 }
@@ -440,7 +443,144 @@ async fn a_poll_that_finds_nothing_new_writes_nothing() {
     let written = std::fs::metadata(&file).unwrap().modified().unwrap();
     std::thread::sleep(std::time::Duration::from_millis(20));
     following.hurry();
-    following.tick(|_| true, |_, _| {}).await;
+    following.tick(|_| true, |_| false, |_, _, _| {}).await;
     assert_eq!(fetcher.asked.lock().unwrap().len(), 2, "it was polled");
     assert_eq!(std::fs::metadata(&file).unwrap().modified().unwrap(), written, "and nothing was written");
+}
+
+/// A Linear issue as Linear answers: its status and its comments `(id, author id, body)`.
+fn issue(state: &str, comments: Vec<(&str, &str, &str)>) -> Value {
+    json!({"data": {"viewer": {"id": "me", "name": "Arsen"}, "issue": {
+        "id": "iss", "identifier": "ENG-1", "title": "Vitals", "description": "", "url": "https://linear.app/acme/issue/ENG-1",
+        "priorityLabel": "High", "estimate": null, "dueDate": null, "state": {"name": state}, "assignee": null, "project": null,
+        "cycle": null, "parent": null, "labels": {"nodes": []},
+        "comments": {"nodes": comments.iter().map(|(id, who, body)| json!({"id": id, "body": body, "url": "https://linear.app/acme/issue/ENG-1",
+            "createdAt": "2026-11-13T10:00:00Z", "updatedAt": "2026-11-13T10:00:00Z", "user": {"id": who, "name": who}, "parent": null})).collect::<Vec<_>>()}
+    }}})
+}
+
+type Told = Arc<Mutex<Vec<(String, String, Heard)>>>;
+
+fn listener(told: &Told) -> impl Fn(&str, &str, Heard) + '_ {
+    |session: &str, words: &str, heard: Heard| told.lock().unwrap().push((session.into(), words.into(), heard))
+}
+
+/// A task that moved an issue itself isn't woken by its own move coming back: the conversation notes it, quietly.
+/// Someone else's move, or a comment it didn't write, wakes it as before.
+#[tokio::test]
+async fn a_tasks_own_change_coming_back_doesnt_wake_it() {
+    let fetcher = canned(vec![
+        Ok(issue("Working on", vec![])),
+        Ok(issue("PM review", vec![("c1", "me", "Ready for **PM review**:\nthe fix is live.")])),
+        Ok(issue("Done", vec![("c1", "me", "Ready for **PM review**:\nthe fix is live."), ("c2", "u2", "Thanks")])),
+    ]);
+    let home = temp_dir("following-own");
+    std::fs::write(home.join("linear.json"), r#"{"name":"Acme","url_key":"acme","access":"lin_tok","refresh":null,"expires":9999999999}"#)
+        .unwrap();
+    let following = Following::open(&home, fetcher.clone(), Integrations::open(&home, fetcher));
+    following.follow("s1", "linear/ENG-1", false, vec![]).await.unwrap();
+    following.follow("s2", "linear/ENG-1", false, vec![]).await.unwrap();
+    // s1 moves it and comments, through Linear's MCP server.
+    following.touched(
+        "s1",
+        &ItemKind::Tool {
+            name: "mcp__linear-server__save_issue".into(),
+            detail: r#"{"id":"ENG-1","state":"PM review"}"#.into(),
+            output: String::new(),
+        },
+    );
+    following.touched(
+        "s1",
+        &ItemKind::Tool {
+            name: "linear-server.save_comment".into(),
+            detail: r#"{"issueId":"eng-1","body":"Ready for **PM review**:\n\nthe fix is live."}"#.into(),
+            output: String::new(),
+        },
+    );
+    let told: Told = Arc::default();
+    following.hurry();
+    following.tick(|_| true, |_| false, listener(&told)).await;
+    let mut heard = told.lock().unwrap().clone();
+    heard.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(heard.len(), 2, "{heard:?}");
+    assert_eq!(heard[0].0, "s1");
+    assert_eq!(heard[0].2, Heard::Own, "s1 isn't woken by its own move");
+    assert!(heard[0].1.contains("status: Working on → PM review") && heard[0].1.contains("comment by me"), "{}", heard[0].1);
+    assert_eq!((heard[1].0.as_str(), heard[1].2), ("s2", Heard::News), "another task hears it as news");
+
+    // Within the window, someone else moves it on and comments: that wakes s1.
+    told.lock().unwrap().clear();
+    following.hurry();
+    following.tick(|_| true, |_| false, listener(&told)).await;
+    let heard: Vec<_> = told.lock().unwrap().iter().filter(|t| t.0 == "s1").cloned().collect();
+    assert_eq!(heard.len(), 1);
+    assert_eq!(heard[0].2, Heard::News);
+    assert!(heard[0].1.starts_with("2 new events") && heard[0].1.contains("PM review → Done"), "{}", heard[0].1);
+}
+
+/// Own changes on GitHub and Slack go through the same check: a merge, a comment, a push, a message.
+#[test]
+fn what_a_step_did_is_matched_to_the_events_it_causes() {
+    let following = open("following-own-steps", canned(vec![]));
+    let command = |command: &str| ItemKind::Command {
+        command: command.into(),
+        cwd: "/tmp".into(),
+        output: String::new(),
+        exit_code: Some(0),
+        duration_ms: None,
+        description: String::new(),
+    };
+    following
+        .touched("s1", &command("gh pr merge 42 --squash -R o/r && gh pr comment https://github.com/o/r/pull/7 --body 'Merged, thanks'"));
+    following.touched("s1", &command("git push origin fix-vitals"));
+    following.touched(
+        "s1",
+        &ItemKind::Tool {
+            name: "mcp__slack__post_message".into(),
+            detail: r#"{"channel_id":"C0D","text":"Deployed app#42"}"#.into(),
+            output: String::new(),
+        },
+    );
+    let event = |topic: &str, kind: &str, summary: &str, body: &str| Event {
+        topic: topic.into(),
+        kind: kind.into(),
+        summary: summary.into(),
+        body: body.into(),
+        ..Default::default()
+    };
+    let own = |e: Event| following.own("s1", &e);
+    assert!(own(event("github/o/r/42", "merged", "PR merged into main by @arsen", "")));
+    assert!(!own(event("github/o/r/43", "merged", "PR merged into main", "")), "another pull request");
+    assert!(!own(event("github/x/r/42", "merged", "PR merged into main", "")), "another repository");
+    assert!(own(event("github/o/r/7", "comment", "comment by @arsen", "Merged, thanks")));
+    assert!(!own(event("github/o/r/7", "comment", "comment by @sam", "Why?")), "someone else's comment");
+    assert!(own(event("github/o/r/7", "push", "1 new commit pushed to fix-vitals", "")));
+    assert!(!own(event("github/o/r/7", "checks", "CI failure: 3 passed, 1 failed, 4 total", "")), "CI isn't its own change");
+    assert!(own(event("slack/C0D", "message", "message by Arsen", "Deployed app#42")));
+    assert!(!own(event("slack/C0D", "message", "message by Dana", "Deployed app#42 to staging too")));
+    assert!(!following.own("s2", &event("github/o/r/42", "merged", "PR merged into main", "")), "another task's merge");
+}
+
+/// Events for a task between turns that land close together wake it once, with all of them; one after the window
+/// wakes it again. A task mid-turn gets them at once (they wait in its queue for the turn's end).
+#[tokio::test]
+async fn a_burst_of_events_wakes_an_idle_task_once() {
+    let comments = |n: usize| (1..=n).map(|i| (["c1", "c2", "c3", "c4", "c5"][i - 1], "sam", "More")).collect::<Vec<_>>();
+    let fetcher = canned((0..=4).map(|n| Ok(pr(comments(n), vec![], vec![], "aaa", "OPEN"))).collect());
+    let following = open("following-burst", fetcher);
+    following.follow("s1", "github/o/r/42", false, vec![]).await.unwrap();
+    let told: Told = Arc::default();
+    for _ in 0..3 {
+        following.hurry();
+        following.tick(|_| true, |_| true, listener(&told)).await;
+    }
+    assert!(told.lock().unwrap().is_empty(), "held while the window is open");
+    following.set_window(0);
+    following.tick(|_| true, |_| true, listener(&told)).await;
+    assert_eq!(told.lock().unwrap().len(), 1);
+    assert!(told.lock().unwrap()[0].1.starts_with("3 new events on what you follow:"), "{}", told.lock().unwrap()[0].1);
+    following.hurry();
+    following.tick(|_| true, |_| true, listener(&told)).await;
+    assert_eq!(told.lock().unwrap().len(), 2, "one after the window is its own wake");
+    assert!(told.lock().unwrap()[1].1.starts_with("1 new event"));
 }

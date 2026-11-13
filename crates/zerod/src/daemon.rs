@@ -255,11 +255,16 @@ fn hear_sessions(daemon: &Arc<Daemon>) {
             match heard.recv().await {
                 Ok(event) => match weak.upgrade() {
                     Some(daemon) => {
-                        if let Change::Item { item } = &event.change
-                            && item.status == crate::model::ItemStatus::Done
-                            && let Some(url) = crate::following::opened(&item.kind)
-                        {
-                            daemon.follow_opened(&event.session, &url)
+                        if let Change::Item { item } = &event.change {
+                            // Recorded as it starts, before a poll can find what it did.
+                            if let Some(following) = daemon.following.get() {
+                                following.touched(&event.session, &item.kind)
+                            }
+                            if item.status == crate::model::ItemStatus::Done
+                                && let Some(url) = crate::following::opened(&item.kind)
+                            {
+                                daemon.follow_opened(&event.session, &url)
+                            }
                         }
                         daemon.heard(&event.session)
                     }

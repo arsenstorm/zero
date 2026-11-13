@@ -30,7 +30,7 @@ const FIELDS: [(&str, &str); 9] = [
     ("title", "title"),
 ];
 
-fn is_issue(id: &str) -> bool {
+pub(super) fn is_issue(id: &str) -> bool {
     let Some((team, number)) = id.rsplit_once('-') else { return false };
     team.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
         && team.chars().all(|c| c.is_ascii_alphanumeric())

@@ -426,6 +426,11 @@ impl Daemon {
 
     /// A quiet line in `id`'s conversation: Zero follows `topic` for it.
     pub(super) fn say_following(&self, id: &str, topic: &str) {
+        self.say_quietly(id, &format!("Following {}", crate::following::short(topic)))
+    }
+
+    /// A line in `id`'s conversation that starts no turn: its own change on what it follows, heard back.
+    pub fn say_quietly(&self, id: &str, text: &str) {
         let Ok(session) = self.session(id) else { return };
         let conversation = session.summary();
         session.change(Change::Item {
@@ -433,7 +438,7 @@ impl Daemon {
                 at: None,
                 id: format!("following-{}", conversation.seq + 1),
                 turn: conversation.turn.clone(),
-                kind: ItemKind::Notice { text: format!("Following {}", crate::following::short(topic)), error: false },
+                kind: ItemKind::Notice { text: text.into(), error: false },
                 status: crate::model::ItemStatus::Done,
             },
         });
