@@ -32,7 +32,7 @@ extension AppDelegate {
             }
             let host = NSHostingController(rootView: view)
             host.sizingOptions = []
-            let window = ZeroWindow(contentViewController: host)
+            let window = NSWindow(contentViewController: host)
             window.title = "Zero"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
             window.titlebarAppearsTransparent = true
