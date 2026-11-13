@@ -38,7 +38,10 @@ providers' own types are close at hand.
    resumes the provider's thread in a new process.
 4. **Host** (`zerod/src/server.rs`): `~/.zero/zerod.sock`, owner-only, JSON lines. Requests answer by id;
    `subscribe` sends each session's snapshot, then every change numbered by a per-session `seq`, so a client's copy
-   has no gaps or repeats and a client that falls behind gets a fresh snapshot.
+   has no gaps or repeats and a client that falls behind gets a fresh snapshot. The user's ops (`APP_ONLY`:
+   answering asks and approvals, settings, sign-ins, connections) are made only for Zero.app, told by the code
+   signature of the connection's peer (`peer.rs`); agents' `zero` commands use the rest. The integrations' tokens and
+   write switches are in a Keychain item only zerod reads (`vault.rs`).
 5. **UI** (`apps/macos`): the bar, the inbox and the workspace window. They read `Conversation`s and never see a
    provider's protocol. An approval also becomes an `Ask` of kind `permission` in the inbox, so the bar's orange dot
    and the inbox work for every provider.

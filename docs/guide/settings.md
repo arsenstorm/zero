@@ -163,7 +163,7 @@ See [Workspaces and folders](/docs/workspaces-and-folders).
 | Connection | Settings › Linear › Connection | **Connect Linear** signs in in your browser. Kept on this Mac. The row's **Disconnect** button removes it. |
 | Link issues | Settings › Linear › Links | Issue keys such as `ABC-123` in messages open the issue. On by default. |
 | Open issues in the Linear app | Settings › Linear › Links | Opens issues in Linear's app instead of the browser. On by default. Turned off and greyed out when Linear's app isn't installed or **Link issues** is off. |
-| Let agents make changes | Settings › Linear › Agents | Agents read Linear through Zero with `zero linear`. When this is on, they can also change it, and you approve each change first. Connect Linear again after you turn it on, so that Zero gets write access. Off by default. |
+| Let agents make changes | Settings › Linear › Agents | Agents read Linear through Zero with `zero linear`. When this is on, they can also change it, and you approve each change first. Zero asks Linear for write access only while this is on, so disconnect and connect Linear again after you change it. Only Zero's app can change this setting. Off by default. |
 | Following | Settings › Linear › Following | The issues agents follow. Shown once Linear is connected. |
 
 ## Slack
@@ -171,7 +171,7 @@ See [Workspaces and folders](/docs/workspaces-and-folders).
 | Setting | Where | What it does |
 |---|---|---|
 | Workspaces | Settings › Slack › Workspaces | The Slack workspaces Zero is connected to. Their channels and message links open in Slack. **Connect Slack** adds one. Each workspace's row has a **Disconnect** button that removes it. |
-| Let agents post | Settings › Slack › Agents | Agents read Slack through Zero with `zero slack`. When this is on, they can also post, and you approve each post first. Zero's Slack app needs the `chat:write` scope. Off by default. |
+| Let agents post | Settings › Slack › Agents | Agents read Slack through Zero with `zero slack`. When this is on, they can also post, and you approve each post first. Zero's Slack app has the `chat:write` scope only while this is on. After you change it, add or remove `chat:write` in the app's **User Token Scopes** in Slack, reinstall the app and connect Slack again with the new token. Only Zero's app can change this setting. Off by default. |
 | Following | Settings › Slack › Following | The threads and channels agents follow. Shown once Slack is connected. |
 
 To stop a follow, point at its row under **Following** and click **×**, **Unfollow**. Click the task's name to open the task. A task's own follows are also in its details pane, under **Follows**. [Following and integrations](/docs/following-and-integrations) explains connecting each service and the rows.

@@ -89,7 +89,7 @@ An integration that isn't connected says so under **Connection** on its page, as
 
 The page then shows **Connected as** and your GitHub login. To disconnect, sign out of the GitHub CLI.
 
-**Linear.** Click **Connect Linear**, then allow Zero on the Linear page that opens in your browser. Zero reads Linear. It changes Linear only when you turn on **Let agents make changes** and approve the change. Issue keys of the workspace's teams, such as `ABC-123`, then link in messages. It keeps the connection on this Mac. To disconnect, click **Disconnect** on the page.
+**Linear.** Click **Connect Linear**, then allow Zero on the Linear page that opens in your browser. Zero reads Linear. It changes Linear only when you turn on **Let agents make changes** and approve the change. Issue keys of the workspace's teams, such as `ABC-123`, then link in messages. It keeps the connection on this Mac. Zero asks Linear for write access only while **Let agents make changes** is on. After you change it, disconnect and connect Linear again. To disconnect, click **Disconnect** on the page.
 
 **Slack.** Zero reads channels, messages and names. It posts only when you turn on **Let agents post** and approve the post. Each Slack workspace gets Zero's own Slack app:
 
@@ -100,11 +100,22 @@ The page then shows **Connected as** and your GitHub login. To disconnect, sign 
 
 To connect more than one Slack workspace, click **Connect Slack** beside **Workspaces** and do the same steps for each one.
 
-A Slack connection made before agents could follow or search Slack needs new scopes. Add the scopes from the app's manifest to your Slack app, reinstall the app and paste the new token.
+Zero's Slack app gets the `chat:write` scope only while **Let agents post** is on. A token without `chat:write` can't post, even if someone else gets it. After you turn **Let agents post** on or off, add or remove `chat:write` under **User Token Scopes** on the app's **OAuth & Permissions** page in Slack. Then reinstall the app and paste the new token. A Slack connection made before agents could follow or search Slack also needs new scopes: add the scopes from the app's manifest in the same way.
 
 The page then lists the workspace under **Workspaces**. Each workspace has its own **Disconnect**.
 
 Agents read through these connections with `zero slack` and `zero linear`, without tokens of their own. See [The zero command](/docs/cli#read-slack-and-linear).
+
+### What keeps agents from going around Zero
+
+Agents run as you, on your Mac, so they can read your files and run your commands. Zero keeps the following out of their direct reach:
+
+- **The tokens.** Zero keeps the Slack and Linear tokens in a Keychain item named **Zero integrations**. Only Zero's daemon, `zerod`, can read it. If any other program tries to read it, such as `security find-generic-password`, a script, or an agent, macOS asks for your login password. Click **Deny**. Zero never asks you for this, so a request to read **Zero integrations** always comes from something else.
+- **Your answers.** Only Zero's app can answer an ask or an approval, change settings, accounts or connections, or send an agent a message from you. Zero checks the code signature of each program that connects to it. If another program asks to do one of these things, Zero refuses.
+- **The write switches.** **Let agents post** and **Let agents make changes** are kept with the tokens, not in `settings.json`. Only Zero's app can change them, and an edit to `settings.json` has no effect.
+- **Old answers.** An approval counts only if you answered it after Zero last started. An answer that Zero reads back from its inbox log on disk does not count.
+
+What this doesn't stop: a program can still show you the Keychain's password request, and it gets the token if you allow it. Zero never allows a request for you. It also doesn't stop a program that changes Zero's own files in `/Applications/Zero.app`, or one that has your login password.
 
 ## Make references in messages open where you want
 
