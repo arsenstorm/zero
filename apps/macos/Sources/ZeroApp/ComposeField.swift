@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ZeroCore
 
 /// The word being typed at the caret when it starts with "/" or "@": what to suggest for, and where it sits.
 struct MentionTrigger: Equatable {
@@ -68,6 +69,8 @@ struct ComposeField: NSViewRepresentable {
     var onKey: (ComposeKey) -> Bool = { _ in false }
     /// "@paths" are tokens only while file suggestions are on.
     var highlightFiles = false
+    /// The folder the message goes to: whose skills a "/word" may name, what "./" is in.
+    var folder: String?
     /// A click on an image's pill: which image (counting from 1).
     var onImage: (Int) -> Void = { _ in }
     /// Images and videos dropped on the words: attached, as a drop on the composer is (the field alone writes their
@@ -101,6 +104,9 @@ struct ComposeField: NSViewRepresentable {
         view.allowsUndo = true
         view.font = Self.font
         view.textColor = .labelColor
+        view.selectedTextAttributes = [.backgroundColor: Theme.selection]
+        view.linkTextAttributes = [.foregroundColor: Theme.linkColor, .cursor: NSCursor.pointingHand]
+        view.insertionPointColor = .textColor
         view.textContainerInset = TokenTextView.inset // room for a token's pill at the edges
         view.textContainer?.lineFragmentPadding = 0
         view.textContainer?.widthTracksTextView = true
@@ -138,7 +144,9 @@ struct ComposeField: NSViewRepresentable {
         handle?.view = view
         view.placeholder = placeholder
         view.isEditable = editable
-        if view.highlightFiles != highlightFiles { view.highlightFiles = highlightFiles; context.coordinator.restyle(view) }
+        if view.highlightFiles != highlightFiles || view.folder != folder {
+            view.highlightFiles = highlightFiles; view.folder = folder; context.coordinator.restyle(view)
+        }
         view.textColor = editable ? .labelColor : .secondaryLabelColor
         if context.coordinator.decode(view) != text {
             view.string = text
@@ -181,6 +189,13 @@ struct ComposeField: NSViewRepresentable {
         var parent: ComposeField
         private var edges = (top: false, bottom: false)
         init(_ parent: ComposeField) { self.parent = parent }
+
+        /// A path written in the message (TokenTextView.paths): opened as one in a message is.
+        func textView(_ view: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+            guard let url = link as? URL, url.isFileURL else { return false }
+            OpenTarget.open(path: url.path)
+            return true
+        }
 
         /// More above or below what's shown, when that changes.
         func edges(_ scroll: NSScrollView) {
@@ -312,10 +327,12 @@ struct ComposeField: NSViewRepresentable {
             storage.addAttributes(
                 [.font: ComposeField.font, .foregroundColor: view.isEditable ? NSColor.labelColor : NSColor.secondaryLabelColor], range: all
             )
+            storage.removeAttribute(.link, range: all)
             view.tokenRanges = view.tokens()
             for range in view.tokenRanges {
-                storage.addAttributes([.font: TokenTextView.tokenFont, .foregroundColor: TokenTextView.tokenText], range: range)
+                storage.addAttributes([.font: TokenTextView.tokenFont, .foregroundColor: Theme.tokenText], range: range)
             }
+            for (range, path) in view.paths() { storage.addAttribute(.link, value: URL(fileURLWithPath: path), range: range) }
             storage.endEditing()
             if !tokens.isEmpty { view.setSelectedRange(NSRange(location: max(0, min(caret.location - shift, storage.length)), length: 0)) }
             view.needsDisplay = true
@@ -398,6 +415,7 @@ final class TokenTextView: NSTextView {
     }
     var placeholder = "" { didSet { if placeholder != oldValue { needsDisplay = true } } }
     var highlightFiles = false
+    var folder: String?
     var tokenRanges: [NSRange] = []
 
     /// A token moves to the next line whole rather than breaking after its "/" (a place text may wrap): a pill split
@@ -410,32 +428,32 @@ final class TokenTextView: NSTextView {
 
     static let inset = NSSize(width: 3, height: 1)
     static let tokenFont = NSFont.systemFont(ofSize: 14.5, weight: .semibold)
-    private static func dynamic(dark: NSColor, light: NSColor) -> NSColor {
-        NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light }
-    }
-    static let tokenText = dynamic(
-        dark: NSColor(red: 0.98, green: 0.84, blue: 0.40, alpha: 1), light: NSColor(red: 0.55, green: 0.38, blue: 0.0, alpha: 1))
-    static let tokenFill = dynamic(
-        dark: NSColor(red: 0.36, green: 0.29, blue: 0.06, alpha: 1), light: NSColor(red: 0.99, green: 0.93, blue: 0.62, alpha: 1))
 
-    /// "/word", "@loop" for a loop that exists, and "@path" when files are on, at the start of the text or after
-    /// whitespace. "@someone" that names no loop is plain words.
-    static func tokens(in text: String, files: Bool = true, loops: [String] = []) -> [NSRange] {
-        let pattern = files ? "(?<![^\\s])[/@][^\\s]+" : "(?<![^\\s])(?:/[^\\s]+|@[a-z0-9-]+)"
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
-        let ns = text as NSString
-        return regex.matches(in: text, range: NSRange(location: 0, length: ns.length)).map(\.range).filter { range in
-            files || !ns.substring(with: range).hasPrefix("@") || loops.contains(ns.substring(with: range).dropFirst().description)
+    /// A "/word" naming a skill (SlashWord), "@loop" for a loop that exists, and "@path" when files are on, at the
+    /// start of the text or after whitespace. "@someone" that names no loop is plain words, as is a "/word" naming no
+    /// skill (a path that's there is a link: paths()).
+    func tokens() -> [NSRange] {
+        let ns = string as NSString
+        let regex = try? NSRegularExpression(pattern: highlightFiles ? "(?<![^\\s])@[^\\s]+" : "(?<![^\\s])@[a-z0-9-]+")
+        let mentions = (regex?.matches(in: string, range: NSRange(location: 0, length: ns.length)) ?? []).map(\.range).filter {
+            highlightFiles || LoopNames.known.contains(ns.substring(with: $0).dropFirst().description)
+        }
+        let skills = SlashWord.find(in: string, skills: ClaudeCommands.names(projectPath: folder), cwd: folder, exists: { _ in false })
+        return (mentions + skills.map(\.range)).sorted { $0.location < $1.location }
+    }
+
+    /// The paths written in it that are there: links that open them.
+    func paths() -> [(NSRange, String)] {
+        SlashWord.find(in: string, skills: [], cwd: folder).compactMap {
+            if case let .path(path) = $0.word { ($0.range, path) } else { nil }
         }
     }
-
-    func tokens() -> [NSRange] { Self.tokens(in: string, files: highlightFiles, loops: LoopNames.known) }
 
     /// Each token sits on a yellow pill, 2 pt wider than its text on each side, rounded, one per line it spans.
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
         guard let manager = layoutManager, let container = textContainer else { return }
-        Self.tokenFill.setFill()
+        Theme.tokenFill.setFill()
         for range in tokenRanges {
             let glyphs = manager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             // A pill per line it's on, hugging its own letters there: a line's enclosing rect runs on to the line's end.

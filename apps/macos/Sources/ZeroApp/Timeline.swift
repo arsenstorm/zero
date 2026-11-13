@@ -572,7 +572,7 @@ private struct FollowedEvents: View {
     @ViewBuilder private func opening(_ text: String, _ link: String?) -> some View {
         if let link, let url = URL(string: link) {
             Button {
-                NSWorkspace.shared.open(url)
+                LinearLinks.open(url)
             } label: {
                 TaskDetails.linked(text)
             }.buttonStyle(.plain).tip("Open " + link)
@@ -1147,7 +1147,7 @@ struct StreamingText: View {
             // jumping as it went from one to the other.
             let _ = MarkdownText.render(
                 text, size: 14.5, compact: false,
-                links: MarkdownText.links(repo: References.repo(of: cwd), owner: References.owner(of: cwd), yours: false))
+                links: MarkdownText.links(cwd: cwd, yours: false))
             MarkdownText(text, cwd: cwd, size: 14.5)
         } else {
             // Read here so the clock's tick redraws this, and only this.

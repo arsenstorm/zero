@@ -20,7 +20,7 @@ struct RevealText: View {
     var body: some View {
         RevealBox(
             readout: readout, text: text,
-            links: MarkdownText.links(repo: References.repo(of: cwd), owner: References.owner(of: cwd), yours: false),
+            links: MarkdownText.links(cwd: cwd, yours: false),
             grew: grew, generation: grew.count
         )
         .padding(.horizontal, -RichTextView.bleed)

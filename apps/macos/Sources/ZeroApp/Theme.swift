@@ -140,7 +140,8 @@ enum Theme {
     // Opaque, so a border is one colour along its length whatever sits behind each segment.
     // Light strokes sit a step above the key-cap grey (L 0.92 against 0.91): an outline, not a frame.
     static let hairline = dynamic(dark: NSColor(white: 0.30, alpha: 1), light: NSColor(white: 0.88, alpha: 1))
-    static let stroke = dynamic(dark: NSColor(white: 0.24, alpha: 1), light: NSColor(white: 0.89, alpha: 1))
+    static let strokeColor = dynamicColor(dark: NSColor(white: 0.24, alpha: 1), light: NSColor(white: 0.89, alpha: 1))
+    static let stroke = Color(nsColor: strokeColor)
     /// Menus, as Linear draws its (dark measured from its pixels; light read from its page's styles: lch 100 under an
     /// lch 90.55 edge, lch 97.3 between groups).
     static let menu = dynamic(dark: NSColor(srgbRed: 33 / 255, green: 33 / 255, blue: 34 / 255, alpha: 1), light: .white)

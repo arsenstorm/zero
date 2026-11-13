@@ -9,6 +9,8 @@ struct MarkdownText: View {
     let text: String
     /// Where "#123" points: the GitHub repository of the agent's folder.
     var repo: String?
+    /// The agent's folder: what "./" in the text is in, and whose skills a "/word" may name.
+    var cwd: String?
     /// Whose "name#123" is, when the folder holds repositories rather than being one.
     var owner: String?
     /// The body text's size; headings, code and markers scale with it. The inbox's cards are smaller than a task's page.
@@ -32,6 +34,7 @@ struct MarkdownText: View {
         onClick: (() -> Void)? = nil
     ) {
         self.text = text
+        self.cwd = cwd
         repo = cwd.flatMap(References.repo(of:))
         owner = cwd.flatMap(References.owner(of:))
         self.size = size
@@ -145,21 +148,20 @@ struct MarkdownText: View {
     }
 
     /// What finding links needs, read on the main thread so rendering can happen anywhere.
-    private var links: Links { Self.links(repo: repo, owner: owner, yours: yours) }
+    private var links: Links { Self.links(cwd: cwd, yours: yours) }
 
-    static func links(repo: String?, owner: String?, yours: Bool) -> Links {
+    static func links(cwd: String?, yours: Bool) -> Links {
         Links(
-            repo: repo, owner: owner, github: GitHubLinks.enabled, slack: SlackLinks.teams,
-            teams: LinearLinks.enabled ? LinearTeams.known : [:],
-            app: LinearLinks.inApp, loops: LoopNames.known, skills: yours, pads: PadNames.known)
+            repo: cwd.flatMap(References.repo(of:)), owner: cwd.flatMap(References.owner(of:)), github: GitHubLinks.enabled,
+            slack: SlackLinks.teams, teams: LinearLinks.enabled ? LinearTeams.known : [:],
+            app: LinearLinks.inApp, loops: LoopNames.known, skills: yours, pads: PadNames.known, cwd: cwd,
+            skillNames: yours ? ClaudeCommands.names(projectPath: cwd) : [])
     }
 
     /// Styles a conversation's messages ahead of their first drawing (the window opening on it), off the main thread,
     /// so the page paints at once instead of parsing as it scrolls into view.
     static func warm(_ conversation: Conversation) async {
-        let repo = References.repo(of: conversation.cwd)
-        let owner = References.owner(of: conversation.cwd)
-        let (theirs, yours) = (links(repo: repo, owner: owner, yours: false), links(repo: repo, owner: owner, yours: true))
+        let (theirs, yours) = (links(cwd: conversation.cwd, yours: false), links(cwd: conversation.cwd, yours: true))
         let texts: [(String, Bool)] = conversation.items.compactMap { item in
             switch item.kind {
             case let .agent(text, _): (text, false)
@@ -187,6 +189,10 @@ struct MarkdownText: View {
         var skills = false
         /// The pads' titles by id: a bare zero://pad/<id> link reads as its pad's title (and section), not its address.
         var pads: [String: String] = [:]
+        /// What "./" is in.
+        var cwd: String?
+        /// The skills a "/word" of yours may name (the composer's "/" list); a "/word" naming none is a path or words.
+        var skillNames: Set<String> = []
     }
 
     private struct Rendered: @unchecked Sendable { let text: NSAttributedString; init(_ text: NSAttributedString) { self.text = text } }
@@ -277,16 +283,17 @@ struct MarkdownText: View {
                 result.replaceSubrange(span, with: named)
             }
         }
-        if links.skills, let regex = try? NSRegularExpression(pattern: "(?<![^\\s])/[^\\s]+") {
-            let string = String(result.characters)
-            for match in regex.matches(in: string, range: NSRange(location: 0, length: (string as NSString).length)) {
-                guard let range = Range(match.range, in: string), let span = Range(range, in: result),
-                    result[span].runs.allSatisfy({ $0.link == nil && !($0.inlinePresentationIntent?.contains(.code) ?? false) }),
-                    let url = URL(
-                        string: "zero://skill/" + (string as NSString).substring(with: match.range).dropFirst().addingPercentEncoding(
-                            withAllowedCharacters: .urlPathAllowed)!)
-                else { continue }
-                result[span].link = url
+        // A skill of yours as its pill; a path that's there as a link that opens it (SlashWord); anything else, words.
+        let string = String(result.characters)
+        for (range, word) in SlashWord.find(in: string, skills: links.skillNames, cwd: links.cwd) {
+            guard let range = Range(range, in: string), let span = Range(range, in: result),
+                result[span].runs.allSatisfy({ $0.link == nil && !($0.inlinePresentationIntent?.contains(.code) ?? false) })
+            else { continue }
+            switch word {
+            case .skill:
+                let name = string[range].dropFirst().addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
+                result[span].link = URL(string: "zero://skill/" + name)
+            case let .path(path): result[span].link = URL(fileURLWithPath: path)
             }
         }
         return result

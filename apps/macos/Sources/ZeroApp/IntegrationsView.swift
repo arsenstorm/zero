@@ -107,12 +107,10 @@ struct IntegrationPage: View {
                 SettingsSection(title: "Links") {
                     Rows {
                         SettingRow(title: "Link issues", detail: "ABC-123 in messages opens the issue.") { Switch(isOn: $linear) }
-                        SettingRow(
-                            title: "Open issues in the Linear app",
-                            detail: LinearLinks.installed ? "Rather than the browser." : "Linear's app isn't installed."
-                        ) {
+                        SettingRow(title: "Open issues in the Linear app", detail: "Rather than the browser.") {
                             Switch(isOn: Binding(get: { linear && LinearLinks.installed && linearInApp }, set: { linearInApp = $0 }))
                                 .disabled(!linear || !LinearLinks.installed)
+                                .tip(!LinearLinks.installed ? "Linear's app isn't installed" : linear ? "" : "Issue links are off")
                         }
                     }
                 }

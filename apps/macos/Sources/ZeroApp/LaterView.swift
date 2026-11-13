@@ -163,9 +163,12 @@ private struct LaterDetail: View {
                     if !item.links.isEmpty || !item.files.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(item.links, id: \.self) { link in
-                                Link(destination: URL(string: link) ?? URL(fileURLWithPath: "/")) {
-                                    Text(link).fontWeight(.medium).underline(pattern: .dash).lineLimit(1)
+                                Button {
+                                    if let url = URL(string: link) { LinearLinks.open(url) }
+                                } label: {
+                                    TaskDetails.linked(link)
                                 }
+                                .buttonStyle(.plain)
                             }
                             ForEach(item.files, id: \.self) { file in
                                 Button {

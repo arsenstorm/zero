@@ -186,3 +186,57 @@ public enum ProjectFiles {
         return true
     }
 }
+
+/// A word in a message that starts with "/", "~/" or "./": a skill or command the composer's "/" offers (drawn as its
+/// pill), a path on disk (a link that opens it), or neither (plain words: a "/word" that names no skill, a path that
+/// isn't there). The Mac and the iPhone draw messages and the composer by this one rule.
+public enum SlashWord: Equatable, Sendable {
+    case skill
+    /// The path, absolute and standardised.
+    case path(String)
+
+    /// The skills and paths among `text`'s words, by their UTF-16 ranges, punctuation after a word left out. `skills`
+    /// are names without their "/" (empty where no word is a skill: an agent's message); `cwd` is what "./" is in.
+    public static func find(
+        in text: String, skills: Set<String>, cwd: String?, home: String = NSHomeDirectory(),
+        exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+    ) -> [(range: NSRange, word: SlashWord)] {
+        guard let regex = try? NSRegularExpression(pattern: "(?<![^\\s(\\[])(?:~|\\.\\.?)?/[^\\s]+") else { return [] }
+        let ns = text as NSString
+        return regex.matches(in: text, range: NSRange(location: 0, length: ns.length)).compactMap { match in
+            var range = match.range
+            while range.length > 1, ".,;:!?)]}'\"".contains(ns.substring(with: NSRange(location: NSMaxRange(range) - 1, length: 1))) {
+                range.length -= 1
+            }
+            guard let word = classify(ns.substring(with: range), skills: skills, cwd: cwd, home: home, exists: exists) else { return nil }
+            return (range, word)
+        }
+    }
+
+    /// One word: a skill when it is "/" and a skill's name, else a path when one is there.
+    public static func classify(
+        _ word: String, skills: Set<String>, cwd: String?, home: String = NSHomeDirectory(),
+        exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+    ) -> SlashWord? {
+        if word.hasPrefix("/"), skills.contains(String(word.dropFirst())) { return .skill }
+        let full: String
+        if word.hasPrefix("/") {
+            full = word
+        } else if word.hasPrefix("~/") {
+            full = home + word.dropFirst()
+        } else if let cwd, word.hasPrefix(".") {
+            full = cwd + "/" + word
+        } else {
+            return nil
+        }
+        let path = (full as NSString).standardizingPath
+        return exists(path) ? .path(path) : nil
+    }
+}
+
+extension ClaudeCommands {
+    /// The names "/" offers (without the "/"): what a "/word" must be to be a skill's pill.
+    public static func names(projectPath: String?) -> Set<String> {
+        Set(all(projectPath: projectPath).map { String($0.insert.dropFirst()) })
+    }
+}

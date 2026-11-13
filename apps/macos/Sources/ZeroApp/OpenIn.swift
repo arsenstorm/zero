@@ -50,8 +50,22 @@ struct OpenTarget {
     /// terminal app; then its path.
     static func groups(
         _ conversation: Conversation, in workspace: Workspace, last: String = UserDefaults.standard.string(forKey: OpenTarget.lastKey) ?? ""
-    ) -> [[OpenTarget]] {
-        let path = conversation.cwd, folder = URL(fileURLWithPath: path)
+    ) -> [[OpenTarget]] { places(conversation.cwd, last: last) }
+
+    /// A path written in a message or an ask, clicked: a file shown in Finder, a folder opened where the task's
+    /// folders open (the place first in "Open in").
+    static func open(path: String) {
+        var folder: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &folder) else { return }
+        if folder.boolValue {
+            places(path, last: UserDefaults.standard.string(forKey: lastKey) ?? "")[0][0].open()
+        } else {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+        }
+    }
+
+    private static func places(_ path: String, last: String) -> [[OpenTarget]] {
+        let folder = URL(fileURLWithPath: path)
         let terminal = TerminalApp.shared
         func opening(_ url: URL, in app: URL) -> () -> Void {
             { NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) }
@@ -112,14 +126,14 @@ struct OpenInButton: View {
     var body: some View {
         let main = OpenTarget.groups(conversation, in: workspace, last: last)[0][0]
         let open = WorkspaceSelector.shared.open == "open-in"
-        Button(action: list) {
+        Button(action: unlessClicked(list)) {
             HStack(spacing: 4) {
                 TaskDetails.linked(main.title)
                 NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0))
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain).tip("Open in…")
+        .buttonStyle(.plain).opensOnPress(list).tip("Open in…")
         .onGeometryChange(for: CGRect.self) {
             $0.frame(in: .global)
         } action: {
@@ -131,5 +145,18 @@ struct OpenInButton: View {
         WorkspaceSelector.shared.toggle("open-in", kind: .menu, anchor: anchor) { [workspace, conversation] in
             ZeroContextMenu.sections(OpenTarget.groups(conversation, in: workspace).map { $0.map(\.item) })
         }
+    }
+}
+
+extension View {
+    /// A path's link in SwiftUI text (an ask's words) opens as one in a message does: OpenTarget.open(path:).
+    func opensPaths() -> some View {
+        environment(
+            \.openURL,
+            OpenURLAction { url in
+                guard url.isFileURL else { LinearLinks.open(url); return .handled }
+                OpenTarget.open(path: url.path)
+                return .handled
+            })
     }
 }

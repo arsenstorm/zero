@@ -343,7 +343,7 @@ struct TaskDetails: View {
         var body: some View {
             HStack(spacing: 6) {
                 Button {
-                    if let url = follow.url { NSWorkspace.shared.open(url) }
+                    if let url = follow.url { LinearLinks.open(url) }
                 } label: {
                     TaskDetails.linked(follow.title).truncationMode(.middle)
                 }
@@ -369,7 +369,7 @@ struct TaskDetails: View {
     @ViewBuilder private func link(_ text: String, to url: URL?) -> some View {
         if let url {
             Button {
-                NSWorkspace.shared.open(url)
+                LinearLinks.open(url)
             } label: {
                 Self.linked(text)
             }

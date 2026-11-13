@@ -108,7 +108,7 @@ struct CardView: View {
     }
 
     var body: some View {
-        if ask.kind == .message { messageBubble } else { card }
+        if ask.kind == .message { messageBubble } else { card.opensPaths() }
     }
 
     /// The user's message to the agent: a bubble on the right with a small time beside it, no header and no
@@ -217,8 +217,7 @@ struct CardView: View {
     /// Its words with what they name made links, as a message's are: a Linear ticket, a pull request (repo#123, #123 in
     /// the agent's own repository), a commit, a Slack channel; "#anchor", a passage of its task's conversation.
     private func linked(_ words: String) -> AttributedString {
-        let cwd = ask.agent.cwd ?? ask.cwd ?? ""
-        let links = MarkdownText.links(repo: References.repo(of: cwd), owner: References.owner(of: cwd), yours: false)
+        let links = MarkdownText.links(cwd: ask.agent.cwd ?? ask.cwd, yours: false)
         return MarkdownText.inline(task.map { TaskLinks.absolute(words, task: $0) } ?? words, links: links)
     }
 

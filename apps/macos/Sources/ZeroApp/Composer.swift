@@ -156,12 +156,21 @@ struct Composer<Controls: View>: View {
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
                         ForEach(attached, id: \.offset) { number, url in
-                            // A click opens it, as its pill does. A video's tile keeps its place while its first
-                            // still is cut (in the background), then shows it and its length.
+                            // A click opens it, as its pill does; ⌥-click puts its token in at the caret. A video's
+                            // tile keeps its place while its first still is cut (in the background), then shows it
+                            // and its length.
                             let video = Attachments.isVideo(url)
                             let poster = video ? Attachments.poster(url) : nil
                             Thumbnail(
-                                path: poster ?? url.path, tap: { open(number + 1) }, remove: { handle.remove(number + 1) }
+                                path: poster ?? url.path,
+                                tap: {
+                                    if NSEvent.modifierFlags.contains(.option) {
+                                        insert(ImageToken.text(number + 1, video: video))
+                                    } else {
+                                        open(number + 1)
+                                    }
+                                },
+                                remove: { handle.remove(number + 1) }
                             )
                             .overlay {
                                 if video { VideoBadge(seconds: Attachments.videos[url.path]?.info.seconds, loading: poster == nil) }
@@ -179,7 +188,7 @@ struct Composer<Controls: View>: View {
                 },
                 onSubmit: { if ready { (queue ?? send)() } },
                 onCommandSubmit: queue == nil ? nil : { if ready { send() } },
-                onTrigger: suggest, onKey: key, highlightFiles: suggestFiles,
+                onTrigger: suggest, onKey: key, highlightFiles: suggestFiles, folder: folder,
                 onImage: open,
                 onAttach: { attach($0) }, onDropping: { fieldDropping = $0 },
                 handle: handle, onEdges: { fades = (top: $0, bottom: $1) }

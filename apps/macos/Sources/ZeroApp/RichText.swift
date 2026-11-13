@@ -20,16 +20,6 @@ extension NSAttributedString.Key {
 }
 
 enum RichMarkdown {
-    static let codeFill = NSColor(name: nil) {
-        $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.09) : NSColor(white: 0, alpha: 0.055)
-    }
-    static let blockFill = NSColor(name: nil) {
-        $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.06) : NSColor(white: 0, alpha: 0.04)
-    }
-    static let quoteBar = NSColor(name: nil) {
-        $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.2) : NSColor(white: 0, alpha: 0.15)
-    }
-
     private static let rendered: NSCache<NSString, NSAttributedString> = {
         // Every task's latest messages, styled ahead at launch (WorkspaceView): at 500, tasks past 20 or so evicted
         // each other.
@@ -239,7 +229,7 @@ enum RichMarkdown {
         attachment.attachmentCell = PictureCell(imageCell: image)
         let out = NSMutableAttributedString(attachment: attachment)
         out.append(NSAttributedString(string: "\n"))
-        out.addAttributes([.paragraphStyle: paragraph, .toolTip: alt], range: NSRange(location: 0, length: out.length))
+        out.addAttributes([.paragraphStyle: paragraph], range: NSRange(location: 0, length: out.length))
         out.addAttributes([.zeroPicture: path, .cursor: NSCursor.pointingHand], range: NSRange(location: 0, length: 1))
         return out
     }
@@ -277,13 +267,13 @@ enum RichMarkdown {
                 let opens = link.scheme == nil ? URL(string: "zero://task/#" + (link.fragment ?? "")) : link
             {
                 attributes[.zeroOpens] = opens; attributes[.cursor] = NSCursor.pointingHand
-                attributes[.foregroundColor] = NSColor.linkColor
+                attributes[.foregroundColor] = Theme.linkColor
                 out.append(NSAttributedString(string: piece, attributes: attributes))
                 continue
             }
             if let link = run.link, link.scheme == "zero", link.host == "loop" || link.host == "skill" || link.host == "pad" {
                 attributes[.font] = NSFont.systemFont(ofSize: font.pointSize, weight: .medium)
-                attributes[.foregroundColor] = TokenTextView.tokenText
+                attributes[.foregroundColor] = Theme.tokenText
                 attributes[.zeroToken] = true
                 if link.host == "loop" || link.host == "pad" { attributes[.zeroOpens] = link; attributes[.cursor] = NSCursor.pointingHand }
                 let added = NSMutableAttributedString(string: piece, attributes: attributes)
@@ -292,9 +282,16 @@ enum RichMarkdown {
                 out.append(added)
                 continue
             }
+            // A path that's there (SlashWord): opened by Zero, a file shown in Finder, a folder where "Open in" opens it.
+            if let link = run.link, link.isFileURL, ImageToken.number(inLabel: piece) == nil {
+                attributes[.zeroOpens] = link; attributes[.cursor] = NSCursor.pointingHand
+                attributes[.foregroundColor] = Theme.linkColor
+                out.append(NSAttributedString(string: piece, attributes: attributes))
+                continue
+            }
             // A link's colour is its own, in the text (not the view's link style): so it fades in with the words around
             // it as they stream, rather than showing at full strength ahead of them.
-            if let link = run.link { attributes[.link] = link; attributes[.foregroundColor] = NSColor.linkColor }
+            if let link = run.link { attributes[.link] = link; attributes[.foregroundColor] = Theme.linkColor }
             // An image's token (ImageToken.linked): its pill, which opens the image.
             if let link = run.link, link.isFileURL, let named = ImageToken.number(inLabel: piece) {
                 let token = NSMutableAttributedString(attributedString: ImageToken.attachment(named.number, font: font, video: named.video))
@@ -351,7 +348,7 @@ enum RichMarkdown {
                 block.setWidth(c == 0 ? 0 : 6, type: .absoluteValueType, for: .padding, edge: .minX)
                 block.setWidth(c == columns - 1 ? 0 : 14, type: .absoluteValueType, for: .padding, edge: .maxX)
                 block.setWidth(r == 0 ? 1 : 0, type: .absoluteValueType, for: .border, edge: .maxY)
-                block.setBorderColor(.separatorColor)
+                block.setBorderColor(Theme.strokeColor)
                 block.setValue(widths[c] / 700 * 100, type: .percentageValueType, for: .width)
                 let paragraph = style(size: size, after: 0)
                 paragraph.textBlocks = [block]
@@ -399,7 +396,7 @@ final class RichLayoutManager: NSLayoutManager {
         // system's named one.)
         // One colour, Codex's: a neutral grey, whether the window is active or the selection is carried across
         // messages (AppKit greys an inactive one, and its accent blue read heavy over a whole answer).
-        let color = Self.selection
+        let color = Theme.selection
         // Set to fill with: AppKit sets its own before asking, and fills with what's set, not with what it's given.
         color.setFill()
         // Each of AppKit's rects on its own (it draws a selection in pieces), and each line it covers (one rect can span
@@ -450,10 +447,6 @@ final class RichLayoutManager: NSLayoutManager {
             super.fillBackgroundRectArray($0.baseAddress!, count: $0.count, forCharacterRange: charRange, color: color)
         }
     }
-    /// The selection's grey: light text stays readable on it in dark mode, dark text in light.
-    static let selection = NSColor(name: nil) {
-        $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 0.36, alpha: 1) : NSColor(white: 0.82, alpha: 1)
-    }
 
     /// Where the text is being drawn (drawBackground's origin): AppKit's rects are in the view, the layout's in the
     /// container.
@@ -467,10 +460,10 @@ final class RichLayoutManager: NSLayoutManager {
         storage.enumerateAttribute(.zeroCodeBlock, in: characters) { value, range, _ in
             guard value != nil else { return }
             let panel = Self.panel(for: range, storage: storage, manager: self, container: container, origin: origin)
-            RichMarkdown.blockFill.setFill()
+            Theme.codeColor.setFill()
             NSBezierPath(roundedRect: panel, xRadius: 8, yRadius: 8).fill()
         }
-        for (key, fill) in [(NSAttributedString.Key.zeroCode, RichMarkdown.codeFill), (.zeroToken, TokenTextView.tokenFill)] {
+        for (key, fill) in [(NSAttributedString.Key.zeroCode, Theme.inlineCode), (.zeroToken, Theme.tokenFill)] {
             storage.enumerateAttribute(key, in: characters) { value, range, _ in
                 guard value != nil, let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont else { return }
                 let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
@@ -496,7 +489,7 @@ final class RichLayoutManager: NSLayoutManager {
             guard value != nil else { return }
             let rect = boundingRect(forGlyphRange: glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: container)
             let style = storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
-            RichMarkdown.quoteBar.setFill()
+            Theme.quoteBar.setFill()
             NSBezierPath(
                 roundedRect: NSRect(
                     x: origin.x + container.lineFragmentPadding + (style?.headIndent ?? 14) - 14, y: origin.y + rect.minY, width: 3,
@@ -506,7 +499,7 @@ final class RichLayoutManager: NSLayoutManager {
         storage.enumerateAttribute(.zeroRule, in: characters) { value, range, _ in
             guard value != nil else { return }
             let rect = boundingRect(forGlyphRange: glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: container)
-            NSColor.separatorColor.setFill()
+            Theme.strokeColor.setFill()
             NSRect(
                 x: origin.x + container.lineFragmentPadding, y: origin.y + rect.midY,
                 width: container.size.width - 2 * container.lineFragmentPadding, height: 1
@@ -897,17 +890,10 @@ final class RichTextView: NSTextView {
 
     /// The code block under the pointer, and the button on its corner that copies it whole.
     private var hovered: NSRange? { didSet { if hovered != oldValue { placeCopy() } } }
-    private lazy var copyButton: NSButton = {
-        let button = NSButton(image: Nucleo.image("copy", size: 14) ?? NSImage(), target: self, action: #selector(copyBlock))
-        button.isBordered = false
-        button.contentTintColor = .secondaryLabelColor
-        button.toolTip = "Copy"
+    /// The conversation's CopyButton (its hover fill, tip and tick), on the code's fill so code under it doesn't show.
+    private lazy var copyButton: NSHostingView<AnyView> = {
+        let button = NSHostingView(rootView: AnyView(EmptyView()))
         button.frame.size = NSSize(width: 26, height: 26)
-        button.wantsLayer = true
-        button.layer?.cornerRadius = 6
-        button.layer?.backgroundColor = RichMarkdown.blockFill.cgColor
-        button.layer?.borderWidth = 1
-        button.layer?.borderColor = NSColor.separatorColor.cgColor
         button.isHidden = true
         addSubview(button)
         return button
@@ -960,20 +946,13 @@ final class RichTextView: NSTextView {
 
     private func placeCopy() {
         guard let hovered, let panel = codePanels().first(where: { $0.range == hovered })?.panel else { copyButton.isHidden = true; return }
-        copyButton.image = Nucleo.image("copy", size: 14)
+        let code = textStorage?.attributedSubstring(from: hovered).string.replacingOccurrences(of: "\u{2028}", with: "\n") ?? ""
+        copyButton.rootView = AnyView(
+            CopyButton(text: code.hasSuffix("\n") ? String(code.dropLast()) : code, size: 26)
+                .background(Theme.code, in: RoundedRectangle(cornerRadius: 6)))
         // Its top-right corner, inside it (the view is flipped: y grows down).
         copyButton.frame.origin = NSPoint(x: panel.maxX - copyButton.frame.width - 6, y: panel.minY + 6)
         copyButton.isHidden = false
-    }
-
-    @objc private func copyBlock() {
-        guard let hovered, let storage = textStorage else { return }
-        let code = storage.attributedSubstring(from: hovered).string.replacingOccurrences(of: "\u{2028}", with: "\n")
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(code.hasSuffix("\n") ? String(code.dropLast()) : code, forType: .string)
-        // A tick for a moment says it did.
-        copyButton.image = Nucleo.image("check", size: 14)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in self?.copyButton.image = Nucleo.image("copy", size: 14) }
     }
 
     /// Its height at `width`, laid out once per text and width: SwiftUI asks several times a layout.
@@ -1086,7 +1065,7 @@ final class RichTextView: NSTextView {
         if url.isFileURL, textStorage?.attribute(.attachment, at: index, effectiveRange: nil) != nil {
             ImageViewer.shared.show(url.path, among: imagePaths)
         } else {
-            NSWorkspace.shared.open(url)
+            LinearLinks.open(url)
         }
     }
 
@@ -1187,7 +1166,8 @@ private struct ReplyChip: View {
             .padding(.horizontal, 10).frame(height: 26)
             .background(Theme.card, in: Capsule())
             .overlay(Capsule().strokeBorder(Theme.stroke))
-            .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
+            .compositingGroup()
+            .floatingShadow()
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)

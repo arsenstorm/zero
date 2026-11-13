@@ -219,7 +219,7 @@ struct ComposerCard: View {
                 onSubmit: submit,
                 onTrigger: { controller.updateMention(key: key, trigger: $0) },
                 onKey: { controller.mentionKey($0, for: key) },
-                highlightFiles: controller.suggestFiles
+                highlightFiles: controller.suggestFiles, folder: controller.projectPath(for: key)
             )
             .padding(.horizontal, -TokenTextView.inset.width) // text still starts under the card's 14 pt
             HStack(spacing: 6) {

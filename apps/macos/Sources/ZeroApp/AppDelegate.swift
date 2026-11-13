@@ -58,6 +58,7 @@ import ZeroCore
     }
 
     @objc func openZeroURL(_ url: URL) {
+        if url.isFileURL { OpenTarget.open(path: url.path); return }
         let name = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         switch url.host {
         case "loop": navigation.place = name.isEmpty ? .loops : .loop(name)
