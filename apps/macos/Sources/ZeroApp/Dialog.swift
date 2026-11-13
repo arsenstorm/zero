@@ -159,6 +159,7 @@ private struct FirstField: ViewModifier {
     func body(content: Content) -> some View {
         content.focused($focused).onAppear {
             focused = true
+            DispatchQueue.main.async { NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil) }
         }
     }
 }
