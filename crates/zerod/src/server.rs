@@ -88,6 +88,8 @@ struct Request {
     state: Option<String>,
     conversation: Option<bool>,
     code: Option<bool>,
+    /// unrewind: the folder as it was before the rewind (its `undo`).
+    undo: Option<String>,
     /// adopt: the provider's own session id, to take in as a task.
     thread: Option<String>,
     /// send: images with the words, by their files.
@@ -425,8 +427,8 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         | "following" => watches::handle(zerod, request).await,
         "start" | "spawn" | "adopt" | "detach" | "migrate" | "archive" | "unarchive" | "archived" | "saveForLater" | "resumeLater"
         | "restartStatus" | "restart" | "stopLeft" => sessions::lifecycle(zerod, request).await,
-        "release" | "resume" | "openTerminal" | "closeTerminal" | "rewindPreview" | "rewind" | "branch" | "switch" | "interrupt"
-        | "stop" | "pause" | "unpause" => sessions::control(zerod, request).await,
+        "release" | "resume" | "openTerminal" | "closeTerminal" | "rewindPreview" | "rewind" | "unrewind" | "branch" | "switch"
+        | "interrupt" | "stop" | "pause" | "unpause" => sessions::control(zerod, request).await,
         "send" | "queue" | "unqueue" | "notify" | "decide" | "answer" | "seen" | "introduce" => sessions::messages(zerod, request).await,
         "label" | "setPermissions" | "placeInWorkspace" | "setStatus" | "attr" | "issue" | "table" | "place" | "expect" | "stopCommand" => {
             sessions::properties(zerod, request).await

@@ -91,6 +91,9 @@ pub(super) async fn control(zerod: &Zerod, request: Request) -> Result<Value, St
             };
             daemon.rewind(&request.session()?, request.message.as_deref().ok_or("Back to which message?")?, what).await
         }
+        "unrewind" => {
+            daemon.unrewind(&request.session()?, request.undo.as_deref(), request.conversation.unwrap_or(false)).await.map(|_| Value::Null)
+        }
         "branch" => daemon.branch(&request.session()?, request.message.as_deref().ok_or("Branch from which message?")?),
         "closeTerminal" => daemon.close_terminal(&request.session()?).await.map(|_| Value::Null),
         "switch" => {

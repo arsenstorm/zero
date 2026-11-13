@@ -195,7 +195,8 @@ async fn subscribe(daemon: Arc<Daemon>, out: mpsc::UnboundedSender<Value>, lazy:
         let sent = match events.recv().await {
             Ok(event) => match known.get(&event.session).copied() {
                 Some(seq) if event.seq <= seq => true,
-                Some(seq) if event.seq == seq + 1 => {
+                // An undone rewind brings back what clients let go of: they're sent the session afresh instead.
+                Some(seq) if event.seq == seq + 1 && event.change != crate::model::Change::Unrewound => {
                     known.insert(event.session.clone(), event.seq);
                     out.send(json!({"event": "change", "session": event.session, "seq": event.seq, "change": event.change})).is_ok()
                 }

@@ -94,6 +94,68 @@ async fn rewinding_takes_the_conversation_back_and_can_bring_the_folder_back() {
 }
 
 #[tokio::test]
+async fn the_preview_names_the_files_changed_and_the_messages_that_go() {
+    let (daemon, id, project, _) = task("rewind-preview");
+    let second = message(&daemon, &id, "second");
+    daemon.snapshot_for(&id, &second).unwrap();
+    std::fs::write(project.join("a.txt"), "one\nchanged\n").unwrap();
+    std::fs::write(project.join("b.txt"), "new\n").unwrap();
+    let preview = daemon.rewind_preview(&id, &second).unwrap();
+    assert_eq!(preview["messages"], 2, "the message and its answer");
+    let changes: Vec<(&str, u64, u64)> = preview["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| (c["path"].as_str().unwrap(), c["insertions"].as_u64().unwrap(), c["deletions"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(changes, [("a.txt", 1, 0), ("b.txt", 1, 0)]);
+}
+
+#[tokio::test]
+async fn a_rewind_can_be_undone_conversation_and_files() {
+    let (daemon, id, project, _) = task("rewind-undo");
+    let second = message(&daemon, &id, "second");
+    daemon.snapshot_for(&id, &second).unwrap();
+    std::fs::write(project.join("a.txt"), "one\nchanged\n").unwrap();
+    std::fs::write(project.join("b.txt"), "new\n").unwrap();
+
+    let rewound = daemon.rewind(&id, &second, zerod::daemon::Rewind::Both).await.unwrap();
+    let undo = rewound["undo"].as_str().expect("the folder as it was before the rewind");
+    assert_eq!(texts(&daemon.get(&id).unwrap()).len(), 2);
+
+    daemon.unrewind(&id, Some(undo), true).await.unwrap();
+    let back = daemon.get(&id).unwrap();
+    assert_eq!(texts(&back), ["first", "done one", "second", "done two"]);
+    assert_eq!(back.thread.as_deref(), Some("t1"), "on its own thread again, which has it all");
+    assert!(back.snapshots.contains_key(&second), "the message's snapshot back with it");
+    assert_eq!(std::fs::read_to_string(project.join("a.txt")).unwrap(), "one\nchanged\n");
+    assert_eq!(std::fs::read_to_string(project.join("b.txt")).unwrap(), "new\n");
+    assert!(daemon.unrewind(&id, None, true).await.is_err(), "once");
+
+    // Kept: zerod's next start has it undone.
+    let again = Daemon::open(&project.parent().unwrap().join("zerod"), quiet()).unwrap();
+    assert_eq!(texts(&again.get(&id).unwrap()).len(), 4);
+}
+
+#[tokio::test]
+async fn a_rewind_said_over_since_isnt_undone() {
+    let (daemon, id, _, _) = task("rewind-undo-late");
+    let second = message(&daemon, &id, "second");
+    daemon.rewind(&id, &second, zerod::daemon::Rewind::Conversation).await.unwrap();
+    daemon.sessions().into_iter().find(|s| s.id() == id).unwrap().change(Change::Item {
+        item: Item {
+            at: None,
+            id: "later".into(),
+            turn: None,
+            kind: ItemKind::User { text: "something else".into(), images: vec![], sent: None },
+            status: ItemStatus::Done,
+        },
+    });
+    assert!(daemon.unrewind(&id, None, true).await.is_err());
+    assert_eq!(texts(&daemon.get(&id).unwrap()), ["first", "done one", "something else"]);
+}
+
+#[tokio::test]
 async fn rewinding_only_the_conversation_leaves_the_folder_and_the_first_message_starts_afresh() {
     let (daemon, id, project, _) = task("rewind-first");
     let first = message(&daemon, &id, "first");

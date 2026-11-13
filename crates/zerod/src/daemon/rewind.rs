@@ -11,21 +11,28 @@ impl Daemon {
         Some(commit)
     }
 
-    /// What going back to `item` would do to the folder: whether it was kept then, and what changed in it since.
+    /// What going back to `item` would do: how many messages go (it, the answers and the messages after it), whether
+    /// the folder was kept then, and what changed in it since, file by file.
     pub fn rewind_preview(&self, id: &str, item: &str) -> Result<serde_json::Value, String> {
         let conversation = self.session(id)?.snapshot();
-        yours(&conversation, item)?;
+        let (at, _, _) = yours(&conversation, item)?;
+        let messages = conversation.items[at..]
+            .iter()
+            .filter(|i| matches!(i.kind, ItemKind::User { .. } | ItemKind::Agent { final_answer: true, .. }))
+            .count();
         let since = conversation.snapshots.get(item).and_then(|commit| crate::snapshots::preview(Path::new(&conversation.cwd), commit));
         Ok(match since {
-            Some(diff) => {
-                serde_json::json!({"snapshot": true, "files": diff.files, "insertions": diff.insertions, "deletions": diff.deletions})
-            }
-            None => serde_json::json!({"snapshot": false}),
+            Some(diff) => serde_json::json!({
+                "messages": messages, "snapshot": true, "files": diff.files, "insertions": diff.insertions,
+                "deletions": diff.deletions, "changes": diff.changes
+            }),
+            None => serde_json::json!({"messages": messages, "snapshot": false}),
         })
     }
 
     /// Back to just before `item`, a message of yours: the conversation (its provider going on from Zero's record up to
-    /// there), the folder as it was when the message went, or both. Gives the message back, to send again or change.
+    /// there), the folder as it was when the message went, or both. Gives the message back, to send again or change, and
+    /// with the folder restored, `undo`: the folder as it was just before, for `unrewind`.
     pub async fn rewind(&self, id: &str, item: &str, what: Rewind) -> Result<serde_json::Value, String> {
         let session = self.session(id)?;
         let current = session.snapshot();
@@ -36,7 +43,7 @@ impl Daemon {
         if matches!(current.status, Status::Working | Status::Waiting) {
             return Err(format!("{} is working; stop its turn first", current.provider.title()));
         }
-        let mut restored = serde_json::Value::Null;
+        let (mut restored, mut undo) = (serde_json::Value::Null, None);
         if matches!(what, Rewind::Code | Rewind::Both) {
             let commit = current
                 .snapshots
@@ -44,6 +51,7 @@ impl Daemon {
                 .cloned()
                 .ok_or("Zero didn't keep the folder for that message, so its code can't be brought back")?;
             let (cwd, point) = (current.cwd.clone(), format!("{id}/restore-{}", now_ms()));
+            undo = Some(format!("refs/zero/{point}"));
             let diff = tokio::task::spawn_blocking(move || crate::snapshots::restore(Path::new(&cwd), &commit, &point))
                 .await
                 .map_err(|e| e.to_string())??;
@@ -54,7 +62,35 @@ impl Daemon {
             session.change(Change::Rewound { before: item.into() });
             self.rethread(&session)?;
         }
-        Ok(serde_json::json!({"text": text, "images": images, "code": restored}))
+        Ok(serde_json::json!({"text": text, "images": images, "code": restored, "undo": undo}))
+    }
+
+    /// A rewind undone, just after it: the folder back as `files` kept it (rewind's `undo`), the conversation back as it
+    /// was, on its thread, if nothing has been said since.
+    pub async fn unrewind(&self, id: &str, files: Option<&str>, conversation: bool) -> Result<(), String> {
+        let session = self.session(id)?;
+        let current = session.snapshot();
+        if conversation && !current.can_unrewind() {
+            return Err("There's no rewind to undo: something was said since".into());
+        }
+        if matches!(current.status, Status::Working | Status::Waiting) {
+            return Err(format!("{} is working; stop its turn first", current.provider.title()));
+        }
+        if let Some(files) = files {
+            // Only a folder Zero kept: this goes to git as a revision.
+            if !files.starts_with(&format!("refs/zero/{id}/")) {
+                return Err("That isn't a folder Zero kept for this task".into());
+            }
+            let (cwd, commit, point) = (current.cwd.clone(), files.to_string(), format!("{id}/undo-{}", now_ms()));
+            tokio::task::spawn_blocking(move || crate::snapshots::restore(Path::new(&cwd), &commit, &point))
+                .await
+                .map_err(|e| e.to_string())??;
+        }
+        if conversation {
+            self.take_offline(&session).await;
+            session.change(Change::Unrewound);
+        }
+        Ok(())
     }
 
     /// A new task beside this one, its conversation as it was just before `item`; this one stays as it is. Gives the

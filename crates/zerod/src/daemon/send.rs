@@ -466,11 +466,20 @@ impl Daemon {
         self.keep_pending(id);
         let (me, id) = (self.me.clone(), id.to_string());
         tokio::spawn(async move {
+            // The folder as the turn before left it, as a message sent at once has it: what rewinding to the user's
+            // message brings back. Reports aren't the user's, and aren't gone back to.
+            let kept = match me.upgrade().filter(|_| sent.is_some()) {
+                Some(daemon) => daemon.keep_folder(&session).await,
+                None => None,
+            };
             // ponytail: word that fails to go through is dropped with a notice; keep it if sends start failing in practice.
             let message = Message { text: &text, images: &images, context: None, sent: sent.as_deref() };
             let sent = session.send(message, ModelChoice::default()).await;
             if let Err(error) = &sent {
                 session.report(&format!("Couldn't pass on: {error}"))
+            }
+            if let (Ok(()), Some(commit)) = (&sent, kept) {
+                attach_snapshot(&session, commit)
             }
             let Some(daemon) = me.upgrade() else { return };
             daemon.delivering.lock().unwrap().remove(&id);

@@ -64,6 +64,7 @@ impl Bridge {
                                 | Change::Question { .. }
                                 | Change::Answered { .. }
                                 | Change::Rewound { .. }
+                                | Change::Unrewound
                                 | Change::Archived
                         ) => {}
                     Err(RecvError::Lagged(_)) => {}

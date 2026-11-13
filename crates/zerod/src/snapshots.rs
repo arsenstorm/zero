@@ -7,10 +7,19 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// How a folder differs from a snapshot: what a restore would undo.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+/// How a folder differs from a snapshot: what a restore would undo, in all and file by file.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
 pub struct Diff {
     pub files: usize,
+    pub insertions: usize,
+    pub deletions: usize,
+    pub changes: Vec<Changed>,
+}
+
+/// One file of a Diff: its path in the repository and its lines added and removed (none for a binary file).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Changed {
+    pub path: String,
     pub insertions: usize,
     pub deletions: usize,
 }
@@ -82,10 +91,12 @@ fn top(cwd: &Path) -> Option<PathBuf> {
 /// files that haven't changed), so the real one is left as it is.
 fn tree(cwd: &Path, top: &Path) -> Option<String> {
     let index = git(cwd, &["rev-parse", "--path-format=absolute", "--git-path", "index"])?;
+    // One copy each, however many are taken at once: the clock alone (microseconds on macOS) gave two the same file.
+    static COPIES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let copy = std::env::temp_dir().join(format!(
         "zero-index-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+        COPIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     if std::fs::copy(&index, &copy).is_err() {
         let _ = std::fs::remove_file(&copy);
@@ -97,13 +108,17 @@ fn tree(cwd: &Path, top: &Path) -> Option<String> {
 }
 
 fn diff(top: &Path, from: &str, to: &str) -> Option<Diff> {
-    let numbers = git(top, &["diff", "--numstat", "--no-renames", from, to])?;
+    // Paths as they are, not escaped: they are shown.
+    let numbers = git(top, &["-c", "core.quotePath=false", "diff", "--numstat", "--no-renames", from, to])?;
     Some(numbers.lines().fold(Diff::default(), |mut total, line| {
-        let mut parts = line.split('\t');
+        let mut parts = line.splitn(3, '\t');
         // Binary files count as changed, with no lines.
-        total.insertions += parts.next().and_then(|n| n.parse::<usize>().ok()).unwrap_or(0);
-        total.deletions += parts.next().and_then(|n| n.parse::<usize>().ok()).unwrap_or(0);
+        let insertions = parts.next().and_then(|n| n.parse::<usize>().ok()).unwrap_or(0);
+        let deletions = parts.next().and_then(|n| n.parse::<usize>().ok()).unwrap_or(0);
+        total.insertions += insertions;
+        total.deletions += deletions;
         total.files += 1;
+        total.changes.push(Changed { path: parts.next().unwrap_or_default().to_string(), insertions, deletions });
         total
     }))
 }

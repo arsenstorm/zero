@@ -272,6 +272,31 @@ async fn queued_messages_go_one_turn_each_and_never_with_a_report() {
 }
 
 #[tokio::test]
+async fn a_queued_message_has_the_folder_kept_as_it_went_too() {
+    // Written mid-turn and given after it: rewinding to it brings back the folder as it was when it went, not before.
+    let w = world("queue-snapshot");
+    let git = |args: &[&str]| {
+        let ok = std::process::Command::new("git").args(["-c", "commit.gpgsign=false"]).args(args).current_dir(&w.project).output();
+        assert!(ok.unwrap().status.success(), "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    std::fs::write(w.project.join("a.txt"), "one\n").unwrap();
+    git(&["add", "."]);
+    git(&["-c", "user.name=T", "-c", "user.email=t@t", "commit", "-qm", "start"]);
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let seen = lead_runtime(&w).await;
+    seen.said("user", 1).await;
+    w.daemon.queue(&lead, "after this", &[]).unwrap();
+    std::fs::write(w.project.join("a.txt"), "the turn's\n").unwrap();
+    seen.say(turn_ends());
+    seen.said("user", 2).await;
+    let kept = until(&w.daemon, &lead, |c| c.snapshots.len() == 2).await;
+    let queued = kept.items.iter().rfind(|i| matches!(&i.kind, zerod::model::ItemKind::User { text, .. } if text == "after this")).unwrap();
+    let preview = w.daemon.rewind_preview(&lead, &queued.id).unwrap();
+    assert_eq!(preview["files"], 0, "kept as the turn left it, when the message went: {preview}");
+}
+
+#[tokio::test]
 async fn a_queued_message_goes_when_the_turn_ends_asking_the_user_something() {
     // The turn ends on a question to the user: the task waits on them, and their queued message is their word.
     let w = world("queue-asked");

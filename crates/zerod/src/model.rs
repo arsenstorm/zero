@@ -145,6 +145,23 @@ pub struct Conversation {
     pub terminal: Option<Opened>,
     /// How many changes have been applied: a client that took a snapshot at `seq` applies only later changes.
     pub seq: u64,
+    /// What the latest rewind took, to undo it: never sent or saved, a restart replays it from the transcript.
+    #[serde(skip)]
+    pub rewound: Taken,
+}
+
+/// What a rewind took from a conversation: its items from where it went back to, their snapshots and its thread.
+/// Shared, not copied, with each snapshot of the conversation; equal to any other, as it's no part of what's shown.
+#[derive(Clone, Debug, Default)]
+pub struct Taken(Option<std::sync::Arc<Rewound>>);
+
+/// The items a rewind took, their snapshots by item, and the thread the provider was on.
+type Rewound = (Vec<Item>, std::collections::BTreeMap<String, String>, Option<String>);
+
+impl PartialEq for Taken {
+    fn eq(&self, _: &Taken) -> bool {
+        true
+    }
 }
 
 /// A task's provider terminal: zero-host's id for it, and `mark`, how much of the provider's own history (lines of
@@ -604,6 +621,8 @@ pub enum Change {
     Rewound {
         before: String,
     },
+    /// The latest rewind undone: what it took (Conversation::rewound) back, the provider on its thread as before.
+    Unrewound,
     /// Its CLI says this MCP server needs signing in (its own OAuth): Zero has the CLI sign in to it once (mcp_auth.rs).
     /// Nothing changes in the conversation.
     McpSignIn {
@@ -654,6 +673,7 @@ impl Conversation {
             terminal: None,
             seq: 0,
             mcp: vec![],
+            rewound: Taken::default(),
         }
     }
 
@@ -697,6 +717,7 @@ impl Conversation {
             terminal: self.terminal.clone(),
             seq: self.seq,
             mcp: self.mcp.clone(),
+            rewound: self.rewound.clone(),
         }
     }
 
@@ -778,7 +799,11 @@ impl Conversation {
             Change::SignedIn { signin } => self.signin = signin,
             Change::Permitted { permissions } => self.permit(permissions),
             Change::Status { status, turn, error } => (self.status, self.turn, self.error) = (status, turn, error),
-            Change::Item { item } => self.put_item(item),
+            Change::Item { item } => {
+                // Something said since a rewind: it stands.
+                self.rewound = Taken::default();
+                self.put_item(item)
+            }
             Change::Delta { item, text } => self.append_to(&item, &text),
             Change::Approval { approval } => put_last(&mut self.approvals, approval, |a| &a.id),
             Change::Resolved { approval } => self.approvals.retain(|existing| existing.id != approval),
@@ -801,6 +826,7 @@ impl Conversation {
                 None => self.issues.push(issue),
             },
             Change::Rewound { before } => self.rewind_to(&before),
+            Change::Unrewound => self.unrewind(),
             Change::Switched { provider, model, effort } => self.switch_to(provider, model, effort),
         }
     }
@@ -869,11 +895,11 @@ impl Conversation {
 
     /// Back to just before the item `before`: what came from it on, and the thread, turn and what was pending, gone.
     fn rewind_to(&mut self, before: &str) {
-        if let Some(at) = self.items.iter().position(|i| i.id == before) {
-            self.items.truncate(at)
-        }
+        let taken = self.items.iter().position(|i| i.id == before).map(|at| self.items.split_off(at)).unwrap_or_default();
         let kept: std::collections::HashSet<&str> = self.items.iter().map(|i| i.id.as_str()).collect();
-        self.snapshots.retain(|item, _| kept.contains(item.as_str()));
+        let (snapshots, gone) = std::mem::take(&mut self.snapshots).into_iter().partition(|(item, _)| kept.contains(item.as_str()));
+        self.snapshots = snapshots;
+        self.rewound = Taken(Some(std::sync::Arc::new((taken, gone, self.thread.clone()))));
         self.thread = None;
         self.turn = None;
         self.approvals.clear();
@@ -883,6 +909,20 @@ impl Conversation {
         self.failure = None;
         self.stalled = None;
         self.stuck = None;
+    }
+
+    /// Whether the latest rewind can be undone: nothing has been said since.
+    pub fn can_unrewind(&self) -> bool {
+        self.rewound.0.is_some()
+    }
+
+    /// The latest rewind undone, if nothing has been said since; once.
+    fn unrewind(&mut self) {
+        let Some(taken) = self.rewound.0.take() else { return };
+        let (items, snapshots, thread) = std::sync::Arc::unwrap_or_clone(taken);
+        self.items.extend(items);
+        self.snapshots.extend(snapshots);
+        self.thread = thread;
     }
 
     /// On another provider, with no thread of its own yet.
