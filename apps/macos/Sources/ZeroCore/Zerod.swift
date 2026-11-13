@@ -369,6 +369,8 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     }
     public var now: String?
     public var needs: String?
+    /// Why the lead itself is in trouble (what looks stuck, what failed): its notification's words.
+    public var trouble: String?
     /// The open asks of the lead and its workers.
     public var asks: [Waiting]
     public var workers: Int
@@ -377,6 +379,8 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
     /// Your messages waiting for after the current turn, in order; held, they wait for your say (you stopped the agent).
     public var queued: [Queued]?
     public var held: Bool?
+    /// Paused by you: the events waiting for your Resume.
+    public var pausedHeld: Int?
     /// When it next wakes itself (`zero schedule`), in seconds since 1970.
     public var wakes: Int?
     /// A change picked while a turn ran, applied as it ends: the provider, model, effort or permissions.
@@ -434,6 +438,7 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
         public var asks: [Waiting]
         public var queued: [Queued]?
         public var held: Bool?
+        public var pausedHeld: Int?
     }
 
     /// One of its workers as a row of its own: its state, place and asks, for showing that worker.
@@ -443,7 +448,7 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
         row.session = member.session; row.state = member.state; row.place = member.place; row.path = member.path
         row.now = member.now; row.needs = member.needs; row.asks = member.asks; row.workers = 0; row.team = nil
         row.own = nil // the lead's, not the worker's
-        row.queued = member.queued; row.held = member.held
+        row.queued = member.queued; row.held = member.held; row.pausedHeld = member.pausedHeld
         return row
     }
 }
@@ -986,6 +991,8 @@ public final class ZerodLink: @unchecked Sendable {
 
     public func interrupt(session: String) async throws { _ = try await call("interrupt", ["session": session]) }
     public func stop(session: String) async throws { _ = try await call("stop", ["session": session]) }
+    /// Its CLI's process stopped and a fresh one started at once on the same conversation.
+    public func restartAgent(session: String) async throws { _ = try await call("restartAgent", ["session": session]) }
     /// Puts tasks and their workers on hold (every task, none named), and takes them off it; gives the sessions it did.
     public func pause(sessions: [String]) async throws -> [String] { try await call("pause", ["sessions": sessions]) as? [String] ?? [] }
     public func unpause(sessions: [String]) async throws -> [String] {
@@ -1008,6 +1015,9 @@ public final class ZerodLink: @unchecked Sendable {
         public let workers: Int
         /// The lead of a worker archived on its own.
         public var parent: String?
+        /// The last thing it heard that only confirmed its end (an issue done, a pull request merged), kept archived.
+        public var quiet: String?
+        public var quietAt: Int?
         public var date: Date { Date(timeIntervalSince1970: TimeInterval(at) / 1000) }
     }
 

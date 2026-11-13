@@ -10,12 +10,15 @@ struct QueueStrip: View {
     /// Sent on by zerod already, waiting only for playback to reach them: shown, not changed.
     var sent: Set<String> = []
     let held: Bool
+    /// Paused by you, with how many events wait for your Resume: the strip says so, with Resume.
+    var paused: Int?
     /// The pointer on it: the question card behind it comes up, as for the composer.
     var hover: (Bool) -> Void = { _ in }
     let steer: (Queued) -> Void
     let edit: (Queued) -> Void
     let remove: (Queued) -> Void
     let release: () -> Void
+    var resume: () -> Void = {}
     @State private var hovered: String?
     /// A control under the pointer: it takes the hover, and the row gives its own up. The row gives it up across the
     /// whole cluster of controls, gaps included, so crossing from one to the next doesn't flash the row.
@@ -27,10 +30,13 @@ struct QueueStrip: View {
         // naming it, and the queue as rows on their own surface.
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
-                NucleoIcon(held ? "media-stop" : "clock", fill: "glyph", size: 13)
-                Text(held ? "Held" : "Queued").font(.system(size: 12, weight: .medium)).tracking(-0.2)
+                NucleoIcon(paused != nil ? "circle-pause" : held ? "media-stop" : "clock", fill: "glyph", size: 13)
+                Text(title).font(.system(size: 12, weight: .medium)).tracking(-0.2)
                 Spacer()
-                if held {
+                if paused != nil {
+                    Button("Resume", action: resume).buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.primary)
+                        .tip("What came meanwhile goes to the agent first, then your messages")
+                } else if held {
                     Button("Send", action: release).buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.primary)
                         .tip("You stopped the agent; let the queue go on")
                 }
@@ -61,21 +67,24 @@ struct QueueStrip: View {
                                 square("pen", help: "Edit in the composer", id: item.id + "/edit") { edit(item) }
                                 square("trash", help: "Delete", id: item.id + "/delete") { remove(item) }
                                 let lit = control == item.id + "/steer"
-                                Button {
-                                    steer(item)
-                                } label: {
-                                    HStack(spacing: 5) {
-                                        Text("Steer").font(.system(size: 12, weight: .medium))
-                                        NucleoIcon("arrow-turn-up-2", size: 12)
+                                // Paused, nothing to steer: it waits for Resume.
+                                if paused == nil {
+                                    Button {
+                                        steer(item)
+                                    } label: {
+                                        HStack(spacing: 5) {
+                                            Text("Steer").font(.system(size: 12, weight: .medium))
+                                            NucleoIcon("arrow-turn-up-2", size: 12)
+                                        }
+                                        .foregroundStyle(lit ? AnyShapeStyle(Theme.onKnob) : AnyShapeStyle(.primary))
+                                        .padding(.leading, 10).padding(.trailing, 8).frame(height: 24)
+                                        .background(lit ? Theme.knob : Theme.chip, in: Capsule())
+                                        .overlay(Capsule().strokeBorder(lit ? Color.clear : Theme.stroke))
                                     }
-                                    .foregroundStyle(lit ? AnyShapeStyle(Theme.onKnob) : AnyShapeStyle(.primary))
-                                    .padding(.leading, 10).padding(.trailing, 8).frame(height: 24)
-                                    .background(lit ? Theme.knob : Theme.chip, in: Capsule())
-                                    .overlay(Capsule().strokeBorder(lit ? Color.clear : Theme.stroke))
-                                }
-                                .buttonStyle(PressableStyle()).tip("Send it now, mid-turn").padding(.leading, 4)
-                                .onHover { inside in
-                                    if inside { control = item.id + "/steer" } else if control == item.id + "/steer" { control = nil }
+                                    .buttonStyle(PressableStyle()).tip("Send it now, mid-turn").padding(.leading, 4)
+                                    .onHover { inside in
+                                        if inside { control = item.id + "/steer" } else if control == item.id + "/steer" { control = nil }
+                                    }
                                 }
                             }
                             .padding(.vertical, 4).contentShape(Rectangle())
@@ -104,6 +113,11 @@ struct QueueStrip: View {
         .background(Theme.fieldTab, in: UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18, style: .continuous))
         .onHover(perform: hover)
         .padding(.horizontal, 13).padding(.bottom, -16)
+    }
+
+    private var title: String {
+        guard let paused else { return held ? "Held" : "Queued" }
+        return paused == 0 ? "Paused" : "Paused · \(paused) held while paused"
     }
 
     private func square(_ symbol: String, help: String, id: String, action: @escaping () -> Void) -> some View {
@@ -466,7 +480,19 @@ extension Provider {
         switch self {
         case .claude: choiceIcon("claude")
         case .codex: choiceIcon("openai")
-        case .opencode: nil
+        case .opencode: choiceIcon("opencode")
+        }
+    }
+
+    /// Its mark alone, made for a circle (the usage rings): OpenAI's knot without its tile, in the text's colour.
+    @MainActor var glyph: Image? { self == .codex ? choiceIcon("openai-glyph") : mark }
+
+    /// How big its glyph is drawn to fill a circle as Claude's does at 11: a dense knot or block looks bigger.
+    var glyphSize: CGSize {
+        switch self {
+        case .claude: CGSize(width: 11, height: 11)
+        case .codex: CGSize(width: 10, height: 10)
+        case .opencode: CGSize(width: 7.5, height: 9.5)
         }
     }
 }

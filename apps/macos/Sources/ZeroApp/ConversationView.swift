@@ -16,6 +16,8 @@ struct ConversationView: View {
     /// Your messages waiting for after the agent's turn, and whether they're held since you stopped it.
     var queued: [Queued] = []
     var held = false
+    /// Paused by you, with how many events wait for your Resume; nil, not paused.
+    var paused: Int?
     /// A change of model or permissions picked while a turn ran, applied as it ends (zerod's).
     var next: BoardRow.Next?
     /// The task's whole conversation, observed on its own: its words redraw this view, not the window.
@@ -840,9 +842,9 @@ struct ConversationView: View {
                 },
                 // An answered card leaving: the page keeps its height (see `room`).
                 left: { [tracker] in room = max(room, tracker.columnHeight) })
-            if !queued.isEmpty || held {
+            if !queued.isEmpty || held || paused != nil {
                 QueueStrip(
-                    queued: queued, sent: sentOn, held: held,
+                    queued: queued, sent: sentOn, held: held, paused: paused,
                     hover: { [foot] inside in if foot.overQueue != inside { foot.overQueue = inside } },
                     steer: { item in Task { await workspace.steer(conversation.id, item: item) } },
                     edit: { item in
@@ -853,7 +855,8 @@ struct ConversationView: View {
                         }
                     },
                     remove: { item in Task { _ = await workspace.unqueue(conversation.id, item: item.id) } },
-                    release: { Task { await workspace.release(conversation.id) } }
+                    release: { Task { await workspace.release(conversation.id) } },
+                    resume: { Task { await workspace.unpause([conversation.id]) } }
                 )
                 .frame(maxWidth: 680)
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] in foot.stripHeight = $0 }
@@ -875,7 +878,7 @@ struct ConversationView: View {
         .onChange(of: queued) { _, now in queuing.removeAll { pending in now.contains { $0.id == pending.id } } }
         // The strip gone (its last message moved into the conversation): its room given back on the card's curve, the
         // card on it easing down with the page, not dropping by the strip's height in a frame.
-        .onChange(of: shownQueue.isEmpty && !held) { [foot] _, gone in
+        .onChange(of: shownQueue.isEmpty && !held && paused == nil) { [foot] _, gone in
             guard gone, foot.stripHeight > 0, !Motion.reduced else { return }
             foot.stripGone = foot.stripHeight
             foot.stripEase = Ease(from: foot.stripHeight, start: Date())
@@ -1145,8 +1148,9 @@ struct ConversationView: View {
                 }), placeholder: placeholder, canSend: conversation.status != .starting, folder: conversation.cwd, workspace: workspace,
             images: $images, active: active,
             stop: shownBusy && conversation.terminal == nil ? { Task { await workspace.interrupt(conversation.id) } } : nil,
-            // Queued only while the agent is at it: a message sent as the last words read out goes straight to it.
-            queue: working && conversation.terminal == nil
+            // Queued only while the agent is at it, or paused (it waits for your Resume): a message sent as the last
+            // words read out goes straight to it.
+            queue: (working || paused != nil) && conversation.terminal == nil
                 ? {
                     // Return while it works: the message waits for after this turn, in the strip above.
                     let (text, attached) = ImageToken.outgoing(draft, images: images.map(\.path))
@@ -1311,11 +1315,11 @@ struct ConversationView: View {
 
     private var placeholder: String {
         // Its answer still being read out here, though zerod's turn has ended: as the page reads, still at it.
+        if paused != nil { return "Paused · your message waits until you resume" }
         if playback.playing, conversation.status == .idle {
             return conversation.provider == .opencode ? "OpenCode answers one message at a time" : "Steer it while it works"
         }
         return switch conversation.status {
-        case .offline: "Message to resume it"
         // Its next turn not on the page yet (the last still reading out): as the page reads.
         case .working, .waiting:
             !playback.working(true)
@@ -1652,7 +1656,7 @@ private struct DockSlot: View {
 extension ConversationView: Equatable {
     static func == (a: ConversationView, b: ConversationView) -> Bool {
         a.live === b.live && a.workspace === b.workspace && a.inbox === b.inbox && a.active == b.active && a.shown == b.shown
-            && a.queued == b.queued && a.held == b.held && a.next == b.next
+            && a.queued == b.queued && a.held == b.held && a.paused == b.paused && a.next == b.next
     }
 }
 

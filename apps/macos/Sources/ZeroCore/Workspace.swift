@@ -776,6 +776,12 @@ public final class Workspace {
         }
     }
 
+    /// Words for a task's agent from Zero, not typed by the user: the conversation shows their first line as a quiet
+    /// event, the rest under it. Between turns, like a queued message.
+    public func notify(_ session: String, text: String) async {
+        _ = await attempt { try await $0.notify(session: session, text: text, from: "zero") }
+    }
+
     /// Whether it went (or is queued): false, and the words are for the box again.
     @discardableResult
     public func send(_ session: String, text: String, images: [String] = [], model: String? = nil, effort: String? = nil) async -> Bool {
@@ -872,6 +878,8 @@ public final class Workspace {
     }
     public func interrupt(_ session: String) async { _ = await attempt { try await $0.interrupt(session: session) } }
     public func stop(_ session: String) async { _ = await attempt { try await $0.stop(session: session) } }
+    /// For an agent that's stuck, or to pick up a new MCP server, account or plugin: a fresh process, same conversation.
+    public func restartAgent(_ session: String) async { _ = await attempt { try await $0.restartAgent(session: session) } }
     public func resume(_ session: String) async { _ = await attempt { try await $0.resume(session: session) } }
 
     /// Being written to while its agent has stopped (parked after a while idle): its agent started in the background,

@@ -342,8 +342,8 @@ struct TasksSidebar: View {
         folded = set.sorted().joined(separator: "\n")
     }
 
-    /// At the foot, in a card of its own: the accounts used today and their usage; while Zero can't reach its daemon,
-    /// that instead (on a fade, over the list's end).
+    /// At the foot, while Zero can't reach its daemon: that, on a fade over the list's end. (What tasks use and the
+    /// accounts' usage are in the rail.)
     @ViewBuilder private var footer: some View {
         if !workspace.connected {
             NucleoLabel("Connecting to Zero's daemon…", icon: "plug", size: 12)
@@ -357,22 +357,6 @@ struct TasksSidebar: View {
                         startPoint: .top, endPoint: .bottom)
                 )
                 .padding(.horizontal, -10)
-        } else {
-            // In from the sidebar's edges by its inset (the column pads its content 10 at the sides, none below).
-            VStack(spacing: UsageFooter.inset) {
-                TasksUseCard(workspace: workspace) { id in
-                    // A worker opens under its lead, as its row does.
-                    if let lead = workspace.conversation(id)?.parent {
-                        place = .task(lead); navigation.worker = id
-                    } else {
-                        place = .task(id)
-                    }
-                }
-                UsageFooter(workspace: workspace) {
-                    navigation.openSettings(SettingsView.Page.signins.rawValue)
-                }
-            }
-            .padding(.horizontal, UsageFooter.inset - 10).padding(.vertical, UsageFooter.inset)
         }
     }
 }
@@ -435,11 +419,16 @@ struct PairSheet: View {
         static let shared = Asked()
         var renaming: Named?
         var pairing: Named?
+        /// Mid-turn: Restart agent asks first.
+        var restarting: Named?
     }
 
-    /// What the agent is asked when the user wants to know where it is.
+    /// What the agent is asked when the user wants to know where it is: sent as Zero's, so the conversation shows its
+    /// first line as a quiet event ("The user asked for a status update."), the rest under it.
     static let statusCheck = """
-        Status check from the user: where is this task now? Answer in two or three lines, then post the same as a Zero \
+        The user asked for a status update.
+
+        Where is this task now? Answer in two or three lines, then post the same as a Zero \
         note: `zero note "<where it is>"`, with --blocked and --needs "<what you need from the user>" if you're waiting \
         on them, --waiting if on something else, --done if it's finished, --merged once it's merged. Keep the task's \
         state pad current too. Then \
@@ -452,8 +441,6 @@ struct PairSheet: View {
         let worker = conversation?.parent != nil
         let task = Named(
             id: id, name: row?.task ?? conversation.map(Workspace.label(of:)) ?? id, ticket: row?.ticket ?? conversation?.ticket)
-        let online = conversation.map { $0.status != .offline } ?? row?.online ?? true
-        let pinned = UserDefaults.standard.string(forKey: "barPinned") ?? ""
         // Workspace: every one in its own menu, the one it's in (the sidebar's) ticked; another moves it there.
         let moves =
             workspace.workspaces.count > 1 && !worker
@@ -468,17 +455,18 @@ struct PairSheet: View {
                         return item
                     })
             ] : []
-        // One of each pair by its state: paused, Resume is the pause's; running, Pause and End session; ended, Resume
-        // alone (nothing runs to pause).
+        // Resume only for a task you paused. One Zero parked (its agent stopped to save memory, idle or waiting on you)
+        // is as a running one to you. Restart agent: a fresh process on the same conversation, asked first mid-turn.
+        let busy = conversation.map { $0.status == .working || $0.status == .waiting || $0.status == .starting } ?? false
         let session =
             workspace.isPaused(id)
             ? [MenuItem("Resume", "media-play") { Task { await workspace.unpause([id]) } }]
-            : online
-                ? [
-                    MenuItem("Pause", "circle-pause") { Task { await workspace.pause([id]) } },
-                    MenuItem("End session", "media-stop") { Task { await workspace.stop(id) } },
-                ]
-                : [MenuItem("Resume", "media-play") { Task { await workspace.resume(id) } }]
+            : [
+                MenuItem("Pause", "circle-pause") { Task { await workspace.pause([id]) } },
+                MenuItem("Restart agent", "arrow-rotate-clockwise") {
+                    if busy { Asked.shared.restarting = task } else { Task { await workspace.restartAgent(id) } }
+                },
+            ]
         let later =
             worker
             ? []
@@ -488,22 +476,19 @@ struct PairSheet: View {
                     Task { await workspace.saveForLater(id) }
                 }
             ]
+        // As Linear's: the task itself first, then what its agent does, then copying and opening it elsewhere, then
+        // putting it away.
         return [
-            conversation.map { [OpenTarget.menuItem($0, in: workspace), OpenTarget.continueItem($0, in: workspace)].compactMap { $0 } }
-                ?? [],
             [MenuItem("Rename task", "pen") { Asked.shared.renaming = task }] + statusItems(id, in: workspace) + moves + [
-                MenuItem("Work with…", "link") { Asked.shared.pairing = task },
-                MenuItem(BarPins.set(pinned).contains("zerod-" + id) ? "Unpin from bar" : "Pin to bar", "pin-tack") {
-                    UserDefaults.standard.set(BarPins.toggle("zerod-" + id, in: pinned), forKey: "barPinned")
-                },
-                MenuItem("Copy task id", "copy") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(id, forType: .string)
-                },
+                MenuItem("Work with…", "link") { Asked.shared.pairing = task }
             ],
-            [MenuItem("Ask for a status update", "message-check") { Task { await workspace.send(id, text: statusCheck) } }] + session
-                + later,
-            [MenuItem("Archive…", "archive") { workspace.archiving = id }],
+            [MenuItem("Ask for a status update", "message-check") { Task { await workspace.notify(id, text: statusCheck) } }] + session,
+            [TaskCopyMenu.item(id, in: workspace)]
+                + (conversation.map {
+                    [OpenTarget.menuItem($0, in: workspace), OpenTarget.continueItem($0, in: workspace)].compactMap { $0 }
+                }
+                    ?? []),
+            later + [MenuItem("Archive…", "archive") { workspace.archiving = id }],
         ]
     }
 

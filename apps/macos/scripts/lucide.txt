@@ -39,6 +39,7 @@ dots                     ellipsis                  glyph outline
 eye                      eye
 file                     file
 file-content             file-text
+file-link                file-symlink
 folder                   folder                    glyph
 folder-download          folder-down
 folder-plus              folder-plus
@@ -47,6 +48,7 @@ github                   git-pull-request
 globe                    globe
 hand-3                   hand                      glyph
 hand-holding-box         hand-platter              glyph
+hashtag                  hash
 heading-1                heading-1
 heading-2                heading-2
 heading-3                heading-3
@@ -96,9 +98,11 @@ square-code              square-code
 suitcase                 briefcase
 table                    table
 terminal                 terminal                  outline
+text                     type
 text-bold                bold
 text-italic              italic
 text-strikethrough       strikethrough
+ticket                   ticket
 trash                    trash-2                   glyph outline
 triangle-warning         triangle-alert            glyph
 undo                     undo

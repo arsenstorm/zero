@@ -137,7 +137,8 @@ private struct TaskView: View {
                 if let live = workspace.live(conversation.id) {
                     ConversationView(
                         workspace: workspace, inbox: inbox, active: active, shown: shown,
-                        queued: workspace.queued(conversation.id, board: row?.queued ?? []), held: row?.held ?? false, next: row?.next,
+                        queued: workspace.queued(conversation.id, board: row?.queued ?? []), held: row?.held ?? false,
+                        paused: workspace.isPaused(conversation.id) ? row?.pausedHeld ?? 0 : nil, next: row?.next,
                         live: live, open: open
                     ).equatable().id(conversation.id).environment(\.taskLink, taskLink)
                 }
@@ -152,7 +153,8 @@ private struct TaskView: View {
                 if let conversation, let live = workspace.live(conversation.id) {
                     ConversationView(
                         workspace: workspace, inbox: inbox, active: active, shown: shown,
-                        queued: workspace.queued(conversation.id, board: row?.queued ?? []), held: row?.held ?? false, next: row?.next,
+                        queued: workspace.queued(conversation.id, board: row?.queued ?? []), held: row?.held ?? false,
+                        paused: workspace.isPaused(conversation.id) ? row?.pausedHeld ?? 0 : nil, next: row?.next,
                         live: live, open: open
                     ).equatable().id(conversation.id).environment(\.taskLink, taskLink)
                 }

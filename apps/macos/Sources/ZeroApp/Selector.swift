@@ -30,6 +30,8 @@ struct SelectorRow: Identifiable {
     var children: [SelectorRow] = []
     /// A row that takes words: picked, it becomes a field in its place ("Other model…"), and Return gives them here.
     var entry: ((String) -> Void)? = nil
+    /// Its keys, shown at the row's end ("⌘⇧,"): what does the same without the menu.
+    var shortcut: String? = nil
 }
 
 /// A provider (Anthropic, OpenAI): one tab of the selector.
@@ -68,6 +70,57 @@ final class SelectorState {
     @ObservationIgnored var rebuild: () -> [SelectorSection] = { [] }
     init(kind: SelectorKind) { self.kind = kind }
 
+    /// The rows shown: a menu's, all its sections'; a list's, its tab's.
+    var rows: [SelectorRow] {
+        kind == .menu ? sections.flatMap(\.rows) : (sections.first { $0.id == tab } ?? sections.first)?.rows ?? []
+    }
+    /// The window it's in takes the keys, for a row taking words (EntryRow): it otherwise leaves them with the window it
+    /// opened over, which keeps its active look (presentSelector).
+    @ObservationIgnored var takeKeys: () -> Void = {}
+
+    /// A key while it's open (presentSelector's monitor): ↑↓ move, ←→ switch tab, Return picks, Esc closes.
+    func key(_ code: UInt16) {
+        switch code {
+        case 125: move(1)
+        case 126: move(-1)
+        case 123: switchTab(-1)
+        case 124: switchTab(1)
+        case 36, 76: pickHighlighted()
+        case 53: close()
+        default: break
+        }
+    }
+
+    func select(tab: String) {
+        self.tab = tab
+        highlighted = rows.first { $0.selected }?.id ?? rows.first?.id
+    }
+
+    /// A row that takes words becomes a field in its place, and the window takes the keys for it.
+    func enter(_ id: String) {
+        entering = id
+        takeKeys()
+    }
+
+    private func move(_ delta: Int) {
+        let ids = rows.map(\.id)
+        guard let current = highlighted, let index = ids.firstIndex(of: current) else { highlighted = ids.first; return }
+        highlighted = ids[max(0, min(ids.count - 1, index + delta))]
+    }
+
+    private func switchTab(_ delta: Int) {
+        let ids = sections.map(\.id)
+        guard ids.count > 1, let index = ids.firstIndex(of: tab ?? ids[0]) else { return }
+        select(tab: ids[(index + delta + ids.count) % ids.count])
+    }
+
+    private func pickHighlighted() {
+        guard let row = rows.first(where: { $0.id == highlighted }) else { return }
+        if row.entry != nil { enter(row.id); return }
+        row.pick()
+        close()
+    }
+
     /// The pointer's last place over the card, and its moves.
     @ObservationIgnored private var pointer: CGPoint?
     @ObservationIgnored private var moves = 0
@@ -98,7 +151,6 @@ final class SelectorState {
 /// describes the row under the pointer. ←→ switch provider, ↑↓ move, Return picks, Esc closes.
 struct SelectorView: View {
     @Bindable var state: SelectorState
-    @FocusState private var focused: Bool
 
     /// Models get two panes, the list and its details, centred on the inbox; projects a single list on the chip.
     static func width(_ kind: SelectorKind) -> CGFloat {
@@ -117,7 +169,12 @@ struct SelectorView: View {
         let font: [NSAttributedString.Key: Any] = [.font: menuNSFont]
         // A row's icon and the gap after it, then its words; a check's place where something can be checked, a
         // chevron's where a row has its own menu.
-        let widest = rows.map { ($0.glyph == nil ? 0 : 24) + ($0.title as NSString).size(withAttributes: font).width }.max() ?? 0
+        let keys: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12)]
+        let widest =
+            rows.map {
+                ($0.glyph == nil ? 0 : 24) + ($0.title as NSString).size(withAttributes: font).width
+                    + ($0.shortcut.map { 16 + ($0 as NSString).size(withAttributes: keys).width } ?? 0)
+            }.max() ?? 0
         let check: CGFloat = rows.contains(where: \.selected) ? 8 + 13 : 0
         let chevron: CGFloat = rows.contains { !$0.children.isEmpty } ? 8 + 12 : 0
         // Edge and inset and the row's leading; the gap before the spacer, trailing, inset and edge (the row's HStack).
@@ -152,7 +209,7 @@ struct SelectorView: View {
 
     private var sections: [SelectorSection] { state.sections }
     private var section: SelectorSection? { sections.first { $0.id == state.tab } ?? sections.first }
-    private var rows: [SelectorRow] { state.kind == .menu ? sections.flatMap(\.rows) : section?.rows ?? [] }
+    private var rows: [SelectorRow] { state.rows }
     private var highlightedRow: SelectorRow? { rows.first { $0.id == state.highlighted } }
 
     var body: some View {
@@ -202,32 +259,10 @@ struct SelectorView: View {
             if state.kind == .menu, case .active(let at) = phase { state.aim(at, rows: rows) }
         }
         .overlay(alignment: .topLeading) { submenu }
-        .focusable()
-        .focused($focused)
-        .focusEffectDisabled()
-        .onKeyPress(.downArrow) {
-            move(1); return .handled
-        }
-        .onKeyPress(.upArrow) {
-            move(-1); return .handled
-        }
-        .onKeyPress(.leftArrow) {
-            switchTab(-1); return .handled
-        }
-        .onKeyPress(.rightArrow) {
-            switchTab(1); return .handled
-        }
-        .onKeyPress(.return) {
-            pickHighlighted(); return .handled
-        }
-        .onKeyPress(.escape) {
-            state.close(); return .handled
-        }
         .onAppear {
             // Open on the provider that holds the current pick, with that pick highlighted.
             if state.tab == nil { state.tab = sections.first { $0.rows.contains { $0.selected } }?.id ?? sections.first?.id }
             state.highlighted = rows.first { $0.selected }?.id ?? rows.first?.id
-            focused = true
         }
     }
 
@@ -280,10 +315,7 @@ struct SelectorView: View {
         .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 6)
     }
 
-    private func select(tab: String) {
-        state.tab = tab
-        state.highlighted = rows.first { $0.selected }?.id ?? rows.first?.id
-    }
+    private func select(tab: String) { state.select(tab: tab) }
 
     private func singleHeader(_ section: SelectorSection) -> some View {
         HStack(spacing: 6) {
@@ -336,7 +368,7 @@ struct SelectorView: View {
         return Button {
             // A row with its own menu opens it; one taking words becomes a field; the rest act and close.
             if row.entry != nil {
-                state.entering = row.id
+                state.enter(row.id)
             } else if parent {
                 state.submenu = row.id
             } else {
@@ -366,6 +398,7 @@ struct SelectorView: View {
                     }
                 }
                 Spacer(minLength: linear ? 0 : 6)
+                if let shortcut = row.shortcut { Text(shortcut).font(.system(size: 12)).foregroundStyle(Theme.menuIcon) }
                 // The check's place only where something can be checked: a menu of actions has none, and kept no gap.
                 if (siblings ?? rows).contains(where: \.selected) {
                     NucleoIcon("check", size: 13).foregroundStyle(Theme.menuHot).opacity(row.selected ? 1 : 0)
@@ -449,25 +482,6 @@ struct SelectorView: View {
         let text = (row.detail ?? row.provider ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard let last = text.last else { return text }
         return ".!?…".contains(last) ? text : text + "."
-    }
-
-    private func move(_ delta: Int) {
-        let ids = rows.map(\.id)
-        guard let current = state.highlighted, let index = ids.firstIndex(of: current) else { state.highlighted = ids.first; return }
-        state.highlighted = ids[max(0, min(ids.count - 1, index + delta))]
-    }
-
-    private func switchTab(_ delta: Int) {
-        let ids = sections.map(\.id)
-        guard ids.count > 1, let index = ids.firstIndex(of: state.tab ?? ids[0]) else { return }
-        select(tab: ids[(index + delta + ids.count) % ids.count])
-    }
-
-    private func pickHighlighted() {
-        guard let row = highlightedRow else { return }
-        if row.entry != nil { state.entering = row.id; return }
-        row.pick()
-        state.close()
     }
 }
 
@@ -621,6 +635,7 @@ struct MenuItem {
     var image: Image? = nil
     var selected = false
     var children: [MenuItem] = []
+    var shortcut: String? = nil
     var action: () -> Void = {}
     init(_ title: String, _ glyph: String? = nil, image: Image? = nil, action: @escaping () -> Void) {
         self.title = title; self.glyph = glyph; self.image = image; self.action = action
@@ -637,7 +652,7 @@ struct MenuItem {
         SelectorRow(
             id: id, title: title, provider: nil, providerIcon: nil, detail: nil, context: nil, levels: [], defaultLevel: nil,
             modelID: nil, selected: selected, pick: action, glyph: glyph, fill: fill, tint: tint, image: image,
-            children: children.enumerated().map { $1.row("\(id)-\($0)") })
+            children: children.enumerated().map { $1.row("\(id)-\($0)") }, shortcut: shortcut)
     }
 }
 

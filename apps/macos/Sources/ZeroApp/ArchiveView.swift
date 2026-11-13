@@ -76,7 +76,14 @@ struct ArchiveSheet: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.task).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                Text(details(task)).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
+                // What it last heard while archived, when it heard something: why it's still here and not back.
+                if let quiet = task.quiet, let at = task.quietAt {
+                    let when = Date(timeIntervalSince1970: TimeInterval(at) / 1000).formatted(.relative(presentation: .named))
+                    Text("\(quiet) · \(when)").font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
+                        .tip(details(task))
+                } else {
+                    Text(details(task)).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
+                }
             }
             Spacer(minLength: 8)
             if restoring == task.id {

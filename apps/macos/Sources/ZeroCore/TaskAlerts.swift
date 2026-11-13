@@ -164,6 +164,7 @@ public enum TaskAlerts {
             switch state {
             case .needsYou: row.asks.first?.title ?? row.now
             case .handed: row.needs ?? row.now
+            case .trouble: row.trouble ?? row.now
             default: row.now
             }
         let name =
