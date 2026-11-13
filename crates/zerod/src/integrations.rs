@@ -1,7 +1,6 @@
-//! Integrations: GitHub and Linear seen through views, each a saved filter the user names and changes (a GitHub view
-//! is a search query; a Linear view says whose issues, which teams, which states). zerod fetches them: GitHub through
-//! `gh`, which keeps its own sign-in, and Linear through its API on a connection zerod makes in the browser and keeps in
-//! linear.json (the user's alone). Settings live in integrations.json, both in zerod's home.
+//! Integrations: who gh is signed in as, and the Linear and Slack connections zerod makes in the browser (Linear) or
+//! with a pasted token (Slack) and keeps in linear.json and slack.json (the user's alone). Following reads through
+//! them; Linear's team keys and Slack's channels make issue keys and channels in messages links.
 
 use crate::now;
 use std::collections::BTreeMap;
@@ -14,182 +13,6 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::inbox::Fut;
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct Settings {
-    pub github: Source<GitHubView>,
-    pub linear: Source<LinearView>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct Source<V> {
-    pub enabled: bool,
-    pub views: Vec<V>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct GitHubView {
-    #[serde(default)]
-    pub id: String,
-    pub name: String,
-    /// GitHub's search syntax: `is:pr is:open author:@me org:acme`.
-    pub query: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start: Option<Start>,
-}
-
-/// How a view's items start tasks: in which folder, with which agent, saying what. The prompt fills in {key},
-/// {title}, {url} and {state} (the task's state pad).
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct Start {
-    pub cwd: String,
-    pub prompt: String,
-    /// codex, claude or opencode; Claude when left out.
-    #[serde(default)]
-    pub provider: Option<String>,
-    #[serde(default)]
-    pub model: Option<String>,
-    #[serde(default)]
-    pub effort: Option<String>,
-    /// auto or unrestricted.
-    #[serde(default)]
-    pub permissions: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct LinearView {
-    #[serde(default)]
-    pub id: String,
-    pub name: String,
-    pub assignee: Assignee,
-    /// Team keys ("ENG", "WEB"); none means every team.
-    #[serde(default)]
-    pub teams: Vec<String>,
-    /// Workflow state types (backlog, unstarted, started, completed, canceled, triage); none means every state.
-    #[serde(default)]
-    pub states: Vec<String>,
-    /// The teams' own workflow states by name ("PM review", "Plan"); when any are picked they stand in for `states`.
-    #[serde(default, rename = "stateNames")]
-    pub state_names: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start: Option<Start>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum Assignee {
-    Me,
-    Anyone,
-    Nobody,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        let github = |id: &str, name: &str, query: &str| GitHubView { id: id.into(), name: name.into(), query: query.into(), start: None };
-        Settings {
-            github: Source {
-                enabled: false,
-                views: vec![
-                    github("mine", "My pull requests", "is:pr is:open author:@me archived:false"),
-                    github("reviews", "Review requests", "is:pr is:open review-requested:@me archived:false"),
-                ],
-            },
-            linear: Source {
-                enabled: false,
-                views: vec![LinearView {
-                    id: "mine".into(),
-                    name: "My issues".into(),
-                    assignee: Assignee::Me,
-                    teams: vec![],
-                    states: vec!["backlog".into(), "unstarted".into(), "started".into()],
-                    state_names: vec![],
-                    start: None,
-                }],
-            },
-        }
-    }
-}
-
-/// One row of a view, the same for both: a pull request or an issue.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct Item {
-    pub id: String,
-    /// "#19001" or "ENG-9759".
-    pub key: String,
-    pub title: String,
-    pub url: String,
-    /// The repository or the team.
-    pub place: String,
-    /// "Open", "Draft", or the issue's workflow state.
-    pub state: String,
-    /// An issue's state's colour in Linear ("#f2c94c").
-    pub color: Option<String>,
-    /// A pull request's checks: success, failure, pending.
-    pub checks: Option<String>,
-    /// A pull request's review: approved, changes requested, review required.
-    pub review: Option<String>,
-    /// Who it's by (a pull request) or with (an issue).
-    pub person: Option<String>,
-    /// Linear's priority, 1 urgent to 4 low; 0 or none for none.
-    pub priority: Option<u8>,
-    pub updated: String,
-    /// An issue's state's type (started, triage…), which its icon shows.
-    #[serde(default)]
-    pub kind: Option<String>,
-    /// An issue's labels, then its project.
-    #[serde(default)]
-    pub tags: Vec<Tag>,
-    /// The assignee's picture.
-    #[serde(default)]
-    pub avatar: Option<String>,
-    #[serde(default)]
-    pub created: Option<String>,
-    /// The task started from it, if one has been.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub task: Option<String>,
-}
-
-impl Item {
-    /// What its task is filed under: an issue's key, a pull request's repository and number.
-    pub fn ticket(&self) -> String {
-        if self.key.starts_with('#') { format!("{}{}", self.place, self.key) } else { self.key.clone() }
-    }
-}
-
-/// A task's first words, from its view's template: the item filled in, and where to keep the task's state, unless the
-/// template places {state} itself.
-pub fn task_prompt(template: &str, item: &Item, state: &str) -> String {
-    let filled = template.replace("{key}", &item.key).replace("{title}", &item.title).replace("{url}", &item.url).replace("{state}", state);
-    if template.contains("{state}") {
-        return filled;
-    }
-    let ticket = item.ticket();
-    format!(
-        "{filled}\n\nKeep this task's state (what's done, the PR, an open question, the next step) in the scratchpad {state}: read it first, \
-             and keep it current, since it outlives restarts. Put other notes for {ticket} in the scratchpads folder Tasks/{ticket}."
-    )
-}
-
-/// The items, each with the task filed under its ticket, if there is one: (ticket, session) pairs.
-pub fn with_tasks(items: Vec<Item>, tasks: &[(String, String)]) -> Vec<Item> {
-    items
-        .into_iter()
-        .map(|item| {
-            let task = tasks.iter().find(|(ticket, _)| *ticket == item.ticket()).map(|(_, session)| session.clone());
-            Item { task, ..item }
-        })
-        .collect()
-}
-
-/// A label or a project: its name, colour, and a project's icon (an emoji's shortcode, ":fire:", or one of Linear's own).
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
-pub struct Tag {
-    pub name: String,
-    pub color: Option<String>,
-    pub icon: Option<String>,
-}
-
 /// Runs a command (argv, through the login shell where it needs one) with what to write to its stdin, and returns
 /// what it printed. A seam so tests can answer for gh and curl.
 pub trait Fetcher: Send + Sync {
@@ -197,7 +20,7 @@ pub trait Fetcher: Send + Sync {
 }
 
 /// The real one: the command in the user's login environment, as agents run, given up on (and killed) after `timeout`
-/// so a hung gh or curl can't hold a view.
+/// so a hung gh or curl can't hold anything up.
 pub struct Commands {
     pub timeout: std::time::Duration,
 }
@@ -243,9 +66,6 @@ impl Fetcher for Commands {
 /// Zero's Linear OAuth app (authorization code with PKCE: a public client id and no secret).
 const LINEAR_CLIENT: &str = "6a5057347cad54818f0b528ee7763622";
 const LINEAR_GRAPHQL: &str = "https://api.linear.app/graphql";
-const GITHUB_SEARCH: &str = "query($q:String!){search(query:$q,type:ISSUE,first:50){nodes{... on PullRequest{id number title url isDraft updatedAt repository{nameWithOwner} author{login} reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}}";
-const LINEAR_ISSUES: &str = "query($filter:IssueFilter){issues(filter:$filter,first:250,orderBy:updatedAt){nodes{id identifier title url priority updatedAt createdAt state{name type color position} team{key} assignee{name avatarUrl} labels{nodes{name color}} project{name icon color}}}}";
-
 #[derive(Serialize, Deserialize, Clone)]
 struct Account {
     name: String,
@@ -253,6 +73,9 @@ struct Account {
     access: String,
     refresh: Option<String>,
     expires: i64,
+    /// Its teams' keys ("ENG"), whose issue ids link to it.
+    #[serde(default)]
+    teams: Vec<String>,
 }
 
 /// A Slack workspace connected: a user token of Zero's own Slack app (made from the app's manifest, read-only scopes),
@@ -277,7 +100,6 @@ struct SlackAccount {
 pub struct Integrations {
     home: PathBuf,
     fetcher: Arc<dyn Fetcher>,
-    settings: Mutex<Settings>,
     linear: Mutex<Option<Account>>,
     /// Every Slack workspace connected, in the order connected.
     slack: Mutex<Vec<SlackAccount>>,
@@ -288,15 +110,10 @@ pub struct Integrations {
     signing_in: Mutex<(Option<(String, String)>, bool)>,
     /// Who gh is signed in as, once it has said.
     github: Mutex<Option<String>>,
-    /// Each view's last items ("github/mine") and Linear's teams ("linear/teams"), to show while fetching them again;
-    /// in integrations-cache.json.
-    cache: Mutex<serde_json::Map<String, Value>>,
 }
 
 impl Integrations {
     pub fn open(home: &Path, fetcher: Arc<dyn Fetcher>) -> Arc<Integrations> {
-        let settings =
-            std::fs::read(home.join("integrations.json")).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default();
         let linear = std::fs::read(home.join("linear.json")).ok().and_then(|data| serde_json::from_slice(&data).ok());
         // One workspace, as slack.json kept it before there could be several, or a list.
         let slack = std::fs::read(home.join("slack.json"))
@@ -307,50 +124,21 @@ impl Integrations {
                     .or_else(|| serde_json::from_slice::<SlackAccount>(&data).ok().map(|one| vec![one]))
             })
             .unwrap_or_default();
-        let cache = std::fs::read(home.join("integrations-cache.json"))
-            .ok()
-            .and_then(|data| serde_json::from_slice(&data).ok())
-            .unwrap_or_default();
         Arc::new(Integrations {
             home: home.into(),
             fetcher,
-            settings: Mutex::new(settings),
             linear: Mutex::new(linear),
             slack: Mutex::new(slack),
             slack_homes: Mutex::default(),
             port: Mutex::new(47615),
             signing_in: Mutex::new((None, false)),
             github: Mutex::new(None),
-            cache: Mutex::new(cache),
         })
-    }
-
-    /// What `key` last fetched, however long ago.
-    pub fn cached(&self, key: &str) -> Option<Value> {
-        self.cache.lock().unwrap().get(key).cloned()
-    }
-
-    /// Keeps what `key` fetched, or with none forgets every key it starts.
-    fn remember(&self, key: &str, value: Option<Value>) {
-        let mut cache = self.cache.lock().unwrap();
-        match value {
-            Some(value) => {
-                cache.insert(key.into(), value);
-            }
-            None => cache.retain(|k, _| !k.starts_with(key)),
-        }
-        if let Ok(data) = serde_json::to_vec(&*cache) {
-            let _ = write_private(&self.home.join("integrations-cache.json"), &data);
-        }
     }
 
     /// Where Linear's sign-in comes back to (Zero's registered redirect is on 47615); a test's own port.
     pub fn listen_on(&self, port: u16) {
         *self.port.lock().unwrap() = port
-    }
-
-    pub fn settings(&self) -> Settings {
-        self.settings.lock().unwrap().clone()
     }
 
     /// Who gh is signed in as: asked until it answers, then remembered.
@@ -374,135 +162,18 @@ impl Integrations {
         self.linear.lock().unwrap().as_ref().map(|a| a.name.clone())
     }
 
-    pub fn set_enabled(&self, integration: &str, enabled: bool) -> Result<Settings, String> {
-        self.change(|settings| {
-            match integration {
-                "github" => settings.github.enabled = enabled,
-                "linear" => settings.linear.enabled = enabled,
-                other => return Err(format!("No integration {other}")),
-            };
-            Ok(())
-        })
+    /// Each of the connected workspace's team keys, to its URL key ("ENG" → "acme"): where an issue id links.
+    pub fn linear_teams(&self) -> BTreeMap<String, String> {
+        let account = self.linear.lock().unwrap();
+        account.iter().flat_map(|a| a.teams.iter().map(|team| (team.clone(), a.url_key.clone()))).collect()
     }
 
-    /// Adds the view, or replaces the one with its id; a view without an id is new.
-    pub fn save_view(&self, integration: &str, view: Value) -> Result<Settings, String> {
-        if let Some(id) = view["id"].as_str().filter(|id| !id.is_empty()) {
-            self.remember(&format!("{integration}/{id}"), None)
-        }
-        self.change(|settings| {
-            match integration {
-                "github" => {
-                    upsert(&mut settings.github.views, serde_json::from_value(view).map_err(|e| format!("Not a GitHub view: {e}"))?, |v| {
-                        &mut v.id
-                    })
-                }
-                "linear" => {
-                    upsert(&mut settings.linear.views, serde_json::from_value(view).map_err(|e| format!("Not a Linear view: {e}"))?, |v| {
-                        &mut v.id
-                    })
-                }
-                other => return Err(format!("No integration {other}")),
-            }
-            Ok(())
-        })
-    }
-
-    /// Puts the views named by `ids` first, in that order; the rest follow as they were.
-    pub fn order_views(&self, integration: &str, ids: &[String]) -> Result<Settings, String> {
-        fn order<V>(views: &mut [V], ids: &[String], id: impl Fn(&V) -> &str) {
-            views.sort_by_key(|v| ids.iter().position(|i| i == id(v)).unwrap_or(usize::MAX));
-        }
-        self.change(|settings| {
-            match integration {
-                "github" => order(&mut settings.github.views, ids, |v| &v.id),
-                "linear" => order(&mut settings.linear.views, ids, |v| &v.id),
-                other => return Err(format!("No integration {other}")),
-            };
-            Ok(())
-        })
-    }
-
-    pub fn delete_view(&self, integration: &str, id: &str) -> Result<Settings, String> {
-        self.remember(&format!("{integration}/{id}"), None);
-        self.change(|settings| {
-            match integration {
-                "github" => settings.github.views.retain(|v| v.id != id),
-                "linear" => settings.linear.views.retain(|v| v.id != id),
-                other => return Err(format!("No integration {other}")),
-            };
-            Ok(())
-        })
-    }
-
-    fn change(&self, edit: impl FnOnce(&mut Settings) -> Result<(), String>) -> Result<Settings, String> {
-        let mut settings = self.settings.lock().unwrap();
-        edit(&mut settings)?;
-        std::fs::write(self.home.join("integrations.json"), serde_json::to_vec_pretty(&*settings).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
-        Ok(settings.clone())
-    }
-
-    /// A view's name and how its items start tasks.
-    pub fn start_of(&self, integration: &str, view: &str) -> Result<(String, Option<Start>), String> {
-        let settings = self.settings();
-        let found = match integration {
-            "github" => settings.github.views.iter().find(|v| v.id == view).map(|v| (v.name.clone(), v.start.clone())),
-            "linear" => settings.linear.views.iter().find(|v| v.id == view).map(|v| (v.name.clone(), v.start.clone())),
-            other => return Err(format!("No integration {other}")),
-        };
-        found.ok_or_else(|| format!("No view {view}"))
-    }
-
-    /// What a view shows now, kept to show next time while it's fetched again.
-    pub async fn items(&self, integration: &str, view: &str) -> Result<Vec<Item>, String> {
-        let items = self.fetch(integration, view).await?;
-        self.remember(&format!("{integration}/{view}"), Some(json!(items)));
-        Ok(items)
-    }
-
-    async fn fetch(&self, integration: &str, view: &str) -> Result<Vec<Item>, String> {
-        let settings = self.settings();
-        match integration {
-            "github" => {
-                let view = settings.github.views.iter().find(|v| v.id == view).ok_or_else(|| format!("No view {view}"))?;
-                let argv = crate::adapter::on_login_path(&[
-                    "gh",
-                    "api",
-                    "graphql",
-                    "-f",
-                    &format!("query={GITHUB_SEARCH}"),
-                    "-f",
-                    &format!("q={}", view.query),
-                ]);
-                let reply = self.fetcher.run(argv, None).await?;
-                Ok(github_items(&serde_json::from_str(&reply).map_err(|e| format!("gh answered oddly: {e}"))?))
-            }
-            "linear" => {
-                let view = settings.linear.views.iter().find(|v| v.id == view).ok_or_else(|| format!("No view {view}"))?;
-                let reply = self.linear(json!({"query": LINEAR_ISSUES, "variables": {"filter": linear_filter(view)}})).await?;
-                Ok(linear_items(&reply))
-            }
-            other => Err(format!("No integration {other}")),
-        }
-    }
-
-    /// Linear's teams, each with its own workflow states in the order Linear lists them, for picking a view's.
-    pub async fn linear_teams(&self) -> Result<Value, String> {
-        let reply = self.linear(json!({"query": "{teams(first:100){nodes{key name states{nodes{name type color position}}}}}"})).await?;
-        let teams: Value = reply["data"]["teams"]["nodes"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|team| {
-                let mut states = team["states"]["nodes"].as_array().cloned().unwrap_or_default();
-                by_workflow(&mut states, |state| state);
-                json!({"key": team["key"], "name": team["name"],
-                   "states": states.iter().map(|s| json!({"name": s["name"], "type": s["type"], "color": s["color"]})).collect::<Vec<_>>()})
-            })
-            .collect();
-        self.remember("linear/teams", Some(teams.clone()));
-        Ok(teams)
+    /// Asks Linear for the workspace's teams again (one made since the connection links too).
+    pub async fn refresh_linear_teams(&self) -> Result<(), String> {
+        let reply = self.linear(json!({"query": "{teams(first:250){nodes{key}}}"})).await?;
+        let mut account = self.linear.lock().unwrap().clone().ok_or("Linear disconnected")?;
+        account.teams = team_keys(&reply);
+        self.keep(Some(account))
     }
 
     /// One GraphQL request to Linear on the connection, refreshed first if it has run out.
@@ -609,19 +280,19 @@ impl Integrations {
             ("code_verifier", verifier),
         ]);
         let (access, refresh, expires) = self.exchange(&form).await?;
-        *self.linear.lock().unwrap() = Some(Account { name: String::new(), url_key: String::new(), access, refresh, expires });
-        let viewer = self.linear(json!({"query": "{viewer{organization{name urlKey}}}"})).await?;
+        *self.linear.lock().unwrap() =
+            Some(Account { name: String::new(), url_key: String::new(), access, refresh, expires, teams: vec![] });
+        let viewer = self.linear(json!({"query": "{viewer{organization{name urlKey}} teams(first:250){nodes{key}}}"})).await?;
         let organization = &viewer["data"]["viewer"]["organization"];
         let mut account = self.linear.lock().unwrap().clone().ok_or("Linear disconnected")?;
         account.name = organization["name"].as_str().unwrap_or("Linear").into();
         account.url_key = organization["urlKey"].as_str().unwrap_or_default().into();
+        account.teams = team_keys(&viewer);
         self.keep(Some(account.clone()))?;
         Ok(account.name)
     }
 
-    /// Forgets the connection and everything fetched through it.
     pub fn disconnect_linear(&self) -> Result<(), String> {
-        self.remember("linear/", None);
         self.keep(None)
     }
 
@@ -763,113 +434,9 @@ fn write_private(file: &Path, data: &[u8]) -> Result<(), String> {
     std::io::Write::write_all(&mut out, data).map_err(|e| e.to_string())
 }
 
-fn upsert<V>(views: &mut Vec<V>, mut view: V, id: impl Fn(&mut V) -> &mut String) {
-    if id(&mut view).is_empty() {
-        *id(&mut view) = random()[..8].to_string()
-    }
-    let key = id(&mut view).clone();
-    match views.iter_mut().position(|v| *id(v) == key) {
-        Some(i) => views[i] = view,
-        None => views.push(view),
-    }
-}
-
-pub fn github_items(reply: &Value) -> Vec<Item> {
-    reply["data"]["search"]["nodes"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|pr| {
-            let review = pr["reviewDecision"].as_str().map(|d| d.to_lowercase().replace('_', " "));
-            Some(Item {
-                id: pr["id"].as_str()?.into(),
-                key: format!("#{}", pr["number"].as_i64()?),
-                title: pr["title"].as_str()?.into(),
-                url: pr["url"].as_str()?.into(),
-                place: pr["repository"]["nameWithOwner"].as_str().unwrap_or_default().into(),
-                state: if pr["isDraft"] == true { "Draft" } else { "Open" }.into(),
-                color: None,
-                checks: pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["state"].as_str().map(|s| s.to_lowercase()),
-                review,
-                person: pr["author"]["login"].as_str().map(Into::into),
-                priority: None,
-                updated: pr["updatedAt"].as_str().unwrap_or_default().into(),
-                ..Default::default()
-            })
-        })
-        .collect()
-}
-
-pub fn linear_filter(view: &LinearView) -> Value {
-    let mut filter = serde_json::Map::new();
-    match view.assignee {
-        Assignee::Me => {
-            filter.insert("assignee".into(), json!({"isMe": {"eq": true}}));
-        }
-        Assignee::Nobody => {
-            filter.insert("assignee".into(), json!({"null": true}));
-        }
-        Assignee::Anyone => {}
-    }
-    if !view.teams.is_empty() {
-        filter.insert("team".into(), json!({"key": {"in": view.teams}}));
-    }
-    if !view.state_names.is_empty() {
-        filter.insert("state".into(), json!({"name": {"in": view.state_names}}));
-    } else if !view.states.is_empty() {
-        filter.insert("state".into(), json!({"type": {"in": view.states}}));
-    }
-    Value::Object(filter)
-}
-
-/// Grouped by state as Linear lists them: in progress, to do, backlog, triage, done, canceled; within each type, the
-/// furthest along (highest position) first.
-fn by_workflow(values: &mut [Value], state: impl Fn(&Value) -> &Value) {
-    const TYPES: [&str; 6] = ["started", "unstarted", "backlog", "triage", "completed", "canceled"];
-    let rank = |value: &Value| TYPES.iter().position(|t| state(value)["type"] == *t).unwrap_or(TYPES.len());
-    let position = |value: &Value| state(value)["position"].as_f64().unwrap_or(0.0);
-    values.sort_by(|a, b| rank(a).cmp(&rank(b)).then(position(b).total_cmp(&position(a))));
-}
-
-pub fn linear_items(reply: &Value) -> Vec<Item> {
-    let mut issues = reply["data"]["issues"]["nodes"].as_array().cloned().unwrap_or_default();
-    by_workflow(&mut issues, |issue| &issue["state"]);
-    issues
-        .iter()
-        .filter_map(|issue| {
-            Some(Item {
-                id: issue["id"].as_str()?.into(),
-                key: issue["identifier"].as_str()?.into(),
-                title: issue["title"].as_str()?.into(),
-                url: issue["url"].as_str()?.into(),
-                place: issue["team"]["key"].as_str().unwrap_or_default().into(),
-                state: issue["state"]["name"].as_str().unwrap_or_default().into(),
-                color: issue["state"]["color"].as_str().map(Into::into),
-                checks: None,
-                review: None,
-                person: issue["assignee"]["name"].as_str().map(Into::into),
-                priority: issue["priority"].as_u64().map(|p| p as u8),
-                updated: issue["updatedAt"].as_str().unwrap_or_default().into(),
-                kind: issue["state"]["type"].as_str().map(Into::into),
-                avatar: issue["assignee"]["avatarUrl"].as_str().map(Into::into),
-                created: issue["createdAt"].as_str().map(Into::into),
-                task: None,
-                tags: issue["labels"]["nodes"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .chain(issue["project"].is_object().then_some(&issue["project"]))
-                    .filter_map(|tag| {
-                        Some(Tag {
-                            name: tag["name"].as_str()?.into(),
-                            color: tag["color"].as_str().map(Into::into),
-                            icon: tag["icon"].as_str().map(Into::into),
-                        })
-                    })
-                    .collect(),
-            })
-        })
-        .collect()
+/// The team keys in a reply's `teams`, upper-cased as issue ids write them.
+fn team_keys(reply: &Value) -> Vec<String> {
+    reply["data"]["teams"]["nodes"].as_array().into_iter().flatten().filter_map(|t| t["key"].as_str()).map(str::to_uppercase).collect()
 }
 
 async fn slack_call(fetcher: &dyn Fetcher, token: &str, method: &str, params: &[(&str, &str)]) -> Result<Value, String> {
