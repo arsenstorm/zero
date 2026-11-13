@@ -148,7 +148,7 @@ pub fn user_message(text: &str, images: &[String]) -> Value {
         .into_iter()
         .filter_map(|part| match part {
             crate::images::Part::Text(text) => Some(json!({"type": "text", "text": text})),
-            crate::images::Part::Image(path) => crate::images::data(path)
+            crate::images::Part::Image(path) => crate::images::data(&path)
                 .map(|(mime, data)| json!({"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}})),
         })
         .collect();

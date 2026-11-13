@@ -79,6 +79,46 @@ fn each_provider_gets_images_its_own_way() {
     );
 }
 
+/// A tiny PNG made `width`×`height` by sips, as a screenshot would be.
+fn picture(dir: &std::path::Path, name: &str, width: u32, height: u32) -> String {
+    const ONE: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    let path = dir.join(name);
+    std::fs::write(&path, zerod::images::unbase64(ONE).unwrap()).unwrap();
+    let done =
+        std::process::Command::new("/usr/bin/sips").args(["-z", &height.to_string(), &width.to_string()]).arg(&path).output().unwrap();
+    assert!(done.status.success());
+    path.to_str().unwrap().to_string()
+}
+
+fn size(path: &str) -> (u32, u32) {
+    let out = std::process::Command::new("/usr/bin/sips").args(["-g", "pixelWidth", "-g", "pixelHeight", path]).output().unwrap();
+    let words: Vec<u32> = String::from_utf8_lossy(&out.stdout).split_whitespace().filter_map(|w| w.parse().ok()).collect();
+    (words[0], words[1])
+}
+
+#[test]
+fn a_big_image_goes_to_the_agent_at_most_1600_a_side_its_file_kept_as_it_was() {
+    // Claude Code keeps recent messages word for word through compacting, images too: full-size screenshots fill a
+    // fresh context. The agent gets a JPEG copy at most 1600 px a side; the user's file stays as it was.
+    let dir = temp_dir("images-big");
+    let big = picture(&dir, "shot.png", 3000, 2000);
+    let small = picture(&dir, "small.png", 800, 600);
+    let before = std::fs::read(&big).unwrap();
+    let message = zerod::claude::user_message("look", &[big.clone(), small.clone()]);
+    let image = &message["message"]["content"][1]["source"];
+    assert_eq!(image["media_type"], "image/jpeg");
+    let sent = dir.join("sent.jpg");
+    std::fs::write(&sent, zerod::images::unbase64(image["data"].as_str().unwrap()).unwrap()).unwrap();
+    assert_eq!(size(sent.to_str().unwrap()), (1600, 1066));
+    assert_eq!(std::fs::read(&big).unwrap(), before, "the original kept");
+    assert_eq!(message["message"]["content"][2]["source"]["media_type"], "image/png", "a small one as it is");
+    let input = zerod::codex::input("look", &[big.clone(), small.clone()]);
+    let path = input[1]["path"].as_str().unwrap();
+    assert_ne!(path, big, "Codex gets the copy's file");
+    assert_eq!(size(path), (1600, 1066));
+    assert_eq!(input[2]["path"], small.as_str());
+}
+
 #[tokio::test]
 async fn a_message_with_an_image_keeps_it_through_a_restart() {
     let dir = temp_dir("images-kept");

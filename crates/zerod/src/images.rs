@@ -4,12 +4,13 @@ use std::path::Path;
 
 /// A message's parts in order: its words, and each image where its "[Image #n]" (n counting from 1) stands in them.
 /// The token stays in the words, so the agent can call the image by its number; images never named come last.
-pub enum Part<'a> {
+/// Each image as the agent gets it: at most LARGEST a side (sent()).
+pub enum Part {
     Text(String),
-    Image(&'a str),
+    Image(String),
 }
 
-pub fn parts<'a>(text: &str, images: &'a [String]) -> Vec<Part<'a>> {
+pub fn parts(text: &str, images: &[String]) -> Vec<Part> {
     const TOKEN: &str = "[Image #";
     let mut parts = vec![];
     let mut placed = vec![false; images.len()];
@@ -24,7 +25,7 @@ pub fn parts<'a>(text: &str, images: &'a [String]) -> Vec<Part<'a>> {
                 let end = start + TOKEN.len() + digits + 1;
                 words.push_str(&rest[..end]);
                 parts.push(Part::Text(std::mem::take(&mut words)));
-                parts.push(Part::Image(&images[n - 1]));
+                parts.push(Part::Image(sent(&images[n - 1])));
                 placed[n - 1] = true;
                 rest = &rest[end..];
             }
@@ -38,8 +39,31 @@ pub fn parts<'a>(text: &str, images: &'a [String]) -> Vec<Part<'a>> {
     if !words.trim().is_empty() {
         parts.push(Part::Text(words))
     }
-    parts.extend(images.iter().zip(placed).filter(|(_, placed)| !placed).map(|(path, _)| Part::Image(path)));
+    parts.extend(images.iter().zip(placed).filter(|(_, placed)| !placed).map(|(path, _)| Part::Image(sent(path))));
     parts
+}
+
+/// The longest side an image goes to the agent at: Claude Code keeps recent messages word for word through compacting,
+/// images too, and full-size screenshots fill a fresh context.
+const LARGEST: u32 = 1600;
+
+/// The image's file as the agent gets it: a JPEG copy beside it at most LARGEST a side (macOS's sips makes it, once),
+/// the user's file kept as it was; the file itself when it's small enough or can't be read as an image.
+pub fn sent(path: &str) -> String {
+    let copy = format!("{path}.{LARGEST}.jpg");
+    if Path::new(&copy).exists() {
+        return copy;
+    }
+    let sips = |args: &[&str]| std::process::Command::new("/usr/bin/sips").args(args).stderr(std::process::Stdio::null()).output().ok();
+    let Some(sizes) = sips(&["-g", "pixelWidth", "-g", "pixelHeight", path]).filter(|o| o.status.success()) else { return path.into() };
+    let largest = String::from_utf8_lossy(&sizes.stdout).split_whitespace().filter_map(|w| w.parse::<u32>().ok()).max().unwrap_or(0);
+    if largest <= LARGEST {
+        return path.into();
+    }
+    match sips(&["-Z", &LARGEST.to_string(), "-s", "format", "jpeg", "-s", "formatOptions", "80", path, "--out", &copy]) {
+        Some(done) if done.status.success() => copy,
+        _ => path.into(),
+    }
 }
 
 /// The image's type and its bytes in base64, as Claude's and ACP's messages carry them; none when it can't be read.

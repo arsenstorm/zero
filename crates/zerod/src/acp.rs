@@ -447,7 +447,7 @@ pub fn blocks(text: &str, images: &[String]) -> Value {
         .filter_map(|part| match part {
             crate::images::Part::Text(text) => Some(json!({"type": "text", "text": text})),
             crate::images::Part::Image(path) => {
-                crate::images::data(path).map(|(mime, data)| json!({"type": "image", "mimeType": mime, "data": data}))
+                crate::images::data(&path).map(|(mime, data)| json!({"type": "image", "mimeType": mime, "data": data}))
             }
         })
         .collect();
