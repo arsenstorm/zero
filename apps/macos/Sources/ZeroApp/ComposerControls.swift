@@ -25,6 +25,9 @@ struct QueueStrip: View {
     @State private var control: String?
     @State private var overControls: String?
 
+    /// The height of a tab's heading: the queue's, and a docked card's.
+    static let heading: CGFloat = 28
+
     var body: some View {
         // The project tab's place and shape, behind the composer's top edge; inside it the panel's parts: a strip
         // naming it, and the queue as rows on their own surface.
@@ -42,7 +45,8 @@ struct QueueStrip: View {
                 }
             }
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 12).frame(height: 28)
+            // As a docked card's heading sits (its shell's 2 and 14), so "Queued" and "Question" line up, sunk or not.
+            .padding(.horizontal, 16).frame(height: Self.heading)
             VStack(spacing: 0) {
                 // By place, not id: a message just queued shows at once as Zero's own copy, then as zerod's (a new id),
                 // in the same place; by id, the row went and another came in its stead.

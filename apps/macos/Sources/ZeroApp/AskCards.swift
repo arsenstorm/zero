@@ -35,7 +35,7 @@ struct QuestionCard: View {
                 ).tracking(-0.2)
             }
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 14).padding(.vertical, 7)
+            .padding(.horizontal, 14).frame(height: QueueStrip.heading)
             .modifier(PagedStrip())
         } content: {
             Group {
@@ -107,7 +107,7 @@ struct AgentAskCard: View {
             }
             // Whether the task is done: a question still, in the Done state's colour, so it reads as the one it is.
             .foregroundStyle(ask.doneCheck == true ? AnyShapeStyle(Theme.doneInk) : AnyShapeStyle(.secondary))
-            .padding(.horizontal, 14).padding(.vertical, 7)
+            .padding(.horizontal, 14).frame(height: QueueStrip.heading)
             .modifier(PagedStrip())
         } content: {
             CardView(ask: ask, controller: inbox, focus: $focus, flat: true, showsByline: false)
@@ -249,7 +249,7 @@ struct ApprovalCard: View {
                 Text("Approval").font(.system(size: 12, weight: .medium)).tracking(-0.2)
             }
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 14).padding(.vertical, 7)
+            .padding(.horizontal, 14).frame(height: QueueStrip.heading)
             .modifier(PagedStrip())
         } content: {
             VStack(alignment: .leading, spacing: 10) {
