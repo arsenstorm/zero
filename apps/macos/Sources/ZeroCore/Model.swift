@@ -132,6 +132,21 @@ public struct Ask: Codable, Identifiable, Equatable, Sendable {
     /// An option ending with "…" asks for text: picking it opens an input, and the answer is "label: text".
     public static func expectsText(_ option: String) -> Bool { option.hasSuffix("…") || option.hasSuffix("...") }
 
+    /// An answer said rather than tapped (Siri, a notification's reply): the option it names ("yes" for "Yes
+    /// (Recommended)"), else its words in the option that asks for words, else a reply where there are no options.
+    public enum Spoken: Equatable { case option(Int), words(Int, String), reply(String) }
+    public func spoken(_ said: String) -> Spoken? {
+        let said = said.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !said.isEmpty else { return nil }
+        if options.isEmpty { return .reply(said) }
+        let bare = { (text: String) in
+            text.lowercased().replacingOccurrences(of: #"\(.*?\)|[^\p{L}\p{N} ]"#, with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespaces)
+        }
+        if let index = options.firstIndex(where: { !Self.expectsText($0) && bare($0) == bare(said) }) { return .option(index) }
+        return options.firstIndex(where: Self.expectsText).map { .words($0, said) }
+    }
+
     public init(
         kind: AskKind, title: String, body: String = "", options: [String] = [],
         command: String? = nil, cwd: String? = nil, agent: AgentIdentity, ttl: TimeInterval = 3600

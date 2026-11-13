@@ -152,13 +152,15 @@ import ZeroCore
 
     /// A task's notification on every phone that takes them: its words sealed for each, so Apple carries only a
     /// generic line. One per task (its collapse id), replaced by the next.
-    func push(_ alert: TaskAlert, sound: String) {
+    /// `ask`: the ask it's about, while it waits on the user: its options become the notification's buttons.
+    func push(_ alert: TaskAlert, sound: String, ask: Ask? = nil) {
         for device in devices {
-            guard let token = device.push, let note = try? JSONEncoder().encode(["title": alert.title, "body": alert.body]),
+            guard let token = device.push, let note = try? JSONEncoder().encode(TaskAlerts.note(alert, ask: ask)),
                 // Off the wire's queue: sealing reads only the Mac's key, which never changes.
                 let sealed = try? wire.host.seal(note, for: device)
             else { continue }
-            var aps: [String: Any] = ["alert": ["title": "Zero", "body": "A task has news"], "mutable-content": 1]
+            // content-available: the phone's app woken a moment too, to tell the watch (its complications).
+            var aps: [String: Any] = ["alert": ["title": "Zero", "body": "A task has news"], "mutable-content": 1, "content-available": 1]
             if !sound.isEmpty { aps["sound"] = sound + ".aiff" }
             APNs.send(["aps": aps, "zero": sealed.base64EncodedString()], to: token, collapse: alert.session, via: pushVia)
             pushed.insert(alert.session)
@@ -568,7 +570,7 @@ struct DevicesPage: View {
             SettingsSection(
                 title: "Phones",
                 accessory: AnyView(
-                    GhostButton(title: "Pair phone…", icon: "plus", open: pairing) { pairing = true }
+                    GhostButton(title: "Pair phone", icon: "plus", open: pairing) { pairing = true }
                         .disabled(phones.relay.isEmpty).tip(phones.relay.isEmpty ? "Set a relay first" : ""))
             ) {
                 Rows {

@@ -1238,10 +1238,9 @@ struct AskCard: View {
     /// In a list's row, which is the card already: no card of its own (never a card in a card).
     var flat = false
     /// Under its task's name in the inbox (InboxAskRow): what kind it is in a word, the question in plain weight, its
-    /// reasons a few lines until tapped.
+    /// reasons in full.
     var inRow = false
     @State private var typing: Int?
-    @State private var expanded = false
     @State private var words = ""
     @Environment(\.showMessage) private var showMessage
 
@@ -1310,10 +1309,8 @@ struct AskCard: View {
             Text(headline).font(inRow ? .body : .body.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
             aboutLine
             if let supporting {
+                // Whole, always: zerod keeps it to 280 characters.
                 MarkdownView(text: supporting).font(.subheadline).foregroundStyle(.secondary)
-                    .lineLimit(inRow && !expanded ? 3 : nil)
-                    .contentShape(Rectangle())
-                    .onTapGesture { if inRow { expanded.toggle() } }
             }
             if let command = ask.command {
                 // What runs is what's read: the command, the script it runs, and what it printed.

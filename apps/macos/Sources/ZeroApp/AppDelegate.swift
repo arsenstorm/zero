@@ -191,7 +191,8 @@ import ZeroCore
                 navigation.worker = nil
                 openWorkspace()
                 NSApp.activate()
-            })
+            },
+            ask: { [store] id in store.ask(id) })
     }
 
     private func connectInbox() {

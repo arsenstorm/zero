@@ -305,6 +305,14 @@ struct SendToTaskIntent {
             + (links.isEmpty ? "" : "\n\n" + links.map(\.absoluteString).joined(separator: "\n"))
         let images = attachments.filter { $0.type?.conforms(to: .image) ?? false }.map(\.data)
         guard !words.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty else { throw ZeroSiriError.nothingToSend }
+        // The task waiting on an ask of its own (its notification is the ask): the words answer it, when they can.
+        if images.isEmpty, let ask = PhoneModel.shared.waiting.first(where: { $0.session == session }),
+            let said = await PhoneModel.shared.answer(ask, saying: words)
+        {
+            let answered = ZeroMessage(
+                id: session + "/sent-" + UUID().uuidString, task: ZeroTask(row), author: ZeroAgent(me: ()), text: said, date: Date())
+            return .result(value: [answered], dialog: IntentDialog(full: "Answered \(row.task): \(said).", supporting: "Answered"))
+        }
         try await PhoneModel.shared.send(words, images: images, to: session)
         let sent = ZeroMessage(
             id: session + "/sent-" + UUID().uuidString, task: ZeroTask(row), author: ZeroAgent(me: ()), text: words, date: Date())
@@ -427,13 +435,195 @@ struct ResumeAgentsIntent: AppIntent {
     }
 }
 
+// MARK: Asks: what agents wait on you for
+
+/// A question an agent is waiting on you for, as the Inbox shows it.
+struct ZeroAsk: IndexedEntity {
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Question"
+    static let defaultQuery = ZeroAskQuery()
+    var id: String
+    var title: String
+    var from: String
+    var options: [String]
+
+    var displayRepresentation: DisplayRepresentation {
+        let subtitle = from + (options.isEmpty ? "" : " · " + options.joined(separator: ", "))
+        return DisplayRepresentation(title: "\(title)", subtitle: "\(subtitle)")
+    }
+
+    @MainActor init(_ ask: Ask) {
+        id = ask.id
+        title = TaskAlerts.plain(ask.title, limit: 200)
+        from = ask.session.flatMap { PhoneModel.shared.row($0)?.task } ?? ask.agent.label ?? ask.agent.name
+        options = ask.options
+    }
+}
+
+struct ZeroAskQuery: EntityStringQuery {
+    @MainActor func entities(for identifiers: [String]) async throws -> [ZeroAsk] {
+        _ = await PhoneModel.shared.ready()
+        return PhoneModel.shared.asks.filter { identifiers.contains($0.id) }.map(ZeroAsk.init)
+    }
+    /// By its words or its task's name: "the one about the release", "Zero development's".
+    @MainActor func entities(matching string: String) async throws -> [ZeroAsk] {
+        let words = string.lowercased().split(separator: " ").filter { !["the", "ask", "question", "one", "about"].contains($0) }
+        return try await suggestedEntities().filter { ask in
+            words.allSatisfy { (ask.title + " " + ask.from).lowercased().contains($0) }
+        }
+    }
+    @MainActor func suggestedEntities() async throws -> [ZeroAsk] {
+        _ = await PhoneModel.shared.ready()
+        return PhoneModel.shared.waiting.map(ZeroAsk.init)
+    }
+}
+
+/// "Answer Zero: yes": the question named (else the oldest waiting) answered with the option said, or the words.
+struct AnswerAskIntent: AppIntent {
+    static let title: LocalizedStringResource = "Answer a question"
+    static let description = IntentDescription("Answers a question an agent in Zero is waiting on you for.")
+    @Parameter(title: "Question") var ask: ZeroAsk?
+    @Parameter(title: "Answer", requestValueDialog: "What's your answer?") var answer: String
+    static var parameterSummary: some ParameterSummary { Summary("Answer \(\.$ask) with \(\.$answer)") }
+
+    @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
+        let model = PhoneModel.shared
+        guard await model.ready() else { throw ZeroSiriError.offline }
+        guard let target = ask.flatMap({ ask in model.waiting.first { $0.id == ask.id } }) ?? model.waiting.first else {
+            throw ZeroSiriError.noAsk
+        }
+        guard let said = await model.answer(target, saying: answer) else { throw ZeroSiriError.options(target.options) }
+        let title = TaskAlerts.plain(target.title, limit: 80)
+        return .result(dialog: IntentDialog(full: "Answered “\(title)”: \(said).", supporting: "Answered"))
+    }
+}
+
+// MARK: Tasks: start one, pause or stop one
+
+/// One of the Mac's project folders, where a new task starts.
+struct ZeroProject: AppEntity {
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Project"
+    static let defaultQuery = ZeroProjectQuery()
+    var id: String
+    var name: String { (id as NSString).lastPathComponent }
+    var displayRepresentation: DisplayRepresentation { DisplayRepresentation(title: "\(name)", subtitle: "\(id)") }
+}
+
+struct ZeroProjectQuery: EntityStringQuery {
+    @MainActor func entities(for identifiers: [String]) async throws -> [ZeroProject] { identifiers.map(ZeroProject.init) }
+    @MainActor func entities(matching string: String) async throws -> [ZeroProject] {
+        let said = string.lowercased()
+        return try await suggestedEntities().filter { $0.name.lowercased().contains(said) || said.contains($0.name.lowercased()) }
+    }
+    @MainActor func suggestedEntities() async throws -> [ZeroProject] {
+        _ = await PhoneModel.shared.ready()
+        return await PhoneModel.shared.projects().map(ZeroProject.init)
+    }
+}
+
+/// "Start a task in Zero": what to do, in a project, on the agent New task last used.
+struct StartTaskIntent: AppIntent {
+    static let title: LocalizedStringResource = "Start a task"
+    static let description = IntentDescription("Starts a Zero task on your Mac, in one of its projects.")
+    @Parameter(title: "What to do", requestValueDialog: "What should it do?") var prompt: String
+    @Parameter(title: "Project", requestValueDialog: "In which project?") var project: ZeroProject
+    static var parameterSummary: some ParameterSummary { Summary("Start \(\.$prompt) in \(\.$project)") }
+
+    @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
+        let model = PhoneModel.shared
+        guard await model.ready() else { throw ZeroSiriError.offline }
+        let provider = Provider(rawValue: UserDefaults.standard.string(forKey: "newTaskProvider") ?? "") ?? .claude
+        _ = try await model.start(prompt, in: project.id, with: provider, model: nil, effort: nil)
+        return .result(dialog: IntentDialog(full: "Started it in \(project.name).", supporting: "Started"))
+    }
+}
+
+/// One task on hold: it finishes the step it's on, then waits until resumed.
+struct PauseTaskIntent: AppIntent {
+    static let title: LocalizedStringResource = "Pause a task"
+    static let description = IntentDescription("The task finishes the step it's on and stops until you resume it.")
+    @Parameter(title: "Task") var task: ZeroTask
+
+    @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
+        guard await PhoneModel.shared.ready() else { throw ZeroSiriError.offline }
+        Task { _ = await PhoneModel.shared.pause([task.id]) }
+        return .result(dialog: IntentDialog(full: "Pausing \(task.displayName).", supporting: "Pausing"))
+    }
+}
+
+/// Its turn stopped now, mid-step, as the stop button does.
+struct StopTaskIntent: AppIntent {
+    static let title: LocalizedStringResource = "Stop a task"
+    static let description = IntentDescription("Stops what the task is doing now.")
+    @Parameter(title: "Task") var task: ZeroTask
+
+    @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
+        guard await PhoneModel.shared.ready() else { throw ZeroSiriError.offline }
+        await PhoneModel.shared.interrupt(task.id)
+        return .result(dialog: IntentDialog(full: "Stopped \(task.displayName).", supporting: "Stopped"))
+    }
+}
+
+// MARK: Accounts and their use
+
+/// One of the CLIs' accounts Zero keeps, with its use (the Mac's rings).
+struct ZeroAccount: AppEntity {
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Account"
+    static let defaultQuery = ZeroAccountQuery()
+    var id: String
+    var label: String
+    var said: String
+    var displayRepresentation: DisplayRepresentation { DisplayRepresentation(title: "\(label)", subtitle: "\(said)") }
+
+    init(_ signin: ZerodLink.SignIn, _ usage: Usage) {
+        id = signin.id
+        label = signin.cli.title + " (" + signin.label + ")"
+        let now = Int(Date().timeIntervalSince1970)
+        let windows = ["7 days", "5 hours"].compactMap { name in
+            usage.windows.first { $0.name == name }.map {
+                (name == "7 days" ? "week " : "5 hours ") + "\(Int((UsageShown.used($0, now: now) * 100).rounded()))%"
+            }
+        }
+        said =
+            UsageShown.limited(usage, now: now)
+            ? "at its limit"
+            : usage.noLimits == true ? "no plan limits" : windows.joined(separator: ", ")
+    }
+}
+
+struct ZeroAccountQuery: EntityQuery {
+    @MainActor func entities(for identifiers: [String]) async throws -> [ZeroAccount] {
+        try await suggestedEntities().filter { identifiers.contains($0.id) }
+    }
+    @MainActor func suggestedEntities() async throws -> [ZeroAccount] {
+        _ = await PhoneModel.shared.ready()
+        return await PhoneModel.shared.usage().map(ZeroAccount.init)
+    }
+}
+
+/// "How much have I used in Zero?": each account's week and 5 hours, the most used first.
+struct UsageIntent: AppIntent {
+    static let title: LocalizedStringResource = "How much I've used"
+    static let description = IntentDescription("Each account's use of its plan, as Zero's rings show it.")
+
+    @MainActor func perform() async throws -> some ReturnsValue<[ZeroAccount]> & ProvidesDialog {
+        guard await PhoneModel.shared.ready() else { throw ZeroSiriError.offline }
+        let accounts = await PhoneModel.shared.usage().map(ZeroAccount.init)
+        guard !accounts.isEmpty else { return .result(value: [], dialog: "Zero hasn't read any account's use yet.") }
+        let said = accounts.map { $0.label + ": " + $0.said }.joined(separator: ". ")
+        return .result(value: accounts, dialog: IntentDialog(full: "\(said).", supporting: "Usage"))
+    }
+}
+
 enum ZeroSiriError: Error, CustomLocalizedStringResourceConvertible {
-    case offline, noTask, nothingToSend
+    case offline, noTask, nothingToSend, noAsk
+    case options([String])
     var localizedStringResource: LocalizedStringResource {
         switch self {
         case .offline: "Can't reach your Mac. Zero needs to be open there."
         case .noTask: "There's no Zero task by that name."
         case .nothingToSend: "There's nothing to send."
+        case .noAsk: "Nothing is waiting on you."
+        case let .options(options): "Say one of: \(options.joined(separator: ", "))."
         }
     }
 }
@@ -454,6 +644,23 @@ struct ZeroShortcuts: AppShortcutsProvider {
                 "How is \(\.$task) doing in \(.applicationName)", "What's \(\.$task) doing in \(.applicationName)",
                 "Check on \(\.$task) in \(.applicationName)",
             ], shortTitle: "Check a task", systemImageName: "checklist")
+        AppShortcut(
+            intent: AnswerAskIntent(),
+            phrases: [
+                "Answer \(.applicationName)", "Answer a question in \(.applicationName)", "Reply to \(\.$ask) in \(.applicationName)",
+            ],
+            shortTitle: "Answer", systemImageName: "hand.raised")
+        AppShortcut(
+            intent: StartTaskIntent(),
+            phrases: [
+                "Start a task in \(.applicationName)", "Start a task in \(\.$project) in \(.applicationName)",
+                "New \(.applicationName) task",
+            ],
+            shortTitle: "Start a task", systemImageName: "plus.bubble")
+        AppShortcut(
+            intent: UsageIntent(),
+            phrases: ["How much have I used in \(.applicationName)", "What's my usage in \(.applicationName)"],
+            shortTitle: "Usage", systemImageName: "gauge")
         AppShortcut(
             intent: OpenTaskIntent(), phrases: ["Open \(\.$target) in \(.applicationName)"], shortTitle: "Open a task",
             systemImageName: "bubble.left")

@@ -968,12 +968,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         -> Bool
     {
         UNUserNotificationCenter.current().delegate = self
+        // The watch's way to the Mac (iOS starts the app in the background when the watch asks something of it).
+        WatchBridge.shared.start()
         // A task's notification (the Notify extension marks them "task"): Reply, written on the notification itself.
         let reply = UNTextInputNotificationAction(
             identifier: Self.reply, title: "Reply", options: [], textInputButtonTitle: "Send", textInputPlaceholder: "Reply to this task")
-        UNUserNotificationCenter.current().setNotificationCategories([
-            UNNotificationCategory(identifier: "task", actions: [reply], intentIdentifiers: [], options: [])
-        ])
+        // Beside the asks' (AskActions), which the Notify extension registers as they come.
+        Task { await AskActions.register(UNNotificationCategory(identifier: "task", actions: [reply], intentIdentifiers: [], options: [])) }
         return true
     }
     static let reply = "reply"
@@ -984,6 +985,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     }
 
     func application(_ application: UIApplication, didReceiveRemoteNotification info: [AnyHashable: Any]) async -> UIBackgroundFetchResult {
+        // Every push wakes the app a moment (the Mac marks them so): the watch hears what changed.
+        await WatchBridge.shared.refresh()
         guard let ids = info["clear"] as? [String] else { return .noData }
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids)
         // Nothing on screen changed. New data makes iOS draw the app again, suspended, for the app switcher, and that
@@ -1000,6 +1003,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let id = response.notification.request.identifier
+        // An ask answered from its notification (here or on the watch): an option, an option's words, or a reply.
+        if let ask = response.notification.request.content.userInfo["ask"] as? String, await answer(ask, response) { return }
         // Replied to from the notification: to the task, through a link of its own, as the share sheet sends (iOS may
         // have started the app in the background just for this, before any page). Queued: between turns it goes at
         // once; while the task works, after its turn, never cutting into it.
@@ -1009,6 +1014,29 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             try? await ZerodLink(connection: lines).queue(session: id, text: text)
             return
         }
+        await openNotified(id)
+    }
+
+    /// Answered through a link of its own, as a reply is: whether it was an answer.
+    private func answer(_ ask: String, _ response: UNNotificationResponse) async -> Bool {
+        let action = response.actionIdentifier
+        let text = (response as? UNTextInputNotificationResponse)?.userText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let option = action.hasPrefix(AskActions.option) ? Int(action.dropFirst(AskActions.option.count)) : nil
+        guard option != nil || action == AskActions.reply else { return false }
+        if text?.isEmpty == true { return true }
+        guard let pairing = Pairing.load(), let lines = try? TunnelLines(pairing: pairing) else { return true }
+        let link = ZerodLink(connection: lines)
+        defer { link.close() }
+        switch (option, text) {
+        case let (index?, text?): try? await link.answer(ask, option: index, text: text)
+        case let (index?, nil): try? await link.choose(ask, option: index)
+        case let (nil, text?): try? await link.reply(ask, text: text)
+        default: break
+        }
+        return true
+    }
+
+    private func openNotified(_ id: String) async {
         await MainActor.run {
             // An ask's (not a task's): its card is in the Inbox. A task's opens the task.
             let ask = id.hasPrefix(TaskAlerts.askPrefix)

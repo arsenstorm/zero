@@ -15,6 +15,8 @@ import ZeroCore
     /// Whether the workspace window is up where the user can see it.
     private let windowShown: () -> Bool
     private let open: (String) -> Void
+    /// An ask by its id, as the inbox has it.
+    private let lookUp: (String) -> Ask?
     /// The board last heard: none yet, so what tasks are in at launch isn't announced.
     private var last: [BoardRow]?
     /// What each task was last announced as: it isn't announced again when a turn Zero started leaves it as it was.
@@ -26,11 +28,15 @@ import ZeroCore
     /// The screen locked or asleep: nobody at the Mac, whatever is in front.
     private var screenOff = false
 
-    init(navigation: Navigation, settings: Settings, windowShown: @escaping () -> Bool, open: @escaping (String) -> Void) {
+    init(
+        navigation: Navigation, settings: Settings, windowShown: @escaping () -> Bool, open: @escaping (String) -> Void,
+        ask lookUp: @escaping (String) -> Ask?
+    ) {
         self.navigation = navigation
         self.settings = settings
         self.windowShown = windowShown
         self.open = open
+        self.lookUp = lookUp
         super.init()
         center.delegate = self
         // Registered ahead, off the main thread: the first registered when it played cost 100 ms there.
@@ -149,7 +155,7 @@ import ZeroCore
     /// Away from the Mac (or not in Zero): a notification on it, and on the phones.
     private func notifyAway(_ alert: TaskAlert) {
         held[alert.session] = nil
-        Phones.shared.push(alert, sound: settings.sound(for: alert.state))
+        Phones.shared.push(alert, sound: settings.sound(for: alert.state), ask: waitingAsk(alert))
         let content = UNMutableNotificationContent()
         content.title = alert.title
         content.body = alert.body
@@ -159,6 +165,14 @@ import ZeroCore
             content.sound = UNNotificationSound(named: UNNotificationSoundName(sound + ".aiff"))
         }
         center.add(UNNotificationRequest(identifier: alert.session, content: content, trigger: nil))
+    }
+
+    /// The ask a notification is about, so the phone can answer it from the notification (the watch too): an ask's
+    /// own, or the first of a task's open asks (its workers' too) still waiting on the user.
+    private func waitingAsk(_ alert: TaskAlert) -> Ask? {
+        if alert.session.hasPrefix(TaskAlerts.askPrefix) { return lookUp(String(alert.session.dropFirst(TaskAlerts.askPrefix.count))) }
+        guard alert.state == .needsYou, let row = last?.first(where: { $0.session == alert.session }) else { return nil }
+        return row.asks.lazy.compactMap { self.lookUp($0.id) }.first { $0.state == .waiting && $0.isForYou }
     }
 
     /// The task in front of the user has been seen: its notification goes.

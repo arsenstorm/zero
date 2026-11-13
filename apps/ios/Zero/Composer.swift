@@ -105,13 +105,18 @@ struct Composer: View {
         // What zerod lists, and what's just been queued from here and isn't listed yet (PhoneModel.queuing).
         let queued = stripRows
         let held = row?.held == true
+        let paused = row?.state == .paused
         if !queued.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {
-                    Image(held ? "media-stop-glyph" : "clock-glyph").resizable().frame(width: 12, height: 12)
-                    Text(held ? "Held" : "Queued").font(.footnote.weight(.medium))
+                    Image(paused ? "circle-pause-glyph" : held ? "media-stop-glyph" : "clock-glyph").resizable().frame(
+                        width: 12, height: 12)
+                    Text(paused ? pausedTitle(row?.pausedHeld ?? 0) : held ? "Held" : "Queued").font(.footnote.weight(.medium))
                     Spacer()
-                    if held {
+                    if paused {
+                        Button("Resume") { Task { _ = await model.unpause([session]) } }.font(.footnote.weight(.semibold))
+                            .foregroundStyle(.primary)
+                    } else if held {
                         Button("Send") { Task { await model.release(session) } }.font(.footnote.weight(.semibold)).foregroundStyle(.primary)
                     }
                 }
@@ -200,11 +205,13 @@ struct Composer: View {
 
     private var draftKey: String { "draft." + session }
 
-    /// As the Mac's composer words it: "Reply", "Message to resume it" when it's gone. While it works the phone queues
+    private func pausedTitle(_ held: Int) -> String { held == 0 ? "Paused" : "Paused · \(held) held while paused" }
+
+    /// As the Mac's composer words it: "Reply"; paused by you, that it waits for Resume. While it works the phone queues
     /// what's sent for after the turn (it never steers), so it says that, not the Mac's "Steer it while it works".
     private var placeholder: String {
-        switch conversation?.status {
-        case .offline: "Message to resume it"
+        if model.row(session)?.state == .paused { return "Paused · your message waits until you resume" }
+        return switch conversation?.status {
         case .working, .waiting: "Queue a message for after this turn"
         default: "Reply"
         }

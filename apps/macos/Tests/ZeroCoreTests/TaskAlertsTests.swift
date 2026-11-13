@@ -5,12 +5,12 @@ import Testing
 /// A lead's row as zerod's board sends it: its team's state, its own, and a worker's when it has one.
 private func row(
     _ id: String, state: String, own: String? = nil, worker: String? = nil, now: String? = nil, needs: String? = nil,
-    asks: [String] = [], quiet: Bool = false, onYou: [(String, String)] = []
+    trouble: String? = nil, asks: [String] = [], quiet: Bool = false, onYou: [(String, String)] = []
 ) -> BoardRow {
     let team = worker.map { #"[{"session":"w-\#(id)","state":"\#($0)","place":"w","asks":[]}]"# } ?? "[]"
     let json = """
         {"session":"\(id)","task":"Task \(id)","workspace":"zero","place":"p","online":true,"state":"\(state)","own":"\(own ?? state)",
-         "now":\(now.map { "\"\($0)\"" } ?? "null"),"needs":\(needs.map { "\"\($0)\"" } ?? "null"),
+         "now":\(now.map { "\"\($0)\"" } ?? "null"),"needs":\(needs.map { "\"\($0)\"" } ?? "null"),"trouble":\(trouble.map { "\"\($0)\"" } ?? "null"),
          "asks":[\(asks.enumerated().map { #"{"id":"a\#($0.offset)","title":"\#($0.element)"}"# }.joined(separator: ","))],
          "workers":\(worker == nil ? 0 : 1),"team":\(team),"quiet":\(quiet),
          "issues":[\(onYou.map { #"{"ticket":"\#($0.0)","state":"you","text":"\#($0.1)","since":0}"# }.joined(separator: ","))]}
@@ -37,6 +37,13 @@ private func row(
     #expect(TaskAlerts.needingYou([row("1", state: "handed", needs: "Merge the PR")]) == 0)
     let done = TaskAlerts.changes(from: [row("1", state: "working")], to: [row("1", state: "done", now: "Fixed the build")])
     #expect(done.alerts.map(\.body) == ["Done: Fixed the build"])
+}
+
+@Test func aTaskInTroubleSaysWhyNotItsLastAnswer() {
+    let stuck = row(
+        "1", state: "trouble", now: "The setting is built and installed", trouble: "Running `cargo test` for 12 min · looks stuck")
+    let changes = TaskAlerts.changes(from: [row("1", state: "working")], to: [stuck])
+    #expect(changes.alerts.map(\.body) == ["In trouble: Running cargo test for 12 min · looks stuck"])
 }
 
 @Test func aWorkerThatNeedsTheUserIsItsLeadsAlert() {
@@ -218,4 +225,17 @@ private func row(
     #expect(issue("over").boardState == .handed)
     #expect(issue("you").boardState == .needsYou)
     #expect(issue("someday").boardState == .done)
+}
+
+@Test func aPushCarriesTheAskItsNotificationAnswers() {
+    let alert = TaskAlert(session: "s1", kind: .needsYou, state: .needsYou, title: "Task", body: "Ship it?")
+    var ask = Ask(
+        kind: .choice, title: "Ship it?", options: ["Yes", "Something else…"], agent: AgentIdentity(name: "zerod-s1", host: "mac"))
+    let note = TaskAlerts.note(alert, ask: ask)
+    #expect(note["title"] == "Task" && note["ask"] == ask.id && note["kind"] == "choice")
+    #expect(note["options"].flatMap { try? JSONDecoder().decode([String].self, from: Data($0.utf8)) } == ["Yes", "Something else…"])
+    // Answered already, or not the user's to answer: the words alone.
+    ask.state = .answered
+    #expect(TaskAlerts.note(alert, ask: ask) == ["title": "Task", "body": "Ship it?"])
+    #expect(TaskAlerts.note(alert, ask: nil) == ["title": "Task", "body": "Ship it?"])
 }

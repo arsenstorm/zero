@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- What the phone last sent the watch (WatchState), read by the watch app and its complications alike. -->
+	<key>keychain-access-groups</key>
+	<array><string>$(AppIdentifierPrefix)com.arsen.zero.watch</string></array>
+</dict>
+</plist>

@@ -129,6 +129,19 @@ public enum TaskAlerts {
     /// An ask's notification's identifier starts so; a task's is its session.
     public static let askPrefix = "ask-"
 
+    /// What a push seals for the phone: its words, and the ask it answers while that waits on the user (its id, kind
+    /// and options), which the phone makes the notification's buttons (Notify's AskActions).
+    public static func note(_ alert: TaskAlert, ask: Ask?) -> [String: String] {
+        var note = ["title": alert.title, "body": alert.body]
+        guard let ask, ask.state == .waiting, ask.isForYou,
+            let options = String(data: (try? JSONEncoder().encode(ask.options)) ?? Data(), encoding: .utf8)
+        else { return note }
+        note["ask"] = ask.id
+        note["kind"] = ask.kind.rawValue
+        note["options"] = options
+        return note
+    }
+
     /// Markdown as a notification shows it: its words, without the marks that are only noise there (**, `, #, links'
     /// addresses, list markers, code fences), its lines run together, and short.
     // Compiled once: a notification's text is worked out for every task on every change of the board.

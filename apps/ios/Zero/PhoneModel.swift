@@ -177,6 +177,12 @@ import UserNotifications
     /// Words put in a task's composer from elsewhere (Siri's draft): taken by the composer when it shows.
     var drafts: [String: String] = [:]
 
+    /// The accounts with their use, as the Mac's rail shows them, the most used first (the watch's rings).
+    func usage() async -> [(ZerodLink.SignIn, Usage)] {
+        guard let got = try? await linked()?.signIns() else { return [] }
+        return UsageShown.accounts(signins: got.list, usage: got.usage, now: Int(Date().timeIntervalSince1970))
+    }
+
     /// The Mac's project folders, as New task offers them.
     func projects() async -> [String] { (try? await linked()?.call("projects")) as? [String] ?? [] }
 
@@ -541,6 +547,17 @@ import UserNotifications
         acted(ask, option: nil, text: text)
         if answeredForTests(ask, option: nil, text: text) { return }
         try? await linked()?.reply(ask.id, text: text)
+    }
+
+    /// An ask answered in words (Siri, the watch): what it was answered with; nil when the words answer none of its
+    /// options (Ask.spoken).
+    func answer(_ ask: Ask, saying said: String) async -> String? {
+        switch ask.spoken(said) {
+        case let .option(index): await choose(ask, option: index); return ask.options[index]
+        case let .words(index, text): await answer(ask, option: index, text: text); return text
+        case let .reply(text): await reply(ask, text: text); return text
+        case nil: return nil
+        }
     }
 
     /// The user's answers to a task's asks, counted by task: what comes of one (the agent told, its reply) is the user
