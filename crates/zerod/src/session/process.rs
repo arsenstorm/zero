@@ -303,6 +303,10 @@ impl Session {
         let mut found = None;
         let ids: Vec<(String, Instant)> = inner.running.iter().map(|(id, at)| (id.clone(), *at)).collect();
         for (id, started) in ids {
+            // Run in the background on purpose, and the agent is told when it ends: not a hung foreground step.
+            if inner.commands.background.contains(&id) {
+                continue;
+            }
             let Some(ItemKind::Command { command, cwd, .. }) = inner.core.as_ref()?.conversation().item(&id).map(|i| i.kind.clone()) else {
                 continue;
             };
@@ -418,6 +422,8 @@ pub(super) struct Commands {
     seen: HashMap<String, Watch>,
     /// Their own timeouts, in seconds, where the CLI gives one (Claude's Bash `timeout`).
     timeouts: HashMap<String, u64>,
+    /// Run in the background (Claude's Bash `run_in_background`): never judged stuck.
+    background: HashSet<String>,
     /// The agent's word on what its turn's commands take (`zero expect`), with the turn it was said in.
     said: Option<(Option<String>, crate::stuck::Expected)>,
     /// Stopped by Zero: how long they ran says nothing of how long they take.
@@ -439,17 +445,18 @@ impl Commands {
         }
     }
 
-    /// Claude's Bash calls with a timeout of their own.
+    /// Claude's Bash calls with a timeout of their own, or run in the background.
     fn timeouts(&mut self, message: &Value) {
         if message["type"] != "assistant" {
             return;
         }
         for block in message["message"]["content"].as_array().into_iter().flatten() {
-            if block["type"] == "tool_use"
-                && block["name"] == "Bash"
-                && let (Some(id), Some(ms)) = (block["id"].as_str(), block["input"]["timeout"].as_u64())
-            {
+            let Some(id) = block["id"].as_str().filter(|_| block["type"] == "tool_use" && block["name"] == "Bash") else { continue };
+            if let Some(ms) = block["input"]["timeout"].as_u64() {
                 self.timeouts.insert(id.into(), ms.div_ceil(1000));
+            }
+            if block["input"]["run_in_background"] == true {
+                self.background.insert(id.into());
             }
         }
     }
@@ -458,6 +465,7 @@ impl Commands {
     fn finished(&mut self, item: &Item, started: Instant) {
         self.seen.remove(&item.id);
         self.timeouts.remove(&item.id);
+        self.background.remove(&item.id);
         if self.stopped.remove(&item.id) {
             return;
         }

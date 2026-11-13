@@ -63,24 +63,43 @@ pub fn settings() -> Settings {
     SETTINGS.read().unwrap().clone().unwrap_or_default()
 }
 
-/// A command by what's stable in it, so its runs compare: the program and the words after it up to the first path,
-/// quote, variable or redirection, past any `cd …&&`, variables set and wrappers (`timeout 60`).
+/// A command by what's stable in its part that runs longest (`main`): the program and the words after it up to the
+/// first path, quote, variable or redirection, past variables set and wrappers (`timeout 60`).
 pub fn key(command: &str) -> String {
+    main(command).map(|(_, key)| key).unwrap_or_default()
+}
+
+/// The part of a command that runs longest, with its key: of its parts (split at `;`, `|`, `&`, `$(…)` and lines,
+/// past `cd` and the like), a waiter that isn't a pause (`gh run watch` after `sleep 10`), else the first that isn't
+/// a pause, else the first.
+fn main(command: &str) -> Option<(&str, String)> {
+    let parts: Vec<(&str, String)> =
+        command.split([';', '|', '&', '\n', '(', ')']).map(|s| (s, part_key(s))).filter(|(_, k)| !k.is_empty()).collect();
+    let pause = |k: &str| starts(k, "sleep");
+    let found = parts.iter().position(|(s, k)| waits(s, k) && !pause(k)).or_else(|| parts.iter().position(|(_, k)| !pause(k)));
+    parts.into_iter().nth(found.unwrap_or(0))
+}
+
+fn part_key(segment: &str) -> String {
     const SETUP: [&str; 6] = ["cd", "export", "source", ".", "set", "pushd"];
     const WRAPPERS: [&str; 7] = ["time", "timeout", "nice", "env", "command", "exec", "nohup"];
-    let line = command.lines().next().unwrap_or("");
-    let segment = line
-        .split([';', '|', '&'])
-        .map(str::trim)
-        .find(|s| !s.is_empty() && !SETUP.contains(&s.split_whitespace().next().unwrap_or("")))
-        .unwrap_or("");
     let mut words = segment
         .split_whitespace()
         .skip_while(|w| (w.contains('=') && !w.starts_with('-')) || WRAPPERS.contains(w) || w.parse::<f64>().is_ok());
-    let Some(program) = words.next() else { return String::new() };
+    let Some(program) = words.next().filter(|p| !SETUP.contains(p)) else { return String::new() };
     let program = program.trim_start_matches("./");
     let stable = |w: &&str| w.chars().all(|c| c.is_alphanumeric() || "-_:.@+,".contains(c));
     std::iter::once(program).chain(words.take_while(stable).take(3)).collect::<Vec<_>>().join(" ")
+}
+
+fn starts(key: &str, words: &str) -> bool {
+    key.strip_prefix(words).is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
+}
+
+/// Commands that wait by design, quiet as they are: for a run, a file, a pause, Zero (`zero wait`, `zero ask --block`).
+fn waits(segment: &str, key: &str) -> bool {
+    ["sleep", "wait", "gh run watch", "tail -f", "tail -F", "zero"].iter().any(|w| starts(key, w))
+        || (starts(key, "gh pr checks") && segment.contains("--watch"))
 }
 
 /// What a command is expected to take, and on whose word.
@@ -149,8 +168,7 @@ pub fn judge(command: &str, seen: &Seen, expected: &Expected, settings: &Setting
     if settings.when == When::Never {
         return None;
     }
-    // Zero's own commands wait on the user or on other tasks by design (`zero wait`, `zero ask --block`).
-    if key(command).split(' ').next() == Some("zero") {
+    if main(command).is_some_and(|(segment, key)| waits(segment, &key)) {
         return None;
     }
     // The agent said it would take this long: Zero takes its word, however quiet it is.

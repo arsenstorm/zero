@@ -238,3 +238,45 @@ async fn stop_it_ends_the_commands_processes_and_nothing_else() {
     assert!(session.stop_command("c1").is_err(), "stopped once");
     session.stop();
 }
+
+#[test]
+fn a_compound_command_is_named_by_the_part_that_runs_long_and_known_waiters_are_never_stuck() {
+    let settings = Settings::default();
+    let watch = "sleep 10; cd /work && id=$(gh run list --limit 1 --json databaseId -q '.[0].databaseId'); gh run watch $id --exit-status --interval 60 > /tmp/ci.log 2>&1";
+    assert_eq!(key(watch), "gh run watch");
+    assert_eq!(key("sleep 5; cargo test -p zerod 2>&1 | tail -20"), "cargo test -p zerod");
+    let default = zerod::stuck::default_for("make deploy");
+    for waiter in [watch, "sleep 600", "gh pr checks 12 --watch", "tail -f /tmp/log", "zero wait 01a1", "make deploy & wait"] {
+        assert_eq!(judge(waiter, &seen(3600, 3600), &default, &settings), None, "{waiter} waits by design");
+    }
+    let stuck = judge("sleep 2; make deploy", &seen(3600, 3600), &default, &settings).unwrap();
+    assert!(stuck.reason.starts_with("Running `make deploy` for 1 h"), "{}", stuck.reason);
+}
+
+/// A stand-in Claude Bash call, in the background or not.
+fn bash(id: &str, command: &str, background: bool) -> String {
+    line(json!({"type": "assistant", "message": {"id": format!("m-{id}"), "content": [{"type": "tool_use", "id": id, "name": "Bash",
+        "input": {"command": command, "run_in_background": background}}]}}))
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_command_run_in_the_background_is_not_judged_stuck() {
+    let cwd = "/stuck-test/background";
+    let (events, _) = broadcast::channel(4096);
+    let session = Session::new(Conversation::new("s1", Provider::Claude, cwd), None, events).unwrap();
+    let (zero_side, runtime_side) = tokio::io::duplex(1 << 16);
+    let (read, write) = tokio::io::split(zero_side);
+    let (_runtime_read, mut runtime) = tokio::io::split(runtime_side);
+    session.attach(zerod::session::Transport::new(read, write));
+    session.send(zerod::session::Message::text("watch CI and run the tests"), Default::default()).await.unwrap();
+    runtime.write_all(bash("t1", "make deploy", true).as_bytes()).await.unwrap();
+    let begun = json!({"type": "system", "subtype": "task_started", "task_id": "b1", "tool_use_id": "t1", "is_backgrounded": true});
+    runtime.write_all(line(begun).as_bytes()).await.unwrap();
+    wait_minutes(60).await;
+    assert_eq!(session.snapshot().stalled, None, "the agent is told when it ends: waiting on it is by design");
+    runtime.write_all(bash("t2", "make test", false).as_bytes()).await.unwrap();
+    wait_minutes(10).await;
+    let now = session.snapshot();
+    assert!(now.stalled.clone().unwrap_or_default().starts_with("Running `make test` for "), "{:?}", now.stalled);
+    assert_eq!(now.stuck.as_deref(), Some("t2"), "the foreground command, not the background one");
+}
