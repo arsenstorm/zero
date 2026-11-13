@@ -488,7 +488,7 @@
  },
  {
   "name": "browser_dialog",
-  "description": "Answers the alert, confirm or prompt the page has open (a tool that runs into one says so).",
+  "description": "Answers the alert, confirm or prompt the page has open (a tool that runs into one says so). Where the user has Zero replace pages' dialogs, nothing stays open: alerts are only reported, confirm and prompt answer Cancel at once, and a page's \"Leave site?\" is skipped, the tool's result saying what the page asked and what it got. To answer OK instead, call this with accept: true (and text, for a prompt) before doing it again: the tab answers that way from then on, until you call it again.",
   "inputSchema": {
    "type": "object",
    "properties": {

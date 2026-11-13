@@ -362,26 +362,31 @@ impl Browsers {
         answer
     }
 
-    /// The user's settings for the browser: `{"blocked": ["*.bank.com", …]}`, sites no task may use.
+    /// The user's settings for the browser: `{"blocked": ["*.bank.com", …], "dialogs": false}`, sites no task may
+    /// use, and whether pages' dialogs are replaced in agents' tabs (experimental, off unless turned on).
     pub fn settings(&self) -> Value {
         let mut settings: Value =
             std::fs::read(&self.file).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_else(|| json!({}));
         if !settings["blocked"].is_array() {
             settings["blocked"] = json!([])
         }
+        if !settings["dialogs"].is_boolean() {
+            settings["dialogs"] = json!(false)
+        }
         settings
     }
 
-    pub fn save_settings(&self, settings: &Value) -> Result<Value, String> {
-        let blocked: Vec<String> = settings["blocked"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|b| b.as_str())
-            .map(|b| b.trim().to_string())
-            .filter(|b| !b.is_empty())
-            .collect();
-        let settings = json!({"blocked": blocked});
+    /// Saves the settings given; those not given stay as they were.
+    pub fn save_settings(&self, given: &Value) -> Result<Value, String> {
+        let mut settings = self.settings();
+        if let Some(blocked) = given["blocked"].as_array() {
+            let blocked: Vec<String> =
+                blocked.iter().filter_map(|b| b.as_str()).map(|b| b.trim().to_string()).filter(|b| !b.is_empty()).collect();
+            settings["blocked"] = json!(blocked);
+        }
+        if let Some(dialogs) = given["dialogs"].as_bool() {
+            settings["dialogs"] = json!(dialogs);
+        }
         std::fs::write(&self.file, serde_json::to_vec_pretty(&settings).unwrap_or_default()).map_err(|e| e.to_string())?;
         Ok(settings)
     }
@@ -555,7 +560,9 @@ impl Browsers {
             "browser_upload" => args = with_files(args)?,
             _ => {}
         }
-        task["blocked"] = self.settings()["blocked"].clone();
+        let settings = self.settings();
+        task["blocked"] = settings["blocked"].clone();
+        task["dialogs"] = settings["dialogs"].clone();
         // Chrome closed: opened, and given a moment to connect, before the call is refused.
         self.opening().await;
         let (call, waiting) = {
@@ -568,7 +575,7 @@ impl Browsers {
                 if let Some(session) = session.filter(|s| !s.is_empty()) {
                     state.waiting.insert(session.to_string());
                 }
-                return Err("Zero for Chrome isn't connected, though Zero opened Chrome (its extension may be off, or Chrome hasn't finished starting). End your turn rather than retrying: Zero tells this task when it connects. If it's needed now, ask the user to check Chrome has the Zero extension on (Zero's Settings › Agents › Browser).".into());
+                return Err("Zero for Chrome isn't connected, though Zero opened Chrome (its extension may be off, or Chrome hasn't finished starting). End your turn rather than retrying: Zero tells this task when it connects. If it's needed now, ask the user to check Chrome has the Zero extension on (Zero's Settings › Browsers).".into());
             };
             let (send, to) = (browser.send.clone(), browser.id.clone());
             state.next += 1;

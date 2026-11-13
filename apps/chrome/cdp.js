@@ -1,4 +1,4 @@
-import { alerted } from "./tabs.js";
+import { alerted, sharedWith } from "./tabs.js";
 
 // Chrome's debugger on a task's tabs: attached when a tool needs it, detached after a while unused (Chrome shows a
 // banner while any tab is debugged). Keeps each tab's console, requests and open dialog while attached.
@@ -50,6 +50,140 @@ const attached = new Map(); // tabId → idle timer
 const logs = new Map(); // tabId → { host, console: [], network: Map }
 const dialogs = new Map(); // tabId → { type, message }
 
+// Pages' dialogs replaced (the user's experimental setting): in an agent's own tabs (never one the user gave it), the
+// page's alert, confirm and prompt are stand-ins that answer at once, so Chrome never brings the tab's window forward.
+// Each call is told to the agent (`called` below); confirm and prompt answer as browser_dialog last said.
+let replacing = false;
+const standing = new Map(); // tabId → the stand-ins' script, run before each new document's own
+const policies = new Map(); // tabId → { accept, text }: how confirm and prompt answer; Cancel until said otherwise
+const calls = new Map(); // tabId → { seen: Set, unread: [{ type, message, url, answer }] }
+
+/** The user's setting, which comes with every call: from the next time the debugger attaches to a tab. */
+export function replaceDialogs(on) {
+  replacing = !!on;
+}
+
+/** The stand-ins, run in the page's own world (as its alert would be). Calls report through the console, which
+ * Chrome's debugger and Firefox's remote control both pass on. Run again, they only take the new answers. */
+function standIns(policy) {
+  const key = Symbol.for("zero.dialogs");
+  if (window[key]) return window[key](policy);
+  Object.defineProperty(window, key, {
+    value: (given) => {
+      policy = given;
+    },
+  });
+  const debug = console.debug.bind(console);
+  const say = (type, message, answer) => {
+    debug(
+      "zero:dialog",
+      JSON.stringify({
+        type,
+        message: message === undefined ? "" : String(message),
+        url: location.href,
+        answer,
+      })
+    );
+    return answer;
+  };
+  // "Leave site?" not asked for at all: the page's handlers for leaving aren't kept (told once a page). One set
+  // where this can't see it (a body's onbeforeunload attribute) is still left at once when Chrome asks (`event`).
+  let skipped = false;
+  const skip = () => {
+    if (!skipped) say("beforeunload", "", null);
+    skipped = true;
+  };
+  Object.defineProperty(window, "onbeforeunload", {
+    get: () => null,
+    set: skip,
+    configurable: true,
+  });
+  const listen = EventTarget.prototype.addEventListener;
+  EventTarget.prototype.addEventListener = function addEventListener(
+    type,
+    ...rest
+  ) {
+    if (this === window && type === "beforeunload") return skip();
+    return listen.call(this, type, ...rest);
+  };
+  window.alert = function alert(message) {
+    say("alert", message, null);
+  };
+  window.confirm = function confirm(message) {
+    return say("confirm", message, !!policy.accept);
+  };
+  window.prompt = function prompt(message, value) {
+    const typed = policy.text ?? (value === undefined ? "" : String(value));
+    return say("prompt", message, policy.accept ? typed : null);
+  };
+}
+
+/** The stand-ins put in a tab: before every new document's scripts, in all its frames, and in the page it has now. */
+async function stand(tabId) {
+  const source = `(${standIns})(${JSON.stringify(policies.get(tabId) || { accept: false })})`;
+  await unstand(tabId);
+  const { identifier } = await command(
+    tabId,
+    "Page.addScriptToEvaluateOnNewDocument",
+    { source }
+  );
+  standing.set(tabId, identifier);
+  await command(tabId, "Runtime.evaluate", { expression: source });
+}
+
+async function unstand(tabId) {
+  const identifier = standing.get(tabId);
+  standing.delete(tabId);
+  // Chrome forgets it when its debugger lets go; Firefox keeps it until it's removed.
+  if (identifier)
+    await command(tabId, "Page.removeScriptToEvaluateOnNewDocument", {
+      identifier,
+    }).catch(() => {});
+}
+
+/** Whether a tab's dialogs are stand-ins now. */
+export function standingIn(tabId) {
+  return standing.has(tabId);
+}
+
+/** How a tab's confirm and prompt answer from now on. */
+export async function answerDialogs(tabId, policy) {
+  policies.set(tabId, policy);
+  await stand(tabId);
+}
+
+/** A stand-in called. Chrome tells its console again when its debugger attaches again: a call is kept once. */
+function called(tabId, said, at) {
+  let call;
+  try {
+    call = JSON.parse(said);
+  } catch {
+    return;
+  }
+  if (!calls.has(tabId)) calls.set(tabId, { seen: new Set(), unread: [] });
+  const kept = calls.get(tabId);
+  if (kept.seen.has(at + said)) return;
+  kept.seen.add(at + said);
+  kept.unread.push(call);
+  if (kept.unread.length > 20) kept.unread.shift();
+}
+
+/** The stand-ins' calls in a tab not yet told to the agent, as words for it; "" if none. */
+export function dialogCalls(tabId) {
+  const unread = calls.get(tabId)?.unread.splice(0) || [];
+  return unread
+    .map(({ type, message, url, answer }) => {
+      if (type === "beforeunload")
+        return `The page asked to confirm leaving (${url}); Zero skipped it.`;
+      const what = `The page called ${type}(“${message}”) in ${url}`;
+      if (type === "alert") return `${what}. Nothing was shown.`;
+      if (answer === null || answer === false)
+        return `${what}: answered Cancel. To answer OK, browser_dialog with accept: true${type === "prompt" ? " (and text)" : ""}, then do it again.`;
+      return `${what}: answered OK${type === "prompt" ? ` with “${answer}”` : ""}.`;
+    })
+    .join("\n");
+}
+
 function log(tabId) {
   if (!logs.has(tabId))
     logs.set(tabId, { host: "", console: [], network: new Map() });
@@ -97,6 +231,9 @@ export async function attach(tabId) {
   await command(tabId, "Emulation.setFocusEmulationEnabled", {
     enabled: true,
   }).catch(() => {});
+  if (replacing && !(await sharedWith(tabId)))
+    await stand(tabId).catch(() => {});
+  else await unstand(tabId);
   // A size the agent set (browser_resize) outlives the debugger letting go between tools.
   const size = sizes.get(tabId);
   if (size)
@@ -165,6 +302,9 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   logs.delete(tabId);
   dialogs.delete(tabId);
   sizes.delete(tabId);
+  standing.delete(tabId);
+  policies.delete(tabId);
+  calls.delete(tabId);
   marked.delete(tabId);
 });
 
@@ -177,6 +317,13 @@ if (!remote)
 export function event(tabId, method, params) {
   if (!tabId) return;
   if (method === "Page.javascriptDialogOpening") {
+    // "Leave site?" has no stand-in: left at once, so it's at most a flash.
+    if (params.type === "beforeunload" && standing.has(tabId)) {
+      command(tabId, "Page.handleJavaScriptDialog", { accept: true }).catch(
+        () => {}
+      );
+      return;
+    }
     dialogs.set(tabId, { type: params.type, message: params.message });
     alerted(tabId, true);
   } else if (method === "Page.javascriptDialogClosed") {
@@ -195,6 +342,8 @@ export function event(tabId, method, params) {
     const text = params.args
       .map((a) => a.value ?? a.description ?? a.unserializableValue ?? a.type)
       .join(" ");
+    if (text.startsWith("zero:dialog "))
+      return called(tabId, text.slice(12), params.timestamp);
     push(log(tabId).console, {
       level: params.type,
       text,

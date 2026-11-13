@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Zero",
   "description": "Lets the agents Zero runs use Firefox: each task in tabs of its own.",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "permissions": [
     "tabs",
     "tabGroups",

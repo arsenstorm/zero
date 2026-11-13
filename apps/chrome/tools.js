@@ -9,6 +9,10 @@ import {
   networkOf,
   hold,
   setSize,
+  replaceDialogs,
+  standingIn,
+  answerDialogs,
+  dialogCalls,
 } from "./cdp.js";
 import {
   tabsOf,
@@ -60,7 +64,13 @@ export async function run(tool, args, task) {
     ALIASES[tool] || (tool.startsWith("browser_") ? tool : "browser_" + tool);
   const handler = TOOLS[name];
   if (!handler) throw new Error(`No tool ${tool}`);
-  return handler(args, task);
+  replaceDialogs(task.dialogs);
+  const result = await handler(args, task);
+  // What the page's dialogs asked meanwhile, where they're stand-ins: told with the tool's own answer.
+  const said = typeof args.tabId === "number" ? dialogCalls(args.tabId) : "";
+  if (said)
+    result.content = [...(result.content || []), { type: "text", text: said }];
+  return result;
 }
 
 /** The session driving a tab, when the user presses Stop on it. */
@@ -1027,7 +1037,16 @@ const TOOLS = {
 
   async browser_dialog({ tabId, accept, text: answer }, task) {
     const tab = await own(task, tabId);
+    await attach(tab.id);
     const open = dialog(tab.id);
+    if (!open && standingIn(tab.id)) {
+      await answerDialogs(tab.id, { accept: !!accept, text: answer });
+      return text(
+        accept
+          ? `This tab's confirm and prompt answer OK from now on${answer === undefined ? "" : `, prompt with “${answer}”`}.`
+          : "This tab's confirm and prompt answer Cancel from now on."
+      );
+    }
     if (!open) return text("No dialog is open.");
     await send(tab.id, "Page.handleJavaScriptDialog", {
       accept: !!accept,

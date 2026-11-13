@@ -39,6 +39,8 @@ pub enum Answer {
     Screenshot,
     /// Page.getLayoutMetrics's, from the page's own numbers (JSON the page wrote).
     Metrics,
+    /// Page.addScriptToEvaluateOnNewDocument's: `{identifier}`, the preload script's id.
+    Script,
 }
 
 /// The page's sizes as Chrome's Page.getLayoutMetrics gives them, in CSS pixels.
@@ -74,6 +76,15 @@ pub fn plan(method: &str, params: &Value, context: &str) -> Result<Plan, String>
                 shot["clip"] = json!({"type": "box", "x": clip["x"], "y": clip["y"], "width": clip["width"], "height": clip["height"]});
             }
             one("browsingContext.captureScreenshot", shot, Answer::Screenshot)
+        }
+        // Before the page's own scripts, in each of the tab's frames, until it's removed.
+        "Page.addScriptToEvaluateOnNewDocument" => one(
+            "script.addPreloadScript",
+            json!({"functionDeclaration": format!("() => {{\n{}\n}}", params["source"].as_str().unwrap_or("")), "contexts": [context]}),
+            Answer::Script,
+        ),
+        "Page.removeScriptToEvaluateOnNewDocument" => {
+            one("script.removePreloadScript", json!({"script": params["identifier"]}), Answer::Nothing)
         }
         "Page.handleJavaScriptDialog" => {
             let mut answer = json!({"context": context, "accept": params["accept"].as_bool().unwrap_or(false)});
@@ -244,6 +255,7 @@ pub fn answer(answer: &Answer, result: &Value) -> Result<Value, String> {
     Ok(match answer {
         Answer::Nothing => json!({}),
         Answer::Screenshot => json!({"data": result["data"]}),
+        Answer::Script => json!({"identifier": result["script"]}),
         Answer::Evaluated => match result["type"].as_str() {
             Some("exception") => {
                 let details = &result["exceptionDetails"];

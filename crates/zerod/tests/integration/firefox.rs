@@ -62,6 +62,15 @@ fn screenshots_scripts_and_dialogs_are_firefoxs_own() {
     let dialog = plan("Page.handleJavaScriptDialog", &json!({"accept": true, "promptText": "yes"}), "c1").unwrap();
     assert_eq!(dialog.commands[0].1, json!({"context": "c1", "accept": true, "userText": "yes"}));
     assert!(plan("Page.enable", &json!({}), "c1").unwrap().commands.is_empty());
+    // A script run before the page's own, in the tab's frames: a preload script of the tab's.
+    let preload = plan("Page.addScriptToEvaluateOnNewDocument", &json!({"source": "f()"}), "c1").unwrap();
+    assert_eq!(
+        preload.commands[0],
+        ("script.addPreloadScript".into(), json!({"functionDeclaration": "() => {\nf()\n}", "contexts": ["c1"]}))
+    );
+    assert_eq!(answer(&preload.answer, &json!({"script": "p1"})).unwrap(), json!({"identifier": "p1"}));
+    let removed = plan("Page.removeScriptToEvaluateOnNewDocument", &json!({"identifier": "p1"}), "c1").unwrap();
+    assert_eq!(removed.commands[0], ("script.removePreloadScript".into(), json!({"script": "p1"})));
     assert!(plan("Page.startScreencast", &json!({}), "c1").unwrap_err().contains("Chrome"));
     let evaluated = answer(
         &Answer::Evaluated,

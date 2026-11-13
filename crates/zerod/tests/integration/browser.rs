@@ -56,7 +56,6 @@ async fn zerod(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
         zerod::server::Zerod {
             daemon,
             inbox: zerod::inbox::Inbox::open(None, vec![]),
-            drops: None,
             integrations: integrations.clone(),
             following: zerod::following::Following::open(&home, Arc::new(zerod::integrations::Commands::default()), integrations),
             pads: Arc::new(zerod::pads::Pads::open(&home.join("scratchpads"))),
@@ -80,7 +79,7 @@ async fn zerod(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
 #[tokio::test]
 async fn a_tasks_call_reaches_the_extension_and_its_answer_comes_back() {
     let (home, socket) = zerod("browser-calls").await;
-    std::fs::write(home.join("browser.json"), json!({"blocked": ["*.bank.example"]}).to_string()).unwrap();
+    std::fs::write(home.join("browser.json"), json!({"blocked": ["*.bank.example"], "dialogs": true}).to_string()).unwrap();
     let (mut extension, host_side) = tokio::io::duplex(1 << 20);
     let (host_in, host_out) = tokio::io::split(host_side);
     let host = tokio::spawn(zerod::browser::host(host_in, host_out, socket.clone()));
@@ -106,6 +105,7 @@ async fn a_tasks_call_reaches_the_extension_and_its_answer_comes_back() {
         (Some("call"), Some("browser_navigate"), Some("example.com"))
     );
     assert_eq!(call["task"]["blocked"], json!(["*.bank.example"]), "the user's blocked sites go with every call");
+    assert_eq!(call["task"]["dialogs"], true, "and whether pages' dialogs are replaced in agents' tabs");
     assert_eq!(call["task"]["group"], "zero", "outside a task, Zero's own group");
     frame(&mut extension, json!({"type": "answer", "call": call["call"], "result": {"content": [{"type": "text", "text": "Navigated"}]}}))
         .await;
@@ -331,4 +331,18 @@ fn a_blocked_site_is_matched_as_the_extension_matches_it() {
     ] {
         assert_eq!(zerod::browser::blocked(url, &patterns), blocked, "{url}");
     }
+}
+
+/// The browser settings: blocked sites, and pages' dialogs replaced in agents' tabs (off unless the user turns it on).
+/// Saving one leaves the other as it was.
+#[tokio::test]
+async fn saving_one_browser_setting_keeps_the_others() {
+    let (_home, socket) = zerod("browser-settings").await;
+    let mut client = Client::connect(&socket).await;
+    let read = client.call(json!({"id": 1, "op": "browserSettings"})).await;
+    assert_eq!(read["result"], json!({"blocked": [], "dialogs": false}));
+    client.call(json!({"id": 2, "op": "saveBrowserSettings", "browser": {"blocked": ["bank.com"]}})).await;
+    client.call(json!({"id": 3, "op": "saveBrowserSettings", "browser": {"dialogs": true}})).await;
+    let read = client.call(json!({"id": 4, "op": "browserSettings"})).await;
+    assert_eq!(read["result"], json!({"blocked": ["bank.com"], "dialogs": true}));
 }
