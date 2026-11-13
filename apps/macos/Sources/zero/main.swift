@@ -91,14 +91,23 @@ func usage(help: Bool = false) -> Never {
                        a bench or a machine, for the board's Where; --where "" goes back to its folder)
           zero follow  <url | topic>... [--mine] [--about "word,other words"] [--session ID]
                        (hear of changes between your turns, however long you've been idle: a pull request (its reviews,
-                       comments, CI, pushes, merge), a Linear issue or one comment thread in it, a Slack thread or channel.
+                       comments, CI, pushes, merge, then its GitHub deployments), a Linear issue or one comment thread in it, a Slack thread or channel.
                        Topics: github/<owner>/<repo>/<pr>, linear/<ISSUE>[/<thread>], slack/<channel>[/<thread-ts>]; a URL does.
-                       A busy channel: --mine hears only messages naming the pull requests you follow; --about, these words)
+                       A busy channel: --mine hears only messages naming the pull requests you follow or their merge
+                       commits; --about, these words; and the same author's next messages, until they name something else)
           zero unfollow <topic>... | --all [--session ID]
           zero following [--session ID]   (what you follow, and how reading it goes)
           zero browser <tool> ['{"json": "input"}'] [--session ID]   (Chrome, through Zero for Chrome: the browser_ tools of
                        Zero's MCP server, for agents without it: zero browser tabs '{"createIfEmpty": true}', zero browser
                        navigate '{"url": "example.com"}'. Screenshots are saved to a file and its path printed)
+          zero slack   <method> [key=value...] [--workspace NAME] [--approval ID]   (Slack's Web API through the user's
+                       Slack connection in Zero, no token needed; Slack's JSON back. Reads: conversations.history,
+                       conversations.replies, conversations.info, search.messages, users.info… Page with cursor=<its
+                       response_metadata.next_cursor>. A write (chat.postMessage…) only if the user lets agents post,
+                       each asked first: end your turn [zero: asked ID], then run it again with --approval ID)
+          zero linear  '<graphql>' [--variables JSON] [--approval ID]   (Linear's GraphQL API through the user's Linear
+                       connection in Zero; - or none reads the query from stdin. A mutation only if the user lets agents
+                       make changes, asked first as a Slack write is)
           zero notify  <session> "text"   (words for a session, given between its turns: for event sources and scripts)
           zero watch   [--session ID] -- command...   (runs it in the background; this session is told how it ended, so end
                        your turn instead of polling: zero watch -- gh pr checks 42 --watch)
@@ -221,6 +230,8 @@ case "later": await laterCommand()
 case "pause", "unpause": await pauseCommand(command)
 case "following": await followingCommand()
 case "browser": await browserCommand()
+case "slack": await slackCommand()
+case "linear": await linearCommand()
 case "notify": await notifyCommand()
 case "watch" where positional.first == "list": await watchListCommand()
 case "watch" where positional.first == "stop": await watchStopCommand()

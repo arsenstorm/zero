@@ -84,7 +84,10 @@ private let acme = Slack.State(team: .init(id: "T0AB", name: "Acme", domain: "ac
     #expect(
         found.map(\.url.absoluteString) == ["slack://channel?team=T0AB&id=C0D", "https://slack.com/app_redirect?team=T0AB&channel=new"])
     // Slack's answers are read by zerod (integrations.rs); the app keeps the manifest that makes its Slack app.
-    let manifest = Slack.createAppURL.absoluteString
+    let manifest = Slack.createAppURL(posts: false).absoluteString
     #expect(manifest.hasPrefix("https://api.slack.com/apps?new_app=1&manifest_json=%7B"))
     #expect(manifest.removingPercentEncoding?.contains("\"channels:history\"") == true, "following a thread needs its history")
+    // A token that can't post can't be made to, whoever ends up with it: chat:write only once the user lets agents post.
+    #expect(manifest.removingPercentEncoding?.contains("chat:write") == false)
+    #expect(Slack.createAppURL(posts: true).absoluteString.removingPercentEncoding?.contains("\"chat:write\"") == true)
 }

@@ -179,19 +179,31 @@ Zero gives you Chrome through its MCP server's `browser_` tools (or `zero browse
 
 The user's blocked sites are refused. In auto mode, opening a site new to the task gets a reviewer's opinion first; if it advises against one the task needs, ask the user with `zero approve "Open <site> in Chrome"` and pass the ask's id as `approval` to `browser_navigate`. Never type the user's passwords or card numbers: ask them to do it.
 
+## Slack and Linear
+
+Read Slack and Linear through Zero's own connections: `zero slack` and `zero linear` (or the MCP tools `zero_slack` and `zero_linear`). Zero holds the tokens, so you need no key, no `op read`, no environment variable; you get the service's own JSON. Slack takes a Web API method and `key=value` arguments; page with `cursor=` set to the last answer's `response_metadata.next_cursor`; `--workspace` picks one when the user connected several. Linear takes a GraphQL document, with `--variables` as JSON; keep pages small (`first: 50`) for its complexity limit. Rate limits: Slack's are waited out up to half a minute, Linear's say when they reset.
+
+```bash
+zero slack conversations.replies channel=C0123ABCD ts=1731500000.123456      # a thread, from its link's ids
+zero slack search.messages query='"deploy failed" in:#eng' count=20
+zero linear 'query($id: String!) { issue(id: $id) { title state { name } comments { nodes { body } } } }' --variables '{"id": "ENG-123"}'
+```
+
+Both read only. A write (a Slack post, a Linear mutation) is refused unless the user turned on **Let agents post** or **Let agents make changes** in Zero's settings; then the first call asks the user to approve that exact call and says its ask id. End your turn `[zero: asked <id>]`; once they approve, run the same command again with `--approval <id>` (`approval` for the tools). An approval is for that call, once.
+
 ## Following
 
-Follow what you take ownership of, the moment you take it: the pull request you are asked to babysit, the ticket you pick up (or just the comment thread you were pointed at), the Slack thread whose link you were given. Zero reads it every minute and tells you what changed between your turns (a review, a comment, a failed check, a merge, a status change, a reply), waking you if you were parked. So end your turn instead of polling or sleeping; you'll be told. The pull requests you open (`gh pr create`, the pulls API, an MCP tool) Zero follows for you, and makes the task's PR if it has none; a worker's pass to its lead with its report. A turn that ends `[zero: waiting]` with nothing followed and nothing running is told so: follow what you wait on, or say who you're waiting on.
+Follow what you take ownership of, the moment you take it: the pull request you are asked to babysit, the ticket you pick up (or just the comment thread you were pointed at), the Slack thread whose link you were given. Zero reads it every minute and tells you what changed between your turns (a review, a comment, a failed check, a merge, a status change, a reply), waking you if you were parked. A pull request you follow, once merged, also brings its merge commit's GitHub deployments (under way, deployed, failed) where the repository uses them, and its follow lasts until they settle: don't write a watcher of your own for a deploy. So end your turn instead of polling or sleeping; you'll be told. The pull requests you open (`gh pr create`, the pulls API, an MCP tool) Zero follows for you, and makes the task's PR if it has none; a worker's pass to its lead with its report. A turn that ends `[zero: waiting]` with nothing followed and nothing running is told so: follow what you wait on, or say who you're waiting on.
 
 ```bash
 zero follow https://github.com/org/repo/pull/42          # or github/org/repo/42
 zero follow https://linear.app/team/issue/ENG-9429/...#comment-abcd1234   # one thread; without #comment, the whole issue
-zero follow slack/C0123ABCD --mine                        # a busy channel: only messages naming your pull requests
+zero follow slack/C0123ABCD --mine                        # a busy channel: only messages naming your pull requests or their merge commits
 zero following                                            # what you follow, and whether reading it works
 zero unfollow github/org/repo/42                          # or --all
 ```
 
-Events arrive as a message from Zero starting `N new events on what you follow`, grouped by topic with each event's text and link. In a channel followed with `--mine` or `--about`, a sender's message that names nothing (no pull request, ticket or link) is read as continuing that sender's last message that did, for half an hour, and comes marked so: a deploy bot's "Deploy complete" after its "Deploying … (#42)" reaches you as #42's. `(you)` marks events by the user's own account: often your own action echoing back (your comment, your push), so skip those unless it is something you didn't do. Unfollow what you are done with (merged, closed, resolved): follows outlive your memory of them, which is the point, so prune them.
+Events arrive as a message from Zero starting `N new events on what you follow`, grouped by topic with each event's text and link. In a channel followed with `--mine` or `--about`, once a message passes, its author's next messages there pass too, as one sequence marked with what they continue, until the author names something else (another commit, pull request, ticket or link), half an hour passes quietly, or twenty have passed: a deploy bot's "Running migrations" and "Deploy complete" after its "Deploying commit 5425391615" reach you with it. `(you)` marks events by the user's own account: often your own action echoing back (your comment, your push), so skip those unless it is something you didn't do. Unfollow what you are done with (merged, closed, resolved): follows outlive your memory of them, which is the point, so prune them.
 
 ## Identity
 

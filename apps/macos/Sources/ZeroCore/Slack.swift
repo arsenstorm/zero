@@ -1,7 +1,7 @@
 import Foundation
 
 /// The Slack workspaces Zero is connected to, as zerod keeps them (integrations.rs: a user token of Zero's own Slack app
-/// each, made from the manifest below, in zerod's slack.json). Zero knows each team's id and its channels' ids, which is
+/// each, made from the manifest below: what it is in zerod's slack.json, its token in zerod's own Keychain item). Zero knows each team's id and its channels' ids, which is
 /// what Slack's app opens by: "#channel" and Slack's own links in messages then open in Slack itself; and agents follow
 /// their threads and channels (following.rs). This is the app's copy, kept in UserDefaults so links resolve before
 /// zerod has answered.
@@ -29,15 +29,23 @@ public final class Slack {
         teams = UserDefaults.standard.data(forKey: Self.key).flatMap { try? JSONDecoder().decode([State].self, from: $0) } ?? []
     }
 
-    /// Slack's page for creating Zero's app, its manifest filled in: a name and read-only scopes (channels and their
-    /// names; history and people's names, for following threads).
-    public nonisolated static var createAppURL: URL {
+    /// Slack's page for creating Zero's app, its manifest filled in: a name and its scopes (channels and their names;
+    /// history, search and people's names, for following threads and agents' reads; chat:write only while the user lets
+    /// agents post, each post still theirs to approve, so a token made without it can't post at all).
+    public nonisolated static func createAppURL(posts: Bool) -> URL {
         let manifest: [String: Any] = [
             "display_information": [
                 "name": "Zero", "description": "Lets Zero open channels and threads in Slack, and agents follow them.",
                 "background_color": "#1d1c1d",
             ],
-            "oauth_config": ["scopes": ["user": ["channels:read", "groups:read", "channels:history", "groups:history", "users:read"]]],
+            "oauth_config": [
+                "scopes": [
+                    "user": [
+                        "channels:read", "groups:read", "im:read", "mpim:read", "channels:history", "groups:history", "im:history",
+                        "mpim:history", "users:read", "search:read", "team:read",
+                    ] + (posts ? ["chat:write"] : [])
+                ]
+            ],
             "settings": ["org_deploy_enabled": false, "socket_mode_enabled": false, "token_rotation_enabled": false],
         ]
         let json = String(

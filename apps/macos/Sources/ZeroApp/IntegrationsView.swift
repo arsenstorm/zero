@@ -114,7 +114,17 @@ struct IntegrationPage: View {
                         }
                     }
                 }
-            case .slack: EmptyView()
+                AgentWrites(
+                    title: "Let agents make changes", key: "linearChanges",
+                    detail:
+                        "Agents read Linear through Zero. On, they can change it too, each change approved by you. Zero asks Linear for write access only while this is on: after changing it, disconnect and connect Linear again."
+                )
+            case .slack:
+                AgentWrites(
+                    title: "Let agents post", key: "slackPosts",
+                    detail:
+                        "Agents read Slack through Zero. On, they can post too, each post approved by you. Zero's Slack app has chat:write only while this is on: after changing it, add or remove chat:write in the app's User Token Scopes in Slack, reinstall it, and connect Slack again with the new token."
+                )
             }
             if let workspace, integration.account(in: workspace.integrations) != nil {
                 SettingsSection(title: "Following") {
@@ -133,13 +143,13 @@ struct IntegrationPage: View {
             switch integration {
             case .slack:
                 SettingsSection(
-                    title: "Workspaces", accessory: AnyView(GhostButton(title: "Connect Slack…", icon: "plus") { connectingSlack = true })
+                    title: "Workspaces", accessory: AnyView(GhostButton(title: "Connect Slack", icon: "plus") { connectingSlack = true })
                 ) {
                     Rows {
                         ForEach(workspace.integrations?.slack ?? [], id: \.team.id) { connected in
                             SettingRow(
                                 title: connected.team.name,
-                                detail: "\(connected.team.domain).slack.com: its #channels and message links open in Slack. Read-only."
+                                detail: "\(connected.team.domain).slack.com: its #channels and message links open in Slack."
                             ) {
                                 RowButton(title: "Disconnect") { Task { await workspace.disconnectSlack(team: connected.team.id) } }
                             }
@@ -152,7 +162,7 @@ struct IntegrationPage: View {
                         SettingRow(
                             title: integration == .github ? "Connected as \(account)" : "Connected to \(account)",
                             detail: integration == .github
-                                ? "Through the GitHub CLI, signed in as it already is." : "Read-only, kept on this Mac."
+                                ? "Through the GitHub CLI, signed in as it already is." : "Kept on this Mac."
                         ) {
                             if integration == .linear { RowButton(title: "Disconnect") { Task { await workspace.disconnectLinear() } } }
                         }
@@ -164,6 +174,33 @@ struct IntegrationPage: View {
                 ConnectCard(integration: integration, workspace: workspace) { connectingSlack = true }.bleedingCard()
             }
         }
+    }
+}
+
+/// Whether agents may write through a connection (`zero slack`, `zero linear`): zerod's setting, off unless turned on,
+/// and every write still the user's to approve.
+private struct AgentWrites: View {
+    let title: String
+    let key: String
+    let detail: String
+    @State private var on = false
+    @State private var link = try? ZerodLink()
+
+    var body: some View {
+        SettingsSection(title: "Agents") {
+            Rows {
+                SettingRow(title: title, detail: detail) {
+                    Switch(
+                        isOn: Binding(
+                            get: { on },
+                            set: { chosen in
+                                on = chosen
+                                Task { _ = try? await link?.call("configure", [key: chosen]) }
+                            }))
+                }
+            }
+        }
+        .task { if let settings = try? await link?.call("settings") as? [String: Any] { on = settings[key] as? Bool ?? false } }
     }
 }
 
@@ -249,7 +286,7 @@ struct ConnectCard: View {
         case .linear: "Issue ids in messages open in Linear, and agents can follow an issue or one of its threads to hear its changes."
         case .github: "Agents follow pull requests through the GitHub CLI: reviews, comments, CI and merges reach them between turns."
         case .slack:
-            "Channels and threads named in messages open in Slack itself, and agents can follow a thread or a channel to hear its replies. Zero reads channels, messages and names; it posts nothing."
+            "Channels and threads named in messages open in Slack itself, and agents can follow a thread or a channel to hear its replies. Zero reads channels, messages and names, and posts only if you let agents."
         }
     }
 
@@ -334,6 +371,9 @@ struct SlackConnect: View {
     let workspace: Workspace
     @Environment(\.closeDialog) private var dismiss
     @State private var token = ""
+    /// Whether agents may post: the app is made with chat:write only then.
+    @State private var posts = false
+    @State private var link = try? ZerodLink()
     @State private var waiting = false
     @State private var problem: String?
 
@@ -342,14 +382,14 @@ struct SlackConnect: View {
             DialogTitle(
                 text: "Connect Slack",
                 detail:
-                    "Zero reads channels, messages and names; it posts nothing. Each workspace gets Zero's own Slack app. Connected before agents could follow Slack? Add the scopes from the manifest to your app, reinstall it, and paste the new token."
+                    "Zero reads channels, messages and names, and posts only if you let agents. Each workspace gets Zero's own Slack app. Connected before? Give your app the scopes in the manifest (chat:write only if agents may post), reinstall it, and paste the new token."
             )
             DialogPart(title: "1. Make Zero's app in the workspace") {
                 HStack {
                     Text("Slack opens with it filled in: Create, then Install to Workspace.").font(.system(size: 12.5)).fixedSize(
                         horizontal: false, vertical: true)
                     Spacer()
-                    DialogButton(title: "Open Slack") { NSWorkspace.shared.open(Slack.createAppURL) }
+                    DialogButton(title: "Open Slack") { NSWorkspace.shared.open(Slack.createAppURL(posts: posts)) }
                 }
             }
             DialogPart(title: "2. Paste its User OAuth Token") {
@@ -365,6 +405,9 @@ struct SlackConnect: View {
             }
         }
         .frame(width: 440)
+        .task {
+            if let settings = try? await link?.call("settings") as? [String: Any] { posts = settings["slackPosts"] as? Bool ?? false }
+        }
     }
 
     private func connect() {
