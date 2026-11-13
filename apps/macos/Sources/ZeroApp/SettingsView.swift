@@ -18,7 +18,7 @@ struct SettingsView: View {
     enum Page: String, CaseIterable, Identifiable {
         case general = "General", inbox = "Inbox and bar", devices = "Phone"
         case agents = "Agents", signins = "Accounts and models", git = "Git", chrome = "Browsers", mcp = "MCP servers"
-        case workspaces = "Workspaces", github = "GitHub", linear = "Linear", slack = "Slack", about = "About"
+        case workspaces = "Workspaces", github = "GitHub", linear = "Linear", slack = "Slack"
         var id: String { rawValue }
         /// One each, none shared: the sidebar is scanned by its icons.
         var icon: String {
@@ -32,15 +32,14 @@ struct SettingsView: View {
             case .chrome: "globe"
             case .mcp: "plug"
             case .workspaces: "suitcase"
-            case .about: "circle-info"
             case .github, .linear, .slack: ""
             }
         }
         /// GitHub, Linear and Slack: drawn with their own marks.
         var integration: Integration? { Integration(rawValue: rawValue.lowercased()) }
-        /// The pages before the groups: About first (the user's choice), then General, the inbox and the phone, which
+        /// The pages before the groups: General (Zero's version and health at its foot), the inbox and the phone, which
         /// everyone meets.
-        static let top: [Page] = [.about, .general, .inbox, .devices]
+        static let top: [Page] = [.general, .inbox, .devices]
         /// Then what agents run with (the tools they use among them), how the work is laid out, and the services Zero
         /// connects to.
         static let groups: [(String, [Page])] = [
@@ -54,8 +53,6 @@ struct SettingsView: View {
         get { navigation.map { Page(rawValue: $0.settingsPage ?? "") ?? .general } ?? ownPage }
         nonmutating set { if let navigation { navigation.settingsPage = newValue.rawValue } else { ownPage = newValue } }
     }
-    /// A page asked for from elsewhere (the sidebar's Workspace settings…), taken when the view appears.
-    @MainActor static var requested: Page?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -75,23 +72,33 @@ struct SettingsView: View {
                 }
             }
             Rectangle().fill(Theme.stroke).frame(width: 1)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    PageTitle(text: page.rawValue).padding(.bottom, 24)
-                    content
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        PageTitle(text: page.rawValue).padding(.bottom, 24)
+                        content
+                    }
+                    .centredColumn(680)
+                    .padding(.vertical, 28)
                 }
-                .centredColumn(680)
-                .padding(.top, 44).padding(.bottom, 28)
+                .thinScrollbar(remember: "settings")
+                .background(Theme.card)
+                .onAppear { scroll(proxy, to: navigation?.settingsSection) }
+                .onChange(of: navigation?.settingsSection) { _, section in scroll(proxy, to: section) }
             }
-            .thinScrollbar(remember: "settings")
-            .background(Theme.card)
         }
-        .onAppear { if let asked = Self.requested { page = asked; Self.requested = nil } }
+    }
+
+    /// To a section asked for (the gear's dot: Health), once laid out and after the remembered offset is restored.
+    private func scroll(_ proxy: ScrollViewProxy, to section: String?) {
+        guard let section else { return }
+        navigation?.settingsSection = nil
+        DispatchQueue.main.async { DispatchQueue.main.async { proxy.scrollTo(section, anchor: .top) } }
     }
 
     @ViewBuilder private var content: some View {
         switch page {
-        case .general: GeneralPage(settings: settings, workspace: workspace) { page = $0 }
+        case .general: GeneralPage(settings: settings, workspace: workspace, showOnboarding: showOnboarding) { page = $0 }
         case .inbox: InboxPage(settings: settings, store: store, inbox: inbox, workspace: workspace)
         case .devices: DevicesPage()
         case .agents: AgentsPage(settings: settings)
@@ -105,7 +112,6 @@ struct SettingsView: View {
                 FoldersPage(inbox: inbox)
             }
         case .github, .linear, .slack: IntegrationPage(integration: page.integration!, workspace: workspace)
-        case .about: AboutPage(showOnboarding: showOnboarding)
         }
     }
 }
@@ -340,7 +346,7 @@ struct Rows<Content: View>: View {
         func body(children: _VariadicView.Children) -> some View {
             VStack(spacing: 0) {
                 ForEach(Array(children.enumerated()), id: \.offset) { index, child in
-                    if index > 0 { Divider() }
+                    if index > 0 { Hairline() }
                     child
                 }
             }
@@ -355,7 +361,7 @@ struct Rows<Content: View>: View {
 struct Switch: View {
     @Binding var isOn: Bool
     var body: some View {
-        Toggle("", isOn: $isOn).labelsHidden().toggleStyle(.switch).scaleEffect(44 / 54).frame(width: 44, height: 20)
+        Toggle("", isOn: $isOn).labelsHidden().toggleStyle(.switch).focusEffectDisabled().scaleEffect(44 / 54).frame(width: 44, height: 20)
     }
 }
 
@@ -414,13 +420,15 @@ struct GhostButton: View {
     var open = false
     let action: () -> Void
     @State private var hovered = false
+    @Environment(\.isEnabled) private var enabled
 
     var body: some View {
         Button(action: action) {
             NucleoLabel(title, icon: icon, size: 12).font(.system(size: 12.5, weight: .medium)).foregroundStyle(.secondary)
                 .padding(.horizontal, 9).frame(height: 26)
-                .background(open || hovered ? Theme.row : .clear, in: Capsule())
+                .background(enabled && (open || hovered) ? Theme.hover : .clear, in: Capsule())
                 .contentShape(Capsule())
+                .opacity(enabled ? 1 : 0.4)
         }
         .buttonStyle(.plain).fixedSize()
         .onHover { hovered = $0 }
@@ -451,7 +459,7 @@ struct SettingChoice<Value: Hashable>: View {
                 NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 180 : 0))
             }
             .padding(.horizontal, 8).frame(height: 28)
-            .background(open || hovered ? Theme.row : .clear, in: Capsule())
+            .background(open || hovered ? Theme.hover : .clear, in: Capsule())
             .contentShape(Capsule())
         }
         .buttonStyle(.plain).fixedSize()
@@ -526,21 +534,21 @@ struct SettingRow<Control: View>: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 13, weight: .medium))
-                Text(detailText).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if let more {
+                    Button {
+                        NSWorkspace.shared.open(more.url)
+                    } label: {
+                        TaskDetails.linked(more.title).font(.system(size: 12))
+                    }
+                    .buttonStyle(.plain).padding(.top, 2)
+                }
             }
             Spacer(minLength: 16)
             // A fixed slot, so a spinner turning into a button moves nothing beside it; a wider control widens it.
             control().frame(minWidth: 128, alignment: .trailing)
         }
         .padding(.vertical, 12)
-    }
-
-    private var detailText: AttributedString {
-        guard let more else { return AttributedString(detail) }
-        var link = AttributedString(more.title)
-        link.link = more.url
-        link.underlineStyle = .single
-        return AttributedString(detail + " ") + link
     }
 }
 
@@ -583,6 +591,7 @@ struct UpdateRow: View {
 private struct GeneralPage: View {
     @Bindable var settings: Settings
     let workspace: Workspace?
+    let showOnboarding: () -> Void
     let go: (SettingsView.Page) -> Void
     /// Each state's sound, in its dialog.
     @State private var eachState = false
@@ -612,6 +621,7 @@ private struct GeneralPage: View {
                 Text("While you're in Zero, you hear the sound instead of seeing a notification.")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             }
+            AboutSections(showOnboarding: showOnboarding)
         }
         .zeroDialog(isPresented: $eachState) { StateSoundsSheet(settings: settings) }
     }
@@ -641,7 +651,7 @@ private struct SetupChecklist: View {
                 Rows {
                     step("Zero plugin in your agents", "So they ask you here instead of waiting in a terminal.", done: plugin) {
                         if installing {
-                            ProgressView().controlSize(.small)
+                            Spinner().frame(width: 12, height: 12)
                         } else {
                             RowButton(title: "Install") {
                                 installing = true
@@ -674,7 +684,7 @@ private struct SetupChecklist: View {
     private func step(_ title: String, _ detail: String, done: Bool, @ViewBuilder action: () -> some View) -> some View {
         let action = action()
         return SettingRow(title: title, detail: detail) {
-            if done { StatePill(text: "Done", color: .green) } else { action }
+            if done { StatePill(text: "Done", color: Theme.doneInk) } else { action }
         }
     }
 }
@@ -716,8 +726,10 @@ private struct StateSoundsSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            DialogTitle(text: "Each state's sound")
-            Text("A task's notification plays the sound of the state it came to.").font(.system(size: 12.5)).foregroundStyle(.secondary)
+            DialogTitle(
+                text: "Each state's sound",
+                detail: "A task's notification plays the sound of the state it came to."
+            )
             VStack(spacing: 4) {
                 ForEach(Self.states, id: \.state) { row in
                     HStack {
@@ -761,10 +773,10 @@ private struct InboxPage: View {
     let store: Store
     let inbox: InboxController
     let workspace: Workspace?
-    /// The agent being renamed, and the name typed so far.
-    @State private var editing: String?
-    @State private var draft = ""
-    @FocusState private var focused: Bool
+    /// The agent being renamed, in the dialog every rename in Zero uses.
+    @State private var renaming: Agent?
+    private struct Agent: Identifiable { let id: String }
+    @AppStorage("barFoot") private var barFoot = false
     /// "Never", as minutes: ten years.
     static let never = 10 * 365 * 1440
 
@@ -776,6 +788,17 @@ private struct InboxPage: View {
                         Switch(isOn: $settings.showBar)
                     }
                 }
+            }
+            SettingsSection(title: "In the bar") {
+                VStack(spacing: 10) {
+                    BarPartsCard(settings: settings)
+                    Rows {
+                        SettingRow(title: "Settings button", detail: "Under the bar, out when the pointer is on it.") {
+                            Switch(isOn: $barFoot)
+                        }
+                    }
+                }
+                .barOnly(settings.showBar)
             }
             SettingsSection(title: "Placement") {
                 Rows {
@@ -824,29 +847,16 @@ private struct InboxPage: View {
         let agents = inbox.barAgents(settings: settings, workspace: workspace)
         let names = agents.map(\.0)
         if names.isEmpty {
-            Text("No agents yet. They appear here when they first ask you something.").font(.system(size: 13)).foregroundStyle(.secondary)
+            Text("No agents yet. They appear here when they first ask you something.").font(.system(size: 13)).foregroundStyle(.tertiary)
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 List {
                     ForEach(names, id: \.self) { name in
                         HStack(spacing: 10) {
                             Circle().fill((agents.first { $0.0 == name }?.1 ?? .closed).color).frame(width: 8, height: 8)
-                            if editing == name {
-                                TextField("Name", text: $draft, prompt: Text(store.identity(of: name)?.label ?? name))
-                                    .textFieldStyle(.plain).font(.system(size: 13, weight: .medium)).focused($focused)
-                                    .onSubmit {
-                                        store.rename(name, to: draft); editing = nil
-                                    }
-                                    .onExitCommand { editing = nil }
-                            } else {
-                                Text(store.displayName(of: name)).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                            }
+                            Text(store.displayName(of: name)).font(.system(size: 13, weight: .medium)).lineLimit(1)
                             Spacer()
-                            IconButton(symbol: "pen", help: "Rename") {
-                                draft = store.names[name] ?? store.displayName(of: name)
-                                editing = name
-                                focused = true
-                            }
+                            IconButton(symbol: "pen", help: "Rename") { renaming = Agent(id: name) }
                             IconButton(symbol: "trash", help: store.canStop(name) ? "Remove and stop" : "Remove") { store.closeAgent(name) }
                         }
                         .padding(.vertical, 4)
@@ -862,17 +872,121 @@ private struct InboxPage: View {
                 Text("Drag to reorder. A removed agent comes back when it next asks you something.")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             }
+            .zeroDialog(item: $renaming) { agent in
+                NameSheet(
+                    title: "Rename", name: store.names[agent.id] ?? store.displayName(of: agent.id), action: "Rename",
+                    done: { store.rename(agent.id, to: $0) },
+                    // A custom name only: clearing it gives the agent its own label back.
+                    reset: store.names[agent.id] == nil ? nil : { store.rename(agent.id, to: "") })
+            }
+        }
+    }
+}
+
+/// The bar's parts in its order, top to bottom: each switched on or off (for Agents, which of them), dragged to
+/// reorder. Rows of one height, so a dragged row steps over its neighbours a row at a time.
+private struct BarPartsCard: View {
+    @Bindable var settings: Settings
+    @State private var drag: (part: BarPart, y: CGFloat)?
+    @State private var hovered: BarPart?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let height: CGFloat = 60
+
+    var body: some View {
+        let parts = settings.barParts
+        VStack(spacing: 0) {
+            ForEach(Array(parts.enumerated()), id: \.element) { index, part in
+                row(part, index: index, among: parts)
+            }
+        }
+        .bleedingCard()
+    }
+
+    private func dropIndex(in parts: [BarPart]) -> Int? {
+        guard let drag, let from = parts.firstIndex(of: drag.part) else { return nil }
+        return max(0, min(parts.count - 1, from + Int((drag.y / height).rounded())))
+    }
+
+    /// While dragging, the rows between the start and the drop step aside by one.
+    private func shift(_ index: Int, in parts: [BarPart]) -> CGFloat {
+        guard let drag, let from = parts.firstIndex(of: drag.part), let to = dropIndex(in: parts) else { return 0 }
+        if from < to, index > from, index <= to { return -height }
+        if from > to, index >= to, index < from { return height }
+        return 0
+    }
+
+    private func row(_ part: BarPart, index: Int, among parts: [BarPart]) -> some View {
+        let dragging = drag?.part == part
+        // Square, but for the card's own corners at its ends.
+        let top: CGFloat = index == 0 ? 14 : 0, bottom: CGFloat = index == parts.count - 1 ? 14 : 0
+        return SettingRow(title: title(part), detail: detail(part)) { control(part) }
+            .padding(.horizontal, 18)
+            .frame(height: height)
+            .background(
+                hovered == part || dragging ? Theme.row : .clear,
+                in: UnevenRoundedRectangle(
+                    topLeadingRadius: top, bottomLeadingRadius: bottom, bottomTrailingRadius: bottom, topTrailingRadius: top)
+            )
+            // Edge to edge, as the fill is; it travels with its row.
+            .overlay(alignment: .top) { if index > 0 && !dragging { Hairline() } }
+            .contentShape(Rectangle())
+            .onHover { hovered = $0 ? part : (hovered == part ? nil : hovered) }
+            .pointerStyle(dragging ? .grabActive : .grabIdle)
+            .offset(y: dragging ? drag!.y : shift(index, in: parts))
+            .animation(dragging || reduceMotion ? nil : .snappy(duration: 0.2), value: dropIndex(in: parts))
+            .zIndex(dragging ? 1 : 0)
+            .gesture(
+                DragGesture(minimumDistance: 4)
+                    .onChanged { drag = (part, $0.translation.height) }
+                    .onEnded { _ in
+                        if let to = dropIndex(in: parts), let from = parts.firstIndex(of: part) {
+                            var order = parts
+                            order.move(fromOffsets: [from], toOffset: to > from ? to + 1 : to)
+                            settings.barParts = order
+                        }
+                        drag = nil
+                    })
+    }
+
+    private func title(_ part: BarPart) -> String {
+        switch part {
+        case .inbox: "Inbox"
+        case .workspaces: "Workspace"
+        case .agents: "Agents"
+        }
+    }
+
+    private func detail(_ part: BarPart) -> String {
+        switch part {
+        case .inbox: "Open asks, with a dot while one waits."
+        case .workspaces: "Switch workspaces. Shown while you have more than one."
+        case .agents: "A dot for each task, as the sidebar lists them."
+        }
+    }
+
+    @ViewBuilder private func control(_ part: BarPart) -> some View {
+        switch part {
+        case .agents:
+            SettingChoice(
+                id: "barAgents",
+                choices: [
+                    [("All tasks", BarAgents.all), ("Only those that need you", .needsYou), ("Pinned tasks only", .pinned)],
+                    [("None", .none)],
+                ],
+                selection: $settings.barAgents)
+        default:
+            Switch(
+                isOn: Binding(
+                    get: { !settings.barHidden.contains(part) },
+                    set: { on in if on { settings.barHidden.remove(part) } else { settings.barHidden.insert(part) } }))
         }
     }
 }
 
 extension View {
-    /// A setting only the control bar uses: greyed out, with a line saying why, while the bar is off.
-    @ViewBuilder fileprivate func barOnly(_ shown: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            disabled(!shown).opacity(shown ? 1 : 0.5)
-            if !shown { Text("The control bar is off.").font(.system(size: 12)).foregroundStyle(.secondary) }
-        }
+    /// A setting only the control bar uses: greyed out while the bar is off, why on hover.
+    fileprivate func barOnly(_ shown: Bool) -> some View {
+        disabled(!shown).opacity(shown ? 1 : 0.5).tip(shown ? "" : "The control bar is off")
     }
 }
 
@@ -1016,6 +1130,7 @@ private struct StuckThresholdsSheet: View {
             }
             DialogPart(title: "Never stop commands containing") {
                 TextField("", text: $never, prompt: Text("migrate, deploy")).textFieldStyle(.dialog).font(.system(size: 12).monospaced())
+                    .firstField()
             }
             HStack {
                 Spacer()
@@ -1221,7 +1336,7 @@ private struct BrowserRows: View {
                         if firefox {
                             Text("Connected").font(.system(size: 12)).foregroundStyle(.secondary)
                         } else if opening {
-                            ProgressView().controlSize(.small)
+                            Spinner().frame(width: 12, height: 12)
                         } else {
                             RowButton(title: "Open") { openFirefox() }
                         }
@@ -1235,7 +1350,7 @@ private struct BrowserRows: View {
                         detail: safari.map { $0.isEmpty ? "Working · comparisons get a signed-out Safari window" : $0 }
                             ?? "For comparing pages: a signed-out Safari window with real clicks"
                     ) {
-                        if trying { ProgressView().controlSize(.small) } else { RowButton(title: "Try it") { trySafari() } }
+                        if trying { Spinner().frame(width: 12, height: 12) } else { RowButton(title: "Try it") { trySafari() } }
                     }
                 }
             }
@@ -1305,7 +1420,7 @@ private struct BrowserRows: View {
             VStack(spacing: 0) {
                 ForEach(blocked, id: \.self) { site in
                     BlockedSiteRow(site: site) { saveSites(blocked.filter { $0 != site }) }
-                    Divider().padding(.leading, 18)
+                    Hairline().padding(.horizontal, 18)
                 }
                 HStack(spacing: 10) {
                     NucleoIcon("plus", size: 13).foregroundStyle(.secondary)
@@ -1317,7 +1432,7 @@ private struct BrowserRows: View {
                             adding = ""
                         }
                 }
-                .padding(.horizontal, 18).frame(height: 40)
+                .padding(.horizontal, 18).frame(height: 44)
             }
             .bleedingCard()
         }
@@ -1357,12 +1472,12 @@ private struct BlockedSiteRow: View {
     @State private var hovered = false
     var body: some View {
         HStack {
-            Text(site).font(.system(size: 13))
+            Text(site).font(.system(size: 13, weight: .medium))
             Spacer()
             Button(action: remove) { NucleoIcon("trash", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28) }
                 .buttonStyle(Hovering(radius: 7)).tip("Unblock it").opacity(hovered ? 1 : 0)
         }
-        .padding(.leading, 18).padding(.trailing, 8).frame(height: 40)
+        .padding(.leading, 18).padding(.trailing, 10).frame(height: 44)
         .contentShape(Rectangle()).onHover { hovered = $0 }
     }
 }
@@ -1397,7 +1512,7 @@ private struct PluginRow: View {
                                     }
                                 }))
                     } else {
-                        ProgressView().controlSize(.small)
+                        Spinner().frame(width: 12, height: 12)
                     }
                 }
             }
@@ -1457,10 +1572,10 @@ private struct FoldersPage: View {
 
     var body: some View {
         Sections {
-            SettingsSection(title: "Projects", accessory: AnyView(GhostButton(title: "Add folder", icon: "plus", action: addFolders))) {
+            SettingsSection(title: "Projects", accessory: AnyView(GhostButton(title: "Add folder…", icon: "plus", action: addFolders))) {
                 card(empty: folders.isEmpty) {
                     ForEach(Array(folders.enumerated()), id: \.element) { index, folder in
-                        if index > 0 { Divider().padding(.leading, 18) }
+                        if index > 0 { Hairline() } // edge to edge, as the row's hover fill is
                         HStack(spacing: 10) {
                             NucleoIcon("folder", size: 15).foregroundStyle(.secondary).frame(width: 18)
                             Text(Projects.name(of: folder)).font(.system(size: 13, weight: .medium)).lineLimit(1)
@@ -1498,7 +1613,7 @@ private struct FoldersPage: View {
     private func card<Content: View>(empty: Bool, @ViewBuilder rows: () -> Content) -> some View {
         VStack(spacing: 0) {
             if empty {
-                Text("None yet").font(.system(size: 13)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                Text("None yet").font(.system(size: 13)).foregroundStyle(.tertiary).frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 18).frame(height: 44)
             }
             rows()

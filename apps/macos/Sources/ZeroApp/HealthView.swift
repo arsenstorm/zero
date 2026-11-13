@@ -2,16 +2,17 @@ import AppKit
 import SwiftUI
 import ZeroCore
 
-/// Settings › About: the version and its update, Zero's own checks, and what's there to look into: the daemon when it
-/// doesn't start at login, which icons this build draws, the log, the welcome.
-struct AboutPage: View {
+/// The foot of Settings › General: the version and its update, Zero's own checks, and what's there to look into: the
+/// daemon when it doesn't start at login, which icons this build draws, the log, the welcome. About and Health are
+/// ids links scroll to.
+struct AboutSections: View {
     let showOnboarding: () -> Void
     /// Read as the page opens and as Zero comes back from System Settings: shown only while it's off.
     @State private var daemon = ZerodAgent.state
 
     var body: some View {
         Sections {
-            SettingsSection(title: "Zero") {
+            SettingsSection(title: "About") {
                 Rows {
                     UpdateRow()
                     if daemon != .on { ZerodAgentRow() }
@@ -24,7 +25,8 @@ struct AboutPage: View {
                     ) { EmptyView() }
                 }
             }
-            HealthPage()
+            .id("about")
+            HealthPage().id("health")
             SettingsSection(title: "Help") {
                 Rows {
                     SettingRow(
@@ -104,7 +106,7 @@ private struct HealthPage: View {
 
     static func color(_ state: HealthCheck.State) -> Color {
         switch state {
-        case .ok: .green
+        case .ok: Theme.done
         case .info: .secondary
         case .warning: .orange
         case .failing: .red

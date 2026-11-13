@@ -70,6 +70,20 @@ import Testing
     #expect(navigation.place == .task("t1"))
 }
 
+/// Opening Settings on a page (the gear with Health's dot, a link) is one step: back goes to where it was opened from.
+@MainActor @Test func backFromSettingsOpenedOnAPageIsWhereItWasOpenedFrom() {
+    let navigation = Navigation()
+    navigation.place = .task("t1")
+    navigation.openSettings("General", section: "health")
+    #expect(navigation.place == .settings && navigation.settingsPage == "General" && navigation.settingsSection == "health")
+    navigation.goBack()
+    #expect(navigation.place == .task("t1"))
+    navigation.goForward()
+    navigation.openSettings("Git") // in Settings already: the page is a step
+    navigation.goBack()
+    #expect(navigation.place == .settings && navigation.settingsPage == "General")
+}
+
 /// A worker opened by its own id (a link, an inbox card, a report) is its lead's page with it shown, as the sidebar opens
 /// it: one step back goes to where you were.
 @MainActor @Test func aWorkerOpenedByItsIdIsShownOnItsLeadsPage() {

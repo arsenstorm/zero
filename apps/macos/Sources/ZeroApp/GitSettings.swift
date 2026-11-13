@@ -73,7 +73,7 @@ struct GitPage: View {
                             HStack(spacing: 10) {
                                 if model.publicKey != nil, !git.login.isEmpty, let onGitHub {
                                     StatePill(
-                                        text: onGitHub ? "On \(git.login)" : "Not on \(git.login)", color: onGitHub ? .green : .orange
+                                        text: onGitHub ? "On \(git.login)" : "Not on \(git.login)", color: onGitHub ? Theme.done : .orange
                                     )
                                     .tip(
                                         onGitHub
@@ -98,10 +98,10 @@ struct GitPage: View {
                     }
                 }
             }
-            // The folders limit the GitHub token too (GitHub › Agents' access): shown while either is on.
-            if git.enabled || git.scopedToken {
+            // The folders limit the GitHub token and HTTPS pushes too (GitHub › Agents' access): shown while any is on.
+            if git.enabled || git.scopedToken || git.https {
                 SettingsSection(
-                    title: "Only in these folders", accessory: AnyView(GhostButton(title: "Add folder", icon: "plus", action: addFolder))
+                    title: "Only in these folders", accessory: AnyView(GhostButton(title: "Add folder…", icon: "plus", action: addFolder))
                 ) {
                     Rows {
                         if git.folders.isEmpty {
@@ -207,7 +207,6 @@ struct AgentsGitHubAccess: View {
                                     enableAfterToken = true
                                     editingToken = true
                                 } else {
-                                    if enabled { model.git.https = true }
                                     model.git.scopedToken = enabled; model.save()
                                 }
                             }))
@@ -224,8 +223,16 @@ struct AgentsGitHubAccess: View {
                         }
                     }
                 }
-                SettingRow(title: "Push with the GitHub CLI's sign-in", detail: httpsDetail) {
-                    Switch(isOn: model.binding(\.https)).disabled(git.scopedToken || !git.enabled)
+                SettingRow(title: "Push with the GitHub CLI's sign-in", detail: "Rather than SSH, which may wait on your own key.") {
+                    // The token pushes over HTTPS itself: on and locked while agents have it.
+                    Switch(
+                        isOn: Binding(
+                            get: { git.https || git.scopedToken },
+                            set: {
+                                model.git.https = $0; model.save()
+                            })
+                    )
+                    .disabled(git.scopedToken).tip(git.scopedToken ? "Agents' own token pushes over HTTPS" : "")
                 }
             }
         }
@@ -237,7 +244,7 @@ struct AgentsGitHubAccess: View {
                 Task {
                     await model.refreshToken()
                     if shouldEnable && tokenSaved && model.tokenStatus?.error == nil {
-                        model.git.https = true; model.git.scopedToken = true; model.save()
+                        model.git.scopedToken = true; model.save()
                     }
                 }
             }
@@ -245,14 +252,6 @@ struct AgentsGitHubAccess: View {
         .onChange(of: editingToken) { _, open in
             if !open { enableAfterToken = false }
         }
-    }
-
-    /// Why it's locked, when it is: the token pushes over HTTPS itself; without agents' own account, zerod leaves
-    /// pushes to the user's own setup.
-    private var httpsDetail: String {
-        if git.scopedToken { return "The token pushes over HTTPS." }
-        if !git.enabled { return "With agents' own account (Settings › Git), rather than SSH, which may wait on your key." }
-        return "Rather than SSH, which may wait on your own key."
     }
 
     private var tokenDetail: String {
@@ -271,10 +270,11 @@ private struct CoauthorSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            DialogTitle(text: "Your name and email")
-            Text("Leave both blank to use each repository's user.name and user.email.")
-                .font(.system(size: 12.5)).foregroundStyle(.secondary)
-            DialogPart(title: "Name") { TextField("Name", text: $name).textFieldStyle(.dialog) }
+            DialogTitle(
+                text: "Your name and email",
+                detail: "Leave both blank to use each repository's user.name and user.email."
+            )
+            DialogPart(title: "Name") { TextField("Name", text: $name).textFieldStyle(.dialog).firstField() }
             DialogPart(title: "Email") { TextField("Email", text: $email).textFieldStyle(.dialog) }
             HStack {
                 Spacer()
@@ -300,18 +300,18 @@ private struct GitTokenSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            DialogTitle(text: "Agents' GitHub token")
-            Text(
-                "Paste a fine-grained token for the repositories agents may use. Give it Contents and Pull requests read and write, Checks and Actions read, and no Administration. Zero keeps it in your Keychain."
+            DialogTitle(
+                text: "Agents' GitHub token",
+                detail:
+                    "Paste a fine-grained token for the repositories agents may use. Give it Contents and Pull requests read and write, Checks and Actions read, and no Administration. Zero keeps it in your Keychain."
             )
-            .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Button {
                 NSWorkspace.shared.open(URL(string: "https://github.com/settings/personal-access-tokens/new")!)
             } label: {
                 TaskDetails.linked("Create a token on GitHub").font(.system(size: 12.5))
             }
             .buttonStyle(.plain)
-            SecureField("Token", text: $token).textFieldStyle(.dialog)
+            SecureField("Token", text: $token).textFieldStyle(.dialog).firstField()
             HStack {
                 Spacer()
                 DialogButton(title: "Cancel") { dismiss() }

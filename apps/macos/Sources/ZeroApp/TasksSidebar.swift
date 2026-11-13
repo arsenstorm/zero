@@ -113,7 +113,7 @@ struct TasksSidebar: View {
                 (
                     "settings", "Workspace settings…", "sliders", false,
                     {
-                        SettingsView.requested = .workspaces; place = .settings
+                        navigation.openSettings(SettingsView.Page.workspaces.rawValue)
                     }
                 ),
             ],
@@ -369,7 +369,7 @@ struct TasksSidebar: View {
                     }
                 }
                 UsageFooter(workspace: workspace) {
-                    SettingsView.requested = .signins; place = .settings
+                    navigation.openSettings(SettingsView.Page.signins.rawValue)
                 }
             }
             .padding(.horizontal, UsageFooter.inset - 10).padding(.vertical, UsageFooter.inset)

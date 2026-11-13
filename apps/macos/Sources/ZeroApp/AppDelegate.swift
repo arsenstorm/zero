@@ -349,10 +349,10 @@ import ZeroCore
         statusItem.menu = menu
     }
 
-    /// Settings › General, where an update is checked for and installed.
+    /// Settings › General's About, where an update is checked for and installed.
     @objc private func showUpdates() {
-        navigation.settingsPage = SettingsView.Page.general.rawValue
-        openSettings()
+        navigation.openSettings(SettingsView.Page.general.rawValue, section: "about")
+        openWorkspace()
         if Updater.shared.available == nil { Task { await Updater.shared.check() } }
     }
 

@@ -61,6 +61,16 @@ public final class Navigation {
     public var windowShown = true
     /// On a scratchpad: the section a link pointed at, to scroll to once.
     public var padSection: String?
+    /// In Settings: the section asked for (Health, About), to scroll to once.
+    public var settingsSection: String?
+
+    /// Settings, on `page` (else the page it was on last). Coming in, the page is set before the place, so it isn't
+    /// a step of its own: back goes to where Settings was opened from.
+    public func openSettings(_ page: String? = nil, section: String? = nil) {
+        if let page { settingsPage = page }
+        settingsSection = section
+        place = .settings
+    }
     /// Past the splash: the window shows its places, and the toolbar its arrows.
     public var ready = false
     /// The pane on a task's right, open or not, as it was last left.

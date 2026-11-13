@@ -104,7 +104,9 @@ struct WorkspaceView: View {
 
     private var window: some View {
         HStack(spacing: 0) {
-            Rail(place: $navigation.place, homePlace: navigation.homePlace, inbox: inbox)
+            Rail(place: $navigation.place, homePlace: navigation.homePlace, inbox: inbox) {
+                navigation.openSettings(SettingsView.Page.general.rawValue, section: "health")
+            }
             Group {
                 switch navigation.place {
                 case .settings: settings()
@@ -260,6 +262,8 @@ private struct Rail: View {
     /// Where Home was last (a task, say): what its icon goes back to.
     var homePlace: Navigation.Place = .home
     let inbox: InboxController
+    /// Settings › General at its Health section, where the gear's dot points.
+    let openHealth: () -> Void
 
     private var home: Bool {
         switch place {
@@ -299,8 +303,7 @@ private struct Rail: View {
             let trouble = HealthMonitor.shared.trouble
             let help = trouble ? "Settings · Health has something to look at" : "Settings"
             item("gear", selected: place == .settings, help: help, shortcut: "⌘,") {
-                if trouble { SettingsView.requested = .about }
-                place = .settings
+                if trouble { openHealth() } else { place = .settings }
             }
             .overlay(alignment: .topTrailing) {
                 Circle().fill(.orange).frame(width: 6, height: 6).padding(6).opacity(trouble ? 1 : 0).allowsHitTesting(false)

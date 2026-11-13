@@ -1916,8 +1916,8 @@ public struct AgentGit: Codable, Equatable, Sendable {
     public var login = ""
     public var name = ""
     public var email = ""
-    /// GitHub over HTTPS with the GitHub CLI's sign-in, not SSH.
-    public var https = true
+    /// GitHub over HTTPS with the GitHub CLI's sign-in, not SSH; on its own, with or without agents' own account.
+    public var https = false
     /// Only agents in these folders; none, every folder.
     public var folders: [String] = []
     public var agentsAuthor = false
@@ -1927,7 +1927,8 @@ public struct AgentGit: Codable, Equatable, Sendable {
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, login, name, email, https, folders, agentsAuthor, coauthorName, coauthorEmail, scopedToken
+        case enabled, login, name, email, folders, agentsAuthor, coauthorName, coauthorEmail, scopedToken
+        case https = "httpsPush"
     }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -1935,7 +1936,7 @@ public struct AgentGit: Codable, Equatable, Sendable {
         login = try values.decodeIfPresent(String.self, forKey: .login) ?? ""
         name = try values.decodeIfPresent(String.self, forKey: .name) ?? ""
         email = try values.decodeIfPresent(String.self, forKey: .email) ?? ""
-        https = try values.decodeIfPresent(Bool.self, forKey: .https) ?? true
+        https = try values.decodeIfPresent(Bool.self, forKey: .https) ?? false
         folders = try values.decodeIfPresent([String].self, forKey: .folders) ?? []
         agentsAuthor = try values.decodeIfPresent(Bool.self, forKey: .agentsAuthor) ?? false
         coauthorName = try values.decodeIfPresent(String.self, forKey: .coauthorName) ?? ""
