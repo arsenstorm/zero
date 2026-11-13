@@ -38,7 +38,8 @@ pub enum State {
     Read,
     /// Finished end to end, confirmed (`zero done`, its token, or the user's word; `--completed` and `--merged` as it was): merged and
     /// deployed, verified, or the user said so; a review, CI or QA still to come is Waiting. Last of all, and put
-    /// away (Settings › archiveCompleted; a worker once its lead has its report); something it follows brings it back.
+    /// away (Settings › archiveCompleted; a worker once its lead has its report); something it follows that needs it
+    /// brings it back, what only confirms its end (an issue done, its pull request merged) is noted and it stays.
     Done,
     Idle,
     Offline,

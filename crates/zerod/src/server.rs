@@ -334,6 +334,14 @@ impl Zerod {
         rows
     }
 
+    /// Whether a task (a lead, or a worker on one) is done, confirmed: the board's word.
+    pub fn done(&self, id: &str) -> bool {
+        self.board().iter().any(|r| {
+            (r.session == id && r.own == crate::board::State::Done)
+                || r.team.iter().any(|m| m.session == id && m.state == crate::board::State::Done)
+        })
+    }
+
     fn board(&self) -> Vec<crate::board::Row> {
         let daemon = &self.daemon;
         let mut rows = crate::board::board_in(

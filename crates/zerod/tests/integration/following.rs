@@ -327,60 +327,136 @@ fn a_slack_threads_changes_become_events() {
     assert_eq!(slack::thread_snapshot(&after)["root_text"], "Deploying <@U2>'s PR");
 }
 
+/// A pull request followed, merged as `5425391615…`: gh's answer, with the deployments of its merge commit (an
+/// environment, its latest status) and whether the repository has any at all.
+fn merged(deploys: Vec<(&str, &str, &str)>, repo_deploys: u64) -> Value {
+    let mut reply = pr(vec![], vec![], vec![], "aaa", "MERGED");
+    reply["data"]["repository"]["deployments"] = json!({"totalCount": repo_deploys});
+    reply["data"]["repository"]["pullRequest"]["mergeCommit"] = json!({"oid": "5425391615abcdef0123456789abcdef01234567", "deployments": {"nodes":
+        deploys.iter().map(|(id, env, state)| json!({"databaseId": id, "environment": env, "state": "ACTIVE",
+            "latestStatus": if state.is_empty() { Value::Null } else { json!({"state": state, "description": "", "logUrl": format!("https://ci/deploys/{id}"), "environmentUrl": ""}) }})).collect::<Vec<_>>()}});
+    reply
+}
+
+/// A deploy bot posts each step of a deploy as its own message, some naming the merged commit and some nothing
+/// ("Running migrations", "Deploy complete"). Once a filtered follow passes one of its messages, the bot's next ones
+/// in the channel pass too, as one sequence, each saying what it continues: until the bot names something else
+/// (another commit or pull request), half an hour passes quietly, or twenty have passed.
 #[tokio::test]
-async fn a_deploy_bots_message_naming_nothing_continues_its_last_that_did() {
-    let bot = |ts: &str, text: &str| json!({"ts": ts, "username": "Deploy: app (production)", "bot_id": "B1", "text": text});
-    let github = |ts: &str, title: &str| json!({"ts": ts, "user": "UGH", "text": "", "attachments": [{"fallback": title}]});
+async fn a_matched_authors_next_messages_continue_it() {
+    let bot =
+        |at: u64, text: &str| json!({"ts": format!("{at}.000100"), "username": "Deploy: app (production)", "bot_id": "B1", "text": text});
+    let person = |at: u64, text: &str| json!({"ts": format!("{at}.000100"), "user": "U9", "text": text});
     let history = |messages: Vec<Value>| Ok(json!({"ok": true, "messages": messages.into_iter().rev().collect::<Vec<_>>()}));
+    const T: u64 = 1_700_000_000;
+    let mut later = vec![
+        person(T - 100, "morning"),
+        bot(T, "Waiting until commit 5425391615 is built"),
+        bot(T + 60, "Pulling image for commit 5425391615"),
+        bot(T + 120, "Running migrations"),
+        bot(T + 180, "Migrations finished"),
+        bot(T + 240, "Deploying commit 5425391615"),
+        bot(T + 300, "Deploy complete"),
+        person(T + 360, "Deploy complete?"),
+        bot(T + 400, "Waiting until commit 9f8e7d6c5b is built"),
+        bot(T + 460, "Deploy complete"),
+        bot(T + 500, "Deploying commit 5425391615 again"),
+        bot(T + 500 + 31 * 60, "Deploy complete after the quiet"),
+        bot(T + 5000, "Deploying commit 5425391615 once more"),
+    ];
+    later.extend((1..=25).map(|k| bot(T + 5000 + 60 * k, &format!("step {k}"))));
     let fetcher = canned(vec![
         Ok(json!({"ok": true, "team_id": "T0AB", "team": "Acme", "url": "https://acme.slack.com/", "user_id": "U2"})),
-        Ok(json!({"ok": true, "channels": [{"id": "C0D", "name": "deploys"}], "response_metadata": {"next_cursor": ""}})),
-        // The baseline: a deploy under way already.
-        history(vec![bot("1700000000.000100", "Pulling image for commit abc Fix vitals (#42)")]),
-        // Then: assets, the deploy, its completion; another PR's deploy starts; GitHub's merge notice (all attachment).
-        history(vec![
-            bot("1700000000.000100", "Pulling image for commit abc Fix vitals (#42)"),
-            bot("1700000100.000100", "Extracting assets to host dirs on 2 node(s)"),
-            bot("1700000200.000100", "Deploying commit abc Fix vitals (#42)"),
-            bot("1700000300.000100", "Deploy complete"),
-            bot("1700000400.000100", "Waiting until commit def Docs (#43) is built"),
-            bot("1700000500.000100", "Deploy complete"),
-            github("1700000600.000100", "<https://github.com/o/r/pull/44|#44 Charts>"),
-        ]),
+        Ok(json!({"ok": true, "channels": [{"id": "C0DEPLOY1", "name": "deploys"}], "response_metadata": {"next_cursor": ""}})),
+        Ok(merged(vec![], 0)),
+        history(vec![person(T - 100, "morning")]),
+        Ok(merged(vec![], 0)),
+        history(later),
+        Ok(json!({"ok": true, "user": {"name": "sam"}})),
     ]);
-    let home = temp_dir("following-deploys");
+    let home = temp_dir("following-sequences");
     let integrations = Integrations::open(&home, fetcher.clone());
     integrations.connect_slack("xoxp-1").await.unwrap();
-    let first = slack::poll(&integrations, &["C0D"], None).await.unwrap();
-    assert_eq!(first.summary, "#deploys https://acme.slack.com/archives/C0D/p1700000000000100");
-    let second = slack::poll(&integrations, &["C0D"], Some(&first.state)).await.unwrap();
-    let seen: Vec<(&str, Option<&str>)> = second.events.iter().map(|e| (e.body.as_str(), e.after.as_deref())).collect();
-    assert_eq!(
-        seen,
-        [
-            ("Extracting assets to host dirs on 2 node(s)", Some("Pulling image for commit abc Fix vitals (#42)")),
-            ("Deploying commit abc Fix vitals (#42)", None),
-            ("Deploy complete", Some("Deploying commit abc Fix vitals (#42)")),
-            ("Waiting until commit def Docs (#43) is built", None),
-            ("Deploy complete", Some("Waiting until commit def Docs (#43) is built")),
-            ("#44 Charts (https://github.com/o/r/pull/44)", None),
-        ]
-    );
-    // So a follow of the channel for #42 hears its deploy's completion, and not #43's.
-    let following = Following::open(&home, fetcher.clone(), integrations.clone());
-    let follow = Follow { session: "s1".into(), topic: "slack/C0D".into(), mine: false, about: vec!["#42".into()], at: 0 };
-    let mine: Vec<&Event> = second.events.iter().filter(|e| passes(&["#42"], &[&e.body, e.after.as_deref().unwrap_or("")])).collect();
-    assert_eq!(mine.len(), 3);
-    let words = format(&mine, |_| String::new());
-    assert!(words.contains("  message by Deploy: app (production) in #deploys\n    Deploy complete\n    (continues their earlier message: Deploying commit abc Fix vitals (#42))"), "{words}");
-    drop((following, follow));
+    let following = Following::open(&home, fetcher.clone(), integrations);
+    following.follow("s1", "github/o/r/42", false, vec![]).await.unwrap();
+    following.follow("s1", "slack/C0DEPLOY1", true, vec![]).await.unwrap();
+    let told = Arc::new(Mutex::new(vec![]));
+    following.hurry();
+    following.tick(|_| true, |_| false, |_: &str, words: &str, _| told.lock().unwrap().push(words.to_string())).await;
+    // A bot's words only confirm (Event::settled): told on a line each, what it said and what it continues.
+    let told = told.lock().unwrap().join("; ");
+    let passed: Vec<&str> = told
+        .split("; ")
+        .map(|line| line.split_once("#deploys: ").map_or(line, |(_, said)| said))
+        .map(|said| said.split(" (continuing: ").next().unwrap())
+        .collect();
+    let mut expected = vec![
+        "Waiting until commit 5425391615 is built",
+        "Pulling image for commit 5425391615",
+        "Running migrations",
+        "Migrations finished",
+        "Deploying commit 5425391615",
+        "Deploy complete",
+        "Deploying commit 5425391615 again",
+        "Deploying commit 5425391615 once more",
+    ];
+    let steps: Vec<String> = (1..=20).map(|k| format!("step {k}")).collect();
+    expected.extend(steps.iter().map(String::as_str));
+    assert_eq!(passed, expected, "{told}");
+    assert!(told.contains(": Deploy complete (continuing: Deploying commit 5425391615);"), "{told}");
+    assert!(told.contains(": Running migrations (continuing: Pulling image for commit 5425391615);"), "{told}");
     assert!(
         slack::cites("see ENG-9429")
             && slack::cites("fixed in #12")
             && slack::cites("https://x")
+            && slack::cites("commit 9f8e7d6c5b")
             && !slack::cites("Deploy complete")
             && !slack::cites("Extracting assets to 2 node(s)")
     );
+}
+
+/// A followed pull request, once merged, follows the GitHub deployments of its merge commit in the same read: each
+/// one created, under way, done or failed reaches the task. Its follow ends once they've settled, at the merge when
+/// the repository has none, or two hours after it when none comes.
+#[tokio::test]
+async fn a_merged_pull_requests_deployments_are_followed_until_they_settle() {
+    let fetcher = canned(vec![
+        Ok(pr(vec![], vec![], vec![], "aaa", "OPEN")),
+        Ok(merged(vec![], 3)),
+        Ok(merged(vec![("7", "production", "IN_PROGRESS")], 3)),
+        Ok(merged(vec![("7", "production", "SUCCESS"), ("8", "staging", "FAILURE")], 3)),
+    ]);
+    let home = temp_dir("following-deployments");
+    let following = Following::open(&home, fetcher.clone(), Integrations::open(&home, fetcher.clone()));
+    following.follow("s1", "github/o/r/42", false, vec![]).await.unwrap();
+    let query = fetcher.asked.lock().unwrap()[0].join(" ");
+    assert!(query.contains("mergeCommit") && query.contains("deployments"), "one read: {query}");
+    let told: Told = Arc::new(Mutex::new(vec![]));
+    for _ in 0..3 {
+        following.hurry();
+        following.tick(|_| true, |_| false, listener(&told)).await;
+        if told.lock().unwrap().len() < 3 {
+            assert!(!following.finished("s1"), "merged, its deploy still to come");
+        }
+    }
+    let told = told.lock().unwrap().clone();
+    let words: Vec<(&str, Heard)> = told.iter().map(|(_, w, h)| (w.as_str(), *h)).collect();
+    assert_eq!(words[0], ("r#42 PR merged into main", Heard::Settled));
+    assert_eq!(words[1].1, Heard::Settled);
+    assert!(words[1].0.contains("deploy to production in progress"), "{}", words[1].0);
+    assert_eq!(words[2].1, Heard::News, "a failed deploy is news");
+    assert!(words[2].0.contains("deployed to production") && words[2].0.contains("deploy to staging failed"), "{}", words[2].0);
+    assert!(words[2].0.contains("https://ci/deploys/8"), "{}", words[2].0);
+    assert!(following.finished("s1"), "its deploys settled: nothing more to come");
+
+    // No deployments in the repository: merged is the end. None in two hours: so is that.
+    let none = zerod::following::github::snapshot(&merged(vec![], 0)["data"]).unwrap();
+    assert!(github::ended(&none));
+    let mut waiting = zerod::following::github::snapshot(&merged(vec![], 3)["data"]).unwrap();
+    waiting["merged_seen"] = json!(zerod::now());
+    assert!(!github::ended(&waiting));
+    waiting["merged_seen"] = json!(zerod::now() - 2 * 3600 - 1);
+    assert!(github::ended(&waiting));
 }
 
 #[tokio::test]

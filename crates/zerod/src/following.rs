@@ -37,11 +37,19 @@ pub const BATCH: i64 = 30;
 /// How long what a step did is remembered, to know the events it causes as the task's own.
 pub const OWN_FOR: i64 = 300;
 
+/// A filtered follow that passed an author's message passes their next ones in the same place too, as one sequence (a
+/// deploy bot's "Running migrations", "Deploy complete"): until they name something else, this long passes quietly,
+/// or this many have passed.
+pub const QUIET: i64 = 30 * 60;
+pub const SEQUENCE: u32 = 20;
+
 /// How a follower hears of events: news wakes it; its own changes coming back are only noted in its conversation.
+/// Settled is news that only confirms an end (Event::settled): a finished task notes it and isn't woken.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Heard {
     News,
     Own,
+    Settled,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -49,7 +57,8 @@ pub enum Heard {
 pub struct Follow {
     pub session: String,
     pub topic: String,
-    /// Only events that name a pull request the session follows (`repo#N`, `pull/N`, `#N`): a busy channel's share.
+    /// Only events that name a pull request the session follows (`repo#N`, `pull/N`, `#N`) or its merge commit, and the
+    /// sequences they start (QUIET): a busy channel's share.
     #[serde(default)]
     pub mine: bool,
     /// Only events with one of these words in them.
@@ -87,6 +96,21 @@ struct Kept {
     /// Per session between turns, the events held for one wake (BATCH), and since when.
     #[serde(default)]
     held: HashMap<String, (i64, Vec<Event>)>,
+    #[serde(default)]
+    sequences: Vec<Sequence>,
+}
+
+/// An author's messages a session's filtered follow passes for following the one it matched (QUIET, SEQUENCE).
+#[derive(Serialize, Deserialize, Clone)]
+struct Sequence {
+    session: String,
+    topic: String,
+    actor: String,
+    /// The matched message, which the next ones continue.
+    matched: String,
+    /// When the last of it was said, and how many have followed the matched one.
+    at: i64,
+    count: u32,
 }
 
 /// Something that changed on a followed thing.
@@ -105,9 +129,14 @@ pub struct Event {
     pub dedupe: Option<String>,
     /// For a reply in a thread: the thread's first message, which decides whether a filtered follow wants the reply.
     pub root: Option<String>,
-    /// For a channel message that names nothing (no pull request, ticket or link): the sender's last message that did,
-    /// within the half hour, which this one continues: a deploy bot's "Deploy complete" after its "Deploying … (#42)".
+    /// For a message a filtered follow passes as part of a sequence (QUIET): the one that matched, which it continues:
+    /// a deploy bot's "Deploy complete" after its "Deploying commit 5425391615".
     pub after: Option<String>,
+    /// Only confirms an end, nothing to act on: an issue completed or canceled, a pull request merged, closed or
+    /// approved, CI passing, a bot's words, bookkeeping on what has ended. Not known to, it's news (the default).
+    pub settled: bool,
+    /// When it happened, in seconds, when the source says (a Slack message); 0 when it was heard.
+    pub at: i64,
 }
 
 /// One poll's outcome: the fresh reading, the events since the last, and the line describing the thing.
@@ -374,6 +403,23 @@ impl Following {
         removed
     }
 
+    /// Whether every pull request and issue `session` follows has ended (merged or closed; completed or canceled),
+    /// at least one of them: nothing more is to come of its work.
+    pub fn finished(&self, session: &str) -> bool {
+        let kept = self.kept.lock().unwrap();
+        let ended = |f: &Follow| {
+            let state = kept.targets.get(&poll_key(&f.topic)).and_then(|t| t.state.as_ref());
+            match Source::of(&f.topic) {
+                Ok(Source::GitHub) => state.is_some_and(github::ended),
+                Ok(Source::Linear) => state.is_some_and(linear::ended),
+                _ => true,
+            }
+        };
+        let ending: Vec<&Follow> =
+            kept.follows.iter().filter(|f| f.session == session && Source::of(&f.topic).is_ok_and(|s| s != Source::Slack)).collect();
+        !ending.is_empty() && kept.follows.iter().filter(|f| f.session == session).all(ended)
+    }
+
     /// Have everything polled on the next tick.
     pub fn hurry(&self) {
         let mut kept = self.kept.lock().unwrap();
@@ -500,28 +546,34 @@ impl Following {
             return;
         }
         let mut kept = self.kept.lock().unwrap();
+        kept.sequences.retain(|s| now() - s.at <= 4 * QUIET);
         let sessions: Vec<String> = kept.follows.iter().map(|f| f.session.clone()).collect::<HashSet<_>>().into_iter().collect();
         for session in sessions {
             let follows: Vec<Follow> = kept.follows.iter().filter(|f| f.session == session).cloned().collect();
             let mine = mine_terms(&follows);
+            let commits = merge_commits(&follows, &kept.targets);
             let mut wanted: Vec<Event> = vec![];
             for event in events {
-                let covering = follows.iter().filter(|f| covers(&f.topic, &event.topic));
-                let asked = covering.into_iter().any(|f| {
-                    if !f.mine && f.about.is_empty() {
-                        return true;
-                    }
-                    let terms: Vec<&str> = f
-                        .about
-                        .iter()
-                        .map(String::as_str)
-                        .chain(if f.mine { mine.iter().map(String::as_str).collect() } else { vec![] })
-                        .collect();
-                    passes(
-                        &terms,
-                        &[&event.summary, &event.body, event.root.as_deref().unwrap_or(""), event.after.as_deref().unwrap_or("")],
-                    )
-                });
+                let covering: Vec<&Follow> = follows.iter().filter(|f| covers(&f.topic, &event.topic)).collect();
+                if covering.is_empty() {
+                    continue;
+                }
+                let texts = [event.summary.as_str(), &event.body, event.root.as_deref().unwrap_or("")];
+                let filtered = covering.iter().all(|f| f.mine || !f.about.is_empty());
+                let mut asked = !filtered
+                    || covering.iter().any(|f| {
+                        let terms: Vec<&str> = f
+                            .about
+                            .iter()
+                            .map(String::as_str)
+                            .chain(if f.mine { mine.iter().map(String::as_str).collect() } else { vec![] })
+                            .collect();
+                        passes(&terms, &texts) || (f.mine && names_commit(&commits, &texts))
+                    });
+                let mut event = event.clone();
+                if filtered {
+                    asked = continues(&mut kept.sequences, &session, &mut event, asked);
+                }
                 if !asked {
                     continue;
                 }
@@ -536,7 +588,7 @@ impl Following {
                         seen.drain(..100);
                     }
                 }
-                wanted.push(event.clone());
+                wanted.push(event);
             }
             if !wanted.is_empty() {
                 kept.held.entry(session).or_insert_with(|| (now(), vec![])).1.extend(wanted);
@@ -563,7 +615,10 @@ impl Following {
                 let s = if mine.len() == 1 { "" } else { "s" };
                 tell(&session, &format!("Your own change{s} on what you follow, heard back: {}", what.join("; ")), Heard::Own);
             }
-            if !news.is_empty() {
+            if news.iter().all(|e| e.settled) && !news.is_empty() {
+                let what: Vec<String> = news.iter().map(|e| line(e)).collect();
+                tell(&session, &what.join("; "), Heard::Settled);
+            } else if !news.is_empty() {
                 let text = format(&news, |topic| kept.targets.get(&poll_key(topic)).map(|t| t.summary.clone()).unwrap_or_default());
                 tell(&session, &text, Heard::News);
             }
@@ -652,6 +707,71 @@ fn mine_terms(follows: &[Follow]) -> Vec<String> {
         })
         .flatten()
         .collect()
+}
+
+/// The merge commits of the pull requests followed, as read.
+fn merge_commits(follows: &[Follow], targets: &BTreeMap<String, Target>) -> Vec<String> {
+    follows
+        .iter()
+        .filter(|f| is_pr(&f.topic))
+        .filter_map(|f| targets.get(&f.topic)?.state.as_ref()?["merge"].as_str().map(str::to_lowercase))
+        .collect()
+}
+
+/// Whether a text names one of the commits, as much of its hash as it gives (seven digits or more).
+fn names_commit(commits: &[String], texts: &[&str]) -> bool {
+    texts.iter().flat_map(|t| t.split(|c: char| !c.is_alphanumeric())).any(|word| {
+        let word = word.to_lowercase();
+        slack::is_sha(&word) && commits.iter().any(|c| c.starts_with(&word))
+    })
+}
+
+/// Whether `event` passes `session`'s filtered follow as part of an author's sequence, given whether it `matched`
+/// itself: a message that matches starts one (or starts it again); the author's next in the same place continue it
+/// (`after` says what), until they name something else, QUIET passes or SEQUENCE have.
+fn continues(sequences: &mut Vec<Sequence>, session: &str, event: &mut Event, matched: bool) -> bool {
+    if event.kind != "message" || event.root.is_some() || event.actor.is_empty() {
+        return matched;
+    }
+    let at = if event.at > 0 { event.at } else { now() };
+    let at_place = |s: &Sequence| s.session == session && s.topic == event.topic && s.actor == event.actor;
+    let found = sequences.iter().position(at_place);
+    if matched {
+        let sequence = Sequence {
+            session: session.into(),
+            topic: event.topic.clone(),
+            actor: event.actor.clone(),
+            matched: first_line(&event.body, 120),
+            at,
+            count: 0,
+        };
+        match found {
+            Some(i) => sequences[i] = sequence,
+            None => sequences.push(sequence),
+        }
+        return true;
+    }
+    let Some(i) = found else { return false };
+    let s = &mut sequences[i];
+    if slack::cites(&event.body) || at - s.at > QUIET || s.count >= SEQUENCE {
+        sequences.remove(i);
+        return false;
+    }
+    (s.at, s.count) = (at, s.count + 1);
+    event.after = Some(s.matched.clone());
+    true
+}
+
+/// An event on a line: what it's on, what happened, its words' first line and what it continues.
+fn line(e: &Event) -> String {
+    let mut out = format!("{} {}", name(&e.topic), e.summary.trim());
+    if !e.body.trim().is_empty() {
+        out.push_str(&format!(": {}", first_line(&e.body, 120)))
+    }
+    if let Some(after) = &e.after {
+        out.push_str(&format!(" (continuing: {})", first_line(after, 120)))
+    }
+    out
 }
 
 /// Any term in any text as a whole word, case ignored: `#124` doesn't match `#1240`.

@@ -166,10 +166,11 @@ async fn words(integrations: &Integrations, m: &Value) -> String {
     parts.into_iter().filter(|p| !p.trim().is_empty()).collect::<Vec<_>>().join("\n")
 }
 
-/// Whether a message names something to act on: a pull request (#42), a ticket (ABC-123) or a link. One that
-/// doesn't continues its sender's last one that did.
+/// Whether a message names something: a pull request (#42), a ticket (ABC-123), a commit (7 to 40 hex digits) or a
+/// link. One that names something not followed ends its author's sequence (Following::hold).
+/// ponytail: a long number (a byte count) reads as a commit too, ending a sequence early rather than running on.
 pub fn cites(text: &str) -> bool {
-    if text.contains("http://") || text.contains("https://") {
+    if text.contains("http://") || text.contains("https://") || text.split(|c: char| !c.is_alphanumeric()).any(is_sha) {
         return true;
     }
     let chars: Vec<char> = text.chars().collect();
@@ -187,18 +188,12 @@ pub fn cites(text: &str) -> bool {
     false
 }
 
-/// Who sent a message, as a key: the user, or the bot's name (one deploy bot per environment).
-fn sender(m: &Value) -> String {
-    [&m["user"], &m["username"], &m["bot_profile"]["name"], &m["bot_id"]]
-        .into_iter()
-        .map(str)
-        .find(|s| !s.is_empty())
-        .unwrap_or("?")
-        .to_string()
+/// A word that may be a commit: 7 to 40 hex digits, lowercase, at least one a digit.
+pub fn is_sha(word: &str) -> bool {
+    (7..=40).contains(&word.len())
+        && word.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+        && word.chars().any(|c| c.is_ascii_digit())
 }
-
-/// How long a sender's message that names nothing is read as continuing their last that did.
-const CONTINUES_FOR: f64 = 30.0 * 60.0;
 
 fn permalink(domain: &str, channel: &str, ts: &str, thread: Option<&str>) -> String {
     let link = format!("https://{domain}.slack.com/archives/{channel}/p{}", ts.replace('.', ""));
@@ -267,6 +262,7 @@ pub fn thread_events(
                 actor: name,
                 mine,
                 dedupe: Some(format!("msg:{ts}")),
+                settled: m["user"].is_null(),
                 ..Default::default()
             });
             continue;
@@ -291,6 +287,7 @@ pub fn thread_events(
                     summary: format!(":{reaction}: added to message by {name}"),
                     body: first_line(&text(m), 80),
                     url: url.clone(),
+                    settled: true,
                     ..Default::default()
                 });
             }
@@ -302,6 +299,7 @@ pub fn thread_events(
                     kind: "reaction".into(),
                     summary: format!(":{reaction}: removed from message by {name}"),
                     url: url.clone(),
+                    settled: true,
                     ..Default::default()
                 });
             }
@@ -372,24 +370,8 @@ async fn poll_channel(integrations: &Integrations, channel: &str, state: Option<
         top.iter().filter_map(|m| m["latest_reply"].as_str().map(|last| (str(&m["ts"]).to_string(), last.to_string()))).collect();
     let name = channel_name(integrations, channel).await;
     let summary = if top.is_empty() { name.clone() } else { format!("{name} {}", permalink(&team.domain, channel, &latest, None)) };
-    // Each sender's last message naming something, so that one naming nothing is read as its continuation; from
-    // the last reading, then from what's older here (a baseline knows the deploy under way), kept for two hours.
-    let mut named: BTreeMap<String, (f64, String)> = state
-        .and_then(|s| s["named"].as_object())
-        .into_iter()
-        .flatten()
-        .filter_map(|(k, v)| Some((k.clone(), (v[0].as_f64()?, str(&v[1]).to_string()))))
-        .collect();
-    for m in top.iter().filter(|m| ts_of(m) <= was_latest.parse().unwrap_or(0.0) || state.is_none()) {
-        let text = words(integrations, m).await;
-        if cites(&text) && named.get(&sender(m)).is_none_or(|(at, _)| *at < ts_of(m)) {
-            named.insert(sender(m), (ts_of(m), text));
-        }
-    }
-    let newest = top.last().map(|m| ts_of(m)).unwrap_or(0.0);
-    named.retain(|_, (at, _)| newest - *at <= 4.0 * CONTINUES_FOR);
     let Some(old) = state else {
-        return Ok(Poll { state: json!({"latest": latest, "threads": threads, "named": named}), events: vec![], summary });
+        return Ok(Poll { state: json!({"latest": latest, "threads": threads}), events: vec![], summary });
     };
 
     let topic = format!("slack/{channel}");
@@ -399,14 +381,6 @@ async fn poll_channel(integrations: &Integrations, channel: &str, state: Option<
             continue;
         }
         let (who, ts, text) = (author(integrations, m).await, str(&m["ts"]), words(integrations, m).await);
-        let after = if cites(&text) {
-            None
-        } else {
-            named.get(&sender(m)).filter(|(at, _)| ts_of(m) - at <= CONTINUES_FOR).map(|(_, text)| text.clone())
-        };
-        if cites(&text) {
-            named.insert(sender(m), (ts_of(m), text.clone()));
-        }
         ev.push(Event {
             topic: topic.clone(),
             kind: "message".into(),
@@ -417,7 +391,9 @@ async fn poll_channel(integrations: &Integrations, channel: &str, state: Option<
             mine: !me.is_empty() && m["user"] == me,
             dedupe: Some(format!("msg:{ts}")),
             root: None,
-            after,
+            after: None,
+            settled: m["user"].is_null(),
+            at: ts_of(m) as i64,
         });
     }
     for (ts, last) in &threads {
@@ -444,6 +420,8 @@ async fn poll_channel(integrations: &Integrations, channel: &str, state: Option<
                 dedupe: Some(format!("msg:{rts}")),
                 root: Some(root.clone()),
                 after: None,
+                settled: r["user"].is_null(),
+                at: ts_of(&r) as i64,
             });
         }
     }
@@ -456,7 +434,7 @@ async fn poll_channel(integrations: &Integrations, channel: &str, state: Option<
         by_time.sort_by(|a, b| a.1.parse::<f64>().unwrap_or(0.0).total_cmp(&b.1.parse::<f64>().unwrap_or(0.0)));
         merged = by_time.into_iter().rev().take(500).collect();
     }
-    Ok(Poll { state: json!({"latest": latest, "threads": merged, "named": named}), events: ev, summary })
+    Ok(Poll { state: json!({"latest": latest, "threads": merged}), events: ev, summary })
 }
 
 pub async fn poll(integrations: &Integrations, key: &[&str], state: Option<&Value>) -> Result<Poll, String> {

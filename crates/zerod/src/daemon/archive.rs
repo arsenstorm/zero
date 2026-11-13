@@ -45,6 +45,12 @@ impl Daemon {
         if let (Some(following), Some(lead)) = (self.following.get(), session.summary().parent) {
             following.drop_shared(id, &lead)
         }
+        // Everything it follows has ended (issue done, pull request merged): nothing more will come of them.
+        if let Some(following) = self.following.get()
+            && following.finished(id)
+        {
+            following.unfollow(id, None);
+        }
         self.archiving.lock().unwrap().insert(id.into());
         self.take_offline(&session).await;
         self.archiving.lock().unwrap().remove(id);
@@ -104,6 +110,32 @@ impl Daemon {
         Ok(back)
     }
 
+    /// What only confirms a finished task's end (following::Heard::Settled), noted in its conversation without waking
+    /// it: archived, it stays archived and the archive shows it as what it last heard; live, only once it's `done`.
+    /// False when it isn't finished (or isn't there): it's told as news.
+    pub fn settle(&self, id: &str, text: &str, done: impl FnOnce() -> bool) -> bool {
+        if let Ok(session) = self.session(id) {
+            let done = done();
+            if done {
+                quiet_notice(&session, text)
+            }
+            return done;
+        }
+        let dir = self.home.join("archive").join(id);
+        // Loaded on its own, its change heard by no client: none has a row for it.
+        let Some(session) = dir.join("meta.json").exists().then(|| Session::load(&dir, broadcast::channel(1).0).ok()).flatten() else {
+            return false;
+        };
+        quiet_notice(&session, text);
+        drop(session);
+        let mut kept = marker(&dir).unwrap_or_else(|| serde_json::json!({}));
+        kept["quiet"] = text.into();
+        kept["quietAt"] = now_ms().into();
+        let _ = std::fs::write(dir.join(ARCHIVED), serde_json::to_vec(&kept).unwrap_or_default());
+        self.reindex(id);
+        true
+    }
+
     /// What's archived that was put away itself (not with its lead), newest first: its name, when, its workspace and
     /// how many workers went with it.
     pub fn archived(&self, limit: usize) -> Vec<serde_json::Value> {
@@ -119,7 +151,7 @@ impl Daemon {
                 .take(limit)
                 .map(|a| {
                     serde_json::json!({"id": a.id, "task": a.task, "at": a.at, "workspace": a.workspace,
-                "workers": counts.get(a.id.as_str()).copied().unwrap_or(0), "parent": a.parent})
+                "workers": counts.get(a.id.as_str()).copied().unwrap_or(0), "parent": a.parent, "quiet": a.quiet, "quietAt": a.quiet_at})
                 })
                 .collect()
         })
@@ -206,6 +238,20 @@ fn archived_at() -> i64 {
     }
 }
 
+/// A quiet row in a task's conversation: noted, nothing sent to its agent.
+pub(super) fn quiet_notice(session: &Session, text: &str) {
+    let conversation = session.summary();
+    session.change(Change::Item {
+        item: crate::model::Item {
+            at: None,
+            id: format!("following-{}", conversation.seq + 1),
+            turn: conversation.turn.clone(),
+            kind: ItemKind::Notice { text: text.into(), error: false },
+            status: crate::model::ItemStatus::Done,
+        },
+    });
+}
+
 fn marker(dir: &Path) -> Option<serde_json::Value> {
     std::fs::read(dir.join(ARCHIVED)).ok().and_then(|data| serde_json::from_slice(&data).ok())
 }
@@ -227,6 +273,11 @@ pub(super) struct Archived {
     parent: Option<String>,
     /// The lead it went with; none, it was put away itself.
     with: Option<String>,
+    /// The last thing it heard that only confirmed its end (Daemon::settle), and when, in milliseconds.
+    #[serde(default)]
+    quiet: Option<String>,
+    #[serde(default)]
+    quiet_at: Option<i64>,
 }
 
 impl Archived {
@@ -240,6 +291,8 @@ impl Archived {
             at: kept.as_ref().and_then(|m| m["at"].as_i64()).unwrap_or_else(|| modified_ms(dir)),
             workspace: field("workspace"),
             with: field("with"),
+            quiet: field("quiet"),
+            quiet_at: kept.as_ref().and_then(|m| m["quietAt"].as_i64()),
             parent: meta["parent"].as_str().map(String::from),
             id,
         })

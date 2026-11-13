@@ -56,6 +56,7 @@ mod schedules;
 mod self_check;
 mod server;
 mod session;
+mod settled;
 mod signins;
 mod snapshots;
 mod stuck;

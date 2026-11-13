@@ -431,17 +431,9 @@ impl Daemon {
 
     /// A line in `id`'s conversation that starts no turn: its own change on what it follows, heard back.
     pub fn say_quietly(&self, id: &str, text: &str) {
-        let Ok(session) = self.session(id) else { return };
-        let conversation = session.summary();
-        session.change(Change::Item {
-            item: crate::model::Item {
-                at: None,
-                id: format!("following-{}", conversation.seq + 1),
-                turn: conversation.turn.clone(),
-                kind: ItemKind::Notice { text: text.into(), error: false },
-                status: crate::model::ItemStatus::Done,
-            },
-        });
+        if let Ok(session) = self.session(id) {
+            super::archive::quiet_notice(&session, text)
+        }
     }
 
     /// A turn Zero started (an event it follows, a worker's report, a wake-up) has come to an end: its reply is nothing

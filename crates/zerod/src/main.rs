@@ -161,12 +161,11 @@ fn zerod_for(args: &Args, daemon: &Arc<zerod::daemon::Daemon>, inbox: Arc<zerod:
     let loops = Arc::new(zerod::loops::Loops::open(&beside.join("loops")));
     let following = zerod::following::Following::open(home, Arc::new(zerod::integrations::Commands::default()), integrations.clone());
     daemon.set_following(following.clone());
-    poll_following(following.clone(), daemon.clone());
     let browsers = open_browsers(home);
     browsers.follow(daemon.clone(), inbox.clone());
     let places = Arc::new(zerod::board::Places::default());
     tokio::spawn(places.clone().follow(home.clone()));
-    zerod::server::Zerod {
+    let zerod = zerod::server::Zerod {
         daemon: daemon.clone(),
         inbox,
         integrations,
@@ -178,7 +177,9 @@ fn zerod_for(args: &Args, daemon: &Arc<zerod::daemon::Daemon>, inbox: Arc<zerod:
         places,
         notices: tokio::sync::broadcast::channel(64).0,
         peers,
-    }
+    };
+    poll_following(zerod.clone());
+    zerod
 }
 
 /// Where this zerod keeps its sessions and serves them, from its flags; the rest beside its home.
@@ -264,18 +265,23 @@ fn keep_liveness(inbox: &Arc<zerod::inbox::Inbox>) {
     });
 }
 
-/// What tasks follow, polled every 5 seconds, each change told to its task: held a while for one between turns.
-fn poll_following(poller: Arc<zerod::following::Following>, polled: Arc<zerod::daemon::Daemon>) {
+/// What tasks follow, polled every 5 seconds, each change told to its task: held a while for one between turns. What
+/// only confirms a finished task's end is noted without waking it, and once all it follows has ended it stops.
+fn poll_following(zerod: zerod::server::Zerod) {
+    use zerod::following::Heard;
     tokio::spawn(async move {
+        let (poller, polled) = (zerod.following.clone(), zerod.daemon.clone());
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
+            let settled = std::sync::Mutex::new(vec![]);
             poller
                 .tick(
                     |id| polled.exists(id),
                     |id| polled.summary(id).is_none_or(|c| c.status != zerod::model::Status::Working),
                     |id, words, heard| match heard {
-                        zerod::following::Heard::Own => polled.say_quietly(id, words),
-                        zerod::following::Heard::News => {
+                        Heard::Own => polled.say_quietly(id, words),
+                        Heard::Settled if polled.settle(id, words, || zerod.done(id)) => settled.lock().unwrap().push(id.to_string()),
+                        Heard::Settled | Heard::News => {
                             if let Err(error) = polled.notify(id, words) {
                                 eprintln!("zerod: couldn't tell {id} what it follows changed: {error}")
                             }
@@ -283,6 +289,11 @@ fn poll_following(poller: Arc<zerod::following::Following>, polled: Arc<zerod::d
                     },
                 )
                 .await;
+            for id in settled.into_inner().unwrap() {
+                if poller.finished(&id) {
+                    poller.unfollow(&id, None);
+                }
+            }
         }
     });
 }

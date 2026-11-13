@@ -1,7 +1,7 @@
 //! `github/<owner>/<repo>/<number>`: everything that happens on a pull request, read through `gh` in one GraphQL
 //! query and diffed against the last reading: state, draft, title, description, base, labels, assignees, reviewers,
 //! review decision, conflicts, pushes, CI (each failed check, then the overall result), comments, review comments,
-//! reviews, and review threads resolved or not.
+//! reviews, and review threads resolved or not; once merged, the GitHub deployments of its merge commit.
 
 use serde_json::{Map, Value, json};
 
@@ -10,16 +10,18 @@ use super::{Event, Poll, text_diff};
 const QUERY: &str = r#"query($owner: String!, $repo: String!, $number: Int!) {
   viewer { login }
   repository(owner: $owner, name: $repo) {
+    deployments(first: 1) { totalCount }
     pullRequest(number: $number) {
       title url state isDraft body baseRefName headRefName headRefOid mergeable reviewDecision
       author { login }
       mergedBy { login }
+      mergeCommit { oid deployments(last: 10) { nodes { databaseId environment latestStatus { state description logUrl environmentUrl } } } }
       assignees(first: 20) { nodes { login } }
       labels(first: 30) { nodes { name } }
       reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } ... on Bot { login } } } }
-      comments(last: 100) { nodes { id author { login } body url createdAt updatedAt } }
-      reviews(last: 100) { nodes { id author { login } state body url submittedAt updatedAt } }
-      reviewThreads(last: 100) { nodes { id isResolved path line comments(last: 50) { nodes { id author { login } body url createdAt updatedAt state } } } }
+      comments(last: 100) { nodes { id author { login __typename } body url createdAt updatedAt } }
+      reviews(last: 100) { nodes { id author { login __typename } state body url submittedAt updatedAt } }
+      reviewThreads(last: 100) { nodes { id isResolved path line comments(last: 50) { nodes { id author { login __typename } body url createdAt updatedAt state } } } }
       commits(last: 30) { totalCount nodes { commit { oid messageHeadline statusCheckRollup { state contexts(first: 100) { nodes {
         __typename ... on CheckRun { name status conclusion detailsUrl } ... on StatusContext { context state targetUrl } } } } } } }
     }
@@ -29,6 +31,10 @@ const QUERY: &str = r#"query($owner: String!, $repo: String!, $number: Int!) {
 const FAILED: [&str; 6] = ["FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"];
 const PASSED: [&str; 4] = ["SUCCESS", "NEUTRAL", "SKIPPED", "STALE"];
 const TERMINAL: [&str; 3] = ["SUCCESS", "FAILURE", "ERROR"];
+/// A deployment's statuses that end it (inactive: a later one replaced it).
+const DEPLOYED: [&str; 4] = ["SUCCESS", "FAILURE", "ERROR", "INACTIVE"];
+/// How long a merged pull request in a repository with deployments waits for one of its own before its follow ends.
+pub const DEPLOY_WAIT: i64 = 2 * 3600;
 
 /// `owner/repo/number`, from `github/o/r/42`, `github/o/r/pull/42` or a pull request's URL.
 pub fn normalize(parts: &[&str]) -> Result<Vec<String>, String> {
@@ -80,12 +86,20 @@ pub fn poll(reply: &Value, state: Option<&Value>, topic: &str) -> Result<Poll, S
     {
         new["mergeable"] = old["mergeable"].clone()
     }
+    if new["state"] == "MERGED" {
+        new["merged_seen"] = state.and_then(|old| old["merged_seen"].as_i64()).unwrap_or_else(crate::now).into()
+    }
     let events = state.map(|old| diff(old, &new, topic)).unwrap_or_default();
     Ok(Poll { summary: describe(&new), state: new, events })
 }
 
 fn login(node: &Value) -> String {
     node["author"]["login"].as_str().unwrap_or("ghost").to_string()
+}
+
+/// Its author is a bot (an app, CI, a deploy preview): its words confirm, they don't ask.
+fn bot(node: &Value) -> bool {
+    node["author"]["__typename"] == "Bot" || login(node).ends_with("[bot]")
 }
 
 fn names(nodes: &Value, key: &str) -> Vec<String> {
@@ -118,7 +132,7 @@ pub fn snapshot(data: &Value) -> Option<Value> {
     }
     let mut comments = Map::new();
     for c in pr["comments"]["nodes"].as_array().into_iter().flatten() {
-        comments.insert(c["id"].as_str().unwrap_or("").into(), json!({"kind": "comment", "author": login(c), "body": c["body"], "url": c["url"], "created": c["createdAt"], "updated": c["updatedAt"]}));
+        comments.insert(c["id"].as_str().unwrap_or("").into(), json!({"kind": "comment", "author": login(c), "bot": bot(c), "body": c["body"], "url": c["url"], "created": c["createdAt"], "updated": c["updatedAt"]}));
     }
     let mut threads = Map::new();
     for t in pr["reviewThreads"]["nodes"].as_array().into_iter().flatten() {
@@ -132,7 +146,7 @@ pub fn snapshot(data: &Value) -> Option<Value> {
             if c["state"] == "PENDING" {
                 continue;
             } // part of a review not yet submitted
-            comments.insert(c["id"].as_str().unwrap_or("").into(), json!({"kind": "review_comment", "author": login(c), "body": c["body"], "url": c["url"], "created": c["createdAt"], "updated": c["updatedAt"], "where": r#where}));
+            comments.insert(c["id"].as_str().unwrap_or("").into(), json!({"kind": "review_comment", "author": login(c), "bot": bot(c), "body": c["body"], "url": c["url"], "created": c["createdAt"], "updated": c["updatedAt"], "where": r#where}));
         }
     }
     let mut reviews = Map::new();
@@ -141,7 +155,7 @@ pub fn snapshot(data: &Value) -> Option<Value> {
             continue;
         } // the viewer's own draft
         let (submitted, updated) = (r["submittedAt"].as_str(), r["updatedAt"].as_str());
-        reviews.insert(r["id"].as_str().unwrap_or("").into(), json!({"author": login(r), "state": r["state"], "body": r["body"], "url": r["url"], "created": submitted.or(updated), "updated": updated.or(submitted)}));
+        reviews.insert(r["id"].as_str().unwrap_or("").into(), json!({"author": login(r), "bot": bot(r), "state": r["state"], "body": r["body"], "url": r["url"], "created": submitted.or(updated), "updated": updated.or(submitted)}));
     }
     let mut reviewers: Vec<String> = pr["reviewRequests"]["nodes"]
         .as_array()
@@ -153,6 +167,15 @@ pub fn snapshot(data: &Value) -> Option<Value> {
         })
         .collect();
     reviewers.sort();
+    let mut deploys = Map::new();
+    for d in pr["mergeCommit"]["deployments"]["nodes"].as_array().into_iter().flatten() {
+        let status = &d["latestStatus"];
+        let url = [&status["logUrl"], &status["environmentUrl"]].into_iter().map(str).find(|u| !u.is_empty()).unwrap_or("");
+        deploys.insert(
+            d["databaseId"].to_string().trim_matches('"').into(),
+            json!({"env": d["environment"], "s": status["state"].as_str().unwrap_or("CREATED"), "url": url, "desc": status["description"]}),
+        );
+    }
     Some(json!({
         "viewer": data["viewer"]["login"], "title": pr["title"], "url": pr["url"], "body": pr["body"].as_str().unwrap_or(""),
         "state": pr["state"], "draft": pr["isDraft"], "base": pr["baseRefName"], "head_ref": pr["headRefName"],
@@ -161,6 +184,7 @@ pub fn snapshot(data: &Value) -> Option<Value> {
         "head": pr["headRefOid"], "commits": commits.iter().map(|c| json!({"oid": c["oid"], "headline": c["messageHeadline"]})).collect::<Vec<_>>(),
         "total_commits": pr["commits"]["totalCount"], "checks": checks, "rollup": rollup["state"],
         "comments": comments, "reviews": reviews, "threads": threads,
+        "merge": pr["mergeCommit"]["oid"], "deploys": deploys, "deploys_used": data["repository"]["deployments"]["totalCount"].as_u64().unwrap_or(0) > 0,
     }))
 }
 
@@ -347,5 +371,63 @@ pub fn diff(old: &Value, new: &Value, topic: &str) -> Vec<Event> {
             );
         }
     }
+    for (id, d) in new["deploys"].as_object().into_iter().flatten() {
+        if old["deploys"].get(id).is_some_and(|prev| prev["s"] == d["s"]) {
+            continue;
+        }
+        let env = str(&d["env"]);
+        let summary = match str(&d["s"]) {
+            "INACTIVE" => continue,
+            "SUCCESS" => format!("deployed to {env}"),
+            "FAILURE" => format!("deploy to {env} failed"),
+            "ERROR" => format!("deploy to {env} errored"),
+            s => format!("deploy to {env} {}", s.to_lowercase().replace('_', " ")),
+        };
+        add("deployment", summary, str(&d["desc"]), str(&d["url"]), "");
+    }
+    let bots: Vec<&str> = ["comments", "reviews"]
+        .iter()
+        .flat_map(|key| new[*key].as_object().into_iter().flatten())
+        .filter(|(_, c)| c["bot"] == true)
+        .map(|(_, c)| str(&c["author"]))
+        .collect();
+    for e in &mut ev {
+        e.settled = settles(e, new, bots.contains(&e.actor.as_str()));
+    }
     ev
+}
+
+/// Whether nothing more is to come of the pull request: closed, or merged and its deployments settled (all done or
+/// failed; none in a repository that has none; none in DEPLOY_WAIT).
+pub fn ended(state: &Value) -> bool {
+    let deploys = state["deploys"].as_object().filter(|d| !d.is_empty());
+    match str(&state["state"]) {
+        "CLOSED" => true,
+        "MERGED" => {
+            state["deploys_used"] != true
+                || deploys.is_some_and(|d| d.values().all(|d| DEPLOYED.contains(&str(&d["s"]))))
+                || state["merged_seen"].as_i64().is_some_and(|at| crate::now() - at > DEPLOY_WAIT)
+        }
+        _ => false,
+    }
+}
+
+fn closed(state: &Value) -> bool {
+    matches!(str(&state["state"]), "MERGED" | "CLOSED")
+}
+
+/// Whether an event only confirms the pull request's end (Event::settled): merged or closed, approved, CI passing, a
+/// deploy under way or done, a bot's words, or bookkeeping once it has ended. Reopened, changes asked, a check failing, a push or a person's words
+/// are news.
+fn settles(e: &Event, new: &Value, by_bot: bool) -> bool {
+    match e.kind.as_str() {
+        "merged" | "closed" => true,
+        "deployment" => !e.summary.ends_with("failed") && !e.summary.ends_with("errored"),
+        "review" | "review_edited" => by_bot || e.summary.ends_with("approved"),
+        "review_decision" => e.summary.ends_with("→ approved"),
+        "checks" => e.summary.starts_with("CI success"),
+        "comment" | "review_comment" | "comment_edited" | "review_comment_edited" => by_bot,
+        "labels" | "assignees" | "reviewers" | "title" | "description" | "draft" | "base" | "thread" | "conflicts" => closed(new),
+        _ => false,
+    }
 }

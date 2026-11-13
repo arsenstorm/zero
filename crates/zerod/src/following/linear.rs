@@ -12,7 +12,7 @@ const QUERY: &str = r#"query($id: String!) {
   viewer { id name }
   issue(id: $id) {
     id identifier title description url priorityLabel estimate dueDate
-    state { name } assignee { id name } project { name } cycle { number name } parent { identifier }
+    state { name type } assignee { id name } project { name } cycle { number name } parent { identifier }
     labels(first: 50) { nodes { name } }
     comments(first: 250) { nodes { id body url createdAt updatedAt user { id name } botActor { name } externalUser { name } parent { id } } }
   }
@@ -98,7 +98,8 @@ pub fn snapshot(data: &Value) -> Option<Value> {
             .into_iter()
             .find_map(|n| n.as_str())
             .unwrap_or("integration");
-        comments.insert(str(&c["id"]).into(), json!({"parent": c["parent"]["id"], "author": author, "author_id": c["user"]["id"], "body": c["body"], "url": c["url"], "created": c["createdAt"], "updated": c["updatedAt"]}));
+        let bot = c["user"].is_null() && c["externalUser"].is_null();
+        comments.insert(str(&c["id"]).into(), json!({"parent": c["parent"]["id"], "author": author, "bot": bot, "author_id": c["user"]["id"], "body": c["body"], "url": c["url"], "created": c["createdAt"], "updated": c["updatedAt"]}));
     }
     let cycle = &issue["cycle"];
     let labels = |issue: &Value| {
@@ -110,7 +111,7 @@ pub fn snapshot(data: &Value) -> Option<Value> {
     Some(json!({
         "viewer": data["viewer"]["id"], "id": issue["id"], "identifier": issue["identifier"], "url": issue["url"],
         "title": issue["title"], "description": issue["description"].as_str().unwrap_or(""),
-        "state": issue["state"]["name"], "assignee": issue["assignee"]["name"], "priority": issue["priorityLabel"], "project": issue["project"]["name"],
+        "state": issue["state"]["name"], "state_type": issue["state"]["type"], "assignee": issue["assignee"]["name"], "priority": issue["priorityLabel"], "project": issue["project"]["name"],
         "cycle": if cycle.is_object() { cycle["name"].as_str().map(String::from).or_else(|| cycle["number"].as_i64().map(|n| format!("Cycle {n}"))).into() } else { Value::Null },
         "estimate": issue["estimate"], "due": issue["dueDate"], "parent": issue["parent"]["identifier"],
         "labels": labels(issue),
@@ -133,8 +134,15 @@ fn thread_topic(key: &str, root: &str) -> String {
     format!("{key}/{}", root.chars().take(8).collect::<String>())
 }
 
+/// Whether the issue has ended: its state's type completed or canceled, whatever the team calls it.
+pub fn ended(state: &Value) -> bool {
+    matches!(str(&state["state_type"]), "completed" | "canceled")
+}
+
 pub fn diff(old: &Value, new: &Value, key: &str) -> Vec<Event> {
     let url = str(&new["url"]).to_string();
+    // On an issue that has ended, its fields changing is bookkeeping (moved to Done, cycle closed, labels tidied).
+    let settled = ended(new);
     let mut ev: Vec<Event> = vec![];
     let name = |v: &Value| match v {
         Value::Null => "none".to_string(),
@@ -148,6 +156,7 @@ pub fn diff(old: &Value, new: &Value, key: &str) -> Vec<Event> {
                 kind: field.into(),
                 summary: format!("{label}: {} → {}", name(&old[field]), name(&new[field])),
                 url: url.clone(),
+                settled,
                 ..Default::default()
             })
         }
@@ -159,6 +168,7 @@ pub fn diff(old: &Value, new: &Value, key: &str) -> Vec<Event> {
             kind: "labels".into(),
             summary: format!("label added: {x}"),
             url: url.clone(),
+            settled,
             ..Default::default()
         })
     }
@@ -168,6 +178,7 @@ pub fn diff(old: &Value, new: &Value, key: &str) -> Vec<Event> {
             kind: "labels".into(),
             summary: format!("label removed: {x}"),
             url: url.clone(),
+            settled,
             ..Default::default()
         })
     }
@@ -201,8 +212,8 @@ pub fn diff(old: &Value, new: &Value, key: &str) -> Vec<Event> {
                 actor: author.into(),
                 mine,
                 dedupe: Some(format!("comment:{id}")),
-                root: None,
-                after: None,
+                settled: c["bot"] == true,
+                ..Default::default()
             }),
             Some(prev) if prev["body"] != c["body"] => ev.push(Event {
                 topic,
@@ -212,6 +223,7 @@ pub fn diff(old: &Value, new: &Value, key: &str) -> Vec<Event> {
                 url: str(&c["url"]).into(),
                 actor: author.into(),
                 mine,
+                settled: c["bot"] == true,
                 ..Default::default()
             }),
             _ => {}
