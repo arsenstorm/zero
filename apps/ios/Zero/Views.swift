@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 import UserNotifications
 import VisionKit
@@ -9,23 +10,60 @@ struct ZeroPhone: App {
     @State private var model = PhoneModel.shared
     @Environment(\.scenePhase) private var phase
 
+    init() {
+        StateGlyph.terminal = { PhoneModel.shared.terminalName }
+        // The workspace the Tasks list shows, for the share sheet's list of tasks to send to.
+        Keychain.write("workspace", Data(PhoneModel.shared.workspace.utf8))
+    }
+
     var body: some Scene {
         WindowGroup {
-            Root(model: model)
-                // Back in front: connected again if the connection dropped while away.
-                .onChange(of: phase) { if phase == .active { Task { await model.wake() } } }
-                // Dropped: tried again while the app is in front, at once (the Mac's app restarting is back in a moment),
-                // then waiting longer each time it doesn't connect, up to four seconds.
-                .task(id: model.status) {
-                    guard case .offline = model.status, phase == .active else { return }
-                    try? await Task.sleep(for: .seconds(min(4, 0.5 * pow(2, Double(model.retries)))))
-                    model.retries += 1
-                    model.connect()
-                }
-                .onAppear { AppDelegate.model = model }
-                // A pairing link, from the Camera or anywhere: paired with that Mac (again, if it's a new code).
-                .onOpenURL { url in if url.host == "pair" { model.unpair(); _ = model.pair(url.absoluteString) } }
+            Group {
+                #if DEBUG
+                    if CommandLine.arguments.contains("-composerTest") { TaskTestPage() } else { Root(model: model) }
+                #else
+                    Root(model: model)
+                #endif
+            }
+            // Back in front: connected again if the connection dropped while away.
+            .onChange(of: phase) { if phase == .active { Task { await model.wake() } } }
+            // In front: the system's appearance, held while the app is away (Appearance).
+            .onChange(of: phase, initial: true) { if phase == .active { Appearance.hold() } }
+            // Dropped: tried again while the app is in front, at once (the Mac's app restarting is back in a moment),
+            // then waiting longer each time it doesn't connect, up to four seconds.
+            .task(id: model.status) {
+                guard case .offline = model.status, phase == .active else { return }
+                try? await Task.sleep(for: .seconds(min(4, 0.5 * pow(2, Double(model.retries)))))
+                model.retries += 1
+                model.connect()
+            }
+            .onAppear { AppDelegate.model = model }
+            // A pairing link, from the Camera or anywhere: paired with that Mac (again, if it's a new code).
+            .onOpenURL { url in if url.host == "pair" { model.unpair(); _ = model.pair(url.absoluteString) } }
         }
+    }
+}
+
+/// The app's appearance held to the system's while the app is in front, and kept as it was while it's away. To picture
+/// a suspended app for the app switcher, iOS draws it again in the other appearance and then back, and part of it (a
+/// list's rows, a toolbar's title) hadn't come back when the picture was taken: dark words on the dark page.
+@MainActor enum Appearance {
+    private static var followed = Set<ObjectIdentifier>()
+
+    static func hold() {
+        for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
+            pin(scene)
+            // Changed while in front (Control Center, the evening's switch): followed at once.
+            guard followed.insert(ObjectIdentifier(scene)).inserted else { continue }
+            scene.registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (scene: UIWindowScene, _) in
+                if UIApplication.shared.applicationState == .active { pin(scene) }
+            }
+        }
+    }
+
+    /// The scene's traits are the system's; a window's override is the window's alone.
+    private static func pin(_ scene: UIWindowScene) {
+        for window in scene.windows { window.overrideUserInterfaceStyle = scene.traitCollection.userInterfaceStyle }
     }
 }
 
@@ -66,157 +104,6 @@ struct Root: View {
         let on: Bool
         func body(content: Content) -> some View {
             content.scaleEffect(on ? 1.12 : 1).blur(radius: on ? 12 : 0).opacity(on ? 0 : 1)
-        }
-    }
-}
-
-/// A task's state, as the Mac's sidebar shows it: the same icons and colours.
-struct StateGlyph: View {
-    let state: BoardRow.State
-    var size: CGFloat = 16
-    var body: some View {
-        let look = Self.look(state)
-        if state == .working {
-            Spinner().frame(width: size - 2, height: size - 2).frame(width: size, height: size)
-        } else {
-            Image(look.icon).resizable().frame(width: size, height: size).foregroundStyle(look.color)
-        }
-    }
-
-    static func look(_ state: BoardRow.State) -> (icon: String, color: Color, name: String) {
-        switch state {
-        case .needsYou: ("hand-3-glyph", .blue, "Needs you")
-        case .trouble: ("triangle-warning-glyph", .orange, "In trouble")
-        case .blocked: ("circle-minus-glyph", .red, "Blocked")
-        case .working: ("arrow-rotate-clockwise-glyph", .blue, "Working")
-        case .handed: ("hand-holding-box-glyph", .teal, "Over to you")
-        case .waiting: ("hourglass-glyph", .secondary, "Waiting")
-        case .answered: ("message-check-glyph", .indigo, "Replied")
-        case .done: ("badge-check-glyph", .purple, "Done")
-        case .paused: ("circle-pause-glyph", .secondary, "Paused")
-        case .read: ("message-check-glyph", .secondary, "Replied")
-        case .idle: ("moon-glyph", .secondary, "Idle")
-        case .offline: ("power-off-glyph", .secondary, "Offline")
-        }
-    }
-}
-
-/// What a task says under its name, as Linear's inbox: up to two lines, the end of the last fading out under how long
-/// ago it moved.
-struct Described: View {
-    let text: String?
-    let at: Int?
-    var font: Font = .subheadline
-    /// In the primary colour (a note saved for later is the row itself), not the secondary of what a task says.
-    var primary = false
-    @State private var timeWidth: CGFloat = 0
-    @State private var lineHeight: CGFloat = 18
-
-    var body: some View {
-        let ago = at.map { Ago.short($0) }
-        if let text, !text.isEmpty {
-            // Left-aligned: inside a button (a task's row), lines are centred otherwise.
-            Text(text).font(font).foregroundStyle(primary ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)).lineLimit(2)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .mask {
-                    // Whole, but the last line's end: fading out, then nothing where the time is.
-                    VStack(spacing: 0) {
-                        Color.black
-                        HStack(spacing: 0) {
-                            Color.black
-                            if ago != nil {
-                                LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 28)
-                                Color.clear.frame(width: timeWidth + 4)
-                            }
-                        }
-                        .frame(height: lineHeight)
-                    }
-                }
-                .overlay(alignment: .bottomTrailing) {
-                    if let ago {
-                        Text(ago).font(font).foregroundStyle(.secondary).monospacedDigit()
-                            .onGeometryChange(for: CGSize.self) {
-                                $0.size
-                            } action: {
-                                timeWidth = $0.width; lineHeight = $0.height
-                            }
-                    }
-                }
-        }
-    }
-
-    /// Nothing to say: the row has a single line, the time beside its name (TimeBeside), centred on its icon.
-    static func says(_ text: String?) -> Bool { !(text ?? "").isEmpty }
-}
-
-/// One line of text at its own width when it fits; when it doesn't, as wide as there's room for, fading out at its end
-/// rather than ending in "…". It takes its room as any one-line label does (the hidden text, which the row lays out),
-/// and draws the whole line over it, clipped: the line itself never makes the row wider.
-struct FadingLine: View {
-    let text: String
-    let font: Font
-    @State private var whole: CGFloat = 0
-    @State private var room: CGFloat = 0
-
-    var body: some View {
-        Text(text).font(font).lineLimit(1).hidden()
-            .onGeometryChange(for: CGFloat.self) {
-                $0.size.width
-            } action: {
-                room = $0
-            }
-            .overlay(alignment: .leading) {
-                Text(text).font(font).lineLimit(1).fixedSize()
-                    .onGeometryChange(for: CGFloat.self) {
-                        $0.size.width
-                    } action: {
-                        whole = $0
-                    }
-            }
-            .clipped()
-            .mask {
-                HStack(spacing: 0) {
-                    Color.black
-                    if whole > room + 0.5 {
-                        LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 28)
-                    }
-                }
-            }
-    }
-}
-
-/// How long ago a row moved, beside its name: for a row with nothing under its name.
-struct TimeBeside: View {
-    let at: Int?
-    var body: some View {
-        if let at { Text(Ago.short(at)).font(.subheadline).foregroundStyle(.secondary).monospacedDigit() }
-    }
-}
-
-/// A task's agent as an avatar, Linear's way: its mark in a circle, its state at the corner.
-struct AgentAvatar: View {
-    let provider: Provider?
-    let state: BoardRow.State
-
-    var body: some View {
-        Image(Self.mark(provider)).resizable().frame(width: 22, height: 22)
-            .frame(width: 44, height: 44)
-            .background(Color(.secondarySystemFill), in: Circle())
-            .overlay(alignment: .bottomTrailing) {
-                StateGlyph(state: state).scaleEffect(0.8)
-                    .frame(width: 20, height: 20)
-                    .background(Color(.systemBackground), in: Circle())
-                    .offset(x: 3, y: 3)
-                    .accessibilityLabel(StateGlyph.look(state).name)
-            }
-    }
-
-    static func mark(_ provider: Provider?) -> String {
-        switch provider {
-        case .claude: "provider-claude"
-        case .codex: "provider-openai"
-        default: "terminal-outline"
         }
     }
 }
@@ -311,15 +198,16 @@ struct ConnectionBadge: View {
     let model: PhoneModel
     var body: some View {
         ZStack {
-            if model.status != .connected {
-                Text(model.status == .connecting ? "Reconnecting to your Mac" : "Can't reach your Mac").font(.footnote.weight(.medium))
+            // Steadied (PhoneModel.banner): one message through a restart's many tries.
+            if let banner = model.banner {
+                Text(banner == .reconnecting ? "Reconnecting to your Mac" : "Can't reach your Mac").font(.footnote.weight(.medium))
                     .padding(.horizontal, 14).padding(.vertical, 8)
                     .glassEffect(.regular, in: Capsule())
                     .padding(.top, 4)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        .animation(.easeOut(duration: 0.2), value: model.status)
+        .animation(.easeOut(duration: 0.2), value: model.banner)
     }
 }
 
@@ -486,7 +374,7 @@ extension TasksView {
             Label("Rename", image: "pen-glyph")
         }
         Button {
-            Task { await model.askToSaveForLater(session) }
+            Task { await model.saveForLater(session) }
         } label: {
             Label("Save for later", image: "bookmark-glyph")
         }
@@ -523,51 +411,6 @@ struct TaskPeek: View {
     }
 }
 
-/// A task as the Mac's sidebar lists it: its name, then (a lead with workers) the chevron that folds them, then its
-/// state. A worker's is a step in and smaller.
-/// A task's row, the same in the inbox and the task list, as Linear shows an issue in its inbox: its agent's mark with
-/// its state at the corner, its name (a dot before it while its reply is unread) and how long ago it moved, then what
-/// it says in up to two lines.
-struct TaskRow: View {
-    let row: BoardRow
-    /// What it says under its name: its reply, or the step that's the user's.
-    let said: String?
-    let show: () -> Void
-
-    var body: some View {
-        Button(action: show) {
-            HStack(alignment: .center, spacing: 12) {
-                AgentAvatar(provider: row.provider, state: row.ownState)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        // Its name, then the unread dot right after it; a name too long for the line fades out at its
-                        // end before the dot, as what it says fades before the time.
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            FadingLine(text: row.task, font: .body.weight(.semibold))
-                            // Centred on the name's capitals (about 12 pt tall at this size), not sat on its baseline
-                            // like a full stop.
-                            if row.ownState == .answered {
-                                Circle().fill(.blue).frame(width: 8, height: 8).alignmentGuide(.firstTextBaseline) {
-                                    $0[VerticalAlignment.center] + 6
-                                }
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        if !Described.says(said) { TimeBeside(at: row.at) }
-                    }
-                    if Described.says(said) { Described(text: said, at: row.at) }
-                }
-            }
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        // Its avatar's edge under the page title's T (20.7 pt in): the circle fills its frame, unlike a padded icon.
-        .listRowInsets(EdgeInsets(top: 6, leading: 20.5, bottom: 6, trailing: 16))
-        .listRowSeparator(.hidden)
-    }
-}
-
 /// An ask in the inbox, laid out as the rows under it: its task's avatar (needing you), its name and when, then the
 /// question, answered in place.
 struct InboxAskRow: View {
@@ -598,7 +441,19 @@ struct TaskView: View {
     let model: PhoneModel
     let session: String
     @State private var position = ScrollPosition(edge: .bottom)
-    @State private var atBottom = true
+    /// Opened: held at the end until then, while the page settles (a long conversation's turns, its markdown and the
+    /// composer's inset laying out after the first scroll left it short of its end), or until you touch it.
+    @State private var settling = Date.distantPast
+    /// The conversation's end and the page's foot, and ↓ (TaskEnd).
+    @State private var end = TaskEnd()
+    /// Your message just sent, lifted to the page's top with room under it for the answer (as ChatGPT's): its id, and
+    /// the room, a screen's height without the keyboard, so the keyboard going doesn't take it away.
+    @State private var lifted: (id: String, room: CGFloat)?
+    /// One of this task's asks just answered (here, in its inbox, or the Inbox): when, and the items there were then.
+    /// What it brings is lifted when it lands, as a message sent is: the user acted in this task.
+    @State private var answered: (at: Date, known: Set<String>)?
+    /// What the composer opens over the page, presented here.
+    @State private var panels = ComposerPanels()
     @Environment(\.scenePhase) private var phase
     @State private var details = false
     /// The task's inbox open: what waits on you on it.
@@ -609,6 +464,13 @@ struct TaskView: View {
     @State private var missedMac = false
 
     /// Its history, asked for again a few times when the Mac doesn't answer, rather than once and then a blank page.
+    /// To the end while the page settles after opening. After this layout, not inside it: asked mid-layout (the app
+    /// opening on it from a notification), the scroll was dropped and the page sat past its end, blank, until scrolled.
+    private func settle() {
+        guard Date() < settling else { return }
+        DispatchQueue.main.async { position.scrollTo(edge: .bottom) }
+    }
+
     private func loadUntilLoaded() async {
         couldNotLoad = false
         for attempt in 0..<5 {
@@ -624,7 +486,8 @@ struct TaskView: View {
         let waiting: Int = conversation.map(model.waitingCount) ?? 0
         ScrollView {
             if let conversation {
-                ConversationView(model: model, conversation: conversation).padding()
+                ConversationView(model: model, conversation: conversation, lift: lifted?.room ?? 0, liftAt: lifted?.id, end: end)
+                    .padding()
             }
             // Not loaded: a moment the Mac couldn't be reached left the page blank, with nothing to say so.
             // Can't reach the Mac (or it didn't answer): said, in the page's middle, not a spinner going on.
@@ -644,7 +507,9 @@ struct TaskView: View {
             }
         }
         .scrollPosition($position)
-        .defaultScrollAnchor(.bottom)
+        // Opened at the end; after that only you scroll: words added below don't move what you're reading.
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .defaultScrollAnchor(.top, for: .sizeChanges)
         // The keyboard goes as the conversation is dragged down, as in Messages, or with a tap on the conversation:
         // the composer then folds back to its capsule when nothing is written.
         .scrollDismissesKeyboard(.interactively)
@@ -653,24 +518,86 @@ struct TaskView: View {
                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
             }
         )
-        // Where the reader is: at the bottom (or not scrolled yet), new words keep it there; scrolled up, they don't.
-        .onScrollGeometryChange(for: Bool.self) { geometry in
-            geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 60
-        } action: { _, bottom in
-            atBottom = bottom
-        }
-        // Opened, the conversation arrived, or grew: to the bottom, once it's laid out.
+        // Opened, or the conversation arrived: to the bottom, once it's laid out. After that only you scroll: growing,
+        // it isn't followed (ChatGPT's way: followed, the words being read slid up under the eye); ↓ goes there.
         .onScrollGeometryChange(for: CGFloat.self) {
             $0.contentSize.height
         } action: { old, _ in
-            // After this layout, not inside it: asked mid-layout (the app opening on it from a notification), the scroll
-            // was dropped and the page sat past its end, blank, until scrolled.
-            if atBottom || old < 1 { DispatchQueue.main.async { position.scrollTo(edge: .bottom) } }
+            if old < 1 { settling = Date().addingTimeInterval(1) }
+            settle()
         }
-        // Opened while the app comes up, or the conversation arriving after: to the bottom again once it's settled.
-        .onChange(of: conversation == nil) { _, missing in if !missing { settle() } }
-        .onChange(of: phase) { _, now in if now == .active, atBottom { settle() } }
-        .safeAreaInset(edge: .bottom) { Composer(model: model, conversation: conversation, session: session) }
+        .onChange(of: conversation == nil) { _, missing in
+            if !missing { settling = Date().addingTimeInterval(1); settle() }
+        }
+        .onAppear {
+            settling = Date().addingTimeInterval(1); settle()
+        }
+        .onScrollPhaseChange { _, phase in
+            if phase == .interacting { settling = .distantPast }
+        }
+        // The keyboard about to move: whether the end is in view now, and the keyboard's own time and curve.
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+            end.keyboardWillMove(note)
+        }
+        // The room at the foot changed (the keyboard came or went, the composer grew or shrank): the end held above it
+        // if it was in view.
+        .onScrollGeometryChange(for: CGFloat.self) {
+            $0.contentInsets.bottom
+        } action: { _, _ in
+            if Date() < settling { settle() } else { DispatchQueue.main.async { end.footMoved() } }
+        }
+        // An ask of this task answered: what it brings (zerod telling the agent, the agent's reply) lifted to the top
+        // when it lands, with the room under it. Content coming on its own still never scrolls the page.
+        .onChange(of: model.acted[session]) { _, _ in askAnswered() }
+        .onChange(of: conversation?.items.count) { _, _ in answerLanded() }
+        // Yours sent: lifted to the top, with the room under it for the answer, once that room is laid out.
+        .onChange(of: model.sending[session]?.last?.id) { _, sent in
+            guard let sent else { return }
+            lifted = (sent, end.room)
+            DispatchQueue.main.async {
+                withAnimation(.easeOut(duration: 0.3)) { position.scrollTo(id: ConversationView.lifted, anchor: .top) }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            Composer(model: model, conversation: conversation, session: session, panels: panels)
+                .onGeometryChange(for: CGFloat.self) {
+                    $0.size.height
+                } action: { _ in
+                    DispatchQueue.main.async { end.footMoved() }
+                }
+                // The page fades out above the composer and is solid under it, its queue strip included: the
+                // conversation read through the gaps (a reply's line cut in half between the strip and the box, a
+                // bubble past the capsule's end).
+                .background(alignment: .top) { ComposerFade(end: end) }
+                // Past the end of what's on screen: a way down, once, as ChatGPT's. Over the fade, 10 pt above the
+                // composer: under it, the fade dimmed its lower half.
+                .overlay(alignment: .top) {
+                    if conversation != nil, end.down {
+                        Button {
+                            // To the conversation's end, not into the empty room under it.
+                            end.toEnd()
+                        } label: {
+                            Image("arrow-up-outline").resizable().frame(width: 14, height: 14).rotationEffect(.degrees(180))
+                                .foregroundStyle(.primary)
+                                // Solid: a material let the line of text under it read through ("Sim↓ator").
+                                .frame(width: 36, height: 36).background(Color(uiColor: .secondarySystemBackground), in: Circle())
+                                .overlay(Circle().strokeBorder(.quaternary))
+                        }
+                        .buttonStyle(.plain)
+                        .alignmentGuide(.top) { $0[.bottom] + 10 }
+                        .transition(.opacity.animation(.easeOut(duration: 0.15)))
+                        .accessibilityLabel("To the end")
+                    }
+                }
+        }
+        // The keyboard's room is SwiftUI's own: it moves in the keyboard's own animation (and with a finger taking it
+        // down from the conversation), so the composer stays on the keyboard's top. Followed by hand, a frame at a time,
+        // the composer jumped ahead of the keyboard as it opened (measured in the Simulator: 313 pt in one frame).
+        // Photos and videos (a screen recording goes to the agent as a file, as from the Mac).
+        .photosPicker(
+            isPresented: $panels.picking, selection: $panels.picked, maxSelectionCount: 10, matching: .any(of: [.images, .videos])
+        )
+        .sheet(isPresented: $panels.selecting) { modelSheet(conversation) }
         // On screen, for Siri: "this" is this task ("save this for later", "what's it doing?").
         .appEntityIdentifier(EntityIdentifier(for: ZeroTask.self, identifier: session))
         .toolbar { bar(waiting: waiting) }
@@ -690,7 +617,6 @@ struct TaskView: View {
             model.follow(session)
             UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [session])
             model.markSeen(session)
-            settle()
         }
         // A reply arriving while it's open is seen once you do something in it (tap, scroll): having it open isn't
         // reading it.
@@ -700,27 +626,320 @@ struct TaskView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
+    /// The composer's model and effort for the next message: the Mac's selector, as a sheet.
+    @ViewBuilder private func modelSheet(_ conversation: Conversation?) -> some View {
+        if let conversation {
+            let provider = conversation.provider
+            let id = panels.chosen?.model ?? conversation.model
+            let effort = panels.chosen?.effort ?? conversation.effort
+            ModelSelector(agents: [.init(provider: provider, models: panels.models)], current: (provider, id, effort)) { _, picked, level in
+                guard let picked else { return }
+                panels.chosen = (picked, level)
+                // Mid-turn, as the Mac's chip: zerod keeps it for the next turn now, not with a message (which would
+                // have to go at once, steering the turn, to carry it).
+                if conversation.status == .working || conversation.status == .waiting {
+                    Task { await model.switchModel(session, provider: provider, model: picked, effort: level) }
+                }
+            }
+        }
+    }
+
+    /// One of this task's asks just answered: the items there are now, to know what it brings.
+    private func askAnswered() {
+        answered = (Date(), Set(model.conversation(session)?.items.map(\.id) ?? []))
+    }
+
+    /// The first message an answer brought (zerod telling the agent of it), lifted to the top.
+    private func answerLanded() {
+        guard let answered, Date().timeIntervalSince(answered.at) < 120, let items = model.conversation(session)?.items else { return }
+        let new = items.first { item in
+            guard !answered.known.contains(item.id), case .user = item.kind else { return false }
+            return true
+        }
+        guard let event = new else { return }
+        self.answered = nil
+        lifted = (event.id, end.room)
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.3)) { position.scrollTo(id: ConversationView.lifted, anchor: .top) }
+        }
+    }
+
+    /// The tray and ⋯ in one item, 36 pt apart, each tappable 4 pt past its 36 pt slot (44 pt targets, meeting in the
+    /// middle): as two items, the bar's glass pill held them far apart with an empty middle.
     @ToolbarContentBuilder private func bar(waiting: Int) -> some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
-            TaskInboxButton(count: waiting) { asking = true }
-        }
-        ToolbarItem(placement: .topBarTrailing) {
-            Menu {
-                Button("Details") { details = true }
-                Button("Save for later") { Task { await model.askToSaveForLater(session) } }
-            } label: {
-                Image("dots-glyph")
+            HStack(spacing: 0) {
+                TaskInboxButton(count: waiting) { asking = true }
+                    .frame(width: 36, height: 44).contentShape(Rectangle().inset(by: -4))
+                Menu {
+                    Button("Details") { details = true }
+                    Button("Save for later") { Task { await model.saveForLater(session) } }
+                } label: {
+                    Image("dots-glyph").frame(width: 36, height: 44).contentShape(Rectangle().inset(by: -4))
+                }
+                .accessibilityLabel("More")
             }
         }
     }
 
     /// To the bottom now, and again a moment on, once a push or the app's own opening has finished moving it.
-    private func settle() {
-        Task {
-            for delay in [0.05, 0.35] {
-                try? await Task.sleep(for: .seconds(delay))
-                position.scrollTo(edge: .bottom)
+}
+
+/// A conversation's end and the page's foot, measured in the page's own scroll view (UIKit's, at one moment, in its
+/// content's points), and the ↓ button. The end is the conversation's last row's foot (EndMarker), whatever room lies
+/// under it; ↓ shows when it's below what's on screen. Growing never scrolls the page; the keyboard coming or going,
+/// or the composer growing, scrolls it once, with the keyboard, and only when the end was in view.
+/// The page's fade above the composer, with the solid under it. Only while something runs under it (TaskEnd's
+/// `under`): at the end it looked like more to scroll.
+private struct ComposerFade: View {
+    let end: TaskEnd
+
+    var body: some View {
+        #if DEBUG
+            let _ = FrameLog.fade = end.under
+        #endif
+        VStack(spacing: 0) {
+            LinearGradient(
+                colors: [Color(uiColor: .systemBackground).opacity(0), Color(uiColor: .systemBackground)], startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 40)
+            .opacity(end.under)
+            Color(uiColor: .systemBackground)
+        }
+        .padding(.top, -40)
+        .ignoresSafeArea(edges: .bottom)
+        .allowsHitTesting(false)
+        #if DEBUG
+            // Its alpha, for the UI tests.
+            .overlay {
+                if CommandLine.arguments.contains("-composerTest") {
+                    Color.clear.frame(width: 1, height: 1).accessibilityElement()
+                    .accessibilityIdentifier("test.fade").accessibilityValue(String(end.under))
+                }
             }
+        #endif
+    }
+}
+
+@MainActor @Observable final class TaskEnd {
+    /// ↓ shows: the conversation's last row is below what's on screen.
+    private(set) var down = false
+    /// How far the conversation runs under the composer's fade: none with its end in view (where ↓ takes it), all of
+    /// it once the end is at the page's foot or past it, in between as it comes.
+    private(set) var under: Double = 0
+    @ObservationIgnored weak var scroll: UIScrollView?
+    @ObservationIgnored weak var marker: UIView?
+    /// Not worked out again before then: a scroll of ours is running.
+    @ObservationIgnored private var still = Date.distantPast
+    /// The keyboard moving: its time and curve, and how the end stood as it began to.
+    @ObservationIgnored private var keyboard: (duration: Double, curve: UInt, visible: Bool, close: Bool, end: CGFloat?, at: Date)?
+    /// The room at the page's foot (the composer, the keyboard), as last seen.
+    @ObservationIgnored private var foot: CGFloat?
+    /// The last row this far above the page's foot when it's held there.
+    private static let margin: CGFloat = 24
+
+    /// Where an answer being read out has got to (ReadingMarker): its unread words are laid out, unseen, and the page
+    /// followed them as the keyboard moved, scrolling to keep blank lines above it.
+    @ObservationIgnored weak var reading: UIView?
+    /// The room at the page's foot with the keyboard down: the closed composer and the home indicator, as measured.
+    @ObservationIgnored private var resting: CGFloat?
+    @ObservationIgnored private var keyboardUp = false
+    /// Where the page was scrolled before a change at its foot: UIKit clamps it to the new end before footMoved runs
+    /// (a queued message's strip going, at the end, dropped the page 82 pt in a frame).
+    @ObservationIgnored private var lastOffset: CGFloat?
+    /// And where its end was then: content coming in the same moment (a queued message sent on as its strip goes)
+    /// moved the end down, and the page, judged by the new end, was let drop.
+    @ObservationIgnored private var lastEnd: CGFloat?
+
+    /// The conversation's end as seen: where the read-out has got to, while one is under way, or its last row.
+    private var endY: CGFloat? {
+        guard let scroll else { return nil }
+        if let reading, reading.window != nil { return reading.convert(CGPoint(x: 0, y: reading.bounds.maxY), to: scroll).y }
+        guard let marker, marker.window != nil else { return nil }
+        return marker.convert(CGPoint(x: 0, y: marker.bounds.maxY), to: scroll).y
+    }
+
+    /// The page's foot (above the composer and keyboard), in the content's points, with the room there `foot`.
+    private func bottom(_ foot: CGFloat) -> CGFloat {
+        guard let scroll else { return 0 }
+        return scroll.contentOffset.y + scroll.bounds.height - foot
+    }
+
+    /// The end in view, or within a little of it.
+    private func visible(_ foot: CGFloat) -> Bool { endY.map { $0 <= bottom(foot) + 12 } ?? true }
+    /// In view and near the foot: the page is at the end (not lifted, the end higher up with room under it).
+    private func close(_ foot: CGFloat) -> Bool { endY.map { visible(foot) && $0 >= bottom(foot) - 60 } ?? false }
+
+    /// A screen's height without the keyboard, less the closed composer: the room under a message just sent. From the
+    /// foot as measured with the keyboard down: guessed (90 pt), it was 16 pt short, and the lifted message slid down as
+    /// the keyboard closed.
+    var room: CGFloat {
+        guard let scroll, let window = scroll.window else { return 600 }
+        return window.bounds.height - scroll.adjustedContentInset.top - (resting ?? window.safeAreaInsets.bottom + 90)
+            - ConversationView.liftGap
+    }
+
+    /// The page's scroll view and its end found: the room at its foot as it is now, so the first change after (the
+    /// keyboard coming up the first time a task is opened) is followed. Known only from that change, it was taken as
+    /// the starting point, and the conversation didn't lift the first time.
+    func found() {
+        if foot == nil, let scroll { foot = scroll.adjustedContentInset.bottom }
+        if !keyboardUp, let foot { resting = foot }
+        recount()
+    }
+
+    /// The page scrolled, or the conversation changed: ↓ again.
+    func recount() {
+        guard let scroll else { return }
+        let foot = scroll.adjustedContentInset.bottom
+        // The fade follows every frame, our own glides included (↓, the keyboard): none with the page at its end (the
+        // last row its padding, 16 pt, above the foot), all of it 24 pt further down, in steps of 5 %.
+        let depth = endY.map { ($0 - (bottom(foot) - 16)) / Self.margin } ?? 1
+        let fade = (min(1, max(0, depth)) * 20).rounded() / 20
+        // A jump (↓'s glide, which sets where it ends at once) eased over its time, not in a frame.
+        if abs(under - fade) > 0.3 {
+            withAnimation(.easeOut(duration: 0.3)) { under = fade }
+        } else if under != fade {
+            under = fade
+        }
+        guard Date() >= still else { return }
+        // Only with the foot as footMoved last took it: between a change at the foot and footMoved, the page has
+        // already been clamped by UIKit, and that's not where it was.
+        if self.foot.map({ abs($0 - foot) < 0.5 }) ?? true {
+            lastOffset = scroll.contentOffset.y
+            lastEnd = endY
+        }
+        let now = !visible(foot)
+        if down != now { down = now }
+    }
+
+    func keyboardWillMove(_ note: Notification) {
+        guard let scroll else { return }
+        let info = note.userInfo ?? [:]
+        let duration = (info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        let curve = (info[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt) ?? 7
+        let foot = foot ?? scroll.adjustedContentInset.bottom
+        if let frame = info[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect, let screen = scroll.window?.screen {
+            keyboardUp = frame.minY < screen.bounds.maxY - 1
+        }
+        keyboard = (duration, curve, visible(foot), close(foot), endY, Date())
+        still = Date().addingTimeInterval(duration + 0.1)
+    }
+
+    /// The room at the page's foot changed: if the end was in view, it stays in view, just above it (at the end,
+    /// held there whether the room grew or shrank); one scroll, on the keyboard's own time and curve when it's the
+    /// keyboard.
+    func footMoved() {
+        guard let scroll else { return }
+        let now = scroll.adjustedContentInset.bottom
+        guard let before = foot else { foot = now; recount(); return }
+        guard abs(now - before) > 0.5, let endY else { return }
+        foot = now
+        if !keyboardUp { resting = now }
+        let moving = keyboard.flatMap { Date().timeIntervalSince($0.at) < $0.duration + 0.3 ? $0 : nil }
+        // As it stood before the change: the end and offset recorded then, not the ones it brought.
+        let then = (end: lastEnd ?? endY, bottom: (lastOffset ?? scroll.contentOffset.y) + scroll.bounds.height - before)
+        let wasVisible = moving?.visible ?? (then.end <= then.bottom + 12)
+        let wasClose = moving?.close ?? (wasVisible && then.end >= then.bottom - 60)
+        guard wasVisible else { recount(); return }
+        // Where the end was as the keyboard began to move: a read-out going on meanwhile was chased, the page
+        // scrolling on with each step of the move (measured: 130 pt past the words read when it began).
+        let fit = (moving?.end ?? endY) + Self.margin - (scroll.bounds.height - now)
+        let lowest = -scroll.adjustedContentInset.top
+        let highest = max(lowest, scroll.contentSize.height + now - scroll.bounds.height)
+        // From where the page was before the change (UIKit may have clamped it already; it's put back, so the move is
+        // one glide, not a drop and then a second move).
+        let from = (moving == nil ? lastOffset : nil) ?? scroll.contentOffset.y
+        // At the end: by the foot's change, as it was when the move began. Worked out from where the end is now, a
+        // read-out gone on since had the page scroll again after the keyboard had settled.
+        let target = min(highest, max(lowest, wasClose ? from + (now - before) : max(from, fit)))
+        if abs(from - scroll.contentOffset.y) > 0.5, abs(target - from) >= 40 { scroll.contentOffset.y = from }
+        lastOffset = target
+        lastEnd = endY
+        guard abs(target - scroll.contentOffset.y) > 0.5 else { return }
+        // A step of a move already under way (the box growing frame by frame, the keyboard following a finger): taken
+        // as it comes. Animated, each frame's started a new animation and the page trailed behind.
+        if abs(target - scroll.contentOffset.y) < 40 {
+            scroll.contentOffset.y = target
+            return
+        }
+        let duration = moving?.duration ?? 0.25
+        // The keyboard's curve (7) is a spring that runs about half a second whatever its duration: nothing is
+        // recorded from the page until it's done (a mid-glide offset was taken as where the page stood).
+        still = Date().addingTimeInterval(max(duration, 0.5) + 0.05)
+        UIView.animate(
+            withDuration: duration, delay: 0,
+            options: [UIView.AnimationOptions(rawValue: (moving?.curve ?? 7) << 16), .beginFromCurrentState, .allowUserInteraction]
+        ) {
+            scroll.contentOffset.y = target
+        } completion: { _ in
+            self.still = .distantPast
+            self.recount()
+        }
+    }
+
+    /// ↓: the conversation's last row just above the page's foot.
+    func toEnd() {
+        guard let scroll, let endY else { return }
+        let foot = scroll.adjustedContentInset.bottom
+        let lowest = -scroll.adjustedContentInset.top
+        let highest = max(lowest, scroll.contentSize.height + foot - scroll.bounds.height)
+        let target = min(highest, max(lowest, endY + Self.margin - (scroll.bounds.height - foot)))
+        down = false
+        still = Date().addingTimeInterval(0.4)
+        UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .allowUserInteraction]) {
+            scroll.contentOffset.y = target
+        } completion: { _ in
+            self.still = .distantPast
+            self.recount()
+        }
+    }
+}
+
+/// Where an answer being read out has got to, as a view of UIKit's, handed to TaskEnd (StreamingText places it).
+struct ReadingMarker: UIViewRepresentable {
+    let end: TaskEnd?
+    func makeUIView(context: Context) -> Marker {
+        let view = Marker()
+        view.end = end
+        view.isUserInteractionEnabled = false
+        return view
+    }
+    func updateUIView(_ view: Marker, context: Context) { view.end = end }
+
+    final class Marker: UIView {
+        weak var end: TaskEnd?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window != nil { end?.reading = self } else if end?.reading === self { end?.reading = nil }
+            end?.recount()
+        }
+    }
+}
+
+/// The conversation's end, as a view of UIKit's: where it is in the page's scroll view, which it finds and hands to
+/// TaskEnd.
+struct EndMarker: UIViewRepresentable {
+    let end: TaskEnd?
+    func makeUIView(context: Context) -> Marker {
+        let view = Marker()
+        view.end = end
+        view.isUserInteractionEnabled = false
+        return view
+    }
+    func updateUIView(_ view: Marker, context: Context) { view.end = end }
+
+    final class Marker: UIView {
+        weak var end: TaskEnd?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard window != nil, let end else { return }
+            var view = superview
+            while let next = view, !(next is UIScrollView) { view = next.superview }
+            end.scroll = view as? UIScrollView
+            end.marker = self
+            end.found()
         }
     }
 }
@@ -752,7 +971,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     func application(_ application: UIApplication, didReceiveRemoteNotification info: [AnyHashable: Any]) async -> UIBackgroundFetchResult {
         guard let ids = info["clear"] as? [String] else { return .noData }
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids)
-        return .newData
+        // Nothing on screen changed. New data makes iOS draw the app again, suspended, for the app switcher, and that
+        // drawing came out half in light mode: the conversation's words black on its black page.
+        return .noData
     }
 
     // In the app: its sound, no banner over what you're reading.
@@ -875,5 +1096,105 @@ struct InboxView: View {
 
     private func item(_ row: BoardRow, _ said: String?) -> some View {
         TaskRow(row: row, said: said) { model.path.append(row.session) }
+    }
+}
+
+/// How much of the keyboard is on screen, frame by frame as it's drawn: from its top to the screen's foot, less the
+/// home indicator's room. Followed while it moves on its own (announced) and while it's up (a finger can take it down,
+/// unannounced until it lets go). The composer opens and closes by it (Composer).
+struct KeyboardFollow: UIViewRepresentable {
+    /// The keyboard's room now, and when it's all the way up (as iOS last announced it).
+    let room: (CGFloat, CGFloat) -> Void
+    func makeUIView(context: Context) -> Follower {
+        let view = Follower()
+        view.room = room
+        view.isUserInteractionEnabled = false
+        return view
+    }
+    func updateUIView(_ view: Follower, context: Context) { view.room = room }
+    static func dismantleUIView(_ view: Follower, coordinator: ()) { view.stop() }
+
+    final class Follower: UIView {
+        var room: (CGFloat, CGFloat) -> Void = { _, _ in }
+        private var full: CGFloat = 0
+        private var told: CGFloat = 0
+        private var link: CADisplayLink?
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(moves(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window == nil { stop() }
+        }
+
+        func stop() {
+            link?.invalidate()
+            link = nil
+        }
+
+        private var bottom: CGFloat { (window?.screen.bounds.maxY ?? 0) - (window?.safeAreaInsets.bottom ?? 0) }
+
+        /// Pinned to the keyboard's top by its layout guide, which follows a finger taking it down frame by frame.
+        private lazy var probe: UIView = {
+            let probe = UIView()
+            probe.isUserInteractionEnabled = false
+            probe.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(probe)
+            NSLayoutConstraint.activate([
+                probe.heightAnchor.constraint(equalToConstant: 1), probe.widthAnchor.constraint(equalToConstant: 1),
+                probe.leadingAnchor.constraint(equalTo: leadingAnchor),
+                probe.bottomAnchor.constraint(equalTo: keyboardLayoutGuide.topAnchor),
+            ])
+            return probe
+        }()
+
+        /// Until when the keyboard is moving on its own (its announced time): followed frame by frame till then.
+        private var until = Date.distantPast
+        private var up = false
+
+        @objc private func moves(_ note: Notification) {
+            guard window != nil, let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+            let time = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+            up = frame.minY < (window?.screen.bounds.maxY ?? 0) - 1
+            if up { full = max(0, bottom - frame.minY) }
+            until = Date().addingTimeInterval(time + 0.1)
+            _ = probe
+            if link == nil {
+                let link = CADisplayLink(target: self, selector: #selector(frameTick))
+                link.add(to: .main, forMode: .common)
+                self.link = link
+            }
+        }
+
+        /// The keyboard's top where it is on screen this frame (its guide's layer as drawn, mid-animation too), while
+        /// it moves on its own or is up (a finger can take it down at any time). Read on SwiftUI's own approximation
+        /// of the keyboard's curve, the composer trailed the keyboard as it rose and was covered for a moment.
+        @objc private func frameTick() {
+            guard window != nil else { return }
+            // As drawn: the probe's and every ancestor's layer as presented this frame. Not laid out again here (the
+            // guide was at the keyboard's end at once), nor converted with the views' own frames (this view rides the
+            // keyboard with the composer: its frame was the keyboard's end at once too).
+            var foot = (probe.layer.presentation() ?? probe.layer).frame.maxY
+            var view: UIView? = self
+            while let current = view, !(current is UIWindow) {
+                let layer = current.layer.presentation() ?? current.layer
+                let parent = current.superview.map { $0.layer.presentation() ?? $0.layer }
+                foot += layer.frame.minY - (parent?.bounds.minY ?? 0)
+                view = current.superview
+            }
+            tell(max(0, bottom - foot), animated: false)
+            if !up, Date() > until { stop() }
+        }
+
+        private func tell(_ now: CGFloat, animated: Bool) {
+            guard abs(now - told) > 0.5 else { return }
+            told = now
+            room(now, full)
+        }
     }
 }

@@ -386,16 +386,16 @@ struct OpenTaskIntent: OpenIntent {
     }
 }
 
-/// Asks a task's agent to save what it has for later (it writes the note and the artifact).
+/// Saves a whole task for later: off the tasks and on hold, until resumed from Later.
 struct SaveForLaterIntent: AppIntent {
     static let title: LocalizedStringResource = "Save a task for later"
-    static let description = IntentDescription("Asks the task's agent to write down what's left, in Zero's Later.")
+    static let description = IntentDescription("Puts the task in Zero's Later, paused, until you resume it.")
     @Parameter(title: "Task") var task: ZeroTask
 
     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
         guard await PhoneModel.shared.ready() else { throw ZeroSiriError.offline }
-        await PhoneModel.shared.askToSaveForLater(task.id)
-        return .result(dialog: IntentDialog(full: "Asked \(task.displayName) to save it for later.", supporting: "Saving for later"))
+        await PhoneModel.shared.saveForLater(task.id)
+        return .result(dialog: IntentDialog(full: "Saved \(task.displayName) for later.", supporting: "Saved for later"))
     }
 }
 

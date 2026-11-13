@@ -1,6 +1,8 @@
 import AVFoundation
 import PhotosUI
-import ScreenCaptureKit
+#if !targetEnvironment(simulator)
+    import ScreenCaptureKit
+#endif
 import Speech
 import SwiftUI
 import UniformTypeIdentifiers
@@ -241,79 +243,95 @@ private struct Movie: Transferable {
 /// The screen recorded from the app, as iOS 27's ScreenCaptureKit has it: the system's picker chooses the screen (and
 /// whether the microphone is on), a stream records it into a file of the app's, until it's stopped here or from the
 /// system's own control.
-@MainActor @Observable final class ScreenRecorder: NSObject, SCContentSharingPickerObserver, SCStreamDelegate, SCRecordingOutputDelegate {
-    private(set) var recording = false
-    private(set) var started = Date()
-    /// A whole recording, for the view to take.
-    var finished: URL?
-    var problem: String?
-    @ObservationIgnored private var stream: SCStream?
-    @ObservationIgnored private var file: URL?
-
-    var available: Bool { SCContentSharingPicker.shared.isAvailable }
-
-    func start() {
-        let picker = SCContentSharingPicker.shared
-        var configuration = picker.defaultConfiguration
-        configuration.showsMicrophoneControl = true
-        picker.defaultConfiguration = configuration
-        picker.add(self)
-        picker.isActive = true
-        picker.present(using: .display)
+#if targetEnvironment(simulator)
+    /// The Simulator has no ScreenCaptureKit: recording isn't offered there (the UI tests build the app for it).
+    @MainActor @Observable final class ScreenRecorder {
+        private(set) var recording = false
+        private(set) var started = Date()
+        var finished: URL?
+        var problem: String?
+        var available: Bool { false }
+        func start() {}
+        func stop() {}
     }
+#else
+    @MainActor @Observable final class ScreenRecorder: NSObject, SCContentSharingPickerObserver, SCStreamDelegate, SCRecordingOutputDelegate
+    {
+        private(set) var recording = false
+        private(set) var started = Date()
+        /// A whole recording, for the view to take.
+        var finished: URL?
+        var problem: String?
+        @ObservationIgnored private var stream: SCStream?
+        @ObservationIgnored private var file: URL?
 
-    func stop() {
-        Task { try? await stream?.stopCapture() }
-    }
+        var available: Bool { SCContentSharingPicker.shared.isAvailable }
 
-    private func record(_ filter: SCContentFilter) {
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent("recording-\(UUID().uuidString).mp4")
-        let output = SCRecordingOutputConfiguration()
-        output.outputURL = file
-        let stream = SCStream(filter: filter, configuration: SCStreamConfiguration(), delegate: self)
-        do {
-            try stream.addRecordingOutput(SCRecordingOutput(configuration: output, delegate: self))
-        } catch {
-            problem = "Couldn't record: \(error.localizedDescription)"
-            return
+        func start() {
+            let picker = SCContentSharingPicker.shared
+            var configuration = picker.defaultConfiguration
+            configuration.showsMicrophoneControl = true
+            picker.defaultConfiguration = configuration
+            picker.add(self)
+            picker.isActive = true
+            picker.present(using: .display)
         }
-        (self.stream, self.file) = (stream, file)
-        Task {
-            do { try await stream.startCapture(); started = Date(); recording = true } catch {
-                problem = "Couldn't record: \(error.localizedDescription)"; ended()
+
+        func stop() {
+            Task { try? await stream?.stopCapture() }
+        }
+
+        private func record(_ filter: SCContentFilter) {
+            let file = FileManager.default.temporaryDirectory.appendingPathComponent("recording-\(UUID().uuidString).mp4")
+            let output = SCRecordingOutputConfiguration()
+            output.outputURL = file
+            let stream = SCStream(filter: filter, configuration: SCStreamConfiguration(), delegate: self)
+            do {
+                try stream.addRecordingOutput(SCRecordingOutput(configuration: output, delegate: self))
+            } catch {
+                problem = "Couldn't record: \(error.localizedDescription)"
+                return
+            }
+            (self.stream, self.file) = (stream, file)
+            Task {
+                do { try await stream.startCapture(); started = Date(); recording = true } catch {
+                    problem = "Couldn't record: \(error.localizedDescription)"; ended()
+                }
+            }
+        }
+
+        private func ended() {
+            recording = false
+            stream = nil
+            SCContentSharingPicker.shared.isActive = false
+            SCContentSharingPicker.shared.remove(self)
+        }
+
+        nonisolated func contentSharingPicker(
+            _ picker: SCContentSharingPicker, didUpdateWith filter: SCContentFilter, for stream: SCStream?
+        ) {
+            Task { @MainActor in self.record(filter) }
+        }
+        nonisolated func contentSharingPicker(_ picker: SCContentSharingPicker, didCancelFor stream: SCStream?) {
+            Task { @MainActor in self.ended() }
+        }
+        nonisolated func contentSharingPickerStartDidFailWithError(_ error: any Error) {
+            Task { @MainActor in
+                self.problem = "Couldn't record: \(error.localizedDescription)"; self.ended()
+            }
+        }
+        nonisolated func stream(_ stream: SCStream, didStopWithError error: any Error) {
+            Task { @MainActor in self.ended() }
+        }
+        nonisolated func recordingOutputDidFinishRecording(_ recordingOutput: SCRecordingOutput) {
+            Task { @MainActor in
+                self.finished = self.file; self.ended()
+            }
+        }
+        nonisolated func recordingOutput(_ recordingOutput: SCRecordingOutput, didFailWithError error: any Error) {
+            Task { @MainActor in
+                self.problem = "The recording failed: \(error.localizedDescription)"; self.ended()
             }
         }
     }
-
-    private func ended() {
-        recording = false
-        stream = nil
-        SCContentSharingPicker.shared.isActive = false
-        SCContentSharingPicker.shared.remove(self)
-    }
-
-    nonisolated func contentSharingPicker(_ picker: SCContentSharingPicker, didUpdateWith filter: SCContentFilter, for stream: SCStream?) {
-        Task { @MainActor in self.record(filter) }
-    }
-    nonisolated func contentSharingPicker(_ picker: SCContentSharingPicker, didCancelFor stream: SCStream?) {
-        Task { @MainActor in self.ended() }
-    }
-    nonisolated func contentSharingPickerStartDidFailWithError(_ error: any Error) {
-        Task { @MainActor in
-            self.problem = "Couldn't record: \(error.localizedDescription)"; self.ended()
-        }
-    }
-    nonisolated func stream(_ stream: SCStream, didStopWithError error: any Error) {
-        Task { @MainActor in self.ended() }
-    }
-    nonisolated func recordingOutputDidFinishRecording(_ recordingOutput: SCRecordingOutput) {
-        Task { @MainActor in
-            self.finished = self.file; self.ended()
-        }
-    }
-    nonisolated func recordingOutput(_ recordingOutput: SCRecordingOutput, didFailWithError error: any Error) {
-        Task { @MainActor in
-            self.problem = "The recording failed: \(error.localizedDescription)"; self.ended()
-        }
-    }
-}
+#endif

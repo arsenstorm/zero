@@ -11,7 +11,7 @@ struct PairView: View {
         Welcome(title: "Pair with your Mac", words: "Your phone talks to Zero on your Mac, end to end encrypted.") {
             Panel {
                 ForEach(
-                    Array(["Open Zero on your Mac", "Settings › Phone › Add a phone", "Scan the code it shows"].enumerated()), id: \.offset
+                    Array(["Open Zero on your Mac", "Settings › Phone › Pair phone", "Scan the code it shows"].enumerated()), id: \.offset
                 ) { n, step in
                     HStack(spacing: 14) {
                         Text("\(n + 1)").font(.subheadline.weight(.semibold)).monospacedDigit()

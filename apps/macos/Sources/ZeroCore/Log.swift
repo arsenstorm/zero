@@ -4,7 +4,12 @@ import Foundation
 /// Plain lines (the system log redacts an app's interpolations as <private>); kept to a few megabytes, the previous
 /// file beside it.
 public enum Log {
-    public static let file = Paths.dir.appendingPathComponent("zero.log")
+    #if os(iOS)
+        // An iPhone app may write only inside its container's folders (Library, Documents, tmp), not a ~/.zero beside them.
+        public static let file = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0].appendingPathComponent("zero.log")
+    #else
+        public static let file = Paths.dir.appendingPathComponent("zero.log")
+    #endif
     private static let limit = 5 * 1024 * 1024
     private static let lock = NSLock()
     private static let stamp: ISO8601DateFormatter = {

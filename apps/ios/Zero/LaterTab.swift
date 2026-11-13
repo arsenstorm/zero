@@ -65,7 +65,7 @@ struct LaterView: View {
                 } description: {
                     Text(
                         showing == .open
-                            ? "In a task, choose Save for later from its menu, and its agent writes down what's left."
+                            ? "In a task, choose Save for later from its menu: it waits here, paused, until you resume it."
                             : "Notes you mark done show here.")
                 }
                 .allowsHitTesting(false)
@@ -135,20 +135,32 @@ struct LaterDetail: View {
                     }
                     .font(.footnote).foregroundStyle(.secondary)
                     HStack(spacing: 8) {
-                        Menu {
-                            ForEach(model.tasks) { row in
-                                Button(row.task) {
-                                    Task {
-                                        try? await model.send(LaterAsk.pickUp(item), images: [], to: row.session)
-                                        model.tab = .tasks
-                                        model.path = [row.session]
-                                    }
+                        if let resume = item.resume, !item.done {
+                            // A whole task saved for later: back among the tasks, off hold.
+                            Button("Resume") {
+                                Task {
+                                    let session = await model.resumeLater(item.id) ?? resume
+                                    model.tab = .tasks
+                                    model.path = [session]
                                 }
                             }
-                        } label: {
-                            Text("Send to a task")
+                            .buttonStyle(.glassProminent)
+                        } else {
+                            Menu {
+                                ForEach(model.tasks) { row in
+                                    Button(row.task) {
+                                        Task {
+                                            try? await model.send(laterPickUp(item), images: [], to: row.session)
+                                            model.tab = .tasks
+                                            model.path = [row.session]
+                                        }
+                                    }
+                                }
+                            } label: {
+                                Text("Send to a task")
+                            }
+                            .buttonStyle(.glassProminent)
                         }
-                        .buttonStyle(.glassProminent)
                         Button(item.done ? "Not done" : "Done") {
                             Task {
                                 await model.editLater(item.id, ["done": !item.done]); self.item = await model.laterItem(id)

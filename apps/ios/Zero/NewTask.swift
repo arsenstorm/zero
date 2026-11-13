@@ -148,27 +148,11 @@ struct NewTaskSheet: View {
         .buttonStyle(.plain).glassEffect(.regular.interactive(), in: Capsule())
     }
 
-    /// Zero's own list, not the system menu: the tick at the right edge, where it's read last.
+    /// Zero's own list (ChoiceList), closing as it's picked from.
     private func list(_ rows: [(String, String)], selected: String, pick: @escaping (String) -> Void) -> some View {
-        VStack(spacing: 2) {
-            ForEach(rows, id: \.0) { id, title in
-                Button {
-                    pick(id); choosing = nil
-                } label: {
-                    HStack {
-                        Text(title).lineLimit(1)
-                        Spacer(minLength: 16)
-                        Image("circle-check-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(Color.accentColor).opacity(
-                            id == selected ? 1 : 0)
-                    }
-                    .padding(.horizontal, 14).frame(height: 44).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
+        ChoiceList(rows: rows.map { (id: $0.0, title: $0.1) }, selected: selected) {
+            pick($0); choosing = nil
         }
-        .padding(6)
-        .frame(width: 260)
-        .presentationCompactAdaptation(.popover)
     }
 
     private var modelName: String {

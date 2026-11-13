@@ -13,6 +13,7 @@ import UserNotifications
     private(set) var status = Status.unpaired {
         // The ways being tried settle with it: in when connected, missed when not.
         didSet {
+            if status != oldValue { settleBanner() }
             for i in routes.indices where routes[i].state == .trying {
                 switch status {
                 case .connected: routes[i].state = .connected
@@ -26,6 +27,46 @@ import UserNotifications
     private(set) var routes: [Route] = []
     /// Not reaching the Mac just now.
     var offline: Bool { if case .offline = status { true } else { false } }
+
+    /// What the banner at the top says, steadied: the connection flips between connecting and not on each try (a
+    /// restart of the Mac's zerod is a dozen of them), and said as it went, the banner flickered between its two
+    /// messages. Nothing for a drop under a second; "Reconnecting" from then; "Can't reach" only after ten seconds of
+    /// not connecting; each shown a second and a half at least.
+    enum Banner: Equatable { case reconnecting, unreachable }
+    private(set) var banner: Banner?
+    @ObservationIgnored private var lostAt: Date?
+    @ObservationIgnored private var bannerSince = Date.distantPast
+    @ObservationIgnored private var bannerCheck: Task<Void, Never>?
+
+    private func settleBanner() {
+        let now = Date()
+        if status == .connected || status == .unpaired { lostAt = nil } else if lostAt == nil { lostAt = now }
+        var want: Banner?
+        var next: TimeInterval?
+        if let lostAt {
+            let gone = now.timeIntervalSince(lostAt)
+            if gone < 1 {
+                next = 1 - gone
+            } else if gone < 10 {
+                want = .reconnecting; next = 10 - gone
+            } else {
+                want = .unreachable
+            }
+        }
+        let held = now.timeIntervalSince(bannerSince)
+        if want != banner, banner != nil, held < 1.5 {
+            want = banner
+            next = min(next ?? .infinity, 1.5 - held)
+        }
+        if want != banner { banner = want; bannerSince = now }
+        bannerCheck?.cancel()
+        if let next {
+            bannerCheck = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(next))
+                if !Task.isCancelled { self?.settleBanner() }
+            }
+        }
+    }
     struct Route: Equatable, Identifiable {
         enum State { case waiting, trying, connected, missed }
         let id: String
@@ -38,7 +79,10 @@ import UserNotifications
     private(set) var sidebar = (sort: BoardRow.Sort.state, order: "")
     /// The workspace shown here: the phone's own, not the Mac's, so each can be on its own work.
     private(set) var workspace = UserDefaults.standard.string(forKey: "workspace") ?? "zero" {
-        didSet { UserDefaults.standard.set(workspace, forKey: "workspace") }
+        didSet {
+            UserDefaults.standard.set(workspace, forKey: "workspace")
+            Keychain.write("workspace", Data(workspace.utf8))
+        }
     }
     /// zerod's sessions as they come; views read `lives`, one observed object a task, so a change to one task redraws
     /// that task's page alone, not every page reading the mirror.
@@ -172,6 +216,8 @@ import UserNotifications
     /// gone; the task open fetched again either way.
     func wake() async {
         guard paired else { return }
+        // Back in front: how long it was out while the app was away isn't how long it's failed to connect.
+        if lostAt != nil { lostAt = Date(); settleBanner() }
         guard let link else { connect(); return }
         let answered = Answered()
         Task { if (try? await link.call("board")) != nil { answered.yes = true } }
@@ -295,6 +341,10 @@ import UserNotifications
                 status = .connected
                 retries = 0
                 beat(link)
+                // The terminal app its tasks open in, for "In Ghostty" (as the Mac's pill says it).
+                if let app = try? await link.terminal().app {
+                    terminalName = ((app as NSString).lastPathComponent as NSString).deletingPathExtension
+                }
                 // The Mac's name, and that it was seen now.
                 if var kept = pairing {
                     if let name = try? await link.call("name") as? String { kept.name = name }
@@ -407,6 +457,27 @@ import UserNotifications
 
     func conversation(_ id: String) -> Conversation? { lives[id]?.conversation }
 
+    /// The terminal app the Mac opens tasks in, by its name: "In Ghostty" on a task open there.
+    private(set) var terminalName = "Terminal"
+
+    #if DEBUG
+        /// A conversation of the UI tests' own, as if zerod had sent it (TaskTestPage).
+        func showForTests(_ conversation: Conversation, earlier: Int = 0) {
+            _ = mirror.receive(.session(conversation))
+            _ = mirror.receive(.earlier(session: conversation.id, count: earlier))
+            sync(conversation.id)
+        }
+        /// A message of the user's that zerod sends on by itself (one queued), with no lift.
+        func addedForTests(_ text: String, to session: String) {
+            guard var conversation = mirror.conversations[session] else { return }
+            conversation.items.append(
+                ConversationItem(
+                    id: "added-" + UUID().uuidString, turn: nil, kind: .user(text: text, images: []), status: .done,
+                    at: Int(Date().timeIntervalSince1970 * 1000)))
+            showForTests(conversation)
+        }
+    #endif
+
     private func receive(_ message: ZerodMirror.Message) {
         let kept = mirror.receive(message)
         switch message {
@@ -456,36 +527,166 @@ import UserNotifications
         try? await linked()?.send(session: session, text: text)
     }
 
-    func choose(_ ask: Ask, option: Int) async { try? await linked()?.choose(ask.id, option: option) }
-    func answer(_ ask: Ask, option: Int, text: String) async { try? await linked()?.answer(ask.id, option: option, text: text) }
-    func reply(_ ask: Ask, text: String) async { try? await linked()?.reply(ask.id, text: text) }
+    func choose(_ ask: Ask, option: Int) async {
+        acted(ask, option: option, text: nil)
+        if answeredForTests(ask, option: option, text: nil) { return }
+        try? await linked()?.choose(ask.id, option: option)
+    }
+    func answer(_ ask: Ask, option: Int, text: String) async {
+        acted(ask, option: option, text: text)
+        if answeredForTests(ask, option: option, text: text) { return }
+        try? await linked()?.answer(ask.id, option: option, text: text)
+    }
+    func reply(_ ask: Ask, text: String) async {
+        acted(ask, option: nil, text: text)
+        if answeredForTests(ask, option: nil, text: text) { return }
+        try? await linked()?.reply(ask.id, text: text)
+    }
+
+    /// The user's answers to a task's asks, counted by task: what comes of one (the agent told, its reply) is the user
+    /// acting in that task, as a message sent is, and its page lifts it (TaskView).
+    private(set) var acted: [String: Int] = [:]
+    private func acted(_ ask: Ask, option: Int?, text: String?) {
+        if let session = ask.session { acted[session, default: 0] += 1 }
+    }
+
+    #if DEBUG
+        /// zerod's side of a message sent from the UI tests' task (no Mac): its copy of the message, keeping the id
+        /// `send` gave it as `sent` (as zerod does), then the agent's long reply, which reads out.
+        private func sentForTests(_ text: String, to session: String, id: String) async -> Bool {
+            guard session.hasPrefix("test-"), var conversation = mirror.conversations[session] else { return false }
+            try? await Task.sleep(for: .milliseconds(500))
+            let at = Int(Date().timeIntervalSince1970 * 1000)
+            conversation.items.append(
+                ConversationItem(id: "sent-" + id, turn: nil, kind: .user(text: text, images: []), status: .done, at: at, sent: id))
+            conversation.status = .working
+            showForTests(conversation)
+            Task {
+                try? await Task.sleep(for: .milliseconds(800))
+                var lines = (1...14).map { "Line \($0) of a long reply, read out a word at a time, long enough to wrap on the phone." }
+                // A wide table in the middle, read out row by row, cut off at the page's edge.
+                lines.insert(
+                    "| Step | What it does | Where it runs | What's left to check |\n|---|---|---|---|\n"
+                        + "| One | Reads the conversation | On the phone | Nothing |\n| Two | Lifts the message sent | In the page's scroll | The room |\n"
+                        + "| Three | Follows the keyboard | Every frame | The curve |", at: 3)
+                conversation.items.append(
+                    ConversationItem(
+                        id: "reply-" + id, turn: nil, kind: .agent(text: lines.joined(separator: "\n\n"), finalAnswer: true), status: .done,
+                        at: at + 1300))
+                conversation.status = .idle
+                showForTests(conversation)
+            }
+            return true
+        }
+
+        /// zerod's side of a message queued from the UI tests' task: held a moment, then sent on (into the
+        /// conversation) as the turn it waited for ends.
+        private func queuedForTests(_ text: String, to session: String) async -> Bool {
+            guard session.hasPrefix("test-"), var conversation = mirror.conversations[session] else { return false }
+            try? await Task.sleep(for: .milliseconds(1500))
+            conversation.items.append(
+                ConversationItem(
+                    id: "queued-sent-" + UUID().uuidString, turn: nil, kind: .user(text: text, images: []), status: .done,
+                    at: Int(Date().timeIntervalSince1970 * 1000)))
+            conversation.status = .idle
+            showForTests(conversation)
+            return true
+        }
+
+        /// An ask of the UI tests' own (TaskTestPage), on its task.
+        func showForTests(_ ask: Ask) { asks.append(ask) }
+
+        /// Answered with no Mac (the UI tests' task): the ask answered, then what zerod and the agent would send.
+        private func answeredForTests(_ ask: Ask, option: Int?, text: String?) -> Bool {
+            guard let session = ask.session, session.hasPrefix("test-"), var conversation = mirror.conversations[session] else {
+                return false
+            }
+            if let index = asks.firstIndex(where: { $0.id == ask.id }) {
+                asks[index].state = .answered
+                asks[index].choice = option
+                asks[index].answer = text ?? option.map { ask.options[$0] }
+            }
+            Task {
+                try? await Task.sleep(for: .milliseconds(400))
+                let at = Int(Date().timeIntervalSince1970 * 1000)
+                conversation.items.append(
+                    ConversationItem(
+                        id: "answered-" + ask.id, turn: nil,
+                        kind: .user(
+                            text:
+                                "<!-- from: zero -->\nThe user answered your ask \(ask.id) (\"\(ask.title)\"): \(option.map { ask.options[$0] } ?? text ?? "")",
+                            images: []),
+                        status: .done, at: at))
+                conversation.items.append(
+                    ConversationItem(
+                        id: "reply-" + ask.id, turn: nil, kind: .agent(text: "Thanks, going on with that.", finalAnswer: true),
+                        status: .done, at: at + 500))
+                showForTests(conversation)
+            }
+            return true
+        }
+    #else
+        private func answeredForTests(_ ask: Ask, option: Int?, text: String?) -> Bool { false }
+        private func sentForTests(_ text: String, to session: String, id: String) async -> Bool { false }
+        private func queuedForTests(_ text: String, to session: String) async -> Bool { false }
+    #endif
     func deliver(_ ask: Ask) async { try? await linked()?.deliver(ask.id) }
     /// An answer taken back in the moment before it goes (the Mac's take-back window): the ask waits again.
     func takeBack(_ ask: Ask) async { _ = try? await linked()?.takeBack(ask.id) }
     func decide(session: String, approval: String, choice: String) async {
+        acted[session, default: 0] += 1
         try? await linked()?.decide(session: session, approval: approval, choice: choice)
     }
     func answer(session: String, question: String, answers: [String: [String]]) async {
+        acted[session, default: 0] += 1
         try? await linked()?.answer(session: session, question: question, answers: answers)
     }
 
     /// Images sent to a task: each kept on the Mac (its "upload"), then the message naming them.
-    func send(_ text: String, images: [Data], to session: String, model: String? = nil, effort: String? = nil) async throws {
-        guard let link = await linked() else { throw ZerodError(message: "Not connected to your Mac") }
-        // Shown at once, while its agent starts: the conversation's own takes its place.
+    func send(_ text: String, images: [Data], videos: [URL] = [], to session: String, model: String? = nil, effort: String? = nil)
+        async throws
+    {
+        // Shown at once, while its videos upload and its agent starts: the conversation's own takes its place, known
+        // by this one's id (zerod keeps it as `sent`). Without it, zerod's copy was a new message to Playback, and the
+        // bubble was gone for a beat (measured: 117 ms) between the two.
         let echo = Sending(text: text, images: [])
         sending[session, default: []].append(echo)
         defer { sending[session]?.removeAll { $0.id == echo.id } }
-        try await link.send(session: session, text: text, images: upload(images, through: link), model: model, effort: effort)
+        if await sentForTests(text, to: session, id: echo.id) { return }
+        guard let link = await linked() else { throw ZerodError(message: "Not connected to your Mac") }
+        let text = try await withVideos(text, videos, through: link)
+        try await link.send(session: session, text: text, images: upload(images, through: link), model: model, effort: effort, id: echo.id)
     }
 
     /// Messages sent from here that their conversation doesn't have yet, by session.
     private(set) var sending: [String: [Sending]] = [:]
+    /// Messages queued from here that the task's row doesn't list yet, by session.
+    private(set) var queuing: [String: [Queued]] = [:]
 
     /// For after the task's current turn: queued behind what's waiting, as the Mac's Return while it works.
-    func queue(_ text: String, images: [Data], to session: String) async throws {
+    func queue(_ text: String, images: [Data], videos: [URL] = [], to session: String) async throws {
+        // In the queue's strip at once, until zerod's row has it (by the same id): nothing showed it for 200 ms.
+        let id = "queued-" + UUID().uuidString
+        queuing[session, default: []].append(Queued(id: id, text: text, images: nil))
+        defer { queuing[session]?.removeAll { $0.id == id } }
+        if await queuedForTests(text, to: session) { return }
         guard let link = await linked() else { throw ZerodError(message: "Not connected to your Mac") }
-        try await link.queue(session: session, text: text, images: upload(images, through: link))
+        let text = try await withVideos(text, videos, through: link)
+        try await link.queue(session: session, text: text, images: upload(images, through: link), id: id)
+    }
+
+    /// Videos sent to a task, as the Mac's composer sends them (Attachments.withVideos): each kept on the Mac, and a
+    /// line after the words saying where it is and that `zero video` cuts its frames (an agent's CLI doesn't take a video).
+    private func withVideos(_ text: String, _ videos: [URL], through link: ZerodLink) async throws -> String {
+        var out = text
+        for (index, video) in videos.enumerated() {
+            let data = try Data(contentsOf: video)
+            let name = "video-\(index + 1)." + (video.pathExtension.isEmpty ? "mov" : video.pathExtension)
+            guard let path = try await link.call("upload", ["name": name, "data": data.base64EncodedString()]) as? String else { continue }
+            out += "\n\n[Video #\(index + 1): \(path). It's a video: cut the frames you need with `zero video \"\(path)\"`.]"
+            try? FileManager.default.removeItem(at: video)
+        }
+        return out
     }
 
     private func upload(_ images: [Data], through link: ZerodLink) async throws -> [String] {
@@ -570,9 +771,18 @@ import UserNotifications
         await loadLater()
     }
 
-    /// The task's agent asked to save what it has for later; it writes the note and the artifact.
-    func askToSaveForLater(_ session: String) async {
-        try? await linked()?.notify(session: session, text: LaterAsk.text(), from: "zero")
+    /// The whole task saved for later, as the Mac's: off the board and on hold, with its workers, until resumed.
+    func saveForLater(_ session: String) async {
+        if path.contains(session) { path = [] }
+        try? await linked()?.saveForLater(session: session)
+        await loadLater()
+    }
+
+    /// A task saved for later back among the tasks, off hold: its session.
+    func resumeLater(_ item: String) async -> String? {
+        let session = (try? await linked()?.resumeLater(item)) ?? nil
+        await loadLater()
+        return session
     }
 
     /// The user is reading this task: its latest reply is seen, on every client (zerod settles Replied a while on).

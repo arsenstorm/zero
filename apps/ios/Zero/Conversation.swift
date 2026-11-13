@@ -7,36 +7,237 @@ import SwiftUI
 struct ConversationView: View {
     let model: PhoneModel
     let conversation: Conversation
+    /// Your message just sent, lifted to the page's top: from it down, at least this tall (the page's height), so the
+    /// answer grows into room already there and the page never has to move for it (TaskView).
+    var lift: CGFloat = 0
+    /// The message lifted: yours sent (its own id), or what an answer to an ask brought (TaskView).
+    var liftAt: String? = nil
+    /// Where the conversation's end is and ↓ (TaskView's): told when the conversation moves or changes.
+    var end: TaskEnd? = nil
+    /// What's on screen, at the Mac's pace (ZeroCore's Playback): answers read out word by word, what came after them
+    /// stepping out once they're read. Opened, or back from the background, it's all there at once. Calmer than the
+    /// Mac's: an answer that comes whole is read a word at a time (twice the pace at most), not in runs of words.
+    @State private var playback: Playback = {
+        let playback = Playback()
+        playback.fastest = 2
+        playback.limit = 60
+        return playback
+    }()
+    @State private var shape = TurnShape()
+    /// The lifted group's height as laid out, and what it keeps as its least (a turn's live row gone, see below).
+    @State private var height: CGFloat = 0
+    @State private var held: CGFloat = 0
+    /// The message an About link went to, washed for a moment.
+    @State private var washed: String?
+    @Environment(\.scenePhase) private var phase
+
+    /// Posted with an item's id (an ask's About, tapped in the task's inbox): the conversation goes to it.
+    static let show = Notification.Name("zero.showMessage")
 
     var body: some View {
-        let blocks = TimelineBlock.of(
-            Sending.merge(conversation.items, model.sending[conversation.id] ?? []).filter { item in
-                !conversation.approvals.contains { $0.item == item.id }
-            },
-            working: conversation.status == .working || conversation.status == .waiting)
-        // Not lazy: a lazy stack under a bottom anchor drew nothing until scrolled, and the phone holds one page only.
-        VStack(alignment: .leading, spacing: 24) {
-            if model.earlier(conversation.id) > 0 {
-                Button("Earlier messages") { Task { await model.loadEarlier(conversation.id) } }
-                    .font(.footnote).frame(maxWidth: .infinity)
-            }
-            ForEach(blocks) { block in
-                switch block {
-                case let .user(item): UserMessage(item: item)
-                case let .work(_, items, start, end, live):
-                    WorkBlock(model: model, session: conversation.id, items: items, start: start, end: end, live: live)
-                // An answer that was only its ending (an event or a worker's report taken in, "[zero: waiting]") has
-                // no words to show: nothing, not its copy and menu under an empty reply.
-                case let .answer(item):
-                    if case let .agent(text, _) = item.kind, case let words = ZeroEnding.split(text).0,
-                        !words.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    {
-                        Answer(text: words)
+        let items = Sending.merge(conversation.items, model.sending[conversation.id] ?? []).filter { item in
+            !conversation.approvals.contains { $0.item == item.id }
+        }
+        // Not live only in the background: Control Center or a Face ID prompt (inactive) showed the rest of an answer at once.
+        let _ = playback.update(items, conversation: conversation.id, live: phase != .background, now: Date())
+        #if DEBUG
+            let _ = FrameLog.shown = playback.count
+        #endif
+        let working = playback.working(conversation.status == .working || conversation.status == .waiting)
+        let blocks = shape.blocks(Array(items.prefix(playback.count)), working: working)
+        ScrollViewReader { proxy in
+            // Not lazy: a lazy stack under a bottom anchor drew nothing until scrolled, and the phone holds one page only.
+            VStack(alignment: .leading, spacing: 0) {
+                let earlier = model.earlier(conversation.id) > 0
+                // From your latest message down, in a group of its own: what's lifted (always the same group, so a
+                // send moves nothing into or out of it but the messages around it).
+                // From the message lifted (yours sent, by its own id or zerod's copy of it keeping that id as `sent`;
+                // or what an answer to an ask brought), or from the end until it shows; with nothing lifted, from your
+                // latest message. Always the latest of yours, the room moved on to a message never lifted.
+                let split =
+                    liftAt.map { at in
+                        blocks.firstIndex { block in
+                            if case let .user(item) = block { return item.id == at || item.sent == at }
+                            return block.id == at
+                        } ?? blocks.endIndex
                     }
-                case let .step(item): StepView(model: model, session: conversation.id, item: item)
+                    ?? blocks.lastIndex { if case let .user(item) = $0 { item.isYours } else { false } } ?? blocks.endIndex
+                VStack(alignment: .leading, spacing: 24) {
+                    if earlier {
+                        Button("Earlier messages") { Task { await model.loadEarlier(conversation.id) } }
+                            .font(.footnote).frame(maxWidth: .infinity)
+                    }
+                    ForEach(blocks[..<split]) { row($0) }
                 }
+                VStack(alignment: .leading, spacing: 24) {
+                    ForEach(blocks[split...]) { row($0) }
+                }
+                .onGeometryChange(for: CGFloat.self) {
+                    $0.size.height
+                } action: {
+                    height = $0
+                }
+                .overlay(alignment: .bottom) {
+                    EndMarker(end: end).frame(height: 1)
+                        .onGeometryChange(for: CGFloat.self) {
+                            $0.frame(in: .global).maxY
+                        } action: { _ in
+                            end?.recount()
+                        }
+                }
+                .frame(minHeight: max(lift, held), alignment: .top)
+                // The gap between blocks above it is the group's own: a lift scrolls to it, so a lifted message has
+                // that gap below the bar, not against its edge.
+                .padding(.top, earlier || split > 0 ? Self.liftGap : 0)
+                .id(Self.lifted)
+            }
+            // A turn ending with nothing in its live row's place: the row's space kept until the next item takes it,
+            // so the page at its end doesn't drop by it.
+            .onChange(of: working) { was, now in if was && !now { held = height } }
+            .onChange(of: items.count) { held = 0 }
+            .onChange(of: liftAt) { held = 0 }
+            .environment(\.showMessage) { show($0, proxy) }
+            .environment(\.playback, playback)
+            .environment(\.taskEnd, end)
+            .onReceive(NotificationCenter.default.publisher(for: Self.show)) { note in
+                if let item = note.object as? String { show(item, proxy) }
             }
         }
+        .background { PlaybackClock(playback: playback) }
+    }
+
+    /// The id of the group from your latest message down: where a message just sent is lifted to (TaskView).
+    static let lifted = "lifted"
+    /// A lifted message's gap below the bar: the conversation's own between blocks.
+    static let liftGap: CGFloat = 24
+
+    @ViewBuilder private func row(_ block: TimelineBlock) -> some View {
+        switch block {
+        case let .user(item): UserMessage(item: item).id(item.id).washed(washed == item.id)
+        case let .work(id, items, start, end, live):
+            WorkBlock(
+                model: model, session: conversation.id, items: items, start: start, end: end, live: live,
+                answered: shape.answered.contains(id), followed: shape.followed.contains(id), washed: washed)
+        // An answer that was only its ending (an event or a worker's report taken in, "[zero: waiting]") has no words
+        // to show: nothing, not its copy and menu under an empty reply.
+        case let .answer(item):
+            if case let .agent(text, _) = item.kind, case let words = ZeroEnding.split(text).0,
+                !words.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                let readout = playback.readout(item.id)
+                Answer(text: words, date: item.date, readout: readout, stamped: (readout?.done ?? true) && item.status != .running)
+                    .id(item.id).washed(washed == item.id)
+            }
+        case let .step(item): StepView(model: model, session: conversation.id, item: item)
+        }
+    }
+
+    /// To a message, its turn opened if it's folded there (WorkBlock), then washed a moment.
+    private func show(_ item: String, _ proxy: ScrollViewProxy) {
+        NotificationCenter.default.post(name: WorkBlock.unfold, object: item)
+        Task {
+            // Once an opened turn has laid out its steps.
+            try? await Task.sleep(for: .milliseconds(50))
+            withAnimation(.easeOut(duration: 0.3)) { proxy.scrollTo(item, anchor: .center) }
+            washed = item
+            try? await Task.sleep(for: .seconds(1.6))
+            if washed == item { withAnimation(.easeOut(duration: 0.6)) { washed = nil } }
+        }
+    }
+}
+
+/// The conversation's blocks as the Mac's TimelineShape makes them: of the items playback has reached, and which
+/// turns have their answer under them (they fold) or a message after them.
+@MainActor final class TurnShape {
+    private(set) var answered: Set<String> = []
+    private(set) var followed: Set<String> = []
+    /// Answers whose words began under their turn's live heading: they keep it as the turn ends.
+    private var spoken: Set<String> = []
+
+    func blocks(_ items: [ConversationItem], working: Bool) -> [TimelineBlock] {
+        var blocks = TimelineBlock.of(items, working: working)
+        for case let .work(_, work, _, _, true) in blocks where work.count == 1 {
+            if case .agent = work[0].kind { spoken.insert(work[0].id) }
+        }
+        // An answer that had nothing else in its turn's work: its heading ("Thought for…") stays as the turn ends, the
+        // same block it was (gone, the answer moved up by its height at once).
+        for index in blocks.indices.reversed() where index > 0 {
+            guard case let .answer(answer) = blocks[index], spoken.contains(answer.id), case let .user(asked) = blocks[index - 1]
+            else { continue }
+            blocks.insert(.work(id: "work-" + answer.id, items: [], start: asked.date, end: answer.date, live: false), at: index)
+        }
+        answered = []
+        followed = []
+        var work: [String] = []
+        for (index, block) in blocks.enumerated() {
+            switch block {
+            case let .work(id, _, _, _, _):
+                work.append(id)
+                if index + 1 < blocks.count, case .answer = blocks[index + 1] { answered.insert(id) }
+            case .user: followed.formUnion(work); work = []
+            default: break
+            }
+        }
+        return blocks
+    }
+}
+
+/// Playback's clock: the display's, at most 60 times a second while something is read out or fading, not at all
+/// otherwise. Its own view, so a tick redraws only what reads what it changed (the words being read).
+private struct PlaybackClock: UIViewRepresentable {
+    let playback: Playback
+
+    func makeUIView(context: Context) -> Ticker { Ticker() }
+
+    func updateUIView(_ ticker: Ticker, context: Context) {
+        ticker.tick = { [playback] in playback.advance(to: $0) }
+        ticker.paused = !playback.playing
+    }
+
+    static func dismantleUIView(_ ticker: Ticker, coordinator: ()) { ticker.end() }
+
+    final class Ticker: UIView {
+        var tick: ((Date) -> Void)?
+        var paused = true { didSet { run() } }
+        private var link: CADisplayLink?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window == nil { end() } else { run() }
+        }
+
+        private func run() {
+            if link == nil, window != nil, !paused {
+                let link = CADisplayLink(target: self, selector: #selector(fire))
+                // Sixty a second: a tick at the steady pace is then a word or less. A tick only draws (RevealRenderer).
+                link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+                link.add(to: .main, forMode: .common)
+                self.link = link
+            }
+            link?.isPaused = paused
+        }
+
+        /// The link holds this view: let go of it when the view leaves.
+        func end() {
+            link?.invalidate()
+            link = nil
+        }
+
+        @objc private func fire(_ link: CADisplayLink) { tick?(Date()) }
+    }
+}
+
+extension EnvironmentValues {
+    /// The task page's end (TaskEnd): where a read-out under way has got to is told to it (ReadingMarker).
+    @Entry var taskEnd: TaskEnd? = nil
+    /// Goes to a message of the conversation on screen (an ask's About); nil where there's none.
+    @Entry var showMessage: ((String) -> Void)? = nil
+}
+
+extension View {
+    /// A message an About link went to: a soft wash behind it, fading.
+    func washed(_ on: Bool) -> some View {
+        background(Color.accentColor.opacity(on ? 0.12 : 0), in: RoundedRectangle(cornerRadius: 12).inset(by: -6))
     }
 }
 
@@ -95,6 +296,13 @@ struct TaskInbox: View {
             }
             .navigationTitle("Waiting on you")
             .navigationBarTitleDisplayMode(.inline)
+            // An ask's About: the sheet goes, and the conversation under it goes to the message.
+            .environment(\.showMessage) { item in
+                dismiss()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    NotificationCenter.default.post(name: ConversationView.show, object: item)
+                }
+            }
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
         .onChange(of: waiting) { old, now in if now == 0 && old > 0 { dismiss() } }
@@ -144,14 +352,24 @@ struct OpenAskRow: View {
 /// text on the phone copies a whole paragraph or nothing.
 struct Answer: View {
     let text: String
+    var date: Date? = nil
+    /// Being read out (Playback), or its last words fading.
+    var readout: Readout? = nil
+    /// Its row shows: not while its words are still being read out (the row keeps its place).
+    var stamped = true
     @State private var selecting = false
     @State private var copied = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            MarkdownView(text: text)
-                .contextMenu { CopyActions(text: text, select: { selecting = true }) }
-            HStack(spacing: 4) {
+            Group {
+                if let readout { StreamingText(readout: readout, text: text) } else { MarkdownView(text: text) }
+            }
+            .contextMenu { CopyActions(text: text, select: { selecting = true }) }
+            // As the Mac's: when it came, by the words' edge, then copy, then more, evenly and closely spaced, each
+            // icon's touch area wider than it looks.
+            HStack(spacing: 14) {
+                if let date { Text(MessageStamp.text(date)).font(.footnote).foregroundStyle(.tertiary) }
                 Button {
                     UIPasteboard.general.string = text
                     copied = true
@@ -159,21 +377,159 @@ struct Answer: View {
                         try? await Task.sleep(for: .seconds(1.5)); copied = false
                     }
                 } label: {
-                    Image(copied ? "circle-check-glyph" : "copy-outline").resizable().frame(width: 18, height: 18)
-                        .foregroundStyle(.secondary).frame(width: 36, height: 32).contentShape(Rectangle())
+                    Image(copied ? "circle-check-glyph" : "copy-outline").resizable().frame(width: 16, height: 16)
+                        .foregroundStyle(.secondary).contentShape(Rectangle().inset(by: -10))
                 }
+                .accessibilityLabel("Copy")
                 Menu {
                     CopyActions(text: text, select: { selecting = true })
                 } label: {
-                    Image("dots-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(.secondary).frame(width: 36, height: 32)
-                        .contentShape(Rectangle())
+                    Image("dots-glyph").resizable().frame(width: 16, height: 16).foregroundStyle(.secondary)
+                        .contentShape(Rectangle().inset(by: -10))
                 }
+                .accessibilityLabel("More")
             }
             .buttonStyle(.plain)
-            .padding(.leading, -9)
+            .frame(height: 32)
+            // Under words still being read out, nothing yet: its place kept, where it'll be once they're read; then in,
+            // faded (it popped in, late, with the turn's end).
+            .opacity(stamped ? 1 : 0)
+            .animation(.easeOut(duration: 0.25), value: stamped)
+            .allowsHitTesting(stamped)
         }
         .sheet(isPresented: $selecting) { SelectText(text: text) }
     }
+}
+
+/// "5:39 PM" today, "Oct 7, 5:39 PM" before, with the year when it isn't this one (the Mac's MessageBlock.stamp).
+enum MessageStamp {
+    static func text(_ date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return date.formatted(date: .omitted, time: .shortened) }
+        let sameYear = calendar.isDate(date, equalTo: .now, toGranularity: .year)
+        return date.formatted(
+            sameYear ? .dateTime.month(.abbreviated).day().hour().minute() : .dateTime.month(.abbreviated).day().year().hour().minute())
+    }
+}
+
+/// Words as they're read out, at Playback's pace: whole words, each run the clock passes fading in from nothing over
+/// 700 ms, so the newest words are an even gradient. Laid out whole as its words arrive and revealed in place (Reveal):
+/// a tick only draws again, nothing is laid out, and nothing below it moves as it reads. Read and faded in, it's the
+/// answer's plain text.
+struct StreamingText: View {
+    let readout: Readout
+    let text: String
+    @State private var drawn = DrawnCount()
+
+    var body: some View {
+        if readout.done {
+            MarkdownView(text: text)
+        } else {
+            // Read here so the clock's tick redraws this, and only this.
+            let now = readout.now
+            let reveal = Reveal(
+                visible: drawn.of(text, readout.shown),
+                runs: readout.fadingSoFar.map { (at: drawn.of(text, $0.at), since: $0.since) },
+                now: now)
+            MarkdownView(blocks: MarkdownCache.blocks(text), reveal: reveal)
+        }
+    }
+}
+
+/// How many characters as drawn the first `n` characters of an answer's Markdown make (its marks aren't drawn).
+/// Worked out a paragraph at a time: the paragraphs before the one `n` is in are counted once per arrival (each parse
+/// kept by MarkdownCache), and only the start of that one is parsed again, not the whole answer up to it for every
+/// word. Kept by `n`: the run starts are asked for on every tick.
+@MainActor final class DrawnCount {
+    private var known: [Int: Int] = [:]
+    private var bytes = 0
+    /// Each paragraph's start (in characters) and the characters drawn before it.
+    private var paragraphs: [(start: Int, before: Int, text: Substring)] = []
+
+    func of(_ text: String, _ n: Int) -> Int {
+        let size = text.utf8.count
+        if size != bytes {
+            // Shrunk or changed: what was known may not hold. Grown: it does (a start doesn't depend on what follows).
+            if size < bytes { known = [:] }
+            bytes = size
+            split(text)
+        }
+        if let count = known[n] { return count }
+        guard let index = paragraphs.lastIndex(where: { $0.start <= n }) else { return 0 }
+        let paragraph = paragraphs[index]
+        let count = paragraph.before + MarkdownView.length(MarkdownBlock.parse(String(paragraph.text.prefix(n - paragraph.start))))
+        known[n] = count
+        return count
+    }
+
+    private func split(_ text: String) {
+        paragraphs = []
+        var start = 0, before = 0
+        for part in text.split(separator: "\n\n", omittingEmptySubsequences: false) {
+            paragraphs.append((start, before, part))
+            before += MarkdownView.length(MarkdownCache.blocks(String(part)))
+            start += part.count + 2
+        }
+    }
+}
+
+/// What of an answer is drawn: the characters (as drawn) shown so far, the runs still fading in, and the clock's time.
+struct Reveal {
+    let visible: Int
+    let runs: [(at: Int, since: Date)]
+    let now: Date
+    /// Where the words still fading begin: before it, plain.
+    var fading: Int { runs.first?.at ?? visible }
+
+    func alpha(_ i: Int) -> Double {
+        guard i < visible else { return 0 }
+        guard let run = runs.last(where: { $0.at <= i }) else { return 1 }
+        return min(1, max(0, now.timeIntervalSince(run.since) / Playback.fade))
+    }
+}
+
+/// One text of an answer being read out, `start` characters into it: its glyphs up to what's shown, the newest fading.
+/// A character or two off where a line's glyphs and characters differ (a soft break), which no eye sees in a fade.
+struct RevealRenderer: TextRenderer {
+    let start: Int
+    let reveal: Reveal
+
+    func draw(layout: Text.Layout, in context: inout GraphicsContext) {
+        let fading = reveal.runs.first?.at ?? reveal.visible
+        var index = start
+        for line in layout {
+            guard index < reveal.visible else { return }
+            let count = line.reduce(0) { $0 + $1.count }
+            // Read before the fading words: drawn whole.
+            if index + count <= min(fading, reveal.visible) {
+                context.draw(line)
+                index += count
+                continue
+            }
+            for run in line {
+                for glyph in run {
+                    let alpha = reveal.alpha(index)
+                    index += 1
+                    guard alpha > 0 else { continue }
+                    var faded = context
+                    faded.opacity = alpha
+                    faded.draw(glyph)
+                }
+            }
+        }
+    }
+}
+
+/// Zero's link underline: dashed, just under the baseline (the system's sits too far below the words).
+struct DashedRule: View {
+    private struct Line: Shape {
+        func path(in rect: CGRect) -> Path {
+            Path {
+                $0.move(to: CGPoint(x: rect.minX, y: rect.midY)); $0.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+            }
+        }
+    }
+    var body: some View { Line().stroke(.secondary.opacity(0.55), style: StrokeStyle(lineWidth: 1, dash: [2, 2])).frame(height: 1) }
 }
 
 /// Copy, and pick out part of it.
@@ -283,6 +639,10 @@ struct UserMessage: View {
                             .contextMenu { CopyActions(text: words) }
                             .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
                     }
+                    // When it was sent, always, by the bubble's edge (its copy is a long press away).
+                    if let date = item.date {
+                        Text(MessageStamp.text(date)).font(.footnote).foregroundStyle(.tertiary).padding(.trailing, 12)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .padding(.leading, 40)
@@ -291,25 +651,113 @@ struct UserMessage: View {
     }
 }
 
-/// A turn's work: "Working for 12s" while it goes, every step under it; "Worked for 2m 37s" once answered, folded.
+/// A turn's work, as the Mac's: folded unless you open it. Folded while it works, only what the agent has said shows,
+/// each message staying, and one line under them for the step running now; its answer, once it's writing it, takes
+/// the messages' place under the heading. Opened, every step and message is listed and the answer comes in below
+/// them. Over: "Worked for 2m 37s" with the answer under it.
 struct WorkBlock: View {
+    /// Posted with an item's id as an About link goes to it: the work holding it opens.
+    static let unfold = Notification.Name("zero.unfoldWork")
     let model: PhoneModel
     let session: String
     let items: [ConversationItem]
     let start: Date?
     let end: Date?
     let live: Bool
-    @State private var toggled = false
-    private var open: Bool { live != toggled }
+    /// Its answer is on screen under it (being read out, from its first words).
+    var answered = false
+    /// A message has come after it.
+    var followed = false
+    /// The message an About link went to.
+    var washed: String? = nil
+    /// Opened by you, and only by you: a turn going live again as Zero restarts opened it by itself, when its
+    /// openness followed its state. Your next message folds it.
+    @State private var expanded = false
+    /// Its words have been the last thing long enough to be its answer, not a message between steps: its messages
+    /// fold away and the answer reads on from the heading.
+    @State private var answering = false
+    @Environment(\.playback) private var playback
+
+    /// Steps of substance: reading, running, editing. Thought alone isn't work, nor its words.
+    private var worked: Bool {
+        items.contains { if case .reasoning = $0.kind { false } else if case .agent = $0.kind { false } else { true } }
+    }
+    /// Answering with no steps, its words streaming in: the heading it ends with ("Thought for…") already.
+    private var speaking: Bool { live && !worked && items.last.map { if case .agent = $0.kind { true } else { false } } == true }
+    /// The words the agent is writing now, the last of its items.
+    private var streamingWords: String? {
+        guard let last = items.last, case let .agent(said, _) = last.kind, case let text = ZeroEnding.split(said).0, !text.isEmpty else {
+            return nil
+        }
+        return text
+    }
+    /// Folded, what it has said shows (and a failure, as said), not its steps: while it works, until its answer comes;
+    /// over, when it ended with no answer to stand in for them.
+    private var showsNotes: Bool { live ? !answering : !answered }
+
+    /// What it said, in order, the words still being written left out, and any failure as said.
+    private var said: [(item: ConversationItem, text: String)] {
+        let done = live && streamingWords != nil ? Array(items.dropLast()) : items
+        return done.compactMap { item in
+            switch item.kind {
+            case let .agent(text, _):
+                let words = ZeroEnding.split(text).0
+                return words.isEmpty ? nil : (item, words)
+            case .notice(_, error: true): return (item, "")
+            default: return nil
+            }
+        }
+    }
+
+    static let spacing: CGFloat = 10
+    /// The first thing under the heading, a message or a step, this far further down.
+    static let first: CGFloat = 4
+    static let ruleAbove: CGFloat = 3
+    /// The conversation's gap (24) less the turn's own (10): an answer sits as near its turn as its steps do.
+    static let headed: CGFloat = 14
+    /// The answer's row under its words (copy, time): live words keep its room, so they become the answer unmoved.
+    static let room: CGFloat = 42
+
+    /// How far below what's above them its words sit beyond the stack's spacing.
+    private func lead(steps: [ConversationItem]) -> CGFloat {
+        if expanded { return steps.isEmpty ? Self.first : 2 }
+        return showsNotes && !said.isEmpty ? 0 : Self.first
+    }
+
+    /// The line under the turn's grey lines: above the first thing it said (or its words, or its answer below), so
+    /// "Working for…" and the steps before any message read as one group, apart from what it says. None while open.
+    private enum Rule: Equatable { case none, above(String), words, bottom }
+
+    private func rule() -> Rule {
+        guard worked, !expanded else { return .none }
+        if showsNotes, let first = said.first { return .above(first.item.id) }
+        if live, streamingWords != nil { return .words }
+        if !live, answered { return .bottom }
+        return .none
+    }
+
+    /// Drawn in the gap above what it's on: it takes no room, so it coming or going moves nothing.
+    private func line(_ above: CGFloat) -> some View {
+        Rectangle().fill(.quaternary).frame(height: 1).offset(y: -above).allowsHitTesting(false)
+    }
+
+    @ViewBuilder private func words(_ item: ConversationItem, _ text: String) -> some View {
+        if let readout = playback?.readout(item.id) { StreamingText(readout: readout, text: text) } else { MarkdownView(text: text) }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let steps = live && streamingWords != nil ? Array(items.dropLast()) : items
+        let top = lead(steps: steps)
+        let rule = rule()
+        VStack(alignment: .leading, spacing: Self.spacing) {
+            // Its heading holds its place from the turn's start to its end.
             Button {
-                withAnimation(.easeOut(duration: 0.15)) { toggled.toggle() }
+                withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
             } label: {
                 HStack(spacing: 6) {
-                    // As the Mac's: thought alone isn't work, and under a second is "for a moment", never "0s".
-                    if live, !worked {
+                    if speaking {
+                        Text(Took.text("Thought", start.flatMap { start in items.last?.date.map { $0.timeIntervalSince(start) } }))
+                    } else if live, !worked {
                         Text("Thinking")
                     } else if live {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -319,25 +767,131 @@ struct WorkBlock: View {
                         Text(Took.text(worked ? "Worked" : "Thought", start.flatMap { start in end.map { $0.timeIntervalSince(start) } }))
                     }
                     if !items.isEmpty {
-                        Image("chevron-down-outline").resizable().frame(width: 9, height: 9).rotationEffect(.degrees(open ? 0 : -90))
+                        Image("chevron-down-outline").resizable().frame(width: 9, height: 9).rotationEffect(.degrees(expanded ? 0 : -90))
                     }
                 }
                 .font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(items.isEmpty)
-            if open {
-                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                    StepView(model: model, session: session, item: item, until: index + 1 < items.count ? items[index + 1].date : end)
+            // Over, its answer below: the line halfway down the gap between the heading and the answer's words (the
+            // block's foot is drawn up into the heading, so the answer sits as near as its steps did).
+            .overlay(alignment: .bottom) {
+                if rule == .bottom { line(-(Self.spacing + Self.first) / 2) }
+            }
+            if expanded, !steps.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(Array(steps.enumerated()), id: \.element.id) { index, item in
+                        StepView(
+                            model: model, session: session, item: item,
+                            until: index + 1 < items.count ? items[index + 1].date : (live ? nil : end)
+                        )
+                        .id(item.id).washed(washed == item.id)
+                    }
+                }
+                .padding(.top, 4)
+                .transition(.opacity)
+            }
+            // Folded, what it has said, each staying where it was; of its steps only the one running now (below).
+            if !expanded, showsNotes {
+                ForEach(Array(said.enumerated()), id: \.element.item.id) { index, note in
+                    Group {
+                        if note.text.isEmpty {
+                            StepView(model: model, session: session, item: note.item)
+                        } else {
+                            words(note.item, note.text)
+                        }
+                    }
+                    .padding(.top, index == 0 ? Self.first : 0)
+                    .overlay(alignment: .top) { if rule == .above(note.item.id) { line(Self.ruleAbove) } }
+                    .id(note.item.id).washed(washed == note.item.id)
+                    .transition(.opacity)
                 }
             }
-            // Under steps of work, what it's at now; with only thought so far the heading says "Thinking" already.
-            if live, worked { Text("Thinking…").font(.subheadline).foregroundStyle(.tertiary) }
+            if live {
+                if let last = items.last, let text = streamingWords {
+                    // What it's saying, read out at Zero's pace, where it'll be once it's the answer: nothing moves.
+                    words(last, text)
+                        .padding(.top, top)
+                        .overlay(alignment: .top) { if rule == .words { line(Self.ruleAbove) } }
+                        .padding(.bottom, Self.room)
+                } else {
+                    // Where it is: its latest step, on one line of fixed height whatever kind of step it is, the
+                    // next replacing it; a message stays above it.
+                    if !expanded {
+                        Group {
+                            if let last = items.last, !{ if case .notice(_, true) = last.kind { true } else { false } }(),
+                                !{ if case .agent = last.kind { true } else { false } }()
+                            {
+                                StepLine(item: last)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 22, maxHeight: 22, alignment: .leading)
+                        .opacity(0.7).allowsHitTesting(false)
+                    }
+                    // Between steps: not under a step still running, which says so itself. Its place kept.
+                    if worked {
+                        Text("Thinking…").font(.subheadline).foregroundStyle(.tertiary)
+                            .opacity(items.last?.status == .running ? 0 : 1)
+                    }
+                }
+            }
+        }
+        // Ended, its answer right under it, where its words were read out while it was live.
+        .padding(.bottom, live ? 0 : lead(steps: items) - (answered ? Self.headed : 0))
+        // A message after it: it folds.
+        .onChange(of: followed) { _, now in
+            if now, !live, expanded { withAnimation(.easeOut(duration: 0.2)) { expanded = false } }
+        }
+        // Its words still the last thing a moment and a half after they started (an answer, not a message between
+        // steps, which a step follows at once): its messages fold away and the answer reads on from the heading.
+        .task(id: streamingWords == nil ? nil : items.last?.id) {
+            guard live, streamingWords != nil else {
+                if live, answering { withAnimation(.easeOut(duration: 0.2)) { answering = false } }
+                return
+            }
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled, live, streamingWords != nil, playback?.held != true else { return }
+            if !answering { withAnimation(.easeOut(duration: 0.2)) { answering = true } }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Self.unfold)) { note in
+            if let item = note.object as? String, items.contains(where: { $0.id == item }) { expanded = true }
         }
     }
+}
 
-    /// Steps of substance: reading, running, editing. Thought alone isn't work.
-    private var worked: Bool { items.contains { if case .reasoning = $0.kind { false } else { true } } }
+/// A step on one line, quietly: what the turn is doing now, under its messages.
+struct StepLine: View {
+    let item: ConversationItem
+
+    var body: some View {
+        HStack(spacing: 7) {
+            StatusIcon(status: item.status)
+            text.lineLimit(1).truncationMode(.tail)
+        }
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder private var text: some View {
+        switch item.kind {
+        case let .command(command, _, _, _, _, description):
+            if description.isEmpty { Text("$ " + CommandText.line(command)).font(.footnote.monospaced()) } else { Text(description) }
+        case let .tool(name, detail): Text(ToolNames.name(name)).fontWeight(.medium) + Text(" " + ToolNames.detail(detail))
+        case let .fileChange(changes): Text("Edited " + changes.map { ($0.path as NSString).lastPathComponent }.joined(separator: ", "))
+        case let .agent(text, _), let .reasoning(text), let .plan(text): Text(text.split(separator: "\n").first.map(String.init) ?? "")
+        case let .notice(text, _): Text(String(NoticeText.attributed(text).characters))
+        case let .table(title, _, rows): Text(title.isEmpty ? "A table of \(rows.count)" : title)
+        case let .user(text, _): Text((ConversationItem.from(text)?.text ?? text).split(separator: "\n").first.map(String.init) ?? "")
+        }
+    }
+}
+
+extension EnvironmentValues {
+    /// The conversation on screen as it plays (what's shown, what's being read out).
+    @Entry var playback: Playback? = nil
 }
 
 /// One step: a command (its output a tap away), files changed, a tool, the agent's words between steps, a notice, a
@@ -433,14 +987,29 @@ struct StepView: View {
 /// Markdown as an answer uses it (ZeroCore's MarkdownBlock), its inline parts (bold, code, links) styled by SwiftUI.
 struct MarkdownView: View {
     let blocks: [MarkdownBlock]
+    /// Being read out: what of it is drawn (StreamingText), from `base` characters in.
+    var reveal: Reveal? = nil
+    var base = 0
     init(text: String) { blocks = MarkdownCache.blocks(text) }
-    init(blocks: [MarkdownBlock]) { self.blocks = blocks }
+    init(blocks: [MarkdownBlock], reveal: Reveal? = nil, base: Int = 0) { self.blocks = blocks; self.reveal = reveal; self.base = base }
 
     // Spaced as ChatGPT's answers are: a little air between lines, a clear gap between paragraphs, so a long answer
     // reads as paragraphs rather than one block of text.
     var body: some View {
+        let starts = reveal == nil ? [] : Self.starts(blocks, from: base)
         VStack(alignment: .leading, spacing: 16) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in Self.view(block) }
+            ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
+                // Being read out: only the blocks still fading in are drawn again on a tick; those read are plain
+                // text, those not reached yet laid out but hidden.
+                if let reveal, starts[index] < reveal.visible, starts[index] + Self.length(block) > reveal.fading {
+                    Self.view(block, reveal: reveal, start: starts[index])
+                        .overlay(alignment: .topLeading) { readingMark(reveal, start: starts[index], length: Self.length(block)) }
+                } else if let reveal, starts[index] >= reveal.visible {
+                    Self.view(block).hidden()
+                } else {
+                    Self.view(block)
+                }
+            }
         }
         .lineSpacing(3)
     }
@@ -449,37 +1018,92 @@ struct MarkdownView: View {
         Text(MarkdownCache.inline(text))
     }
 
-    @ViewBuilder static func view(_ block: MarkdownBlock) -> some View {
+    @Environment(\.taskEnd) private var taskEnd
+
+    /// Where the read-out has got to, in the block it's in (the answer's own blocks, not a list's inner ones): down
+    /// the block by the share of its characters read, close enough to keep the page off the unread lines.
+    @ViewBuilder private func readingMark(_ reveal: Reveal, start: Int, length: Int) -> some View {
+        if base == 0, taskEnd != nil, start < reveal.visible, reveal.visible <= start + length {
+            GeometryReader { geometry in
+                ReadingMarker(end: taskEnd).frame(width: 1, height: 1)
+                    .offset(y: max(0, geometry.size.height * CGFloat(reveal.visible - start) / CGFloat(max(length, 1)) - 1))
+                    .onGeometryChange(for: CGFloat.self) {
+                        $0.frame(in: .global).maxY
+                    } action: { _ in
+                        taskEnd?.recount()
+                    }
+            }
+        }
+    }
+
+    /// Characters as drawn: what a reveal counts in.
+    static func length(_ blocks: [MarkdownBlock]) -> Int { blocks.reduce(0) { $0 + length($1) } }
+
+    static func length(_ block: MarkdownBlock) -> Int {
+        switch block {
+        case let .heading(_, text), let .paragraph(text), let .quote(text): MarkdownCache.drawn(text)
+        case let .list(_, _, items): items.reduce(0) { $0 + MarkdownCache.drawn($1.text) + length($1.children) }
+        case let .code(code): MarkdownCache.count(code)
+        case let .table(rows): rows.joined().reduce(0) { $0 + MarkdownCache.drawn($1) }
+        case .image, .rule: 1
+        }
+    }
+
+    private static func starts(_ blocks: [MarkdownBlock], from base: Int) -> [Int] {
+        var at = base
+        return blocks.map { block in
+            defer { at += length(block) }
+            return at
+        }
+    }
+
+    @ViewBuilder static func view(_ block: MarkdownBlock, reveal: Reveal? = nil, start: Int = 0) -> some View {
+        // What isn't text (a table, an image, a rule, a bullet, a quote's bar) shows as the reading reaches it.
+        let reached = reveal.map { $0.alpha(start) } ?? 1
         switch block {
         case let .heading(level, text):
-            inline(text).font(level == 1 ? .title3.weight(.semibold) : level == 2 ? .headline : .subheadline.weight(.semibold))
-                .padding(.top, 4)
-        case let .paragraph(text): inline(text)
-        case let .list(ordered, start, items):
+            inline(text).revealed(reveal, start).font(
+                level == 1 ? .title3.weight(.semibold) : level == 2 ? .headline : .subheadline.weight(.semibold)
+            )
+            .padding(.top, 4)
+        case let .paragraph(text): inline(text).revealed(reveal, start)
+        case let .list(ordered, number, items):
+            let starts = items.reduce(into: [start]) { $0.append($0.last! + MarkdownCache.drawn($1.text) + length($1.children)) }
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                    let at = starts[index]
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Text(ordered ? "\(start + index)." : "•").foregroundStyle(.secondary).frame(minWidth: 12, alignment: .leading)
+                        Text(ordered ? "\(number + index)." : "•").foregroundStyle(.secondary).frame(minWidth: 12, alignment: .leading)
+                            .opacity(reveal.map { $0.alpha(at) } ?? 1)
                         VStack(alignment: .leading, spacing: 8) {
-                            inline(item.text)
-                            if !item.children.isEmpty { MarkdownView(blocks: item.children) }
+                            inline(item.text).revealed(reveal, at)
+                            if !item.children.isEmpty {
+                                MarkdownView(blocks: item.children, reveal: reveal, base: at + MarkdownCache.drawn(item.text))
+                            }
                         }
                     }
                 }
             }
         case let .code(code):
-            ScrollView(.horizontal) { Text(code).font(.footnote.monospaced()).padding(10) }
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+            ScrollView(.horizontal) { Text(code).font(.footnote.monospaced()).revealed(reveal, start).padding(10) }
+                .background(.quaternary.opacity(reached), in: RoundedRectangle(cornerRadius: 10))
         case let .quote(text):
-            inline(text).foregroundStyle(.secondary).padding(.leading, 10)
-                .overlay(alignment: .leading) { Rectangle().fill(.tertiary).frame(width: 3) }
+            inline(text).revealed(reveal, start).foregroundStyle(.secondary).padding(.leading, 10)
+                .overlay(alignment: .leading) { Rectangle().fill(.tertiary).frame(width: 3).opacity(reached) }
         case let .table(rows):
-            if let head = rows.first { TableView(title: "", columns: head, rows: Array(rows.dropFirst())) }
+            if let head = rows.first { TableView(title: "", columns: head, rows: Array(rows.dropFirst()), reveal: reveal, start: start) }
         case let .image(path, alt):
-            AnswerImage(path: path, alt: alt)
+            AnswerImage(path: path, alt: alt).opacity(reached)
         case .rule:
-            Divider()
+            Divider().opacity(reached)
         }
+    }
+}
+
+extension View {
+    /// Being read out: drawn as far as it's read, its newest words fading in (RevealRenderer).
+    @ViewBuilder func revealed(_ reveal: Reveal?, _ start: Int) -> some View {
+        if let reveal { textRenderer(RevealRenderer(start: start, reveal: reveal)) } else { self }
     }
 }
 
@@ -489,6 +1113,23 @@ struct TableView: View {
     let title: String
     let columns: [String]
     let rows: [[String]]
+    /// Being read out: each row shows as the reading reaches it (it was all at once), `start` characters in.
+    var reveal: Reveal? = nil
+    var start = 0
+    /// More of it past an edge, to scroll to: that edge fades (the last column was cut mid-word, with nothing to say
+    /// it scrolls).
+    @State private var more = (left: false, right: false)
+
+    /// Where each row starts in the read-out (the header first), in characters as drawn.
+    private var rowStarts: [Int] {
+        var at = start + columns.reduce(0) { $0 + MarkdownCache.drawn($1) }
+        return rows.map { row in
+            defer { at += row.reduce(0) { $0 + MarkdownCache.drawn($1) } }
+            return at
+        }
+    }
+
+    private func shown(_ at: Int) -> Double { reveal?.alpha(at) ?? 1 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -502,8 +1143,10 @@ struct TableView: View {
                     GridRow {
                         ForEach(Array(columns.enumerated()), id: \.offset) { _, column in Text(column).font(.caption.weight(.semibold)) }
                     }
-                    Divider()
-                    ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    .opacity(shown(start))
+                    Divider().opacity(shown(start))
+                    let starts = rowStarts
+                    ForEach(Array(rows.enumerated()), id: \.offset) { number, row in
                         GridRow {
                             ForEach(Array(row.enumerated()), id: \.offset) { index, cell in
                                 let content = Cell(text: cell, column: index < columns.count ? columns[index] : "")
@@ -514,10 +1157,25 @@ struct TableView: View {
                                 }
                             }
                         }
+                        .opacity(shown(starts[number]))
                     }
                 }
                 .font(.footnote)
                 .padding(12)
+            }
+            .onScrollGeometryChange(for: [Bool].self) { geometry in
+                [geometry.contentOffset.x > 1, geometry.contentOffset.x + geometry.containerSize.width < geometry.contentSize.width - 1]
+            } action: { _, now in
+                more = (now[0], now[1])
+            }
+            .mask {
+                HStack(spacing: 0) {
+                    LinearGradient(colors: [.black.opacity(more.left ? 0 : 1), .black], startPoint: .leading, endPoint: .trailing).frame(
+                        width: 28)
+                    Rectangle()
+                    LinearGradient(colors: [.black, .black.opacity(more.right ? 0 : 1)], startPoint: .leading, endPoint: .trailing).frame(
+                        width: 28)
+                }
             }
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
         }
@@ -587,6 +1245,7 @@ struct AskCard: View {
     @State private var typing: Int?
     @State private var expanded = false
     @State private var words = ""
+    @Environment(\.showMessage) private var showMessage
 
     /// A command for you to run yourself (an agent's question with `--code`: another machine's shell, sudo), laid out as
     /// steps. An approval's command is the agent's own, to allow or not, so it's never this.
@@ -636,6 +1295,7 @@ struct AskCard: View {
                 .foregroundStyle(ask.doneCheck == true ? AnyShapeStyle(DoneShades.ink) : AnyShapeStyle(.secondary))
             }
             Text(headline).font(inRow ? .body : .body.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+            aboutLine
             if let supporting {
                 MarkdownView(text: supporting).font(.subheadline).foregroundStyle(.secondary)
                     .lineLimit(inRow && !expanded ? 3 : nil)
@@ -702,6 +1362,29 @@ struct AskCard: View {
             in: RoundedRectangle(cornerRadius: 16)
         )
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(flat ? AnyShapeStyle(.clear) : AnyShapeStyle(.quaternary)))
+    }
+
+    /// What it's about, quietly under the question, as the Mac's: "About" and the message's title in one grey, the title
+    /// a link in Zero's style (medium, a dashed line under it) where there's a conversation to go to.
+    @ViewBuilder private var aboutLine: some View {
+        if let about = ask.about {
+            HStack(spacing: 5) {
+                Text("About")
+                if let showMessage {
+                    Button {
+                        showMessage(about.item)
+                    } label: {
+                        Text(about.title).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
+                            .overlay(alignment: .bottom) { DashedRule().offset(y: -1.5) }
+                            .contentShape(Rectangle().inset(by: -8))
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Text(about.title).lineLimit(1).truncationMode(.tail)
+                }
+            }
+            .font(.footnote).foregroundStyle(.secondary)
+        }
     }
 
     /// An option's row, and once answered, how it stands: the one chosen in its state's colour (on its way, delivered,
@@ -902,6 +1585,29 @@ private extension Array where Element == String {
     private static let inlineCache: NSCache<NSString, Inline> = {
         let c = NSCache<NSString, Inline>(); c.countLimit = 3000; return c
     }()
+
+    private static let drawnCounts: NSCache<NSString, NSNumber> = {
+        let c = NSCache<NSString, NSNumber>(); c.countLimit = 3000; return c
+    }()
+    private static let plainCounts: NSCache<NSString, NSNumber> = {
+        let c = NSCache<NSString, NSNumber>(); c.countLimit = 500; return c
+    }()
+
+    /// Characters an inline text draws (its Markdown marks left out), counted once.
+    static func drawn(_ text: String) -> Int {
+        if let kept = drawnCounts.object(forKey: text as NSString) { return kept.intValue }
+        let count = inline(text).characters.count
+        drawnCounts.setObject(NSNumber(value: count), forKey: text as NSString)
+        return count
+    }
+
+    /// Characters in a text as it is (a code block's), counted once.
+    static func count(_ text: String) -> Int {
+        if let kept = plainCounts.object(forKey: text as NSString) { return kept.intValue }
+        let count = text.count
+        plainCounts.setObject(NSNumber(value: count), forKey: text as NSString)
+        return count
+    }
 
     static func blocks(_ text: String) -> [MarkdownBlock] {
         if let kept = blockCache.object(forKey: text as NSString) { return kept.value }

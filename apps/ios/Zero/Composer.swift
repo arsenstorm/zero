@@ -9,20 +9,34 @@ struct Composer: View {
     let model: PhoneModel
     let conversation: Conversation?
     let session: String
+    /// What it opens over the page (photos, the model's sheet) and the choices for the next message, held by the page.
+    let panels: ComposerPanels
     @State private var draft = ""
-    @State private var picked: [PhotosPickerItem] = []
-    @State private var picking = false
-    @State private var images: [UIImage] = []
-    @State private var models: [PhoneModel.ModelChoice] = []
+    /// What's attached: photos, and videos (a screen recording) with a still of each.
+    @State private var attached: [Attached] = []
+    struct Attached {
+        let item: PhotosPickerItem
+        let image: UIImage
+        var video: URL? = nil
+    }
     /// Chosen here for the next message; until then, the task's own.
-    @State private var chosen: (model: String, effort: String?)?
     @State private var dictation = Dictation()
-    @State private var selecting = false
-    @State private var permitting = false
     @State private var sending = false
-    @FocusState private var focused: Bool
+    /// Being written in: its own text view is first responder (ComposerField).
+    @State private var focused = false
+    /// How open the box is, 0 (the capsule) to 1 (ComposerLayout): as far as the keyboard is up.
+    @State private var open: Double = 0
+    /// The keyboard's room now, and when it's all the way up.
+    @State private var keyboardRoom: CGFloat = 0
+    @State private var keyboardFull: CGFloat = 0
+    /// When the field took focus: with no keyboard on screen a moment after, the box opens anyway.
+    @State private var focusedAt: Date?
+    /// The queue strip's rows as last shown (kept while it folds away).
+    @State private var stripRows: [Queued] = []
+    /// The box's height: its scroll view (KeyboardDrag) is as tall as it.
+    @State private var height: CGFloat = 48
 
-    private var empty: Bool { draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && images.isEmpty }
+    private var empty: Bool { draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attached.isEmpty }
     /// Not being written in (the keyboard down, not listening): one slim capsule, whatever's in it. What's written
     /// shows as its first line and sends from there; a tap opens it again, all of it there.
     private var compact: Bool { !focused && !dictation.listening }
@@ -31,7 +45,7 @@ struct Composer: View {
     /// (opening the picker takes the keyboard, which folds it), and a sheet on the button went with it, closing at once.
     private var photos: some View {
         Button {
-            picking = true
+            panels.picking = true
         } label: {
             Image("plus-outline").resizable().frame(width: 20, height: 20).frame(width: 40, height: 40)
         }
@@ -61,7 +75,9 @@ struct Composer: View {
             } label: {
                 Image("media-stop-glyph").resizable().frame(width: 14, height: 14)
                     .foregroundStyle(Color(uiColor: .systemBackground))
-                    .frame(width: 40, height: 40).background(Color.primary, in: Circle())
+                    // The label's own colour, not .primary: on the glass, .primary is drawn vibrant, and Stop came out grey
+                    // (#525252) beside a white Send.
+                    .frame(width: 40, height: 40).background(Color(uiColor: .label), in: Circle())
             }
             .accessibilityLabel("Stop")
         } else {
@@ -78,9 +94,17 @@ struct Composer: View {
 
     /// What waits for after this turn, above the box: each back into it on a tap, Steer to send it now; held since
     /// the agent was stopped, Send lets it go on.
+    /// What zerod lists, and what's just been queued from here and isn't listed yet (PhoneModel.queuing).
+    private var queuedNow: [Queued] {
+        let listed = model.row(session)?.queued ?? []
+        return listed + (model.queuing[session] ?? []).filter { mine in !listed.contains { $0.id == mine.id } }
+    }
+
     @ViewBuilder private var queueStrip: some View {
         let row = model.row(session)
-        let queued = row?.queued ?? [], held = row?.held == true
+        // What zerod lists, and what's just been queued from here and isn't listed yet (PhoneModel.queuing).
+        let queued = stripRows
+        let held = row?.held == true
         if !queued.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {
@@ -135,10 +159,34 @@ struct Composer: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            queueStrip
-            box
+            // Grown in and folded away by its height, not put in and taken out: its room at the page's foot changes a
+            // little each frame and the page follows it (taken out in a frame, the page dropped 82 pt at once). What it
+            // listed stays in it while it folds.
+            Unfold(shown: queuedNow.isEmpty ? 0 : 1) { queueStrip }
+                .opacity(queuedNow.isEmpty ? 0 : 1)
+                .clipped()
+                .accessibilityHidden(queuedNow.isEmpty)
+            // In a scroll view of its own, which doesn't scroll: dragged down, iOS's own interactive dismissal takes the
+            // keyboard down with the finger and the box rides on it (a box moved by hand went under the keyboard), and a
+            // drag cancels its buttons' taps, as in any scroll view.
+            ScrollView {
+                box.onGeometryChange(for: CGFloat.self) {
+                    $0.size.height
+                } action: {
+                    height = $0
+                }
+                .background(KeyboardDrag())
+            }
+            .scrollClipDisabled()
+            .scrollIndicators(.hidden)
+            .scrollDisabled(compact)
+            // Not dismissed the way the conversation's is (the keyboard following the finger): Messages' input bar
+            // doesn't, a swipe on it closes the keyboard (KeyboardDrag).
+            .scrollDismissesKeyboard(.never)
+            .frame(height: height)
         }
-        .photosPicker(isPresented: $picking, selection: $picked, maxSelectionCount: 10, matching: .images)
+        .animation(.smooth(duration: 0.25), value: queuedNow.isEmpty)
+        .onChange(of: queuedNow, initial: true) { _, now in if !now.isEmpty { stripRows = now } }
         // What's written is kept on the phone as it's typed: back after the app is closed or restarted, gone once sent.
         .onAppear { if draft.isEmpty, let kept = UserDefaults.standard.string(forKey: draftKey) { draft = kept } }
         .onChange(of: draft) { _, text in
@@ -152,18 +200,34 @@ struct Composer: View {
 
     private var draftKey: String { "draft." + session }
 
+    /// Open as far as the keyboard is up; all the way for dictation, or once a moment has passed with the field
+    /// focused and no keyboard on screen.
+    private func follow() {
+        let shown = keyboardFull > 0 ? Double(min(1, keyboardRoom / keyboardFull)) : 0
+        let noKeyboard = keyboardRoom < 1 && (focusedAt.map { Date().timeIntervalSince($0) > 0.3 } ?? false)
+        let target: Double = dictation.listening || (!compact && noKeyboard) ? 1 : shown
+        if abs(open - target) > 0.001 { open = target }
+    }
+
     private var box: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Folded too: smaller, so what's attached is still seen.
-            if !images.isEmpty {
+            if !attached.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: compact ? 6 : 8) {
-                        ForEach(Array(images.enumerated()), id: \.offset) { index, image in
-                            Image(uiImage: image).resizable().scaledToFill().frame(width: compact ? 40 : 56, height: compact ? 40 : 56)
+                        ForEach(Array(attached.enumerated()), id: \.offset) { index, one in
+                            Image(uiImage: one.image).resizable().scaledToFill().frame(width: compact ? 40 : 56, height: compact ? 40 : 56)
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
+                                .overlay {
+                                    if one.video != nil {
+                                        Image("media-play-glyph").resizable().frame(width: 10, height: 10).foregroundStyle(.white)
+                                            .frame(width: 22, height: 22).background(.black.opacity(0.55), in: Circle())
+                                    }
+                                }
                                 .overlay(alignment: .topTrailing) {
                                     Button {
-                                        images.remove(at: index); if index < picked.count { picked.remove(at: index) }
+                                        let item = attached.remove(at: index).item
+                                        panels.picked.removeAll { $0 == item }
                                     } label: {
                                         Text("✕").font(.caption2.weight(.bold)).foregroundStyle(.white)
                                             .frame(width: 18, height: 18).background(.black.opacity(0.6), in: Circle())
@@ -175,73 +239,92 @@ struct Composer: View {
                     .padding(.horizontal, compact ? 12 : 14).padding(.top, compact ? 10 : 14)
                 }
             }
-            // One field in both shapes, so focusing it doesn't make a new one: the controls arrange around it.
-            HStack(alignment: .center, spacing: 0) {
-                if compact { photos }
-                TextField(dictation.listening ? "Listening…" : "Write to this task", text: $draft, axis: .vertical)
-                    .lineLimit(compact ? 1...1 : 1...8)
-                    .focused($focused)
-                    // Folded: the field's text clear and the draft drawn in its place, one line, centred, fading if
-                    // there's more. The field still scrolls at one line high, so it showed its text scrolled off-centre,
-                    // and jumped as it folded; plain text moves with the fold. Taps go through to the field: its text
-                    // clear, not the field itself (UIKit gives a see-through view no taps, so it couldn't be opened).
-                    .foregroundStyle(compact && !draft.isEmpty ? Color.clear : Color.primary)
-                    .overlay(alignment: .leading) {
-                        if compact && !draft.isEmpty {
-                            FadingLine(text: draft.split(whereSeparator: \.isNewline).joined(separator: " "), font: .body)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .allowsHitTesting(false)
+            // One box in both shapes, its parts the same views throughout, moved by one layout (ComposerLayout) as
+            // `open` goes from 0 to 1 on the keyboard's curve: the field (its line limit never changes, so it never
+            // keeps a stale scroll; closed, it's hidden and takes no taps), the closed line, +, the menus, mic and send.
+            ComposerLayout(open: open, text: draft) {
+                ComposerField(text: $draft, focused: $focused)
+                    .overlay(alignment: .topLeading) {
+                        if draft.isEmpty {
+                            Text(dictation.listening ? "Listening…" : "Write to this task").foregroundStyle(.tertiary).allowsHitTesting(
+                                false)
                         }
                     }
-                    .padding(.leading, compact ? 4 : 18).padding(.trailing, compact ? 4 : 18)
-                    .padding(.top, compact ? 0 : 16).padding(.bottom, compact ? 0 : 6)
-                if compact { microphone; sendButton.padding(.leading, 7) }
-            }
-            .padding(.horizontal, compact ? 4 : 0)
-            if !compact {
-                // 7 pt either side of each control's icon or words: 14 between any two, the send button too.
-                HStack(spacing: 0) {
-                    photos
-                    Spacer()
-                    modelMenu
-                    permissionsMenu
-                    microphone
-                    sendButton.padding(.leading, 7)
+                    // The two placeholders hand over halfway through the box's opening, never both at once (cross-faded,
+                    // they showed twice, a ghost).
+                    .opacity(max(0, open * 2 - 1))
+                    .allowsHitTesting(!compact)
+                // Closed: the draft's first line, fading if there's more, or the placeholder.
+                Group {
+                    if draft.isEmpty {
+                        Text(dictation.listening ? "Listening…" : "Write to this task").foregroundStyle(.tertiary).lineLimit(1)
+                    } else {
+                        FadingLine(text: draft.split(whereSeparator: \.isNewline).joined(separator: " "), font: .body)
+                    }
                 }
-                .padding(.horizontal, 8).padding(.bottom, 8)
-                .transition(.opacity)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .opacity(max(0, 1 - open * 2))
+                .allowsHitTesting(false)
+                photos
+                // In once the box has room for them.
+                modelMenu.opacity(max(0, open * 2 - 1)).allowsHitTesting(!compact)
+                permissionsMenu.opacity(max(0, open * 2 - 1)).allowsHitTesting(!compact)
+                microphone
+                sendButton
             }
         }
         .foregroundStyle(.primary)
-        .frame(minHeight: compact ? 48 : nil)
-        // Concentric: the 40 pt buttons sit 4 pt in a 48 pt capsule (20 + 4), 8 pt in the open box (20 + 8). Closed, it
-        // also sits further in from the screen's edges, so its round ends follow the screen's corners.
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: compact ? 24 : 28))
-        // Open, swiped down: the keyboard goes and it folds to its capsule, what's written kept. Only a mostly downward
-        // swipe: selecting text and scrolling a long draft still work. (No grabber drawn for it: it looked out of place.)
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 14).onEnded { drag in
-                guard !compact, drag.translation.height > 30, drag.translation.height > abs(drag.translation.width) * 1.5 else { return }
-                dictation.stop()
-                focused = false
-            }
+        // Closed, a tap anywhere on it opens it, the caret at the end (its +, mic and send keep their own taps).
+        .contentShape(RoundedRectangle(cornerRadius: 24 + 4 * open))
+        .gesture(
+            TapGesture().onEnded {
+                focused = true
+            }, including: compact ? .all : .subviews
         )
-        .padding(.horizontal, compact ? 30 : 12).padding(.bottom, compact ? 2 : 8)
-        .animation(.smooth(duration: 0.28), value: compact)
-        .onChange(of: picked) {
+        // Clipped to its shape: what's inside never shows outside the glass as it grows. Concentric: the 40 pt buttons
+        // sit 4 pt in a 48 pt capsule (20 + 4), 8 pt in the open box (20 + 8). Closed, it also sits further in from the
+        // screen's edges, so its round ends follow the screen's corners.
+        .clipShape(RoundedRectangle(cornerRadius: 24 + 4 * open))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24 + 4 * open))
+        .padding(.horizontal, 30 - 18 * open).padding(.bottom, 2 + 6 * open)
+        // Open as far as the keyboard is up, frame by frame (KeyboardFollow): it opens as the keyboard rises and
+        // closes as it goes, a finger's drag included, one motion with it. Animated on its own, the box went on
+        // closing after a dragged keyboard had gone (measured: 0.2 s late, iOS saying nothing till the finger lifted).
+        // Dictation, or a field with no keyboard on screen (a hardware one): open anyway.
+        .background {
+            KeyboardFollow { room, full in
+                keyboardRoom = room
+                keyboardFull = full
+                follow()
+            }
+        }
+        .onChange(of: compact, initial: true) { _, now in
+            focusedAt = now ? nil : Date()
+            follow()
             Task {
-                var loaded: [UIImage] = []
-                for item in picked {
-                    if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) {
-                        loaded.append(image)
+                try? await Task.sleep(for: .milliseconds(350))
+                follow()
+            }
+        }
+        .onChange(of: panels.picked) {
+            Task {
+                var loaded: [Attached] = []
+                for item in panels.picked {
+                    if item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) }) {
+                        // A video: the file itself, sent as the Mac sends one (PhoneModel.send), a still for its tile.
+                        if let video = try? await item.loadTransferable(type: PickedVideo.self) {
+                            loaded.append(Attached(item: item, image: await PickedVideo.still(video.url), video: video.url))
+                        }
+                    } else if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) {
+                        loaded.append(Attached(item: item, image: image))
                     }
                 }
-                images = loaded
+                attached = loaded
             }
         }
         // Its request waits for the link while it reconnects (PhoneModel.linked), so it comes back full.
         .task(id: conversation?.provider) {
-            if let provider = conversation?.provider { models = await model.models(provider) }
+            if let provider = conversation?.provider { panels.models = await model.models(provider) }
         }
         .onDisappear { dictation.stop() }
         // Words drafted elsewhere (Siri's "draft a message to …"): into the box, to look over and send.
@@ -258,8 +341,14 @@ struct Composer: View {
         let pending = model.row(session)?.next?.permissions
         let shown = pending ?? conversation?.permissions ?? .auto
         let unrestricted = shown == .unrestricted
-        return Button {
-            permitting = true
+        // A menu, not a popover: a menu needs no page to be presented from (the composer is the keyboard's accessory).
+        return Menu {
+            Picker(
+                "Permissions", selection: Binding(get: { shown }, set: { choice in Task { await model.setPermissions(session, choice) } })
+            ) {
+                Text("Auto").tag(Permissions.auto)
+                Text("Unrestricted").tag(Permissions.unrestricted)
+            }
         } label: {
             Image(unrestricted ? "bolt-lightning-glyph" : "wand-sparkle-outline").resizable().frame(width: 18, height: 18)
                 .foregroundStyle(unrestricted ? Color.orange : Color.primary)
@@ -272,28 +361,6 @@ struct Composer: View {
         }
         .buttonStyle(.plain)
         .disabled(conversation == nil)
-        .popover(isPresented: $permitting) {
-            VStack(spacing: 2) {
-                ForEach([Permissions.auto, .unrestricted], id: \.self) { choice in
-                    Button {
-                        permitting = false
-                        Task { await model.setPermissions(session, choice) }
-                    } label: {
-                        HStack {
-                            Text(choice == .auto ? "Auto" : "Unrestricted")
-                            Spacer(minLength: 16)
-                            Image("circle-check-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(Color.accentColor)
-                                .opacity(shown == choice ? 1 : 0)
-                        }
-                        .padding(.horizontal, 14).frame(height: 44).contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(6)
-            .frame(width: 220)
-            .presentationCompactAdaptation(.popover)
-        }
         .accessibilityLabel(unrestricted ? "Permissions: unrestricted" : "Permissions: auto")
     }
 
@@ -313,39 +380,30 @@ struct Composer: View {
     }
 
     private var modelMenu: some View {
-        let id = chosen?.model ?? conversation?.model
-        let effort = chosen?.effort ?? conversation?.effort
-        let current = models.first { $0.id == id }
+        let id = panels.chosen?.model ?? conversation?.model
+        let effort = panels.chosen?.effort ?? conversation?.effort
+        let current = panels.models.first { $0.id == id }
         let name = current?.name ?? id.map(Self.readable) ?? conversation?.provider.title ?? ""
         let level = current?.levels.first { $0.id == effort }?.name ?? effort?.capitalized
         // Its list fetched again if it isn't in yet (a moment the Mac couldn't be reached): never stuck disabled.
         return Button {
             Task {
-                if models.isEmpty, let provider = conversation?.provider { models = await model.models(provider) }
-                if !models.isEmpty { selecting = true }
+                if panels.models.isEmpty, let provider = conversation?.provider { panels.models = await model.models(provider) }
+                if !panels.models.isEmpty { panels.selecting = true }
             }
         } label: {
             (Text(name).fontWeight(.medium) + Text(level.map { " " + $0 } ?? "").foregroundStyle(.secondary))
                 .font(.subheadline).lineLimit(1).padding(.horizontal, 7).frame(height: 40)
         }
         .buttonStyle(.plain)
-        .sheet(isPresented: $selecting) {
-            if let provider = conversation?.provider {
-                ModelSelector(agents: [.init(provider: provider, models: models)], current: (provider, id, effort)) { _, picked, level in
-                    guard let picked else { return }
-                    chosen = (picked, level)
-                    // Mid-turn, as the Mac's chip: zerod keeps it for the next turn now, not with a message (which
-                    // would have to go at once, steering the turn, to carry it).
-                    if busy { Task { await model.switchModel(session, provider: provider, model: picked, effort: level) } }
-                }
-            }
-        }
     }
 
     private func send() {
         dictation.stop()
-        let text = draft, photos = images.compactMap { $0.jpegData(compressionQuality: 0.8) }, choice = chosen
-        draft = ""; images = []; picked = []; chosen = nil
+        let text = draft, choice = panels.chosen
+        let photos = attached.filter { $0.video == nil }.compactMap { $0.image.jpegData(compressionQuality: 0.8) }
+        let videos = attached.compactMap(\.video)
+        draft = ""; attached = []; panels.picked = []; panels.chosen = nil
         // The keyboard can put words back that were mid-correction as the box emptied: emptied again once it's done.
         DispatchQueue.main.async { if !draft.isEmpty { draft = "" } }
         sending = true
@@ -355,9 +413,9 @@ struct Composer: View {
                 // While it works, always after this turn: never steering it (a model picked mid-turn is zerod's
                 // already, for the next turn). Sent with one that was, it interrupted the turn.
                 if busy {
-                    try await model.queue(text, images: photos, to: session)
+                    try await model.queue(text, images: photos, videos: videos, to: session)
                 } else {
-                    try await model.send(text, images: photos, to: session, model: choice?.model, effort: choice?.effort)
+                    try await model.send(text, images: photos, videos: videos, to: session, model: choice?.model, effort: choice?.effort)
                 }
             } catch { draft = text } // Back in the box, to send again.
         }
@@ -427,5 +485,268 @@ struct Composer: View {
             SFSpeechRecognizer.requestAuthorization { done.resume(returning: $0 == .authorized) }
         }
         return speech ? await AVAudioApplication.requestRecordPermission() : false
+    }
+}
+
+/// The composer's parts, placed between their two shapes by `open` (0, the capsule; 1, the open box), so each moves
+/// from one place to the other with the box: the field, the closed line, +, the model and permissions menus, mic, send.
+/// Closed: + at the left, mic and send at the right, the line between, 48 pt high. Open: the field across the top, the
+/// controls along the foot, 7 pt either side of each control's icon or words, 14 between any two.
+struct ComposerLayout: Layout {
+    var open: Double
+    /// The draft: the field's height is measured from it here, so the box grows as it's typed (SwiftUI didn't measure
+    /// the field's own text view again as its text changed).
+    var text = ""
+
+    var animatableData: Double {
+        get { open }
+        set { open = newValue }
+    }
+
+    private func field(_ subviews: Subviews, width: CGFloat) -> CGFloat {
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        let fit = (text.isEmpty ? " " : text as NSString).boundingRect(
+            with: CGSize(width: max(1, width - 36), height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font], context: nil
+        ).height
+        return ceil(min(max(fit, font.lineHeight), font.lineHeight * 8))
+    }
+
+    /// The open box's height: the field (16 above it, 6 below), then the controls' row (40, 8 under it).
+    private func openHeight(_ subviews: Subviews, width: CGFloat) -> CGFloat { 16 + field(subviews, width: width) + 6 + 40 + 8 }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 360
+        let height = 48 + (openHeight(subviews, width: width) - 48) * open
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let w = bounds.width, x = bounds.minX, y = bounds.minY
+        let t = CGFloat(open)
+        func between(_ closed: CGFloat, _ opened: CGFloat) -> CGFloat { closed + (opened - closed) * t }
+        let fieldHeight = field(subviews, width: w)
+        // The field where it is open: hidden (and clipped by the box) while closed.
+        subviews[0].place(at: CGPoint(x: x + 18, y: y + 16), proposal: ProposedViewSize(width: w - 36, height: fieldHeight))
+        // The row's middle: the capsule's, or the open box's foot.
+        let row = y + between(24, 16 + fieldHeight + 6 + 20)
+        // + at the left; send and mic at the right (send 4 pt in closed, 8 open; mic 7 pt before it).
+        subviews[2].place(at: CGPoint(x: x + between(24, 28), y: row), anchor: .center, proposal: ProposedViewSize(width: 40, height: 40))
+        let send = x + w - between(24, 28)
+        subviews[6].place(at: CGPoint(x: send, y: row), anchor: .center, proposal: ProposedViewSize(width: 40, height: 40))
+        let mic = send - 20 - 7 - 17
+        subviews[5].place(at: CGPoint(x: mic, y: row), anchor: .center, proposal: ProposedViewSize(width: 34, height: 40))
+        // The menus before the mic, their own widths.
+        let permissions = subviews[4].sizeThatFits(.unspecified)
+        let model = subviews[3].sizeThatFits(.unspecified)
+        let menusEnd = mic - 17
+        subviews[4].place(
+            at: CGPoint(x: menusEnd - permissions.width / 2, y: row), anchor: .center, proposal: ProposedViewSize(permissions))
+        subviews[3].place(
+            at: CGPoint(x: menusEnd - permissions.width - model.width / 2, y: row), anchor: .center, proposal: ProposedViewSize(model))
+        // The closed line between + and the mic.
+        let lineStart = x + 48
+        subviews[1].place(
+            at: CGPoint(x: lineStart, y: y + 24), anchor: .leading,
+            proposal: ProposedViewSize(width: max(0, mic - 17 - 4 - lineStart), height: nil))
+    }
+}
+
+/// The composer's scroll view, set to be dragged and never scrolled: always draggable (so a drag on the box begins at
+/// all, and cancels its buttons' taps), held at its top. A drag down of 28 pt on it closes the keyboard there and then,
+/// the finger still down, on the keyboard's own animation, as Messages' input bar does (measured in the Simulator:
+/// nothing at 25 pt, closed at 30; the keyboard never follows the finger from the bar, only from the conversation).
+struct KeyboardDrag: UIViewRepresentable {
+    func makeUIView(context: Context) -> Hook { Hook() }
+    func updateUIView(_ view: Hook, context: Context) {}
+
+    final class Hook: UIView {
+        /// 28 pt from where the finger came down: the pan counts from where it begins, about 10 pt on.
+        static let swipe: CGFloat = 18
+        private var watch: NSKeyValueObservation?
+        private var swiped = false
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            isUserInteractionEnabled = false
+            guard window != nil, watch == nil else { return }
+            var view = superview
+            while let next = view, !(next is UIScrollView) { view = next.superview }
+            guard let scroll = view as? UIScrollView else { return }
+            scroll.alwaysBounceVertical = true
+            scroll.showsVerticalScrollIndicator = false
+            scroll.panGestureRecognizer.addTarget(self, action: #selector(panned(_:)))
+            watch = scroll.observe(\.contentOffset, options: [.new]) { scroll, _ in
+                MainActor.assumeIsolated { if scroll.contentOffset.y != 0 { scroll.contentOffset.y = 0 } }
+            }
+        }
+
+        @objc private func panned(_ pan: UIPanGestureRecognizer) {
+            switch pan.state {
+            case .began: swiped = false
+            case .changed:
+                guard !swiped, pan.translation(in: pan.view).y >= Self.swipe else { return }
+                swiped = true
+                // The drag ends there, as Messages' swipe does: closed while the finger was still moving fast, the
+                // keyboard took its speed and was gone in a frame or two (Messages': the usual 10-frame close).
+                pan.isEnabled = false
+                pan.isEnabled = true
+                DispatchQueue.main.async { [weak self] in self?.window?.endEditing(true) }
+            default: break
+            }
+        }
+    }
+}
+
+/// The composer's field, a text view of its own: one to eight lines as the draft grows, scrolling with UIKit's own
+/// bounce past that, the caret at the end when it's opened from the capsule. A short draft doesn't scroll, so a drag
+/// on it is the composer's (KeyboardDrag), which takes the keyboard down with the finger.
+struct ComposerField: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var focused: Bool
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView()
+        view.delegate = context.coordinator
+        view.font = .preferredFont(forTextStyle: .body)
+        view.adjustsFontForContentSizeCategory = true
+        view.textColor = .label
+        view.backgroundColor = .clear
+        view.textContainerInset = .zero
+        view.textContainer.lineFragmentPadding = 0
+        view.keyboardDismissMode = .interactive
+        view.accessibilityIdentifier = "composer.field"
+        // The swipe down that closes the keyboard, on the text too: its own gestures took the touch, and the box's never
+        // began (measured: Messages' field closes on a swipe over typed text).
+        let swipe = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.swiped(_:)))
+        swipe.delegate = context.coordinator
+        swipe.cancelsTouchesInView = false
+        view.addGestureRecognizer(swipe)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.text = text
+        return view
+    }
+
+    func updateUIView(_ view: UITextView, context: Context) {
+        context.coordinator.parent = self
+        if view.text != text { view.text = text }
+        if focused, !view.isFirstResponder {
+            DispatchQueue.main.async {
+                guard !view.isFirstResponder, view.becomeFirstResponder() else { return }
+                let end = view.endOfDocument
+                view.selectedTextRange = view.textRange(from: end, to: end)
+            }
+        } else if !focused, view.isFirstResponder {
+            DispatchQueue.main.async { view.resignFirstResponder() }
+        }
+    }
+
+    /// As tall as ComposerLayout gives it: the layout measures the draft itself (a draft put back from before is
+    /// measured before the text view has it).
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView view: UITextView, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 300, height: proposal.height ?? view.font?.lineHeight ?? 22)
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
+        private var swiped = false
+
+        /// Down, and only when the text has nothing to scroll back to (fits, or is at its start): otherwise the drag
+        /// is the text's, scrolling it back.
+        func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
+            guard let pan = gesture as? UIPanGestureRecognizer, let view = pan.view as? UITextView else { return false }
+            let velocity = pan.velocity(in: view)
+            let fits = view.contentSize.height <= view.bounds.height + 4
+            let atStart = view.contentOffset.y <= -view.adjustedContentInset.top + 4
+            return abs(velocity.y) >= abs(velocity.x) && (fits || atStart)
+        }
+
+        func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            true
+        }
+
+        @objc func swiped(_ pan: UIPanGestureRecognizer) {
+            switch pan.state {
+            case .began: swiped = false
+            case .changed:
+                guard !swiped, pan.translation(in: pan.view).y >= KeyboardDrag.Hook.swipe else { return }
+                swiped = true
+                let view = pan.view as? UITextView
+                pan.isEnabled = false
+                pan.isEnabled = true
+                closed = Date()
+                DispatchQueue.main.async { view?.resignFirstResponder() }
+            default: break
+            }
+        }
+
+        var parent: ComposerField
+        init(_ parent: ComposerField) { self.parent = parent }
+        func textViewDidChange(_ view: UITextView) { parent.text = view.text }
+        func textViewDidBeginEditing(_ view: UITextView) { if !parent.focused { parent.focused = true } }
+
+        /// Not again as the finger that swiped it closed lifts off the text: the text view took the lift for a tap and
+        /// opened the keyboard again (measured: 0.26 s after it closed).
+        func textViewShouldBeginEditing(_ view: UITextView) -> Bool { Date().timeIntervalSince(closed) > 0.6 }
+        private var closed = Date.distantPast
+        func textViewDidEndEditing(_ view: UITextView) { if parent.focused { parent.focused = false } }
+    }
+}
+
+/// What the composer opens over the page, and the choices it keeps for the next message: held by the page (TaskView),
+/// which presents them.
+@MainActor @Observable final class ComposerPanels {
+    var picking = false
+    var picked: [PhotosPickerItem] = []
+    var selecting = false
+    var models: [PhoneModel.ModelChoice] = []
+    /// Chosen for the next message; until then, the task's own.
+    var chosen: (model: String, effort: String?)?
+}
+
+/// A video picked to send (a screen recording): its file, copied out of the picker's reach.
+struct PickedVideo: Transferable {
+    let url: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(importedContentType: .movie) { received in
+            let copy = FileManager.default.temporaryDirectory.appendingPathComponent(
+                UUID().uuidString + "-" + received.file.lastPathComponent)
+            try FileManager.default.copyItem(at: received.file, to: copy)
+            return PickedVideo(url: copy)
+        }
+    }
+
+    /// Its first frame, for its tile; a grey square if it has none.
+    static func still(_ url: URL) async -> UIImage {
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 240, height: 240)
+        if let frame = try? await generator.image(at: .zero).image { return UIImage(cgImage: frame) }
+        return UIImage(systemName: "video") ?? UIImage()
+    }
+}
+
+/// Its content as tall as `shown` of its own height, laid out again every frame as `shown` animates (a frame's height
+/// animates only in drawing: what's under it, the page's room at its foot, moved in one step).
+struct Unfold: Layout {
+    var shown: Double
+    var animatableData: Double {
+        get { shown }
+        set { shown = newValue }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let size = subviews.first?.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil)) ?? .zero
+        return CGSize(width: proposal.width ?? size.width, height: size.height * shown)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let content = subviews.first else { return }
+        let size = content.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+        content.place(
+            at: CGPoint(x: bounds.minX, y: bounds.maxY - size.height), proposal: ProposedViewSize(width: bounds.width, height: size.height))
     }
 }
