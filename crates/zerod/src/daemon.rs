@@ -567,6 +567,16 @@ impl Daemon {
         Ok(())
     }
 
+    /// An ask about `ticket` (`zero ask --ticket`) answered at `at` (seconds): its row on the user moves to working, the
+    /// agent setting what's next. A row in another state, or set again since, stays as it is.
+    pub fn ticket_answered(&self, id: &str, ticket: &str, at: i64) {
+        let Ok(session) = self.session(id) else { return };
+        let on_you = |i: &crate::model::Issue| i.ticket == ticket && i.state == crate::model::IssueState::You && i.updated / 1000 <= at;
+        if let Some(row) = session.summary().issues.into_iter().find(on_you) {
+            let _ = self.set_issue(id, ticket, crate::model::IssueState::Working, &row.text);
+        }
+    }
+
     /// Which workspace a conversation is in: the one it was put in, else Zero.
     pub fn workspace_of(&self, conversation: &Conversation) -> String {
         self.workspaces.of(conversation.workspace.as_deref())

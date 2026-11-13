@@ -312,8 +312,8 @@ pub fn know_workers(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
     }));
 }
 
-/// Asks linked to their task's conversation (about.rs): what each is about read from it, and the agent's answer to the
-/// user's words on one kept with it as its turn ends.
+/// Asks linked to their task's conversation (about.rs): what each is about read from it, moved to the answer its turn
+/// ends on, and the agent's answer to the user's words on one kept with it as its turn ends.
 pub fn link_asks(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
     let weak = Arc::downgrade(daemon);
     inbox.know_conversations(Box::new(move |session, all| {
@@ -324,6 +324,7 @@ pub fn link_asks(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
     let inbox = Arc::downgrade(inbox);
     daemon.when_ended(Box::new(move |conversation| {
         if let Some(inbox) = inbox.upgrade() {
+            inbox.answered(&conversation.id, &conversation.items);
             inbox.keep_reply(&conversation.items)
         }
     }));

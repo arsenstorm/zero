@@ -222,6 +222,16 @@ impl Inbox {
         )
     }
 
+    /// A task's turn ended: the asks made in it are about the answer it ended on (about.rs answered).
+    pub fn answered(&self, session: &str, items: &[crate::model::Item]) {
+        for (id, about) in crate::about::answered(session, items, &self.asks()) {
+            self.update(&id, |a| {
+                a.about = Some(about);
+                true
+            });
+        }
+    }
+
     /// The agent's answer to the user's words on one of its asks, kept with that ask (about.rs reply), as a turn ends.
     pub fn keep_reply(&self, items: &[crate::model::Item]) {
         let said = self.lock().said_on.clone();

@@ -91,6 +91,11 @@ impl Bridge {
                     let Some(session) = ask.agent.reference.as_deref().filter(|_| ask.agent.runtime.as_deref() == Some("zerod")) else {
                         continue;
                     };
+                    if ask.state == AskState::Answered
+                        && let (Some(ticket), Some(at)) = (ask.agent.ticket.as_deref(), ask.answered_at)
+                    {
+                        daemon.ticket_answered(session, ticket, at.0)
+                    }
                     let Some(act) = bridge.heard(&ask, daemon.get(session).as_ref()) else { continue };
                     let daemon = daemon.clone();
                     tokio::spawn(async move {

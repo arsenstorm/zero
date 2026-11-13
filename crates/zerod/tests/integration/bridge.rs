@@ -294,3 +294,38 @@ async fn a_live_session_is_answered_from_the_inbox() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(inbox.open_asks().iter().all(|a| a.kind != AskKind::Permission), "nothing left to ask");
 }
+
+/// `zero ask --ticket T-1`, answered: the row on the user for T-1 moves to working by itself (the agent sets what's
+/// next), so the task stops needing them; rows in other states are left as they are.
+#[tokio::test]
+async fn an_answered_ask_about_a_ticket_takes_its_row_off_the_user() {
+    let home = temp_dir("bridge-ticket");
+    let (script, _seen) = play(fixture("codex-command"));
+    let script = std::sync::Mutex::new(Some(script));
+    let runtime: Runtime = Arc::new(move |_: &Conversation, _: &std::path::Path, _: &[String]| Ok(script.lock().unwrap().take().unwrap()));
+    let daemon = Daemon::open(&home, runtime).unwrap();
+    let inbox = Inbox::open(None, vec![]);
+    inbox.configure(Duration::from_millis(20), 3600);
+    Bridge::start(daemon.clone(), inbox.clone());
+    let session = daemon
+        .start(Provider::Codex, "ls", zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() })
+        .unwrap();
+    daemon.set_issue(&session, "T-1", IssueState::You, "merge on your go").unwrap();
+    daemon.set_issue(&session, "T-2", IssueState::Over, "review #12").unwrap();
+    let mut identity = zerod::bridge::identity(&daemon.get(&session).unwrap(), "mac");
+    for ticket in ["T-1", "T-2"] {
+        identity.ticket = Some(ticket.into());
+        let ask = inbox.create(Ask::new(AskKind::Question, "Merge it?", identity.clone(), 600), false);
+        inbox.reply(&ask.id, "Yes");
+        settled(&inbox, &ask.id).await;
+    }
+    let states = || daemon.get(&session).unwrap().issues.iter().map(|i| (i.ticket.clone(), i.state)).collect::<Vec<_>>();
+    for _ in 0..200 {
+        if states()[0].1 != IssueState::You {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(states(), [("T-1".to_string(), IssueState::Working), ("T-2".into(), IssueState::Over)]);
+    assert_eq!(daemon.get(&session).unwrap().issues[0].text, "merge on your go", "its words kept");
+}

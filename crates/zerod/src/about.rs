@@ -28,7 +28,7 @@ pub fn linked(items: &[Item], anchor: &str) -> Result<About, String> {
     for item in items.iter().rev() {
         let Some(text) = words(item) else { continue };
         if item.id == anchor {
-            return Ok(whole(item, text));
+            return Ok(About { anchor: Some(anchor.into()), ..whole(item, text) });
         }
         let sections = crate::pads::sections(text);
         let Some(at) = sections.iter().position(|s| s.slug == anchor) else { continue };
@@ -51,6 +51,32 @@ pub fn linked(items: &[Item], anchor: &str) -> Result<About, String> {
     known.truncate(20);
     let there = if known.is_empty() { "it has no headings".to_string() } else { format!("its latest are {}", known.join(", ")) };
     Err(format!("No heading #{anchor} in this task's conversation: {there}"))
+}
+
+/// As a turn ends on an answer: the asks made in it that are about the agent's words just before them (not a heading or
+/// an item it named) are about that answer instead, the turn's own account of them (an ask made mid-turn with --async
+/// came after a working note). Each such ask's id, and its About now. Made in the turn: its About is one of the turn's
+/// items, or it came after the turn's message; a later turn's answer is that turn's.
+pub fn answered(session: &str, items: &[Item], all: &[Ask]) -> Vec<(String, About)> {
+    let Some(at) = items.iter().rposition(|i| matches!(i.kind, ItemKind::User { .. })) else { return vec![] };
+    let (started, turn) = (items[at].at, &items[at + 1..]);
+    let Some((answer, text)) = turn
+        .iter()
+        .rev()
+        .find(|i| matches!(i.kind, ItemKind::Agent { final_answer: true, .. }))
+        .and_then(|i| words(i).filter(|t| !t.trim().is_empty()).map(|t| (i, t)))
+    else {
+        return vec![];
+    };
+    all.iter()
+        .filter(|a| asks(a) && a.agent.runtime.as_deref() == Some("zerod") && a.agent.reference.as_deref() == Some(session))
+        .filter(|a| a.about.as_ref().is_none_or(|about| about.anchor.is_none() && about.item != answer.id))
+        .filter(|a| {
+            let about = a.about.as_ref().map(|about| about.item.as_str());
+            about.is_some_and(|item| turn.iter().any(|i| i.id == item)) || started.is_some_and(|ms| a.created_at.0 * 1000 >= ms)
+        })
+        .map(|a| (a.id.clone(), whole(answer, text)))
+        .collect()
 }
 
 /// The agent's answer to the user's own words on an ask, as its turn ends: the turn they started (given to the agent

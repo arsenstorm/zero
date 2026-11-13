@@ -230,3 +230,44 @@ async fn words_written_to_a_task_while_one_ask_is_open_are_about_it_and_so_is_th
     assert_eq!(inbox.ask(&ask.id).unwrap().replies.len(), 1);
     assert!(inbox.ask(&other.id).unwrap().replies.is_empty());
 }
+
+#[tokio::test]
+async fn an_ask_made_mid_turn_is_about_the_answer_its_turn_ends_on() {
+    // Asked with --async mid-turn, after a working note, and explained in the answer the turn ends on: that answer is
+    // what it's about, once there is one. A heading or item the agent named stays. A later turn's answer isn't it.
+    let w = world("links-answer");
+    let (id, seen, inbox) = asking(&w).await;
+    w.daemon.send(&id, zerod::session::Message::text("is the fix in?"), Default::default()).await.unwrap();
+    seen.said("user", 2).await;
+    seen.say(json!({"type": "assistant", "message": {"id": "m2", "content": [{"type": "text", "text": "Reading the log…"}]}}));
+    until(&w.daemon, &id, |c| c.items.iter().any(|i| i.id == "m2:0")).await;
+    let ask = inbox.create(question(&id, "Ship it?"), false);
+    assert_eq!(ask.about.as_ref().map(|a| a.item.as_str()), Some("m2:0"), "the words before it, until the turn has its answer");
+    let mut named = question(&id, "And this?");
+    named.about = about("m2:0");
+    let named = inbox.create(named, false);
+    let answer = "## Test result\n\nThe login test passed on all three runs.\n\n[zero: asked k2m4p6]";
+    seen.say(json!({"type": "assistant", "message": {"id": "m3", "content": [{"type": "text", "text": answer}]}}));
+    seen.say(json!({"type": "result", "subtype": "success", "is_error": false, "result": answer}));
+    let mut moved = None;
+    for _ in 0..300 {
+        moved = inbox.ask(&ask.id).unwrap().about.filter(|a| a.item == "m3:0");
+        if moved.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let moved = moved.expect("moved to the turn's answer");
+    assert_eq!(moved.title, "Test result");
+    assert!(moved.text.contains("passed on all three runs") && !moved.text.contains("[zero:"), "{}", moved.text);
+    assert_eq!(inbox.ask(&named.id).unwrap().about.unwrap().item, "m2:0", "named by the agent: kept");
+
+    // The next turn's answer (to the user's answer) is that turn's, not the ask's.
+    inbox.choose(&ask.id, 0);
+    seen.said("user", 3).await;
+    seen.say(json!({"type": "assistant", "message": {"id": "m4", "content": [{"type": "text", "text": "Shipping."}]}}));
+    seen.say(json!({"type": "result", "subtype": "success", "is_error": false, "result": "Shipping."}));
+    until(&w.daemon, &id, |c| c.items.iter().any(|i| i.id == "m4:0") && c.attention() != Attention::Working).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(inbox.ask(&ask.id).unwrap().about.unwrap().item, "m3:0");
+}
