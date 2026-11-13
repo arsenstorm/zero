@@ -49,7 +49,16 @@ extension AppDelegate {
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) {
             [weak self] _ in self?.layout()
         }
-        pill.orderFrontRegardless()
+    }
+
+    /// The bar on screen, or put away with its panel, as Settings says; shown at once when switched back on.
+    func showBar() {
+        guard settings.showBar else {
+            pill.orderOut(nil)
+            if inboxPanel.isVisible { hideInbox() }
+            return
+        }
+        if !pill.isVisible { pill.orderFrontRegardless() }
     }
 
     /// Panels stay on one screen (the one under the pointer when first shown, or chosen via "Move Zero to this
@@ -71,6 +80,8 @@ extension AppDelegate {
 
     /// Instant on purpose: the inbox is the most-used surface, and motion there would only slow it down.
     func open(byIntent: Bool) {
+        // Without the bar, the window's inbox (the hotkey, a way back to an ask).
+        guard settings.showBar else { inWindow(.inbox); return }
         layout()
         notifier?.lookedAtAsks()
         inbox.ensureSelection()
@@ -108,7 +119,7 @@ extension AppDelegate {
 
     /// A click on a pill control pins the inbox open on that view; the same click again unpins and closes it.
     func pin(agent: String?) {
-        if navigation.barDocked { agent.map(openAgent) ?? inWindow(.inbox); return }
+        if navigation.barDocked || !settings.showBar { agent.map(openAgent) ?? inWindow(.inbox); return }
         if openedByIntent && inboxPanel.isVisible && inbox.agentFilter == agent && !inbox.newAgentOpen { hideInbox(); return }
         inbox.show(agent: agent)
         open(byIntent: true)

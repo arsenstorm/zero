@@ -2,7 +2,7 @@ import Foundation
 
 /// Zero's own health, checked at launch and every few minutes: zerod (who started it, its sockets, quarantine, its
 /// descriptors, its build), crash and hang reports, and the app's main thread. Each check with its state and a fix the
-/// user clicks; Settings › Health lists them, and only trouble shows elsewhere.
+/// user clicks; Settings › About lists them, and only trouble shows elsewhere.
 
 /// zerod's `selfCheck` (crates/zerod/src/self_check.rs).
 public struct ZerodSelfCheck: Decodable, Equatable, Sendable {
@@ -36,7 +36,8 @@ public struct AppHang: Codable, Equatable, Sendable {
 }
 
 public struct HealthCheck: Identifiable, Equatable, Sendable {
-    public enum State: Sendable { case ok, warning, failing, unknown }
+    /// `info`: something past (a crash, a hang) not looked at but over a day old: said, without calling the user.
+    public enum State: Sendable { case ok, info, warning, failing, unknown }
     public enum Fix: Equatable, Sendable {
         case restartZerod, startZerod, openReport(URL), dismiss
     }
@@ -55,11 +56,14 @@ public enum Health {
 
     /// Main-thread blocks longer than this are hangs.
     public static let hangThreshold: Double = 5
+    /// Crashes and hangs older than this are information, not something to look at now.
+    public static let recent: TimeInterval = 24 * 3600
 
     public static func judge(
         _ zerod: ZerodSelfCheck?, cliAnswers: Bool, app: String, appZerod: String, reports: [CrashReport], hang: AppHang?,
-        seen: Date
+        seen: Date, now: Date = Date()
     ) -> [HealthCheck] {
+        func past(_ at: Date) -> HealthCheck.State { now.timeIntervalSince(at) > recent ? .info : .warning }
         func check(_ kind: Kind, _ state: HealthCheck.State, _ detail: String, _ fix: HealthCheck.Fix? = nil) -> HealthCheck {
             HealthCheck(id: kind, state: state, detail: detail, fix: fix)
         }
@@ -108,17 +112,24 @@ public enum Health {
             let count = new.count == 1 ? "A report" : "\(new.count) reports"
             checks.append(
                 check(
-                    .crashes, .warning, "\(count) since you last looked; latest \(latest.url.lastPathComponent).", .openReport(latest.url)))
+                    .crashes, past(latest.date), "\(count) since you last looked; latest \(latest.url.lastPathComponent).",
+                    .openReport(latest.url)))
         } else {
             checks.append(check(.crashes, .ok, "None since you last looked."))
         }
         if let hang, hang.at > seen {
             let when = hang.at.formatted(date: .abbreviated, time: .shortened)
-            checks.append(check(.app, .warning, "Stopped responding for \(Int(hang.seconds)) s on \(when).", .dismiss))
+            checks.append(check(.app, past(hang.at), "Stopped responding for \(Int(hang.seconds)) s on \(when).", .dismiss))
         } else {
             checks.append(check(.app, .ok, "Responsive."))
         }
         return checks
+    }
+
+    /// The program a report is about: an .ips's `"procPath"`, a .hang's or .spin's `Path:`.
+    static func program(in report: String) -> String? {
+        if let match = report.firstMatch(of: #/"procPath"\s*:\s*"([^"]*)"/#) { return String(match.1).replacing("\\/", with: "/") }
+        return report.firstMatch(of: #/(?m)^Path:\s*(.+)$/#).map { $0.1.trimmingCharacters(in: .whitespaces) }
     }
 
     /// A program's name from its path: the app it's in (Google Chrome), else its file.
@@ -130,12 +141,15 @@ public enum Health {
 
     public static let reportsFolder = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Logs/DiagnosticReports")
 
-    /// Zero's programs' crash and hang reports in `dir`: `Zero-2026-11-11-142542.ips`, `Zero_2026-11-11-142542.hang`.
+    /// Zero's programs' crash and hang reports in `dir`: `Zero-2026-11-11-142542.ips`, `Zero_2026-11-11-142542.hang`,
+    /// the Mac app's and zerod's only (the iPhone app in the Simulator is called Zero too).
     public static func reports(in dir: URL = reportsFolder) -> [CrashReport] {
         let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         return files.compactMap { url in
             let name = url.lastPathComponent
-            guard ["ips", "hang", "spin"].contains(url.pathExtension), name.wholeMatch(of: #/(Zero|zerod|zero-host)[-_]\d.*/#) != nil
+            guard ["ips", "hang", "spin"].contains(url.pathExtension), name.wholeMatch(of: #/(Zero|zerod)[-_]\d.*/#) != nil,
+                let text = try? String(contentsOf: url, encoding: .utf8), let path = program(in: text),
+                path.hasSuffix(".app/Contents/MacOS/Zero") || path.hasSuffix("/zerod")
             else { return nil }
             let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
             return CrashReport(url: url, date: date)

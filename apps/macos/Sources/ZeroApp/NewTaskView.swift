@@ -39,7 +39,7 @@ struct NewTaskView: View {
                 ) {
                     // Where it starts, as chips in the row: the folder tab that sat above the card is gone.
                     if folders.isEmpty {
-                        NucleoLabel("Add a project in Settings › Folders", icon: "folder", size: 13).font(.system(size: 12))
+                        NucleoLabel("Add a project in Settings › Workspaces", icon: "folder", size: 13).font(.system(size: 12))
                             .foregroundStyle(.secondary)
                     } else {
                         ComposerChip(

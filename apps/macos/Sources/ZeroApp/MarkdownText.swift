@@ -150,7 +150,7 @@ struct MarkdownText: View {
     static func links(repo: String?, owner: String?, yours: Bool) -> Links {
         Links(
             repo: repo, owner: owner, github: GitHubLinks.enabled, slack: SlackLinks.teams,
-            teams: LinearLinks.enabled ? Linear.shared.teams : [:],
+            teams: LinearLinks.enabled ? LinearTeams.known : [:],
             app: LinearLinks.inApp, loops: LoopNames.known, skills: yours, pads: PadNames.known)
     }
 

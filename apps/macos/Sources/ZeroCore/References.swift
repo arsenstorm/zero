@@ -140,7 +140,13 @@ public enum SlackLinks {
     }
 }
 
-/// Whether GitHub's references in messages are links (Settings › Links).
+/// Linear's team keys to the connected workspace's URL key ("ENG" → "acme"), from zerod's connection: which "ENG-123"
+/// in messages are issues, and where they open.
+public enum LinearTeams {
+    @MainActor public static var known: [String: String] = [:]
+}
+
+/// Whether GitHub's references in messages are links (Settings › GitHub).
 public enum GitHubLinks {
     public static let key = "githubLinks"
     /// Pull requests (repo#123) and commits in messages as links; on unless turned off.

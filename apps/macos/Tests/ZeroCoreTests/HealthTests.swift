@@ -14,12 +14,13 @@ final class HealthTests: XCTestCase {
             descriptors: .init(open: open, limit: 10240), exe: exe, replaced: replaced)
     }
 
-    func judge(_ zerod: ZerodSelfCheck?, cli: Bool = true, reports: [CrashReport] = [], hang: AppHang? = nil, seen: Date = .distantPast)
-        -> [Health.Kind: HealthCheck]
-    {
+    func judge(
+        _ zerod: ZerodSelfCheck?, cli: Bool = true, reports: [CrashReport] = [], hang: AppHang? = nil, seen: Date = .distantPast,
+        now: Date = Date(timeIntervalSince1970: 1000)
+    ) -> [Health.Kind: HealthCheck] {
         Dictionary(
             uniqueKeysWithValues: Health.judge(
-                zerod, cliAnswers: cli, app: app, appZerod: self.zerod, reports: reports, hang: hang, seen: seen
+                zerod, cliAnswers: cli, app: app, appZerod: self.zerod, reports: reports, hang: hang, seen: seen, now: now
             ).map { ($0.id, $0) })
     }
 
@@ -92,14 +93,32 @@ final class HealthTests: XCTestCase {
         XCTAssertEqual(judge(selfCheck(), hang: hang, seen: Date(timeIntervalSince1970: 400))[.app]?.state, .ok)
     }
 
+    func testPastEventsOlderThanADayAreInformation() {
+        let day: Double = 24 * 3600
+        let report = CrashReport(url: URL(fileURLWithPath: "/r/Zero-2026-11-11-100000.ips"), date: Date(timeIntervalSince1970: 300))
+        let hang = AppHang(at: Date(timeIntervalSince1970: 300), seconds: 15)
+        let late = Date(timeIntervalSince1970: 300 + day + 1)
+        let checks = judge(selfCheck(), reports: [report], hang: hang, seen: Date(timeIntervalSince1970: 200), now: late)
+        XCTAssertEqual(checks[.crashes]?.state, .info)
+        XCTAssertEqual(checks[.crashes]?.fix, .openReport(report.url))
+        XCTAssertEqual(checks[.app]?.state, .info)
+        XCTAssertEqual(checks[.app]?.fix, .dismiss)
+    }
+
     func testReportsAreZerosOwnOnly() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("health-\(UUID())")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        for name in [
-            "Zero-2026-11-11-142542.ips", "zerod-2026-11-11-142542.ips", "Zero_2026-11-11-142542.hang", "Zero-full-2026-11-11.ips",
-            "ZeroX-2026-11-11-142542.ips", "Safari-2026-11-11-142542.ips", "Zero-2026-11-11-142542.txt",
+        let mac = #"{"app_name":"Zero"}\n{ "procPath" : "\/Applications\/Zero.app\/Contents\/MacOS\/Zero" }"#
+        let simulator =
+            #"{"app_name":"Zero"}\n{ "procPath" : "\/Users\/USER\/Library\/Developer\/CoreSimulator\/Devices\/A\/Zero.app\/Zero" }"#
+        for (name, text) in [
+            ("Zero-2026-11-11-142542.ips", mac), ("Zero-2026-11-12-182840.000.ips", simulator),
+            ("zerod-2026-11-11-142542.ips", #"{ "procPath" : "\/Applications\/Zero.app\/Contents\/MacOS\/zerod" }"#),
+            ("Zero_2026-11-11-142542.hang", "Process:  Zero [123]\nPath:     /Users/me/zero/build/Zero.app/Contents/MacOS/Zero\n"),
+            ("Zero-full-2026-11-11.ips", mac), ("ZeroX-2026-11-11-142542.ips", mac), ("Safari-2026-11-11-142542.ips", mac),
+            ("Zero-2026-11-11-142542.txt", mac),
         ] {
-            FileManager.default.createFile(atPath: dir.appendingPathComponent(name).path, contents: Data())
+            FileManager.default.createFile(atPath: dir.appendingPathComponent(name).path, contents: Data(text.utf8))
         }
         let names = Set(Health.reports(in: dir).map(\.url.lastPathComponent))
         XCTAssertEqual(names, ["Zero-2026-11-11-142542.ips", "zerod-2026-11-11-142542.ips", "Zero_2026-11-11-142542.hang"])

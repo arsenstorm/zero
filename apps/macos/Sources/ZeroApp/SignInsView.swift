@@ -417,7 +417,7 @@ struct UsageFooter: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .tip("Usage of the accounts used today · Settings › Accounts")
+                .tip("Usage of the accounts used today · Settings › Accounts and models")
             }
         }
         // Read when the window opens and every few minutes: zerod keeps what tasks hear, and asks each CLI now and then.
@@ -657,8 +657,7 @@ private struct AddedModels: View {
                             if let note = availability(model) { Text(note).font(.system(size: 11.5)).foregroundStyle(.secondary) }
                         }
                         Spacer()
-                        Button("Remove") { Task { await CustomModels.shared.remove(model) } }
-                            .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                        RowButton(title: "Remove") { Task { await CustomModels.shared.remove(model) } }
                     }
                     .padding(.horizontal, 18).frame(minHeight: 52)
                 }

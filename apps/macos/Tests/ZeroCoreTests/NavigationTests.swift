@@ -26,7 +26,7 @@ import Testing
 
 @Test func aPlaceIsKeptAsAWordAndComesBackTheSame() {
     let places: [Navigation.Place] = [
-        .home, .inbox, .board, .task("01a1:x"), .agent("claude-7"), .settings, .integrations, .integration("github"), .pads, .pad("5bz"),
+        .home, .inbox, .board, .task("01a1:x"), .agent("claude-7"), .settings, .pads, .pad("5bz"),
     ]
     for place in places { #expect(Navigation.Place(key: place.key) == place) }
     #expect(Navigation.Place(key: "nowhere") == nil)

@@ -6,8 +6,8 @@ import Observation
 @MainActor @Observable
 public final class Navigation {
     public enum Place: Hashable, Sendable {
-        case home, inbox, board, task(String), agent(String), settings, integrations, integration(String), pads, pad(String), loops, loop(
-            String), later, laterItem(String)
+        case home, inbox, board, task(String), agent(String), settings, pads, pad(String), loops, loop(String), later,
+            laterItem(String)
     }
 
     /// Where the window is. A worker's task set here by its own id (a link, an inbox card, a report: every way into a
@@ -140,8 +140,6 @@ public extension Navigation.Place {
         case let .task(id): "task:" + id
         case let .agent(name): "agent:" + name
         case .settings: "settings"
-        case .integrations: "integrations"
-        case let .integration(name): "integration:" + name
         case .pads: "pads"
         case let .pad(id): "pad:" + id
         case .loops: "loops"
@@ -160,8 +158,6 @@ public extension Navigation.Place {
         case "task": self = .task(value)
         case "agent": self = .agent(value)
         case "settings": self = .settings
-        case "integrations": self = .integrations
-        case "integration": self = .integration(value)
         case "pads": self = .pads
         case "pad": self = .pad(value)
         case "loops": self = .loops

@@ -317,12 +317,9 @@ struct TaskDetails: View {
         }
     }
 
-    /// The ticket's page: from the integration's view that lists it, else Linear's link for its team's workspace.
+    /// The ticket's page: Linear's link for its team's workspace.
     private func ticketURL(_ ticket: String) -> URL? {
-        if let listed = workspace.items.values.lazy.flatMap({ $0 }).first(where: { $0.ticketKey == ticket })?.url {
-            return LinearLinks.url(listed)
-        }
-        guard let team = ticket.split(separator: "-").first, let space = Linear.shared.teams[String(team)] else { return nil }
+        guard let team = ticket.split(separator: "-").first, let space = LinearTeams.known[String(team)] else { return nil }
         return LinearLinks.url("https://linear.app/\(space)/issue/\(ticket)")
     }
 
@@ -386,8 +383,7 @@ struct TaskDetails: View {
         return all
     }
 
-    /// The latest pull request the task's words mention: a GitHub link, or "repo#123" for a repository one of the
-    /// GitHub views shows (which says whose it is).
+    /// The latest pull request the task's words mention, as a GitHub link.
     private var mentionedPR: String? {
         let texts =
             [row?.asks.first?.title, row?.needs, row?.now].compactMap { $0 }
@@ -397,19 +393,7 @@ struct TaskDetails: View {
                 default: nil
                 }
             }
-        let owners = Dictionary(
-            workspace.items.values.flatMap { $0 }.compactMap { item -> (String, String)? in
-                let parts = item.url.split(separator: "/")
-                guard item.url.contains("github.com/"), parts.count >= 4 else { return nil }
-                return (String(parts[3]).lowercased(), String(parts[2]))
-            }, uniquingKeysWith: { first, _ in first })
-        for text in texts {
-            if let match = text.firstMatch(of: #/https://github\.com/[\w.-]+/[\w.-]+/pull/\d+/#) { return String(match.0) }
-            if let match = text.firstMatch(of: #/\b([\w.-]+)#(\d+)\b/#), let owner = owners[String(match.1).lowercased()] {
-                return "https://github.com/\(owner)/\(match.1)/pull/\(match.2)"
-            }
-        }
-        return nil
+        return texts.lazy.compactMap { $0.firstMatch(of: #/https://github\.com/[\w.-]+/[\w.-]+/pull/\d+/#).map { String($0.0) } }.first
     }
 
     /// A GitHub pull request as "repo#123"; any other link without its scheme; words as they are.

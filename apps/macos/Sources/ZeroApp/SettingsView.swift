@@ -16,34 +16,35 @@ struct SettingsView: View {
     var showOnboarding: () -> Void = {}
 
     enum Page: String, CaseIterable, Identifiable {
-        case general = "General", controlBar = "Control bar", composer = "Composer and inbox", devices = "Phone", health = "Health"
-        case agents = "Agents", signins = "Accounts", mcp = "MCP servers", chrome = "Browsers"
-        case workspaces = "Workspaces", projects = "Folders", git = "Git", links = "Links", events = "Following"
+        case general = "General", inbox = "Inbox and bar", devices = "Phone"
+        case agents = "Agents", signins = "Accounts and models", git = "Git", chrome = "Browsers", mcp = "MCP servers"
+        case workspaces = "Workspaces", github = "GitHub", linear = "Linear", slack = "Slack", about = "About"
         var id: String { rawValue }
         /// One each, none shared: the sidebar is scanned by its icons.
         var icon: String {
             switch self {
             case .general: "sliders"
-            case .controlBar: "layout-top"
-            case .composer: "inbox"
+            case .inbox: "inbox"
             case .devices: "mobile"
-            case .health: "shield"
             case .agents: "robot"
             case .signins: "circle-user"
-            case .mcp: "plug"
-            case .chrome: "globe"
-            case .workspaces: "suitcase"
-            case .projects: "folder"
             case .git: "code-branch"
-            case .links: "link"
-            case .events: "eye"
+            case .chrome: "globe"
+            case .mcp: "plug"
+            case .workspaces: "suitcase"
+            case .about: "circle-info"
+            case .github, .linear, .slack: ""
             }
         }
-        /// General leads on its own, where Home's New task is, so switching between the two moves no row. Then the
-        /// app itself, what agents run with, and how the work is laid out.
+        /// GitHub, Linear and Slack: drawn with their own marks.
+        var integration: Integration? { Integration(rawValue: rawValue.lowercased()) }
+        /// The pages before the groups: About first (the user's choice), then General, the inbox and the phone, which
+        /// everyone meets.
+        static let top: [Page] = [.about, .general, .inbox, .devices]
+        /// Then what agents run with (the tools they use among them), how the work is laid out, and the services Zero
+        /// connects to.
         static let groups: [(String, [Page])] = [
-            ("App", [.controlBar, .composer, .devices, .health]), ("Agents", [.agents, .signins, .mcp, .chrome]),
-            ("Work", [.workspaces, .projects, .git, .links, .events]),
+            ("Agents", [.agents, .signins, .git, .chrome, .mcp]), ("Work", [.workspaces]), ("Connections", [.github, .linear, .slack]),
         ]
     }
     /// The page open, kept in the window's history (Navigation) so back and forward go between pages; on its own
@@ -59,11 +60,17 @@ struct SettingsView: View {
     var body: some View {
         HStack(spacing: 0) {
             SidebarColumn(title: "Settings") {
-                SidebarItem(Page.general.rawValue, icon: Page.general.icon, selected: page == .general) { page = .general }
+                ForEach(Page.top) { item in SidebarItem(item.rawValue, icon: item.icon, selected: item == page) { page = item } }
                 ForEach(Page.groups, id: \.0) { group, pages in
                     SidebarHeading(text: group)
                     ForEach(pages) { item in
-                        SidebarItem(item.rawValue, icon: item.icon, selected: item == page) { page = item }
+                        if let integration = item.integration {
+                            SidebarItem(title: item.rawValue, selected: item == page, action: { page = item }) {
+                                integration.icon(size: 15)
+                            }
+                        } else {
+                            SidebarItem(item.rawValue, icon: item.icon, selected: item == page) { page = item }
+                        }
                     }
                 }
             }
@@ -84,20 +91,21 @@ struct SettingsView: View {
 
     @ViewBuilder private var content: some View {
         switch page {
-        case .general: GeneralPage(settings: settings, showOnboarding: showOnboarding)
-        case .controlBar: ControlBarPage(settings: settings, store: store, inbox: inbox, workspace: workspace)
-        case .composer: ComposerPage(settings: settings)
+        case .general: GeneralPage(settings: settings, workspace: workspace) { page = $0 }
+        case .inbox: InboxPage(settings: settings, store: store, inbox: inbox, workspace: workspace)
         case .devices: DevicesPage()
-        case .health: HealthPage()
-        case .agents: AgentsPage()
-        case .projects: FoldersPage(settings: settings, inbox: inbox)
-        case .git: GitPage()
-        case .links: LinksPage(workspace: workspace)
-        case .events: EventsPage(workspace: workspace)
-        case .workspaces: WorkspacesPage(workspace: workspace)
-        case .mcp: McpServersPage(workspace: workspace)
+        case .agents: AgentsPage(settings: settings)
         case .signins: SignInsPage(workspace: workspace)
+        case .git: GitPage()
         case .chrome: if let workspace { BrowserRows(workspace: workspace) }
+        case .mcp: McpServersPage(workspace: workspace)
+        case .workspaces:
+            Sections {
+                WorkspacesPage(workspace: workspace)
+                FoldersPage(inbox: inbox)
+            }
+        case .github, .linear, .slack: IntegrationPage(integration: page.integration!, workspace: workspace)
+        case .about: AboutPage(showOnboarding: showOnboarding)
         }
     }
 }
@@ -117,8 +125,6 @@ struct SidebarColumn<Content: View>: View {
     var picker: (() -> [SelectorSection])? = nil
     /// The heading's logo: a workspace's glyph; none, Zero's mark.
     var glyph = ""
-    /// A row at the foot under a divider (an integration's Edit views), level with the rail's settings.
-    var footer: AnyView? = nil
     @ViewBuilder let content: () -> Content
     @AppStorage(SidebarWidth.key) private var width = SidebarWidth.standard
     /// The width when the drag began.
@@ -129,13 +135,6 @@ struct SidebarColumn<Content: View>: View {
             SidebarHeader(title: title, picker: picker, glyph: glyph)
                 .padding(.horizontal, -10).padding(.bottom, -4)
             content()
-            if let footer {
-                Spacer(minLength: 0)
-                Rectangle().fill(Theme.stroke).frame(height: 1).padding(.horizontal, -10).padding(.bottom, 4)
-                // A 30 pt row centred 24 pt above the panel's foot, as the rail's settings is (12 + 16 from the
-                // window's, less the panel's 4).
-                footer.padding(.bottom, 9)
-            }
         }
         .padding(.horizontal, 10)
         .frame(width: width)
@@ -342,13 +341,22 @@ struct Switch: View {
 private struct RowMenu: ViewModifier {
     let id: String
     let enabled: Bool
+    let first: Bool
+    let last: Bool
     let rows: () -> [SelectorSection]
     @State private var frame = CGRect.zero
     @State private var hovered = false
 
     func body(content: Content) -> some View {
+        // Square, but for the card's own corners at its ends. Not left to the card's clip: a row's tip puts an NSView
+        // in it while hovered, and the clip then rounds that row's fill on its own, a pill mid-card.
+        let top: CGFloat = first ? 14 : 0, bottom: CGFloat = last ? 14 : 0
         content
-            .background(enabled && (hovered || WorkspaceSelector.shared.open == id) ? Theme.row : .clear)
+            .background(
+                enabled && (hovered || WorkspaceSelector.shared.open == id) ? Theme.row : .clear,
+                in: UnevenRoundedRectangle(
+                    topLeadingRadius: top, bottomLeadingRadius: bottom, bottomTrailingRadius: bottom, topTrailingRadius: top)
+            )
             .contentShape(Rectangle())
             .onTapGesture {
                 guard enabled else { return }
@@ -367,8 +375,11 @@ private struct RowMenu: ViewModifier {
 }
 
 extension View {
-    func rowMenu(_ id: String, enabled: Bool = true, rows: @escaping () -> [SelectorSection]) -> some View {
-        modifier(RowMenu(id: id, enabled: enabled, rows: rows))
+    /// `first` and `last`: where the row sits in its card, so its fill takes the card's corners there.
+    func rowMenu(
+        _ id: String, enabled: Bool = true, first: Bool, last: Bool, rows: @escaping () -> [SelectorSection]
+    ) -> some View {
+        modifier(RowMenu(id: id, enabled: enabled, first: first, last: last, rows: rows))
     }
 }
 
@@ -482,6 +493,8 @@ struct SettingRow<Control: View>: View {
     var picture: Image? = nil
     let title: String
     let detail: String
+    /// More on it, after the detail: the guide's page, say.
+    var more: (title: String, url: URL)? = nil
     @ViewBuilder let control: () -> Control
     var body: some View {
         HStack(spacing: 12) {
@@ -490,7 +503,7 @@ struct SettingRow<Control: View>: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 13, weight: .medium))
-                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(detailText).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 16)
             // A fixed slot, so a spinner turning into a button moves nothing beside it; a wider control widens it.
@@ -498,31 +511,43 @@ struct SettingRow<Control: View>: View {
         }
         .padding(.vertical, 12)
     }
+
+    private var detailText: AttributedString {
+        guard let more else { return AttributedString(detail) }
+        var link = AttributedString(more.title)
+        link.link = more.url
+        link.underlineStyle = .single
+        return AttributedString(detail + " ") + link
+    }
 }
 
 /// The pages' sections, one under another.
-private struct Sections<Content: View>: View {
+struct Sections<Content: View>: View {
     @ViewBuilder let content: () -> Content
     var body: some View { VStack(alignment: .leading, spacing: 32) { content() } }
 }
 
 /// The version, and an update when there is one: installed only on the user's click, saying what it does to agents.
-private struct UpdateRow: View {
+struct UpdateRow: View {
     var body: some View {
         let updater = Updater.shared
         switch updater.state {
         case .unchecked, .checking:
             SettingRow(title: "Zero \(updater.current)", detail: "Checking for updates…") { EmptyView() }
         case .upToDate:
-            SettingRow(title: "Zero \(updater.current)", detail: "Up to date.") { Button("Check now") { Task { await updater.check() } } }
+            SettingRow(title: "Zero \(updater.current)", detail: "Up to date.") {
+                RowButton(title: "Check now") { Task { await updater.check() } }
+            }
         case .failed(let problem):
-            SettingRow(title: "Zero \(updater.current)", detail: problem) { Button("Check again") { Task { await updater.check() } } }
+            SettingRow(title: "Zero \(updater.current)", detail: problem) {
+                RowButton(title: "Check again") { Task { await updater.check() } }
+            }
         case .available(let release):
             SettingRow(
                 title: "Zero \(release.version) is available",
                 detail: "Updating restarts Zero: running agents pause between steps for a few seconds, then carry on."
             ) {
-                Button("Update and restart") { Task { await updater.install(release) } }
+                RowButton(title: "Update and restart") { Task { await updater.install(release) } }
             }
         case .installing(let release):
             SettingRow(title: "Updating to Zero \(release.version)…", detail: "Zero quits and opens again as the new version.") {
@@ -534,79 +559,157 @@ private struct UpdateRow: View {
 
 private struct GeneralPage: View {
     @Bindable var settings: Settings
-    let showOnboarding: () -> Void
-    /// The states a task's notification comes with, each with its own sound.
-    struct Sounded { let state: BoardRow.State; let name: String; let detail: String }
-    static let sounded = [
-        Sounded(state: .needsYou, name: "Needs you", detail: "It asks you something, or one of its workers does."),
-        Sounded(state: .trouble, name: "In trouble", detail: "It failed, got stuck or ran out of usage."),
-        Sounded(state: .handed, name: "Over to you", detail: "It has a step for you."),
-        Sounded(state: .answered, name: "Replied", detail: "It answered you."),
-        Sounded(state: .waiting, name: "Waiting", detail: "The next move is someone else's."),
-        Sounded(state: .done, name: "Done", detail: "Nothing is left that it can do."),
-    ]
+    let workspace: Workspace?
+    let go: (SettingsView.Page) -> Void
+    /// Each state's sound, in its dialog.
+    @State private var eachState = false
+
     var body: some View {
         Sections {
+            SetupChecklist(workspace: workspace, go: go)
             SettingsSection(title: "Zero") {
                 Rows {
-                    UpdateRow()
-                    // The one difference between an official build and one from source, shown so no one wonders.
-                    SettingRow(
-                        title: Nucleo.set == "Nucleo" ? "Icons: Nucleo" : "Icons: Lucide (open-source build)",
-                        detail: Nucleo.set == "Nucleo"
-                            ? "Official builds draw Nucleo's licensed icons."
-                            : "Built from source, Zero draws Lucide's icons in place of Nucleo's. Nothing else differs."
-                    ) { EmptyView() }
                     SettingRow(title: "Launch Zero at login", detail: "So agents can always reach you.") {
                         Switch(isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
                     }
-                    ZerodAgentRow()
-                    SettingRow(title: "Talk hotkey", detail: "Opens the inbox and starts dictation.") {
+                    SettingRow(title: "Inbox hotkey", detail: "Opens the inbox from any app.") {
                         HotKeyRecorder(settings: settings, minWidth: nil)
                     }
                 }
             }
             SettingsSection(title: "Notifications") {
                 Rows {
-                    SettingRow(title: "Needs you", detail: "A task asks you something, or one of its workers does.") {
-                        Switch(isOn: $settings.notifyNeedsYou)
-                    }
-                    SettingRow(title: "In trouble", detail: "A task fails, gets stuck, runs out of usage, or is blocked.") {
-                        Switch(isOn: $settings.notifyTrouble)
-                    }
-                    SettingRow(title: "Finished", detail: "A task is done, replied, waiting or over to you.") {
-                        Switch(isOn: $settings.notifyFinished)
-                    }
-                    SettingRow(title: "Sounds", detail: "With each notification; in Zero, a sound instead.") {
-                        Switch(isOn: $settings.notificationSounds)
-                    }
+                    notification(
+                        "Needs you", "A task asks you something or has a step for you, or one of its workers asks.", .needsYou,
+                        $settings.notifyNeedsYou)
+                    notification(
+                        "In trouble", "A task fails, gets stuck, runs out of usage, or is blocked.", .trouble, $settings.notifyTrouble)
+                    notification("Finished", "A task is done, replied, or waiting on someone else.", .finished, $settings.notifyFinished)
                 }
+                Text("While you're in Zero, you hear the sound instead of seeing a notification.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
             }
-            if settings.notificationSounds {
-                SettingsSection(title: "Sounds") {
-                    Rows {
-                        ForEach(Self.sounded, id: \.state) { sounded in
-                            SettingRow(title: sounded.name, detail: sounded.detail) {
-                                SoundPicker(settings: settings, state: sounded.state)
+        }
+        .zeroDialog(isPresented: $eachState) { StateSoundsSheet(settings: settings) }
+    }
+
+    private func notification(_ title: String, _ detail: String, _ kind: AlertKind, _ on: Binding<Bool>) -> some View {
+        SettingRow(title: title, detail: detail) {
+            HStack(spacing: 8) {
+                KindSound(settings: settings, kind: kind) { eachState = true }
+                Switch(isOn: on)
+            }
+        }
+    }
+}
+
+/// What's left to set up, while the two that matter aren't done: the plugin and an account. Optional ones (a phone,
+/// Chrome) are listed with them, and go with the card.
+private struct SetupChecklist: View {
+    let workspace: Workspace?
+    let go: (SettingsView.Page) -> Void
+    @State private var plugin = ClaudePlugin.isInstalled
+    @State private var installing = false
+    @State private var chrome = false
+
+    var body: some View {
+        if !plugin || workspace?.signins.isEmpty != false {
+            SettingsSection(title: "Set up Zero") {
+                Rows {
+                    step("Zero plugin in your agents", "So they ask you here instead of waiting in a terminal.", done: plugin) {
+                        if installing {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            RowButton(title: "Install") {
+                                installing = true
+                                Task {
+                                    _ = await ClaudePlugin.install() ?? AgentMCP.install()
+                                    plugin = ClaudePlugin.isInstalled
+                                    installing = false
+                                }
                             }
                         }
                     }
+                    step(
+                        "An account for an agent", "Claude, ChatGPT or an API key, for your agents to run as.",
+                        done: workspace?.signins.isEmpty == false
+                    ) {
+                        RowButton(title: "Add account") { go(.signins) }
+                    }
+                    step("Your phone (optional)", "Your tasks and asks on your iPhone.", done: !Phones.shared.devices.isEmpty) {
+                        RowButton(title: "Pair") { go(.devices) }
+                    }
+                    step("Chrome for agents (optional)", "Agents use Chrome, each task in tabs of its own.", done: chrome) {
+                        RowButton(title: "Set up") { go(.chrome) }
+                    }
                 }
             }
-            SettingsSection(title: "Advanced") {
-                Rows {
-                    SettingRow(
-                        title: "Log",
-                        detail: "What Zero did and when: " + Log.file.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
-                    ) {
-                        RowButton(title: "View log") { NSWorkspace.shared.open(Log.file) }
-                    }
-                    SettingRow(title: "Onboarding", detail: "See the welcome again.") {
-                        RowButton(title: "Open", action: showOnboarding)
+            .task { chrome = await workspace?.browsers().contains { $0 != "Firefox" } ?? false }
+        }
+    }
+
+    private func step(_ title: String, _ detail: String, done: Bool, @ViewBuilder action: () -> some View) -> some View {
+        let action = action()
+        return SettingRow(title: title, detail: detail) {
+            if done { StatePill(text: "Done", color: .green) } else { action }
+        }
+    }
+}
+
+/// A kind of notification's sound: the system's sounds and None, played as it's picked, or each of its states' own
+/// (the dialog), which is what it shows when they differ.
+private struct KindSound: View {
+    @Bindable var settings: Settings
+    let kind: AlertKind
+    let eachState: () -> Void
+    private static let each = "*"
+
+    var body: some View {
+        let standard = Settings.defaultSound(Settings.soundKinds.first { $0.kind == kind }!.states[0])
+        let sounds = Settings.sounds.map { (title: $0 == standard ? "\($0) (default)" : $0, value: $0) }
+        // ponytail: the selector's menu doesn't scroll; these 17 rows are about 500 pt, cut off where neither side of
+        // the chip has that room. Let the menu kind scroll (Selector.swift) if a screen that short turns up.
+        SettingChoice(
+            id: "sound-" + kind.rawValue,
+            choices: [sounds, [(title: "None", value: "")], [(title: "Each state's sound…", value: Self.each)]],
+            selection: Binding(
+                get: { settings.sound(for: kind) ?? Self.each },
+                set: { sound in
+                    if sound == Self.each { eachState(); return }
+                    settings.setSound(sound, for: kind)
+                    if !sound.isEmpty { Chime.play(sound) }
+                }))
+    }
+}
+
+/// Each state's own sound, for those who'd rather tell them apart than hear one a kind.
+private struct StateSoundsSheet: View {
+    @Bindable var settings: Settings
+    @Environment(\.closeDialog) private var dismiss
+    static let states: [(state: BoardRow.State, name: String)] = [
+        (.needsYou, "Needs you"), (.handed, "Over to you"), (.trouble, "In trouble"), (.blocked, "Blocked"), (.answered, "Replied"),
+        (.waiting, "Waiting"), (.done, "Done"),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            DialogTitle(text: "Each state's sound")
+            Text("A task's notification plays the sound of the state it came to.").font(.system(size: 12.5)).foregroundStyle(.secondary)
+            VStack(spacing: 4) {
+                ForEach(Self.states, id: \.state) { row in
+                    HStack {
+                        Text(row.name).font(.system(size: 13))
+                        Spacer()
+                        SoundPicker(settings: settings, state: row.state)
                     }
                 }
+            }
+            HStack {
+                Spacer()
+                DialogButton(title: "Done", kind: .primary) { dismiss() }
             }
         }
+        .frame(width: 360)
     }
 }
 
@@ -618,8 +721,6 @@ private struct SoundPicker: View {
         let sounds = Settings.sounds.map { sound in
             (title: sound == Settings.defaultSound(state) ? "\(sound) (default)" : sound, value: sound)
         }
-        // ponytail: the selector's menu doesn't scroll; these 15 rows are about 450 pt, cut off where neither side of
-        // the chip has that room. Let the menu kind scroll (Selector.swift) if a screen that short turns up.
         SettingChoice(
             id: "sound-" + state.rawValue, choices: [sounds, [(title: "None", value: "")]],
             selection: Binding(
@@ -631,7 +732,8 @@ private struct SoundPicker: View {
     }
 }
 
-private struct ControlBarPage: View {
+/// The inbox and the control bar: where the bar sits, how answers and asks behave, and the bar's agents.
+private struct InboxPage: View {
     @Bindable var settings: Settings
     let store: Store
     let inbox: InboxController
@@ -640,22 +742,58 @@ private struct ControlBarPage: View {
     @State private var editing: String?
     @State private var draft = ""
     @FocusState private var focused: Bool
+    /// "Never", as minutes: ten years.
+    static let never = 10 * 365 * 1440
+
     var body: some View {
         Sections {
+            SettingsSection(title: "Control bar") {
+                Rows {
+                    SettingRow(title: "Show the control bar", detail: "Off, asks reach you in Zero's window, notifications and the Dock.") {
+                        Switch(isOn: $settings.showBar)
+                    }
+                }
+            }
             SettingsSection(title: "Placement") {
                 Rows {
                     SettingRow(title: "Follow the active screen", detail: "The bar moves to the screen you use.") {
                         Switch(isOn: $settings.followActiveScreen)
                     }
-                    SettingRow(title: "Bar in the window", detail: "The bar sits in Zero's window instead of at the screen's edge.") {
+                    SettingRow(title: "Show the bar in Zero's window", detail: "Rather than at the screen's edge.") {
                         SettingChoice(
                             id: "barDock", choices: [[("When it fills the screen", .auto), ("Always", .always), ("Never", .never)]],
                             selection: $settings.barDock)
                     }
                 }
+                .barOnly(settings.showBar)
             }
-            SettingsSection(title: "Agents in the bar") { list }
+            SettingsSection(title: "Answers") {
+                Rows {
+                    SettingRow(title: "Undo an answer", detail: "Esc takes it back within this time.") {
+                        // A time set before these choices stays among them.
+                        let seconds = Set([0, 1, 2, 3, 5, settings.takeBackSeconds]).sorted()
+                        SettingChoice(
+                            id: "takeBack", choices: [seconds.map { (title: $0 == 0 ? "Off" : String(format: "%g s", $0), value: $0) }],
+                            selection: $settings.takeBackSeconds)
+                    }
+                    SettingRow(title: "Unanswered asks expire after", detail: "When the agent didn't set its own expiry.") {
+                        let minutes = Set([15, 60, 240, 1440, Self.never, settings.defaultTTLMinutes]).sorted()
+                        SettingChoice(
+                            id: "askExpiry", choices: [minutes.map { (title: Self.duration($0), value: $0) }],
+                            selection: $settings.defaultTTLMinutes)
+                    }
+                }
+            }
+            SettingsSection(title: "Agents in the bar") { list.barOnly(settings.showBar) }
         }
+    }
+
+    /// 15 min, 1 h, 1 day, Never.
+    static func duration(_ minutes: Int) -> String {
+        if minutes >= never { return "Never" }
+        if minutes % 1440 == 0 { return minutes == 1440 ? "1 day" : "\(minutes / 1440) days" }
+        if minutes % 60 == 0 { return "\(minutes / 60) h" }
+        return "\(minutes) min"
     }
 
     @ViewBuilder private var list: some View {
@@ -705,61 +843,21 @@ private struct ControlBarPage: View {
     }
 }
 
-private struct ComposerPage: View {
-    @Bindable var settings: Settings
-    @State private var microphones: [(name: String, uid: String)] = []
-    var body: some View {
-        Sections {
-            SettingsSection(title: "Composer") {
-                Rows {
-                    SettingRow(title: "Suggest skills after /", detail: "Commands and skills as you type.") {
-                        Switch(isOn: $settings.suggestCommands)
-                    }
-                    SettingRow(title: "Suggest files after @", detail: "Files from the agent's project.") {
-                        Switch(isOn: $settings.suggestFiles)
-                    }
-                }
-            }
-            SettingsSection(title: "Inbox") {
-                Rows {
-                    SettingRow(title: "Take-back window", detail: "Esc takes an answer back within this time.") {
-                        HStack(spacing: 6) {
-                            Slider(value: $settings.takeBackSeconds, in: 0...5, step: 0.5).frame(width: 80)
-                            Text(String(format: "%.1f s", settings.takeBackSeconds)).font(.system(size: 12)).monospacedDigit().frame(
-                                width: 38, alignment: .trailing)
-                        }
-                    }
-                    SettingRow(title: "Move to the next ask", detail: "3 s after an answer lands.") {
-                        Switch(isOn: $settings.autoAdvance)
-                    }
-                    SettingRow(title: "Ask expiry", detail: "For asks that set none.") {
-                        Stepper("\(settings.defaultTTLMinutes) min", value: $settings.defaultTTLMinutes, in: 5...1440, step: 5).font(
-                            .system(size: 12))
-                    }
-                }
-            }
-            SettingsSection(title: "Dictation") {
-                Rows {
-                    SettingRow(
-                        title: "Microphone",
-                        detail: missing ? "Not connected; the system default is used." : "Used when you dictate a reply."
-                    ) {
-                        SettingChoice(
-                            id: "microphone",
-                            choices: [[(title: "System default", value: "")] + microphones.map { (title: $0.name, value: $0.uid) }],
-                            selection: Binding(
-                                get: { settings.inputDeviceUID ?? "" }, set: { settings.inputDeviceUID = $0.isEmpty ? nil : $0 }))
-                    }
-                }
-            }
+extension View {
+    /// A setting only the control bar uses: greyed out, with a line saying why, while the bar is off.
+    @ViewBuilder fileprivate func barOnly(_ shown: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            disabled(!shown).opacity(shown ? 1 : 0.5)
+            if !shown { Text("The control bar is off.").font(.system(size: 12)).foregroundStyle(.secondary) }
         }
-        .onAppear { microphones = Dictation.inputDevices() }
     }
-    private var missing: Bool { settings.inputDeviceUID.map { uid in !microphones.contains { $0.uid == uid } } ?? false }
 }
 
-/// How agents run and reach Zero, and where their tasks are.
+/// How agents run and reach Zero: what everyone meets first, then stuck commands, then what few change, folded.
 private struct AgentsPage: View {
+    @Bindable var settings: Settings
+    @AppStorage("settingsAgentsAdvanced") private var advanced = false
+
     var body: some View {
         Sections {
             SettingsSection(title: "Setup") { PluginRow() }
@@ -771,43 +869,56 @@ private struct AgentsPage: View {
                     ) {
                         ArchiveCompletedPicker()
                     }
-                    SettingRow(
-                        title: "Agents' own subagents",
-                        detail:
-                            "Off, agents hand work to Zero workers, which you see, steer and stop here. On, Claude and Codex may also use their own, which you can't. From each task's next start."
-                    ) {
-                        SubagentsSwitch()
+                    SettingRow(title: "Terminal app", detail: "Where Open in Terminal takes a task, and a running command's output.") {
+                        TerminalAppPicker()
                     }
-                    BuildCacheRow()
-                    SettingRow(
-                        title: "Compact context at",
-                        detail:
-                            "Agents summarise their conversation once it reaches this size, so each turn sends less. Claude Code and Codex; OpenCode keeps its own. Applies to tasks as they start."
-                    ) {
-                        CompactWindowPicker()
-                    }
-                    SettingRow(
-                        title: "Where tasks run",
-                        detail:
-                            "A command printing [{\"ticket\": \"ENG-1\", \"place\": \"my-bench\"}], run in your login shell every five minutes. Each task's Where is its place, by ticket, in place of its folder."
-                    ) {
-                        PlacesCommandField()
+                    SettingRow(title: "Suggest files after @", detail: "Files from the task's project as you type.") {
+                        Switch(isOn: $settings.suggestFiles)
                     }
                 }
             }
             SettingsSection(title: "Stuck commands") { StuckCommandsRows() }
+            SettingsSection(
+                title: "Advanced",
+                accessory: AnyView(
+                    GhostButton(title: advanced ? "Hide" : "Show", icon: "chevron-down", open: advanced) { advanced.toggle() })
+            ) {
+                if advanced {
+                    Rows {
+                        SettingRow(
+                            title: "Let agents use their own subagents",
+                            detail: "Off: they hand work to Zero workers, which you can see and stop. From each task's next start."
+                        ) {
+                            SubagentsSwitch()
+                        }
+                        SettingRow(
+                            title: "Summarise conversations at",
+                            detail: "Smaller turns, less usage. Claude Code and Codex, from each task's next start."
+                        ) {
+                            CompactWindowPicker()
+                        }
+                        BuildCacheRow()
+                        SettingRow(
+                            title: "Task places command",
+                            detail: "A command that tells Zero which folder each ticket's task runs in.",
+                            more: ("How it works", URL(string: "https://withzero.dev/docs/settings#agents")!)
+                        ) {
+                            PlacesCommandField()
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
 /// What Zero does about a command that runs well past its usual time (learned per project, or what its agent said with
 /// `zero expect`) with no output and no CPU: tells the user, stops it (its agent told why, so it carries on), or doesn't
-/// look. zerod's setting, so it holds while the app is closed.
+/// look; how it tells, in a dialog. zerod's setting, so it holds while the app is closed.
 private struct StuckCommandsRows: View {
     @State private var settings = StuckCommands()
-    @State private var never = ""
     @State private var link = try? ZerodLink()
-    @FocusState private var focused: Bool
+    @State private var editing = false
 
     var body: some View {
         Rows {
@@ -822,57 +933,90 @@ private struct StuckCommandsRows: View {
                         [(title: "Tell me", value: StuckCommands.When.tell), (title: "Stop it", value: .stop)],
                         [(title: "Never check", value: .never)],
                     ],
-                    selection: binding(\.when))
+                    selection: Binding(
+                        get: { settings.when },
+                        set: {
+                            settings.when = $0; save()
+                        }))
             }
-            Group {
-                SettingRow(title: "Hung after", detail: "No output and no CPU for this long.") {
-                    SettingChoice(
-                        id: "stuckHung", choices: [[1.0, 3, 5, 10, 15].map { (title: "\(Int($0)) min", value: $0) }],
-                        selection: binding(\.hungMinutes))
-                }
-                SettingRow(title: "Past its usual time", detail: "How many times its usual time, and never sooner than the least.") {
-                    HStack(spacing: 4) {
-                        SettingChoice(
-                            id: "stuckTimes", choices: [[2.0, 3, 5, 10].map { (title: "\(Int($0))×", value: $0) }],
-                            selection: binding(\.times))
-                        SettingChoice(
-                            id: "stuckFloor", choices: [[1.0, 3, 5, 10, 30].map { (title: "at least \(Int($0)) min", value: $0) }],
-                            selection: binding(\.floorMinutes))
-                    }
-                }
-                SettingRow(
-                    title: "Never stop", detail: "Commands Zero leaves running, by any part of them, comma-separated: migrate, deploy."
-                ) {
-                    TextField("", text: $never, prompt: Text("migrate"))
-                        .textFieldStyle(.dialog).font(.system(size: 12).monospaced()).frame(width: 200)
-                        .focused($focused)
-                        .onSubmit(saveNever)
-                        .onChange(of: focused) { if !focused { saveNever() } }
-                }
+            if settings.when != .never {
+                SettingRow(title: "Thresholds", detail: thresholds) { RowButton(title: "Change…") { editing = true } }
             }
-            .disabled(settings.when == .never).opacity(settings.when == .never ? 0.5 : 1)
         }
         .task {
             guard let kept = try? await link?.stuckCommands() else { return }
             settings = kept
-            never = kept.never.joined(separator: ", ")
+        }
+        .zeroDialog(isPresented: $editing) {
+            StuckThresholdsSheet(settings: settings) { changed in
+                settings = changed
+                save()
+            }
         }
     }
 
-    private func binding<Value>(_ key: WritableKeyPath<StuckCommands, Value>) -> Binding<Value> {
-        Binding(
-            get: { settings[keyPath: key] },
-            set: { chosen in
-                settings[keyPath: key] = chosen
-                let settings = settings
-                Task { try? await link?.setStuckCommands(settings) }
-            })
+    private var thresholds: String {
+        let never = settings.never.isEmpty ? "" : " Never stops: \(settings.never.joined(separator: ", "))."
+        return
+            "Hung after \(Int(settings.hungMinutes)) min; past \(Int(settings.times))× its usual time, at least \(Int(settings.floorMinutes)) min.\(never)"
     }
 
-    private func saveNever() {
-        let patterns = never.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        guard patterns != settings.never else { return }
-        binding(\.never).wrappedValue = patterns
+    private func save() {
+        let settings = settings
+        Task { try? await link?.setStuckCommands(settings) }
+    }
+}
+
+/// When a command counts as stuck, and the ones Zero never stops.
+private struct StuckThresholdsSheet: View {
+    @State var settings: StuckCommands
+    let save: (StuckCommands) -> Void
+    @State private var never = ""
+    @Environment(\.closeDialog) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            DialogTitle(text: "Stuck commands")
+            row("Hung after", "No output and no CPU for this long.") {
+                SettingChoice(
+                    id: "stuckHung", choices: [[1.0, 3, 5, 10, 15].map { (title: "\(Int($0)) min", value: $0) }],
+                    selection: $settings.hungMinutes)
+            }
+            row("Past its usual time", "How many times its usual time, and never sooner than the least.") {
+                HStack(spacing: 4) {
+                    SettingChoice(
+                        id: "stuckTimes", choices: [[2.0, 3, 5, 10].map { (title: "\(Int($0))×", value: $0) }], selection: $settings.times)
+                    SettingChoice(
+                        id: "stuckFloor", choices: [[1.0, 3, 5, 10, 30].map { (title: "at least \(Int($0)) min", value: $0) }],
+                        selection: $settings.floorMinutes)
+                }
+            }
+            DialogPart(title: "Never stop commands containing") {
+                TextField("", text: $never, prompt: Text("migrate, deploy")).textFieldStyle(.dialog).font(.system(size: 12).monospaced())
+            }
+            HStack {
+                Spacer()
+                DialogButton(title: "Cancel") { dismiss() }
+                DialogButton(title: "Save", kind: .primary) {
+                    settings.never = never.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                    save(settings)
+                    dismiss()
+                }
+            }
+        }
+        .frame(width: 460)
+        .onAppear { never = settings.never.joined(separator: ", ") }
+    }
+
+    private func row(_ title: String, _ detail: String, @ViewBuilder control: () -> some View) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 13, weight: .medium))
+                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            control()
+        }
     }
 }
 
@@ -925,27 +1069,27 @@ private struct BuildCacheRow: View {
     @State private var link = try? ZerodLink()
 
     var body: some View {
-        SettingRow(title: "Shared build cache", detail: detail) {
-            Switch(
-                isOn: Binding(
-                    get: { on },
-                    set: { chosen in
-                        on = chosen
-                        Task { try? await link?.setBuildCache(chosen) }
-                    })
-            )
+        SettingRow(title: "Shared build cache", detail: "Agents' copies of a project reuse each other's compiled dependencies.") {
+            HStack(spacing: 8) {
+                // What this Mac lacks for it: Zero passes the tools, never installs them.
+                ForEach(tools.filter { !$0.found }, id: \.tool) { missing in
+                    StatePill(text: "needs \(missing.tool)", color: .orange)
+                        .tip("\(missing.use) needs it: brew install \(missing.tool)")
+                }
+                Switch(
+                    isOn: Binding(
+                        get: { on },
+                        set: { chosen in
+                            on = chosen
+                            Task { try? await link?.setBuildCache(chosen) }
+                        }))
+            }
         }
         .task {
             guard let kept = try? await link?.buildCache() else { return }
             on = kept.on
             tools = kept.tools
         }
-    }
-
-    private var detail: String {
-        let found = tools.map { $0.found ? "\($0.use) through \($0.tool)." : "\($0.use) needs \($0.tool): brew install \($0.tool)." }
-        return (["Agents' copies of a project reuse each other's compiled dependencies. From each task's next start."] + found)
-            .joined(separator: " ")
     }
 }
 
@@ -971,7 +1115,8 @@ private struct CompactWindowPicker: View {
             SettingChoice(
                 id: "compactWindow",
                 choices: [
-                    [(title: "Off", value: 0)], Self.sizes.map { (title: "\($0 / 1000)k", value: $0) }, [(title: "Other", value: -1)],
+                    [(title: "CLI's default", value: 0)], Self.sizes.map { (title: "\($0 / 1000)k", value: $0) },
+                    [(title: "Other", value: -1)],
                 ],
                 selection: Binding(
                     get: { choice },
@@ -1027,6 +1172,7 @@ private struct BrowserRows: View {
     @State private var connected: [String]?
     @State private var folder: String?
     @State private var blocked: [String] = []
+    @State private var dialogs = false
     @State private var adding = ""
     /// Safari tried: nil not yet, "" fine, else why not.
     @State private var safari: String?
@@ -1062,7 +1208,7 @@ private struct BrowserRows: View {
             SettingsSection(title: "Safari") {
                 Rows {
                     SettingRow(
-                        title: "Safari's automation windows",
+                        title: "Let agents use Safari",
                         detail: safari.map { $0.isEmpty ? "Working · comparisons get a signed-out Safari window" : $0 }
                             ?? "For comparing pages: a signed-out Safari window with real clicks"
                     ) {
@@ -1070,10 +1216,28 @@ private struct BrowserRows: View {
                     }
                 }
             }
+            SettingsSection(title: "Dialogs") {
+                Rows {
+                    SettingRow(
+                        title: "Replace pages' dialogs in agents' tabs (experimental)",
+                        detail:
+                            "A page's alert, confirm or prompt answers at once and is told to the agent, so its window never comes forward"
+                    ) {
+                        Switch(
+                            isOn: Binding(
+                                get: { dialogs },
+                                set: { on in
+                                    dialogs = on
+                                    Task { await workspace.replaceDialogs(on) }
+                                }))
+                    }
+                }
+            }
             SettingsSection(title: "Blocked sites") { sites }
         }
         .task {
             blocked = await workspace.blockedSites()
+            dialogs = await workspace.replacesDialogs()
             while !Task.isCancelled {
                 connected = await workspace.browsers()
                 try? await Task.sleep(for: .seconds(3))
@@ -1258,14 +1422,11 @@ private struct IconButton: View {
 
 /// The folders Zero's own agents start in. Each runs in a terminal of its own, so it keeps running whether or not
 /// Zero is open.
-/// Projects and drop folders: where agents start, and where asks arrive as files. Each folder a row with a name of
-/// the user's choosing (its own until then); what's done to one, in its menu.
+/// Projects: where agents start. Each folder a row with a name of the user's choosing (its own until then); what's done to one, in its menu.
 private struct FoldersPage: View {
-    @Bindable var settings: Settings
     let inbox: InboxController
     @State private var folders = Projects.folders
     @State private var renaming: Folder?
-    @State private var addingDrop = false
     /// Bumped when a name changes: the rows read names from UserDefaults.
     @State private var named = 0
 
@@ -1284,7 +1445,7 @@ private struct FoldersPage: View {
                         }
                         .padding(.horizontal, 18).frame(height: 44)
                         .tip((folder as NSString).abbreviatingWithTildeInPath)
-                        .rowMenu("folder-\(folder)") {
+                        .rowMenu("folder-\(folder)", first: index == 0, last: index == folders.count - 1) {
                             ComposerRows.menu([
                                 [
                                     ("rename", "Rename…", "pen", false, { renaming = Folder(path: folder) }),
@@ -1299,25 +1460,7 @@ private struct FoldersPage: View {
                     }
                 }
                 .id(named)
-            }
-            SettingsSection(
-                title: "Drop folders", accessory: AnyView(GhostButton(title: "Add drop folder", icon: "plus") { addingDrop = true })
-            ) {
-                card(empty: settings.dropPatterns.isEmpty) {
-                    ForEach(Array(settings.dropPatterns.enumerated()), id: \.element) { index, pattern in
-                        if index > 0 { Divider().padding(.leading, 18) }
-                        HStack {
-                            Text(pattern).font(.system(size: 12, design: .monospaced)).lineLimit(1).truncationMode(.middle)
-                            Spacer()
-                        }
-                        .padding(.horizontal, 18).frame(height: 44)
-                        .rowMenu("drop-\(pattern)") {
-                            ComposerRows.menu([
-                                [("remove", "Remove", "trash", false, { settings.dropPatterns.removeAll { $0 == pattern } })]
-                            ])
-                        }
-                    }
-                }
+                Text("The folders New task offers.").font(.system(size: 12)).foregroundStyle(.secondary)
             }
         }
         .zeroDialog(item: $renaming) { folder in
@@ -1327,7 +1470,6 @@ private struct FoldersPage: View {
                 inbox.loadSpawnChoices(force: true)
             }
         }
-        .zeroDialog(isPresented: $addingDrop) { DropFolderForm(settings: settings) }
     }
 
     private func card<Content: View>(empty: Bool, @ViewBuilder rows: () -> Content) -> some View {
@@ -1338,7 +1480,6 @@ private struct FoldersPage: View {
             }
             rows()
         }
-        .clipShape(RoundedRectangle(cornerRadius: 14))
         .bleedingCard()
     }
 
@@ -1353,154 +1494,6 @@ private struct FoldersPage: View {
         folders = list
         UserDefaults.standard.set(list, forKey: Projects.key)
         inbox.loadSpawnChoices(force: true)
-    }
-}
-
-/// A drop folder added: a pattern of synced folders (~/remotes/*/.zero), typed or chosen.
-private struct DropFolderForm: View {
-    @Bindable var settings: Settings
-    @Environment(\.closeDialog) private var dismiss
-    @State private var pattern = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
-                DialogTitle(text: "Add a drop folder")
-                Text("Agents on another machine reach you through files in synced folders that match it.")
-                    .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-            HStack(spacing: 8) {
-                TextField("", text: $pattern, prompt: Text("~/remotes/*/.zero")).textFieldStyle(.dialog).font(
-                    .system(size: 13, design: .monospaced)
-                ).onSubmit(add)
-                DialogButton(title: "Choose…") {
-                    let panel = NSOpenPanel()
-                    panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
-                    if panel.runModal() == .OK, let url = panel.url {
-                        pattern = url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
-                    }
-                }
-            }
-            HStack {
-                Spacer()
-                DialogButton(title: "Cancel") { dismiss() }
-                DialogButton(title: "Add", kind: .primary, enabled: !pattern.trimmingCharacters(in: .whitespaces).isEmpty, action: add)
-            }
-        }
-        .frame(width: 440)
-    }
-
-    private func add() {
-        let pattern = pattern.trimmingCharacters(in: .whitespaces)
-        guard !pattern.isEmpty else { return }
-        if !settings.dropPatterns.contains(pattern) { settings.dropPatterns.append(pattern) }
-        dismiss()
-    }
-}
-
-/// Where references in messages open: issues in Linear's app, channels and threads in Slack.
-private struct LinksPage: View {
-    @AppStorage(GitHubLinks.key) private var github = true
-    @AppStorage(LinearLinks.enabledKey) private var linear = true
-    @AppStorage(LinearLinks.key) private var linearInApp = true
-    let workspace: Workspace?
-    @State private var connecting = false
-
-    var body: some View {
-        Sections {
-            SettingsSection(title: "GitHub", icon: AnyView(Integration.github.icon(size: 14).foregroundStyle(.secondary))) {
-                Rows {
-                    SettingRow(
-                        title: "Link pull requests and commits", detail: "repo#123, #123 and commit hashes in messages open on GitHub."
-                    ) { Switch(isOn: $github) }
-                }
-            }
-            SettingsSection(title: "Linear", icon: AnyView(Integration.linear.icon(size: 14).foregroundStyle(.secondary))) {
-                Rows {
-                    SettingRow(title: "Link issues", detail: "ABC-123 in messages opens the issue.") { Switch(isOn: $linear) }
-                    SettingRow(
-                        title: "Open issues in the Linear app",
-                        detail: LinearLinks.installed ? "Rather than the browser." : "Linear's app isn't installed."
-                    ) {
-                        Switch(isOn: Binding(get: { linear && LinearLinks.installed && linearInApp }, set: { linearInApp = $0 })).disabled(
-                            !linear || !LinearLinks.installed)
-                    }
-                }
-            }
-            SettingsSection(
-                title: "Slack", icon: AnyView(Integration.slack.icon(size: 14).foregroundStyle(.secondary)),
-                accessory: workspace == nil ? nil : AnyView(GhostButton(title: "Connect Slack", icon: "plus") { connecting = true })
-            ) {
-                Rows {
-                    if Slack.shared.teams.isEmpty {
-                        SettingRow(title: "No workspace connected", detail: "Once one is, its #channels and message links open in Slack.") {
-                            EmptyView()
-                        }
-                    }
-                    ForEach(Slack.shared.teams, id: \.team.id) { connected in
-                        SettingRow(
-                            title: connected.team.name,
-                            detail: "\(connected.team.domain).slack.com: its #channels and message links open in Slack."
-                        ) {
-                            if let workspace {
-                                DialogButton(title: "Disconnect") { Task { await workspace.disconnectSlack(team: connected.team.id) } }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        .zeroDialog(isPresented: $connecting) { if let workspace { SlackConnect(workspace: workspace) } }
-    }
-}
-
-/// Connecting a Slack workspace: Zero's Slack app made in it from the manifest, then the user token Slack shows.
-private struct SlackConnect: View {
-    let workspace: Workspace
-    @Environment(\.closeDialog) private var dismiss
-    @State private var token = ""
-    @State private var waiting = false
-    @State private var problem: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
-                DialogTitle(text: "Connect Slack")
-                Text("Zero reads channels, messages and names; it posts nothing. Each workspace gets Zero's own Slack app.")
-                    .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-            DialogPart(title: "1. Make Zero's app in the workspace") {
-                HStack {
-                    Text("Slack opens with it filled in: Create, then Install to Workspace.").font(.system(size: 12.5)).fixedSize(
-                        horizontal: false, vertical: true)
-                    Spacer()
-                    DialogButton(title: "Open Slack") { NSWorkspace.shared.open(Slack.createAppURL) }
-                }
-            }
-            DialogPart(title: "2. Paste its User OAuth Token") {
-                SecureField("", text: $token, prompt: Text("xoxp-…")).textFieldStyle(.dialog).onSubmit(connect)
-            }
-            if let problem { Text(problem).font(.system(size: 12)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
-            HStack {
-                Spacer()
-                DialogButton(title: "Cancel") { dismiss() }
-                DialogButton(
-                    title: waiting ? "Connecting…" : "Connect", kind: .primary,
-                    enabled: !waiting && !token.trimmingCharacters(in: .whitespaces).isEmpty, action: connect)
-            }
-        }
-        .frame(width: 440)
-    }
-
-    private func connect() {
-        guard !token.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        waiting = true
-        problem = nil
-        Task {
-            problem = await workspace.connectSlack(token: token)
-            waiting = false
-            if problem == nil { dismiss() }
-        }
     }
 }
 

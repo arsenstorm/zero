@@ -100,7 +100,6 @@ import ZeroCore
             return
         }
         NSApp.setActivationPolicy(.accessory)
-        Task { await Linear.shared.refresh() }
         Task { await CustomModels.shared.load() }
         HealthMonitor.shared.start()
         // Before connecting: launchd starts zerod, rather than the app (ZerodLink.ensureRunning).
@@ -276,11 +275,11 @@ import ZeroCore
         }
     }
 
-    /// Zero is in the Dock only while one of its windows (onboarding, the workspace) is open; otherwise it is a menu
-    /// bar app with its bar.
+    /// Zero is in the Dock while one of its windows (onboarding, the workspace) is open, or always without the bar (its
+    /// badge and icon are then the way back); otherwise it is a menu bar app with its bar.
     private func updateDock() {
         let windowOpen = [onboardingWindow, workspaceWindow].contains { $0?.isVisible == true }
-        let policy: NSApplication.ActivationPolicy = windowOpen ? .regular : .accessory
+        let policy: NSApplication.ActivationPolicy = windowOpen || !settings.showBar ? .regular : .accessory
         if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
     }
 
@@ -322,6 +321,8 @@ import ZeroCore
         inbox.suggestFiles = settings.suggestFiles
         if hotKey != nil { registerHotKey() }
         placeBar()
+        showBar()
+        updateDock()
     }
 
     private func makeStatusItem() {

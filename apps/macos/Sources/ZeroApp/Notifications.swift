@@ -106,7 +106,7 @@ import ZeroCore
     func ask(_ ask: Ask, agent: String) {
         guard settings.notifyNeedsYou else { return }
         if NSApp.isActive && atMac {
-            if settings.notificationSounds { Chime.play("Glass") }
+            if !settings.sound(for: .needsYou).isEmpty { Chime.play("Glass") }
             return
         }
         let alert = TaskAlerts.ask(ask, agent: agent)
@@ -139,7 +139,7 @@ import ZeroCore
         if present {
             let looking = navigation.place == .task(alert.session)
             let sound = settings.sound(for: alert.state)
-            if settings.notificationSounds && !sound.isEmpty && (looking || alert.kind != .finished) { Chime.play(sound) }
+            if !sound.isEmpty && (looking || alert.kind != .finished) { Chime.play(sound) }
             held[alert.session] = (alert, Date())
             return
         }
@@ -149,13 +149,13 @@ import ZeroCore
     /// Away from the Mac (or not in Zero): a notification on it, and on the phones.
     private func notifyAway(_ alert: TaskAlert) {
         held[alert.session] = nil
-        Phones.shared.push(alert, sound: settings.notificationSounds ? settings.sound(for: alert.state) : "")
+        Phones.shared.push(alert, sound: settings.sound(for: alert.state))
         let content = UNMutableNotificationContent()
         content.title = alert.title
         content.body = alert.body
         // The notification's own sound, so Focus and the system's settings for Zero quiet it as they do any app's.
         let sound = settings.sound(for: alert.state)
-        if settings.notificationSounds && !sound.isEmpty {
+        if !sound.isEmpty {
             content.sound = UNNotificationSound(named: UNNotificationSoundName(sound + ".aiff"))
         }
         center.add(UNNotificationRequest(identifier: alert.session, content: content, trigger: nil))

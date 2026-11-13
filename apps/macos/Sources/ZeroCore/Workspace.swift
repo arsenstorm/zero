@@ -47,12 +47,13 @@ public final class Workspace {
     /// The task the user asked to archive, waiting on their confirmation.
     public var archiving: String?
 
-    /// GitHub and Linear: their settings and views, and what each view showed last ("github/<view>"), or why not.
+    /// Who GitHub, Linear and Slack are connected as, and what makes their references in messages links.
     public private(set) var integrations: IntegrationState? {
-        didSet { if integrations?.slack != oldValue?.slack { Slack.shared.apply(integrations?.slack ?? []) } }
+        didSet {
+            if integrations?.slack != oldValue?.slack { Slack.shared.apply(integrations?.slack ?? []) }
+            LinearTeams.known = integrations?.linearTeams ?? [:]
+        }
     }
-    public private(set) var items: [String: [IntegrationItem]] = [:]
-    public private(set) var itemErrors: [String: String] = [:]
     /// Bumped whenever zerod says a scratchpad changed: what shows pads reads them again.
     public private(set) var padsVersion = 0
     /// The scratchpads and their folders, as zerod last listed them.
@@ -75,9 +76,6 @@ public final class Workspace {
         }
     }
     public var currentWorkspace: ZerodLink.Workspace { workspaces.first { $0.id == current } ?? workspaces[0] }
-
-    /// Views being fetched again, while what they last showed stays up.
-    public private(set) var refreshing: Set<String> = []
 
     /// What each running task's processes use (zerod's uses.rs), by session; a parked task isn't in it.
     public private(set) var uses: [String: TaskUses] = [:]
@@ -287,6 +285,7 @@ public final class Workspace {
                     // Opened while zerod restarts (an install reopens the app first): said straight away.
                     if (try? await fresh.restartStatus())?.restarting == true { followUpdate() }
                     await loadWorkspaces(); await loadIntegrations()
+                    Task { await refreshLinearTeams() }
                 }
             }
             // Without one, looked for again soon: zerod back from a restart is picked up within a moment. With one,
@@ -345,14 +344,6 @@ public final class Workspace {
     }
 
     // What the window asks of zerod.
-
-    /// An issue's (or pull request's) task, started from its view's template if it has none; the view is fetched
-    /// again so its row shows the task.
-    public func startTask(_ integration: String, view: String, item: IntegrationItem) async -> StartedTask? {
-        let started = await attempt { try await $0.startTask(integration, view: view, item: item) }
-        if started != nil { await refreshView(integration, view: view); await refreshBoard() }
-        return started
-    }
 
     /// Puts a task away with its workers (zerod takes them with it, so they come back with it); the board drops them
     /// at once, the mirror as zerod says each is gone.
@@ -633,6 +624,8 @@ public final class Workspace {
     }
     public func blockedSites() async -> [String] { (try? await link?.browserSettings()) ?? [] }
     public func saveBlockedSites(_ sites: [String]) async { _ = await attempt { try await $0.saveBrowserSettings(blocked: sites) } }
+    public func replacesDialogs() async -> Bool { (try? await link?.browserDialogs()) ?? false }
+    public func replaceDialogs(_ on: Bool) async { _ = await attempt { try await $0.saveBrowserDialogs(on) } }
 
     public func loadFollowing() async {
         guard let list = try? await link?.following() else { return }
@@ -750,46 +743,10 @@ public final class Workspace {
         }
     }
 
-    public func setIntegration(_ integration: String, enabled: Bool) async {
-        if let state = await attempt({ try await $0.setIntegration(integration, enabled: enabled) }) { integrations = state }
-    }
-
-    public func saveView(_ integration: String, view: some Encodable & Sendable) async {
-        if let state = await attempt({ try await $0.saveView(integration, view: view) }) { integrations = state }
-    }
-
-    public func orderViews(_ integration: String, ids: [String]) async {
-        if let state = await attempt({ try await $0.orderViews(integration, ids: ids) }) { integrations = state }
-    }
-
-    public func deleteView(_ integration: String, view: String) async {
-        if let state = await attempt({ try await $0.deleteView(integration, view: view) }) { integrations = state }
-    }
-
-    public func refreshView(_ integration: String, view: String) async {
-        let key = "\(integration)/\(view)"
-        guard let link else { return }
-        // Stale while it revalidates: what the view last showed (kept by zerod), then the fresh rows.
-        if items[key] == nil, let kept = try? await link.cachedItems(integration, view: view) { items[key] = kept }
-        refreshing.insert(key)
-        defer { refreshing.remove(key) }
-        do {
-            let rows = try await link.viewItems(integration, view: view)
-            if rows != items[key] { items[key] = rows }
-            itemErrors[key] = nil
-        } catch {
-            itemErrors[key] = error.localizedDescription
-        }
-    }
-
-    /// Linear's sign-in page; zerod finishes the connection when it comes back.
-    /// Linear's teams and their own states, for picking a view's; nil until Linear is connected.
-    public private(set) var linearTeams: [LinearTeam]?
-
-    /// What zerod last heard of Linear's teams, then what Linear says now.
-    public func loadLinearTeams() async {
-        if linearTeams == nil, let kept = try? await link?.linearTeams(cached: true) { linearTeams = kept }
-        if let fresh = try? await link?.linearTeams() { linearTeams = fresh }
+    /// Linear's teams again, so issue ids of a team made since link too.
+    public func refreshLinearTeams() async {
+        guard integrations?.linear != nil, let state = try? await link?.linearTeams() else { return }
+        integrations = state
     }
 
     public func connectLinear() async -> URL? { await attempt { try await $0.connectLinear() } }

@@ -26,7 +26,6 @@ import Testing
     #expect(
         References.find(in: "ENG-9559 and ABC-12", repo: nil, linear: ["ABC": "personal"], linearApp: false)
             .map(\.url.absoluteString) == ["https://linear.app/personal/issue/ABC-12"])
-    #expect(Linear.base64URL(Data([0xfb, 0xff])) == "-_8")
 }
 
 @Test func remotesParseToOwnerAndName() {

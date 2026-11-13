@@ -189,94 +189,16 @@ public struct QuestionOption: Decodable, Equatable, Sendable {
     public init(label: String, description: String?) { self.label = label; self.description = description }
 }
 
-/// Integrations as zerod keeps them (crates/zerod/src/integrations.rs): GitHub and Linear, each on or off with its views,
-/// and the connected Linear workspace.
+/// Integrations as zerod keeps them (crates/zerod/src/integrations.rs): who each is connected as.
 public struct IntegrationState: Decodable, Equatable, Sendable {
-    public var settings: IntegrationSettings
+    /// The connected Linear workspace's name.
     public var linear: String?
+    /// Its team keys to its URL key ("ENG" → "acme"), where issue ids in messages link.
+    public var linearTeams: [String: String]?
     /// Who the GitHub CLI is signed in as; nil when it isn't (or isn't installed).
     public var github: String?
-    /// The Slack workspace connected and its channels' ids; nil when none is.
-    /// Each Slack workspace connected.
+    /// Each Slack workspace connected, with its channels' ids.
     public var slack: [Slack.State]?
-}
-
-public struct IntegrationSettings: Decodable, Equatable, Sendable {
-    public var github: IntegrationSource<GitHubView>
-    public var linear: IntegrationSource<LinearView>
-}
-
-public struct IntegrationSource<View: Decodable & Equatable & Sendable>: Decodable, Equatable, Sendable {
-    public var enabled: Bool
-    public var views: [View]
-}
-
-/// A GitHub view: a search query.
-public struct GitHubView: Codable, Equatable, Sendable, Identifiable {
-    public var id: String
-    public var name: String
-    public var query: String
-    public var start: TaskStart?
-    public init(id: String = "", name: String, query: String, start: TaskStart? = nil) {
-        self.id = id; self.name = name; self.query = query; self.start = start
-    }
-}
-
-/// How a view's items start tasks (crates/zerod/src/integrations.rs): the folder, the agent, and a prompt that fills in
-/// {key}, {title}, {url} and {state}.
-public struct TaskStart: Codable, Equatable, Sendable {
-    public var cwd: String
-    public var prompt: String
-    public var provider: String?
-    public var model: String?
-    public var effort: String?
-    public var permissions: String?
-    public init(
-        cwd: String, prompt: String, provider: String? = nil, model: String? = nil, effort: String? = nil, permissions: String? = nil
-    ) {
-        self.cwd = cwd; self.prompt = prompt; self.provider = provider; self.model = model; self.effort = effort;
-        self.permissions = permissions
-    }
-}
-
-/// A task started from an item, or the one it already had, with the task's state pad.
-public struct StartedTask: Decodable, Sendable {
-    public var session: String
-    public var existing: Bool
-    public var pad: String?
-}
-
-/// A Linear view: whose issues ("me", "anyone", "nobody"), which teams and which state types (none means all).
-public struct LinearView: Codable, Equatable, Sendable, Identifiable {
-    public var id: String
-    public var name: String
-    public var assignee: String
-    public var teams: [String]
-    public var states: [String]
-    /// The teams' own states by name; when any are picked they stand in for `states` (their types).
-    public var stateNames: [String]
-    public var start: TaskStart?
-    public init(
-        id: String = "", name: String, assignee: String = "me", teams: [String] = [],
-        states: [String] = ["backlog", "unstarted", "started"],
-        stateNames: [String] = [], start: TaskStart? = nil
-    ) {
-        self.id = id; self.name = name; self.assignee = assignee; self.teams = teams; self.states = states; self.stateNames = stateNames;
-        self.start = start
-    }
-}
-
-/// A Linear team and its own workflow states, in the order Linear lists them.
-public struct LinearTeam: Decodable, Sendable, Identifiable {
-    public struct State: Decodable, Sendable, Hashable {
-        public var name: String
-        public var type: String
-        public var color: String
-    }
-    public var key: String
-    public var name: String
-    public var states: [State]
-    public var id: String { key }
 }
 
 /// A scratchpad as zerod lists it (crates/zerod/src/pads.rs): a Markdown file under ~/.zero/scratchpads.
@@ -313,44 +235,6 @@ public struct Pad: Decodable, Equatable, Sendable {
 public struct PadList: Decodable, Equatable, Sendable {
     public var pads: [PadSummary]
     public var folders: [String]
-}
-
-/// One row of a view: a pull request or an issue.
-public struct IntegrationItem: Codable, Equatable, Sendable, Identifiable {
-    public var id: String
-    public var key: String
-    public var title: String
-    public var url: String
-    public var place: String
-    public var state: String
-    /// An issue's state's colour in Linear ("#f2c94c").
-    public var color: String?
-    public var checks: String?
-    public var review: String?
-    public var person: String?
-    public var priority: Int?
-    public var updated: String
-    /// An issue's state's type (started, triage…), which its icon shows.
-    public var kind: String?
-    /// An issue's labels, then its project.
-    public var tags: [IntegrationTag]?
-    /// The assignee's picture.
-    public var avatar: String?
-    public var created: String?
-    /// The task started from it, if one has been.
-    public var task: String?
-}
-
-extension IntegrationItem {
-    /// What its task is filed under, as zerod files it: an issue's key, a pull request's repository and number.
-    public var ticketKey: String { key.hasPrefix("#") ? place + key : key }
-}
-
-/// A label, or a project with its icon (an emoji's shortcode, ":fire:", or one of Linear's own names).
-public struct IntegrationTag: Codable, Equatable, Sendable, Hashable {
-    public var name: String
-    public var color: String?
-    public var icon: String?
 }
 
 /// One row of the board (crates/zerod/src/board.rs): a lead session with its workers folded in.
@@ -1271,6 +1155,11 @@ public final class ZerodLink: @unchecked Sendable {
         (try await call("gitCheck", ["args": ["login": login]]) as? [String: Any])?["title"] as? String
     }
 
+    public func gitTokenStatus() async throws -> GitTokenStatus {
+        let raw = try await call("gitTokenStatus")
+        return try JSONDecoder().decode(GitTokenStatus.self, from: JSONSerialization.data(withJSONObject: raw))
+    }
+
     /// The private key at `path` as the agents' signing key: zerod keeps its own copy. Gives its public half.
     public func takeGitKey(path: String) async throws -> String {
         ((try await call("gitKey", ["args": ["path": path]])) as? [String: Any])?["publicKey"] as? String ?? ""
@@ -1509,6 +1398,13 @@ public final class ZerodLink: @unchecked Sendable {
     }
     public func saveBrowserSettings(blocked: [String]) async throws {
         _ = try await call("saveBrowserSettings", ["browser": ["blocked": blocked]])
+    }
+    /// Whether pages' dialogs are replaced in agents' tabs (experimental).
+    public func browserDialogs() async throws -> Bool {
+        ((try await call("browserSettings")) as? [String: Any])?["dialogs"] as? Bool ?? false
+    }
+    public func saveBrowserDialogs(_ on: Bool) async throws {
+        _ = try await call("saveBrowserSettings", ["browser": ["dialogs": on]])
     }
 
     // Workspaces: the user's work split by who it's for (zerod's workspaces.rs). "zero" is always there.
@@ -1756,34 +1652,8 @@ public final class ZerodLink: @unchecked Sendable {
 
     // Integrations.
     public func integrations() async throws -> IntegrationState { try decode(IntegrationState.self, from: await call("integrations")) }
-    public func setIntegration(_ integration: String, enabled: Bool) async throws -> IntegrationState {
-        try decode(IntegrationState.self, from: await call("setIntegration", ["integration": integration, "enabled": enabled]))
-    }
-    public func saveView(_ integration: String, view: some Encodable) async throws -> IntegrationState {
-        let fields = try JSONSerialization.jsonObject(with: JSONEncoder().encode(view))
-        return try decode(IntegrationState.self, from: await call("saveView", ["integration": integration, "view": fields]))
-    }
-    public func orderViews(_ integration: String, ids: [String]) async throws -> IntegrationState {
-        try decode(IntegrationState.self, from: await call("orderViews", ["integration": integration, "ids": ids]))
-    }
-    public func deleteView(_ integration: String, view: String) async throws -> IntegrationState {
-        try decode(IntegrationState.self, from: await call("deleteView", ["integration": integration, "view": view]))
-    }
-    public func viewItems(_ integration: String, view: String) async throws -> [IntegrationItem] {
-        try decode([IntegrationItem].self, from: await call("viewItems", ["integration": integration, "view": view]))
-    }
-    /// What the view last showed, however long ago; nil before it has been fetched.
-    public func cachedItems(_ integration: String, view: String) async throws -> [IntegrationItem]? {
-        try decode([IntegrationItem]?.self, from: await call("viewItems", ["integration": integration, "view": view, "cached": true]))
-    }
-    public func linearTeams(cached: Bool = false) async throws -> [LinearTeam]? {
-        try decode([LinearTeam]?.self, from: await call("linearTeams", ["cached": cached]))
-    }
-    /// The item's task: the one it has, or a new one from its view's template.
-    public func startTask(_ integration: String, view: String, item: IntegrationItem) async throws -> StartedTask {
-        let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(item))
-        return try decode(StartedTask.self, from: await call("startTask", ["integration": integration, "view": view, "item": object]))
-    }
+    /// Linear's teams asked for again.
+    public func linearTeams() async throws -> IntegrationState { try decode(IntegrationState.self, from: await call("linearTeams")) }
     /// The page to open in the browser; zerod waits for Linear to come back.
     public func connectLinear() async throws -> URL {
         guard let url = ((try await call("connectLinear")) as? [String: Any])?["url"] as? String, let link = URL(string: url) else {
@@ -2030,7 +1900,14 @@ public struct Rewound: Decodable, Sendable {
     public let session: String?
 }
 
-/// The identity agents' Git commits and signs as (zerod git.rs): the user stays the author; this commits and signs.
+public struct GitTokenStatus: Decodable, Sendable {
+    public let configured: Bool
+    public let login: String?
+    public let expires: String?
+    public let error: String?
+}
+
+/// The identity agents' Git commits and signs as (zerod git.rs).
 public struct AgentGit: Codable, Equatable, Sendable {
     public var enabled = false
     /// The GitHub account that commits and signs; its name and noreply email are GitHub's.
@@ -2041,7 +1918,28 @@ public struct AgentGit: Codable, Equatable, Sendable {
     public var https = true
     /// Only agents in these folders; none, every folder.
     public var folders: [String] = []
+    public var agentsAuthor = false
+    public var coauthorName = ""
+    public var coauthorEmail = ""
+    public var scopedToken = false
     public init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, login, name, email, https, folders, agentsAuthor, coauthorName, coauthorEmail, scopedToken
+    }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try values.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        login = try values.decodeIfPresent(String.self, forKey: .login) ?? ""
+        name = try values.decodeIfPresent(String.self, forKey: .name) ?? ""
+        email = try values.decodeIfPresent(String.self, forKey: .email) ?? ""
+        https = try values.decodeIfPresent(Bool.self, forKey: .https) ?? true
+        folders = try values.decodeIfPresent([String].self, forKey: .folders) ?? []
+        agentsAuthor = try values.decodeIfPresent(Bool.self, forKey: .agentsAuthor) ?? false
+        coauthorName = try values.decodeIfPresent(String.self, forKey: .coauthorName) ?? ""
+        coauthorEmail = try values.decodeIfPresent(String.self, forKey: .coauthorEmail) ?? ""
+        scopedToken = try values.decodeIfPresent(Bool.self, forKey: .scopedToken) ?? false
+    }
 }
 
 /// Settings › Stuck commands: what Zero does about a command that runs well past its usual time with no output and no CPU.

@@ -45,7 +45,7 @@ struct WorkspaceView: View {
             }
         }
         .ignoresSafeArea()
-        // Behind the mark, everything the first screen needs: zerod and the inbox connected, the rail's integrations,
+        // Behind the mark, everything the first screen needs: zerod and the inbox connected, the integrations,
         // the sidebar's tasks, loop names for the pills, and the page the window opens on with its words already
         // styled, so nothing loads or reflows once the window shows.
         .task {
@@ -104,11 +104,10 @@ struct WorkspaceView: View {
 
     private var window: some View {
         HStack(spacing: 0) {
-            Rail(place: $navigation.place, homePlace: navigation.homePlace, workspace: workspace, inbox: inbox)
+            Rail(place: $navigation.place, homePlace: navigation.homePlace, inbox: inbox)
             Group {
                 switch navigation.place {
                 case .settings: settings()
-                case .integrations: IntegrationsPane(workspace: workspace)
                 case .pads, .pad: ScratchpadsPage(workspace: workspace, navigation: navigation)
                 case .loops, .loop: LoopsPage(workspace: workspace, navigation: navigation)
                 case .later, .laterItem: LaterPage(workspace: workspace, navigation: navigation)
@@ -118,12 +117,6 @@ struct WorkspaceView: View {
                         Rectangle().fill(Theme.stroke).frame(width: 1)
                         AsksPage(controller: inbox).frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.card)
                     }
-                case .integration(let name):
-                    IntegrationPage(
-                        workspace: workspace, integration: Integration(rawValue: name) ?? .github,
-                        edit: { Integration.edit(name, place: &navigation.place) },
-                        openTask: { navigation.place = .task($0) }
-                    ).id(name)
                 default:
                     HStack(spacing: 0) {
                         TasksSidebar(workspace: workspace, navigation: navigation)
@@ -252,36 +245,19 @@ private struct ArchiveDialog: View {
 /// The title bar adds however far the sidebar has been dragged from that.
 let pageStart: CGFloat = 48 + CGFloat(SidebarWidth.standard) + 1
 
-/// The outer rail: home at the top, then each integration that's switched on, in the order you put them (⌘-drag one,
-/// or right-click it); integrations and settings at the foot.
+/// The outer rail: home and Zero's pages at the top; integrations and settings at the foot.
 private struct Rail: View {
     @Binding var place: Navigation.Place
     /// Where Home was last (a task, say): what its icon goes back to.
     var homePlace: Navigation.Place = .home
-    let workspace: Workspace
     let inbox: InboxController
-    @AppStorage("railOrder") private var order = "github,linear"
-    @State private var dragging: Integration?
-    @State private var dragged: CGFloat = 0
-    @State private var command = NSEvent.modifierFlags.contains(.command)
-    @State private var monitor: Any?
-    /// One rail item and the gap after it.
-    private static let step: CGFloat = 38
 
     private var home: Bool {
         switch place {
-        case .inbox, .settings, .integrations, .integration, .pads, .pad, .loops, .loop, .later, .laterItem: false;
+        case .inbox, .settings, .pads, .pad, .loops, .loop, .later, .laterItem: false;
         default: true
         }
     }
-
-    /// Every integration in your order, those never placed after.
-    private var ranked: [Integration] {
-        let placed = order.split(separator: ",").compactMap { Integration(rawValue: String($0)) }
-        return placed + Integration.allCases.filter { !placed.contains($0) }
-    }
-
-    private var shown: [Integration] { ranked.filter { $0.enabled(in: workspace.integrations) } }
 
     var body: some View {
         VStack(spacing: 6) {
@@ -309,39 +285,12 @@ private struct Rail: View {
             item("note-3", selected: pads, help: "Scratchpads") { if !pads { place = .pads } }
             let loops = { if case .loop = place { true } else { place == .loops } }()
             item("animation-repeat", selected: loops, help: "Loops") { if !loops { place = .loops } }
-            let shown = shown
-            ForEach(Array(shown.enumerated()), id: \.element) { index, integration in
-                let selected = place == .integration(integration.rawValue)
-                Button {
-                    place = .integration(integration.rawValue)
-                } label: {
-                    integration.icon(size: 17).foregroundStyle(selected ? .primary : .secondary).frame(width: 32, height: 32)
-                }
-                .buttonStyle(Hovering(selected: selected, fill: Theme.railSelected, hover: Theme.railHover)).tip(integration.title)
-                .offset(y: dragging == integration ? held(index, of: shown.count) : shift(index, in: shown))
-                .zIndex(dragging == integration ? 1 : 0)
-                .animation(.spring(duration: 0.22), value: dragging == integration ? 0 : shift(index, in: shown))
-                .highPriorityGesture(drag(integration, from: index, of: shown.count), including: command ? .all : .subviews)
-                .zeroContextMenu("rail-\(integration.rawValue)") {
-                    [
-                        (index > 0 ? [MenuItem("Move up", "arrow-up") { move(integration, to: index - 1) }] : [])
-                            + (index < shown.count - 1 ? [MenuItem("Move down", "chevron-down") { move(integration, to: index + 1) }] : [])
-                            + [MenuItem("Edit views", "pen") { Integration.edit(integration.rawValue, place: &place) }],
-                        [
-                            MenuItem("Hide from the sidebar", "eye") {
-                                Task { await workspace.setIntegration(integration.rawValue, enabled: false) }
-                            }
-                        ],
-                    ]
-                }
-            }
             Spacer()
-            item("puzzle-piece", selected: place == .integrations, help: "Integrations") { place = .integrations }
             // Zero's own trouble (HealthMonitor), said quietly: a dot on Settings, which then opens on Health.
             let trouble = HealthMonitor.shared.trouble
             let help = trouble ? "Settings · Health has something to look at" : "Settings"
             item("gear", selected: place == .settings, help: help, shortcut: "⌘,") {
-                if trouble { SettingsView.requested = .health }
+                if trouble { SettingsView.requested = .about }
                 place = .settings
             }
             .overlay(alignment: .topTrailing) {
@@ -351,63 +300,6 @@ private struct Rail: View {
         }
         .padding(.top, 50).padding(.bottom, 12)
         .frame(width: 48)
-        // ⌘ held or not decides whether a drag moves an item or is a click.
-        .onAppear {
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
-                command = event.modifierFlags.contains(.command); return event
-            }
-        }
-        .onDisappear { if let monitor { NSEvent.removeMonitor(monitor) } }
-    }
-
-    /// Held ⌘: the item follows the pointer within the integrations' slots, the others making way as it passes, and it
-    /// lands in the slot it's let go over.
-    private func drag(_ integration: Integration, from index: Int, of count: Int) -> some Gesture {
-        DragGesture(minimumDistance: 3)
-            .onChanged { value in
-                dragging = integration; dragged = value.translation.height
-            }
-            .onEnded { _ in
-                let target = slot(from: index, of: count)
-                // Landed where it's drawn already: no animation back and forth.
-                withTransaction(Transaction(animation: nil)) {
-                    move(integration, to: target)
-                    dragging = nil
-                    dragged = 0
-                }
-            }
-    }
-
-    /// Where the dragged item is drawn: under the pointer, but not past the first or last integration's slot, with a
-    /// little give beyond (never over Home or the items at the foot).
-    private func held(_ index: Int, of count: Int) -> CGFloat {
-        let (top, bottom) = (-CGFloat(index) * Self.step, CGFloat(count - 1 - index) * Self.step)
-        let give = { (over: CGFloat) in min(8, over * 0.2) }
-        if dragged < top { return top - give(top - dragged) }
-        if dragged > bottom { return bottom + give(dragged - bottom) }
-        return dragged
-    }
-
-    /// The slot the dragged item is over.
-    private func slot(from index: Int, of count: Int) -> Int {
-        max(0, min(count - 1, index + Int((dragged / Self.step).rounded())))
-    }
-
-    /// How far an item moves to make way: one slot towards where the dragged one came from, if it's been passed.
-    private func shift(_ index: Int, in shown: [Integration]) -> CGFloat {
-        guard let dragging, let from = shown.firstIndex(of: dragging), index != from else { return 0 }
-        let to = slot(from: from, of: shown.count)
-        if from < to, index > from, index <= to { return -Self.step }
-        if to < from, index >= to, index < from { return Self.step }
-        return 0
-    }
-
-    private func move(_ integration: Integration, to index: Int) {
-        var list = shown
-        guard let from = list.firstIndex(of: integration) else { return }
-        list.remove(at: from)
-        list.insert(integration, at: max(0, min(list.count, index)))
-        order = (list + ranked.filter { !list.contains($0) }).map(\.rawValue).joined(separator: ",")
     }
 
     private func item(_ symbol: String, selected: Bool, help: String, shortcut: String? = nil, action: @escaping () -> Void) -> some View {

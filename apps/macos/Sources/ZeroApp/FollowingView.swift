@@ -1,29 +1,8 @@
 import SwiftUI
 import ZeroCore
 
-// Following: what agents hear of between their turns (zerod's following.rs). Settings › Events lists every follow;
-// each integration's page lists the follows read through it. Both are FollowRows.
-
-struct EventsPage: View {
-    let workspace: Workspace?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 32) {
-            if let workspace {
-                let sources = Integration.allCases.filter { source in workspace.followed.contains { $0.source == source.rawValue } }
-                if sources.isEmpty {
-                    SettingsSection(title: "Followed") { FollowRows(workspace: workspace, source: nil) }
-                } else {
-                    ForEach(sources) { source in
-                        SettingsSection(title: source.title, icon: AnyView(source.icon(size: 14).foregroundStyle(.secondary))) {
-                            FollowRows(workspace: workspace, source: source)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+// Following: what agents hear of between their turns (zerod's following.rs). Each integration's page (Settings ›
+// GitHub…) lists the follows read through it; a task's details pane, its own.
 
 /// The follows read through one integration (or every follow), one row each: the thing, who follows it, how reading it
 /// goes; unfollow on hover.

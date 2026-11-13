@@ -2,6 +2,13 @@ import Foundation
 import Testing
 @testable import ZeroCore
 
+@Test func olderGitSettingsKeepTheirIdentityAndDefaultNewOptionsOff() throws {
+    let old = #"{"enabled":true,"login":"agent","name":"Agent","email":"agent@example.com","https":true,"folders":[]}"#
+    let git = try JSONDecoder().decode(AgentGit.self, from: Data(old.utf8))
+    #expect(git.enabled && git.login == "agent" && git.email == "agent@example.com")
+    #expect(!git.agentsAuthor && !git.scopedToken)
+}
+
 /// The real zerod (target/debug/zerod, which `cargo test` builds; `make test` runs cargo first), launched the way
 /// the app launches it, in a home and socket of the test's own.
 private let binary = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
