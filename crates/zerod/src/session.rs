@@ -70,6 +70,8 @@ struct Inner {
     generation: u64,
     /// When the runtime last said anything, and when each command still running started.
     heard: Instant,
+    /// Whether the process attached last has said anything: one that ends without a word never read what it was sent.
+    spoke: bool,
     running: HashMap<String, Instant>,
     /// What's watched of those commands, to tell a stuck one (stuck.rs).
     commands: process::Commands,
@@ -158,6 +160,7 @@ impl Session {
                 next: lines + 1,
                 generation: 0,
                 heard: Instant::now(),
+                spoke: false,
                 running: HashMap::new(),
                 commands: Default::default(),
                 init: None,
@@ -253,6 +256,7 @@ impl Session {
             next,
             generation: 0,
             heard: Instant::now(),
+            spoke: false,
             running: HashMap::new(),
             commands: Default::default(),
             init: None,
@@ -376,6 +380,24 @@ impl Session {
     /// True while a runtime process is connected.
     pub fn is_attached(&self) -> bool {
         self.lock().out.is_some()
+    }
+
+    /// Waits for the process attached last to say something (true) or end without a word (false), up to `within`.
+    pub async fn speaks(&self, within: Duration) -> bool {
+        let began = Instant::now();
+        loop {
+            let (spoke, attached) = {
+                let inner = self.lock();
+                (inner.spoke, inner.out.is_some())
+            };
+            if spoke || !attached {
+                return spoke;
+            }
+            if began.elapsed() > within {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
     }
 
     /// While its process runs between turns with nothing open (no approval, question or command), how long since the

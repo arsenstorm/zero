@@ -113,16 +113,42 @@ impl Daemon {
             && (conversation.items.is_empty() || conversation.provider == Provider::Opencode)
         {
             self.restart(&session, message, choice).await?;
-        } else {
-            if !session.is_attached() {
-                self.resume(id).await?
-            }
+        } else if session.is_attached() {
             session.send(message, choice).await?;
+        } else {
+            self.resume(id).await?;
+            // Claude Code takes its message unanswered: one that dies as it starts (it couldn't read its folder) took it
+            // to its grave. Under one id, so the message sent again is the same one in the conversation.
+            let sent = message.sent.map_or_else(new_id, String::from);
+            session.send(Message { sent: Some(&sent), ..message }, choice).await?;
+            if session.summary().provider == Provider::Claude {
+                self.again_if_unread(id, message.text, message.images, &sent);
+            }
         }
         if let Some(commit) = kept {
             attach_snapshot(&session, commit)
         }
         Ok(())
+    }
+
+    /// A message whose freshly started process ended without a word goes to a new one, once; its failure is reported.
+    fn again_if_unread(&self, id: &str, text: &str, images: &[String], sent: &str) {
+        let (me, id, text, images, sent) = (self.me.clone(), id.to_string(), text.to_string(), images.to_vec(), sent.to_string());
+        tokio::spawn(async move {
+            let Some(session) = me.upgrade().and_then(|d| d.session(&id).ok()) else { return };
+            if session.speaks(Duration::from_secs(60)).await {
+                return;
+            }
+            let Some(daemon) = me.upgrade() else { return };
+            let message = Message { text: &text, images: &images, context: None, sent: Some(&sent) };
+            let again = match daemon.resume(&id).await {
+                Ok(()) => session.send(message, ModelChoice::default()).await,
+                Err(error) => Err(error),
+            };
+            if again.is_err() || !session.speaks(Duration::from_secs(60)).await {
+                session.report("Claude Code ended as it started, before it read your message: send it again.");
+            }
+        });
     }
 
     /// The task's folder kept as it is now (snapshots.rs), off the async threads: git reads the whole folder.

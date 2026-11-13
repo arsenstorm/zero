@@ -216,6 +216,111 @@ async fn after_compacting_the_agent_hears_zeros_record_word_for_word_not_only_it
 }
 
 #[tokio::test]
+async fn a_message_to_a_claude_that_dies_as_it_starts_goes_to_the_next_one_once() {
+    // Resumed to take the user's message, Claude Code ended before saying a word (it couldn't read its folder): the
+    // message was written to it and lost. Zero starts it once more and gives that one the message, shown once.
+    let home = temp_dir("events-died-starting");
+    let project = home.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let starts = Arc::new(Mutex::new(vec![]));
+    let seen = starts.clone();
+    let runtime: Runtime = Arc::new(move |_: &Conversation, _: &std::path::Path, _: &[String]| {
+        let n = seen.lock().unwrap().len();
+        // The second start dies at once, having taken nothing in.
+        let script = if n == 1 { vec![json!({"out": {"type": "user"}}), json!({"hangup": true})] } else { vec![] };
+        let (transport, recorder) = play(script);
+        seen.lock().unwrap().push(recorder);
+        Ok(transport)
+    });
+    let daemon = Daemon::open(&home, runtime).unwrap();
+    let id = daemon.start(Provider::Claude, "hi", Options { cwd: Some(project.to_str().unwrap().into()), ..Default::default() }).unwrap();
+    until(&daemon, &id, |_| starts.lock().unwrap().len() == 1).await;
+    let first = starts.lock().unwrap()[0].clone();
+    first.said("user", 1).await;
+    first.say(json!({"type": "system", "subtype": "init", "session_id": "t1"}));
+    first.say(json!({"type": "result", "subtype": "success", "is_error": false, "result": "ok"}));
+    until(&daemon, &id, |c| c.attention() == Attention::Idle).await;
+    let session = daemon.session(&id).unwrap();
+    session.stop();
+    until(&daemon, &id, |c| c.status == zerod::model::Status::Offline).await;
+    daemon.send(&id, zerod::session::Message::text("take a look at this"), Default::default()).await.unwrap();
+    for _ in 0..300 {
+        if starts.lock().unwrap().len() == 3 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(starts.lock().unwrap().len(), 3, "started once more after the start that died");
+    let third = starts.lock().unwrap()[2].clone();
+    assert_eq!(third.said("user", 1).await[0]["message"]["content"], "take a look at this");
+    let mine = daemon
+        .get(&id)
+        .unwrap()
+        .items
+        .iter()
+        .filter(|i| matches!(&i.kind, ItemKind::User { text, .. } if text == "take a look at this"))
+        .count();
+    assert_eq!(mine, 1, "shown once");
+}
+
+#[tokio::test]
+async fn compactions_back_to_back_give_one_record_not_one_each() {
+    // Claude Code compacts again and again while the context is still too big: each record would wait for the next
+    // request, all of them in it. One record until the agent has had it; a failed turn had it, so the next compaction
+    // gets its own, once.
+    let w = world("events-recap-once");
+    let (id, seen) = idle_claude(&w).await;
+    zerod::recap::start(w.daemon.clone(), zerod::inbox::Inbox::open(None, vec![]));
+    let session = w.daemon.session(&id).unwrap();
+    session.change(Change::Status { status: zerod::model::Status::Working, turn: Some("t2".into()), error: None });
+    let records = |seen: &Seen| told(seen).iter().filter(|t| t.contains("just compacted")).count();
+    let compact = |seen: &Seen| {
+        seen.say(json!({"type": "system", "subtype": "status", "status": "compacting"}));
+        seen.say(json!({"type": "system", "subtype": "status", "status": null, "compact_result": "success"}));
+    };
+    compact(&seen);
+    seen.said("user", 2).await;
+    compact(&seen);
+    compact(&seen);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(records(&seen), 1, "{:?}", told(&seen));
+    seen.say(json!({"type": "result", "subtype": "success", "is_error": true, "result": "Prompt is too long"}));
+    compact(&seen);
+    seen.said("user", 3).await;
+    compact(&seen);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(records(&seen), 2, "{:?}", told(&seen));
+}
+
+#[tokio::test]
+async fn zeros_record_names_the_users_images_by_path_and_attaches_none() {
+    // A few big stills are what push a fresh context over the limit: the record says where they are instead.
+    let w = world("events-recap-images");
+    let (id, seen) = idle_claude(&w).await;
+    zerod::recap::start(w.daemon.clone(), zerod::inbox::Inbox::open(None, vec![]));
+    let session = w.daemon.session(&id).unwrap();
+    session.change(Change::Item {
+        item: Item {
+            at: None,
+            id: "u2".into(),
+            turn: None,
+            kind: ItemKind::User {
+                text: "it's buggy: [Image #1] and [Image #2]".into(),
+                images: vec!["/a/one.png".into(), "/a/two.png".into()],
+                sent: None,
+            },
+            status: ItemStatus::Done,
+        },
+    });
+    seen.say(json!({"type": "system", "subtype": "status", "status": "compacting"}));
+    seen.say(json!({"type": "system", "subtype": "status", "status": null, "compact_result": "success"}));
+    let record = seen.said("user", 2).await[1].clone();
+    let words = record["message"]["content"].as_str().expect("words alone, no image blocks").to_string();
+    assert!(words.contains("it's buggy: [image: /a/one.png] and [image: /a/two.png]"), "{words}");
+    assert!(!words.contains("[Image #"), "{words}");
+}
+
+#[tokio::test]
 async fn a_blocking_ask_holds_what_else_comes_for_the_task_until_the_user_answers() {
     // Asked with --block: the agent can't go on without the answer, so Zero holds its events and reports meanwhile.
     // The answer itself, and the user's own words, go.

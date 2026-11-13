@@ -80,6 +80,7 @@ impl Session {
             inner.writing = Some(writing);
             inner.answered.clear();
             inner.heard = Instant::now();
+            inner.spoke = false;
             inner.generation
         };
         let watched = self.clone();
@@ -170,6 +171,7 @@ impl Session {
         }
         inner.core().at(at);
         inner.heard = Instant::now();
+        inner.spoke = true;
         let effects = inner.core().receive(&message);
         inner.commands.timeouts(&message);
         for change in &effects.changes {

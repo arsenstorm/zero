@@ -69,6 +69,19 @@ impl Core {
                 _ => {}
             }
         }
+        // Sent again under its id (to a process started anew, the one before having ended before reading it): the same
+        // message, not another.
+        if let ItemKind::User { sent: Some(id), .. } = &item.kind
+            && let Some(same) = self
+                .conversation
+                .items
+                .iter()
+                .rev()
+                .find(|i| i.id != item.id && matches!(&i.kind, ItemKind::User { sent: Some(was), .. } if was == id))
+        {
+            item.id = same.id.clone();
+            item.at = same.at;
+        }
     }
 
     /// Numbered on from at least `seq`: a replay counts fewer changes than the live session made (streamed pieces aren't

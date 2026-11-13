@@ -17,6 +17,8 @@ use crate::session::{Message, ModelChoice};
 /// The user's latest messages the recap repeats, each up to this many characters.
 const MESSAGES: usize = 8;
 const LONGEST: usize = 2000;
+/// How the recap starts: how it's known in the conversation.
+const HEAD: &str = "Your conversation was just compacted.";
 
 /// Hears each compaction end and gives that session its recap.
 pub fn start(daemon: Arc<Daemon>, inbox: Arc<Inbox>) {
@@ -39,6 +41,9 @@ pub fn start(daemon: Arc<Daemon>, inbox: Arc<Inbox>) {
             }
             let Some(daemon) = weak.upgrade() else { return };
             let (Ok(session), Some(conversation)) = (daemon.session(&event.session), daemon.get(&event.session)) else { continue };
+            if unread(&conversation) {
+                continue;
+            }
             let asks: Vec<Ask> = inbox.open_asks().into_iter().filter(|a| a.agent.name == format!("zerod-{}", conversation.id)).collect();
             let changed = git_status(&conversation.cwd).await;
             let words = crate::model::from_line("zero", &text(&conversation, &daemon.workers(&conversation.id), &asks, &changed));
@@ -49,18 +54,30 @@ pub fn start(daemon: Arc<Daemon>, inbox: Arc<Inbox>) {
     });
 }
 
+/// The last recap is still waiting for the agent: since it, only compactions (Claude Code compacting again and again
+/// while the context is too big). Another would wait with it, all of them in the next request.
+fn unread(conversation: &Conversation) -> bool {
+    for item in conversation.items.iter().rev() {
+        match &item.kind {
+            ItemKind::Notice { .. } if item.id.starts_with(COMPACTED) => continue,
+            ItemKind::User { text, .. } => return crate::model::from(text) == Some("zero") && text.contains(HEAD),
+            _ => return false,
+        }
+    }
+    false
+}
+
 /// What Zero knows for certain about the task, as the agent reads it after compacting.
 pub fn text(conversation: &Conversation, workers: &[Conversation], asks: &[Ask], changed: &str) -> String {
-    let mut parts = vec![
-        "Your conversation was just compacted. This is Zero's own record, not a summary: where your summary \
-says otherwise, this is right. Carry on with what you were doing."
-            .to_string(),
-    ];
-    let said: Vec<&str> = conversation
+    let mut parts = vec![format!(
+        "{HEAD} This is Zero's own record, not a summary: where your summary says otherwise, this is right. Carry on \
+with what you were doing."
+    )];
+    let said: Vec<String> = conversation
         .items
         .iter()
         .filter_map(|i| match &i.kind {
-            ItemKind::User { text, .. } if crate::model::from(text).is_none() => Some(text.as_str()),
+            ItemKind::User { text, images, .. } if crate::model::from(text).is_none() => Some(named(text, images)),
             _ => None,
         })
         .collect();
@@ -87,6 +104,18 @@ says otherwise, this is right. Carry on with what you were doing."
         parts.push(format!("`git status` in {} now:\n{changed}", conversation.cwd))
     }
     parts.join("\n\n")
+}
+
+/// The message with each image named by its file, not attached: a few big images can push a fresh context over its
+/// limit.
+fn named(text: &str, images: &[String]) -> String {
+    let mut words = text.to_string();
+    for (n, path) in images.iter().enumerate() {
+        let token = format!("[Image #{}]", n + 1);
+        let name = format!("[image: {path}]");
+        if words.contains(&token) { words = words.replacen(&token, &name, 1) } else { words.push_str(&format!(" {name}")) }
+    }
+    words
 }
 
 fn clip(text: &str) -> String {
