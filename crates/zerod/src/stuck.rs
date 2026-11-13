@@ -106,8 +106,8 @@ impl Expected {
 
     fn says(&self) -> Option<String> {
         match self {
-            Expected::Said { seconds, what } if what.is_empty() => Some(format!("expected {}", span(*seconds))),
-            Expected::Said { seconds, what } => Some(format!("expected {} for {what}", span(*seconds))),
+            Expected::Said { seconds, what } if what.is_empty() => Some(format!("past the {} the agent expected", span(*seconds))),
+            Expected::Said { seconds, what } => Some(format!("past the {} the agent expected for {what}", span(*seconds))),
             Expected::Timeout(seconds) => Some(format!("its timeout {}", span(*seconds))),
             Expected::Usual { median, .. } => Some(format!("usually {}", span(*median))),
             Expected::Default(_) => None,
@@ -153,6 +153,12 @@ pub fn judge(command: &str, seen: &Seen, expected: &Expected, settings: &Setting
     if key(command).split(' ').next() == Some("zero") {
         return None;
     }
+    // The agent said it would take this long: Zero takes its word, however quiet it is.
+    if let Expected::Said { seconds, .. } = expected
+        && seen.elapsed < Duration::from_secs(*seconds)
+    {
+        return None;
+    }
     let short = match key(command) {
         k if k.is_empty() => command.chars().take(40).collect(),
         k => k,
@@ -179,7 +185,12 @@ pub fn judge(command: &str, seen: &Seen, expected: &Expected, settings: &Setting
         Some(says) => format!("Running `{short}` for {elapsed} ({says}) · looks stuck"),
         None => format!("Running `{short}` for {elapsed} · looks stuck"),
     };
-    let past = says.map(|s| format!(", past {}", s.replace("usually", "its usual"))).unwrap_or_default();
+    let past = says
+        .map(|s| match s.starts_with("past ") {
+            true => format!(", {s}"),
+            false => format!(", past {}", s.replace("usually", "its usual")),
+        })
+        .unwrap_or_default();
     let note = format!(
         "Zero stopped `{short}`: no output and no CPU for {}{past}; it was likely waiting for input or hung. Try another way, \
          and run long commands in the background.",

@@ -64,7 +64,7 @@ async fn read_usage(daemon: &std::sync::Arc<Daemon>, notices: &broadcast::Sender
     while let Some(Ok((id, read))) = reads.join_next().await {
         match read {
             Some(Ok(usage)) => {
-                daemon.signins.record_usage(&id, &usage);
+                daemon.signins.replace_usage(&id, &usage);
                 read_any = true
             }
             Some(Err(error)) => eprintln!("zerod: couldn't read {id}'s usage: {error}"),

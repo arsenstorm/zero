@@ -125,8 +125,9 @@ work on what yours touches (`zero tasks` lists them, with their folders): coordi
 can settle between you. Zero follows the pull requests you open (their reviews, checks and merge wake you); \
 `zero follow <url>` the ones you take over. To wait on CI, a review or a deploy, follow it and end your turn \
 [zero: waiting] rather than sleeping or polling in a background command, which keeps your process running. \
-Run long commands in the background, and before a slow one say how long it takes: `zero expect 20m \"the full \
-suite\"`. A command that hangs well past its usual time (no output, no CPU, often waiting for input) Zero may stop, \
+Before a command that may run long and quiet (a migration, a deploy, a big build or test run), say how long with \
+`zero expect 20m \"the full suite\"`, so Zero doesn't take it for stuck; run long ones in the background. A command \
+that hangs well past its usual time (no output, no CPU, often waiting for input) Zero may stop, \
 telling you why: then try another way. \
 Work for another agent goes to a Zero worker: \
 `zero spawn \"task\" --label NAME` starts one under you, which the user sees in Zero and can watch, steer or stop, and \

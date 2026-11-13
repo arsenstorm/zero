@@ -57,11 +57,29 @@ fn waiting_for_input_is_stuck_soon() {
 fn what_the_agent_said_and_its_timeout_are_shown() {
     let settings = Settings::default();
     let said = Expected::Said { seconds: 120, what: "the full suite".into() };
-    assert_eq!(
-        judge("make test", &seen(400, 400), &said, &settings).unwrap().reason,
-        "Running `make test` for 6 min (expected 2 min for the full suite) · looks stuck"
-    );
+    let stuck = judge("make test", &seen(400, 400), &said, &settings).unwrap();
+    assert_eq!(stuck.reason, "Running `make test` for 6 min (past the 2 min the agent expected for the full suite) · looks stuck");
+    assert!(stuck.note.contains("6 min, past the 2 min the agent expected for the full suite;"), "{}", stuck.note);
     assert_eq!(judge("make test", &seen(400, 400), &Expected::Timeout(600), &settings), None, "within 3× its 10 min timeout");
+}
+
+#[test]
+fn a_command_the_agent_announced_is_left_alone_while_within_what_it_said() {
+    let settings = Settings { when: When::Stop, ..Settings::default() };
+    let said = Expected::Said { seconds: 40 * 60, what: "the migration".into() };
+    let mut asking = seen(30 * 60, 30 * 60);
+    asking.input = Some("less".into());
+    assert_eq!(judge("bin/rails db:migrate", &seen(30 * 60, 30 * 60), &said, &settings), None, "quiet, but within its 40 min");
+    assert_eq!(judge("bin/rails db:migrate", &asking, &said, &settings), None, "not even waiting for input");
+    assert!(judge("bin/rails db:migrate", &seen(130 * 60, 60 * 60), &said, &settings).is_some(), "a hung one is still caught past it");
+}
+
+#[test]
+fn an_old_tasks_keep_commands_is_ignored() {
+    let mut saved = serde_json::to_value(Conversation::new("s", Provider::Claude, "/work")).unwrap();
+    saved["keepCommands"] = json!(true);
+    let loaded: Conversation = serde_json::from_value(saved).unwrap();
+    assert!(serde_json::to_value(&loaded).unwrap().get("keepCommands").is_none());
 }
 
 #[test]
@@ -173,7 +191,8 @@ async fn the_agents_word_on_how_long_it_takes_counts() {
     wait_minutes(31).await;
     let reason = session.snapshot().stalled.unwrap_or_default();
     assert!(
-        reason.starts_with("Running `make test` for 1 h") && reason.ends_with("(expected 20 min for the full suite) · looks stuck"),
+        reason.starts_with("Running `make test` for 1 h")
+            && reason.ends_with("(past the 20 min the agent expected for the full suite) · looks stuck"),
         "{reason}"
     );
 }

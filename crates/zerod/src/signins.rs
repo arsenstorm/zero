@@ -192,24 +192,26 @@ impl SignIns {
 
     /// A sign-in's usage, as a task running as it was told by its CLI.
     pub fn record_usage(&self, id: &str, usage: &crate::model::Usage) {
-        let mut kept = self.kept.lock().unwrap();
-        if !kept.signins.iter().any(|s| s.id == id) {
-            return;
-        }
         // Added to what's known: a report that has no figure for a window (a limit said in an error, an account just
         // switched to) leaves the one read before, which it used to wipe, the account's usage then shown as nothing.
         let mut merged = usage.clone();
-        if let Some(before) = kept.usage.get(id) {
-            for window in &before.windows {
+        if let Some(before) = self.usage(id) {
+            for window in before.windows {
                 if !merged.windows.iter().any(|w| w.name == window.name) {
-                    merged.windows.push(window.clone())
+                    merged.windows.push(window)
                 }
             }
         }
-        if kept.usage.get(id) == Some(&merged) {
+        self.replace_usage(id, &merged)
+    }
+
+    /// A sign-in's usage as a read of its plan gave it: every window it has, so one it no longer reports goes.
+    pub fn replace_usage(&self, id: &str, usage: &crate::model::Usage) {
+        let mut kept = self.kept.lock().unwrap();
+        if !kept.signins.iter().any(|s| s.id == id) || kept.usage.get(id) == Some(usage) {
             return;
         }
-        kept.usage.insert(id.into(), merged);
+        kept.usage.insert(id.into(), usage.clone());
         let _ = self.persist(&kept);
     }
 

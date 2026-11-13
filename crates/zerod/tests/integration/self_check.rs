@@ -17,3 +17,21 @@ fn a_self_check_says_who_started_zerod_and_what_it_holds() {
     assert_eq!(check["exe"], std::env::current_exe().unwrap().to_str().unwrap());
     assert_eq!(check["replaced"], false);
 }
+
+#[test]
+fn a_build_rewritten_unchanged_is_not_replaced() {
+    use std::time::{Duration, SystemTime};
+    let path = temp_dir("self-check-build").join("zerod");
+    std::fs::write(&path, b"build one").unwrap();
+    let was = zerod::self_check::fingerprint(&path);
+    assert!(!zerod::self_check::replaced(&path, was));
+    // An install that copies the same build again: a newer date, the same bytes.
+    std::fs::write(&path, b"build one").unwrap();
+    let later = SystemTime::now() + Duration::from_secs(60);
+    std::fs::File::options().write(true).open(&path).unwrap().set_modified(later).unwrap();
+    assert!(!zerod::self_check::replaced(&path, was), "same bytes, newer date");
+    std::fs::write(&path, b"build two").unwrap();
+    assert!(zerod::self_check::replaced(&path, was), "another build");
+    std::fs::remove_file(&path).unwrap();
+    assert!(zerod::self_check::replaced(&path, was), "gone");
+}

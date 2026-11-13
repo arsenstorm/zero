@@ -193,6 +193,20 @@ fn a_report_without_figures_keeps_the_accounts_windows() {
     assert_eq!((used("5 hours"), used("7 days")), (Some(0.4), Some(0.8)), "the week updated, the 5 hours kept");
 }
 
+/// A read of the account's plan is all its windows: one it no longer reports (a 5-hour window kept from an earlier
+/// report, on a plan without one) goes, rather than staying at 0%.
+#[test]
+fn a_read_of_the_plan_drops_the_windows_it_no_longer_has() {
+    let store = SignIns::open(&temp_dir("signins-replace"));
+    let account = store.save(signin(Provider::Claude, Kind::ClaudeHome, "a@example.com")).unwrap();
+    store.record_usage(&account.id, &usage(0.0, 0.5, NOW + DAY));
+    let week = zerod::model::UsageWindow { name: "7 days".into(), used: 0.56, resets_at: Some(NOW + DAY) };
+    store.replace_usage(&account.id, &zerod::model::Usage { limited: false, resets_at: None, windows: vec![week.clone()] });
+    assert_eq!(store.usage(&account.id).unwrap().windows, vec![week.clone()], "the 5 hours dropped");
+    store.record_usage(&account.id, &zerod::model::Usage { limited: false, resets_at: None, windows: vec![] });
+    assert_eq!(store.usage(&account.id).unwrap().windows, vec![week], "and not brought back by a task's report");
+}
+
 /// Each account's activity, as a contribution graph counts it: the turns its tasks finished, by the hour they ended
 /// in (the app puts them in the user's own days), kept across a restart.
 #[test]

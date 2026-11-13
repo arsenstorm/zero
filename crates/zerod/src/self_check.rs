@@ -15,11 +15,25 @@ unsafe extern "C" {
     ) -> isize;
 }
 
-/// The build on disk when zerod started: a newer one there means an install that didn't restart it.
-static BUILT: LazyLock<Option<SystemTime>> = LazyLock::new(built);
+/// The build on disk when zerod started: another one there means an install that didn't restart it.
+static BUILT: LazyLock<Option<(SystemTime, u64)>> = LazyLock::new(|| fingerprint(&std::env::current_exe().ok()?));
 
-fn built() -> Option<SystemTime> {
-    std::fs::metadata(std::env::current_exe().ok()?).and_then(|m| m.modified()).ok()
+/// A build's date and a digest of its bytes: an install copies an unchanged build again with a newer date.
+pub fn fingerprint(path: &Path) -> Option<(SystemTime, u64)> {
+    use std::hash::Hasher;
+    let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok()?;
+    let mut hasher = std::hash::DefaultHasher::new();
+    hasher.write(&std::fs::read(path).ok()?);
+    Some((modified, hasher.finish()))
+}
+
+/// Whether the build at `path` is no longer the one fingerprinted: its bytes are read again only when its date moved.
+pub fn replaced(path: &Path, was: Option<(SystemTime, u64)>) -> bool {
+    let Some((modified, digest)) = was else { return false };
+    if std::fs::metadata(path).and_then(|m| m.modified()).ok() == Some(modified) {
+        return false;
+    }
+    fingerprint(path).map(|(_, now)| now) != Some(digest)
 }
 
 /// At start: the build noted, and a quarantined zerod said loudly in its log.
@@ -44,7 +58,7 @@ pub fn report(home: &Path) -> Value {
         "quarantined": quarantined(home),
         "descriptors": {"open": open, "limit": descriptor_limit()},
         "exe": std::env::current_exe().ok(),
-        "replaced": BUILT.is_some() && built() != *BUILT,
+        "replaced": std::env::current_exe().is_ok_and(|exe| replaced(&exe, *BUILT)),
     })
 }
 
