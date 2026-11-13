@@ -20,13 +20,14 @@ Click **Add account** beside the agent's name and choose how to sign in:
 
 | Agent | Choice | What happens |
 |---|---|---|
-| Claude Code | **Sign in with Claude** | Claude's sign-in page opens in your browser. Sign in there. If the page shows a code, paste it into **Its code, if Claude shows one** and click **Send**. The account's tasks get a token that lasts a year. Zero keeps it in your Keychain. |
+| Claude Code | **Sign in with Claude** | Claude's sign-in page opens in your browser. Sign in there. Until you finish, the account shows on the page with **Signing in… finish in your browser**. Claude Code keeps the sign-in in a separate folder for this account and renews it itself. Zero shows the account's email, plan and usage. |
+| Claude Code | **Use a token** | Claude's sign-in page opens in your browser. If the page shows a code, paste it into **Its code, if Claude shows one** and click **Send**. The account's tasks get a token that lasts a year. Zero keeps it in your Keychain. Zero can't read a token's usage until its tasks report it. |
 | Claude Code | **Anthropic API key** | Type **A name for it** and **Its API key**, then click **Save**. You pay for each use. |
 | Codex | **Sign in with ChatGPT** | ChatGPT's sign-in page opens in your browser. Until you finish the sign-in, the account shows on the page with **Signing in… finish in your browser**. |
 | Codex | **OpenAI API key** | Type a name and the key, then click **Save**. You pay for each use. Codex keeps the key in a separate folder for this account. |
 | OpenCode | **OpenCode Go key**, **Anthropic key**, **OpenAI key** or **OpenRouter key** | Type a name and the key, then click **Save**. Zero gives the key to OpenCode in the variable of that provider, such as `OPENCODE_API_KEY`. |
 
-- If Claude doesn't say whose account it is, the new row asks **Whose account is this? (its email, or a name)**. Type one and press <kbd>Return</kbd>.
+- If Claude doesn't say whose a token is, the sign-in asks **Whose account is this? (its email, or a name)** before it closes. Type one and press <kbd>Return</kbd>. If you close it instead, the account is called **Claude account** until you rename it from its **⋯** menu.
 - A ChatGPT sign-in goes away when you refuse it, or when you don't finish it within 15 minutes. To try again, add it again.
 - If a Claude sign-in fails, the dialog says why and shows **Try again**.
 
@@ -41,7 +42,10 @@ Under each account's name, its row says what it is:
 Click **⋯** at the end of the account's row to open its menu:
 
 - **Rename**: type a new name and press <kbd>Return</kbd>. <kbd>Esc</kbd> cancels.
-- **Switch to a token**: shows for a Claude account whose row says **its own folder: your MCP sign-ins aren't shared**. It opens Claude's sign-in again. With the token it gets, the account shares your MCP sign-ins.
+- **Switch to a browser sign-in**: shows for a Claude account with a token. Sign in on Claude's page as the same account. The account keeps its tasks and activity, and Zero removes the token from your Keychain when the sign-in is done.
+- **Switch to a token**: shows for a Claude account that signed in through the browser. It opens Claude's sign-in again and gives the account a token.
+
+Every Claude account shares your MCP server sign-ins. When you sign in to a server in one account, Zero keeps that sign-in in your Keychain and gives it to each account when its task starts.
 - **Remove…**: the row asks again. Click **Remove** to confirm, or **Cancel**. The tasks of a removed account can't restart with it. To get the account back, sign in again.
 
 ## See how much usage is left
@@ -53,7 +57,7 @@ Click an account's row to open it in place. It shows a tile for each allowance i
 
 Each tile shows the share used, a bar and when the allowance resets. The bar turns orange at 90% and red at 100%. An account at a limit shows **At its limit** on its row. Click the row again to close it.
 
-Under the tiles, **Activity** has a square for each day, darker the more turns the account's tasks finished that day. The count starts on the day Zero began to keep it.
+Under the tiles, **Activity** has a square for each day, darker the more turns the account's tasks finished that day. The count goes back as far as the tasks Zero still keeps. Turns from before Zero began to count them show under the agent, such as **Claude Code's own sign-in**, because Zero doesn't know which account those tasks used.
 
 While the page is open, Zero asks each agent for its accounts' usage every two minutes. API keys have no allowance, so they show no tiles.
 

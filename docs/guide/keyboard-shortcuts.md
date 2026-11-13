@@ -51,7 +51,7 @@ Each <kbd>Esc</kbd> does the first of these that applies:
 2. Closes an open model or project list.
 3. Closes the agent's screen in the panel.
 4. Closes the open text box of an answer.
-5. Takes back the answer you picked last, while its row is still orange: 2 seconds by default. To change the time, go to **Settings › Inbox and bar › Answers › Undo an answer**.
+5. Takes back the answer you picked last, while its row is still orange: 2 seconds by default. To change the time, go to **Settings › Inbox › Answers › Undo an answer**.
 6. Leaves the box you're typing in.
 7. Leaves the agent's view and goes back to the inbox.
 8. Hides the panel.

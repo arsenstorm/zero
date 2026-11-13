@@ -63,7 +63,7 @@ When a task says your account "can't use" a model, Zero moves the task to an acc
 The control bar is on the right edge of one screen, halfway down. It shows in every Space, including over apps in full screen.
 
 - **Is Zero running?** Look for Zero's icon in the menu bar. If the icon isn't there, open Zero from your Applications folder.
-- **More than one screen?** The bar stays on the screen where it showed first. To move it to the screen you're using, turn on **Settings › Inbox and bar › Placement › Follow the active screen**.
+- **More than one screen?** The bar stays on the screen where it showed first. To move it to the screen you're using, turn on **Settings › Control bar › Placement › Follow the active screen**.
 
 See [The control bar](/docs/control-bar).
 
@@ -87,13 +87,13 @@ mkdir -p ~/.local/bin && ln -sf /Applications/Zero.app/Contents/MacOS/zero-cli ~
 
 **Claude Code has the Zero plugin.** The plugin teaches Claude Code to ask you in Zero. Turn on **Settings › Agents › Setup › Zero plugin**. When Zero can't install the plugin, the reason shows under the switch. The same switch adds Zero's tools to Codex's and OpenCode's configuration.
 
-**The ask hasn't expired.** An ask without its own expiry expires after 1 hour and leaves **Waiting on you**. To give asks more time, change **Settings › Inbox and bar › Answers › Unanswered asks expire after**. Answered asks are under **Answered** on the **Inbox** page, the tray in the window's left rail.
+**The ask hasn't expired.** An ask without its own expiry expires after 1 hour and leaves **Waiting on you**. To give asks more time, change **Settings › Inbox › Answers › Unanswered asks expire after**. Answered asks are under **Answered** on the **Inbox** page, the tray in the window's left rail.
 
 **No notifications.** When asks reach the inbox but no notifications come, check that Zero may send them in macOS's **System Settings › Notifications**. Then check that the kinds you want are on in **Settings › General › Notifications**.
 
 ## Zero shows a problem with itself
 
-Zero checks itself when it opens and every five minutes. When a check finds something, the gear at the foot of the window's left rail gets an orange dot. Click the gear: Settings opens on **General** at its **Health** section, which lists each check with a pill.
+Zero checks itself when it opens and every five minutes. When a check finds something, the gear at the foot of the window's left rail gets an orange dot. Click the gear: Settings opens on **General**. Scroll to its **Health** section, which lists each check with a pill.
 
 | Check | What it looks at |
 |---|---|

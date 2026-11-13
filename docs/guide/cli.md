@@ -51,7 +51,7 @@ Zero refuses an ask whose question is longer than 140 characters or whose detail
 
 | Setting | Where | What it does |
 |---|---|---|
-| Unanswered asks expire after | Settings › Inbox and bar › Answers | How long an ask waits for you before it expires, unless the agent sets its own with `--ttl`. The default is 1 hour. |
+| Unanswered asks expire after | Settings › Inbox › Answers | How long an ask waits for you before it expires, unless the agent sets its own with `--ttl`. The default is 1 hour. |
 
 Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> or the gear at the foot of the window's left rail.
 
@@ -111,7 +111,7 @@ Zero puts a finished worker away an hour after its lead has its report. A worker
 
 | Command | Flags | What it does |
 |---|---|---|
-| `zero follow <url or topic>...` | `--mine`, `--about "word,other words"`, `--session` | The task hears of changes between its turns. It can follow a pull request, for its reviews, comments, checks, pushes and merge. It can also follow an issue, one comment thread in an issue, or a Slack thread or channel. In a busy channel, `--mine` passes on only messages that name the pull requests the task follows, and `--about` only those with these words. Each service's page in Settings, such as **Settings › GitHub**, shows what tasks follow through it, under **Following**. A task's details pane shows its own, under **Follows**. Zero follows a pull request that a task opens by itself, and makes it the task's **PR** attribute when it has none. |
+| `zero follow <url or topic>...` | `--mine`, `--about "word,other words"`, `--session` | The task hears of changes between its turns. It can follow a pull request, for its reviews, comments, checks, pushes and merge, and once merged, its GitHub deployments. It can also follow an issue, one comment thread in an issue, or a Slack thread or channel. In a busy channel, `--mine` passes on only messages that name the pull requests the task follows or their merge commits, and `--about` only those with these words. After a message passes, the next messages from the same author pass too, until the author names something else or half an hour passes. Each service's page in Settings, such as **Settings › GitHub**, shows what tasks follow through it, under **Following**. A task's details pane shows its own, under **Follows**. Zero follows a pull request that a task opens by itself, and makes it the task's **PR** attribute when it has none. |
 | `zero unfollow <topic>...` | `--all`, `--session` | Stops following. |
 | `zero following` | `--session` | Lists what the task follows, and any trouble reading it. |
 | `zero watch -- command...` | `--session` | Runs the command in the background. The task is told how it ended, so it doesn't need to keep checking. |
@@ -121,6 +121,17 @@ Zero puts a finished worker away an hour after its lead has its report. A worker
 | `zero schedule list`, `zero schedule cancel ID` | | Lists or cancels them. |
 | `zero remind <minutes> "text"` | `--session` | The same as `zero schedule`, in minutes. |
 | `zero notify <task> "text"` | | Gives a task words between its turns, for scripts. |
+
+## Read Slack and Linear
+
+Agents read Slack and Linear through the connections in Settings, so they need no tokens of their own. Zero keeps the tokens and never gives them to the agent. Agents get the service's JSON.
+
+| Command | Flags | What it does |
+|---|---|---|
+| `zero slack <method> [key=value...]` | `--workspace NAME`, `--approval ID` | Calls a method of Slack's Web API, such as `conversations.history`, `conversations.replies` or `search.messages`. To get the next page, give `cursor=` the `next_cursor` from the last answer. `--workspace` picks a workspace by its name when more than one is connected. If Slack limits the rate, Zero waits as Slack tells it, for up to 30 seconds. |
+| `zero linear '<graphql>'` | `--variables JSON`, `--approval ID` | Sends a GraphQL query to Linear. With `-` or no query, it reads the query from standard input. |
+
+Agents can only read. A Slack post or a Linear change is refused unless you turn on **Let agents post** in **Settings › Slack**, or **Let agents make changes** in **Settings › Linear**. When it is on, Zero asks you to approve each post or change, and shows you the call. The agent then runs the same command again with `--approval` and the ask's id. An approval is for that one call. Agents without a shell get the same commands as the `zero_slack` and `zero_linear` tools of Zero's MCP server.
 
 ## Later, the browser, videos and scratchpads
 

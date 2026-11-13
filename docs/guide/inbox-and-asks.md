@@ -61,7 +61,7 @@ Press <kbd>Delete</kbd> to remove a finished card from the panel.
 
 Picked the wrong answer? Press <kbd>Esc</kbd> in the inbox panel while the row is still orange. The card goes back to waiting, with nothing chosen, and you can answer again.
 
-You have 2 seconds unless you change it. Set the time in **Settings › Inbox and bar › Answers › Undo an answer**: **Off**, **1 s**, **2 s**, **3 s** or **5 s**. At **Off**, every answer goes at once.
+You have 2 seconds unless you change it. Set the time in **Settings › Inbox › Answers › Undo an answer**: **Off**, **1 s**, **2 s**, **3 s** or **5 s**. At **Off**, every answer goes at once.
 
 Taking back works only in the inbox panel. Once the row turns green, the agent has your answer.
 
@@ -195,7 +195,7 @@ An ask you don't answer in time expires and leaves the inbox and the Inbox page.
 | Asks where the agent set its own time | The agent's time |
 | Permission requests from a task in Zero | 24 hours |
 
-To change the default, go to **Settings › Inbox and bar › Answers › Unanswered asks expire after**: **15 min**, **1 h**, **4 h**, **1 day** or **Never**.
+To change the default, go to **Settings › Inbox › Answers › Unanswered asks expire after**: **15 min**, **1 h**, **4 h**, **1 day** or **Never**.
 
 An agent can also withdraw an ask it no longer needs, and it leaves the inbox the same way. When the ask was a command that's running, the command stops.
 
@@ -222,12 +222,12 @@ macOS's own settings for Zero, and Focus, can quiet its notifications as they do
 
 ## Settings for the inbox
 
-Most are in **Settings › Inbox and bar**.
+Most are in **Settings › Control bar**.
 
 | Setting | Where | What it does |
 |---|---|---|
-| Undo an answer | Settings › Inbox and bar › Answers | How long <kbd>Esc</kbd> can take an answer back: **Off**, **1 s**, **2 s**, **3 s** or **5 s**. **2 s** by default. |
-| Unanswered asks expire after | Settings › Inbox and bar › Answers | How long an ask waits when the agent set no time: **15 min**, **1 h**, **4 h**, **1 day** or **Never**. **1 h** by default. |
+| Undo an answer | Settings › Inbox › Answers | How long <kbd>Esc</kbd> can take an answer back: **Off**, **1 s**, **2 s**, **3 s** or **5 s**. **2 s** by default. |
+| Unanswered asks expire after | Settings › Inbox › Answers | How long an ask waits when the agent set no time: **15 min**, **1 h**, **4 h**, **1 day** or **Never**. **1 h** by default. |
 | Inbox hotkey | Settings › General › Zero | The keys that open the inbox, from any app. <kbd>⌥</kbd> <kbd>Space</kbd> by default. |
 
 Zero records every ask and answer in `~/.zero/asks.jsonl`. To open it, right-click the control bar and choose **Open log**.

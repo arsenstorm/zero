@@ -83,7 +83,7 @@ Right-click a task in the sidebar. The same menu opens from the **⋯** in the w
 | **Copy task id** | Copies the task's id. |
 | **Ask for a status update** | The agent answers in a few lines and posts where it stands. |
 | **Pause** / **Resume** | Puts the task and its workers on hold, or takes them off hold. |
-| **End session** / **Resume** | Stops the agent's process, or starts an offline one again on the same conversation. |
+| **Restart agent** | Stops the agent's process and starts a fresh one on the same conversation. |
 | **Save for later** | Puts the whole task in Later. It leaves the sidebar and is paused with its workers, but isn't archived. See [Later, scratchpads and loops](/docs/later-scratchpads-loops). |
 | **Archive…** | Archives the task. See "Archive a task" below. |
 
@@ -236,19 +236,20 @@ A worker that ends its turn while a command it started in the background still r
 
 Zero archives a finished worker an hour after its task has its report, so finished workers don't pile up under a task. A worker that's waiting, asking or in the middle of its work stays, and so does one with an ask, a follow, a watch or a wake-up still open. Zero doesn't archive workers when **Archive done tasks** is **Never**. A message to an archived worker, from you or its task, brings it back.
 
-## Pause, end or resume a task
+## Pause, restart or resume a task
 
 | Action | Where | What it does |
 |---|---|---|
 | **Stop** | The square in the composer, or <kbd>⌘</kbd> <kbd>.</kbd> | Stops the turn the agent is on. The task stays where it is, and you can write to it again. |
-| **Pause** | A task's menu: in the sidebar, the **⋯** in the title bar, or the **⋯** on the board | Puts the task and its workers on hold. Zero asks a working agent to finish the step it's on and end its turn, then stops it. Messages for it wait until you resume it. |
-| **Resume** a paused task | The same menus | Takes the task and its workers off hold. Any with messages waiting start again for them. |
-| **End session** | The same menus | Stops the agent's process. |
-| **Resume** an offline task | The same menus | Starts the agent again on the same conversation. |
+| **Pause** | A task's menu: in the sidebar, the **⋯** in the title bar, or the **⋯** on the board | Puts the task and its workers on hold. Zero asks a working agent to finish the step it's on and end its turn, then stops it. Nothing wakes it while it's paused. |
+| **Resume** | The same menus, or **Resume** above the composer | Takes the task and its workers off hold. What came for it meanwhile goes to the agent first, in one message, then the messages you wrote. |
+| **Restart agent** | The same menus | Stops the agent's process and starts a fresh one on the same conversation right away. Use it for an agent that's stuck, or to pick up a new MCP server, account or plugin. If the agent is mid-turn, Zero asks first, as the turn stops. |
+
+While a task is paused, its title bar and sidebar row say **Paused**. Events for it (pull requests it follows, workers' reports, watches, wake-ups, messages from other tasks, answers to its asks) still arrive: each shows in the conversation as **Held while paused**, and the bar above the composer counts them, for example **Paused · 4 held while paused**. A message you send waits there too. Its box says **Paused · your message waits until you resume**.
 
 To pause every task in a workspace, use **Pause all tasks** in the sliders menu beside the sidebar's **Tasks** heading.
 
-When an agent has been idle for three minutes with nothing waiting for it, Zero stops it to free memory. This includes an agent that asked you something in the inbox: your answer starts it again. You don't need to resume it by hand: write to it and it starts again. Its box says **Message to resume it**.
+When an agent has been idle for three minutes with nothing waiting for it, Zero stops it to free memory. This includes an agent that asked you something in the inbox: your answer starts it again. You don't need to resume it by hand: write to it and it starts again. Zero shows it as it was, not as paused.
 
 ## Archive a task
 

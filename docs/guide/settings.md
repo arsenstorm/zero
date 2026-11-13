@@ -4,7 +4,7 @@ description: "Every setting in Zero: what it does, where it is and what it's set
 order: 10
 ---
 
-Settings is part of Zero's window. Its left column lists the pages. **General**, **Inbox and bar** and **Phone** come first. Then three groups follow. **Agents** has Agents, Accounts and models, Git, Browsers and MCP servers. **Work** has Workspaces. **Connections** has GitHub, Linear and Slack.
+Settings is part of Zero's window. Its left column lists the pages. **General**, **Inbox**, **Control bar** and **Phone** come first. Then three groups follow. **Agents** has Agents, Accounts and models, Git, Browsers and MCP servers. **Work** has Workspaces. **Connections** has GitHub, Linear and Slack.
 
 ## Open Settings
 
@@ -13,7 +13,7 @@ Settings is part of Zero's window. Its left column lists the pages. **General**,
 - Click Zero's icon in the menu bar and choose **Settings…**.
 - Right-click the control bar and choose **Settings…**.
 
-Settings opens on **General**. When Zero's own checks find a problem, the gear has an orange dot, and Settings opens on General at **Health**. Each change takes effect at once, so the pages have no Save button.
+Settings opens on **General**. When Zero's own checks find a problem, the gear has an orange dot, and Settings opens on General: the problem is in its **Health** section, near the foot. Each change takes effect at once, so the pages have no Save button.
 
 ## General
 
@@ -55,18 +55,23 @@ While you're in Zero, you hear the sound and get no notification. **None** turns
 
 [Tasks and workers](/docs/tasks-and-workers) explains the task states.
 
-## Inbox and bar
+## Inbox
 
 | Setting | Where | What it does |
 |---|---|---|
-| Show the control bar | Settings › Inbox and bar › Control bar | Off: asks reach you in Zero's window, in notifications and on the Dock instead. While it's off, the bar's other settings are greyed out and read **The control bar is off.** On by default. |
-| Follow the active screen | Settings › Inbox and bar › Placement | On: the bar moves to the screen you're using. Off by default. |
-| Show the bar in Zero's window | Settings › Inbox and bar › Placement | Puts the bar inside Zero's window instead of on the screen's edge: **When it fills the screen**, **Always** or **Never**. Default: **When it fills the screen**. |
-| Undo an answer | Settings › Inbox and bar › Answers | How long you can press <kbd>Esc</kbd> to take an answer back after you give it: **Off**, **1 s**, **2 s**, **3 s** or **5 s**. Default: **2 s**. |
-| Unanswered asks expire after | Settings › Inbox and bar › Answers | How long an ask waits before it expires, unless the agent sets its own time: **15 min**, **1 h**, **4 h**, **1 day** or **Never**. Default: **1 h**. |
-| Agents in the bar | Settings › Inbox and bar › Agents in the bar | The agents outside Zero that the bar shows. Point at one for the pen, **Rename**, and the bin, **Remove**. The bin is **Remove and stop** when Zero can stop the agent. Drag rows to change the order. A removed agent comes back the next time it asks you something. The list is empty until an agent first asks you something. |
+| Undo an answer | Settings › Inbox › Answers | How long you can press <kbd>Esc</kbd> to take an answer back after you give it: **Off**, **1 s**, **2 s**, **3 s** or **5 s**. Default: **2 s**. |
+| Unanswered asks expire after | Settings › Inbox › Answers | How long an ask waits before it expires, unless the agent sets its own time: **15 min**, **1 h**, **4 h**, **1 day** or **Never**. Default: **1 h**. |
 
 A time you set in an earlier version of Zero stays in the list of choices.
+
+## Control bar
+
+| Setting | Where | What it does |
+|---|---|---|
+| Show the control bar | Settings › Control bar › Control bar | Off: asks reach you in Zero's window, in notifications and on the Dock instead. While it's off, the bar's other settings are greyed out and read **The control bar is off.** On by default. |
+| Follow the active screen | Settings › Control bar › Placement | On: the bar moves to the screen you're using. Off by default. |
+| Show the bar in Zero's window | Settings › Control bar › Placement | Puts the bar inside Zero's window instead of on the screen's edge: **When it fills the screen**, **Always** or **Never**. Default: **When it fills the screen**. |
+| Agents in the bar | Settings › Control bar › Agents in the bar | The agents outside Zero that the bar shows. Point at one for the pen, **Rename**, and the bin, **Remove**. The bin is **Remove and stop** when Zero can stop the agent. Drag rows to change the order. A removed agent comes back the next time it asks you something. The list is empty until an agent first asks you something. |
 
 See [The control bar](/docs/control-bar) for the bar, and [The inbox and asks](/docs/inbox-and-asks) for answering asks.
 
@@ -111,7 +116,7 @@ The page has a section for each agent, **Claude Code**, **Codex** and **OpenCode
 - **Add account**: sign in with Claude or ChatGPT in your browser, or add an API key. For OpenCode, pick the provider of the key: OpenCode Go, Anthropic, OpenAI or OpenRouter.
 - **Add model**: add a model that the agent doesn't list yet, by its id and the name to show in the model picker.
 
-Click an account to open it in place: how much it has used of each usage window, when each resets, and its activity by day. Its **⋯** menu has **Rename** and **Remove…**. Some Claude accounts also have **Switch to a token**. [Accounts and models](/docs/accounts-and-models) covers all of this in detail.
+Click an account to open it in place: how much it has used of each usage window, when each resets, and its activity by day. Its **⋯** menu has **Rename** and **Remove…**. Claude accounts also have **Switch to a browser sign-in** or **Switch to a token**. [Accounts and models](/docs/accounts-and-models) covers all of this in detail.
 
 ## Git
 
@@ -155,9 +160,10 @@ See [Workspaces and folders](/docs/workspaces-and-folders).
 
 | Setting | Where | What it does |
 |---|---|---|
-| Connection | Settings › Linear › Connection | **Connect Linear** signs in in your browser. Read-only, kept on this Mac. The row's **Disconnect** button removes it. |
+| Connection | Settings › Linear › Connection | **Connect Linear** signs in in your browser. Kept on this Mac. The row's **Disconnect** button removes it. |
 | Link issues | Settings › Linear › Links | Issue keys such as `ABC-123` in messages open the issue. On by default. |
 | Open issues in the Linear app | Settings › Linear › Links | Opens issues in Linear's app instead of the browser. On by default. Turned off and greyed out when Linear's app isn't installed or **Link issues** is off. |
+| Let agents make changes | Settings › Linear › Agents | Agents read Linear through Zero with `zero linear`. When this is on, they can also change it, and you approve each change first. Connect Linear again after you turn it on, so that Zero gets write access. Off by default. |
 | Following | Settings › Linear › Following | The issues agents follow. Shown once Linear is connected. |
 
 ## Slack
@@ -165,6 +171,7 @@ See [Workspaces and folders](/docs/workspaces-and-folders).
 | Setting | Where | What it does |
 |---|---|---|
 | Workspaces | Settings › Slack › Workspaces | The Slack workspaces Zero is connected to. Their channels and message links open in Slack. **Connect Slack** adds one. Each workspace's row has a **Disconnect** button that removes it. |
+| Let agents post | Settings › Slack › Agents | Agents read Slack through Zero with `zero slack`. When this is on, they can also post, and you approve each post first. Zero's Slack app needs the `chat:write` scope. Off by default. |
 | Following | Settings › Slack › Following | The threads and channels agents follow. Shown once Slack is connected. |
 
 To stop a follow, point at its row under **Following** and click **×**, **Unfollow**. Click the task's name to open the task. A task's own follows are also in its details pane, under **Follows**. [Following and integrations](/docs/following-and-integrations) explains connecting each service and the rows.
@@ -173,7 +180,7 @@ To stop a follow, point at its row under **Following** and click **×**, **Unfol
 
 Set up an MCP server here once, and Zero gives it to your tasks as they start, in every agent. **Add a server** opens the form. Each server's row has a switch and **Edit**. In the form, **Start when first used** keeps a command's server stopped until a task first calls it. Until then, Zero answers from what the server said last time.
 
-**Claude Code's servers** lists the servers in Claude Code's own settings, each with its project or **Every project**. One that needs you to sign in shows **Needs sign-in** and **Sign in**, which opens its sign-in page in your browser. [Browsers and MCP servers](/docs/browsers-and-mcp) explains every field.
+**Claude Code's servers** lists the servers in Claude Code's own settings, each with its project or **Every project**. One that needs you to sign in shows **Needs sign-in** and **Sign in**, which opens its sign-in page in your browser. One that isn't in Zero yet shows **Manage in Zero**, which opens the form with the server's settings filled in. Save it, and Zero gives it to every task in every agent and account. [Browsers and MCP servers](/docs/browsers-and-mcp) explains every field.
 
 ## Browsers
 

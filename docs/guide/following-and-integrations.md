@@ -41,7 +41,7 @@ When an agent ends its turn waiting, but follows nothing and runs nothing, nothi
 | Command | What it does |
 |---|---|
 | `zero follow <link>` | Follows a pull request, an issue, a Slack thread or channel, or a Linear comment thread. The link to a Linear comment thread ends in `#comment-…`. |
-| `zero follow <link> --mine` | For a busy channel. Delivers only messages that name a pull request that the task follows. |
+| `zero follow <link> --mine` | For a busy channel. Delivers only messages that name a pull request that the task follows, or its merge commit, and the next messages from the same author, such as a deploy bot's "Deploy complete". |
 | `zero follow <link> --about "word,other words"` | Delivers only events that contain one of these words. |
 | `zero following` | Lists what the task follows, and whether Zero can read each one. |
 | `zero unfollow <topic>` | Stops one follow. `--all` stops all of them. |
@@ -89,9 +89,9 @@ An integration that isn't connected says so under **Connection** on its page, as
 
 The page then shows **Connected as** and your GitHub login. To disconnect, sign out of the GitHub CLI.
 
-**Linear.** Click **Connect Linear**, then allow Zero on the Linear page that opens in your browser. Zero reads Linear and never writes to it. Issue keys of the workspace's teams, such as `ABC-123`, then link in messages. It keeps the connection on this Mac. To disconnect, click **Disconnect** on the page.
+**Linear.** Click **Connect Linear**, then allow Zero on the Linear page that opens in your browser. Zero reads Linear. It changes Linear only when you turn on **Let agents make changes** and approve the change. Issue keys of the workspace's teams, such as `ABC-123`, then link in messages. It keeps the connection on this Mac. To disconnect, click **Disconnect** on the page.
 
-**Slack.** Zero reads channels, messages and names. It posts nothing. Each Slack workspace gets Zero's own Slack app:
+**Slack.** Zero reads channels, messages and names. It posts only when you turn on **Let agents post** and approve the post. Each Slack workspace gets Zero's own Slack app:
 
 1. Click **Connect Slack**, then **Open Slack**. Slack opens with the app filled in.
 2. In Slack, click **Create**, then **Install to Workspace**.
@@ -100,9 +100,11 @@ The page then shows **Connected as** and your GitHub login. To disconnect, sign 
 
 To connect more than one Slack workspace, click **Connect Slack** beside **Workspaces** and do the same steps for each one.
 
-A Slack connection made before agents could follow Slack needs new scopes. Add the scopes from the app's manifest to your Slack app, reinstall the app and paste the new token.
+A Slack connection made before agents could follow or search Slack needs new scopes. Add the scopes from the app's manifest to your Slack app, reinstall the app and paste the new token.
 
 The page then lists the workspace under **Workspaces**. Each workspace has its own **Disconnect**.
+
+Agents read through these connections with `zero slack` and `zero linear`, without tokens of their own. See [The zero command](/docs/cli#read-slack-and-linear).
 
 ## Make references in messages open where you want
 

@@ -69,12 +69,12 @@ Right-click the bar for:
 
 ## Settings for the bar
 
-These are in **Settings › Inbox and bar**. Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> or the gear at the foot of the window's left rail.
+These are in **Settings › Control bar**. Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> or the gear at the foot of the window's left rail.
 
 | Setting | Where | What it does |
 |---|---|---|
-| Follow the active screen | Settings › Inbox and bar › Placement | On: the bar moves to the screen you're using. Off: it stays on the screen where it first appeared. |
-| Show the bar in Zero's window | Settings › Inbox and bar › Placement | Puts the bar in Zero's window, not on the screen's edge: **When it fills the screen**, **Always** or **Never**. **When it fills the screen** is the default. |
-| Agents in the bar | Settings › Inbox and bar › Agents in the bar | The agents outside Zero that the bar shows. Rename or remove one, or drag them into a new order. A removed agent comes back when it next asks you something. |
+| Follow the active screen | Settings › Control bar › Placement | On: the bar moves to the screen you're using. Off: it stays on the screen where it first appeared. |
+| Show the bar in Zero's window | Settings › Control bar › Placement | Puts the bar in Zero's window, not on the screen's edge: **When it fills the screen**, **Always** or **Never**. **When it fills the screen** is the default. |
+| Agents in the bar | Settings › Control bar › Agents in the bar | The agents outside Zero that the bar shows. Rename or remove one, or drag them into a new order. A removed agent comes back when it next asks you something. |
 
 The **Inbox hotkey** opens the inbox from any app. It's <kbd>⌥</kbd> <kbd>Space</kbd> unless you change it in **Settings › General › Zero › Inbox hotkey**.
